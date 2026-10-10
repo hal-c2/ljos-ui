@@ -21,6 +21,7 @@ smallvec.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 vello_cpu.workspace = true
+skrifa.workspace = true
 egui = { workspace = true, optional = true }
 
 [lints]

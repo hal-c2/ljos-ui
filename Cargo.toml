@@ -41,6 +41,8 @@ egui_kittest = "0.36.2"
 accesskit = "0.24.1"
 vello_cpu = "0.3"
 parley = "0.12"
+# Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
+skrifa = "0.44"
 
 # Async, services and MCP
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std"] }

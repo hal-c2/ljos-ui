@@ -12,8 +12,14 @@
 //! * linear gradients are exact (triangles are split at every stop) but a
 //!   gradient *border* uses its first stop colour;
 //! * path fills assume convex polygons (egui's `PathShape` limit);
-//! * `Image`, `NinePatch`, `Glyphs`, `Embed` and `layer.*` are not drawn yet;
-//! * the text stop-gap ignores rotation and shear.
+//! * `Image`, `NinePatch`, `Embed` and `layer.*` are not drawn yet;
+//! * gradient text uses its first stop colour, and colour glyphs (emoji) are
+//!   not drawn;
+//! * the unshaped `Text` op ignores rotation and shear.
+//!
+//! Text ([`DrawOp::Glyphs`]) is drawn as quads that sample the glyph atlas
+//! (the private `glyph_atlas` module). Upright text is placed on the device
+//! pixel grid; a glyph outside the clip rectangle is neither filled nor drawn.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -23,12 +29,15 @@ use egui::epaint::{
     StrokeKind, TessellationOptions, Tessellator, TextShape, Vertex,
 };
 use egui::{Color32, Context, FontId, Pos2, Rect as ERect};
-use vello_cpu::kurbo::{Affine, PathEl, Point, Rect};
+use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 
 use crate::backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RgbaImage};
 use crate::display_list::{
-    DisplayList, DisplayListId, DrawOp, LinearGradient, Paint, PathStyle, TextAlign,
+    Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
+    TextAlign,
 };
+use crate::glyph::{baseline_snap, is_upright, snap_bar};
+use crate::glyph_atlas::{BINS, GlyphAtlas, GlyphKey, Slot};
 use crate::rgba::Rgba;
 use crate::tree::NodeId;
 
@@ -39,7 +48,8 @@ const KEEP_FRAMES: u64 = 120;
 /// needs to place them.
 #[derive(Debug)]
 pub struct EguiSink<'a> {
-    /// Needed for the text stop-gap (egui's font layout). Without it, text is skipped.
+    /// Needed for text: it owns the glyph atlas texture and egui's font
+    /// layout. Without it, text is skipped.
     pub ctx: Option<&'a Context>,
     /// Screen position of the snapshot viewport's top-left corner, in points.
     pub origin: Pos2,
@@ -74,6 +84,190 @@ impl<'a> EguiSink<'a> {
 enum LocalSeg {
     Mesh(Arc<Mesh>),
     Text(TextCmd),
+    Glyphs(GlyphsCmd),
+}
+
+#[derive(Clone)]
+struct GlyphsCmd {
+    run: Arc<GlyphRun>,
+    origin: Vec2,
+    color: Rgba,
+    decorations: Decorations,
+}
+
+/// A run placed on the screen. Its mesh is built when it is first drawn and
+/// kept until the atlas or the clip rectangle changes.
+#[derive(Clone)]
+struct GlyphSeg {
+    cmd: GlyphsCmd,
+    to_screen: Affine,
+    opacity: f32,
+    mesh: Option<GlyphMesh>,
+}
+
+#[derive(Clone)]
+struct GlyphMesh {
+    generation: u64,
+    clip: ERect,
+    mesh: Arc<Mesh>,
+}
+
+impl GlyphSeg {
+    fn mesh_for(&self, generation: u64, clip: ERect) -> Option<&Arc<Mesh>> {
+        self.mesh
+            .as_ref()
+            .filter(|m| m.generation == generation && m.clip == clip)
+            .map(|m| &m.mesh)
+    }
+}
+
+/// Where one glyph goes on the screen.
+enum Placement {
+    /// Upright text: the glyph origin in whole device pixels.
+    Snapped { x: i64, y: i64 },
+    /// Rotated, sheared or unevenly scaled text: maps bitmap pixels, relative
+    /// to the glyph origin, to screen points.
+    Free(Affine),
+}
+
+/// Visit every glyph of `seg` that can touch `clip`, with its atlas key, the
+/// device size it is filled at and its place. Both the atlas pass and the mesh
+/// pass go through here, so they always agree on the keys.
+fn place_glyphs(
+    seg: &GlyphSeg,
+    ppp: f32,
+    clip: ERect,
+    mut f: impl FnMut(GlyphKey, f64, Placement),
+) {
+    let run = &*seg.cmd.run;
+    let origin = seg.cmd.origin;
+    let screen_bounds = erect(seg.to_screen.transform_rect_bbox(run.bounds + origin));
+    if !screen_bounds.intersects(clip) {
+        return;
+    }
+    let ppp = f64::from(ppp);
+    let to_device = Affine::scale(ppp) * seg.to_screen;
+    let [a, _, _, d, e, ty] = to_device.as_coeffs();
+    if is_upright(to_device) && (a - d).abs() < 1e-6 * a.abs().max(1.0) {
+        let size = f64::from(run.font_size) * a;
+        let dy = baseline_snap(to_device, f64::from(run.baseline) + origin.y);
+        // A glyph reaches at most this far from its origin; anything further
+        // from the clip rectangle is skipped before it costs an atlas slot.
+        let reach = size * 2.0 + 2.0;
+        let (cx0, cx1) = (f64::from(clip.min.x) * ppp, f64::from(clip.max.x) * ppp);
+        let (cy0, cy1) = (f64::from(clip.min.y) * ppp, f64::from(clip.max.y) * ppp);
+        for g in &run.glyphs {
+            let x = a * (f64::from(g.x) + origin.x) + e;
+            let y = (d * (f64::from(g.y) + origin.y) + ty + dy).round();
+            if x + reach < cx0 || x - reach > cx1 || y + reach < cy0 || y - reach > cy1 {
+                continue;
+            }
+            let q = (x * BINS as f64).round() as i64;
+            let (key, filled) = GlyphKey::new(run, g.id, size, q.rem_euclid(BINS));
+            f(
+                key,
+                filled,
+                Placement::Snapped {
+                    x: q.div_euclid(BINS),
+                    y: y as i64,
+                },
+            );
+        }
+    } else {
+        let scale = to_device.determinant().abs().sqrt();
+        if scale <= 0.0 {
+            return;
+        }
+        let size = f64::from(run.font_size) * scale;
+        for g in &run.glyphs {
+            let (key, filled) = GlyphKey::new(run, g.id, size, 0);
+            let at = origin + Vec2::new(f64::from(g.x), f64::from(g.y));
+            let px_to_local = f64::from(run.font_size) / filled;
+            f(
+                key,
+                filled,
+                Placement::Free(seg.to_screen * Affine::translate(at) * Affine::scale(px_to_local)),
+            );
+        }
+    }
+}
+
+fn push_quad(mesh: &mut Mesh, corners: [Pos2; 4], uv: [Pos2; 4], color: Color32) {
+    let base = mesh.vertices.len() as u32;
+    for (pos, uv) in corners.into_iter().zip(uv) {
+        mesh.vertices.push(Vertex { pos, uv, color });
+    }
+    mesh.indices
+        .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+fn pos2(p: Point) -> Pos2 {
+    Pos2::new(p.x as f32, p.y as f32)
+}
+
+/// Quads for the glyphs of `seg` that are in the atlas, and its bars.
+fn glyph_mesh(seg: &GlyphSeg, atlas: &GlyphAtlas, ppp: f32, clip: ERect) -> Mesh {
+    let mut mesh = Mesh::default();
+    let Some(texture) = atlas.texture_id() else {
+        return mesh;
+    };
+    mesh.texture_id = texture;
+    let color = color32(seg.cmd.color.with_opacity(seg.opacity));
+    let side = atlas.side() as f32;
+    let inv_ppp = 1.0 / f64::from(ppp);
+    place_glyphs(seg, ppp, clip, |key, _, placement| {
+        let Some(Slot {
+            x,
+            y,
+            w,
+            h,
+            left,
+            top,
+        }) = atlas.slot(&key)
+        else {
+            return;
+        };
+        if w == 0 {
+            return;
+        }
+        let (u0, v0) = (x as f32 / side, y as f32 / side);
+        let (u1, v1) = ((x + w) as f32 / side, (y + h) as f32 / side);
+        let uv = [
+            Pos2::new(u0, v0),
+            Pos2::new(u1, v0),
+            Pos2::new(u1, v1),
+            Pos2::new(u0, v1),
+        ];
+        let (l, t) = (f64::from(left), f64::from(top));
+        let (r, b) = (l + f64::from(w), t + f64::from(h));
+        let corners = match placement {
+            Placement::Snapped { x, y } => {
+                let (x, y) = (x as f64, y as f64);
+                [(l, t), (r, t), (r, b), (l, b)]
+                    .map(|(cx, cy)| pos2(Point::new((x + cx) * inv_ppp, (y + cy) * inv_ppp)))
+            }
+            Placement::Free(to_screen) => [(l, t), (r, t), (r, b), (l, b)]
+                .map(|(cx, cy)| pos2(to_screen * Point::new(cx, cy))),
+        };
+        push_quad(&mut mesh, corners, uv, color);
+    });
+    let to_device = Affine::scale(f64::from(ppp)) * seg.to_screen;
+    for bar in seg.cmd.decorations.bars() {
+        let bar = bar + seg.cmd.origin;
+        let corners = match snap_bar(to_device, bar) {
+            Some(r) => [(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)]
+                .map(|(x, y)| pos2(Point::new(x * inv_ppp, y * inv_ppp))),
+            None => [
+                (bar.x0, bar.y0),
+                (bar.x1, bar.y0),
+                (bar.x1, bar.y1),
+                (bar.x0, bar.y1),
+            ]
+            .map(|(x, y)| pos2(seg.to_screen * Point::new(x, y))),
+        };
+        push_quad(&mut mesh, corners, [atlas.white_uv(); 4], color);
+    }
+    mesh
 }
 
 #[derive(Clone)]
@@ -97,6 +291,7 @@ enum WorldSeg {
         opacity: f32,
         align: TextAlign,
     },
+    Glyphs(GlyphSeg),
 }
 
 struct ListEntry {
@@ -128,6 +323,20 @@ pub struct EpaintBackend {
     frame: u64,
     tessellations: u64,
     world_rebuilds: u64,
+    atlas: GlyphAtlas,
+}
+
+/// What the glyph atlas holds, for tests and diagnostics.
+#[derive(Clone, Copy, Debug)]
+pub struct GlyphAtlasInfo<'a> {
+    /// Width and height of the atlas in texels.
+    pub side: usize,
+    /// Glyphs held, counting those without ink.
+    pub glyphs: usize,
+    /// Glyphs filled since the backend was created.
+    pub rasterised: u64,
+    /// Coverage, one byte per texel, row by row.
+    pub alpha: &'a [u8],
 }
 
 impl std::fmt::Debug for EpaintBackend {
@@ -294,6 +503,17 @@ impl EpaintBackend {
             frame: 0,
             tessellations: 0,
             world_rebuilds: 0,
+            atlas: GlyphAtlas::default(),
+        }
+    }
+
+    /// The glyph atlas as it is now.
+    pub fn glyph_atlas(&self) -> GlyphAtlasInfo<'_> {
+        GlyphAtlasInfo {
+            side: self.atlas.side(),
+            glyphs: self.atlas.len(),
+            rasterised: self.atlas.rasterised(),
+            alpha: self.atlas.alpha(),
         }
     }
 
@@ -315,6 +535,8 @@ impl EpaintBackend {
             self.no_aa = tessellator(ppp, false);
             self.lists.clear();
             self.nodes.clear();
+            // Glyphs are filled per device size; none of the old ones match.
+            self.atlas.clear();
         }
     }
 
@@ -451,7 +673,36 @@ impl EpaintBackend {
                 DrawOp::Image { .. } | DrawOp::NinePatch { .. } => {
                     warn("image ops are not drawn (no texture cache in M0)");
                 }
-                DrawOp::Glyphs { .. } => warn("Glyphs are not drawn; B0 uses the Text stop-gap"),
+                DrawOp::Glyphs {
+                    run,
+                    origin,
+                    paint,
+                    decorations,
+                } => {
+                    let color = match paint {
+                        Paint::Solid(c) => *c,
+                        Paint::LinearGradient(g) => {
+                            warn("gradient text uses its first stop colour");
+                            first_stop(g)
+                        }
+                        Paint::Image(_) => {
+                            warn("image-filled text is not drawn");
+                            continue;
+                        }
+                    };
+                    if color.is_transparent() {
+                        continue;
+                    }
+                    if !cur.is_empty() {
+                        segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                    }
+                    segs.push(LocalSeg::Glyphs(GlyphsCmd {
+                        run: Arc::clone(run),
+                        origin: *origin,
+                        color,
+                        decorations: *decorations,
+                    }));
+                }
                 DrawOp::Embed { .. } => warn("Embed surfaces are not drawn by the shape encoder"),
             }
         }
@@ -463,6 +714,41 @@ impl EpaintBackend {
             warnings,
             last_used: self.frame,
         }
+    }
+
+    /// Put every glyph this frame draws into the atlas, then upload it.
+    fn fill_atlas(&mut self, ctx: &Context, order: &[(NodeId, ERect)], stats: &mut EncodeStats) {
+        let max_side = GlyphAtlas::max_side(ctx);
+        for attempt in 0..2 {
+            let mut full = false;
+            for (node, clip) in order {
+                let Some(ne) = self.nodes.get(node) else {
+                    continue;
+                };
+                for seg in &ne.segs {
+                    let WorldSeg::Glyphs(g) = seg else { continue };
+                    // A valid mesh means its glyphs are already in the atlas.
+                    if g.mesh_for(self.atlas.generation(), *clip).is_some() {
+                        continue;
+                    }
+                    place_glyphs(g, self.ppp, *clip, |key, size, _| {
+                        full |= self.atlas.ensure(&key, &g.cmd.run, size, max_side).is_err();
+                    });
+                }
+            }
+            if !full {
+                break;
+            }
+            if attempt == 0 {
+                // Largest size reached: drop the glyphs of earlier frames and
+                // fill this frame's again.
+                self.atlas.clear();
+            } else {
+                stats.warnings += 1;
+                tracing::debug!("B0: the glyph atlas is full; some glyphs are not drawn");
+            }
+        }
+        self.atlas.upload(ctx);
     }
 
     fn world_segs(local: &[LocalSeg], to_screen: Affine, opacity: f32) -> Vec<WorldSeg> {
@@ -498,6 +784,12 @@ impl EpaintBackend {
                     opacity,
                     align: t.align,
                 },
+                LocalSeg::Glyphs(cmd) => WorldSeg::Glyphs(GlyphSeg {
+                    cmd: cmd.clone(),
+                    to_screen,
+                    opacity,
+                    mesh: None,
+                }),
             })
             .collect()
     }
@@ -556,6 +848,11 @@ impl RenderBackend for EpaintBackend {
             egui::Vec2::new(snap.viewport.width() as f32, snap.viewport.height() as f32),
         );
         sink.shapes.clear();
+        // Nodes to draw, in paint order, each with its clip rectangle. Shapes
+        // are emitted after the loop, once the glyph atlas is complete: adding
+        // a glyph can grow the atlas, which moves every texture coordinate.
+        let mut order: Vec<(NodeId, ERect)> = Vec::new();
+        let mut has_glyphs = false;
 
         for item in &snap.items {
             let Some(list) = &item.list else { continue };
@@ -622,13 +919,50 @@ impl RenderBackend for EpaintBackend {
             }
             let ne = self.nodes.get_mut(&item.node).expect("present");
             ne.last_used = self.frame;
+            has_glyphs |= ne.segs.iter().any(|s| matches!(s, WorldSeg::Glyphs(_)));
+            order.push((item.node, clip));
+        }
 
-            for seg in &ne.segs {
+        if has_glyphs {
+            match sink.ctx {
+                Some(ctx) => self.fill_atlas(ctx, &order, &mut stats),
+                None => {
+                    stats.warnings += 1;
+                    tracing::debug!("B0: text needs an egui Context; skipped");
+                }
+            }
+        }
+
+        for (node, clip) in &order {
+            let clip = *clip;
+            let ne = self.nodes.get_mut(node).expect("present");
+            for seg in &mut ne.segs {
                 match seg {
                     WorldSeg::Mesh(m) => sink.shapes.push(ClippedShape {
                         clip_rect: clip,
                         shape: Shape::Mesh(Arc::clone(m)),
                     }),
+                    WorldSeg::Glyphs(g) => {
+                        if sink.ctx.is_none() {
+                            continue;
+                        }
+                        let generation = self.atlas.generation();
+                        if g.mesh_for(generation, clip).is_none() {
+                            g.mesh = Some(GlyphMesh {
+                                generation,
+                                clip,
+                                mesh: Arc::new(glyph_mesh(g, &self.atlas, self.ppp, clip)),
+                            });
+                        }
+                        if let Some(m) = g.mesh_for(generation, clip)
+                            && !m.is_empty()
+                        {
+                            sink.shapes.push(ClippedShape {
+                                clip_rect: clip,
+                                shape: Shape::Mesh(Arc::clone(m)),
+                            });
+                        }
+                    }
                     WorldSeg::Text {
                         rect,
                         text,
@@ -639,7 +973,7 @@ impl RenderBackend for EpaintBackend {
                     } => {
                         let Some(ctx) = sink.ctx else {
                             stats.warnings += 1;
-                            tracing::debug!("B0: text stop-gap needs an egui Context; skipped");
+                            tracing::debug!("B0: unshaped text needs an egui Context; skipped");
                             continue;
                         };
                         let galley = ctx.fonts_mut(|f| {
@@ -675,6 +1009,7 @@ impl RenderBackend for EpaintBackend {
             MemoryPressure::Critical => {
                 self.lists.clear();
                 self.nodes.clear();
+                self.atlas.reset();
             }
             MemoryPressure::Moderate => {
                 let keep_after = self.frame.saturating_sub(10);

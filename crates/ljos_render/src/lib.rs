@@ -10,12 +10,15 @@
 mod backend;
 mod compose;
 mod display_list;
+mod glyph;
 mod raster;
 mod rgba;
 mod tree;
 
 #[cfg(feature = "b0")]
 pub mod b0;
+#[cfg(feature = "b0")]
+mod glyph_atlas;
 
 pub use backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage};
 pub use compose::{
@@ -26,6 +29,7 @@ pub use display_list::{
     GradientStop, ImageKey, Insets, LinearGradient, Paint, PaintContent, PaintCx, PathStyle,
     PositionedGlyph, TextAlign, TileMode,
 };
+pub use glyph::{FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds};
 pub use raster::{RasterConfig, TextMode, VelloCpuReference};
 pub use rgba::Rgba;
 pub use tree::{ClipSpec, Dirty, LayerSpec, NodeId, RenderNode, RenderTree, TreeError};

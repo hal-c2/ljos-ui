@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use vello_cpu::kurbo::{BezPath, Point, Rect, Shape, Size};
+use vello_cpu::kurbo::{BezPath, Point, Rect, Shape, Size, Vec2};
 use vello_cpu::peniko::FontData;
 
 use crate::rgba::Rgba;
@@ -168,13 +168,16 @@ pub enum TileMode {
 pub struct PositionedGlyph {
     /// Glyph id in the run's font.
     pub id: u32,
-    /// Baseline-origin x in the node's local space.
+    /// Baseline-origin x, relative to the op's `origin`.
     pub x: f32,
-    /// Baseline-origin y in the node's local space.
+    /// Baseline-origin y, relative to the op's `origin`.
     pub y: f32,
 }
 
-/// A shaped run, produced later by `ljos_text` (Parley). Placeholder shape.
+/// A shaped run of glyphs in one font at one size, produced by `ljos_text`.
+///
+/// Positions are relative to the `origin` of the [`DrawOp::Glyphs`] that draws
+/// the run, so one cached run can be drawn at any alignment offset.
 #[derive(Clone, Debug)]
 pub struct GlyphRun {
     /// Font bytes and collection index.
@@ -183,17 +186,58 @@ pub struct GlyphRun {
     pub font_size: f32,
     /// Positioned glyphs.
     pub glyphs: Vec<PositionedGlyph>,
-    /// Ink bounds in local space, supplied by the shaper (used for culling).
+    /// Y of the run's baseline. Backends snap it to a whole device pixel, so
+    /// both draw the same rows of pixels.
+    pub baseline: f32,
+    /// Ink bounds, supplied by the shaper (used for culling).
     pub bounds: Rect,
+    /// Variation-axis position as normalised 2.14 coordinates; empty for a
+    /// static font or the default instance.
+    pub normalized_coords: Vec<i16>,
+    /// Thicken the outlines, for a bold request the font file cannot meet.
+    pub embolden: bool,
+    /// Slant for an italic request the font file cannot meet: the tangent of
+    /// the angle from upright, 0 for none.
+    pub skew: f32,
 }
 
-/// Underline and strike-through flags. Placeholder until the text engine exists.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+impl GlyphRun {
+    /// A run with no variation coordinates and no synthetic bold or italic.
+    pub fn new(
+        font: FontData,
+        font_size: f32,
+        glyphs: Vec<PositionedGlyph>,
+        baseline: f32,
+        bounds: Rect,
+    ) -> Self {
+        Self {
+            font,
+            font_size,
+            glyphs,
+            baseline,
+            bounds,
+            normalized_coords: Vec::new(),
+            embolden: false,
+            skew: 0.0,
+        }
+    }
+}
+
+/// Underline and strike-through bars of a [`DrawOp::Glyphs`], relative to its
+/// `origin` and filled with its paint.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Decorations {
-    /// Draw an underline.
-    pub underline: bool,
-    /// Draw a strike-through.
-    pub strike_through: bool,
+    /// The underline bar.
+    pub underline: Option<Rect>,
+    /// The strike-through bar.
+    pub strike_through: Option<Rect>,
+}
+
+impl Decorations {
+    /// The bars that are set.
+    pub fn bars(&self) -> impl Iterator<Item = Rect> {
+        self.underline.into_iter().chain(self.strike_through)
+    }
 }
 
 /// Horizontal alignment of the stop-gap [`DrawOp::Text`].
@@ -273,20 +317,23 @@ pub enum DrawOp {
         /// Horizontal and vertical edge handling.
         tile: [TileMode; 2],
     },
-    /// Shaped glyphs. The real text path; no backend consumes it in B0.
+    /// Shaped glyphs: how text is drawn. Both backends fill the same outlines
+    /// (R directly, B0 through its glyph atlas).
     Glyphs {
         /// The run.
         run: Arc<GlyphRun>,
-        /// Fill.
+        /// Where the run's coordinate origin lies in the node's local space.
+        origin: Vec2,
+        /// Fill. Backends draw a gradient or image paint in its first colour.
         paint: Paint,
         /// Decorations.
         decorations: Decorations,
     },
-    /// STOP-GAP for M0 only: a plain string for egui's own text layout.
+    /// A plain string laid out by egui's own text code, without shaping.
     ///
-    /// It exists so B0 can show text before `ljos_text` produces [`DrawOp::Glyphs`].
-    /// Backends other than B0 skip it (R can draw a box with `TextMode::Boxes`).
-    /// Remove when the text engine lands.
+    /// `ljos_text` produces [`DrawOp::Glyphs`] instead; this stays for callers
+    /// that have no text engine. Backends other than B0 skip it (R can draw a
+    /// box with `TextMode::Boxes`).
     Text {
         /// Layout box; also the culling bounds.
         rect: Rect,
@@ -327,7 +374,17 @@ impl DrawOp {
                 rect, blur, spread, ..
             } => rect.inflate(f64::from(*spread + *blur), f64::from(*spread + *blur)),
             Self::Image { dst, .. } | Self::NinePatch { dst, .. } => *dst,
-            Self::Glyphs { run, .. } => run.bounds,
+            Self::Glyphs {
+                run,
+                origin,
+                decorations,
+                ..
+            } => {
+                decorations
+                    .bars()
+                    .fold(run.bounds, |acc, bar| acc.union(bar))
+                    + *origin
+            }
             Self::Text { rect, .. } | Self::Embed { rect, .. } => *rect,
             Self::Path { path, style, .. } => {
                 let b = path.bounding_box();
@@ -447,7 +504,23 @@ impl DisplayListBuilder {
         })
     }
 
-    /// STOP-GAP plain text (see [`DrawOp::Text`]).
+    /// A shaped run in one colour.
+    pub fn glyphs(
+        &mut self,
+        run: Arc<GlyphRun>,
+        origin: Vec2,
+        color: Rgba,
+        decorations: Decorations,
+    ) -> &mut Self {
+        self.push(DrawOp::Glyphs {
+            run,
+            origin,
+            paint: Paint::Solid(color),
+            decorations,
+        })
+    }
+
+    /// Unshaped plain text (see [`DrawOp::Text`]).
     pub fn text_stopgap(
         &mut self,
         rect: Rect,

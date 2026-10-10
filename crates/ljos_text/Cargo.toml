@@ -1,0 +1,17 @@
+[package]
+name = "ljos_text"
+description = "TextEngine for Ljós: Parley shaping and line breaking, a layout cache, elide, and glyph runs for the render backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_render = { path = "../ljos_render", default-features = false }
+parley.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

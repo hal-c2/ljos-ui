@@ -3,13 +3,14 @@
 //! Determinism comes from a fixed SIMD level (`Level::baseline`, chosen at
 //! compile time, never by runtime CPU detection), one thread
 //! (the `multithreading` feature is not enabled and `num_threads` is 0) and
-//! no text shaping in M0. Opacity is applied per op (multiplied down), as Qt
-//! does, not by grouping a subtree into a layer.
+//! unhinted glyph outlines (shaping happens earlier, in `ljos_text`). Opacity
+//! is applied per op (multiplied down), as Qt does, not by grouping a subtree
+//! into a layer.
 
 use std::collections::HashSet;
 
 use vello_cpu::color::{AlphaColor, Srgb};
-use vello_cpu::kurbo::{Affine, Rect, RoundedRect, RoundedRectRadii, Shape, Stroke};
+use vello_cpu::kurbo::{Affine, Rect, RoundedRect, RoundedRectRadii, Shape, Stroke, Vec2};
 use vello_cpu::peniko::{
     ColorStop, ColorStops, Extend, Fill, Gradient, ImageAlphaType, LinearGradientPosition,
 };
@@ -22,10 +23,11 @@ use crate::backend::{
     EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage,
 };
 use crate::compose::{ClipId, FrameSnapshot};
-use crate::display_list::{DrawOp, Paint, PathStyle};
+use crate::display_list::{Decorations, DrawOp, GlyphRun, Paint, PathStyle};
+use crate::glyph::{OutlineCache, baseline_snap, snap_bar};
 use crate::rgba::Rgba;
 
-/// How R draws the M0 stop-gap [`DrawOp::Text`]. R has no bundled font yet.
+/// How R draws the unshaped [`DrawOp::Text`], which only egui can lay out.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextMode {
     /// Draw nothing.
@@ -40,7 +42,7 @@ pub enum TextMode {
 pub struct RasterConfig {
     /// Colour the frame is cleared to. Transparent by default.
     pub background: Rgba,
-    /// Text stop-gap behaviour.
+    /// What to draw for an unshaped [`DrawOp::Text`].
     pub text: TextMode,
 }
 
@@ -58,6 +60,7 @@ pub struct VelloCpuReference {
     config: RasterConfig,
     ctx: Option<RenderContext>,
     resources: Resources,
+    outlines: OutlineCache,
 }
 
 impl std::fmt::Debug for VelloCpuReference {
@@ -122,6 +125,7 @@ impl VelloCpuReference {
             config,
             ctx: None,
             resources: Resources::new(),
+            outlines: OutlineCache::default(),
         }
     }
 
@@ -177,7 +181,7 @@ impl VelloCpuReference {
         })
     }
 
-    fn draw(&self, ctx: &mut RenderContext, view: &FrameView<'_>) {
+    fn draw(&mut self, ctx: &mut RenderContext, view: &FrameView<'_>) {
         let snap = view.snapshot;
         let base = Affine::scale(f64::from(view.scale_factor))
             * Affine::translate((-snap.viewport.x0, -snap.viewport.y0));
@@ -198,9 +202,10 @@ impl VelloCpuReference {
         for item in &snap.items {
             let Some(list) = &item.list else { continue };
             self.sync_clips(ctx, snap, &mut pushed, item.clip, base);
-            ctx.set_transform(base * item.world);
+            let to_device = base * item.world;
+            ctx.set_transform(to_device);
             for op in list.ops() {
-                self.draw_op(ctx, op, item.opacity, &mut warned);
+                self.draw_op(ctx, op, item.opacity, to_device, &mut warned);
             }
         }
         for _ in pushed.drain(..) {
@@ -246,11 +251,67 @@ impl VelloCpuReference {
         }
     }
 
+    /// Fill a run's outlines. Runs wholly outside the canvas are skipped, so
+    /// text scrolled out of view costs nothing.
+    fn draw_glyphs(
+        &mut self,
+        ctx: &mut RenderContext,
+        run: &GlyphRun,
+        origin: Vec2,
+        decorations: &Decorations,
+        color: Rgba,
+        to_device: Affine,
+    ) {
+        if color.is_transparent() {
+            return;
+        }
+        let canvas = Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height()));
+        ctx.set_paint(alpha_color(color));
+        ctx.set_fill_rule(Fill::NonZero);
+        let snapped = Affine::translate((
+            0.0,
+            baseline_snap(to_device, f64::from(run.baseline) + origin.y),
+        )) * to_device;
+        let ink = snapped.transform_rect_bbox(run.bounds + origin);
+        if ink.overlaps(canvas) {
+            let size = f64::from(run.font_size);
+            for g in &run.glyphs {
+                let Some(outline) = self.outlines.get(run, g.id) else {
+                    continue;
+                };
+                if outline.path.is_empty() {
+                    continue;
+                }
+                let at = origin + Vec2::new(f64::from(g.x), f64::from(g.y));
+                ctx.set_transform(snapped * Affine::translate(at) * outline.to_size(run, size));
+                ctx.fill_path(&outline.path);
+                if let Some(width) = outline.embolden_width(run) {
+                    ctx.set_stroke(Stroke::new(width));
+                    ctx.stroke_path(&outline.path);
+                }
+            }
+        }
+        for bar in decorations.bars() {
+            match snap_bar(to_device, bar + origin) {
+                Some(device) => {
+                    ctx.set_transform(Affine::IDENTITY);
+                    ctx.fill_rect(&device);
+                }
+                None => {
+                    ctx.set_transform(to_device);
+                    ctx.fill_rect(&(bar + origin));
+                }
+            }
+        }
+        ctx.set_transform(to_device);
+    }
+
     fn draw_op(
-        &self,
+        &mut self,
         ctx: &mut RenderContext,
         op: &DrawOp,
         opacity: f32,
+        to_device: Affine,
         warned: &mut HashSet<&'static str>,
     ) {
         match op {
@@ -340,10 +401,30 @@ impl VelloCpuReference {
                     ctx.fill_rect(rect);
                 }
             }
-            DrawOp::Glyphs { .. } => {
-                if warned.insert("glyphs") {
-                    tracing::debug!("R: Glyphs ops are not rendered yet (no text engine in M0)");
-                }
+            DrawOp::Glyphs {
+                run,
+                origin,
+                paint,
+                decorations,
+            } => {
+                let color = match paint {
+                    Paint::Solid(c) => *c,
+                    Paint::LinearGradient(g) => {
+                        if warned.insert("glyph-gradient") {
+                            tracing::debug!("R: gradient text uses its first stop colour");
+                        }
+                        g.stops.first().map_or(Rgba::TRANSPARENT, |s| s.color)
+                    }
+                    Paint::Image(_) => Rgba::TRANSPARENT,
+                };
+                self.draw_glyphs(
+                    ctx,
+                    run,
+                    *origin,
+                    decorations,
+                    color.with_opacity(opacity),
+                    to_device,
+                );
             }
             DrawOp::Image { .. } | DrawOp::NinePatch { .. } => {
                 if warned.insert("image") {
@@ -390,6 +471,7 @@ impl RenderBackend for VelloCpuReference {
     fn trim(&mut self, _pressure: MemoryPressure) {
         self.ctx = None;
         self.resources = Resources::new();
+        self.outlines.clear();
     }
 
     fn snapshot_rgba(&mut self, view: &FrameView<'_>) -> Option<RgbaImage> {
