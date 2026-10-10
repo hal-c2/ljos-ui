@@ -1,0 +1,22 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property int a: Base.Large\n    property int b: Child.Base.Large\n    property int c: Child.Medium\n    property int d: Child.Small\n}\n\"##,),\n(\"Base\",\n\"import QtQuick\\nItem { enum Base { Small = 3, Medium, Large = 10 } }\\n\",),\n(\"Child\", \"import QtQuick\\nBase { enum Mine { Small } }\\n\"),])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=2aefcda5
+  o0 QtQuick/Item key=/
+    property int a
+    property int b
+    property int c
+    property int d
+    a = enum(<Base>.Large=10)
+    b = enum(<Child>.Base.Large=10)
+    c = enum(<Child>.Medium=4)
+    d = enum(<Child>.Small=0)
+
+exprs
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.

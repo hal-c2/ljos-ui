@@ -1,0 +1,62 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property int count: 2\n    Text { text: qsTr(\"Hello\") }\n    Text { text: qsTr(\"Open\", \"menu entry\") }\n    Text { text: qsTr(\"%n file(s)\", \"\", count) }\n    Text { text: qsTr(\"%n item(s)\", \"\", 3) }\n    Text { text: qsTranslate(\"Dialog\", \"Cancel\") }\n    Text { text: qsTrId(\"app-title\") }\n    Text { text: QT_TR_NOOP(\"Later\") }\n    Text { text: \"Total: \" + qsTr(\"Sum\") }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=3c6982cd
+  o0 QtQuick/Item key=/
+    property int count
+    count = 2
+    child o1
+    child o2
+    child o3
+    child o4
+    child o5
+    child o6
+    child o7
+    child o8
+  o1 QtQuick/Text key=/Text[0] parent=o0
+    text = tr("Main", "Hello")
+  o2 QtQuick/Text key=/Text[1] parent=o0
+    text = tr("Main", "Open" // "menu entry")
+  o3 QtQuick/Text key=/Text[2] parent=o0
+    text := e0
+  o4 QtQuick/Text key=/Text[3] parent=o0
+    text = tr("Main", "%n item(s)" n=3 // "")
+  o5 QtQuick/Text key=/Text[4] parent=o0
+    text = tr("Dialog", "Cancel")
+  o6 QtQuick/Text key=/Text[5] parent=o0
+    text = trid("", "app-title")
+  o7 QtQuick/Text key=/Text[6] parent=o0
+    text = "Later"
+  o8 QtQuick/Text key=/Text[7] parent=o0
+    text := e1
+
+translations
+  tr("Main", "Hello")
+  tr("Main", "Open" // "menu entry")
+  tr("Main", "%n file(s)" n=? // "")
+  tr("Main", "%n item(s)" n=3 // "")
+  tr("Dialog", "Cancel")
+  trid("", "app-title")
+  noop("Main", "Later")
+  tr("Main", "Sum")
+
+exprs
+  e0 property f0 scope=c0o3 at 8:18 params[$root=c0o0] args[] refs[qsTr:qml global, count:root]
+  e1 property f1 scope=c0o8 at 13:18 params[] args[] refs[qsTr:qml global]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:8:18 Text.text
+export function f0($root) {
+  return (qsTr("%n file(s)", "", $root.count));
+}
+
+// Main.qml:13:18 Text.text
+export function f1() {
+  return ("Total: " + qsTr("Sum"));
+}

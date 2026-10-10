@@ -1,0 +1,33 @@
+[package]
+name = "ljos_compiler"
+description = "Compiles QML files to ljos_ir: lowering, tier-0 name resolution and the tier-2 JavaScript module of each file."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_ir = { path = "../ljos_ir" }
+qml_syntax = { path = "../qml_syntax" }
+qml_front = { path = "../qml_front" }
+qt_types = { path = "../qt_types" }
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
+oxc_syntax.workspace = true
+# Not pinned in the workspace: the free names of a script are what JavaScript
+# scoping leaves unbound, and this is oxc's scope analysis of the same AST.
+oxc_semantic.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

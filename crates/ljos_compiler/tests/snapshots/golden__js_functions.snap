@@ -1,0 +1,42 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    id: root\n    property int total: add(1, 2)\n    function add(a: int, b: int): int {\n        const sum = a + b\n        return sum + width\n    }\n    function reset() {\n        for (let i = 0; i < 3; i++) root.x = i\n        total = 0\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=f27ad491
+  o0 QtQuick/Item key=/
+    property int total
+    function add = e1
+    function reset = e2
+    total := e0
+
+exprs
+  e0 property f0 scope=c0o0 at 6:25 params[$scope=c0o0] args[] refs[add:scope]
+  e1 function f1 scope=c0o0 at 7:5 params[$scope=c0o0] args[a, b] refs[width:scope]
+  e2 function f2 scope=c0o0 at 11:5 params[root=c0o0, $scope=c0o0] args[] refs[root:id c0o0, total:scope]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:6:25 Item.total
+export function f0($scope) {
+  return ($scope.add(1, 2));
+}
+
+// Main.qml:7:5 Item.add()
+export function f1($scope, ...$args) {
+  return (function add(a, b) {
+        const sum = a + b
+        return sum + $scope.width
+    }).apply(this, $args);
+}
+
+// Main.qml:11:5 Item.reset()
+export function f2(root, $scope, ...$args) {
+  return (function reset() {
+        for (let i = 0; i < 3; i++) root.x = i
+        $scope.total = 0
+    }).apply(this, $args);
+}

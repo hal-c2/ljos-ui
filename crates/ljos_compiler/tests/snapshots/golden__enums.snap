@@ -1,0 +1,36 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    enum Mode { Off, On = 5, Auto }\n    property int mode: Main.On\n    property int other: Main.Mode.Auto\n    Text {\n        horizontalAlignment: Text.AlignHCenter\n        property int scoped: Text.HAlignment.AlignRight\n        property int qt: Qt.AlignLeft\n        property int picked: parent.width > 10 ? Text.AlignLeft : Text.AlignRight\n        property int theirs: Panel.Wide\n    }\n}\n\"##,),\n(\"Panel\",\nr##\"\nimport QtQuick\nItem {\n    enum Layout { Narrow, Wide }\n}\n\"##,),])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=67fbe12b
+  o0 QtQuick/Item key=/
+    property int mode
+    property int other
+    enum Mode { Off=0, On=5, Auto=6 }
+    mode = enum(<Main>.On=5)
+    other = enum(<Main>.Mode.Auto=6)
+    child o1
+  o1 QtQuick/Text key=/Text[0] parent=o0
+    property int scoped
+    property int qt
+    property int picked
+    property int theirs
+    horizontalAlignment = enum(QtQuick/Text.AlignHCenter=4)
+    scoped = enum(QtQuick/Text.HAlignment.AlignRight=2)
+    qt = enum(QtQml/Qt.AlignLeft=1)
+    theirs = enum(<Panel>.Wide=1)
+    picked := e0
+
+exprs
+  e0 property f0 scope=c0o1 at 12:30 params[$scope=c0o1, Text=type QtQuick/Text] args[] refs[parent:scope, Text:enum(QtQuick/Text.AlignLeft=1), Text:enum(QtQuick/Text.AlignRight=2)]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:12:30 Text.picked
+export function f0($scope, Text) {
+  return ($scope.parent.width > 10 ? Text.AlignLeft : Text.AlignRight);
+}

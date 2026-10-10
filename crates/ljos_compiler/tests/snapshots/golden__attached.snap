@@ -1,0 +1,61 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nListView {\n    id: view\n    Component.onCompleted: console.log(\"ready\", view.currentIndex)\n    Component.onDestruction: { currentIndex = -1 }\n    Keys.onPressed: (event) => { if (event.key) event.accepted = true }\n    Keys.onReleased: event.accepted = false\n    Keys.enabled: true\n    delegate: Rectangle {\n        width: ListView.isCurrentItem ? 10 : 5\n        height: ListView.view.width\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=4e87e3f7
+  o0 QtQuick/ListView key=/
+    delegate: c1
+    attached Component = QtQml/Component
+      on completed => e0
+      on destruction => e1
+    attached Keys = QtQuick/Keys
+      enabled = true
+      on pressed => e2
+      on released => e3
+
+component c1 Rectangle (template of c0, delegate) id=Main.delegate signature=4e87e3f7
+  o0 QtQuick/Rectangle key=/
+    width := e4
+    height := e5
+
+exprs
+  e0 handler f0 scope=c0o0 at 6:28 params[view=c0o0] args[] refs[console:js global, view:id c0o0]
+  e1 handler f1 scope=c0o0 at 7:30 params[$scope=c0o0] args[] refs[currentIndex:scope]
+  e2 handler f2 scope=c0o0 at 8:21 params[] args[event] refs[]
+  e3 handler f3 scope=c0o0 at 9:22 params[] args[event] refs[event:local]
+  e4 property f4 scope=c1o0 at 12:16 params[ListView=type QtQuick/ListView] args[] refs[ListView:attached QtQuick/ListView.isCurrentItem]
+  e5 property f5 scope=c1o0 at 13:17 params[ListView=type QtQuick/ListView] args[] refs[ListView:attached QtQuick/ListView.view]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:6:28 ListView.Component.onCompleted
+export function f0(view) {
+  return (console.log("ready", view.currentIndex));
+}
+
+// Main.qml:7:30 ListView.Component.onDestruction
+export function f1($scope) { $scope.currentIndex = -1 }
+
+// Main.qml:8:21 ListView.Keys.onPressed
+export function f2(...$args) {
+  return ((event) => { if (event.key) event.accepted = true }).apply(this, $args);
+}
+
+// Main.qml:9:22 ListView.Keys.onReleased
+export function f3(event) {
+  return (event.accepted = false);
+}
+
+// Main.qml:12:16 Rectangle.width
+export function f4(ListView) {
+  return (ListView.isCurrentItem ? 10 : 5);
+}
+
+// Main.qml:13:17 Rectangle.height
+export function f5(ListView) {
+  return (ListView.view.width);
+}

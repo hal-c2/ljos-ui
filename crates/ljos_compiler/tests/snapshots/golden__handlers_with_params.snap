@@ -1,0 +1,91 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    id: root\n    signal picked(int index, string name)\n    property int count: 0\n    onPicked: (i, n) => console.log(i, n)\n    onCountChanged: console.log(count)\n    onWidthChanged: { count++ }\n    MouseArea {\n        onClicked: root.count = mouse.x\n        onPressed: function(m) { root.picked(m.x, \"pressed\") }\n        onDoubleClicked: console.log(arguments.length)\n    }\n    Text {\n        onLinkActivated: Qt.openUrlExternally(link)\n    }\n    Connections {\n        target: root\n        function onPicked(index, name) { console.log(index, name) }\n        onCountChanged: console.log(root.count)\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=0ab03d48
+  o0 QtQuick/Item key=/
+    property int count
+    signal picked(index: int, name: string)
+    count = 0
+    on picked => e0
+    on countChanged => e1
+    on widthChanged => e2
+    child o1
+    child o2
+    child o3
+  o1 QtQuick/MouseArea key=/MouseArea[0] parent=o0
+    on clicked => e3
+    on pressed => e4
+    on doubleClicked => e5
+  o2 QtQuick/Text key=/Text[0] parent=o0
+    on linkActivated => e6
+  o3 QtQml/Connections key=/Connections[0] parent=o0
+    target := e7
+    on picked => e8
+    on countChanged => e9
+
+exprs
+  e0 handler f0 scope=c0o0 at 8:15 params[] args[index, name] refs[console:js global]
+  e1 handler f1 scope=c0o0 at 9:21 params[$scope=c0o0] args[] refs[console:js global, count:scope]
+  e2 handler f2 scope=c0o0 at 10:21 params[$scope=c0o0] args[] refs[count:scope]
+  e3 handler f3 scope=c0o1 at 12:20 params[root=c0o0] args[mouse] refs[root:id c0o0, mouse:local]
+  e4 handler f4 scope=c0o1 at 13:20 params[root=c0o0] args[mouse] refs[root:id c0o0]
+  e5 handler f5 scope=c0o1 at 14:26 params[] args[] refs[console:js global]
+  e6 handler f6 scope=c0o2 at 17:26 params[] args[link] refs[Qt:qml global, link:local]
+  e7 property f7 scope=c0o3 at 20:17 params[root=c0o0] args[] refs[root:id c0o0]
+  e8 handler f8 scope=c0o3 at 21:9 params[] args[index, name] refs[console:js global]
+  e9 handler f9 scope=c0o3 at 22:25 params[root=c0o0] args[] refs[console:js global, root:id c0o0]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:8:15 Item.onPicked
+export function f0(...$args) {
+  return ((i, n) => console.log(i, n)).apply(this, $args);
+}
+
+// Main.qml:9:21 Item.onCountChanged
+export function f1($scope) {
+  return (console.log($scope.count));
+}
+
+// Main.qml:10:21 Item.onWidthChanged
+export function f2($scope) { $scope.count++ }
+
+// Main.qml:12:20 MouseArea.onClicked
+export function f3(root, mouse) {
+  return (root.count = mouse.x);
+}
+
+// Main.qml:13:20 MouseArea.onPressed
+export function f4(root, ...$args) {
+  return (function(m) { root.picked(m.x, "pressed") }).apply(this, $args);
+}
+
+// Main.qml:14:26 MouseArea.onDoubleClicked
+export function f5(...$args) {
+  return (function () { return (console.log(arguments.length)); }).apply(this, $args);
+}
+
+// Main.qml:17:26 Text.onLinkActivated
+export function f6(link) {
+  return (Qt.openUrlExternally(link));
+}
+
+// Main.qml:20:17 Connections.target
+export function f7(root) {
+  return (root);
+}
+
+// Main.qml:21:9 Connections.onPicked
+export function f8(...$args) {
+  return (function onPicked(index, name) { console.log(index, name) }).apply(this, $args);
+}
+
+// Main.qml:22:25 Connections.onCountChanged
+export function f9(root) {
+  return (console.log(root.count));
+}

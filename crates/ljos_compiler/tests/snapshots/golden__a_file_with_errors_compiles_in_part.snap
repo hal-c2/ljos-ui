@@ -1,0 +1,24 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    width: 10\n    height: (\n    Rectangle { color: \"red\" }\n    Unheard { }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=4e87e3f7
+  o0 QtQuick/Item key=/
+    width = 10
+    child o1
+    child o2
+  o1 QtQuick/Rectangle key=/Rectangle[0] parent=o0
+    color = color("red")
+  o2 ?Unheard key=/Unheard[0] parent=o0
+
+exprs
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+diagnostics
+  7:15: error: Expected `,` or `)` but found `{`
+  8:5: error: `Unheard` is not a type of anything the file imports

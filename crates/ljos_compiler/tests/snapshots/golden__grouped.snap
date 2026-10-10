@@ -1,0 +1,55 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    id: root\n    Rectangle {\n        anchors.left: parent.left\n        anchors.margins: 4\n        border.color: \"black\"\n        border { width: 2 }\n    }\n    Text {\n        anchors { left: root.left; right: root.right }\n        font.pixelSize: 12 * 2\n        font.bold: true\n        color: \"#808080\"\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=4e87e3f7
+  o0 QtQuick/Item key=/
+    child o1
+    child o2
+  o1 QtQuick/Rectangle key=/Rectangle[0] parent=o0
+    group anchors
+      margins = 4
+      left := e0
+    group border
+      color = color("black")
+      width = 2
+  o2 QtQuick/Text key=/Text[0] parent=o0
+    color = color("#808080")
+    group anchors
+      left := e1
+      right := e2
+    group font
+      bold = true
+      pixelSize := e3
+
+exprs
+  e0 property f0 scope=c0o1 at 7:23 params[$scope=c0o1] args[] refs[parent:scope]
+  e1 property f1 scope=c0o2 at 13:25 params[root=c0o0] args[] refs[root:id c0o0]
+  e2 property f2 scope=c0o2 at 13:43 params[root=c0o0] args[] refs[root:id c0o0]
+  e3 property f3 scope=c0o2 at 14:25 params[] args[] refs[]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:7:23 Rectangle.anchors.left
+export function f0($scope) {
+  return ($scope.parent.left);
+}
+
+// Main.qml:13:25 Text.anchors.left
+export function f1(root) {
+  return (root.left);
+}
+
+// Main.qml:13:43 Text.anchors.right
+export function f2(root) {
+  return (root.right);
+}
+
+// Main.qml:14:25 Text.font.pixelSize
+export function f3() {
+  return (12 * 2);
+}

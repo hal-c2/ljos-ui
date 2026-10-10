@@ -1,0 +1,44 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    id: root\n    component Badge: Rectangle {\n        id: badge\n        property string label\n        property bool big: false\n        signal tapped()\n        width: big ? 40 : 20\n        Text { text: badge.label }\n    }\n    Badge { label: \"one\" }\n    Badge { label: \"two\"; big: true }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=461f5904
+  o0 QtQuick/Item key=/
+    child o1
+    child o2
+  o1 <Main#Badge> key=/Badge[0] parent=o0
+    label = "one"
+  o2 <Main#Badge> key=/Badge[1] parent=o0
+    label = "two"
+    big = true
+
+component c1 Badge (inline) id=Main#Badge signature=11819938
+  o0 QtQuick/Rectangle key=/
+    property string label
+    property bool big
+    signal tapped()
+    big = false
+    width := e0
+    child o1
+  o1 QtQuick/Text key=/Text[0] parent=o0
+    text := e1
+
+exprs
+  e0 property f0 scope=c1o0 at 11:16 params[$scope=c1o0] args[] refs[big:scope]
+  e1 property f1 scope=c1o1 at 12:22 params[badge=c1o0] args[] refs[badge:id c1o0]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:11:16 Rectangle.width
+export function f0($scope) {
+  return ($scope.big ? 40 : 20);
+}
+
+// Main.qml:12:22 Text.text
+export function f1(badge) {
+  return (badge.label);
+}

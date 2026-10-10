@@ -1,0 +1,17 @@
+[package]
+name = "ljos_ir"
+description = "The compiled form of a QML file: components, objects, literals, resolved bindings and the file's JavaScript module. Owned, arena-free, serialised with postcard."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+postcard.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

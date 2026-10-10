@@ -1,0 +1,31 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property alias label: caption.text\n    property alias captionItem: caption\n    readonly property alias size: caption.font.pixelSize\n    default property alias content: holder.data\n    required property string name\n    required width\n    Text { id: caption; text: name }\n    Item { id: holder }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=961338dc
+  o0 QtQuick/Item key=/
+    property alias label -> caption(c0o1).text
+    property alias captionItem -> caption(c0o1)
+    readonly property alias size -> caption(c0o1).font.pixelSize
+    default property alias content -> holder(c0o2).data
+    required property string name
+    required width
+    child o1
+    child o2
+  o1 QtQuick/Text key=/caption parent=o0
+    text := e0
+  o2 QtQuick/Item key=/holder parent=o0
+
+exprs
+  e0 property f0 scope=c0o1 at 11:31 params[$root=c0o0] args[] refs[name:root]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:11:31 Text.text
+export function f0($root) {
+  return ($root.name);
+}

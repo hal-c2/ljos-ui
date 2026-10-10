@@ -1,0 +1,73 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    id: root\n    property int size: 10\n    width: size * 2\n    Rectangle {\n        id: box\n        width: parent.width / 2\n        height: width + root.size\n        x: label.width\n        Text { id: label; text: box.width + \"px\"; x: size }\n        Rectangle { opacity: x > 0 ? 1 : 0.5 }\n        Rectangle { }\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=90e3e538
+  o0 QtQuick/Item key=/
+    property int size
+    size = 10
+    width := e0
+    child o1
+  o1 QtQuick/Rectangle key=/box parent=o0
+    width := e1
+    height := e2
+    x := e3
+    child o2
+    child o3
+    child o4
+  o2 QtQuick/Text key=/box/label parent=o1
+    text := e4
+    x := e5
+  o3 QtQuick/Rectangle key=/box/Rectangle[0] parent=o1
+    opacity := e6
+  o4 QtQuick/Rectangle key=/box/Rectangle[1] parent=o1
+
+exprs
+  e0 property f0 scope=c0o0 at 7:12 params[$scope=c0o0] args[] refs[size:scope]
+  e1 property f1 scope=c0o1 at 10:16 params[$scope=c0o1] args[] refs[parent:scope]
+  e2 property f2 scope=c0o1 at 11:17 params[$scope=c0o1, root=c0o0] args[] refs[width:scope, root:id c0o0]
+  e3 property f3 scope=c0o1 at 12:12 params[label=c0o2] args[] refs[label:id c0o2]
+  e4 property f4 scope=c0o2 at 13:33 params[box=c0o1] args[] refs[box:id c0o1]
+  e5 property f5 scope=c0o2 at 13:54 params[$root=c0o0] args[] refs[size:root]
+  e6 property f6 scope=c0o3 at 14:30 params[$scope=c0o3] args[] refs[x:scope]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:7:12 Item.width
+export function f0($scope) {
+  return ($scope.size * 2);
+}
+
+// Main.qml:10:16 Rectangle.width
+export function f1($scope) {
+  return ($scope.parent.width / 2);
+}
+
+// Main.qml:11:17 Rectangle.height
+export function f2($scope, root) {
+  return ($scope.width + root.size);
+}
+
+// Main.qml:12:12 Rectangle.x
+export function f3(label) {
+  return (label.width);
+}
+
+// Main.qml:13:33 Text.text
+export function f4(box) {
+  return (box.width + "px");
+}
+
+// Main.qml:13:54 Text.x
+export function f5($root) {
+  return ($root.size);
+}
+
+// Main.qml:14:30 Rectangle.opacity
+export function f6($scope) {
+  return ($scope.x > 0 ? 1 : 0.5);
+}

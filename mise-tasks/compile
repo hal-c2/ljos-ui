@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Compile the qtdoc examples to Ljós IR and print the baseline: files compiled whole, in part or not at all, and bindings with every name resolved"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ ! -e corpus/qtdoc/examples ]; then
+  git submodule update --init --depth 1 corpus/qtdoc
+fi
+cargo run --quiet --release -p ljos_compiler --bin ljos-compile -- baseline "${1:-corpus/qtdoc/examples}"
