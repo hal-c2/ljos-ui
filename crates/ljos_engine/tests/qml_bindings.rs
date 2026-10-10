@@ -497,3 +497,56 @@ fn eval_js_sees_globals() {
         .unwrap();
     assert_eq!(v.to_js_string().as_str(), "#00ff00 a-b");
 }
+
+#[test]
+fn value_type_members_are_assigned_and_bound() {
+    let h = engine();
+    let root = h.load(
+        r#"
+        import QtQuick
+        Item {
+            property font f
+            property point p
+            property int n: 2
+            f.pixelSize: 24
+            f.bold: true
+            p.x: n * 3
+            p.y: 4
+        }
+        "#,
+    );
+    let Value::Font(f) = h.get(root, "f") else {
+        panic!("font: {:?}", h.get(root, "f"))
+    };
+    assert_eq!((f.pixel_size, f.bold()), (24, true));
+    assert_eq!(h.get(root, "p"), Value::point(6.0, 4.0));
+    h.set(root, "n", Value::Int(5));
+    assert_eq!(h.get(root, "p"), Value::point(15.0, 4.0));
+    assert!(h.warnings().is_empty());
+}
+
+#[test]
+fn qt_namespace_enum_keys_read_the_same_as_literals_and_in_javascript() {
+    let h = engine();
+    let root = h.load(
+        r#"
+        import QtQuick
+        Item {
+            property bool flip: true
+            property int literal: Qt.RightToLeft
+            property int computed: flip ? Qt.RightToLeft : Qt.LeftToRight
+            property int align: Qt.AlignHCenter
+            property int flags: Qt.AlignRight | Qt.AlignVCenter
+            property int button: Qt.BackButton
+        }
+        "#,
+    );
+    assert_eq!(h.get(root, "literal"), Value::Int(1));
+    assert_eq!(h.get(root, "computed"), Value::Int(1));
+    h.set(root, "flip", Value::Bool(false));
+    assert_eq!(h.get(root, "computed"), Value::Int(0));
+    assert_eq!(h.get(root, "align"), Value::Int(4));
+    assert_eq!(h.get(root, "flags"), Value::Int(0x82));
+    assert_eq!(h.get(root, "button"), Value::Int(8));
+    assert!(h.warnings().is_empty());
+}

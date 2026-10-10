@@ -29,6 +29,7 @@ use std::sync::Arc;
 use crate::atom::Atom;
 use crate::ids::ObjectId;
 use crate::number::{number_to_string, string_to_number};
+use crate::types::TypeTag;
 
 /// A colour with 16 bits per channel, **not premultiplied**.
 ///
@@ -275,6 +276,75 @@ pub enum Value {
 const _: () = assert!(std::mem::size_of::<Value>() <= 16);
 
 impl Value {
+    /// This value of the value type `ty` (`font`, `point`, `size`, `rect`)
+    /// with its member `name` (`pixelSize`) set to `v`: what a QML
+    /// `font.pixelSize: 24` does. A value of another type starts from the
+    /// type's default. `None` when `ty` has no member `name`.
+    pub fn with_member(&self, ty: &TypeTag, name: &str, v: &Value) -> Option<Value> {
+        let n = v.to_number();
+        match ty {
+            TypeTag::Font => {
+                let mut f = match self {
+                    Value::Font(f) => (**f).clone(),
+                    _ => Font::default(),
+                };
+                match name {
+                    "family" => f.family = v.to_js_string(),
+                    "pointSize" => f.point_size = n,
+                    "pixelSize" => f.pixel_size = crate::number::to_int32(n),
+                    "weight" => f.weight = crate::number::to_int32(n),
+                    "bold" => f.weight = if v.to_boolean() { 700 } else { 400 },
+                    "italic" => f.italic = v.to_boolean(),
+                    "underline" => f.underline = v.to_boolean(),
+                    "strikeout" => f.strikeout = v.to_boolean(),
+                    "letterSpacing" => f.letter_spacing = n,
+                    "wordSpacing" => f.word_spacing = n,
+                    _ => return None,
+                }
+                Some(Value::Font(Arc::new(f)))
+            }
+            TypeTag::Point => {
+                let mut p = match self {
+                    Value::Point(p) => **p,
+                    _ => Point::default(),
+                };
+                match name {
+                    "x" => p.x = n,
+                    "y" => p.y = n,
+                    _ => return None,
+                }
+                Some(Value::Point(Arc::new(p)))
+            }
+            TypeTag::Size => {
+                let mut z = match self {
+                    Value::Size(z) => **z,
+                    _ => Size::default(),
+                };
+                match name {
+                    "width" => z.width = n,
+                    "height" => z.height = n,
+                    _ => return None,
+                }
+                Some(Value::Size(Arc::new(z)))
+            }
+            TypeTag::Rect => {
+                let mut r = match self {
+                    Value::Rect(r) => **r,
+                    _ => Rect::default(),
+                };
+                match name {
+                    "x" => r.x = n,
+                    "y" => r.y = n,
+                    "width" => r.width = n,
+                    "height" => r.height = n,
+                    _ => return None,
+                }
+                Some(Value::Rect(Arc::new(r)))
+            }
+            _ => None,
+        }
+    }
+
     /// A string value from anything string-like (uninterned).
     pub fn string(s: impl Into<Atom>) -> Self {
         Value::String(s.into())

@@ -90,6 +90,9 @@ impl ComponentSource for MapSource {
 pub(crate) struct LoaderState {
     pub(crate) source: Option<Rc<dyn ComponentSource>>,
     pub(crate) files: HashMap<String, Rc<LoadedFile>>,
+    /// Creation jobs waiting for the host's scheduler
+    /// ([`Engine::incubate`]).
+    pub(crate) incubating: Vec<crate::incubator::CreationJob>,
 }
 
 /// A binding that reads a path of properties from one parameter

@@ -725,6 +725,16 @@ impl Engine {
             .set_global_function("__ljos_quit", quit)
             .map_err(err)?;
         js.host.eval_script("prelude", PRELUDE).map_err(err)?;
+        let keys: Vec<String> = QT_ENUM_KEYS
+            .iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect();
+        js.host
+            .eval_script(
+                "qt-enums",
+                &format!("Object.assign(Qt, {{{}}});", keys.join(",")),
+            )
+            .map_err(err)?;
         Ok(())
     }
 }
@@ -736,6 +746,52 @@ fn map(fields: &[(&str, f64)]) -> JsValue {
             .map(|(k, v)| ((*k).to_owned(), JsValue::Number(*v)))
             .collect(),
     )
+}
+
+/// The enum keys of the `Qt` namespace this runtime knows.
+///
+/// One table for both readers: JS reads them off the `Qt` global, and a
+/// compiled literal (`layoutDirection: Qt.RightToLeft`) never reaches JS,
+/// so the incubator looks the key up here.
+pub(crate) const QT_ENUM_KEYS: &[(&str, i64)] = &[
+    ("AlignLeft", 0x1),
+    ("AlignRight", 0x2),
+    ("AlignHCenter", 0x4),
+    ("AlignJustify", 0x8),
+    ("AlignTop", 0x20),
+    ("AlignBottom", 0x40),
+    ("AlignVCenter", 0x80),
+    ("AlignCenter", 0x84),
+    ("AlignBaseline", 0x100),
+    ("Horizontal", 1),
+    ("Vertical", 2),
+    ("LeftToRight", 0),
+    ("RightToLeft", 1),
+    ("LayoutDirectionAuto", 2),
+    ("ElideLeft", 0),
+    ("ElideRight", 1),
+    ("ElideMiddle", 2),
+    ("ElideNone", 3),
+    ("NoButton", 0),
+    ("LeftButton", 1),
+    ("RightButton", 2),
+    ("MiddleButton", 4),
+    ("BackButton", 8),
+    ("ForwardButton", 0x10),
+    ("AllButtons", 0x07ff_ffff),
+    ("NoModifier", 0),
+    ("ShiftModifier", 0x0200_0000),
+    ("ControlModifier", 0x0400_0000),
+    ("AltModifier", 0x0800_0000),
+    ("MetaModifier", 0x1000_0000),
+];
+
+/// The value of `Qt.<key>`, when it is an enum key.
+pub(crate) fn qt_enum_key(key: &str) -> Option<i64> {
+    QT_ENUM_KEYS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| *v)
 }
 
 /// The globals every QML file sees, written in JS because they are mostly
@@ -858,13 +914,6 @@ const PRELUDE: &str = r##"
     formatDate: (d, f) => formatDateTime(d, f === undefined ? "yyyy-MM-dd" : f),
     formatTime: (d, f) => formatDateTime(d, f === undefined ? "HH:mm:ss" : f),
     isQtObject: (o) => o !== null && typeof o === "object" && typeof o.destroy === "function",
-    AlignLeft: 0x1, AlignRight: 0x2, AlignHCenter: 0x4, AlignJustify: 0x8,
-    AlignTop: 0x20, AlignBottom: 0x40, AlignVCenter: 0x80, AlignCenter: 0x84,
-    AlignBaseline: 0x100,
-    Horizontal: 1, Vertical: 2,
-    LeftButton: 1, RightButton: 2, MiddleButton: 4, AllButtons: 0x7ffffff,
-    NoModifier: 0, ShiftModifier: 0x02000000, ControlModifier: 0x04000000,
-    AltModifier: 0x08000000, MetaModifier: 0x10000000,
     transparent: "#00000000", black: "#000000", white: "#ffffff",
     red: "#ff0000", green: "#008000", blue: "#0000ff",
   };

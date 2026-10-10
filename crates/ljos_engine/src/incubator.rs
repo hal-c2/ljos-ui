@@ -17,9 +17,9 @@
 //!    object before its children, children last first; a component's own
 //!    handler before its user's).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use ljos_ir::{
     Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, Literal, Members, ObjRef, ObjectValue,
@@ -600,7 +600,9 @@ impl Engine {
         let id = inst.objects[u.obj];
         self.apply_members(inst, id, &od.members, &[], id, &od.properties);
         for g in &od.grouped {
-            self.apply_members(inst, id, &g.members, &g.path, id, &[]);
+            if !self.apply_value_members(inst, id, &g.members, &g.path) {
+                self.apply_members(inst, id, &g.members, &g.path, id, &[]);
+            }
         }
         for v in &od.children {
             match v {
@@ -775,6 +777,99 @@ impl Engine {
         }
     }
 
+    /// `font.pixelSize: 24; font.bold: flag`: members of a value-type
+    /// property (`font`, `point`, `size`, `rect`) rather than of a group.
+    /// Literals are folded into the value; with any binding, one binding
+    /// on the whole property recomputes every bound member. Returns false
+    /// when `path` is not a value-type property.
+    fn apply_value_members(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        m: &Members,
+        path: &[String],
+    ) -> bool {
+        let [name] = path else { return false };
+        let Ok(prop) = self.property_index(obj, name) else {
+            return false;
+        };
+        let Some(ty) = self.meta_of(obj).and_then(|mm| {
+            mm.property(prop)
+                .filter(|p| !p.flags.contains(PropertyFlags::GROUP))
+                .map(|p| p.ty.clone())
+        }) else {
+            return false;
+        };
+        if !matches!(
+            ty,
+            TypeTag::Font | TypeTag::Point | TypeTag::Size | TypeTag::Rect
+        ) {
+            return false;
+        }
+        let mut base = self.untrack(|| self.read(obj, prop));
+        for a in &m.assignments {
+            let v = self.literal_value(inst, &a.value);
+            match base.with_member(&ty, &a.name, &v) {
+                Some(b) => base = b,
+                None => self.no_property(inst, a.span.line, a.span.column, path, &a.name),
+            }
+        }
+        let mut bound = Vec::new();
+        for pb in &m.bindings {
+            if base.with_member(&ty, &pb.name, &Value::Undefined).is_some() {
+                bound.push((pb.name.clone(), pb.expr));
+            } else {
+                let b = inst.file.ir.expr(pb.expr);
+                self.no_property(inst, b.span.line, b.span.column, path, &pb.name);
+            }
+        }
+        for oa in &m.objects {
+            self.warn(format!(
+                "{}Cannot assign to non-existent property \"{name}.{}\"",
+                self.location_of(obj).unwrap_or_default(),
+                oa.name
+            ));
+        }
+        for h in &m.handlers {
+            let b = inst.file.ir.expr(h.expr);
+            self.no_property(
+                inst,
+                b.span.line,
+                b.span.column,
+                path,
+                &crate::qtqml::handler_name(&h.signal),
+            );
+        }
+        if bound.is_empty() {
+            if let Err(e) = self.write_internal(obj, prop, base, WriteKind::Initial) {
+                let at = self.location_of(obj).unwrap_or_default();
+                self.warn(format!("{at}{e}"));
+            }
+            return true;
+        }
+        let at = {
+            let b = inst.file.ir.expr(bound[0].1);
+            (b.span.line, b.span.column)
+        };
+        let i = inst.clone();
+        let r = self.bind_fallible(obj, prop, move |e| {
+            let mut v = base.clone();
+            for (member, expr) in &bound {
+                let mv = e.eval_expr(&i, *expr, &TypeTag::Var, &[])?;
+                v = v.with_member(&ty, member, &mv)?;
+            }
+            Some(v)
+        });
+        match r {
+            Ok(()) => {
+                let (o, p) = self.redirect(obj, prop);
+                self.add_binding_loc(o, p, at, false);
+            }
+            Err(e) => self.warn(format!("{}:{}:{}: {e}", inst.url(), at.0, at.1)),
+        }
+        true
+    }
+
     fn no_property(&self, inst: &Instance, line: u32, col: u32, path: &[String], name: &str) {
         let full = if path.is_empty() {
             name.to_owned()
@@ -852,11 +947,19 @@ impl Engine {
                 Color::parse(s).map_or_else(|| Value::String(Atom::new(s)), Value::Color)
             }
             Literal::Enum(e) => {
-                let v = e.value.or_else(|| {
-                    self.type_meta(&inst.file, &e.ty)
-                        .ok()
-                        .and_then(|m| m.enum_key(&e.key))
-                });
+                let v = e
+                    .value
+                    .or_else(|| {
+                        self.type_meta(&inst.file, &e.ty)
+                            .ok()
+                            .and_then(|m| m.enum_key(&e.key))
+                    })
+                    .or_else(|| {
+                        // `Qt` is a namespace, not a registered type.
+                        matches!(&e.ty, TypeRef::Native { name, .. } if name == "Qt")
+                            .then(|| crate::js::qt_enum_key(&e.key))
+                            .flatten()
+                    });
                 Value::Int(v.and_then(|v| i32::try_from(v).ok()).unwrap_or(0))
             }
             Literal::Translatable(t) => Value::String(Atom::new(&t.source)),
@@ -1189,32 +1292,66 @@ fn literal_js(lit: &Literal) -> JsValue {
 /// Where a [`CreationJob`] is.
 enum Phase {
     Load,
-    Allocate(Template),
+    Allocate(Rc<Template>),
     Apply(Creation, ObjectId, usize),
     Done,
 }
 
-/// The result of a [`CreationJob`], readable once it is done.
+#[derive(Default)]
+struct HandleState {
+    result: RefCell<Option<Result<ObjectId, EngineError>>>,
+    cancelled: Cell<bool>,
+    /// Applied objects over all objects.
+    progress: Cell<f64>,
+}
+
+/// The result of a [`CreationJob`], readable once it is done, and the way
+/// to call it off.
 #[derive(Clone, Default)]
-pub struct CreationHandle(Rc<RefCell<Option<Result<ObjectId, EngineError>>>>);
+pub struct CreationHandle(Rc<HandleState>);
 
 impl std::fmt::Debug for CreationHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("CreationHandle")
-            .field(&*self.0.borrow())
+            .field(&*self.0.result.borrow())
             .finish()
     }
 }
 
 impl CreationHandle {
     pub fn is_done(&self) -> bool {
-        self.0.borrow().is_some()
+        self.0.result.borrow().is_some()
     }
 
     /// The root, or the error; `None` while still running.
     pub fn result(&self) -> Option<Result<ObjectId, EngineError>> {
-        self.0.borrow().clone()
+        self.0.result.borrow().clone()
     }
+
+    /// How much of the component is made, from 0 to 1.
+    pub fn progress(&self) -> f64 {
+        self.0.progress.get()
+    }
+
+    /// Calls the job off: at its next step it destroys what it made and
+    /// ends with an error, without running its completion callback. Does
+    /// nothing to a job that is done.
+    pub fn cancel(&self) {
+        self.0.cancelled.set(true);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.get()
+    }
+}
+
+/// What a [`CreationJob`] calls when it ends without being cancelled.
+type DoneFn = Box<dyn FnOnce(&Engine, &Result<ObjectId, EngineError>)>;
+
+/// What a [`CreationJob`] makes its object from.
+enum JobSource {
+    Url(String),
+    Component(ObjectId),
 }
 
 /// [`Engine::create_from_url`] as a resumable [`Job`]: loads, allocates,
@@ -1222,21 +1359,27 @@ impl CreationHandle {
 /// the synchronous path each slice is its own batch, so a binding may see
 /// a half-applied component in between (it re-runs once it is complete).
 pub struct CreationJob {
-    engine: Engine,
-    url: String,
+    /// Weak, so a job waiting in [`Engine::incubate`]'s queue does not
+    /// keep its engine alive.
+    engine: Weak<crate::engine::Inner>,
+    source: JobSource,
     parent: Option<ObjectId>,
     props: Vec<(String, Value)>,
     phase: Phase,
     lane: Lane,
     owner: ProcId,
     handle: CreationHandle,
+    done: Option<DoneFn>,
 }
 
 impl std::fmt::Debug for CreationJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CreationJob")
-            .field("url", &self.url)
-            .field("parent", &self.parent)
+        let mut d = f.debug_struct("CreationJob");
+        match &self.source {
+            JobSource::Url(url) => d.field("url", url),
+            JobSource::Component(c) => d.field("component", c),
+        };
+        d.field("parent", &self.parent)
             .field("lane", &self.lane)
             .finish_non_exhaustive()
     }
@@ -1251,37 +1394,120 @@ impl CreationJob {
         lane: Lane,
         owner: ProcId,
     ) -> (Self, CreationHandle) {
+        Self::with_source(
+            engine,
+            JobSource::Url(url.to_owned()),
+            parent,
+            initial_props,
+            lane,
+            owner,
+        )
+    }
+
+    /// [`Engine::component_create`] as a job: makes an object from the
+    /// `Component` object `component`.
+    pub fn for_component(
+        engine: &Engine,
+        component: ObjectId,
+        parent: Option<ObjectId>,
+        initial_props: Vec<(String, Value)>,
+        lane: Lane,
+        owner: ProcId,
+    ) -> (Self, CreationHandle) {
+        Self::with_source(
+            engine,
+            JobSource::Component(component),
+            parent,
+            initial_props,
+            lane,
+            owner,
+        )
+    }
+
+    fn with_source(
+        engine: &Engine,
+        source: JobSource,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        lane: Lane,
+        owner: ProcId,
+    ) -> (Self, CreationHandle) {
         let handle = CreationHandle::default();
         (
             Self {
-                engine: engine.clone(),
-                url: url.to_owned(),
+                engine: Rc::downgrade(&engine.inner),
+                source,
                 parent,
-                props: initial_props,
+                props,
                 phase: Phase::Load,
                 lane,
                 owner,
                 handle: handle.clone(),
+                done: None,
             },
             handle,
         )
     }
 
-    fn finish(&mut self, r: Result<ObjectId, EngineError>) -> JobPoll {
-        *self.handle.0.borrow_mut() = Some(r);
+    /// Calls `f` with the result when the job ends, unless it was
+    /// cancelled. Whoever waits for the object needs no polling.
+    #[must_use]
+    pub fn on_done(
+        mut self,
+        f: impl FnOnce(&Engine, &Result<ObjectId, EngineError>) + 'static,
+    ) -> Self {
+        self.done = Some(Box::new(f));
+        self
+    }
+
+    fn finish(&mut self, engine: Option<&Engine>, r: Result<ObjectId, EngineError>) -> JobPoll {
         self.phase = Phase::Done;
+        self.handle.0.progress.set(1.0);
+        *self.handle.0.result.borrow_mut() = Some(r.clone());
+        if let (Some(e), Some(f)) = (engine, self.done.take())
+            && !self.handle.is_cancelled()
+        {
+            f(e, &r);
+        }
         JobPoll::Done
+    }
+
+    /// Ends a job nobody waits for any more: what it made goes away.
+    fn abandon(&mut self, engine: Option<&Engine>, why: EngineError) -> JobPoll {
+        if let (Some(e), Phase::Apply(_, root, _)) = (engine, &self.phase) {
+            e.destroy_now(*root);
+        }
+        // Not `finish`: the callback belongs to whoever called it off.
+        self.done = None;
+        self.finish(None, Err(why))
     }
 
     /// Runs one step; `check` says whether the slice is spent.
     pub fn step(&mut self, check: &dyn Fn() -> bool) -> JobPoll {
-        let e = self.engine.clone();
+        if matches!(self.phase, Phase::Done) {
+            return JobPoll::Done;
+        }
+        let Some(e) = self.engine.upgrade().map(Engine::from_inner) else {
+            return self.abandon(None, EngineError::Load("the engine is gone".into()));
+        };
         loop {
+            if self.handle.is_cancelled() {
+                return self.abandon(Some(&e), EngineError::Load("creation was cancelled".into()));
+            }
+            if let Some(p) = self.parent.filter(|p| !e.is_alive(*p)) {
+                return self.abandon(Some(&e), EngineError::DeadObject(p));
+            }
             match std::mem::replace(&mut self.phase, Phase::Done) {
-                Phase::Load => match e.file_template(&self.url) {
-                    Ok(t) => self.phase = Phase::Allocate(t),
-                    Err(err) => return self.finish(Err(err)),
-                },
+                Phase::Load => {
+                    let template = match &self.source {
+                        JobSource::Url(url) => e.file_template(url).map(Rc::new),
+                        JobSource::Component(c) => e.component_template(*c),
+                    };
+                    match template {
+                        Ok(t) => self.phase = Phase::Allocate(t),
+                        Err(err) => return self.finish(Some(&e), Err(err)),
+                    }
+                }
                 Phase::Allocate(t) => {
                     let mut cr = Creation::default();
                     match e.allocate_template(&mut cr, &t, self.parent) {
@@ -1289,10 +1515,13 @@ impl CreationJob {
                             e.apply_aliases(&cr);
                             self.phase = Phase::Apply(cr, root, 0);
                         }
-                        Err(err) => return self.finish(Err(err)),
+                        Err(err) => return self.finish(Some(&e), Err(err)),
                     }
                 }
                 Phase::Apply(cr, root, mut next) => {
+                    if !e.is_alive(root) {
+                        return self.finish(Some(&e), Err(EngineError::DeadObject(root)));
+                    }
                     e.batch(|| {
                         while next < cr.units.len() {
                             e.apply_unit(&cr, next);
@@ -1303,13 +1532,17 @@ impl CreationJob {
                         }
                     });
                     if next < cr.units.len() {
+                        self.handle
+                            .0
+                            .progress
+                            .set(next as f64 / cr.units.len() as f64);
                         self.phase = Phase::Apply(cr, root, next);
                         return JobPoll::Yield;
                     }
                     let props = std::mem::take(&mut self.props);
                     let r = e.batch(|| e.finish_props(root, &props));
                     let r = e.finalize(cr, root, r);
-                    return self.finish(r);
+                    return self.finish(Some(&e), r);
                 }
                 Phase::Done => return JobPoll::Done,
             }
@@ -1332,5 +1565,25 @@ impl<C> Job<C> for CreationJob {
     fn poll(&mut self, cx: &mut JobCx<'_, C>) -> JobPoll {
         let budget = cx.budget;
         self.step(&|| budget.check())
+    }
+}
+
+impl Engine {
+    /// Hands `job` to whoever runs the frame (a scene's incubation step):
+    /// it waits here until [`Engine::take_incubations`], and the host is
+    /// woken as for a timer.
+    pub fn incubate(&self, job: CreationJob) {
+        self.inner.loader.borrow_mut().incubating.push(job);
+        self.wake_host();
+    }
+
+    /// The jobs queued by [`Engine::incubate`], for a
+    /// [`ljos_runtime::Scheduler`].
+    pub fn take_incubations(&self) -> Vec<CreationJob> {
+        std::mem::take(&mut self.inner.loader.borrow_mut().incubating)
+    }
+
+    pub fn has_incubations(&self) -> bool {
+        !self.inner.loader.borrow().incubating.is_empty()
     }
 }

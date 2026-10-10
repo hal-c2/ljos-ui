@@ -88,8 +88,11 @@ impl Component {
 }
 
 /// What `Component.` attaches: `onCompleted`, `onDestruction`.
+///
+/// Not `uncreatable`: the engine makes an attached object with the
+/// attached type's constructor. It is in no module, so QML cannot name it.
 #[derive(Debug, Default, QmlObject)]
-#[qml(name = "ComponentAttached", uncreatable)]
+#[qml(name = "ComponentAttached")]
 pub struct ComponentAttached {}
 
 #[qml_impl]
@@ -295,8 +298,13 @@ impl Engine {
     }
 
     pub fn now(&self) -> Time {
-        let clock = self.inner.timers.borrow().clock.clone();
-        clock.now()
+        self.clock().now()
+    }
+
+    /// The clock set by [`Engine::set_clock`], for budgets that must run
+    /// on the same time as the timers.
+    pub fn clock(&self) -> Rc<dyn Clock> {
+        self.inner.timers.borrow().clock.clone()
     }
 
     /// Called when a timer is armed or a call queued, so the host can
@@ -413,7 +421,7 @@ impl Engine {
         }
     }
 
-    fn wake_host(&self) {
+    pub(crate) fn wake_host(&self) {
         let wake = self.inner.timers.borrow().wake.clone();
         if let Some(w) = wake {
             w();
@@ -583,14 +591,21 @@ impl Engine {
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
-        let template = self
-            .with::<Component, _>(component, |c| c.template.clone())?
-            .ok_or_else(|| EngineError::Load("the component is not ready".into()))?;
+        let template = self.component_template(component)?;
         self.create_from_template(&template, parent, props)
     }
 
-    /// The entries of a JS object (`createObject`'s properties).
-    pub(crate) fn js_object_entries(&self, v: &Value) -> Vec<(String, Value)> {
+    pub(crate) fn component_template(
+        &self,
+        component: ObjectId,
+    ) -> Result<Rc<Template>, EngineError> {
+        self.with::<Component, _>(component, |c| c.template.clone())?
+            .ok_or_else(|| EngineError::Load("the component is not ready".into()))
+    }
+
+    /// The entries of a JS object (`createObject`'s properties); none for
+    /// any other value.
+    pub fn js_object_entries(&self, v: &Value) -> Vec<(String, Value)> {
         let Value::Js(h) = v else {
             return Vec::new();
         };

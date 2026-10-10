@@ -752,3 +752,39 @@ fn engine_handles_reach_the_engine_inside_closures() {
     e.set(r, Item::X, 4.0).unwrap();
     assert_eq!(runs.get(), 2);
 }
+
+#[test]
+fn an_effect_in_an_object_dies_with_its_new_owner() {
+    let e = engine();
+    let first = rect(&e);
+    let second = rect(&e);
+    let obj = e.create_by_name("Test", "Rectangle", Some(first)).unwrap();
+    let runs = Rc::new(Cell::new(0));
+    let r = runs.clone();
+    e.effect_in(obj, move |e| {
+        e.read(second, Item::WIDTH.index);
+        r.set(r.get() + 1);
+    })
+    .unwrap();
+    assert_eq!(runs.get(), 1);
+
+    e.set_owner(obj, Some(second)).unwrap();
+    assert_eq!(
+        e.graph().scope_parent(e.object_scope(obj).unwrap()),
+        e.object_scope(second)
+    );
+    e.destroy_now(first);
+    assert!(e.is_alive(obj), "owned by `second` now");
+    e.set(second, Item::WIDTH, 5.0).unwrap();
+    assert_eq!(runs.get(), 2, "the effect moved with the object");
+
+    e.set_owner(obj, None).unwrap();
+    assert_eq!(
+        e.graph().scope_parent(e.object_scope(obj).unwrap()),
+        Some(e.graph().root())
+    );
+    e.destroy_now(obj);
+    e.set(second, Item::WIDTH, 6.0).unwrap();
+    assert_eq!(runs.get(), 2, "and died with it");
+    e.graph().check_invariants().unwrap();
+}

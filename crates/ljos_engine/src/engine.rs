@@ -575,6 +575,18 @@ impl Engine {
         if let Some(o) = owner {
             store.objects[o].children.push(obj);
         }
+        let scope = store.objects[obj].scope;
+        drop(store);
+        // The object's nodes and effects die with its new owner from now
+        // on, as its native part does.
+        if let Some(s) = scope {
+            let g = &self.inner.graph;
+            let parent = match owner {
+                Some(o) => self.ensure_scope(o)?,
+                None => g.root(),
+            };
+            g.reparent_scope(s, parent)?;
+        }
         Ok(())
     }
 

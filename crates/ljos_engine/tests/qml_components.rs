@@ -236,6 +236,32 @@ Item {
 }
 
 #[test]
+fn a_destruction_handler_is_connected_to_the_attached_object() {
+    use ljos_engine::{Component, MetaRef, QmlType};
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  id: root
+  property int gone: 0
+  Item { objectName: "kid"; Component.onDestruction: root.gone++ }
+}
+"#,
+    );
+    let kid = h.find(root, "kid");
+    // Whoever lets an object go (a Loader, a view) emits `destruction` on
+    // its attached object; the engine's own destroy does not yet.
+    let attached = h
+        .engine
+        .attached_object(kid, &MetaRef::Static(Component::static_meta()))
+        .unwrap();
+    assert_eq!(h.engine.children(kid), vec![attached]);
+    h.engine.emit_by_name(attached, "destruction", &[]).unwrap();
+    assert_eq!(h.num(root, "gone"), 1.0);
+    assert!(h.warnings().is_empty());
+}
+
+#[test]
 fn incremental_creation_yields_and_finishes() {
     let h = engine();
     let mut src = String::from("import QtQuick\nItem {\n  property int sum: 0\n");
@@ -266,6 +292,137 @@ fn incremental_creation_yields_and_finishes() {
     let root = handle.result().unwrap().unwrap();
     assert_eq!(h.engine.visual_children(root).len(), 50);
     assert_eq!(h.log(), vec!["done"]);
+}
+
+/// A parent with fifty children, and a `Component` of the same.
+const MANY: &str = r#"import QtQuick
+Item {
+  Component {
+    id: comp
+    Item {
+      objectName: "made"
+      property int n: 0
+      Item {} Item {} Item {} Item {} Item {} Item {} Item {} Item {}
+      Component.onCompleted: console.log("done " + n)
+    }
+  }
+  property Component c: comp
+}
+"#;
+
+#[test]
+fn a_job_makes_an_object_from_a_component_and_reports_it() {
+    let h = engine();
+    let root = h.load(MANY);
+    let comp = h.get(root, "c").as_object().unwrap();
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let s = seen.clone();
+    let (job, handle) = CreationJob::for_component(
+        &h.engine,
+        comp,
+        Some(root),
+        vec![("n".into(), Value::Int(4))],
+        Lane::Visible,
+        ProcId::new(0, 0),
+    );
+    let mut job = job.on_done(move |_, r| *s.borrow_mut() = Some(r.clone()));
+    assert_eq!(handle.progress(), 0.0);
+    let mut yields = 0;
+    while matches!(job.step(&|| true), ljos_runtime::JobPoll::Yield) {
+        yields += 1;
+        assert!(seen.borrow().is_none());
+    }
+    assert!(yields > 4, "{yields}");
+    let made = handle.result().unwrap().unwrap();
+    assert_eq!(*seen.borrow(), Some(Ok(made)));
+    assert_eq!(handle.progress(), 1.0);
+    assert_eq!(h.num(made, "n"), 4.0);
+    assert_eq!(h.engine.owner(made), Some(root));
+    assert_eq!(h.log(), vec!["done 4"]);
+}
+
+#[test]
+fn a_cancelled_job_leaves_nothing_behind() {
+    let h = engine();
+    let root = h.load(MANY);
+    let comp = h.get(root, "c").as_object().unwrap();
+    let before = h.engine.object_count();
+    let called = std::rc::Rc::new(std::cell::Cell::new(false));
+    let c = called.clone();
+    let (job, handle) = CreationJob::for_component(
+        &h.engine,
+        comp,
+        Some(root),
+        vec![],
+        Lane::Visible,
+        ProcId::new(0, 0),
+    );
+    let mut job = job.on_done(move |_, _| c.set(true));
+    for _ in 0..4 {
+        assert!(matches!(job.step(&|| true), ljos_runtime::JobPoll::Yield));
+    }
+    assert!(h.engine.object_count() > before, "the object is half made");
+    handle.cancel();
+    assert!(matches!(job.step(&|| true), ljos_runtime::JobPoll::Done));
+    assert_eq!(h.engine.object_count(), before);
+    assert!(h.engine.visual_children(root).is_empty());
+    assert!(handle.result().unwrap().is_err());
+    assert!(!called.get(), "nobody waits for a cancelled job");
+    assert!(h.log().is_empty(), "it never completed");
+}
+
+#[test]
+fn a_job_whose_parent_died_ends_with_an_error() {
+    let h = engine();
+    let root = h.load(MANY);
+    let comp = h.get(root, "c").as_object().unwrap();
+    let holder = h.engine.create_by_name("QtQuick", "Item", None).unwrap();
+    let (mut job, handle) = CreationJob::for_component(
+        &h.engine,
+        comp,
+        Some(holder),
+        vec![],
+        Lane::Visible,
+        ProcId::new(0, 0),
+    );
+    for _ in 0..3 {
+        assert!(matches!(job.step(&|| true), ljos_runtime::JobPoll::Yield));
+    }
+    h.engine.destroy_now(holder);
+    assert!(matches!(job.step(&|| true), ljos_runtime::JobPoll::Done));
+    assert_eq!(handle.result(), Some(Err(EngineError::DeadObject(holder))));
+}
+
+#[test]
+fn queued_jobs_wake_the_host_and_do_not_keep_the_engine() {
+    let h = engine();
+    let root = h.load(MANY);
+    let comp = h.get(root, "c").as_object().unwrap();
+    let woke = std::rc::Rc::new(std::cell::Cell::new(0));
+    let w = woke.clone();
+    h.engine.set_timer_wake(move || w.set(w.get() + 1));
+    let (job, handle) = CreationJob::for_component(
+        &h.engine,
+        comp,
+        Some(root),
+        vec![],
+        Lane::Visible,
+        ProcId::new(0, 0),
+    );
+    assert!(!h.engine.has_incubations());
+    h.engine.incubate(job);
+    assert_eq!(woke.get(), 1);
+    assert!(h.engine.has_incubations());
+    let mut jobs = h.engine.take_incubations();
+    assert_eq!(jobs.len(), 1);
+    assert!(!h.engine.has_incubations());
+    // A job outlives its engine without keeping it alive.
+    drop(h);
+    assert!(matches!(
+        jobs[0].step(&|| false),
+        ljos_runtime::JobPoll::Done
+    ));
+    assert!(handle.result().unwrap().is_err());
 }
 
 #[test]
