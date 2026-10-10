@@ -1,0 +1,128 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Ledger status of Module.Type[.member]: supported, partial, dropped or unsupported, with reason and proving @api- scenarios.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "query": {
+        "description": "`Module.Type` or `Module.Type.member`, for example `QtQuick.Item.width`.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "ApiArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "api_status",
+  "outputSchema": {
+    "$defs": {
+      "ApiStatus": {
+        "enum": [
+          "supported",
+          "partial",
+          "dropped",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "LedgerRow": {
+        "additionalProperties": false,
+        "description": "One ledger row (§18.5): a type, or one member of a type.",
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/MemberKind"
+          },
+          "member": {
+            "description": "Absent on the row that describes the type itself.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "module": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "Required for `dropped` and `unsupported`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scenarios": {
+            "description": "`@api-…` tags of the scenarios that prove the row.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/$defs/ApiStatus"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "module",
+          "type",
+          "kind",
+          "status"
+        ],
+        "type": "object"
+      },
+      "MemberKind": {
+        "enum": [
+          "type",
+          "property",
+          "signal",
+          "method",
+          "enum"
+        ],
+        "type": "string"
+      }
+    },
+    "properties": {
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "query": {
+        "type": "string"
+      },
+      "rows": {
+        "items": {
+          "$ref": "#/$defs/LedgerRow"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "query",
+      "rows"
+    ],
+    "title": "ApiOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

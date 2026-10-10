@@ -1,0 +1,105 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Describe a QML type: base chain, default property, own properties, signals, methods, enums and attached type. Inherited members are in the types of base_chain.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "module": {
+        "description": "QML module, for example `QtQuick`.",
+        "type": "string"
+      },
+      "type": {
+        "description": "Type name, for example `Rectangle`.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "module",
+      "type"
+    ],
+    "title": "TypeArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "type_lookup",
+  "outputSchema": {
+    "description": "A QML type as the type registry describes it. `properties`, `signals`,\n`methods` and `enums` list only what the type declares itself; what it\ninherits is in the types of `base_chain`, each of which can be looked up in\nturn (that keeps an answer small enough to read).",
+    "properties": {
+      "attached": {
+        "description": "The type `Name.` on another object stands for, if the type attaches\none: `Layout.fillWidth` is a property of `Layout`'s.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "base_chain": {
+        "description": "What the type inherits from, nearest first.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "default_property": {
+        "description": "Inherited too: where objects written inside one of the type go.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "enums": {
+        "description": "`Name: Key, Key`; flags are marked `(flags)`.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "methods": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "module": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "properties": {
+        "description": "`name: type`, with `list`, `readonly` or `required` when they apply.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "signals": {
+        "description": "`name(argument, ...)`: a handler is `on` plus the name, capitalised.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "module",
+      "name",
+      "base_chain",
+      "properties",
+      "signals",
+      "methods",
+      "enums"
+    ],
+    "title": "TypeInfo",
+    "type": "object"
+  },
+  "required_cap": null
+}

@@ -1,0 +1,107 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Lint QML files or directories, including the accessibility audit; returns diagnostics, paginated.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "Resume token from a previous truncated result.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "paths": {
+        "description": "`.qml` files or directories, relative to the project root.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "paths"
+    ],
+    "title": "FilesArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "qml_lint",
+  "outputSchema": {
+    "$defs": {
+      "Diagnostic": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "column": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "file": {
+            "description": "Project-relative path.",
+            "type": "string"
+          },
+          "line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/$defs/Severity"
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "column",
+          "severity",
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "Severity": {
+        "enum": [
+          "error",
+          "warning",
+          "hint"
+        ],
+        "type": "string"
+      }
+    },
+    "properties": {
+      "diagnostics": {
+        "items": {
+          "$ref": "#/$defs/Diagnostic"
+        },
+        "type": "array"
+      },
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "diagnostics"
+    ],
+    "title": "DiagnosticsOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

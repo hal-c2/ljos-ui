@@ -1,0 +1,49 @@
+# API ledger: the status of every Qt Quick type and member in Ljós (ARCHITECTURE.md §18.5).
+#
+# One [[row]] per type, property, signal, method or enum. Fields:
+#   module     QML module, for example "QtQuick" or "QtQuick.Controls".
+#   type       Type name.
+#   member     Property, signal, method or enum name. Omit on the row that describes the type.
+#   kind       "type" | "property" | "signal" | "method" | "enum". "type" exactly when member is omitted.
+#   status     "supported" | "partial" | "dropped" | "unsupported".
+#   reason     Required for dropped and unsupported; says what to use instead where there is a replacement.
+#   scenarios  `@api-…` tags of the scenarios that prove the row. Every supported or partial row needs one
+#              (enforced by `mise run features`).
+#
+# Rows are ordered by how much real QML uses them, so the first rows matter most.
+# The full ledger is generated from the type dump; this seed only covers the first types.
+
+[[row]]
+module = "QtQuick"
+type = "Item"
+kind = "type"
+status = "unsupported"
+reason = "M0 in progress"
+
+[[row]]
+module = "QtQuick"
+type = "Rectangle"
+kind = "type"
+status = "unsupported"
+reason = "M0 in progress"
+
+[[row]]
+module = "QtQuick"
+type = "Text"
+kind = "type"
+status = "unsupported"
+reason = "M0 in progress"
+
+[[row]]
+module = "QtQuick"
+type = "MouseArea"
+kind = "type"
+status = "unsupported"
+reason = "M0 in progress"
+
+[[row]]
+module = "QtQuick"
+type = "Timer"
+kind = "type"
+status = "unsupported"
+reason = "M0 in progress"

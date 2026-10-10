@@ -1,0 +1,22 @@
+//! The Ljós authoring MCP server (`ljos mcp`, ARCHITECTURE.md §19.3).
+//!
+//! Read-only analysis for coding agents that write QML. Everything is confined
+//! to the `--project` directory. The QML front end is behind [`FrontEnd`]:
+//! [`QmlFrontEnd`] is the real one (`qml_check`, `qml_lint`, `type_lookup`),
+//! and [`StubFrontEnd`] stands in where no parser or Qt type table is wanted;
+//! its tools answer with an `unavailable` tool error.
+
+mod front;
+mod frontend;
+mod ledger;
+mod project;
+mod prompts;
+mod resources;
+mod server;
+mod tools;
+
+pub use front::QmlFrontEnd;
+pub use frontend::{Diagnostic, FrontEnd, Severity, StubFrontEnd, TypeInfo};
+pub use ledger::{ApiStatus, Ledger, LedgerError, LedgerRow, MemberKind};
+pub use project::{Project, ProjectError};
+pub use server::{AuthorServer, serve_stdio};

@@ -1,0 +1,32 @@
+[package]
+name = "ljos_mcp_author"
+description = "Ljós authoring MCP server: QML check, lint, type lookup, API ledger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_mcp_core = { path = "../ljos_mcp_core" }
+qml_front = { path = "../qml_front" }
+qml_syntax = { path = "../qml_syntax" }
+qt_types = { path = "../qt_types" }
+oxc_ast_visit.workspace = true
+oxc_syntax.workspace = true
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rmcp = { workspace = true, features = ["client", "server", "macros", "transport-io", "transport-worker"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

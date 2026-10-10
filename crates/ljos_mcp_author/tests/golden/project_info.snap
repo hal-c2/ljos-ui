@@ -1,0 +1,97 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Ljós version, project root, ledger summary and the capabilities granted to this session.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "description": "Empty argument object for tools that take none.",
+    "title": "NoArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "project_info",
+  "outputSchema": {
+    "$defs": {
+      "LedgerSummary": {
+        "properties": {
+          "by_status": {
+            "additionalProperties": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": "Row count per status.",
+            "type": "object"
+          },
+          "error": {
+            "description": "Why the ledger could not be read, if it could not.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "rows": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "present",
+          "rows",
+          "modules",
+          "by_status"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "capabilities": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "front_end_wired": {
+        "description": "Whether the QML front end is linked in; when false `qml_check`,\n`qml_lint` and `type_lookup` return `unavailable`.",
+        "type": "boolean"
+      },
+      "ledger": {
+        "$ref": "#/$defs/LedgerSummary"
+      },
+      "ljos_version": {
+        "type": "string"
+      },
+      "project_root": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "ljos_version",
+      "project_root",
+      "ledger",
+      "front_end_wired",
+      "capabilities"
+    ],
+    "title": "ProjectInfo",
+    "type": "object"
+  },
+  "required_cap": null
+}
