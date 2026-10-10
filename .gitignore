@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+# Data generated from a local Qt install is never committed (D1, CLEAN_ROOM.md).
+/crates/qt_types/src/types.txt
+/corpus/reference/
+/target/features/
+/target/ljos/
+.DS_Store

@@ -1,0 +1,5 @@
+[submodule "corpus/qtdoc"]
+	path = corpus/qtdoc
+	url = https://code.qt.io/qt/qtdoc.git
+	branch = 6.11
+	shallow = true

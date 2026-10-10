@@ -1,0 +1,11 @@
+[package]
+name = "ljos"
+description = "Ljós UI: a QML runtime in Rust. Facade crate re-exporting the public API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
