@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 15b7b75a81ca1c734978641330d9a0bebc41d2445638fca4aff9339494fe099a # shrinks to ops = [NewProp(0, 0), NewProp(0, 0), NewScope(0), NewBinding(0, [53], false), NewScope(0), NewScope(0), NewBinding(0, [2, 25], false), Set(26, 1)]
+cc cf0a6fdbf0200e698edc83f1c1da413a704dce7d81975a2e9dc385cdc246212f # shrinks to ops = [NewScope(0), NewScope(0), NewProp(0, 0), NewEffect(0, [30, 5]), NewScope(0), Set(3, 1)]
+cc 2fa4e19bdaaf1813cef9901896477d269f9a265e6846c914cd929f2039413726 # shrinks to ops = [NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewBinding(0, [30, 1], false), Freeze(0, true)]
+cc a5a36d4f9350789ccc24dcdeebe380332c9ebe8099e0388fa96cef5dbac50e2b # shrinks to ops = [NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewProp(0, 0), NewBinding(0, [0, 1], false), NewProp(0, 0), Read(61), NewScope(0)]

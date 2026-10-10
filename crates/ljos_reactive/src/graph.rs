@@ -13,7 +13,21 @@ use crate::types::{
     OverrideValue, Provenance, ReactiveError, RestoreMode, ScopeId, Stats, WriteKind,
 };
 
-type Edges = SmallVec<[NodeId; 4]>;
+/// One end of a dependency edge, stored on both nodes.
+///
+/// `back` is the index of the mirror entry in the other node's list: for an
+/// entry in `sources` it is the position of this node inside the source's
+/// `observers`, and the other way round. Keeping both indices current lets
+/// an edge be removed with two swap-removes instead of a search, so
+/// disposing a node costs the same whether its source has ten observers or
+/// a hundred thousand.
+#[derive(Clone, Copy)]
+struct Edge {
+    node: NodeId,
+    back: u32,
+}
+
+type Edges = SmallVec<[Edge; 4]>;
 type DiagnosticHandler = Box<dyn FnMut(&Diagnostic)>;
 
 /// One layer of a property: the base, or an override above it.
@@ -86,6 +100,11 @@ struct Node<V> {
     observers: Edges,
     /// Scratch stamp for source diffing.
     mark: u64,
+    /// Scratch for source diffing: where this node's observer entry sat
+    /// before the diff started.
+    scratch: u32,
+    /// Opaque caller tag; the engine maps nodes back to (object, property).
+    data: Option<u64>,
     /// Stamp of the last frame that recorded a read of this node.
     read_stamp: u64,
     runs: u32,
@@ -106,7 +125,12 @@ impl<V> Node<V> {
 
 struct Scope {
     parent: Option<ScopeId>,
-    children: Vec<ScopeId>,
+    /// Children form an intrusive doubly linked list in creation order, so a
+    /// child unlinks itself in O(1) and disposal order stays "newest first".
+    first_child: Option<ScopeId>,
+    last_child: Option<ScopeId>,
+    prev: Option<ScopeId>,
+    next: Option<ScopeId>,
     nodes: Vec<NodeId>,
     /// Dead entries in `nodes`; compacted when they dominate.
     dead: usize,
@@ -121,7 +145,10 @@ impl Scope {
     fn new(parent: Option<ScopeId>, frozen: bool) -> Self {
         Scope {
             parent,
-            children: Vec::new(),
+            first_child: None,
+            last_child: None,
+            prev: None,
+            next: None,
             nodes: Vec::new(),
             dead: 0,
             frozen_self: false,
@@ -324,7 +351,12 @@ impl<V: Clone + 'static> Graph<V> {
             .ok_or(ReactiveError::DeadScope(parent))?
             .frozen;
         let id = i.scopes.insert(Scope::new(Some(parent), frozen));
-        i.scopes[parent].children.push(id);
+        let tail = i.scopes[parent].last_child.replace(id);
+        i.scopes[id].prev = tail;
+        match tail {
+            Some(t) => i.scopes[t].next = Some(id),
+            None => i.scopes[parent].first_child = Some(id),
+        }
         Ok(id)
     }
 
@@ -376,9 +408,19 @@ impl<V: Clone + 'static> Graph<V> {
     }
 
     fn dispose_scope_inner(&self, scope: ScopeId) {
-        let children = match self.inner.borrow().scopes.get(scope) {
-            Some(s) => s.children.clone(),
-            None => return,
+        // A snapshot: a cleanup may dispose or add siblings while we walk.
+        let children = {
+            let i = self.inner.borrow();
+            let Some(s) = i.scopes.get(scope) else {
+                return;
+            };
+            let mut children = Vec::new();
+            let mut cur = s.first_child;
+            while let Some(c) = cur {
+                children.push(c);
+                cur = i.scopes[c].next;
+            }
+            children
         };
         for child in children.into_iter().rev() {
             self.dispose_scope_inner(child);
@@ -402,9 +444,7 @@ impl<V: Clone + 'static> Graph<V> {
             let mut i = self.inner.borrow_mut();
             match i.scopes.remove(scope) {
                 Some(s) => {
-                    if let Some(p) = s.parent.and_then(|p| i.scopes.get_mut(p)) {
-                        p.children.retain(|c| *c != scope);
-                    }
+                    i.unlink_scope(&s);
                     s.nodes
                 }
                 None => Vec::new(),
@@ -449,7 +489,11 @@ impl<V: Clone + 'static> Graph<V> {
                 if was && !eff {
                     thawed.append(&mut s.deferred);
                 }
-                stack.extend(s.children.iter().map(|c| (*c, eff)));
+                let mut child = s.first_child;
+                while let Some(c) = child {
+                    stack.push((c, eff));
+                    child = i.scopes.get(c).and_then(|c| c.next);
+                }
             }
             let all = i.options.eager;
             for n in thawed {
@@ -582,9 +626,14 @@ impl<V: Clone + 'static> Graph<V> {
         )?;
         let i = &mut *g;
         let h = i.nodes[target].height;
-        i.nodes[target].observers.push(n);
+        // `n` is new, so the target is its only source: index 0.
+        i.nodes[target].observers.push(Edge { node: n, back: 0 });
+        let at = i.nodes[target].observers.len() as u32 - 1;
         let node = &mut i.nodes[n];
-        node.sources.push(target);
+        node.sources.push(Edge {
+            node: target,
+            back: at,
+        });
         node.height = h + 1;
         Ok(n)
     }
@@ -596,16 +645,13 @@ impl<V: Clone + 'static> Graph<V> {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             let node = i.nodes.remove(n).ok_or(ReactiveError::DeadNode(n))?;
-            for &s in &node.sources {
-                if let Some(src) = i.nodes.get_mut(s) {
-                    remove_edge(&mut src.observers, n);
-                }
+            for e in &node.sources {
+                drop_observer_slot(&mut i.nodes, e.node, e.back);
             }
             let mut stack = std::mem::take(&mut i.mark_stack);
-            for &o in &node.observers {
-                if let Some(obs) = i.nodes.get_mut(o) {
-                    remove_edge(&mut obs.sources, n);
-                    stack.push((o, NodeState::Dirty, ALWAYS_STALE));
+            for e in &node.observers {
+                if drop_source_slot(&mut i.nodes, e.node, e.back).is_some() {
+                    stack.push((e.node, NodeState::Dirty, ALWAYS_STALE));
                 }
             }
             i.mark_stack = stack;
@@ -697,6 +743,18 @@ impl<V: Clone + 'static> Graph<V> {
         });
         let _guard = UntrackGuard(self);
         f()
+    }
+
+    /// Whether a read right now would be recorded as a dependency: true
+    /// while a binding or effect evaluates, false at top level and inside
+    /// [`Graph::untrack`]. Callers use it to skip work (creating a node for
+    /// a property that nothing listens to) when no one is observing.
+    pub fn is_tracking(&self) -> bool {
+        self.inner
+            .borrow()
+            .frames
+            .last()
+            .is_some_and(|f| f.node.is_some())
     }
 
     // -------------------------------------------------------------- writes
@@ -838,6 +896,40 @@ impl<V: Clone + 'static> Graph<V> {
         self.inner.borrow_mut().batch_depth += 1;
         let _guard = BatchGuard(self);
         f()
+    }
+
+    /// Re-evaluates the active binding (or effect) in place: it becomes
+    /// dirty and observers re-check, but provenance, the override stack and
+    /// the installed closure are untouched. Hot reload and the engine use it
+    /// where [`Graph::bind`] would reset provenance to bound. A plain value
+    /// has nothing to re-run, so this does nothing. Called from inside the
+    /// node's own evaluation it schedules one more run afterwards.
+    pub fn refresh(&self, n: NodeId) -> Result<(), ReactiveError> {
+        {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            let all = i.options.eager;
+            let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            let reruns = match &node.kind {
+                Kind::Property(p) => p.is_bound(),
+                Kind::Effect(_) => true,
+            };
+            if !reruns {
+                return Ok(());
+            }
+            if node.state == NodeState::Computing {
+                // `finish` re-dirties it.
+                node.pending = true;
+            } else {
+                node.state = NodeState::Dirty;
+                if node.is_eager(all) {
+                    enqueue(&mut i.queue, n, node);
+                }
+                i.mark_observers(n, NodeState::Check);
+            }
+        }
+        self.flush_if_idle();
+        Ok(())
     }
 
     // ----------------------------------------------------------- overrides
@@ -1017,7 +1109,7 @@ impl<V: Clone + 'static> Graph<V> {
             .borrow()
             .nodes
             .get(n)
-            .map_or_else(Vec::new, |n| n.sources.to_vec())
+            .map_or_else(Vec::new, |n| n.sources.iter().map(|e| e.node).collect())
     }
 
     /// Nodes that read this one in their last evaluation.
@@ -1026,7 +1118,7 @@ impl<V: Clone + 'static> Graph<V> {
             .borrow()
             .nodes
             .get(n)
-            .map_or_else(Vec::new, |n| n.observers.to_vec())
+            .map_or_else(Vec::new, |n| n.observers.iter().map(|e| e.node).collect())
     }
 
     /// Whether the node is evaluated eagerly (effects, promoted bindings,
@@ -1055,6 +1147,85 @@ impl<V: Clone + 'static> Graph<V> {
             }
         }
         self.flush_if_idle();
+        Ok(())
+    }
+
+    /// Attaches an opaque tag to a node. The graph never interprets it; the
+    /// engine uses it to map a node back to its (object, property) when it
+    /// prints a [`Diagnostic`].
+    pub fn set_node_data(&self, n: NodeId, data: u64) -> Result<(), ReactiveError> {
+        let mut i = self.inner.borrow_mut();
+        i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?.data = Some(data);
+        Ok(())
+    }
+
+    /// The tag set by [`Graph::set_node_data`]; `None` if unset or the node
+    /// is dead.
+    pub fn node_data(&self, n: NodeId) -> Option<u64> {
+        self.inner.borrow().nodes.get(n)?.data
+    }
+
+    /// Verifies the internal indices: every source entry has a mirror entry
+    /// in the source's observer list pointing back at it, and the same for
+    /// observers; the scope child lists are consistent in both directions.
+    /// Costs O(graph); meant for tests and debug builds.
+    pub fn check_invariants(&self) -> Result<(), String> {
+        let i = self.inner.borrow();
+        for (id, node) in &i.nodes {
+            for (idx, e) in node.sources.iter().enumerate() {
+                let src = i
+                    .nodes
+                    .get(e.node)
+                    .ok_or_else(|| format!("{id:?}: source {:?} is dead", e.node))?;
+                match src.observers.get(e.back as usize) {
+                    Some(m) if m.node == id && m.back as usize == idx => {}
+                    _ => {
+                        return Err(format!(
+                            "{id:?}: sources[{idx}] -> {:?}.observers[{}] does not point back",
+                            e.node, e.back
+                        ));
+                    }
+                }
+            }
+            for (idx, e) in node.observers.iter().enumerate() {
+                let obs = i
+                    .nodes
+                    .get(e.node)
+                    .ok_or_else(|| format!("{id:?}: observer {:?} is dead", e.node))?;
+                match obs.sources.get(e.back as usize) {
+                    Some(m) if m.node == id && m.back as usize == idx => {}
+                    _ => {
+                        return Err(format!(
+                            "{id:?}: observers[{idx}] -> {:?}.sources[{}] does not point back",
+                            e.node, e.back
+                        ));
+                    }
+                }
+            }
+        }
+        for (id, scope) in &i.scopes {
+            let mut seen = 0usize;
+            let mut prev = None;
+            let mut cur = scope.first_child;
+            while let Some(c) = cur {
+                let child = i
+                    .scopes
+                    .get(c)
+                    .ok_or_else(|| format!("{id:?}: child {c:?} is dead"))?;
+                if child.parent != Some(id) || child.prev != prev {
+                    return Err(format!("{id:?}: child {c:?} has wrong parent or prev link"));
+                }
+                seen += 1;
+                if seen > i.scopes.len() {
+                    return Err(format!("{id:?}: child list loops"));
+                }
+                prev = Some(c);
+                cur = child.next;
+            }
+            if scope.last_child != prev {
+                return Err(format!("{id:?}: last_child does not end the child list"));
+            }
+        }
         Ok(())
     }
 
@@ -1183,7 +1354,7 @@ impl<V: Clone + 'static> Graph<V> {
                     Some(NodeState::Dirty) => Step::Recompute(top),
                     Some(NodeState::Check) => {
                         let node = &i.nodes[top];
-                        if let Some(&src) = node.sources.get(idx as usize) {
+                        if let Some(src) = node.sources.get(idx as usize).map(|e| e.node) {
                             if let Some(e) = stack.last_mut() {
                                 e.1 += 1;
                             }
@@ -1359,10 +1530,48 @@ impl<V: Clone + 'static> Graph<V> {
 /// must assume it read stale data.
 const ALWAYS_STALE: u64 = u64::MAX;
 
-fn remove_edge(edges: &mut Edges, n: NodeId) {
-    if let Some(pos) = edges.iter().position(|e| *e == n) {
-        edges.swap_remove(pos);
+/// Removes `src.observers[at]` and repairs the back-index of the entry that
+/// the swap moved into its place. Returns the removed entry. The mirror
+/// entry in the observer's `sources` is the caller's to remove.
+fn drop_observer_slot<V>(
+    nodes: &mut SlotMap<NodeId, Node<V>>,
+    src: NodeId,
+    at: u32,
+) -> Option<Edge> {
+    let list = &mut nodes.get_mut(src)?.observers;
+    if at as usize >= list.len() {
+        debug_assert!(false, "observer slot out of range");
+        return None;
     }
+    let removed = list.swap_remove(at as usize);
+    let moved = list.get(at as usize).copied();
+    if let Some(m) = moved
+        && let Some(entry) = nodes
+            .get_mut(m.node)
+            .and_then(|o| o.sources.get_mut(m.back as usize))
+    {
+        entry.back = at;
+    }
+    Some(removed)
+}
+
+/// The mirror of [`drop_observer_slot`] for `obs.sources[at]`.
+fn drop_source_slot<V>(nodes: &mut SlotMap<NodeId, Node<V>>, obs: NodeId, at: u32) -> Option<Edge> {
+    let list = &mut nodes.get_mut(obs)?.sources;
+    if at as usize >= list.len() {
+        debug_assert!(false, "source slot out of range");
+        return None;
+    }
+    let removed = list.swap_remove(at as usize);
+    let moved = list.get(at as usize).copied();
+    if let Some(m) = moved
+        && let Some(entry) = nodes
+            .get_mut(m.node)
+            .and_then(|s| s.observers.get_mut(m.back as usize))
+    {
+        entry.back = at;
+    }
+    Some(removed)
 }
 
 fn enqueue<V>(queue: &mut BinaryHeap<Reverse<(u32, u64, NodeId)>>, n: NodeId, node: &mut Node<V>) {
@@ -1399,6 +1608,8 @@ impl<V: Clone + 'static> Inner<V> {
             sources: Edges::new(),
             observers: Edges::new(),
             mark: 0,
+            scratch: 0,
+            data: None,
             read_stamp: 0,
             runs: 0,
             run_epoch: 0,
@@ -1484,11 +1695,11 @@ impl<V: Clone + 'static> Inner<V> {
 
     /// The active layer is now a plain value: drop dependency edges.
     fn make_plain(&mut self, n: NodeId) {
+        // Back-indices in the (detached) list are only touched through the
+        // mirror entries, so draining it in any order is fine.
         let sources = std::mem::take(&mut self.nodes[n].sources);
-        for s in &sources {
-            if let Some(src) = self.nodes.get_mut(*s) {
-                remove_edge(&mut src.observers, n);
-            }
+        for e in &sources {
+            drop_observer_slot(&mut self.nodes, e.node, e.back);
         }
         let node = &mut self.nodes[n];
         node.binding_gen = node.binding_gen.wrapping_add(1);
@@ -1541,7 +1752,7 @@ impl<V: Clone + 'static> Inner<V> {
         let mut stack = std::mem::take(&mut self.mark_stack);
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
-            stack.extend(node.observers.iter().map(|o| (*o, first, stamp)));
+            stack.extend(node.observers.iter().map(|o| (o.node, first, stamp)));
         }
         self.mark_stack = stack;
         self.propagate_marks();
@@ -1581,7 +1792,11 @@ impl<V: Clone + 'static> Inner<V> {
             }
             if was_clean {
                 let stamp = node.read_stamp;
-                stack.extend(node.observers.iter().map(|o| (*o, NodeState::Check, stamp)));
+                stack.extend(
+                    node.observers
+                        .iter()
+                        .map(|o| (o.node, NodeState::Check, stamp)),
+                );
             }
         }
         self.mark_stack = stack;
@@ -1594,10 +1809,15 @@ impl<V: Clone + 'static> Inner<V> {
         let old_tag = self.tick;
         self.tick += 1;
         let new_tag = self.tick;
+        // `n.sources` is detached while it is rebuilt, so every back-index
+        // that points into it is fixed by hand below. Entries that move in
+        // another node's list never belong to `n`: an edge is unique per
+        // pair, and the only entry of `n` that moves is the one removed.
         let old = std::mem::take(&mut self.nodes[n].sources);
-        for s in &old {
-            if let Some(src) = self.nodes.get_mut(*s) {
+        for e in &old {
+            if let Some(src) = self.nodes.get_mut(e.node) {
                 src.mark = old_tag;
+                src.scratch = e.back;
             }
         }
         let mut fresh = Edges::new();
@@ -1612,22 +1832,51 @@ impl<V: Clone + 'static> Inner<V> {
             if src.mark == new_tag {
                 continue;
             }
-            if src.mark != old_tag {
-                src.observers.push(n);
-            }
+            let slot = if src.mark == old_tag {
+                // Kept: only the position inside `n.sources` changes.
+                let slot = src.scratch;
+                src.observers[slot as usize].back = fresh.len() as u32;
+                slot
+            } else {
+                src.observers.push(Edge {
+                    node: n,
+                    back: fresh.len() as u32,
+                });
+                src.observers.len() as u32 - 1
+            };
             src.mark = new_tag;
             height = height.max(src.height + 1);
-            fresh.push(r);
+            fresh.push(Edge {
+                node: r,
+                back: slot,
+            });
         }
-        for s in &old {
-            if let Some(src) = self.nodes.get_mut(*s)
-                && src.mark == old_tag
-            {
-                remove_edge(&mut src.observers, n);
+        for e in &old {
+            let stale = self
+                .nodes
+                .get(e.node)
+                .is_some_and(|src| src.mark == old_tag);
+            if stale {
+                let slot = self.nodes[e.node].scratch;
+                drop_observer_slot(&mut self.nodes, e.node, slot);
             }
         }
         let node = &mut self.nodes[n];
         node.sources = fresh;
         node.height = height.max(1);
+    }
+
+    /// Unlinks a removed scope from its parent's child list.
+    fn unlink_scope(&mut self, s: &Scope) {
+        if let Some(prev) = s.prev.and_then(|p| self.scopes.get_mut(p)) {
+            prev.next = s.next;
+        } else if let Some(p) = s.parent.and_then(|p| self.scopes.get_mut(p)) {
+            p.first_child = s.next;
+        }
+        if let Some(next) = s.next.and_then(|x| self.scopes.get_mut(x)) {
+            next.prev = s.prev;
+        } else if let Some(p) = s.parent.and_then(|p| self.scopes.get_mut(p)) {
+            p.last_child = s.prev;
+        }
     }
 }

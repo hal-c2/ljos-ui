@@ -44,6 +44,13 @@
 //!    writes still flush separately, matching Qt's intermediate
 //!    `onXChanged` calls.
 //!
+//! Edges are stored on both ends with the index of their mirror entry, and
+//! child scopes form an intrusive list, so disposing a node or scope costs
+//! the same in a graph of ten nodes or a million ([`Graph::check_invariants`]
+//! verifies the indices). [`Graph::refresh`] re-runs a binding in place,
+//! keeping its provenance and override stack; [`Graph::set_node_data`] tags a
+//! node so diagnostics can be mapped back to a property name.
+//!
 //! Every evaluation records the nodes it reads (deduplicated with a stamp,
 //! no allocation in steady state) and diffs them against the previous
 //! sources, so dependencies follow the branches actually taken.

@@ -160,6 +160,26 @@ pub enum Diagnostic {
     },
 }
 
+impl Diagnostic {
+    /// The node the report is about: the re-entered node of a binding loop,
+    /// or the node that hit the re-run cap. Pass it to
+    /// [`Graph::node_data`](crate::Graph::node_data) to name the property.
+    pub fn node(&self) -> NodeId {
+        match self {
+            Diagnostic::BindingLoop { node, .. } | Diagnostic::RerunLimit { node, .. } => *node,
+        }
+    }
+
+    /// The evaluation stack of a binding loop, outermost first; empty for
+    /// other reports.
+    pub fn cycle(&self) -> &[NodeId] {
+        match self {
+            Diagnostic::BindingLoop { cycle, .. } => cycle,
+            Diagnostic::RerunLimit { .. } => &[],
+        }
+    }
+}
+
 /// Errors from API misuse.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ReactiveError {
