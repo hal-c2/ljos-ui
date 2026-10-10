@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Format check, clippy with warnings as errors, and the workspace build"
+set -euo pipefail
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
