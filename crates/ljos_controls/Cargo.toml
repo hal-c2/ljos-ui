@@ -1,0 +1,35 @@
+[package]
+name = "ljos_controls"
+description = "Qt Quick Controls for Ljós: the behaviour of Control, AbstractButton and friends in Rust (QtQuick.Templates), and a clean-room Basic style in QML, compiled to IR when the crate is built"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+ljos_a11y = { path = "../ljos_a11y" }
+ljos_engine = { path = "../ljos_engine" }
+# The compiled style is embedded as IR and read back at registration.
+ljos_ir = { path = "../ljos_ir" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_runtime = { path = "../ljos_runtime" }
+thiserror.workspace = true
+
+[build-dependencies]
+# The style's QML is compiled when this crate is built; the crate itself
+# never links the compiler or the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_ir = { path = "../ljos_ir" }
+qt_types = { path = "../qt_types" }
+
+[dev-dependencies]
+# Tests compile QML strings.
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+
+[lints]
+workspace = true
