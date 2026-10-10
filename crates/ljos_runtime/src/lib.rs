@@ -11,6 +11,8 @@
 //! | [`frame_scheduler`] | next wake time, timers, 0 % idle | 8.1 |
 //! | [`lane`], [`budget`], [`job`], [`scheduler`] | lanes, slices, jobs, `FrameReport` | 9.1 |
 //! | [`fault`], [`supervisor`] | `Fault`, restart policy and intensity | 9.3, 9.4 |
+//! | [`pool`] | `ComputePool`: bounded worker threads for decode and parse | 3.3 |
+//! | [`memory`] | `MemoryPressure`, `Evictable`, byte budgets, `ByteLru` | 8.5 |
 //!
 //! Nothing in this crate polls or sleeps: the only things that wake the UI
 //! thread are the shell's event loop and the inbox's wake hook.
@@ -21,6 +23,8 @@ pub mod frame_scheduler;
 pub mod inbox;
 pub mod job;
 pub mod lane;
+pub mod memory;
+pub mod pool;
 pub mod scheduler;
 pub mod supervisor;
 pub mod time;
@@ -34,6 +38,10 @@ pub use frame_scheduler::{
 pub use inbox::{CoalesceKey, DrainBudget, DrainReport, SendError, UiHandle, UiInbox, WakeHook};
 pub use job::{FnJob, Job, JobCx, JobPoll};
 pub use lane::{Lane, ProcId, ProcIdAllocator};
+pub use memory::{
+    ByteLru, DeviceClass, Evictable, MemoryPressure, image_cache_budget, physical_memory,
+};
+pub use pool::{ComputePool, PoolFull};
 pub use scheduler::{FrameReport, Scheduler};
 pub use supervisor::{
     ChildId, Directive, ExitReason, Intensity, IntensityTracker, IntensityVerdict, Restart,
