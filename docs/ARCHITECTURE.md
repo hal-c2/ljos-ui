@@ -344,8 +344,10 @@ pub trait Reactive {
 - `--eager` mode exists for differential testing against Qt.
 
 **Binding loops**
-- Re-entering a node that is `Computing` is a binding loop. Ljós logs Qt's message, returns the stale value and does not re-enter.
-- Handlers that ping-pong between each other are capped at 100 re-dirties per node per flush.
+- Re-entering a node that is `Computing` is a binding loop. Ljós logs Qt's message once, returns the stale value and does not re-enter. The message names the property and points at its name in the source (`PropertyBinding.name_span`), as Qt's does.
+- Which member of a loop is reported depends on the order bindings first run. During creation the engine follows Qt's set-up order: bindings on some properties are installed but held back (`Graph::hold`) until the component's other bindings have run, then released. Without this an eager engine reports a loop on an acyclic chain.
+- A lazy binding is checked when it is first read, so a loop nobody reads is not reported until then. `--eager` reports it at creation, as Qt does.
+- Handlers that ping-pong between each other are capped at 100 re-dirties per node per flush; the flush ends with `RerunLimit`.
 
 **Override stack.** `Binding {}` and `State`/`PropertyChanges` push onto a per-property override stack above the base binding or value. `restoreMode` pops it. Assigning a value imperatively breaks the binding, and `Qt.binding()` reinstalls one. Report 09 confirmed both against Qt 6.11.2.
 
@@ -799,12 +801,14 @@ Source: 01 §2.5, §3.6; 08.
 
 Source: 05 §3.1.
 
-- **Versions.** AccessKit 0.25.1 with the platform adapters. The Android adapter is 0.9.0 and the iOS adapter 0.2.1; both are young and need early spikes.
-- **A11y pass** (in the style of Masonry):
-  - Each item holds `a11y: Option<A11yProps>` and two bits, `needs_a11y` (somewhere in the subtree) and `request_a11y` (this item).
-  - Changes bubble `needs_a11y` up to the root. The pass walks only those subtrees.
+- **Versions.** AccessKit 0.24.1, the version egui 0.36 uses; its types do not mix with 0.25 (spike 04). The move to 0.25.1 (Android adapter 0.9.0, iOS adapter 0.2.1) waits for egui.
+- **A11y tree** (`ljos_a11y`, egui-free):
+  - An item is exposed when it sets `Accessible.role` or a name. A name without a role gives a `group`, or a `label` on Text. Invisible and `Accessible.ignored` items are left out.
+  - Each exposed item has one reactive effect that reads its accessible properties and bounds and updates its node in a retained tree; the tree records which nodes changed. This replaces the `needs_a11y`/`request_a11y` bits of the first design: the reactive graph already knows what changed.
   - When children change, the parent is always emitted with its full child list.
-  - The pass is gated by `update_if_active`, so it costs nothing without an assistive technology.
+  - The effects exist only while an assistive technology listens (`QuickScene::set_accessibility_active`), so the tree costs nothing otherwise.
+  - On egui, `QmlView` emits one embedded node per item under the view's node while AccessKit is active. egui rebuilds its own tree each pass, so the whole Ljós tree is re-emitted on passes that run; the scene's tree stays incremental for the R backend's own adapter later.
+  - The AccessKit Click action becomes a press at the node's centre. An `Accessible.onPressAction` signal, and focus, come with the focus tree in M1.
   - Off-screen items that exist stay in the tree. Being culled from paint is not the same as being hidden from accessibility. Frozen pages are hidden.
 - **Node ids.**
   - Static items use `(arena index, generation)`.

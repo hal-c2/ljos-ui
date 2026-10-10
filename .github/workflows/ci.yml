@@ -18,9 +18,11 @@ jobs:
           submodules: false
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
+      # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
       - run: mise run check
       - run: mise run test
-      # Until the engine lands the Ljós backend fails every scenario by design, so CI lints the
-      # ledger only. The ratchet gate (features/RATCHET) replaces this once scenarios pass.
-      # The Qt oracle (features:parity) runs nightly where Qt is installed (ARCHITECTURE.md 18.6).
       - run: mise run features:lint
+      # Every scenario that is not backlog passes on the Ljós backend, so the whole ledger gates.
+      # The Qt oracle (features:parity) runs nightly where Qt is installed (ARCHITECTURE.md 18.6).
+      - run: mise run features
