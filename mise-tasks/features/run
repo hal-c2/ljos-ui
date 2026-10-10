@@ -2,7 +2,7 @@
 #MISE description="Run part of the ledger: features:run [--backend ljos|qt|both] [globs…] [-t tagexpr] [-n name-regex]"
 #MISE depends=[]
 set -euo pipefail
-# A glob is a path under features/ (a directory, a file, or a *.feature pattern).
+# A glob is a path under features/, with or without that prefix (a directory, a file, or a *.feature pattern).
 # cucumber takes a single --input, so several paths become one {a,b} glob.
 # Everything else is passed through (-t, -n, --backlog).
 args=()
@@ -13,7 +13,8 @@ while [ $# -gt 0 ]; do
     -t|--tags|-n|--name|--input|-i) args+=("$1" "$2"); shift 2 ;;
     -*) args+=("$1"); shift ;;
     *)
-      g="$1"; shift
+      # Shell completion gives features/bindings; accept that too.
+      g="${1#features/}"; shift
       if [ -d "features/$g" ]; then
         g="${g%/}/**/*.feature"
       else
