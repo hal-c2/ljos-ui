@@ -1,0 +1,29 @@
+[package]
+name = "ljos_shell"
+description = "Desktop shell for Ljós on eframe: one window, one Engine, a full-window QmlView, and the UI inbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_egui = { path = "../ljos_egui" }
+ljos_engine = { path = "../ljos_engine" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_runtime = { path = "../ljos_runtime" }
+eframe.workspace = true
+egui.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Only the demo_qml example compiles QML; the shell itself never links the
+# compiler.
+ljos_compiler = { path = "../ljos_compiler" }
+egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
+anyhow.workspace = true
+png.workspace = true
+
+[lints]
+workspace = true
