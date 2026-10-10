@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Compare pictures (qml-compare diff A B) or run a corpus through a renderer (qml-compare run ...)"
+set -euo pipefail
+exec cargo run --quiet -p qml_compare --bin qml-compare -- "$@"
