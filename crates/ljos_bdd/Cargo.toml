@@ -14,7 +14,7 @@ doctest = false
 name = "features"
 harness = false
 # Opt-in: `cargo test --workspace` skips it; `mise run features` runs it with
-# `--test features`. The ljos backend fails as PENDING until the engine exists.
+# `--test features`.
 test = false
 
 [dependencies]
@@ -25,6 +25,15 @@ futures.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 regex.workspace = true
+# The Ljós backend. This is a test tool, so it may link the compiler (and so
+# the parser); shipped runtimes never do (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_engine = { path = "../ljos_engine" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_runtime = { path = "../ljos_runtime" }
+qml_front = { path = "../qml_front" }
+# Only the R (vello_cpu) backend: egui stays out of this crate.
+ljos_render = { path = "../ljos_render", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true

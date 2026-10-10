@@ -137,7 +137,7 @@ impl BackendMode {
             out.push(Box::new(qt::QtBackend::new()));
         }
         if matches!(self, Self::Ljos | Self::Both) {
-            out.push(Box::new(ljos::LjosBackend));
+            out.push(Box::new(ljos::LjosBackend::new()));
         }
         out
     }

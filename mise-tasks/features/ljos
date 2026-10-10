@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Run scenarios on the Ljós engine (compiler, engine, Quick scene, vello_cpu grabs). Takes features:run's arguments."
+set -euo pipefail
+exec "$(dirname "$0")/run" --backend ljos "$@"
