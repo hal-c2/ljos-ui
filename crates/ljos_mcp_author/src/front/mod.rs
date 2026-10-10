@@ -11,7 +11,9 @@
 //!
 //! # Diagnostic codes
 //!
-//! Emitted by `qml_check` and `qml_lint` alike. Lines and columns are 1-based
+//! Emitted by `qml_check` and `qml_lint` alike. The ones `qml_front` raises
+//! carry its own `Code` (`Code::as_str`), so the strings below are the
+//! front end's, not a reading of its messages. Lines and columns are 1-based
 //! (columns count characters).
 //!
 //! | Code | Severity | Meaning |
@@ -21,8 +23,8 @@
 //! | `types-unavailable` | hint | No Qt type table was generated (`mise run types`), so only syntax was checked. Once per call. |
 //! | `unknown-module` | warning | An `import` names a module that neither Qt's table nor the project's `qmldir`/CMake files know. Type errors in that file are held back, because the module may provide the type. |
 //! | `unknown-type` | error | An object type, or the type an attached property is written on (`Layout.fillWidth`), is not provided by anything the file imports. |
-//! | `unknown-property` | error | A binding names a property the object's type does not have. Only for objects whose type chain is fully known. |
-//! | `unknown-signal` | error | A handler (`onFoo`) for a signal the object's type does not have. |
+//! | `unknown-property` | error | A binding names a property the object's type definitely does not have. Held back where the type chain is not fully known, including a component whose file did not parse whole. |
+//! | `unknown-signal` | error | A handler (`onFoo`) for a signal the object's type definitely does not have (same holds as above). |
 //! | `duplicate-id` | error | Two objects of one component share an `id`. |
 //! | `unknown-alias-target` | error | A `property alias` points at an id the component does not have. |
 //! | `unresolved-name` | warning | A free name in a binding that QML's lookup order cannot find, and that nothing else in the project provides. Warning, not error: a delegate's model role or a name the creating component supplies cannot be seen from one file. |
@@ -59,7 +61,7 @@ use std::{
 
 use ljos_mcp_core::SurfaceError;
 
-use crate::{Diagnostic, FrontEnd, Severity, TypeInfo};
+use crate::{Diagnostic, FrontEnd, ModuleInfo, Severity, TypeInfo};
 
 /// The analysis behind the authoring tools. It holds only the project root,
 /// so a call always sees the files as they are on disk now (an agent edits
@@ -92,6 +94,10 @@ impl FrontEnd for QmlFrontEnd {
 
     fn type_lookup(&self, module: &str, name: &str) -> Result<TypeInfo, SurfaceError> {
         lookup::type_info(module, name)
+    }
+
+    fn module_types(&self, module: &str) -> Result<ModuleInfo, SurfaceError> {
+        lookup::module_info(module)
     }
 }
 

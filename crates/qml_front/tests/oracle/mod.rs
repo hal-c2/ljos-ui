@@ -18,6 +18,8 @@ struct Ty {
     attached: Option<&'static str>,
     enums: Vec<(&'static str, Vec<&'static str>)>,
     required: Vec<&'static str>,
+    /// The runtime does not list all of its members.
+    loose: bool,
 }
 
 pub struct Runtime {
@@ -152,6 +154,14 @@ impl Runtime {
                 ..Ty::default()
             },
             Ty {
+                name: "Loose",
+                module: "QtQuick",
+                prototype: Some(3),
+                properties: vec![p("known", None)],
+                loose: true,
+                ..Ty::default()
+            },
+            Ty {
                 name: "Theme",
                 module: "Styles",
                 singleton: true,
@@ -270,5 +280,31 @@ impl TypeOracle for Runtime {
         self.types
             .iter()
             .any(|ty| ty.properties.iter().any(|property| property.0 == name))
+    }
+
+    fn property_type(&self, ty: usize, name: &str) -> Option<String> {
+        self.chain(ty)
+            .find_map(|ty| ty.properties.iter().find(|property| property.0 == name))
+            .map(|(_, value, _)| value.unwrap_or("var").to_string())
+    }
+
+    /// The number of a key is its place in the enum.
+    fn enum_value(&self, ty: usize, scope: Option<&str>, key: &str) -> Option<i64> {
+        self.chain(ty).find_map(|ty| {
+            ty.enums
+                .iter()
+                .filter(|(name, _)| scope.is_none_or(|scope| scope == *name))
+                .find_map(|(_, keys)| keys.iter().position(|known| *known == key))
+                .map(|place| place as i64)
+        })
+    }
+
+    fn module(&self, ty: usize) -> Option<String> {
+        let module = self.types[ty].module;
+        (!module.is_empty()).then(|| module.to_string())
+    }
+
+    fn members_known(&self, ty: usize) -> bool {
+        !self.chain(ty).any(|ty| ty.loose)
     }
 }

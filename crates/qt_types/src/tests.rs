@@ -418,7 +418,21 @@ fn an_absent_table_finds_nothing() {
         assert!(module("QtQuick").is_some());
         return;
     }
+    assert!(modules().is_empty());
     assert!(module("QtQuick").is_none());
     assert_eq!(native_types("QtQuick"), None);
     assert!(!is_member_name("width"));
+}
+
+/// The listing is every module `module` finds, once, in order.
+#[test]
+fn modules_lists_every_module_in_order() {
+    require_table!("QtQuick");
+    let all = modules();
+    assert!(
+        all.windows(2).all(|pair| pair[0] < pair[1]),
+        "sorted, unique"
+    );
+    assert!(all.contains(&"QtQuick"));
+    assert!(all.iter().all(|uri| module(uri).is_some()));
 }

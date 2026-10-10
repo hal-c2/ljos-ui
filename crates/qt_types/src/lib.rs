@@ -65,6 +65,14 @@ pub fn module(uri: &str) -> Option<&'static Module> {
     table().modules.get(uri)
 }
 
+/// The URI of every module the table has, in order: what a file may import,
+/// and what [`module`] finds. Empty without a table.
+pub fn modules() -> Vec<&'static str> {
+    let mut uris: Vec<&'static str> = table().modules.keys().copied().collect();
+    uris.sort_unstable();
+    uris
+}
+
 /// The types of the module `uri` that Qt has in C++ and not as QML files:
 /// what a runtime has to have of it. None when the table has no such module.
 pub fn native_types(uri: &str) -> Option<Vec<&'static str>> {

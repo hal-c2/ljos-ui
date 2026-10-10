@@ -72,6 +72,24 @@ impl<'r> Loader<'r> {
         }
     }
 
+    /// Records a file that did not parse whole. What did parse stays in the
+    /// project, so a component built on it still resolves; only a file with
+    /// no root type at all is left out, and then it is `broken`.
+    pub fn insert_partial(&mut self, key: &str, text: &str) {
+        if !self.added.insert(key.to_owned()) {
+            return;
+        }
+        self.keep(key, text);
+    }
+
+    fn keep(&mut self, key: &str, text: &str) {
+        // The errors are reported for the file asked for, by its own parse.
+        let _ = self.project.add(key, text);
+        if !self.project.has(key) {
+            self.mark_broken(key);
+        }
+    }
+
     fn mark_broken(&mut self, key: &str) {
         let stem = key.rsplit('/').next().unwrap_or(key);
         // `Screen.ui` is the type `Screen`.
@@ -88,9 +106,7 @@ impl<'r> Loader<'r> {
             self.mark_broken(&key);
             return;
         };
-        if self.project.add(&key, &text).is_err() {
-            self.mark_broken(&key);
-        }
+        self.keep(&key, &text);
     }
 
     /// Every `.qml` file directly in `dir`: they are the types of its

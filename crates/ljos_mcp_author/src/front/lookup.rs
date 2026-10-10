@@ -5,49 +5,52 @@ use ljos_mcp_core::SurfaceError;
 use serde_json::json;
 
 use super::nearest;
-use crate::TypeInfo;
+use crate::{ModuleInfo, TypeInfo};
 
-/// Modules worth suggesting when the one asked for does not exist: the table
-/// does not list its modules, so these are probed.
-const COMMON_MODULES: &[&str] = &[
-    "QtQuick",
-    "QtQuick.Controls",
-    "QtQuick.Controls.Basic",
-    "QtQuick.Controls.Material",
-    "QtQuick.Controls.Universal",
-    "QtQuick.Controls.Fusion",
-    "QtQuick.Layouts",
-    "QtQuick.Window",
-    "QtQuick.Dialogs",
-    "QtQuick.Shapes",
-    "QtQuick.Templates",
-    "QtQml",
-    "QtQml.Models",
-    "QtQml.WorkerScript",
-    "QtMultimedia",
-    "QtCore",
-    "Qt.labs.settings",
-    "Qt.labs.platform",
-    "Qt.labs.folderlistmodel",
-];
+fn unavailable() -> SurfaceError {
+    SurfaceError::unavailable(
+        "no Qt type table was generated for this build, so types cannot be looked up; \
+         run `mise run types` and rebuild",
+    )
+}
+
+/// The error for a module the table does not have, with the ones it does that
+/// are nearest in spelling.
+fn no_such_module(module: &str) -> SurfaceError {
+    let suggestions = nearest(module, qt_types::modules(), 5);
+    SurfaceError::not_found(format!("module `{module}` is not in Qt's type table"))
+        .with_details(json!({ "suggestions": suggestions }))
+}
+
+pub(super) fn module_info(module: &str) -> Result<ModuleInfo, SurfaceError> {
+    if !qt_types::is_available() {
+        return Err(unavailable());
+    }
+    if qt_types::module(module).is_none() {
+        return Err(no_such_module(module));
+    }
+    // Types some C++ registers and types Qt writes as QML files are both
+    // written the same in a file.
+    let mut types: Vec<String> = qt_types::native_types(module)
+        .into_iter()
+        .chain(qt_types::written_types(module))
+        .flatten()
+        .map(str::to_owned)
+        .collect();
+    types.sort();
+    types.dedup();
+    Ok(ModuleInfo {
+        module: module.to_owned(),
+        types,
+    })
+}
 
 pub(super) fn type_info(module: &str, name: &str) -> Result<TypeInfo, SurfaceError> {
     if !qt_types::is_available() {
-        return Err(SurfaceError::unavailable(
-            "no Qt type table was generated for this build, so types cannot be looked up; \
-             run `mise run types` and rebuild",
-        ));
+        return Err(unavailable());
     }
     let Some(found) = qt_types::module(module) else {
-        let present = COMMON_MODULES
-            .iter()
-            .copied()
-            .filter(|m| qt_types::module(m).is_some());
-        let suggestions = nearest(module, present, 5);
-        return Err(SurfaceError::not_found(format!(
-            "module `{module}` is not in Qt's type table"
-        ))
-        .with_details(json!({ "suggestions": suggestions })));
+        return Err(no_such_module(module));
     };
     let Some(ty) = found.type_named(name) else {
         let all = qt_types::native_types(module)

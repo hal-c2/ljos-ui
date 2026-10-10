@@ -426,6 +426,102 @@ fn type_lookup_without_a_table_says_how_to_make_one() {
     assert!(err.message.contains("mise run types"));
 }
 
+#[test]
+fn module_types_lists_the_types_of_a_module_sorted() {
+    need_types!();
+    let front = QmlFrontEnd::new(fixtures());
+    let info = front.module_types("QtQuick").unwrap();
+    assert_eq!(info.module, "QtQuick");
+    for name in ["Item", "Rectangle", "MouseArea"] {
+        assert!(info.types.iter().any(|t| t == name), "{name}");
+    }
+    let mut sorted = info.types.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(info.types, sorted);
+    // Every one of them can be looked up.
+    assert!(front.type_lookup("QtQuick", "Item").is_ok());
+}
+
+#[test]
+fn module_types_of_an_unknown_module_suggests_modules() {
+    need_types!();
+    let err = QmlFrontEnd::new(fixtures())
+        .module_types("QtQuik.Controls")
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    let details = err.details.unwrap().to_string();
+    assert!(details.contains("QtQuick.Controls"), "{details}");
+    // The suggestions come from the table, not from a fixed list: a module
+    // the old list lacked is found.
+    let err = QmlFrontEnd::new(fixtures())
+        .type_lookup("Qt.labs.sharedimag", "Item")
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+}
+
+#[test]
+fn module_types_without_a_table_says_how_to_make_one() {
+    if qt_types::is_available() {
+        eprintln!("skipped: a type table exists");
+        return;
+    }
+    let err = QmlFrontEnd::new(fixtures())
+        .module_types("QtQuick")
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Unavailable);
+    assert!(err.message.contains("mise run types"));
+}
+
+// --- what is definitely missing and what is not --------------------------
+
+#[test]
+fn a_name_missing_from_a_component_that_did_not_parse_whole_is_not_reported() {
+    need_types!();
+    let dir = project(&[
+        // Whole: a typo on it is an error.
+        ("Whole.qml", "import QtQuick\nItem { property int size }\n"),
+        // Not whole: the part that did not parse may declare `more`.
+        (
+            "Part.qml",
+            "import QtQuick\nItem {\n    property int size\n    property int = \n    property int more\n}\n",
+        ),
+        (
+            "Main.qml",
+            "import QtQuick\nItem {\n    Whole { sise: 1; onNope: 1 }\n    Part { more: 1; sise: 1; onNope: 1 }\n}\n",
+        ),
+    ]);
+    let diagnostics = run(dir.path(), &["Main.qml"], false);
+    let lines: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("unknown-"))
+        .map(|d| d.line)
+        .collect();
+    // Line 3 (Whole): both the property and the handler. Line 4 (Part): none.
+    assert_eq!(lines, [3, 3], "{diagnostics:#?}");
+    // The file that did not parse still says why, in its own check.
+    let own = run(dir.path(), &["Part.qml"], false);
+    assert!(own.iter().any(|d| d.code == "syntax"), "{own:#?}");
+}
+
+#[test]
+fn a_type_whose_members_qt_does_not_list_gets_no_unknown_property() {
+    need_types!();
+    let dir = project(&[(
+        "Main.qml",
+        "import QtQuick\nItem {\n    Loader { anything: 1 }\n    ListModel { anything: 1 }\n}\n",
+    )]);
+    let diagnostics = run(dir.path(), &["Main.qml"], false);
+    // `Loader` is an ordinary type, so its typo is reported; the model's
+    // body is read by a parser of its own.
+    let lines: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == "unknown-property")
+        .map(|d| d.line)
+        .collect();
+    assert_eq!(lines, [3], "{diagnostics:#?}");
+}
+
 // --- the whole corpus ----------------------------------------------------
 
 fn qml_files(dir: &Path, out: &mut Vec<PathBuf>) {

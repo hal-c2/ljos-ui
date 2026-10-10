@@ -207,6 +207,10 @@ async fn resources_serve_ledger_docs_and_steps_confined_to_docs() {
     );
     // The type template is stubbed like the tools.
     assert!(read(&c, "ljos://types/QtQuick/Item").await.is_err());
+    assert!(read(&c, "ljos://types/QtQuick").await.is_err());
+    // Neither shape of the uri: no module, or a type with a path in it.
+    assert!(read(&c, "ljos://types/").await.is_err());
+    assert!(read(&c, "ljos://types/QtQuick/Item/x").await.is_err());
 
     let uris: Vec<String> = c
         .list_all_resources()
@@ -218,7 +222,12 @@ async fn resources_serve_ledger_docs_and_steps_confined_to_docs() {
     assert!(uris.contains(&"ljos://ledger".to_owned()));
     assert!(uris.contains(&"ljos://docs/ARCHITECTURE.md".to_owned()));
     let templates = c.list_all_resource_templates().await.unwrap();
-    assert_eq!(templates.len(), 2);
+    assert_eq!(templates.len(), 3);
+    assert!(
+        templates
+            .iter()
+            .any(|t| t.uri_template == "ljos://types/{module}")
+    );
 }
 
 #[tokio::test]

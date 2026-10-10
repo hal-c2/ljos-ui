@@ -47,6 +47,35 @@ pub enum Member<T> {
     Method,
 }
 
+/// What looking a name up on a type can come to. A check that reports a name
+/// as not there has to tell "the type does not have it" from "the type may
+/// have it and the front end cannot see".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lookup<M> {
+    Found(M),
+    /// Every member of the type is known, and this is not one.
+    Missing,
+    /// The type may have it: it is a component the front end has only in
+    /// part (its file did not parse whole) or not at all, a type the oracle
+    /// does not list the members of, or the chain of types is not one.
+    Undecided,
+}
+
+impl<M> Lookup<M> {
+    /// The member, when there is one: what is not found and what cannot be
+    /// decided are alike to a caller that only wants what is there.
+    pub fn found(self) -> Option<M> {
+        match self {
+            Lookup::Found(member) => Some(member),
+            Lookup::Missing | Lookup::Undecided => None,
+        }
+    }
+
+    pub fn is_missing(&self) -> bool {
+        matches!(self, Lookup::Missing)
+    }
+}
+
 /// How many components one may be built on before it is taken to be built on
 /// itself, by whatever detour.
 const DEPTH: usize = 64;
@@ -192,6 +221,30 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         }
     }
 
+    /// The number of the enum key `Type.key`, or `Type.scope.key`: the one a
+    /// component in the chain declares, in this file or another, or the one
+    /// the builtin type the chain ends in has, if the oracle gives it.
+    pub fn enum_value(&self, kind: &Kind<O::Type>, scope: Option<&str>, key: &str) -> Option<i64> {
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            let component = match kind {
+                Kind::Builtin(ty) => return self.oracle.enum_value(ty, scope, key),
+                Kind::Component(component) => component,
+            };
+            let shape = self.project.shape(&component)?;
+            let declared = shape
+                .enums
+                .iter()
+                .filter(|(name, _)| scope.is_none_or(|scope| scope == name.as_str()))
+                .find_map(|(_, keys)| keys.iter().find(|known| known.name == key));
+            if let Some(declared) = declared {
+                return Some(declared.value);
+            }
+            kind = self.root(&component, shape)?;
+        }
+        None
+    }
+
     /// What `member` is to the enums a component declares: `Some(true)` an
     /// enum (`Type.Theme`, of `Type.Theme.Dark`), `Some(false)` a key. The
     /// enums of what its root is are its own too.
@@ -211,7 +264,7 @@ impl<'p, O: TypeOracle> Types<'p, O> {
             if shape
                 .enums
                 .values()
-                .any(|keys| keys.iter().any(|key| key == member))
+                .any(|keys| keys.iter().any(|key| key.name == member))
             {
                 return Some(false);
             }
@@ -237,7 +290,8 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                 return false;
             };
             if shape.enums.iter().any(|(name, keys)| {
-                scope.is_none_or(|scope| scope == name) && keys.iter().any(|known| known == key)
+                scope.is_none_or(|scope| scope == name)
+                    && keys.iter().any(|known| known.name == key)
             }) {
                 return true;
             }
@@ -285,6 +339,12 @@ impl<'p, O: TypeOracle> Types<'p, O> {
     /// What `name` is on an object of the type: something a component in its
     /// chain declares, or a member of the builtin type the chain ends in.
     pub fn member(&self, kind: &Kind<O::Type>, name: &str) -> Option<Member<O::Type>> {
+        self.lookup(kind, name).found()
+    }
+
+    /// As [`member`](Self::member), but says whether a name that is not found
+    /// is not there ([`Lookup::Missing`]) or may be ([`Lookup::Undecided`]).
+    pub fn lookup(&self, kind: &Kind<O::Type>, name: &str) -> Lookup<Member<O::Type>> {
         self.member_through(kind, name, 0)
     }
 
@@ -295,13 +355,21 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         kind: &Kind<O::Type>,
         name: &str,
         aliases: usize,
-    ) -> Option<Member<O::Type>> {
+    ) -> Lookup<Member<O::Type>> {
         let mut kind = kind.clone();
         for _ in 0..DEPTH {
             match kind {
-                Kind::Builtin(ty) => return builtin_member(self.oracle, ty, name),
+                Kind::Builtin(ty) => {
+                    return match builtin_member(self.oracle, ty, name) {
+                        Some(member) => Lookup::Found(member),
+                        None if self.oracle.members_known(ty) => Lookup::Missing,
+                        None => Lookup::Undecided,
+                    };
+                }
                 Kind::Component(key) => {
-                    let shape = self.project.shape(&key)?;
+                    let Some(shape) = self.project.shape(&key) else {
+                        return Lookup::Undecided;
+                    };
                     if let Some(member) = shape_member(shape, name) {
                         // An alias is the property it is an alias of: a path
                         // given to `property alias source: image.source` is
@@ -314,11 +382,8 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                             }
                             let types = self.of(&key.file);
                             let parts: Vec<&str> = of.iter().map(String::as_str).collect();
-                            let Member::Property(mut property) = types.member_through(
-                                &types.find(&parts)?.kind,
-                                first,
-                                aliases + 1,
-                            )?
+                            let Lookup::Found(Member::Property(mut property)) =
+                                types.member_through(&types.find(&parts)?.kind, first, aliases + 1)
                             else {
                                 return None;
                             };
@@ -327,13 +392,44 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                             }
                             Some(Member::Property(property))
                         });
-                        return Some(aliased.unwrap_or(member));
+                        return Lookup::Found(aliased.unwrap_or(member));
                     }
-                    kind = self.root(&key, shape)?;
+                    // What a declaration the parser dropped would have said
+                    // is not known.
+                    if self.project.is_partial(&key.file) {
+                        return Lookup::Undecided;
+                    }
+                    let Some(root) = self.root(&key, shape) else {
+                        return Lookup::Undecided;
+                    };
+                    kind = root;
                 }
             }
         }
-        None
+        Lookup::Undecided
+    }
+
+    /// Whether the chain of components the type is built on goes through one
+    /// whose file did not parse whole: what it declares may be more than the
+    /// front end has.
+    pub fn through_partial(&self, kind: &Kind<O::Type>) -> bool {
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            let Kind::Component(key) = kind else {
+                return false;
+            };
+            if self.project.is_partial(&key.file) {
+                return true;
+            }
+            let Some(shape) = self.project.shape(&key) else {
+                return false;
+            };
+            let Some(root) = self.root(&key, shape) else {
+                return false;
+            };
+            kind = root;
+        }
+        false
     }
 
     /// The file a path given to the property `name` of an object of the type
@@ -376,25 +472,45 @@ impl<'p, O: TypeOracle> Types<'p, O> {
     /// The names a handler of the signal `name` may call its arguments. A
     /// type may have a property of the same name: `pressed` of a MouseArea.
     pub fn signal(&self, kind: &Kind<O::Type>, name: &str) -> Option<Vec<String>> {
+        self.lookup_signal(kind, name).found()
+    }
+
+    /// As [`signal`](Self::signal), but says whether a signal that is not
+    /// found is not there or may be.
+    pub fn lookup_signal(&self, kind: &Kind<O::Type>, name: &str) -> Lookup<Vec<String>> {
         let mut kind = kind.clone();
         for _ in 0..DEPTH {
             match kind {
-                Kind::Builtin(ty) => return self.oracle.signal(ty, name),
+                Kind::Builtin(ty) => {
+                    return match self.oracle.signal(ty, name) {
+                        Some(parameters) => Lookup::Found(parameters),
+                        None if self.oracle.members_known(ty) => Lookup::Missing,
+                        None => Lookup::Undecided,
+                    };
+                }
                 Kind::Component(key) => {
-                    let shape = self.project.shape(&key)?;
+                    let Some(shape) = self.project.shape(&key) else {
+                        return Lookup::Undecided;
+                    };
                     if let Some(parameters) = shape.signals.get(name) {
-                        return Some(parameters.clone());
+                        return Lookup::Found(parameters.clone());
                     }
                     if let Some(property) = name.strip_suffix("Changed")
                         && shape.properties.contains_key(property)
                     {
-                        return Some(Vec::new());
+                        return Lookup::Found(Vec::new());
                     }
-                    kind = self.root(&key, shape)?;
+                    if self.project.is_partial(&key.file) {
+                        return Lookup::Undecided;
+                    }
+                    let Some(root) = self.root(&key, shape) else {
+                        return Lookup::Undecided;
+                    };
+                    kind = root;
                 }
             }
         }
-        None
+        Lookup::Undecided
     }
 
     /// The property whose new value the signal `name` carries to its

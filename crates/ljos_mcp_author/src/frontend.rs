@@ -47,6 +47,14 @@ pub struct TypeInfo {
     pub attached: Option<String>,
 }
 
+/// The types a module exports, by the name a QML file writes them with.
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+pub struct ModuleInfo {
+    pub module: String,
+    /// Sorted. Each can be looked up with `type_lookup`.
+    pub types: Vec<String>,
+}
+
 /// What the authoring server needs from the QML front end. The real one is
 /// [`QmlFrontEnd`](crate::QmlFrontEnd), over `qml_syntax`, `qml_front` and
 /// `qt_types`. The trait stays as the seam, so the tools and the protocol
@@ -62,6 +70,13 @@ pub trait FrontEnd: Send + Sync + 'static {
     /// Lints, including the accessibility audit.
     fn lint(&self, files: &[PathBuf]) -> Result<Vec<Diagnostic>, SurfaceError>;
     fn type_lookup(&self, module: &str, name: &str) -> Result<TypeInfo, SurfaceError>;
+    /// The types of one module. A front end that cannot list them says so
+    /// instead of returning an empty list an agent would believe.
+    fn module_types(&self, _module: &str) -> Result<ModuleInfo, SurfaceError> {
+        Err(SurfaceError::unavailable(
+            "this front end does not list the types of a module",
+        ))
+    }
 }
 
 /// A front end that is not there. Failing loudly beats returning an empty
@@ -83,6 +98,9 @@ impl FrontEnd for StubFrontEnd {
         Err(SurfaceError::unavailable(NOT_WIRED))
     }
     fn type_lookup(&self, _: &str, _: &str) -> Result<TypeInfo, SurfaceError> {
+        Err(SurfaceError::unavailable(NOT_WIRED))
+    }
+    fn module_types(&self, _: &str) -> Result<ModuleInfo, SurfaceError> {
         Err(SurfaceError::unavailable(NOT_WIRED))
     }
 }

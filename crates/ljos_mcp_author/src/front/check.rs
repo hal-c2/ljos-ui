@@ -9,11 +9,11 @@ use std::{
 use oxc_ast_visit::Visit;
 use oxc_syntax::scope::ScopeFlags;
 use qml_front::{
-    QtType, QtTypeOracle, TypeOracle,
+    Code, QtType, QtTypeOracle, TypeOracle,
     names::Names,
     project::{Project, summarize},
     scope::{Tree, handled, is_group},
-    types::{Kind, Member, Types},
+    types::{Kind, Lookup, Member, Types},
 };
 use qml_syntax::{
     Allocator,
@@ -50,6 +50,11 @@ pub(super) fn shape(types: &Types<'_, Oracle>, kind: Option<&Kind<QtType>>) -> S
     let Some(kind) = kind else {
         return Shape::Unknown;
     };
+    // A component whose file did not parse whole is known by what did parse;
+    // a name missing from it may be in the part that did not.
+    if types.through_partial(kind) {
+        return Shape::Incomplete;
+    }
     let Some(base) = types.base(kind) else {
         return Shape::Incomplete;
     };
@@ -130,7 +135,7 @@ pub(super) fn run(root: &Path, files: &[PathBuf], lint: bool) -> Vec<Diagnostic>
                 &text,
                 d.span.start,
                 Severity::Error,
-                "syntax",
+                Code::Syntax.as_str(),
                 d.message.clone(),
             ));
         }
@@ -140,11 +145,12 @@ pub(super) fn run(root: &Path, files: &[PathBuf], lint: bool) -> Vec<Diagnostic>
                 &text,
                 0,
                 Severity::Error,
-                "syntax",
+                Code::Syntax.as_str(),
                 "the file could not be parsed",
             ));
         }
-        loader.insert(&key, None);
+        // Others that build on this file still know what of it parsed.
+        loader.insert_partial(&key, &text);
     }
 
     if !qt_types::is_available() {
@@ -251,7 +257,7 @@ fn file(
                     source,
                     import.span.start,
                     Severity::Warning,
-                    "unknown-module",
+                    Code::UnknownModule.as_str(),
                     format!(
                         "module `{uri}` is not in Qt's type table or in this project's qmldir/CMake \
                          modules; types from it cannot be checked"
@@ -327,9 +333,8 @@ fn file(
     }
 }
 
-/// Turns one of `Tree::analyze`'s errors into a coded diagnostic. The front
-/// end reports these as messages only, so the code is told from the message
-/// (a unit test pins the wording).
+/// Turns one of `Tree::analyze`'s errors into a diagnostic that has the code
+/// the front end gave it.
 fn semantic_error(
     env: &Env<'_>,
     imports: &[String],
@@ -339,55 +344,50 @@ fn semantic_error(
     unverifiable: bool,
 ) -> Option<Diagnostic> {
     let at = error.span.start;
-    let message = &error.message;
-    if message.ends_with("is not a type of anything the file imports") {
-        let name = message.split('`').nth(1).unwrap_or_default();
-        let last = last_part(name);
-        // The file exists and did not parse (its own errors say why), or the
-        // type is one some C++ registers.
-        if unverifiable || env.broken.contains(last) || env.loader.native(last) {
-            return None;
-        }
-        let mut text = format!(
-            "`{name}` is not a type provided by any module this file imports or by a file beside it"
-        );
-        let mut candidates: Vec<&str> = Vec::new();
-        for uri in imports {
-            for list in [qt_types::native_types(uri), qt_types::written_types(uri)]
-                .into_iter()
-                .flatten()
-            {
-                candidates.extend(list);
-            }
-        }
-        if let Some(near) = closest(name, candidates) {
-            text.push_str(&format!("; did you mean `{near}`?"));
-        } else if !name.contains('.') {
-            text.push_str("; is the module imported?");
-        }
+    if error.code != Code::UnknownType {
         return Some(diagnostic(
             path,
             source,
             at,
             Severity::Error,
-            "unknown-type",
-            text,
+            error.code.as_str(),
+            error.message.clone(),
         ));
     }
-    let code = if message.ends_with("is not unique") {
-        "duplicate-id"
-    } else if message.ends_with("is not an id in this component") {
-        "unknown-alias-target"
-    } else {
-        "semantic"
-    };
+    // The span is the type's name as written.
+    let name = source
+        .get(error.span.start as usize..error.span.end as usize)
+        .unwrap_or_default();
+    let last = last_part(name);
+    // The file exists and did not parse (its own errors say why), or the
+    // type is one some C++ registers.
+    if unverifiable || env.broken.contains(last) || env.loader.native(last) {
+        return None;
+    }
+    let mut text = format!(
+        "`{name}` is not a type provided by any module this file imports or by a file beside it"
+    );
+    let mut candidates: Vec<&str> = Vec::new();
+    for uri in imports {
+        for list in [qt_types::native_types(uri), qt_types::written_types(uri)]
+            .into_iter()
+            .flatten()
+        {
+            candidates.extend(list);
+        }
+    }
+    if let Some(near) = closest(name, candidates) {
+        text.push_str(&format!("; did you mean `{near}`?"));
+    } else if !name.contains('.') {
+        text.push_str("; is the module imported?");
+    }
     Some(diagnostic(
         path,
         source,
         at,
         Severity::Error,
-        code,
-        message.clone(),
+        Code::UnknownType.as_str(),
+        text,
     ))
 }
 
@@ -540,7 +540,7 @@ impl<'a> Walker<'_, 'a> {
                 self.source,
                 *offset,
                 Severity::Warning,
-                "unresolved-name",
+                Code::UnresolvedName.as_str(),
                 message,
             );
             (self.pending)((*name).to_owned(), d);
@@ -573,12 +573,16 @@ impl<'a> Walker<'_, 'a> {
     }
 
     fn handler(&mut self, owner: usize, name: &str, at: u32) {
-        // A property may really be called `onFoo`.
-        if self.tree.member(self.types, owner, name).is_some() {
+        // A property may really be called `onFoo`. Only a name the type
+        // definitely lacks is reported; one it may have is not.
+        if !matches!(self.tree.lookup(self.types, owner, name), Lookup::Missing) {
             return;
         }
         let Some(signal) = handled(name) else { return };
-        if self.tree.signal(self.types, owner, &signal).is_some() {
+        if !matches!(
+            self.tree.lookup_signal(self.types, owner, &signal),
+            Lookup::Missing
+        ) {
             return;
         }
         let mut message = format!(
@@ -596,13 +600,14 @@ impl<'a> Walker<'_, 'a> {
                 message.push_str(&format!("; did you mean `{}`?", handler_name(near)));
             }
         }
-        self.report(at, Severity::Error, "unknown-signal", message);
+        self.report(at, Severity::Error, Code::UnknownSignal.as_str(), message);
     }
 
     fn property(&mut self, owner: usize, path: &[&'a str], at: u32) {
         let first = path[0];
-        match self.tree.member(self.types, owner, first) {
-            None => {
+        match self.tree.lookup(self.types, owner, first) {
+            Lookup::Undecided => {}
+            Lookup::Missing => {
                 let mut message = format!(
                     "`{first}` is not a property of `{}`",
                     self.type_label(owner)
@@ -618,9 +623,9 @@ impl<'a> Walker<'_, 'a> {
                         message.push_str(&format!("; did you mean `{near}`?"));
                     }
                 }
-                self.report(at, Severity::Error, "unknown-property", message);
+                self.report(at, Severity::Error, Code::UnknownProperty.as_str(), message);
             }
-            Some(Member::Property(mut property)) => {
+            Lookup::Found(Member::Property(mut property)) => {
                 // `anchors.fill`, `font.pixelSize`: the rest are properties
                 // of the value, where its type is known.
                 for (i, name) in path.iter().enumerate().skip(1) {
@@ -628,6 +633,11 @@ impl<'a> Walker<'_, 'a> {
                         return;
                     }
                     let Some(value) = property.value else { return };
+                    // A value type whose members the table does not list in
+                    // full may have the name.
+                    if !self.types.oracle.members_known(value) {
+                        return;
+                    }
                     match self.types.oracle.property(value, name) {
                         Some(next) => property = next,
                         // Not assignable perhaps, but not unknown either.
@@ -648,13 +658,18 @@ impl<'a> Walker<'_, 'a> {
                             if let Some(near) = closest(name, names) {
                                 message.push_str(&format!("; did you mean `{near}`?"));
                             }
-                            self.report(at, Severity::Error, "unknown-property", message);
+                            self.report(
+                                at,
+                                Severity::Error,
+                                Code::UnknownProperty.as_str(),
+                                message,
+                            );
                             return;
                         }
                     }
                 }
             }
-            Some(_) => {}
+            Lookup::Found(_) => {}
         }
     }
 
@@ -677,7 +692,7 @@ impl<'a> Walker<'_, 'a> {
                 self.report(
                     at,
                     Severity::Error,
-                    "unknown-type",
+                    Code::UnknownType.as_str(),
                     format!(
                         "`{}` is not a type provided by any module this file imports, so `{}` \
                          is not an attached property; is the module imported?",
@@ -700,7 +715,7 @@ impl<'a> Walker<'_, 'a> {
             self.report(
                 at,
                 Severity::Error,
-                "unknown-property",
+                Code::UnknownProperty.as_str(),
                 format!(
                     "`{member}` is not a member of what `{}` attaches",
                     type_parts.join(".")
@@ -731,11 +746,10 @@ mod tests {
         assert_eq!(handler_name("widthChanged"), "onWidthChanged");
     }
 
-    /// `semantic_error` tells the code of a `Tree` error from its wording. If
-    /// the front end rewords one, this fails instead of the code silently
-    /// becoming `semantic`.
+    /// The codes a check emits are the front end's own, so they cannot drift
+    /// from its errors; a reworded message changes nothing here.
     #[test]
-    fn front_end_error_wording_still_maps_to_codes() {
+    fn front_end_errors_carry_their_codes() {
         if !qt_types::is_available() {
             eprintln!("no Qt type table: skipped");
             return;
@@ -749,22 +763,22 @@ mod tests {
         let parsed = qml_syntax::parse(&allocator, source);
         let mut errors = Vec::new();
         Tree::analyze(&parsed.document, types, &mut errors);
-        let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.ends_with("is not a type of anything the file imports")),
-            "{messages:?}"
-        );
-        assert!(
-            messages.iter().any(|m| m.ends_with("is not unique")),
-            "{messages:?}"
-        );
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.ends_with("is not an id in this component")),
-            "{messages:?}"
+        let codes: Vec<Code> = errors.iter().map(|e| e.code).collect();
+        for want in [
+            Code::UnknownType,
+            Code::DuplicateId,
+            Code::UnknownAliasTarget,
+        ] {
+            assert!(codes.contains(&want), "{codes:?}");
+        }
+        // What the type error says it is about is read off the source.
+        let unknown = errors
+            .iter()
+            .find(|e| e.code == Code::UnknownType)
+            .expect("a type error");
+        assert_eq!(
+            &source[unknown.span.start as usize..unknown.span.end as usize],
+            "Nope"
         );
     }
 }

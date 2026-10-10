@@ -15,7 +15,7 @@ use qml_syntax::{
     js::{Expression, IdentifierReference},
 };
 
-use crate::{Error, oracle::TypeOracle};
+use crate::{Code, Error, oracle::TypeOracle};
 
 /// The files of a project, by the key each is added under: its path from the
 /// project's root without `.qml` (`content/Clock`).
@@ -33,6 +33,9 @@ pub struct Project {
     /// (`qrc:/qt/qml/Thermostat/images/icon.png`): where each is, from the
     /// project's root.
     resources: BTreeMap<String, String>,
+    /// What was wrong with the files that were kept in part. A file that is
+    /// not here parsed whole.
+    diagnostics: HashMap<String, Vec<Error>>,
 }
 
 /// A file's component or one of its inline components.
@@ -90,13 +93,23 @@ pub struct Shape {
     /// Objects written inside an instance go somewhere the component says,
     /// not where its root type would put them.
     pub has_default: bool,
-    /// `enum Theme { Light, Dark }`: the keys of each.
-    pub enums: HashMap<String, Vec<String>>,
+    /// `enum Theme { Light, Dark }`: the keys of each, in the order written,
+    /// with their numbers.
+    pub enums: HashMap<String, Vec<EnumKey>>,
     /// The ids of its objects.
     pub ids: HashSet<String>,
     /// The names its scripts use that nothing in it declares: members of the
     /// runtime's types, mostly.
     pub mentions: HashSet<String>,
+}
+
+/// One key of an enum a component declares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumKey {
+    pub name: String,
+    /// The number written (`Dark = 5`), or one more than the key before it
+    /// (0 for the first).
+    pub value: i64,
 }
 
 /// A `property` declaration, as far as an instance cares.
@@ -116,27 +129,68 @@ impl Project {
         Self::default()
     }
 
-    /// Adds the file `name`. A file that does not parse is left out, and its
-    /// errors returned.
+    /// Adds the file `name`, with everything of it that parsed.
+    ///
+    /// A file with syntax errors is kept for what it has (the parser leaves
+    /// out the members it could not read), so the files that use it, hot
+    /// reload and a checker see it. `Err` has what was wrong; it does not
+    /// mean the file was left out. Only a file without a root object, which
+    /// has nothing to say, is: see [`has`](Self::has). What was wrong with a
+    /// kept file is also under [`diagnostics`](Self::diagnostics), and
+    /// [`is_partial`](Self::is_partial) is true of it, so that whoever reads
+    /// its members knows more may have been declared.
     pub fn add(&mut self, name: &str, source: &str) -> Result<(), Vec<Error>> {
         let allocator = Allocator::default();
         let parsed = qml_syntax::parse(&allocator, source);
-        if !parsed.is_ok() {
-            let mut errors: Vec<Error> = parsed.diagnostics.into_iter().map(Error::from).collect();
-            if errors.is_empty() {
-                errors.push(Error::new(
-                    "the file could not be parsed",
-                    qml_syntax::Span::default(),
-                ));
-            }
+        let is_ok = parsed.is_ok();
+        let mut errors: Vec<Error> = parsed
+            .diagnostics
+            .iter()
+            .cloned()
+            .map(Error::from)
+            .collect();
+        if !is_ok && errors.is_empty() {
+            errors.push(Error::with_code(
+                Code::Syntax,
+                "the file could not be parsed",
+                qml_syntax::Span::default(),
+            ));
+        }
+        if parsed.panicked {
+            // A previous version of the file is not what is written now.
+            self.files.remove(name);
+            self.diagnostics.insert(name.to_string(), errors.clone());
             return Err(errors);
         }
         self.insert(name, summarize(&parsed.document));
-        Ok(())
+        if is_ok {
+            return Ok(());
+        }
+        self.diagnostics.insert(name.to_string(), errors.clone());
+        Err(errors)
     }
 
+    /// Adds a summary. The file is taken to have parsed whole.
     pub fn insert(&mut self, name: &str, summary: Summary) {
+        self.diagnostics.remove(name);
         self.files.insert(name.to_string(), summary);
+    }
+
+    /// What was wrong with the file when it was last added, also when it was
+    /// left out. Empty for a file that parsed whole, and for one that was
+    /// not added.
+    pub fn diagnostics(&self, file: &str) -> &[Error] {
+        self.diagnostics.get(file).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the file was added with syntax errors, and so has only what
+    /// parsed. A file that is not here at all is not partial.
+    pub fn is_partial(&self, file: &str) -> bool {
+        self.files.contains_key(file)
+            && self
+                .diagnostics
+                .get(file)
+                .is_some_and(|errors| !errors.is_empty())
     }
 
     /// The directories the files import by path (`import "content"`), as the
@@ -211,7 +265,8 @@ impl Project {
         self.modules.get(uri)?.get(name).map(String::as_str)
     }
 
-    /// Whether the file was added, and parsed.
+    /// Whether the file was added, and has a root object: also true of one
+    /// kept in part.
     pub fn has(&self, file: &str) -> bool {
         self.files.contains_key(file)
     }
@@ -377,7 +432,10 @@ fn shape(summary: &mut Summary, inline: Option<&str>, root: &QmlObject<'_>) {
                     declaration
                         .members
                         .iter()
-                        .map(|member| member.name.name.to_string())
+                        .map(|member| EnumKey {
+                            name: member.name.name.to_string(),
+                            value: member.value,
+                        })
                         .collect(),
                 );
             }

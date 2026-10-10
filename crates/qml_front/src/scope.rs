@@ -20,9 +20,9 @@ use qml_syntax::{
 };
 
 use crate::{
-    Error,
+    Code, Error,
     oracle::{Property, Special, TypeOracle},
-    types::{Kind, Member as TypeMember, Origin, Types},
+    types::{Kind, Lookup, Member as TypeMember, Origin, Types},
 };
 
 /// The objects and contexts of one file.
@@ -236,13 +236,26 @@ impl<'a, T: Copy + Eq> Tree<'a, T> {
         index: usize,
         name: &str,
     ) -> Option<TypeMember<T>> {
+        self.lookup(types, index, name).found()
+    }
+
+    /// As [`member`](Self::member), but says whether a name that is not found
+    /// is not on the object ([`Lookup::Missing`]) or may be ([`Lookup::Undecided`]):
+    /// the type is not known, is a component whose file did not parse whole, or
+    /// is not listed in full.
+    pub fn lookup<O: TypeOracle<Type = T>>(
+        &self,
+        types: Types<'_, O>,
+        index: usize,
+        name: &str,
+    ) -> Lookup<TypeMember<T>> {
         let object = &self.objects[index];
         match object.declared.get(name) {
             Some(Declared::Property { property, .. }) => {
-                return Some(TypeMember::Property(*property));
+                return Lookup::Found(TypeMember::Property(*property));
             }
-            Some(Declared::Signal(_)) => return Some(TypeMember::Signal),
-            Some(Declared::Function) => return Some(TypeMember::Method),
+            Some(Declared::Signal(_)) => return Lookup::Found(TypeMember::Signal),
+            Some(Declared::Function) => return Lookup::Found(TypeMember::Method),
             None => {}
         }
         if let Some(property) = name.strip_suffix("Changed")
@@ -251,9 +264,40 @@ impl<'a, T: Copy + Eq> Tree<'a, T> {
                 Some(Declared::Property { .. })
             )
         {
-            return Some(TypeMember::Signal);
+            return Lookup::Found(TypeMember::Signal);
         }
-        types.member(object.kind.as_ref()?, name)
+        match &object.kind {
+            Some(kind) => types.lookup(kind, name),
+            None => Lookup::Undecided,
+        }
+    }
+
+    /// As [`signal`](Self::signal), with what [`lookup`](Self::lookup) says of
+    /// a signal that is not found.
+    pub fn lookup_signal<O: TypeOracle<Type = T>>(
+        &self,
+        types: Types<'_, O>,
+        index: usize,
+        name: &str,
+    ) -> Lookup<Vec<String>> {
+        let object = &self.objects[index];
+        match object.declared.get(name) {
+            Some(Declared::Signal(parameters)) => return Lookup::Found(parameters.clone()),
+            Some(_) => return Lookup::Missing,
+            None => {}
+        }
+        if let Some(property) = name.strip_suffix("Changed")
+            && matches!(
+                object.declared.get(property),
+                Some(Declared::Property { .. })
+            )
+        {
+            return Lookup::Found(Vec::new());
+        }
+        match &object.kind {
+            Some(kind) => types.lookup_signal(kind, name),
+            None => Lookup::Undecided,
+        }
     }
 
     /// The names a handler of the object's signal `name` may call its
@@ -264,21 +308,7 @@ impl<'a, T: Copy + Eq> Tree<'a, T> {
         index: usize,
         name: &str,
     ) -> Option<Vec<String>> {
-        let object = &self.objects[index];
-        match object.declared.get(name) {
-            Some(Declared::Signal(parameters)) => return Some(parameters.clone()),
-            Some(_) => return None,
-            None => {}
-        }
-        if let Some(property) = name.strip_suffix("Changed")
-            && matches!(
-                object.declared.get(property),
-                Some(Declared::Property { .. })
-            )
-        {
-            return Some(Vec::new());
-        }
-        types.signal(object.kind.as_ref()?, name)
+        self.lookup_signal(types, index, name).found()
     }
 
     /// What the property a binding names is, through the groups on the way:
@@ -350,7 +380,8 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         let parts: Vec<&str> = object.type_name.parts.iter().copied().collect();
         let found = self.types.find(&parts);
         if found.is_none() {
-            self.errors.push(Error::new(
+            self.errors.push(Error::with_code(
+                Code::UnknownType,
                 format!(
                     "`{}` is not a type of anything the file imports",
                     object.type_name
@@ -367,8 +398,11 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         if let Some(id) = id
             && self.tree.id_in(context, id).is_some()
         {
-            self.errors
-                .push(Error::new(format!("id `{id}` is not unique"), object.span));
+            self.errors.push(Error::with_code(
+                Code::DuplicateId,
+                format!("id `{id}` is not unique"),
+                object.span,
+            ));
         }
         let index = self.tree.objects.len();
         self.tree.by_start.insert(object.span.start, index);
@@ -478,7 +512,8 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                 context = self.tree.contexts[at].outer;
             }
             let Some(target) = target else {
-                self.errors.push(Error::new(
+                self.errors.push(Error::with_code(
+                    Code::UnknownAliasTarget,
                     format!("`{}` is not an id in this component", alias.id),
                     alias.span,
                 ));

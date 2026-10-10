@@ -17,6 +17,12 @@ pub(crate) fn templates() -> Vec<ResourceTemplateDef> {
             mime_type: "application/json",
         },
         ResourceTemplateDef {
+            uri_template: "ljos://types/{module}",
+            name: "module",
+            description: "The types a QML module exports; read one with ljos://types/{module}/{type}.",
+            mime_type: "application/json",
+        },
+        ResourceTemplateDef {
             uri_template: "ljos://docs/{path}",
             name: "docs",
             description: "A file from the repository's docs/ directory.",
@@ -91,6 +97,11 @@ fn steps_section(readme: &str) -> Option<String> {
     Some(lines[start..end].join("\n"))
 }
 
+fn pretty(value: &impl serde::Serialize) -> Result<String, SurfaceError> {
+    serde_json::to_string_pretty(value)
+        .map_err(|e| SurfaceError::new(ErrorCode::Internal, e.to_string()))
+}
+
 pub(crate) fn read(
     project: &Project,
     front: &Arc<dyn FrontEnd>,
@@ -133,15 +144,20 @@ pub(crate) fn read(
         return one(read_capped(&path)?, MD);
     }
     if let Some(rest) = uri.strip_prefix("ljos://types/") {
-        let (module, name) = rest
-            .split_once('/')
-            .filter(|(m, n)| !m.is_empty() && !n.is_empty() && !n.contains('/'))
-            .ok_or_else(|| {
-                SurfaceError::invalid_argument("expected ljos://types/{module}/{type}")
-            })?;
-        let info = front.type_lookup(module, name)?;
-        let text = serde_json::to_string_pretty(&info)
-            .map_err(|e| SurfaceError::new(ErrorCode::Internal, e.to_string()))?;
+        let invalid = || {
+            SurfaceError::invalid_argument(
+                "expected ljos://types/{module} or ljos://types/{module}/{type}",
+            )
+        };
+        let text = match rest.split_once('/') {
+            None if !rest.is_empty() => pretty(&front.module_types(rest)?)?,
+            Some((module, name))
+                if !module.is_empty() && !name.is_empty() && !name.contains('/') =>
+            {
+                pretty(&front.type_lookup(module, name)?)?
+            }
+            _ => return Err(invalid()),
+        };
         return one(text, "application/json");
     }
     Err(SurfaceError::not_found(format!("no resource `{uri}`")))

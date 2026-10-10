@@ -61,6 +61,35 @@ pub trait TypeOracle {
     /// Whether some type has a member called `name`: a name that is most
     /// likely that member wherever it is written.
     fn is_member_name(&self, name: &str) -> bool;
+
+    /// The type of a property's value as the runtime names it: `color`,
+    /// `QColor`, `int`. Whether it is a list or read-only is in the
+    /// [`Property`]. None when the oracle does not say; a back end then lets
+    /// the runtime decide (a colour stays a string).
+    fn property_type(&self, _ty: Self::Type, _name: &str) -> Option<String> {
+        None
+    }
+
+    /// The number of `Type.key` (`Type.scope.key`). None when the key has no
+    /// number the oracle knows, which is not the same as no key: that is
+    /// [`has_enum_key`](Self::has_enum_key).
+    fn enum_value(&self, _ty: Self::Type, _scope: Option<&str>, _key: &str) -> Option<i64> {
+        None
+    }
+
+    /// The module that has the type, where it differs from the one a file
+    /// imports it by (`Timer` is `QtQml`'s, imported with `QtQuick`).
+    fn module(&self, _ty: Self::Type) -> Option<String> {
+        None
+    }
+
+    /// Whether the oracle lists every member of the type. A name it does not
+    /// have is then not a member; where this is false (a type the runtime
+    /// writes in QML and describes only in part, a type that reads its body
+    /// itself) it may be.
+    fn members_known(&self, _ty: Self::Type) -> bool {
+        true
+    }
 }
 
 /// Types whose objects change how the objects around them are read.
@@ -242,6 +271,40 @@ impl TypeOracle for QtTypeOracle {
 
     fn is_member_name(&self, name: &str) -> bool {
         qt_types::is_member_name(name)
+    }
+
+    fn property_type(&self, ty: QtType, name: &str) -> Option<String> {
+        ty.0.property(name)
+            .map(|property| property.type_name.to_string())
+    }
+
+    fn enum_value(&self, ty: QtType, scope: Option<&str>, key: &str) -> Option<i64> {
+        let value = ty.0.enum_value(key)?;
+        let enumeration = value.enumeration;
+        scope
+            .is_none_or(|scope| scope == enumeration.name || Some(scope) == enumeration.alias)
+            .then_some(value.number)?
+    }
+
+    fn module(&self, ty: QtType) -> Option<String> {
+        (!ty.0.module.is_empty()).then(|| ty.0.module.to_string())
+    }
+
+    fn members_known(&self, ty: QtType) -> bool {
+        // A style's QML file is not read, so a type written in QML that no
+        // native type stands behind has no members here. `ListElement` and
+        // the like are read by a parser of their own: anything may be in them.
+        let mut ty = Some(ty.0);
+        while let Some(found) = ty {
+            if (found.qml_file.is_some() && found.prototype().is_none())
+                || found.has_custom_parser
+                || found.class == "QQmlListElement"
+            {
+                return false;
+            }
+            ty = found.prototype();
+        }
+        true
     }
 }
 
