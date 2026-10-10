@@ -1,0 +1,21 @@
+[package]
+name = "ljos_quick"
+description = "QtQuick items for Ljós: Item, Rectangle, Text, anchors, positioners, pointer input and the scene that syncs them to the render tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos_engine = { path = "../ljos_engine" }
+ljos_reactive = { path = "../ljos_reactive" }
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_runtime = { path = "../ljos_runtime" }
+bitflags.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
