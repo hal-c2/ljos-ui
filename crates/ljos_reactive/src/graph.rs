@@ -464,49 +464,78 @@ impl<V: Clone + 'static> Graph<V> {
     pub fn set_frozen(&self, scope: ScopeId, frozen: bool) -> Result<(), ReactiveError> {
         {
             let mut g = self.inner.borrow_mut();
-            let i = &mut *g;
-            let s = i
+            let s = g
                 .scopes
                 .get_mut(scope)
                 .ok_or(ReactiveError::DeadScope(scope))?;
             s.frozen_self = frozen;
-            let parent_frozen = s
-                .parent
-                .and_then(|p| i.scopes.get(p))
-                .is_some_and(|p| p.frozen);
-            let mut thawed = Vec::new();
-            let mut stack = vec![(scope, parent_frozen)];
-            while let Some((sid, parent_frozen)) = stack.pop() {
-                let Some(s) = i.scopes.get_mut(sid) else {
-                    continue;
-                };
-                let eff = parent_frozen || s.frozen_self;
-                if eff == s.frozen && sid != scope {
-                    continue;
-                }
-                let was = s.frozen;
-                s.frozen = eff;
-                if was && !eff {
-                    thawed.append(&mut s.deferred);
-                }
-                let mut child = s.first_child;
-                while let Some(c) = child {
-                    stack.push((c, eff));
-                    child = i.scopes.get(c).and_then(|c| c.next);
-                }
+            g.refreeze(scope);
+        }
+        self.flush_if_idle();
+        Ok(())
+    }
+
+    /// Moves `scope` (with its subtree) to the end of `new_parent`'s
+    /// children, so it is disposed with `new_parent` from now on. O(1) for
+    /// the move itself; finding a cycle walks `new_parent`'s ancestors, and
+    /// a change of the effective frozen state walks the subtree.
+    ///
+    /// Fails for the root, a disposed scope, or a `new_parent` inside
+    /// `scope`'s subtree.
+    pub fn reparent_scope(&self, scope: ScopeId, new_parent: ScopeId) -> Result<(), ReactiveError> {
+        {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            if scope == i.root {
+                return Err(ReactiveError::RootScope);
             }
-            let all = i.options.eager;
-            for n in thawed {
-                if let Some(node) = i.nodes.get_mut(n) {
-                    node.deferred = false;
-                    if node.state != NodeState::Clean && node.is_eager(all) {
-                        enqueue(&mut i.queue, n, node);
-                    }
+            let old_parent = i
+                .scopes
+                .get(scope)
+                .ok_or(ReactiveError::DeadScope(scope))?
+                .parent;
+            if !i.scopes.contains_key(new_parent) {
+                return Err(ReactiveError::DeadScope(new_parent));
+            }
+            let mut cur = Some(new_parent);
+            while let Some(c) = cur {
+                if c == scope {
+                    return Err(ReactiveError::ScopeCycle {
+                        scope,
+                        parent: new_parent,
+                    });
                 }
+                cur = i.scopes[c].parent;
+            }
+            if old_parent == Some(new_parent) && i.scopes[new_parent].last_child == Some(scope) {
+                return Ok(());
+            }
+            let (prev, next) = (i.scopes[scope].prev, i.scopes[scope].next);
+            i.unlink_links(old_parent, prev, next);
+            let tail = i.scopes[new_parent].last_child.replace(scope);
+            {
+                let s = &mut i.scopes[scope];
+                s.parent = Some(new_parent);
+                s.prev = tail;
+                s.next = None;
+            }
+            match tail {
+                Some(t) => i.scopes[t].next = Some(scope),
+                None => i.scopes[new_parent].first_child = Some(scope),
+            }
+            let was = i.scopes[scope].frozen;
+            let now = i.scopes[new_parent].frozen || i.scopes[scope].frozen_self;
+            if was != now {
+                i.refreeze(scope);
             }
         }
         self.flush_if_idle();
         Ok(())
+    }
+
+    /// The scope's parent; `None` for the root or a disposed scope.
+    pub fn scope_parent(&self, scope: ScopeId) -> Option<ScopeId> {
+        self.inner.borrow().scopes.get(scope)?.parent
     }
 
     /// Whether the scope is frozen, directly or through an ancestor.
@@ -1866,17 +1895,70 @@ impl<V: Clone + 'static> Inner<V> {
         node.height = height.max(1);
     }
 
+    /// Recomputes the effective frozen state of `scope` and its subtree
+    /// from the parent's and each scope's own flag; parked effects of
+    /// scopes that thawed are queued.
+    fn refreeze(&mut self, scope: ScopeId) {
+        let Some(s) = self.scopes.get(scope) else {
+            return;
+        };
+        let parent_frozen = s
+            .parent
+            .and_then(|p| self.scopes.get(p))
+            .is_some_and(|p| p.frozen);
+        let mut thawed = Vec::new();
+        let mut stack = vec![(scope, parent_frozen)];
+        while let Some((sid, parent_frozen)) = stack.pop() {
+            let Some(s) = self.scopes.get_mut(sid) else {
+                continue;
+            };
+            let eff = parent_frozen || s.frozen_self;
+            if eff == s.frozen && sid != scope {
+                continue;
+            }
+            let was = s.frozen;
+            s.frozen = eff;
+            if was && !eff {
+                thawed.append(&mut s.deferred);
+            }
+            let mut child = s.first_child;
+            while let Some(c) = child {
+                stack.push((c, eff));
+                child = self.scopes.get(c).and_then(|c| c.next);
+            }
+        }
+        let all = self.options.eager;
+        for n in thawed {
+            if let Some(node) = self.nodes.get_mut(n) {
+                node.deferred = false;
+                if node.state != NodeState::Clean && node.is_eager(all) {
+                    enqueue(&mut self.queue, n, node);
+                }
+            }
+        }
+    }
+
     /// Unlinks a removed scope from its parent's child list.
     fn unlink_scope(&mut self, s: &Scope) {
-        if let Some(prev) = s.prev.and_then(|p| self.scopes.get_mut(p)) {
-            prev.next = s.next;
-        } else if let Some(p) = s.parent.and_then(|p| self.scopes.get_mut(p)) {
-            p.first_child = s.next;
+        self.unlink_links(s.parent, s.prev, s.next);
+    }
+
+    /// Unlinks the scope with these links from its parent's child list.
+    fn unlink_links(
+        &mut self,
+        parent: Option<ScopeId>,
+        prev: Option<ScopeId>,
+        next: Option<ScopeId>,
+    ) {
+        if let Some(p) = prev.and_then(|p| self.scopes.get_mut(p)) {
+            p.next = next;
+        } else if let Some(p) = parent.and_then(|p| self.scopes.get_mut(p)) {
+            p.first_child = next;
         }
-        if let Some(next) = s.next.and_then(|x| self.scopes.get_mut(x)) {
-            next.prev = s.prev;
-        } else if let Some(p) = s.parent.and_then(|p| self.scopes.get_mut(p)) {
-            p.last_child = s.prev;
+        if let Some(x) = next.and_then(|x| self.scopes.get_mut(x)) {
+            x.prev = prev;
+        } else if let Some(p) = parent.and_then(|p| self.scopes.get_mut(p)) {
+            p.last_child = prev;
         }
     }
 }

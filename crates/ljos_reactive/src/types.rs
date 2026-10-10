@@ -196,8 +196,11 @@ pub enum ReactiveError {
     #[error("override {1:?} is not on the stack of {0:?}")]
     UnknownOverride(NodeId, OverrideId),
     /// The root scope lives as long as the graph.
-    #[error("the root scope cannot be disposed")]
+    #[error("the root scope cannot be disposed or moved")]
     RootScope,
+    /// `parent` is `scope` or inside its subtree.
+    #[error("scope {parent:?} is inside {scope:?}")]
+    ScopeCycle { scope: ScopeId, parent: ScopeId },
 }
 
 /// Graph-wide configuration.
