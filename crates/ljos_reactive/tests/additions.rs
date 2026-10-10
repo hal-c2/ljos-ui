@@ -1,4 +1,4 @@
-//! `is_tracking`, node data, `refresh` and diagnostic accessors.
+//! `is_tracking`, node data, `refresh`, `peek`, `hold` and diagnostic accessors.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -261,4 +261,116 @@ fn rerun_limit_diagnostic_carries_the_node() {
                 && matches!(g.node_data(d.node()), Some(42 | 43))
                 && d.cycle().is_empty())
     );
+}
+
+#[test]
+fn peek_runs_nothing_and_records_nothing() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let runs = Rc::new(Cell::new(0));
+    let c = runs.clone();
+    let b = g
+        .binding(r, 7, move |g| {
+            c.set(c.get() + 1);
+            g.get(a) + 1
+        })
+        .unwrap();
+    assert_eq!(g.peek(b), Some(7), "the value it was installed over");
+    assert_eq!(runs.get(), 0);
+    assert_eq!(g.state(b), Some(NodeState::Dirty));
+
+    let reader = g.binding(r, 0, move |g| g.peek(b).unwrap_or(0)).unwrap();
+    assert_eq!(g.get(reader), 7);
+    assert!(g.sources(reader).is_empty(), "a peek is not a dependency");
+
+    assert_eq!(g.get(b), 2);
+    assert_eq!(g.peek(b), Some(2));
+    let e = g.effect(r, |_| {}).unwrap();
+    assert_eq!(g.peek(e), None);
+    g.dispose(b).unwrap();
+    assert_eq!(g.peek(b), None);
+}
+
+#[test]
+fn a_held_binding_reads_as_the_old_value_until_it_is_released() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let runs = Rc::new(Cell::new(0));
+    let c = runs.clone();
+    let b = g
+        .binding(r, 7, move |g| {
+            c.set(c.get() + 1);
+            g.get(a) + 1
+        })
+        .unwrap();
+    g.hold(b).unwrap();
+    assert!(g.is_held(b));
+    assert!(g.is_bound(b));
+
+    let reader = g.binding(r, 0, move |g| g.get(b) * 10).unwrap();
+    assert_eq!(g.get(reader), 70);
+    assert_eq!(runs.get(), 0, "reading a held binding does not run it");
+    g.set(a, 5);
+    assert_eq!(g.get(reader), 70, "it has no sources yet");
+
+    g.release(b).unwrap();
+    assert!(!g.is_held(b));
+    assert_eq!(g.get(reader), 60, "what read it runs again");
+    assert_eq!(runs.get(), 1);
+    g.check_invariants().unwrap();
+}
+
+#[test]
+fn releasing_runs_an_eager_reader_now() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let b = g.binding(r, 7, |_| 3).unwrap();
+    g.hold(b).unwrap();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    g.effect(r, move |g| s.borrow_mut().push(g.get(b))).unwrap();
+    assert_eq!(*seen.borrow(), vec![7]);
+    g.release(b).unwrap();
+    assert_eq!(*seen.borrow(), vec![7, 3]);
+}
+
+#[test]
+fn a_write_or_a_new_binding_ends_a_hold() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let b = g.binding(r, 7, |_| 3).unwrap();
+    g.hold(b).unwrap();
+    g.set(b, 9);
+    assert!(!g.is_held(b));
+    g.release(b).unwrap();
+    assert_eq!(g.get(b), 9, "the binding that was held is gone");
+
+    g.bind(b, |_| 4).unwrap();
+    g.hold(b).unwrap();
+    g.bind(b, |_| 5).unwrap();
+    assert!(!g.is_held(b), "the new binding is not held");
+    assert_eq!(g.get(b), 5);
+}
+
+#[test]
+fn hold_only_takes_a_binding_that_has_not_run() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let p = g.property(r, 1).unwrap();
+    g.hold(p).unwrap();
+    assert!(!g.is_held(p), "a plain value has nothing to hold");
+
+    let b = g.binding(r, 0, move |g| g.get(p) + 1).unwrap();
+    assert_eq!(g.get(b), 2);
+    g.hold(b).unwrap();
+    assert!(!g.is_held(b), "it is clean: there is nothing to hold back");
+
+    let e = g.effect(r, |_| {}).unwrap();
+    assert!(matches!(g.hold(e), Err(ReactiveError::NotAProperty(_))));
+    g.dispose(b).unwrap();
+    assert!(matches!(g.hold(b), Err(ReactiveError::DeadNode(_))));
+    assert!(matches!(g.release(b), Err(ReactiveError::DeadNode(_))));
+    assert!(!g.is_held(b));
 }

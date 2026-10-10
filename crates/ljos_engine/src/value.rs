@@ -71,10 +71,13 @@ impl Color {
 
     /// From float channels in `0.0..=1.0` (`Qt.rgba`); out-of-range values
     /// are clamped.
+    ///
+    /// The rounding is done in single precision, as Qt does it, so a number
+    /// such as 0.9271 lands on the same sixteen bits as there.
     pub fn from_rgba_f(r: f64, g: f64, b: f64, a: f64) -> Self {
         fn w(c: f64) -> u16 {
             let c = if c.is_nan() { 0.0 } else { c.clamp(0.0, 1.0) };
-            (c * 65535.0).round() as u16
+            (c as f32 * 65535.0).round() as u16
         }
         Color {
             r: w(r),

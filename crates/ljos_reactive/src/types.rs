@@ -140,13 +140,16 @@ impl<V: fmt::Debug> fmt::Debug for OverrideValue<V> {
 /// (`QML <Type>: Binding loop detected for property "<name>"`).
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Diagnostic {
-    /// A node was read while it was being computed. The read returned the
-    /// stale value and the node was not re-entered.
+    /// A binding's new value reached the binding again through its
+    /// observers. The other members of the cycle were evaluated once
+    /// against that value and the binding was not run again.
     #[error("binding loop detected for {node:?} (cycle: {cycle:?})")]
     BindingLoop {
-        /// The node that was re-entered.
+        /// The binding whose change came back to it. Of a cycle's members
+        /// it is the one that was evaluated first.
         node: NodeId,
-        /// The evaluation stack from `node` to the reader, outermost first.
+        /// One cycle through `node`: each entry reads the next, and the
+        /// last reads `node`.
         cycle: Vec<NodeId>,
     },
     /// An effect or eager binding was re-dirtied too often in one flush
@@ -161,8 +164,8 @@ pub enum Diagnostic {
 }
 
 impl Diagnostic {
-    /// The node the report is about: the re-entered node of a binding loop,
-    /// or the node that hit the re-run cap. Pass it to
+    /// The node the report is about: the binding a loop came back to, or
+    /// the node that hit the re-run cap. Pass it to
     /// [`Graph::node_data`](crate::Graph::node_data) to name the property.
     pub fn node(&self) -> NodeId {
         match self {
@@ -170,7 +173,7 @@ impl Diagnostic {
         }
     }
 
-    /// The evaluation stack of a binding loop, outermost first; empty for
+    /// The members of a binding loop, each reading the next; empty for
     /// other reports.
     pub fn cycle(&self) -> &[NodeId] {
         match self {

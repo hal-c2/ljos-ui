@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the serialised shape changes, so a cache written by an
 /// older compiler is rebuilt instead of misread.
-pub const IR_VERSION: u32 = 1;
+pub const IR_VERSION: u32 = 2;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -425,6 +425,11 @@ pub struct Assignment {
 pub struct PropertyBinding {
     pub name: String,
     pub expr: ExprId,
+    /// Where the name is written: `border` of `border.width: ...`, `width`
+    /// inside `border { width: ... }`, and the whole declaration for a
+    /// value given with `property int p: ...`. Qt's binding-loop message
+    /// names this place, not the expression.
+    pub name_span: SourceSpan,
 }
 
 /// `onClicked: ...`: run when the object emits `signal`.

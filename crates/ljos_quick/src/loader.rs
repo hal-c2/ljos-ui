@@ -15,8 +15,8 @@
 //! next frame, since the handler that unloads it is often the item's own.
 
 use ljos_engine::{
-    Atom, ComponentAttached, CreationHandle, CreationJob, Cx, Engine, EngineError, LogLevel,
-    ObjectId, PropIndex, QmlObject, Url, Value, WriteKind, qml_impl,
+    Atom, CreationHandle, CreationJob, Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex,
+    QmlObject, Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Lane, ProcId};
 
@@ -259,7 +259,7 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
     if let Some(old) = old.filter(|o| e.is_alive(*o)) {
         // The item hears of its end while it is still the Loader's.
         if with_run(e, me, |r| r.leaving.replace(old) != Some(old)) == Some(true) {
-            announce_destruction(e, old);
+            e.announce_destruction(old);
         }
     }
     let Some(origin) = want else {
@@ -286,7 +286,7 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         return;
     }
     let made = match &origin {
-        Origin::Url(url) => e.create_from_url(url, Some(me), props),
+        Origin::Url(url) => e.create_from_url(&e.resolve_url(me, url), Some(me), props),
         Origin::Component(c) => e.component_create(*c, Some(me), props),
     };
     finish(e, me, generation, made);
@@ -307,7 +307,10 @@ fn start_job(
     // to charge the work to.
     let owner = ProcId::new(0, 0);
     let (job, handle) = match origin {
-        Origin::Url(url) => CreationJob::new(e, url, Some(me), props, Lane::Visible, owner),
+        Origin::Url(url) => {
+            let url = e.resolve_url(me, url);
+            CreationJob::new(e, &url, Some(me), props, Lane::Visible, owner)
+        }
         Origin::Component(c) => {
             CreationJob::for_component(e, *c, Some(me), props, Lane::Visible, owner)
         }
@@ -376,24 +379,6 @@ fn discard(e: &Engine, obj: ObjectId) {
         let _ = tree::set_parent_item(e, obj, None);
     }
     e.destroy(obj);
-}
-
-/// Runs `Component.onDestruction` for `root` and everything it owns.
-///
-/// The engine's destroy does not emit it, and Qt's Loader runs it before
-/// the item is let go, not when the memory goes.
-fn announce_destruction(e: &Engine, root: ObjectId) {
-    let mut stack = vec![root];
-    while let Some(o) = stack.pop() {
-        if !e.is_alive(o) {
-            continue;
-        }
-        if is_a::<ComponentAttached>(e, o) {
-            let _ = e.emit_by_name(o, "destruction", &[]);
-        } else {
-            stack.extend(e.children(o).into_iter().rev());
-        }
-    }
 }
 
 /// Keeps the Loader's and the item's sizes together along one axis.

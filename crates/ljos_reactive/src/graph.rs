@@ -92,6 +92,16 @@ struct Node<V> {
     deferred: bool,
     /// On the current check-walk stack; meeting it again is a cycle.
     walking: bool,
+    /// Read itself in the run that is in progress.
+    self_read: bool,
+    /// The change this node's last run produced came back to it through
+    /// its observers: it sits on a dependency cycle and has to settle.
+    cyclic: bool,
+    /// Its cycle is being settled: marks that reach it are dropped, which
+    /// is what breaks the loop.
+    settling: bool,
+    /// A binding set aside by [`Graph::hold`]: installed, not run.
+    held: bool,
     height: u32,
     /// Creation order; breaks height ties so flush order is deterministic.
     seq: u64,
@@ -176,8 +186,11 @@ struct Inner<V> {
     walk_pool: Vec<Vec<(NodeId, u32)>>,
     /// (node, colour, read stamp of the node that sent the mark).
     mark_stack: Vec<(NodeId, NodeState, u64)>,
-    /// Nodes currently computing, outermost first; the binding-loop report.
+    /// Nodes currently computing, outermost first.
     eval_stack: Vec<NodeId>,
+    /// The node whose freshly computed value is being announced. A mark
+    /// that travels back to it closes a dependency cycle.
+    wave_origin: Option<NodeId>,
     batch_depth: u32,
     flush_depth: u32,
     flush_epoch: u64,
@@ -270,6 +283,17 @@ impl<V: Clone + 'static> Drop for FlushGuard<'_, V> {
     }
 }
 
+/// Ends a node's settling on every exit, including unwinding.
+struct SettleGuard<'g, V: Clone + 'static>(&'g Graph<V>, NodeId);
+
+impl<V: Clone + 'static> Drop for SettleGuard<'_, V> {
+    fn drop(&mut self) {
+        if let Some(node) = self.0.inner.borrow_mut().nodes.get_mut(self.1) {
+            node.settling = false;
+        }
+    }
+}
+
 struct UntrackGuard<'g, V: Clone + 'static>(&'g Graph<V>);
 
 impl<V: Clone + 'static> Drop for UntrackGuard<'_, V> {
@@ -320,6 +344,7 @@ impl<V: Clone + 'static> Graph<V> {
                 walk_pool: Vec::new(),
                 mark_stack: Vec::new(),
                 eval_stack: Vec::new(),
+                wave_origin: None,
                 batch_depth: 0,
                 flush_depth: 0,
                 flush_epoch: 0,
@@ -551,6 +576,20 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// Creates a plain property with provenance [`Provenance::Default`].
     pub fn property(&self, scope: ScopeId, value: V) -> Result<NodeId, ReactiveError> {
+        self.property_with(scope, value, Provenance::Default)
+    }
+
+    /// Creates a plain property whose value already has a history: a host
+    /// that makes nodes on demand uses it for a property that was assigned
+    /// before anything observed it. Unlike a [`WriteKind::Initial`] write
+    /// after [`Graph::property`] it never flushes, so it is safe in the
+    /// middle of a binding's evaluation.
+    pub fn property_with(
+        &self,
+        scope: ScopeId,
+        value: V,
+        provenance: Provenance,
+    ) -> Result<NodeId, ReactiveError> {
         let mut i = self.inner.borrow_mut();
         i.insert_node(
             scope,
@@ -558,7 +597,7 @@ impl<V: Clone + 'static> Graph<V> {
                 base: Layer {
                     id: OverrideId(0),
                     content: Content::Value(None),
-                    provenance: Provenance::Default,
+                    provenance,
                 },
                 overrides: Vec::new(),
                 animated: false,
@@ -736,6 +775,14 @@ impl<V: Clone + 'static> Graph<V> {
         self.untrack(|| self.get(n))
     }
 
+    /// The value the property holds right now: nothing is evaluated and no
+    /// dependency is recorded, so a dirty binding gives its last result
+    /// (or the value it was installed over). `None` for a dead node or an
+    /// effect.
+    pub fn peek(&self, n: NodeId) -> Option<V> {
+        self.inner.borrow().nodes.get(n)?.value.clone()
+    }
+
     fn try_get_untracked(&self, n: NodeId) -> Result<V, ReactiveError> {
         {
             let i = self.inner.borrow();
@@ -900,6 +947,49 @@ impl<V: Clone + 'static> Graph<V> {
         drop(dropped);
         self.flush_if_idle();
         Ok(())
+    }
+
+    /// Sets a binding that has not run yet aside: until [`Graph::release`]
+    /// the property reads as the value the binding was installed over, and
+    /// reading it does not run the binding. Does nothing unless `n` is a
+    /// dirty binding.
+    ///
+    /// Qt installs the bindings of some properties after all others of a
+    /// component have run; an engine that wants the same results (which
+    /// member of a binding loop is reported, and what it is left with)
+    /// holds those back with this.
+    pub fn hold(&self, n: NodeId) -> Result<(), ReactiveError> {
+        let mut i = self.inner.borrow_mut();
+        let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+        let Kind::Property(p) = &node.kind else {
+            return Err(ReactiveError::NotAProperty(n));
+        };
+        if p.is_bound() && node.state == NodeState::Dirty {
+            node.state = NodeState::Clean;
+            node.held = true;
+        }
+        Ok(())
+    }
+
+    /// Ends [`Graph::hold`]: the binding is dirty again and its observers
+    /// re-check, as if it had been installed now. Does nothing if `n` is
+    /// not held any more (it ran, or was written or bound since).
+    pub fn release(&self, n: NodeId) -> Result<(), ReactiveError> {
+        {
+            let mut i = self.inner.borrow_mut();
+            let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            if !node.held {
+                return Ok(());
+            }
+            i.make_bound_dirty(n);
+        }
+        self.flush_if_idle();
+        Ok(())
+    }
+
+    /// Whether [`Graph::hold`] has set `n` aside.
+    pub fn is_held(&self, n: NodeId) -> bool {
+        self.inner.borrow().nodes.get(n).is_some_and(|x| x.held)
     }
 
     /// Forces a change notification (`emit xChanged()`): observers re-run
@@ -1350,11 +1440,12 @@ impl<V: Clone + 'static> Graph<V> {
             None => return,
         };
         match state {
-            NodeState::Clean => return,
-            NodeState::Computing => {
-                self.inner.borrow_mut().report_loop(n);
-                return;
-            }
+            // A node that is computing is not re-entered: the reader gets
+            // the stale value. That alone is not a loop (the reader may be
+            // unrelated, run by a nested flush). If it is one, the reader
+            // becomes an observer and the node's new value comes back to
+            // it in `finish`, where the loop is reported and broken.
+            NodeState::Clean | NodeState::Computing => return,
             NodeState::Dirty => {
                 self.recompute(n);
                 return;
@@ -1388,12 +1479,15 @@ impl<V: Clone + 'static> Graph<V> {
                                 e.1 += 1;
                             }
                             match i.nodes.get(src).map(|s| (s.state, s.walking)) {
-                                None | Some((NodeState::Clean, _)) => Step::Next,
-                                Some((NodeState::Check, true))
-                                | Some((NodeState::Computing, _)) => {
-                                    i.report_loop(src);
-                                    Step::Next
-                                }
+                                // A source that is computing or already
+                                // on a walk counts as unchanged for now.
+                                // If it does change, its marks come back
+                                // here, and a real cycle is reported when
+                                // they return to the node that sent them.
+                                None
+                                | Some((NodeState::Clean, _))
+                                | Some((NodeState::Check, true))
+                                | Some((NodeState::Computing, _)) => Step::Next,
                                 Some((NodeState::Check, false)) => {
                                     i.nodes[src].walking = true;
                                     Step::Push(src)
@@ -1455,6 +1549,7 @@ impl<V: Clone + 'static> Graph<V> {
             };
             node.state = NodeState::Computing;
             node.pending = false;
+            node.held = false;
             match compute {
                 Compute::Binding(_) => i.stats.evaluations += 1,
                 Compute::Effect(_) => i.stats.effect_runs += 1,
@@ -1483,6 +1578,42 @@ impl<V: Clone + 'static> Graph<V> {
             None => {}
         }
         guard.ok = true;
+        // `finish` runs here; a cycle it found is settled outside it.
+        drop(guard);
+        self.settle(n);
+    }
+
+    /// Breaks the dependency cycle `finish` found through `n`.
+    ///
+    /// Qt re-evaluates the bindings a change reaches before the write
+    /// returns, and stops with its "Binding loop detected" warning when the
+    /// change arrives back at the binding that started it. This does the
+    /// same: the rest of the cycle is brought up to date once against `n`'s
+    /// new value, and the mark that would make `n` run again is dropped.
+    /// Without it the members would re-dirty each other on every read (or
+    /// up to the re-run cap in eager mode) and never agree.
+    fn settle(&self, n: NodeId) {
+        let sources: SmallVec<[NodeId; 4]> = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            let Some(node) = i.nodes.get_mut(n) else {
+                return;
+            };
+            if !node.cyclic {
+                return;
+            }
+            node.cyclic = false;
+            node.settling = true;
+            let sources = node.sources.iter().map(|e| e.node).collect();
+            i.report_loop(n);
+            sources
+        };
+        let _guard = SettleGuard(self, n);
+        // Every path from `n` back to itself ends in one of its sources,
+        // so pulling those evaluates exactly the members of its cycles.
+        for s in sources {
+            self.update(s);
+        }
     }
 
     fn finish(
@@ -1523,14 +1654,27 @@ impl<V: Clone + 'static> Graph<V> {
                     i.diff_sources(n, &reads);
                     let node = &mut i.nodes[n];
                     node.state = NodeState::Clean;
+                    let self_read = std::mem::take(&mut node.self_read);
                     if let Some(v) = value {
                         if let Kind::Property(p) = &mut node.kind {
                             p.animated = false;
                         }
-                        i.set_value(n, v);
+                        // Only the announcement of a binding's own result
+                        // can close a cycle; marks sent for other reasons
+                        // (writes, `notify`) have no origin.
+                        i.wave_origin = Some(n);
+                        let changed = i.set_value(n, v);
+                        i.wave_origin = None;
+                        // A self-read leaves no edge, so no mark returns.
+                        if changed && self_read {
+                            i.nodes[n].cyclic = true;
+                        }
                     }
                     if i.nodes[n].pending {
+                        // It runs again anyway; that run settles the cycle
+                        // if its result still travels round.
                         i.nodes[n].pending = false;
+                        i.nodes[n].cyclic = false;
                         i.redirty(n);
                     }
                 } else {
@@ -1539,6 +1683,7 @@ impl<V: Clone + 'static> Graph<V> {
                     // effect waits for its next change rather than looping.
                     let node = &mut i.nodes[n];
                     node.pending = false;
+                    node.self_read = false;
                     if matches!(node.kind, Kind::Effect(_)) {
                         node.state = NodeState::Clean;
                     } else {
@@ -1631,6 +1776,10 @@ impl<V: Clone + 'static> Inner<V> {
             queued: false,
             deferred: false,
             walking: false,
+            self_read: false,
+            cyclic: false,
+            settling: false,
+            held: false,
             height: 0,
             seq: self.seq,
             scope,
@@ -1702,24 +1851,52 @@ impl<V: Clone + 'static> Inner<V> {
         self.diagnostics.push(d);
     }
 
+    /// Reports the cycle through `n`: `n`, then one chain of sources that
+    /// its change just dirtied and that leads back to it.
     fn report_loop(&mut self, n: NodeId) {
-        let cycle = match self.eval_stack.iter().position(|x| *x == n) {
-            Some(start) => self.eval_stack[start..].to_vec(),
-            None => vec![n],
-        };
+        self.tick += 1;
+        let seen = self.tick;
+        let mut cycle = vec![n];
+        // (node, next source to try); the path is the stack.
+        let mut stack: Vec<(NodeId, usize)> = vec![(n, 0)];
+        self.nodes[n].mark = seen;
+        'search: while let Some(&(top, idx)) = stack.last() {
+            let Some(src) = self.nodes[top].sources.get(idx).map(|e| e.node) else {
+                stack.pop();
+                continue;
+            };
+            if let Some(e) = stack.last_mut() {
+                e.1 += 1;
+            }
+            let Some(node) = self.nodes.get_mut(src) else {
+                continue;
+            };
+            // The change only went through nodes it left non-clean.
+            if node.mark == seen || node.state == NodeState::Clean {
+                continue;
+            }
+            node.mark = seen;
+            stack.push((src, 0));
+            if node.sources.iter().any(|e| e.node == n) {
+                cycle = stack.iter().map(|(id, _)| *id).collect();
+                break 'search;
+            }
+        }
         self.emit(Diagnostic::BindingLoop { node: n, cycle });
     }
 
-    /// Stores `v` if it differs and marks direct observers dirty.
-    fn set_value(&mut self, n: NodeId, v: V) {
+    /// Stores `v` if it differs and marks direct observers dirty. Returns
+    /// whether it differed.
+    fn set_value(&mut self, n: NodeId, v: V) -> bool {
         let eq = self.options.equals;
         let node = &mut self.nodes[n];
         if node.value.as_ref().is_some_and(|old| eq(old, &v)) {
-            return;
+            return false;
         }
         node.value = Some(v);
         self.stats.propagations += 1;
         self.mark_observers(n, NodeState::Dirty);
+        true
     }
 
     /// The active layer is now a plain value: drop dependency edges.
@@ -1732,6 +1909,7 @@ impl<V: Clone + 'static> Inner<V> {
         }
         let node = &mut self.nodes[n];
         node.binding_gen = node.binding_gen.wrapping_add(1);
+        node.held = false;
         node.height = 0;
         if node.state != NodeState::Computing {
             node.state = NodeState::Clean;
@@ -1745,6 +1923,7 @@ impl<V: Clone + 'static> Inner<V> {
         let all = self.options.eager;
         let node = &mut self.nodes[n];
         node.binding_gen = node.binding_gen.wrapping_add(1);
+        node.held = false;
         node.state = NodeState::Dirty;
         node.pending = false;
         if node.is_eager(all) {
@@ -1768,12 +1947,17 @@ impl<V: Clone + 'static> Inner<V> {
     fn record_read(&mut self, n: NodeId) {
         let Inner { nodes, frames, .. } = self;
         let node = &mut nodes[n];
-        if let Some(frame) = frames.last_mut()
-            && frame.node.is_some_and(|owner| owner != n)
-            && node.read_stamp != frame.stamp
-        {
-            node.read_stamp = frame.stamp;
-            frame.reads.push(n);
+        let Some(frame) = frames.last_mut() else {
+            return;
+        };
+        match frame.node {
+            None => {}
+            Some(owner) if owner == n => node.self_read = true,
+            Some(_) if node.read_stamp != frame.stamp => {
+                node.read_stamp = frame.stamp;
+                frame.reads.push(n);
+            }
+            Some(_) => {}
         }
     }
 
@@ -1796,6 +1980,17 @@ impl<V: Clone + 'static> Inner<V> {
             let Some(node) = self.nodes.get_mut(m) else {
                 continue;
             };
+            if self.wave_origin == Some(m) {
+                // The node's own change came back: a dependency cycle.
+                // `settle` reports it and brings the members up to date.
+                node.cyclic = true;
+                continue;
+            }
+            if node.settling {
+                // Its cycle is settling against the value it just
+                // produced. Running it again is the loop.
+                continue;
+            }
             if node.state == NodeState::Computing {
                 // Only news if the running node already read the sender in
                 // this run; otherwise it is about to read the fresh value.

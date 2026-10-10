@@ -108,6 +108,40 @@ Item {
     assert_eq!(list(&e, b, "children"), vec![k]);
 }
 
+#[test]
+fn a_destroyed_child_leaves_children_resources_and_data() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    property int kids: children.length
+    Item { objectName: "a"; Item { objectName: "a1" } }
+    Timer { objectName: "t" }
+    Item { objectName: "b" }
+}
+"#,
+    );
+    let (a, t, b) = (
+        find(&e, root, "a"),
+        find(&e, root, "t"),
+        find(&e, root, "b"),
+    );
+    let raw = |name: &str| match get(&e, root, name) {
+        Value::List(l) => l.iter().filter_map(Value::as_object).collect::<Vec<_>>(),
+        other => panic!("{name} is {other:?}"),
+    };
+    e.destroy_now(a);
+    assert_eq!(raw("children"), vec![b]);
+    assert_eq!(raw("data"), vec![t, b]);
+    assert_eq!(get(&e, root, "kids"), Value::Int(1));
+    e.destroy_now(t);
+    assert_eq!(raw("resources"), vec![]);
+    assert_eq!(raw("data"), vec![b]);
+    assert!(e.take_warnings().is_empty());
+}
+
 /// Within the scheduler's slack after `ms`.
 fn near(t: Time, ms: u64) -> bool {
     t >= Time::from_millis(ms) && t < Time::from_millis(ms + 20)

@@ -18,4 +18,7 @@ pub struct Context {
     pub context_object: Option<ObjectId>,
     /// Names the host puts in scope (`setContextProperty`).
     pub props: HashMap<Atom, Value>,
+    /// Grows with every context made, so siblings can be told apart by
+    /// age (`Component.onDestruction` runs the youngest first).
+    pub serial: u64,
 }

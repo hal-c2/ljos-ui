@@ -39,8 +39,8 @@ use crate::ids::{ContextId, MethodIndex, ObjectId, PropIndex, PropKey};
 use crate::log::LogState;
 use crate::meta::{CompleteThunk, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags};
 use crate::object::{
-    AliasTarget, ObjectFlags, ObjectHeader, QmlObject, QmlType, downcast_chain, downcast_chain_mut,
-    find_native, find_native_mut,
+    AliasTarget, Location, ObjectFlags, ObjectHeader, QmlObject, QmlType, downcast_chain,
+    downcast_chain_mut, find_native, find_native_mut,
 };
 use crate::registry::{ModuleDef, Registry, TypeDump, Version};
 use crate::signal::Signals;
@@ -52,6 +52,10 @@ use crate::value::Value;
 pub(crate) type BindingFn = Box<dyn FnMut(&Engine) -> Option<Value>>;
 
 pub type ParentListener = Rc<dyn Fn(&Engine, ObjectId, Option<ObjectId>)>;
+
+/// Called when an attached object is first made: (object, attached object).
+/// Returns whether it wants to be called again.
+pub(crate) type AttachedListener = Rc<dyn Fn(&Engine, ObjectId, ObjectId) -> bool>;
 
 pub(crate) struct Store {
     pub(crate) objects: SlotMap<ObjectId, ObjectHeader>,
@@ -76,15 +80,21 @@ pub(crate) struct Inner {
     pub(crate) js: RefCell<Option<Rc<crate::js::JsState>>>,
     pub(crate) loader: RefCell<crate::loader::LoaderState>,
     pub(crate) timers: RefCell<crate::qtqml::TimerState>,
-    /// Nodes whose binding loop was reported this turn: a loop re-runs
-    /// until the graph's re-run limit, and Qt says it once.
-    pub(crate) loops_reported: RefCell<std::collections::HashSet<NodeId>>,
     /// Evaluate bindings at creation instead of on first read.
     pub(crate) eager_bindings: Cell<bool>,
+    /// While a creation applies its objects in eager mode: the bindings
+    /// installed so far. They first run when the creation is whole, in
+    /// Qt's order, as a binding does not run in Qt before then either.
+    pub(crate) eager_hold: RefCell<Option<Vec<Held>>>,
     /// Read by every translated string; bumped by
     /// [`Engine::retranslate`].
     pub(crate) translation: Cell<Option<NodeId>>,
     pub(crate) parent_listeners: RefCell<Vec<ParentListener>>,
+    pub(crate) attached_listeners: RefCell<Vec<AttachedListener>>,
+    /// Set by the first `Component.onDestruction` handler, so destroying
+    /// objects costs nothing extra in an engine that has none.
+    pub(crate) destruction_handlers: Cell<bool>,
+    context_serial: Cell<u64>,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -152,6 +162,43 @@ impl std::fmt::Debug for OverrideContent {
     }
 }
 
+/// The native properties that are bindable in Qt (type, property), found
+/// by running qml6 6.11.2. Qt reports a binding loop on one of them in its
+/// one-line form and first evaluates their bindings after all others.
+/// Only diagnostics and the eager order depend on it, so the list lives
+/// here rather than as a flag on every property.
+const QT_BINDABLE: &[(&str, &str)] = &[
+    ("QtObject", "objectName"),
+    ("Item", "x"),
+    ("Item", "y"),
+    ("Item", "width"),
+    ("Item", "height"),
+];
+
+/// Whether `prop` of a `meta` object is one of [`QT_BINDABLE`].
+fn qt_bindable(meta: &MetaObject, prop: PropIndex) -> bool {
+    let Some(p) = meta.property(prop) else {
+        return false;
+    };
+    matches!(p.access, PropertyAccess::Field { .. })
+        && QT_BINDABLE.iter().any(|(native, name)| {
+            *p.name == **name
+                && meta
+                    .chain()
+                    .any(|m| m.native.is_some() && *m.name == **native)
+        })
+}
+
+/// A binding installed while a creation holds eager evaluation back.
+pub(crate) struct Held {
+    pub(crate) node: NodeId,
+    pub(crate) obj: ObjectId,
+    pub(crate) prop: PropIndex,
+    /// The instance it was written in and the offset of its name there;
+    /// `None` for a binding a native type installs.
+    pub(crate) place: Option<(usize, u32)>,
+}
+
 impl Engine {
     pub fn new() -> Self {
         let graph = Graph::with_options(Options {
@@ -176,10 +223,13 @@ impl Engine {
             js: RefCell::new(None),
             loader: RefCell::new(crate::loader::LoaderState::default()),
             timers: RefCell::new(crate::qtqml::TimerState::default()),
-            loops_reported: RefCell::new(std::collections::HashSet::new()),
             eager_bindings: Cell::new(false),
+            eager_hold: RefCell::new(None),
             translation: Cell::new(None),
             parent_listeners: RefCell::new(Vec::new()),
+            attached_listeners: RefCell::new(Vec::new()),
+            destruction_handlers: Cell::new(false),
+            context_serial: Cell::new(0),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {
@@ -256,30 +306,12 @@ impl Engine {
         let node = match d {
             Diagnostic::BindingLoop { node, .. } | Diagnostic::RerunLimit { node, .. } => *node,
         };
-        let first = match d {
-            Diagnostic::BindingLoop { .. } => self.inner.loops_reported.borrow_mut().insert(node),
-            Diagnostic::RerunLimit { .. } => !self.inner.loops_reported.borrow().contains(&node),
-        };
-        if !first {
-            return;
-        }
         let key = self.inner.store.borrow().node_keys.get(node).copied();
         let what = key.map(|k| self.describe(k.object, k.prop));
         let msg = match (d, what) {
-            (Diagnostic::BindingLoop { .. }, Some((ty, prop))) => {
+            (Diagnostic::BindingLoop { .. }, Some(_)) => {
                 let k = key.expect("described");
-                match self.binding_location(k.object, k.prop) {
-                    // A property declared in QML: the object, then the
-                    // declaration on a second line.
-                    Some((obj_loc, binding_loc, true)) => format!(
-                        "{obj_loc}: QML {ty}: Binding loop detected for property \"{prop}\":\n{binding_loc}"
-                    ),
-                    // A native property: where the binding is written.
-                    Some((_, binding_loc, false)) => format!(
-                        "{binding_loc}: QML {ty}: Binding loop detected for property \"{prop}\""
-                    ),
-                    None => format!("QML {ty}: Binding loop detected for property \"{prop}\""),
-                }
+                self.loop_message(k.object, k.prop)
             }
             (Diagnostic::RerunLimit { runs, .. }, Some((ty, prop))) => {
                 format!("QML {ty}: property \"{prop}\" handlers re-ran {runs} times in one update")
@@ -289,19 +321,48 @@ impl Engine {
         self.warn(msg);
     }
 
-    /// `url:line:col` of the object and of the binding on `prop`, and
-    /// whether the property is declared in QML, when the object was made
-    /// from QML.
-    fn binding_location(&self, obj: ObjectId, prop: PropIndex) -> Option<(String, String, bool)> {
+    /// Qt's binding-loop message for `prop` of `obj`. Qt has two forms:
+    /// most properties name the object and give the binding's place on a
+    /// second line; the few that are bindable in Qt ([`QT_BINDABLE`]) have
+    /// one line at the binding's place.
+    fn loop_message(&self, obj: ObjectId, prop: PropIndex) -> String {
         let store = self.inner.store.borrow();
-        let ext = store.objects.get(obj)?.ext.as_ref()?;
-        let loc = ext.location.as_ref()?;
-        let (_, line, col, declared) = ext.binding_locs.iter().find(|(p, ..)| *p == prop)?;
-        Some((
-            format!("{}:{}:{}", loc.url, loc.line, loc.column),
-            format!("{}:{line}:{col}", loc.url),
-            *declared,
-        ))
+        let Some(h) = store.objects.get(obj) else {
+            return "QML ?: Binding loop detected".to_owned();
+        };
+        let info = h.meta.property(prop);
+        let ext = h.ext.as_ref();
+        let binding = ext.and_then(|e| e.binding_locs.iter().find(|l| l.prop == prop));
+        let place = |l: &Location| format!("{}:{}:{}", l.url, l.line, l.column);
+        let object_at = ext.and_then(|e| e.location.as_ref()).map(place);
+        let binding_at = binding.map(|b| place(&b.at));
+
+        let mut ty = h.meta.name.to_string();
+        let mut name = info.map_or_else(|| "?".to_owned(), |p| p.name.to_string());
+        let mut two_lines = true;
+        match info.map(|p| &p.access) {
+            Some(PropertyAccess::Field { .. }) => two_lines = !qt_bindable(&h.meta, prop),
+            Some(PropertyAccess::Group { meta, leaf, .. }) => {
+                ty = format!("{ty} (parent or ancestor of {})", meta.name);
+                if let Some(p) = meta.property(*leaf) {
+                    name = p.name.to_string();
+                }
+            }
+            _ => {}
+        }
+        if let Some(member) = binding.and_then(|b| b.member.as_ref()) {
+            two_lines = true;
+            name = member.to_string();
+        }
+        let what = format!("QML {ty}: Binding loop detected for property \"{name}\"");
+        match (two_lines, object_at, binding_at) {
+            (true, Some(o), Some(b)) => format!("{o}: {what}:\n{b}"),
+            (false, _, Some(b)) => format!("{b}: {what}"),
+            // A binding made at run time (`Qt.binding`) has no place.
+            (_, Some(o), None) => format!("{o}: {what}"),
+            (_, None, Some(b)) => format!("{b}: {what}"),
+            (_, None, None) => what,
+        }
     }
 
     /// Type and property name, for messages.
@@ -384,6 +445,10 @@ impl Engine {
             }
             None => self.inner.root_context,
         };
+        let mut native = native;
+        if let Some(t) = downcast_chain_mut::<crate::qtqml::Timer>(&mut *native) {
+            t.parent = owner;
+        }
         let mut header = ObjectHeader::new(meta, native, context);
         header.owner = owner;
         let id = store.objects.insert(header);
@@ -442,7 +507,10 @@ impl Engine {
     /// Destroys `obj` and everything it owns, children first. Its reactive
     /// nodes are disposed, so bindings that read it re-run and see `null`;
     /// its connections, as sender or receiver, are dropped.
+    /// `Component.onDestruction` handlers run first, while everything is
+    /// still alive ([`Engine::announce_destruction`]).
     pub fn destroy_now(&self, obj: ObjectId) -> bool {
+        self.tell_destruction(obj, false);
         // Post-order: children before their owner.
         let order = {
             let store = self.inner.store.borrow();
@@ -466,6 +534,9 @@ impl Engine {
         let mut headers = Vec::with_capacity(order.len());
         // Survivors whose visual parent died, to tell listeners.
         let mut orphans = Vec::new();
+        // Survivors that may still list the dead: the owner and the
+        // visual parent of the object destroyed.
+        let mut holders: SmallVec<[ObjectId; 2]> = SmallVec::new();
         {
             let mut store = self.inner.store.borrow_mut();
             let s = &mut *store;
@@ -480,6 +551,13 @@ impl Engine {
                     }
                 }
                 headers.push(h);
+            }
+            if let Some(h) = headers.last() {
+                for p in [h.owner, h.visual_parent].into_iter().flatten() {
+                    if s.objects.contains_key(p) && !holders.contains(&p) {
+                        holders.push(p);
+                    }
+                }
             }
             // Unlink survivors from the dead.
             for h in &headers {
@@ -517,6 +595,9 @@ impl Engine {
             for c in &orphans {
                 self.parent_changed(*c, None);
             }
+            for p in &holders {
+                self.forget_in_lists(*p, &order);
+            }
         });
         for h in &headers {
             if let Some(ext) = &h.ext {
@@ -529,6 +610,37 @@ impl Engine {
         drop(connections);
         drop(headers);
         true
+    }
+
+    /// Takes `dead` out of the native list properties of `holder`
+    /// (`Item.children`, `resources`, `data`), as Qt's own lists drop a
+    /// deleted object. A `property list<T>` written in QML keeps its
+    /// length and reads `null` there, so it is left alone.
+    fn forget_in_lists(&self, holder: ObjectId, dead: &[ObjectId]) {
+        let lists: SmallVec<[PropIndex; 4]> = {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(holder) else {
+                return;
+            };
+            h.meta
+                .properties
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.is_list() && matches!(p.access, PropertyAccess::Field { .. }))
+                .map(|(i, _)| PropIndex(i as u32))
+                .collect()
+        };
+        for p in lists {
+            let Value::List(l) = self.untrack(|| self.read(holder, p)) else {
+                continue;
+            };
+            let gone = |v: &Value| v.as_object().is_some_and(|o| dead.contains(&o));
+            if !l.iter().any(gone) {
+                continue;
+            }
+            let kept = l.iter().filter(|v| !gone(v)).cloned().collect();
+            let _ = self.write_internal(holder, p, Value::list(kept), WriteKind::Initial);
+        }
     }
 
     // ------------------------------------------------------------ hierarchy
@@ -576,7 +688,13 @@ impl Engine {
             store.objects[o].children.push(obj);
         }
         let scope = store.objects[obj].scope;
+        let timer = downcast_chain_mut::<crate::qtqml::Timer>(&mut *store.objects[obj].native)
+            .map(|t| t.parent = owner)
+            .is_some();
         drop(store);
+        if timer {
+            self.notify(obj, crate::qtqml::Timer::PARENT.index)?;
+        }
         // The object's nodes and effects die with its new owner from now
         // on, as its native part does.
         if let Some(s) = scope {
@@ -1102,15 +1220,20 @@ impl Engine {
             Some(s) => s,
             None => self.ensure_scope(obj)?,
         };
-        let n = g.property(scope, value.clone())?;
+        // The node carries the provenance over. A write would do that
+        // too, but a write flushes: this runs in the middle of whichever
+        // binding read the property first, and the flush would run other
+        // queued bindings against that binding's half-made value.
+        let provenance = if assigned {
+            Provenance::Assigned
+        } else {
+            Provenance::Default
+        };
+        let n = g.property_with(scope, value, provenance)?;
         {
             let mut store = self.inner.store.borrow_mut();
             store.objects[obj].set_node(prop, n);
             store.node_keys.insert(n, PropKey { object: obj, prop });
-        }
-        if assigned {
-            // Carries the provenance over; the value is unchanged.
-            g.write(n, value, WriteKind::Initial)?;
         }
         Ok(n)
     }
@@ -1177,22 +1300,53 @@ impl Engine {
             self.check_writable(h, prop, internal)?
         };
         let n = self.ensure_node(obj, prop)?;
-        let last = self
-            .inner
-            .graph
-            .untrack(|| self.inner.graph.try_get(n))
-            .unwrap_or_default();
-        let wrapper = self.binding_wrapper(obj, prop, ty, last, f);
-        self.inner.graph.bind(n, wrapper)?;
+        let g = &self.inner.graph;
+        // What a failing binding keeps. The creator may be replacing a
+        // binding that never ran (the one of the component it uses), and
+        // Qt does not run that one either: reading it here could even
+        // report a loop through a binding that is about to go.
+        let last = if internal {
+            g.peek(n)
+        } else {
+            g.untrack(|| g.try_get(n))
+        };
+        let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f);
+        g.bind(n, wrapper)?;
         if self.inner.eager_bindings.get() {
-            self.inner.graph.set_eager(n, true)?;
+            let held = match self.inner.eager_hold.borrow_mut().as_mut() {
+                Some(held) => {
+                    held.push(Held {
+                        node: n,
+                        obj,
+                        prop,
+                        place: None,
+                    });
+                    true
+                }
+                None => false,
+            };
+            if !held {
+                g.set_eager(n, true)?;
+            }
         }
         Ok(())
     }
 
-    /// Evaluates bindings as they are installed and after every change
-    /// instead of when first read. Off by default; tests that expect Qt's
-    /// eager behaviour (binding-loop warnings at creation) turn it on.
+    /// Whether Qt evaluates the first binding of `prop` after all others
+    /// (see [`QT_BINDABLE`]).
+    pub(crate) fn is_qt_bindable(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let store = self.inner.store.borrow();
+        store
+            .objects
+            .get(obj)
+            .is_some_and(|h| qt_bindable(&h.meta, prop))
+    }
+
+    /// Evaluates bindings when they are installed (those of a component
+    /// being created: once it is whole, in Qt's order) and after every
+    /// change, instead of when first read. Off by default; tests that
+    /// expect Qt's eager behaviour (binding-loop warnings at creation)
+    /// turn it on.
     pub fn set_eager_bindings(&self, eager: bool) {
         self.inner.eager_bindings.set(eager);
     }
@@ -1575,7 +1729,41 @@ impl Engine {
         self.inner.store.borrow_mut().objects[obj]
             .attached
             .push((key, a));
+        // Called unborrowed: a listener may attach something itself.
+        let listeners = self.inner.attached_listeners.borrow().clone();
+        let mut done = Vec::new();
+        for l in &listeners {
+            if !l(self, obj, a) {
+                done.push(Rc::clone(l));
+            }
+        }
+        if !done.is_empty() {
+            self.inner
+                .attached_listeners
+                .borrow_mut()
+                .retain(|l| !done.iter().any(|d| Rc::ptr_eq(d, l)));
+        }
         Ok(a)
+    }
+
+    /// The object `attacher` has attached to `obj`, if one was made.
+    /// Unlike [`Engine::attached_object`] this never makes one, so code
+    /// that only looks (an accessibility pass over every item) does not
+    /// give every object an attached object.
+    pub fn existing_attached_object(&self, obj: ObjectId, attacher: &MetaRef) -> Option<ObjectId> {
+        let key = attacher.type_id();
+        let store = self.inner.store.borrow();
+        let h = store.objects.get(obj)?;
+        h.attached.iter().find(|(k, _)| *k == key).map(|(_, a)| *a)
+    }
+
+    /// Calls `f` after an attached object is first made, with the object
+    /// and what was attached to it. Whoever looked with
+    /// [`Engine::existing_attached_object`] and found nothing learns here
+    /// that there is something now. `f` is forgotten once it returns
+    /// false, so a listener whose owner is gone costs nothing afterwards.
+    pub fn on_attached_created(&self, f: impl Fn(&Engine, ObjectId, ObjectId) -> bool + 'static) {
+        self.inner.attached_listeners.borrow_mut().push(Rc::new(f));
     }
 
     // ------------------------------------------------------------ contexts
@@ -1586,10 +1774,19 @@ impl Engine {
 
     /// A child context (one per component instance).
     pub fn create_context(&self, parent: Option<ContextId>) -> ContextId {
+        let serial = self.inner.context_serial.get() + 1;
+        self.inner.context_serial.set(serial);
         self.inner.contexts.borrow_mut().insert(Context {
             parent: Some(parent.unwrap_or(self.inner.root_context)),
+            serial,
             ..Context::default()
         })
+    }
+
+    /// A context's parent and age, for ordering.
+    pub(crate) fn context_lineage(&self, ctx: ContextId) -> Option<(Option<ContextId>, u64)> {
+        let contexts = self.inner.contexts.borrow();
+        contexts.get(ctx).map(|c| (c.parent, c.serial))
     }
 
     pub fn destroy_context(&self, ctx: ContextId) {
@@ -1649,6 +1846,32 @@ impl Engine {
             cur = c.parent;
         }
         None
+    }
+
+    /// A name the compiler could not place, looked up from `ctx` outwards
+    /// as Qt does at run time: the ids of each context, then its context
+    /// properties. An inline component reads the ids of the file that
+    /// uses it this way.
+    pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
+        let found = {
+            let contexts = self.inner.contexts.borrow();
+            let mut cur = Some(ctx);
+            loop {
+                let c = contexts.get(cur?)?;
+                if let Some(o) = c.ids.get(name) {
+                    break *o;
+                }
+                if let Some(v) = c.props.get(name) {
+                    return Some(v.clone());
+                }
+                cur = c.parent;
+            }
+        };
+        Some(if self.is_alive(found) {
+            Value::Object(found)
+        } else {
+            Value::Null
+        })
     }
 
     pub fn context_object(&self, ctx: ContextId) -> Option<ObjectId> {

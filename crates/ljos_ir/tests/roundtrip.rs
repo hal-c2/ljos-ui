@@ -112,6 +112,7 @@ fn sample() -> CompiledFile {
             bindings: vec![PropertyBinding {
                 name: "width".into(),
                 expr: ExprId(0),
+                name_span: span(92, 97),
             }],
             handlers: vec![],
             objects: vec![],

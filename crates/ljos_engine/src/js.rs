@@ -547,8 +547,9 @@ impl Engine {
             .map_err(|e| EngineError::Js(e.to_string()))
     }
 
-    /// An engine value as JS sees it. Colours and URLs are strings; value
-    /// types are fresh plain objects; a destroyed object is `null`.
+    /// An engine value as JS sees it. URLs are strings; a colour is the one
+    /// object there is for that colour, so it compares by value; the other
+    /// value types are fresh plain objects; a destroyed object is `null`.
     pub(crate) fn to_js(&self, v: &Value) -> JsValue {
         match v {
             Value::Undefined => JsValue::Undefined,
@@ -557,7 +558,7 @@ impl Engine {
             Value::Int(i) => JsValue::Number(f64::from(*i)),
             Value::Real(r) => JsValue::Number(*r),
             Value::String(s) | Value::Url(s) => JsValue::String(s.to_string()),
-            Value::Color(_) => JsValue::String(v.to_js_string().to_string()),
+            Value::Color(c) => JsValue::Color([c.r, c.g, c.b, c.a]),
             Value::Point(p) => map(&[("x", p.x), ("y", p.y)]),
             Value::Size(s) => map(&[("width", s.width), ("height", s.height)]),
             Value::Rect(r) => map(&[
@@ -608,6 +609,7 @@ impl Engine {
                 )
             }
             JsValue::Object(id) => Value::Object(u64_to_obj(id)),
+            JsValue::Color([r, g, b, a]) => Value::Color(Color { r, g, b, a }),
             JsValue::Handle(r) => {
                 let num = |k: &str| match scope.get_field(&r, k) {
                     Ok(JsValue::Number(n)) => n,
@@ -711,7 +713,18 @@ impl Engine {
             }
             Ok(JsValue::Undefined)
         });
+        // The prelude has already brought the channels to sixteen bits.
+        let color: HostFn = Rc::new(|_scope, args| {
+            let ch = |i: usize| match args.get(i) {
+                Some(JsValue::Number(n)) => n.clamp(0.0, 65535.0) as u16,
+                _ => 0,
+            };
+            Ok(JsValue::Color([ch(0), ch(1), ch(2), ch(3)]))
+        });
         let err = |e: JsFault| EngineError::Js(e.to_string());
+        js.host
+            .set_global_function("__ljos_color", color)
+            .map_err(err)?;
         js.host
             .set_global_function("__ljos_log", log)
             .map_err(err)?;
@@ -835,16 +848,30 @@ const PRELUDE: &str = r##"
     return o;
   };
 
-  const clamp = (v) => Math.max(0, Math.min(1, Number(v)));
-  const hex2 = (v) => {
-    const n = Math.round(clamp(v) * 255);
-    return (n < 16 ? "0" : "") + n.toString(16);
+  // Colours come from the host: there is one object per colour, so that two
+  // equal colours are also `===`.
+  const hostColor = g.__ljos_color;
+  const f32 = Math.fround;
+  const num = (v) => { v = Number(v); return v !== v ? 0 : v; };
+  const unit = (v) => Math.max(0, Math.min(1, num(v)));
+  const alpha = (a) => (a === undefined ? 1 : num(a));
+  // Qt takes these numbers in single precision and keeps sixteen bits of
+  // each, and a hue in hundredths of a degree where a full turn is zero.
+  // Rounding the same way first gives the channels it gives.
+  const to16 = (v) => Math.round(f32(f32(unit(v)) * 65535));
+  const turn = (h) => (Math.round(f32(f32(unit(h)) * 36000)) % 36000) / 36000;
+  const ch = (v) => Math.round(unit(v) * 65535);
+  const overloads = (name, n) => {
+    if (n > 4) throw new Error("Too many arguments");
+    if (n < 3) {
+      throw new Error("Unable to determine callable overload.  Candidates are:\n    "
+        + name + "(double,double,double)\n    " + name + "(double,double,double,double)");
+    }
   };
-  const rgba = (r, gr, b, a) => {
-    if (a === undefined) a = 1;
-    const rgb = hex2(r) + hex2(gr) + hex2(b);
-    return clamp(a) >= 1 ? "#" + rgb : "#" + hex2(a) + rgb;
-  };
+  function rgba(r, gr, b, a) {
+    overloads("rgba", arguments.length);
+    return hostColor(to16(r), to16(gr), to16(b), to16(alpha(a)));
+  }
   const hue = (p, q, t) => {
     if (t < 0) t += 1;
     if (t > 1) t -= 1;
@@ -853,19 +880,36 @@ const PRELUDE: &str = r##"
     if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
     return p;
   };
-  const hsla = (h, s, l, a) => {
-    h = Number(h); s = clamp(s); l = clamp(l);
-    if (s === 0) return rgba(l, l, l, a);
+  // Qt.hsla in Qt never gives a channel of one sixteen-bit step: where the
+  // arithmetic says one, it gives none. Without this a fully saturated
+  // colour at half lightness would not be a pure one.
+  const hslCh = (v) => { const n = ch(v); return n === 1 ? 0 : n; };
+  function hsla(h, s, l, a) {
+    overloads("hsla", arguments.length);
+    h = turn(h); s = to16(s) / 65535; l = to16(l) / 65535; a = to16(alpha(a));
+    if (s === 0) return hostColor(ch(l), ch(l), ch(l), a);
     const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
     const p = 2 * l - q;
-    return rgba(hue(p, q, h + 1 / 3), hue(p, q, h), hue(p, q, h - 1 / 3), a);
-  };
-  const hsva = (h, s, v, a) => {
-    h = Number(h); s = clamp(s); v = clamp(v);
-    const l = v * (1 - s / 2);
-    const sl = l === 0 || l === 1 ? 0 : (v - l) / Math.min(l, 1 - l);
-    return hsla(h, sl, l, a);
-  };
+    return hostColor(hslCh(hue(p, q, h + 1 / 3)), hslCh(hue(p, q, h)), hslCh(hue(p, q, h - 1 / 3)), a);
+  }
+  function hsva(h, s, v, a) {
+    overloads("hsva", arguments.length);
+    h = turn(h) * 6; s = to16(s) / 65535; v = to16(v) / 65535; a = to16(alpha(a));
+    const i = Math.floor(h);
+    const f = h - i;
+    const p = ch(v * (1 - s));
+    const q = ch(v * (1 - s * f));
+    const t = ch(v * (1 - s * (1 - f)));
+    v = ch(v);
+    switch (i) {
+      case 0: return hostColor(v, t, p, a);
+      case 1: return hostColor(q, v, p, a);
+      case 2: return hostColor(p, v, t, a);
+      case 3: return hostColor(p, q, v, a);
+      case 4: return hostColor(t, p, v, a);
+      default: return hostColor(v, p, q, a);
+    }
+  }
   const pad = (n, w) => String(n).padStart(w, "0");
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
     "August", "September", "October", "November", "December"];
@@ -900,7 +944,7 @@ const PRELUDE: &str = r##"
   };
   const Qt = {
     rgba, hsla, hsva,
-    rgb: (r, gr, b) => rgba(r, gr, b, 1),
+    rgb: (r, gr, b) => hostColor(to16(r), to16(gr), to16(b), 65535),
     point: (x, y) => ({ x: Number(x), y: Number(y) }),
     size: (width, height) => ({ width: Number(width), height: Number(height) }),
     rect: (x, y, width, height) => ({ x: Number(x), y: Number(y), width: Number(width), height: Number(height) }),

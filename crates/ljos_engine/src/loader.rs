@@ -14,6 +14,7 @@ use ljos_js::{Bytecode, FnId};
 use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
+use crate::ids::ObjectId;
 use crate::meta::MetaRef;
 
 /// Gives the engine compiled files by key (`"Main"`, `"controls/Button"`).
@@ -26,10 +27,77 @@ pub trait ComponentSource {
         format!("file:///{key}.qml")
     }
 
+    /// The key of the file at `url`: the reverse of [`Self::url`]. A bare
+    /// key or file name (`Main`, `Main.qml`) is accepted too.
+    fn key(&self, url: &str) -> String {
+        plain_key(url)
+    }
+
     /// The file's JS module precompiled, if the build made it.
     fn bytecode(&self, _key: &str) -> Option<Bytecode> {
         None
     }
+}
+
+/// `file:///Main.qml` and `Main.qml` are `Main`.
+fn plain_key(url: &str) -> String {
+    let s = url
+        .strip_prefix("file:///")
+        .or_else(|| url.strip_prefix("file://"))
+        .or_else(|| url.strip_prefix("qrc:/"))
+        .unwrap_or(url);
+    s.strip_suffix(".qml").unwrap_or(s).to_owned()
+}
+
+/// `rel` as a document at `base` means it (RFC 3986 section 5.2, without
+/// queries and fragments, which QML file URLs do not carry).
+pub(crate) fn join_url(base: &str, rel: &str) -> String {
+    if has_scheme(rel) {
+        return rel.to_owned();
+    }
+    // `file:///a/b.qml` is (`file://`, `/a/b.qml`); `qrc:/a/b.qml` is
+    // (`qrc:`, `/a/b.qml`); a bare key has no root at all.
+    let (root, path) = match base.find("://") {
+        Some(i) => {
+            let rest = &base[i + 3..];
+            let host = rest.find('/').unwrap_or(rest.len());
+            base.split_at(i + 3 + host)
+        }
+        None => match base.find(':').filter(|_| has_scheme(base)) {
+            Some(i) => base.split_at(i + 1),
+            None => ("", base),
+        },
+    };
+    let joined = if rel.starts_with('/') {
+        rel.to_owned()
+    } else {
+        let dir = path.rfind('/').map_or("", |i| &path[..=i]);
+        format!("{dir}{rel}")
+    };
+    // Below a scheme or a host there is nothing but absolute paths.
+    let absolute = joined.starts_with('/') || !root.is_empty();
+    let mut out: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            s => out.push(s),
+        }
+    }
+    format!("{root}{}{}", if absolute { "/" } else { "" }, out.join("/"))
+}
+
+fn has_scheme(url: &str) -> bool {
+    let Some((scheme, _)) = url.split_once(':') else {
+        return false;
+    };
+    let mut c = scheme.chars();
+    // One letter is a Windows drive, not a scheme.
+    scheme.len() > 1
+        && c.next().is_some_and(|f| f.is_ascii_alphabetic())
+        && c.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
 }
 
 /// A [`ComponentSource`] over files given up front.
@@ -78,6 +146,18 @@ impl ComponentSource for MapSource {
         match &self.base {
             Some(b) => format!("{}/{key}.qml", b.trim_end_matches('/')),
             None => format!("file:///{key}.qml"),
+        }
+    }
+
+    fn key(&self, url: &str) -> String {
+        let under_base = self
+            .base
+            .as_deref()
+            .and_then(|b| url.strip_prefix(b.trim_end_matches('/')))
+            .and_then(|rest| rest.strip_prefix('/'));
+        match under_base {
+            Some(rest) => rest.strip_suffix(".qml").unwrap_or(rest).to_owned(),
+            None => plain_key(url),
         }
     }
 
@@ -252,14 +332,33 @@ impl Engine {
         l.files.clear();
     }
 
-    /// `url` as a source key: `file:///Main.qml` and `Main.qml` are `Main`.
-    pub(crate) fn url_key(url: &str) -> String {
-        let s = url
-            .strip_prefix("file:///")
-            .or_else(|| url.strip_prefix("file://"))
-            .or_else(|| url.strip_prefix("qrc:/"))
-            .unwrap_or(url);
-        s.strip_suffix(".qml").unwrap_or(s).to_owned()
+    /// `url` as a key of the component source.
+    pub(crate) fn url_key(&self, url: &str) -> String {
+        let source = self.inner.loader.borrow().source.clone();
+        match source {
+            Some(s) => s.key(url),
+            None => plain_key(url),
+        }
+    }
+
+    /// `url` as the file that declares `from` means it: a relative URL is
+    /// taken from that file's directory, as Qt resolves `Loader.source`
+    /// and `Image.source`. For the root of a component that is the file
+    /// using the component, not the one defining it (Qt 6.11.2, by
+    /// running qml6). An object not made from QML leaves `url` as it is.
+    pub fn resolve_url(&self, from: ObjectId, url: &str) -> String {
+        let base = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(from)
+                .and_then(|h| h.ext.as_ref()?.location.as_ref())
+                .map(|l| l.url.clone())
+        };
+        match base {
+            Some(base) if !url.is_empty() => join_url(&base, url),
+            _ => url.to_owned(),
+        }
     }
 
     /// The loaded file `key`, loading it on first use.
@@ -302,5 +401,66 @@ impl Engine {
             .files
             .insert(key.to_owned(), file.clone());
         Ok(file)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_relative_url_is_taken_from_the_directory_of_the_base() {
+        for (base, rel, want) in [
+            ("file:///Main.qml", "Leaf.qml", "file:///Leaf.qml"),
+            ("file:///sub/Panel.qml", "Leaf.qml", "file:///sub/Leaf.qml"),
+            ("file:///sub/Panel.qml", "../Leaf.qml", "file:///Leaf.qml"),
+            (
+                "file:///sub/Panel.qml",
+                "./a/../b/Leaf.qml",
+                "file:///sub/b/Leaf.qml",
+            ),
+            (
+                "file:///sub/Panel.qml",
+                "../../Leaf.qml",
+                "file:///Leaf.qml",
+            ),
+            (
+                "file:///sub/Panel.qml",
+                "/top/Leaf.qml",
+                "file:///top/Leaf.qml",
+            ),
+            (
+                "file:///sub/Panel.qml",
+                "qrc:/x/Leaf.qml",
+                "qrc:/x/Leaf.qml",
+            ),
+            (
+                "qrc:/app/sub/Panel.qml",
+                "Leaf.qml",
+                "qrc:/app/sub/Leaf.qml",
+            ),
+            ("qrc:/app/sub/Panel.qml", "/Leaf.qml", "qrc:/Leaf.qml"),
+            (
+                "https://host/a/Panel.qml",
+                "../Leaf.qml",
+                "https://host/Leaf.qml",
+            ),
+            ("https://host", "Leaf.qml", "https://host/Leaf.qml"),
+            ("sub/Panel.qml", "Leaf.qml", "sub/Leaf.qml"),
+        ] {
+            assert_eq!(join_url(base, rel), want, "{rel} at {base}");
+        }
+    }
+
+    #[test]
+    fn a_map_source_finds_the_key_of_its_own_urls() {
+        let plain = MapSource::new();
+        assert_eq!(plain.key(&plain.url("sub/Leaf")), "sub/Leaf");
+        assert_eq!(plain.key("Main.qml"), "Main");
+        assert_eq!(plain.key("Main"), "Main");
+        let based = MapSource::new().with_base_url("qrc:/app/");
+        assert_eq!(based.url("sub/Leaf"), "qrc:/app/sub/Leaf.qml");
+        assert_eq!(based.key("qrc:/app/sub/Leaf.qml"), "sub/Leaf");
+        assert_eq!(based.key("sub/Leaf.qml"), "sub/Leaf");
     }
 }

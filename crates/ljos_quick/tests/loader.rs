@@ -642,3 +642,110 @@ Item { Loader { objectName: "loader"; asynchronous: true; source: "Missing.qml" 
     assert!(e.take_warnings().iter().any(|w| w.contains("Missing.qml")));
     let _ = (Loader::ITEM, QuickScene::new);
 }
+
+/// What `tag` of the item of the Loader named `name` says.
+fn loaded_tag(e: &Engine, root: ObjectId, name: &str) -> String {
+    let item = get(e, find(e, root, name), "item")
+        .as_object()
+        .unwrap_or_else(|| panic!("{name} loaded nothing"));
+    text(e, item, "tag")
+}
+
+#[test]
+fn a_source_is_relative_to_the_file_that_declares_the_loader() {
+    // Qt 6.11.2, by running qml6 on the same files.
+    let leaf = |tag: &str| format!("import QtQuick\nItem {{ property string tag: \"{tag}\" }}\n");
+    let (top_leaf, sub_leaf) = (leaf("top leaf"), leaf("sub leaf"));
+    let (top_other, sub_other) = (leaf("top other"), leaf("sub other"));
+    let e = engine();
+    compile(
+        &e,
+        &[
+            (
+                "Main",
+                r#"
+import QtQuick
+Item {
+    Loader { objectName: "own"; source: "Leaf.qml" }
+    Loader { objectName: "outer"; source: "sub/Panel.qml" }
+    function setInner(url) { find().source = url }
+    function find() { return children[1].item.children[0] }
+}
+"#,
+            ),
+            (
+                "sub/Panel",
+                r#"
+import QtQuick
+Item { Loader { objectName: "inner"; source: "Leaf.qml" } }
+"#,
+            ),
+            ("Leaf", &top_leaf),
+            ("Other", &top_other),
+            ("sub/Leaf", &sub_leaf),
+            ("sub/Other", &sub_other),
+        ],
+    );
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    assert_eq!(loaded_tag(&e, root, "own"), "top leaf");
+    assert_eq!(loaded_tag(&e, root, "inner"), "sub leaf");
+    // The property keeps what was written.
+    assert_eq!(text(&e, find(&e, root, "inner"), "source"), "Leaf.qml");
+
+    // Set from another file, the Loader's own file still decides.
+    let set = |url: &str| {
+        e.invoke_by_name(root, "setInner", &[Value::from(url)])
+            .unwrap()
+    };
+    set("Other.qml");
+    assert_eq!(loaded_tag(&e, root, "inner"), "sub other");
+    set("../Leaf.qml");
+    assert_eq!(loaded_tag(&e, root, "inner"), "top leaf");
+    set("file:///Other.qml");
+    assert_eq!(loaded_tag(&e, root, "inner"), "top other");
+    assert!(e.take_warnings().is_empty());
+
+    set("Missing.qml");
+    let inner = find(&e, root, "inner");
+    assert_eq!(get(&e, inner, "status"), Value::Int(3));
+    let warnings = e.take_warnings();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("file:///sub/Missing.qml")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn an_asynchronous_source_is_relative_to_the_loaders_file_too() {
+    let e = engine();
+    compile(
+        &e,
+        &[
+            (
+                "Main",
+                "import QtQuick\nItem { Loader { objectName: \"outer\"; source: \"sub/Panel.qml\" } }\n",
+            ),
+            (
+                "sub/Panel",
+                "import QtQuick\nItem { Loader { objectName: \"inner\"; asynchronous: true; source: \"Leaf.qml\" } }\n",
+            ),
+            (
+                "Leaf",
+                "import QtQuick\nItem { property string tag: \"top leaf\" }\n",
+            ),
+            (
+                "sub/Leaf",
+                "import QtQuick\nItem { property string tag: \"sub leaf\" }\n",
+            ),
+        ],
+    );
+    let root = e.create_from_url("Main", None, Vec::new()).unwrap();
+    let mut s = scene(&e, root, 100.0, 100.0);
+    for _ in 0..4 {
+        frame(&mut s, &e);
+    }
+    assert_eq!(loaded_tag(&e, root, "inner"), "sub leaf");
+    assert!(e.take_warnings().is_empty());
+}

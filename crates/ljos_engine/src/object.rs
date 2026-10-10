@@ -92,6 +92,8 @@ bitflags::bitflags! {
         const FROZEN = 1 << 4;
         /// Being torn down right now.
         const DESTROYING = 1 << 5;
+        /// `Component.onDestruction` has run for it and what it owns.
+        const DESTRUCTION_TOLD = 1 << 6;
     }
 }
 
@@ -216,6 +218,18 @@ pub(crate) struct Location {
     pub(crate) column: u32,
 }
 
+/// Where the binding on `prop` is written: the start of the property's
+/// name, in the file that binds it (which is not always the file the
+/// object is declared in).
+#[derive(Clone, Debug)]
+pub(crate) struct BindingLoc {
+    pub(crate) prop: PropIndex,
+    pub(crate) at: Location,
+    /// What the binding is on when that is a part of the property:
+    /// `font.pixelSize` for a binding stored on `font`.
+    pub(crate) member: Option<Atom>,
+}
+
 /// Per-object state most native objects never need, boxed so the header
 /// stays small.
 #[derive(Default)]
@@ -223,9 +237,9 @@ pub(crate) struct ObjectExt {
     pub(crate) aliases: Vec<(PropIndex, AliasTarget)>,
     pub(crate) methods: Vec<(MethodIndex, ScriptMethod)>,
     pub(crate) location: Option<Location>,
-    /// Where each binding was written: (property, line, column, whether
-    /// the property is declared in QML), for Qt's two loop message forms.
-    pub(crate) binding_locs: Vec<(PropIndex, u32, u32, bool)>,
+    /// Where the binding of each property was written, for binding-loop
+    /// messages.
+    pub(crate) binding_locs: Vec<BindingLoc>,
     /// Contexts made for this object's component instance; destroyed with
     /// it.
     pub(crate) contexts: Vec<ContextId>,

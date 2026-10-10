@@ -236,32 +236,6 @@ Item {
 }
 
 #[test]
-fn a_destruction_handler_is_connected_to_the_attached_object() {
-    use ljos_engine::{Component, MetaRef, QmlType};
-    let h = engine();
-    let root = h.load(
-        r#"import QtQuick
-Item {
-  id: root
-  property int gone: 0
-  Item { objectName: "kid"; Component.onDestruction: root.gone++ }
-}
-"#,
-    );
-    let kid = h.find(root, "kid");
-    // Whoever lets an object go (a Loader, a view) emits `destruction` on
-    // its attached object; the engine's own destroy does not yet.
-    let attached = h
-        .engine
-        .attached_object(kid, &MetaRef::Static(Component::static_meta()))
-        .unwrap();
-    assert_eq!(h.engine.children(kid), vec![attached]);
-    h.engine.emit_by_name(attached, "destruction", &[]).unwrap();
-    assert_eq!(h.num(root, "gone"), 1.0);
-    assert!(h.warnings().is_empty());
-}
-
-#[test]
 fn incremental_creation_yields_and_finishes() {
     let h = engine();
     let mut src = String::from("import QtQuick\nItem {\n  property int sum: 0\n");
@@ -433,4 +407,216 @@ fn a_file_that_uses_a_missing_module_is_rejected() {
     assert!(h.engine.create_from_url("Main", None, vec![]).is_ok());
     let err = h.engine.create_from_url("Nope", None, vec![]).unwrap_err();
     assert!(err.to_string().contains("No such file"), "{err}");
+}
+
+/// Loads `source`, runs `drop()` and the deferred deletes, and returns
+/// what the handlers wrote to `events`.
+fn events_after_drop(source: &str) -> String {
+    let h = engine();
+    let root = h.load(source);
+    h.engine.invoke_by_name(root, "drop", &[]).unwrap();
+    assert_eq!(
+        h.get(root, "events"),
+        Value::from(""),
+        "destroy() is deferred"
+    );
+    h.engine.process_deferred_deletes();
+    assert!(h.warnings().is_empty());
+    h.get(root, "events").to_js_string().to_string()
+}
+
+#[test]
+fn destroying_a_component_instance_tells_children_before_parents() {
+    let events = events_after_drop(
+        r#"import QtQuick
+Item {
+  id: root
+  property string events: ""
+  Component {
+    id: comp
+    Item {
+      id: top
+      Component.onDestruction: root.events += "top" + top.children.length + (top.parent === root) + " "
+      Item {
+        Component.onDestruction: root.events += "middle "
+        Item { Component.onDestruction: root.events += "bottom " }
+      }
+      QtObject { Component.onDestruction: root.events += "plain " }
+    }
+  }
+  property var made: comp.createObject(root)
+  function drop() { made.destroy() }
+}
+"#,
+    );
+    // Everything is still in place while the handlers run.
+    assert_eq!(events, "bottom middle plain top1true ");
+}
+
+const LEAVES: &str = r#"import QtQuick
+Item {
+  id: root
+  property string events: ""
+  component Leaf: Item {
+    property string name
+    Component.onDestruction: root.events += name + " "
+    Item { Component.onDestruction: root.events += parent.name + ".inner " }
+  }
+  Component {
+    id: comp
+    Item {
+      Component.onDestruction: root.events += "top "
+      Leaf { name: "first"; Component.onDestruction: root.events += "(first) " }
+      Item {
+        objectName: "inline"
+        Component.onDestruction: root.events += "inline "
+        Leaf { name: "second" }
+      }
+    }
+  }
+  property var made: comp.createObject(root)
+  function drop() { DROP.destroy() }
+}
+"#;
+
+#[test]
+fn nested_component_instances_are_told_after_the_file_that_uses_them() {
+    // The youngest instance first; an instance's root is told with its
+    // own component, handlers written at the place of use included.
+    assert_eq!(
+        events_after_drop(&LEAVES.replace("DROP", "made")),
+        "inline top second.inner second first.inner first (first) "
+    );
+}
+
+#[test]
+fn an_inline_object_destroyed_alone_is_not_told() {
+    // Its file lives on, so only the component instance inside it hears.
+    assert_eq!(
+        events_after_drop(&LEAVES.replace("DROP", "made.children[1]")),
+        "second.inner second "
+    );
+}
+
+#[test]
+fn a_root_of_derived_components_is_told_from_the_second_layer_outwards() {
+    // Qt 6.11.2, by running qml6. A Loader, which announces the whole
+    // instance itself, starts with the outermost file instead.
+    let source = r#"import QtQuick
+Item {
+  id: root
+  property string events: ""
+  component Base: Item {
+    property string name
+    Component.onDestruction: root.events += name + ".base "
+    Item { Component.onDestruction: root.events += parent.name + ".baseinner " }
+  }
+  component Kid: Base {
+    Component.onDestruction: root.events += name + ".kid "
+    Item { Component.onDestruction: root.events += parent.name + ".kidinner " }
+  }
+  component Top: Kid {
+    Component.onDestruction: root.events += name + ".top "
+    Item { Component.onDestruction: root.events += parent.name + ".topinner " }
+  }
+  Component {
+    id: comp
+    Top {
+      name: "r"
+      Component.onDestruction: root.events += "r.use "
+      Item { Component.onDestruction: root.events += "r.usechild " }
+      Kid { name: "k1" }
+      Kid { name: "k2" }
+    }
+  }
+  property var made: comp.createObject(root)
+  function drop() { made.destroy() }
+}
+"#;
+    let kids = "k2.kidinner k2.baseinner k2.base k2.kid k1.kidinner k1.baseinner k1.base k1.kid ";
+    assert_eq!(
+        events_after_drop(source),
+        format!("r.kidinner r.baseinner r.base r.kid r.top r.use r.topinner r.usechild {kids}")
+    );
+
+    let h = engine();
+    let root = h.load(source);
+    let made = h.get(root, "made").as_object().unwrap();
+    h.engine.announce_destruction(made);
+    assert_eq!(
+        h.get(root, "events").to_js_string().to_string(),
+        format!("r.usechild {kids}r.topinner r.kidinner r.baseinner r.base r.kid r.top r.use ")
+    );
+    // Told once: the deletion that follows is silent.
+    h.set(root, "events", Value::from(""));
+    h.engine.destroy_now(made);
+    assert_eq!(h.get(root, "events"), Value::from(""));
+}
+
+#[test]
+fn a_creation_that_fails_tells_the_object_it_drops() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  id: root
+  property string events: ""
+  Component {
+    id: comp
+    Item { required property int needed; Component.onDestruction: root.events += "failed " }
+  }
+  property var made: comp.createObject(root)
+}
+"#,
+    );
+    assert_eq!(h.get(root, "made"), Value::Null);
+    assert_eq!(h.get(root, "events"), Value::from("failed "));
+    assert_eq!(h.warnings().len(), 1);
+}
+
+#[test]
+fn an_inline_component_reads_the_ids_of_the_file_that_uses_it() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  id: root
+  property int n: 5
+  component Leaf: Item { property int m: root.n + 1 }
+  Leaf { objectName: "leaf" }
+}
+"#,
+    );
+    let leaf = h.find(root, "leaf");
+    assert_eq!(h.num(leaf, "m"), 6.0);
+    h.set(root, "n", Value::Int(9));
+    assert_eq!(h.num(leaf, "m"), 10.0);
+    assert!(h.warnings().is_empty());
+}
+
+#[test]
+fn a_url_is_resolved_against_the_file_that_declares_the_object() {
+    let h = engine();
+    h.files(&[
+        (
+            "parts/Part",
+            "import QtQuick\nItem { Item { objectName: \"inner\" } }\n",
+        ),
+        ("Main", "import QtQuick\nItem { objectName: \"main\" }\n"),
+    ]);
+    let e = &h.engine;
+    let main = e.create_from_url("Main", None, Vec::new()).unwrap();
+    // A root made straight from a URL is declared by its own file.
+    let part = e
+        .create_from_url("file:///parts/Part.qml", Some(main), Vec::new())
+        .unwrap();
+    let inner = h.find(part, "inner");
+    assert_eq!(e.resolve_url(main, "Leaf.qml"), "file:///Leaf.qml");
+    assert_eq!(e.resolve_url(inner, "Leaf.qml"), "file:///parts/Leaf.qml");
+    assert_eq!(e.resolve_url(inner, "../Leaf.qml"), "file:///Leaf.qml");
+    assert_eq!(e.resolve_url(inner, "qrc:/x/Leaf.qml"), "qrc:/x/Leaf.qml");
+    assert_eq!(e.resolve_url(inner, ""), "");
+    // The resolved URL names the file again.
+    let again = e.resolve_url(inner, "Part.qml");
+    assert!(e.create_from_url(&again, Some(main), Vec::new()).is_ok());
 }

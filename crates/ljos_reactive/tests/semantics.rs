@@ -306,7 +306,7 @@ fn diagnostic_handler_receives_reports() {
     let s = got.clone();
     g.set_diagnostic_handler(move |d| s.borrow_mut().push(d.clone()));
     let a = g.property(g.root(), 0).unwrap();
-    g.bind(a, move |g| g.get(a)).unwrap();
+    g.bind(a, move |g| g.get(a) + 1).unwrap();
     g.get(a);
     assert_eq!(got.borrow().len(), 1);
     assert!(g.take_diagnostics().is_empty());

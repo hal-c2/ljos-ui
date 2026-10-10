@@ -352,3 +352,51 @@ Item {
         ("Child", "import QtQuick\nBase { enum Mine { Small } }\n"),
     ]));
 }
+
+#[test]
+fn a_binding_knows_where_its_name_is_written() {
+    // Qt's binding-loop message points at these places (Qt 6.11.2, by
+    // running qml6).
+    let source = "import QtQuick\n\
+Rectangle {\n\
+\x20   id: root\n\
+\x20      width:   height + 1\n\
+\x20   border.width:  root.width\n\
+\x20   border {\n\
+\x20       color: root.color\n\
+\x20   }\n\
+\x20     readonly property int p: width + 1\n\
+}\n";
+    let mut project = Project::new(Runtime::new());
+    project.add("Main", source);
+    let compiled = compile_file(&project, "Main").expect("compiles");
+    assert!(
+        compiled.diagnostics.is_empty(),
+        "{:?}",
+        compiled.diagnostics
+    );
+    let root = &compiled.file.components[0].objects[0];
+    let place = |members: &ljos_ir::Members, name: &str| {
+        let b = members
+            .bindings
+            .iter()
+            .find(|b| b.name == name)
+            .unwrap_or_else(|| panic!("no binding {name}"));
+        let s = b.name_span;
+        (s.line, s.column, &source[s.start as usize..s.end as usize])
+    };
+    assert_eq!(place(&root.members, "width"), (4, 8, "width"));
+    // A value given in a declaration is placed at the declaration.
+    let (line, column, text) = place(&root.members, "p");
+    assert_eq!((line, column), (9, 7));
+    assert!(text.starts_with("readonly property int p"), "{text:?}");
+    let border = &root
+        .grouped
+        .iter()
+        .find(|g| g.path == ["border"])
+        .expect("border")
+        .members;
+    // Dotted, the first part; in braces, the name itself.
+    assert_eq!(place(border, "width"), (5, 5, "border.width"));
+    assert_eq!(place(border, "color"), (7, 9, "color"));
+}

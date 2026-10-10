@@ -92,43 +92,6 @@ Item {
     assert_eq!(h.num(root, "b"), 7.0);
 }
 
-#[test]
-fn a_binding_loop_is_reported_with_qts_message() {
-    let h = engine();
-    h.engine.set_eager_bindings(true);
-    h.load(
-        r#"
-import QtQuick
-Item {
-  property int p: q + 1
-  property int q: p + 1
-}
-"#,
-    );
-    // Once, in Qt's two-line form for a declared property.
-    let w = h.warnings();
-    let p_msgs: Vec<_> = w.iter().filter(|m| m.contains("\"p\"")).collect();
-    assert_eq!(
-        p_msgs,
-        vec![
-            "file:///Main.qml:3:1: QML Main: Binding loop detected for property \"p\":\n\
-             file:///Main.qml:4:3"
-        ],
-        "{w:?}"
-    );
-    assert!(!w.iter().any(|m| m.contains("re-ran")), "{w:?}");
-}
-
-#[test]
-fn an_acyclic_chain_has_no_warnings() {
-    let h = engine();
-    let root = h.load(
-        "import QtQuick\nItem { property int p: 1; property int q: p + 1; property int r: q + 1 }\n",
-    );
-    assert_eq!(h.num(root, "r"), 3.0);
-    assert!(h.warnings().is_empty());
-}
-
 const GEOMETRY: &str = r##"
 import QtQuick
 Item {
@@ -424,6 +387,47 @@ Item {
     assert_eq!(h.get(root, "second").to_js_string().as_str(), "two");
     // Not visual children: only `data` routes items to `children`.
     assert!(h.engine.visual_children(root).is_empty());
+}
+
+#[test]
+fn a_destroyed_object_leaves_the_native_lists_of_its_parent() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  id: root
+  property list<QtObject> picked: [visual, plain]
+  property int kids: children.length
+  Item { id: visual; objectName: "visual" }
+  Item { objectName: "stays" }
+  QtObject { id: plain; objectName: "plain" }
+}
+"#,
+    );
+    let (visual, stays, plain) = (
+        h.find(root, "visual"),
+        h.find(root, "stays"),
+        h.find(root, "plain"),
+    );
+    let raw = |name: &str| match h.get(root, name) {
+        Value::List(l) => (*l).clone(),
+        other => panic!("{name} is {other:?}"),
+    };
+    assert_eq!(h.num(root, "kids"), 2.0);
+    h.engine.destroy_now(visual);
+    assert_eq!(raw("children"), vec![Value::Object(stays)]);
+    assert_eq!(
+        raw("data"),
+        vec![Value::Object(stays), Value::Object(plain)]
+    );
+    // A binding on the list hears of it.
+    assert_eq!(h.num(root, "kids"), 1.0);
+    h.engine.destroy_now(plain);
+    assert_eq!(raw("resources"), vec![]);
+    assert_eq!(raw("data"), vec![Value::Object(stays)]);
+    // A list the author declared keeps its length, as in Qt.
+    assert_eq!(raw("picked").len(), 2);
 }
 
 #[test]

@@ -19,9 +19,10 @@ use crate::builtins::QtObject;
 use crate::cx::Cx;
 use crate::engine::Engine;
 use crate::error::EngineError;
-use crate::ids::{ConnectionId, ObjectId};
+use crate::ids::{ConnectionId, ContextId, ObjectId};
 use crate::incubator::Template;
-use crate::object::QmlType;
+use crate::meta::MetaRef;
+use crate::object::{ObjectFlags, QmlType};
 use crate::signal::Handler;
 use crate::value::Value;
 use crate::{QmlObject, WriteKind, qml_impl};
@@ -104,6 +105,145 @@ impl ComponentAttached {
     fn destruction();
 }
 
+/// One context's share of a destruction: the attached objects to tell,
+/// and the contexts made inside it.
+#[derive(Default)]
+struct Farewell {
+    parent: Option<ContextId>,
+    serial: u64,
+    attached: Vec<ObjectId>,
+    inner: Vec<(u64, ContextId)>,
+    done: bool,
+}
+
+impl Engine {
+    /// Runs `Component.onDestruction` for `obj` and everything it owns,
+    /// while all of it is still alive. [`Engine::destroy_now`] does this
+    /// itself; call it earlier to let an object hear of its end before it
+    /// is taken out of the tree (a `Loader` does). It runs once per
+    /// object.
+    ///
+    /// The order is Qt's, found by running qml6: a component instance
+    /// tells the objects written in its own file first, children before
+    /// their parent, and then the instances of other components made
+    /// inside it, the youngest first. An object that roots a component
+    /// instance is told with that component, not with the file that uses
+    /// it. Objects whose own file lives on (an inline child destroyed by
+    /// hand) are not told at all.
+    pub fn announce_destruction(&self, obj: ObjectId) {
+        self.tell_destruction(obj, true);
+    }
+
+    /// [`Engine::announce_destruction`]. `outermost` starts with the
+    /// outermost component `obj` roots, as a `Loader` does. A plain
+    /// deletion in Qt starts one layer above the innermost and works
+    /// outwards, which shows only for a root whose type derives from a
+    /// component that derives from another.
+    pub(crate) fn tell_destruction(&self, obj: ObjectId, outermost: bool) {
+        if !self.inner.destruction_handlers.get() {
+            return;
+        }
+        let key = MetaRef::Static(<Component as QmlType>::static_meta()).type_id();
+        // (the context it is told with, attached object), children before
+        // their owner.
+        let mut told: Vec<(ContextId, ObjectId)> = Vec::new();
+        let mut rooted: Vec<ContextId> = Vec::new();
+        let own: Vec<ContextId> = {
+            let mut store = self.inner.store.borrow_mut();
+            let Some(h) = store.objects.get_mut(obj) else {
+                return;
+            };
+            if h.flags.contains(ObjectFlags::DESTRUCTION_TOLD) {
+                return;
+            }
+            h.flags |= ObjectFlags::DESTRUCTION_TOLD;
+            let own = h.ext.as_ref().map_or_else(Vec::new, |e| e.contexts.clone());
+            let mut stack = vec![(obj, false)];
+            while let Some((id, expanded)) = stack.pop() {
+                let Some(h) = store.objects.get(id) else {
+                    continue;
+                };
+                let contexts = h.ext.as_ref().map_or(&[][..], |e| &e.contexts[..]);
+                if expanded {
+                    if let Some((_, a)) = h.attached.iter().find(|(k, _)| *k == key) {
+                        told.push((contexts.first().copied().unwrap_or(h.context), *a));
+                    }
+                    continue;
+                }
+                if id != obj && h.flags.contains(ObjectFlags::DESTRUCTION_TOLD) {
+                    // Told earlier, with all it owns.
+                    continue;
+                }
+                rooted.extend_from_slice(contexts);
+                stack.push((id, true));
+                stack.extend(h.children.iter().rev().map(|c| (*c, false)));
+            }
+            own
+        };
+        if told.is_empty() {
+            return;
+        }
+        let mut farewells: HashMap<ContextId, Farewell> = rooted
+            .iter()
+            .filter_map(|c| {
+                let (parent, serial) = self.context_lineage(*c)?;
+                Some((
+                    *c,
+                    Farewell {
+                        parent,
+                        serial,
+                        ..Farewell::default()
+                    },
+                ))
+            })
+            .collect();
+        for (c, a) in told {
+            // A context that is not going keeps its objects' handlers.
+            if let Some(f) = farewells.get_mut(&c) {
+                f.attached.push(a);
+            }
+        }
+        let mut tops: Vec<(u64, ContextId)> = Vec::new();
+        for c in &rooted {
+            let Some((parent, serial)) = farewells.get(c).map(|f| (f.parent, f.serial)) else {
+                continue;
+            };
+            match parent.and_then(|p| farewells.get_mut(&p)) {
+                Some(p) => p.inner.push((serial, *c)),
+                None => tops.push((serial, *c)),
+            }
+        }
+        tops.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
+        let last = own.len().saturating_sub(1);
+        let start = if outermost { last } else { last.min(1) };
+        let mut order: Vec<ObjectId> = Vec::new();
+        for c in own[start.min(own.len())..]
+            .iter()
+            .copied()
+            .chain(tops.iter().map(|t| t.1))
+        {
+            let mut stack = vec![c];
+            while let Some(c) = stack.pop() {
+                let Some(f) = farewells.get_mut(&c) else {
+                    continue;
+                };
+                if std::mem::replace(&mut f.done, true) {
+                    continue;
+                }
+                order.append(&mut f.attached);
+                // Popped from the end: the youngest goes on last.
+                f.inner.sort_unstable();
+                stack.extend(f.inner.iter().map(|i| i.1));
+            }
+        }
+        for a in order {
+            if self.is_alive(a) {
+                let _ = self.emit_by_name(a, "destruction", &[]);
+            }
+        }
+    }
+}
+
 /// `Connections`: handlers for the signals of another object.
 #[derive(QmlObject)]
 #[qml(module = "QtQml", name = "Connections", extends = QtObject)]
@@ -172,6 +312,11 @@ pub struct Timer {
     pub repeat: bool,
     #[qml(notify)]
     pub triggered_on_start: bool,
+    /// The object the timer is declared in. Qt's `Timer` has this property
+    /// although a plain `QtObject` has none; the engine keeps it equal to
+    /// the owner.
+    #[qml(notify, readonly)]
+    pub parent: Option<ObjectId>,
     #[qml(skip)]
     completed: bool,
 }
@@ -184,6 +329,7 @@ impl Default for Timer {
             running: false,
             repeat: false,
             triggered_on_start: false,
+            parent: None,
             completed: false,
         }
     }
@@ -333,8 +479,6 @@ impl Engine {
     /// `Qt.callLater` queue. A repeating timer due several times fires
     /// several times, as if the host had woken for each.
     pub fn advance_timers(&self, now: Time) {
-        // A new turn: loops may be reported again.
-        self.inner.loops_reported.borrow_mut().clear();
         let mut fired: HashMap<ObjectId, u32> = HashMap::new();
         loop {
             let next = {

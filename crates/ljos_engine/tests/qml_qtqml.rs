@@ -220,3 +220,90 @@ Item {
     let r = h.engine.invoke_by_name(root, "isNull", &[]).unwrap();
     assert_eq!(r, Value::Bool(true));
 }
+
+#[test]
+fn a_timers_parent_is_the_object_it_is_declared_in() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  id: root
+  Item {
+    objectName: "panel"
+    property int ticks: 0
+    property int step: 3
+    Timer {
+      id: timer
+      objectName: "timer"
+      property int twice: parent.step * 2
+      running: true; repeat: true; interval: 50
+      onTriggered: parent.ticks += parent.step
+    }
+  }
+  property bool has: "parent" in timer
+  property string name: timer.parent.objectName
+}
+"#,
+    );
+    let (panel, timer) = (h.find(root, "panel"), h.find(root, "timer"));
+    assert_eq!(h.get(timer, "parent"), Value::Object(panel));
+    assert_eq!(h.num(timer, "twice"), 6.0);
+    assert_eq!(h.get(root, "has"), Value::Bool(true));
+    assert_eq!(h.get(root, "name"), Value::from("panel"));
+    h.pass_ms(120);
+    assert_eq!(h.num(panel, "ticks"), 6.0);
+    assert!(h.warnings().is_empty());
+}
+
+#[test]
+fn a_timers_parent_follows_its_owner() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  Item { objectName: "a" }
+  Item {
+    objectName: "b"
+    Timer { id: timer; objectName: "timer" }
+  }
+  property string name: timer.parent ? timer.parent.objectName : "none"
+}
+"#,
+    );
+    let (a, timer) = (h.find(root, "a"), h.find(root, "timer"));
+    assert_eq!(h.get(root, "name"), Value::from("b"));
+    h.engine.set_owner(timer, Some(a)).unwrap();
+    assert_eq!(h.get(root, "name"), Value::from("a"));
+    h.engine.set_owner(timer, None).unwrap();
+    assert_eq!(h.get(root, "name"), Value::from("none"));
+}
+
+#[test]
+fn parent_inside_a_plain_object_is_the_component_roots_parent() {
+    // A `QtObject` has no `parent` property in Qt, so the name is looked
+    // up further out and found on the component's root object.
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  id: root
+  Item {
+    id: inner
+    objectName: "inner"
+    Item {
+      objectName: "panel"
+      QtObject {
+        objectName: "plain"
+        property bool rootsParent: parent === root.parent
+        property bool panel: parent !== null && parent.objectName === "panel"
+      }
+    }
+  }
+}
+"#,
+    );
+    let plain = h.find(root, "plain");
+    assert_eq!(h.get(plain, "rootsParent"), Value::Bool(true));
+    assert_eq!(h.get(plain, "panel"), Value::Bool(false));
+    assert!(h.warnings().is_empty());
+}

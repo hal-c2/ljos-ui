@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 /// This is deliberately small. The Engine's own `Value` maps onto it. JS
 /// values with identity that are not host objects (functions, plain objects)
 /// cross as a [`JsRef`]; value types such as `point` go into JS as a
-/// [`JsValue::Map`] (a fresh plain object).
+/// [`JsValue::Map`] (a fresh plain object). A colour is the exception: it
+/// compares by value in QML, so it has a variant of its own.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum JsValue {
     #[default]
@@ -21,6 +22,10 @@ pub enum JsValue {
     Handle(JsRef),
     /// Into JS only: a new plain object with these fields, in order.
     Map(Vec<(String, JsValue)>),
+    /// A colour: red, green, blue and alpha, 16 bits each, not
+    /// premultiplied. JS sees one frozen object per distinct colour, so two
+    /// equal colours are `===` there as well.
+    Color([u16; 4]),
 }
 
 /// A strong reference to a JS value held by Rust (a function given to

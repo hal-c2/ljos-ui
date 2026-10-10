@@ -62,11 +62,16 @@
 //! [`Options::eager`] makes every binding eager, the `--eager` debug mode
 //! for differential testing.
 //!
-//! **Loops.** Reading a node that is [`NodeState::Computing`] is a binding
-//! loop: the read returns the stale value, the node is not re-entered, and a
-//! [`Diagnostic::BindingLoop`] with the cycle is reported. Effects that keep
-//! re-dirtying each other are capped per flush
-//! ([`Diagnostic::RerunLimit`]).
+//! **Loops.** A node that is [`NodeState::Computing`] is never re-entered:
+//! a read of it returns the stale value. That is not yet a loop, because the
+//! reader may be unrelated (a nested flush ran it) or the value may turn out
+//! unchanged. A binding loop is a binding whose new value travels through
+//! its observers back to itself. It is reported once
+//! ([`Diagnostic::BindingLoop`], with the cycle) and broken the way Qt
+//! breaks it: the other members are evaluated once against the new value
+//! and the binding does not run again, so the cycle settles instead of
+//! counting upwards. Effects that keep re-dirtying each other are capped per
+//! flush ([`Diagnostic::RerunLimit`]).
 //!
 //! **Frozen scopes.** An effect owned by a frozen scope is parked when its
 //! turn comes. It stays dirty, so further changes coalesce; on thaw it runs

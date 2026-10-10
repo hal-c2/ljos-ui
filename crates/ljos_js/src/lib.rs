@@ -27,6 +27,7 @@
 //! collection, memory statistics) refuse to run inside a run.
 
 mod bytecode;
+mod color;
 mod config;
 mod fault;
 mod host;

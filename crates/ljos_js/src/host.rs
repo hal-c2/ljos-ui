@@ -63,6 +63,16 @@ pub(crate) struct HostState {
     /// Keys of dropped [`JsRef`]s. A mutex because a `JsRef` may be dropped
     /// on any thread; only this host ever drains it.
     handle_release: Arc<Mutex<Vec<u64>>>,
+    /// Made by the first colour that crosses; most hosts never see one
+    /// before their first QML file does.
+    color: RefCell<Option<ColorFace>>,
+}
+
+/// The JS side of [`JsValue::Color`] (see [`crate::color`]).
+struct ColorFace {
+    make: Persistent<Function<'static>>,
+    /// What tells a colour from any other object coming back from JS.
+    proto: Persistent<Object<'static>>,
 }
 
 impl HostState {
@@ -331,7 +341,52 @@ impl<'js> Scope<'js> {
                 }
                 o.into_value()
             }
+            JsValue::Color([r, g, b, a]) => {
+                let (make, _) = self.color_face()?;
+                make.call((i32::from(*r), i32::from(*g), i32::from(*b), i32::from(*a)))?
+            }
         })
+    }
+
+    fn color_face(&self) -> rquickjs::Result<(Function<'js>, Object<'js>)> {
+        let cached = self
+            .state
+            .color
+            .borrow()
+            .as_ref()
+            .map(|f| (f.make.clone(), f.proto.clone()));
+        if let Some((make, proto)) = cached {
+            return Ok((make.restore(&self.ctx)?, proto.restore(&self.ctx)?));
+        }
+        let face: Object<'js> = self.ctx.eval(crate::color::FACE)?;
+        let make: Function<'js> = face.get("make")?;
+        let proto: Object<'js> = face.get("proto")?;
+        *self.state.color.borrow_mut() = Some(ColorFace {
+            make: Persistent::save(&self.ctx, make.clone()),
+            proto: Persistent::save(&self.ctx, proto.clone()),
+        });
+        Ok((make, proto))
+    }
+
+    /// The channels of `o` when it is a colour object.
+    fn read_color(&self, o: &Object<'js>) -> rquickjs::Result<Option<[u16; 4]>> {
+        let proto = self.state.color.borrow().as_ref().map(|f| f.proto.clone());
+        let Some(proto) = proto else {
+            return Ok(None);
+        };
+        if o.get_prototype() != Some(proto.restore(&self.ctx)?) {
+            return Ok(None);
+        }
+        let mut out = [0u16; 4];
+        for (slot, key) in out.iter_mut().zip(["r", "g", "b", "a"]) {
+            // Script can build an object on the colour prototype by hand;
+            // without the channels it is just an object.
+            let Some(v) = o.get::<_, Value<'js>>(key)?.as_number() else {
+                return Ok(None);
+            };
+            *slot = (v * 65535.0).round().clamp(0.0, 65535.0) as u16;
+        }
+        Ok(Some(out))
     }
 
     pub fn from_value(&self, v: &Value<'js>) -> rquickjs::Result<JsValue> {
@@ -361,7 +416,10 @@ impl<'js> Scope<'js> {
                 let o = v.as_object().expect("object");
                 match Class::<HostWrapper>::from_object(o) {
                     Some(c) => JsValue::Object(c.borrow().id),
-                    None => JsValue::Handle(self.keep(v.clone())),
+                    None => match self.read_color(o)? {
+                        Some(c) => JsValue::Color(c),
+                        None => JsValue::Handle(self.keep(v.clone())),
+                    },
                 }
             }
             // Identity matters for these (a handler is disconnected by the
@@ -449,6 +507,7 @@ impl Drop for JsHost {
         self.state.types.borrow_mut().clear();
         self.state.wrappers.borrow_mut().clear();
         self.state.handles.borrow_mut().clear();
+        self.state.color.borrow_mut().take();
     }
 }
 
@@ -504,6 +563,7 @@ impl JsHost {
             handles: RefCell::default(),
             next_handle: Cell::new(1),
             handle_release: Arc::default(),
+            color: RefCell::default(),
         });
         Ok(Self {
             state,

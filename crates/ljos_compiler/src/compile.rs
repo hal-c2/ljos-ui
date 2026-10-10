@@ -342,7 +342,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         continue;
                     }
                     let (slot, name) = self.slot(&path, binding.name.span);
-                    self.value(owner, slot, name, &binding.value, true);
+                    self.value(owner, slot, name, binding.name.span, &binding.value, true);
                 }
                 QmlMember::Property(declaration) => self.property(owner, declaration),
                 QmlMember::Signal(signal) => {
@@ -431,7 +431,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             span,
         });
         if !is_alias && let Some(value) = &declaration.value {
-            self.value(owner, Slot::Own, name, value, false);
+            // Qt places such a binding at the declaration.
+            self.value(owner, Slot::Own, name, declaration.span, value, false);
         }
     }
 
@@ -521,10 +522,12 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         owner: usize,
         slot: Slot,
         name: String,
+        name_span: Span,
         value: &QmlBindingValue<'a>,
         may_handle: bool,
     ) {
         let at = self.place[owner];
+        let name_span = self.span(name_span);
         let signal = handled(&name).filter(|_| may_handle);
         let target = self.describe(owner, &slot, &name);
         match value {
@@ -558,9 +561,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         Some(Vec::new()),
                         &target,
                     );
-                    self.members_mut(at, &slot)
-                        .bindings
-                        .push(PropertyBinding { name, expr });
+                    self.members_mut(at, &slot).bindings.push(PropertyBinding {
+                        name,
+                        expr,
+                        name_span,
+                    });
                 }
             }
             QmlBindingValue::Statement(statement) => {
@@ -571,9 +576,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     Some(Vec::new()),
                     &target,
                 );
-                self.members_mut(at, &slot)
-                    .bindings
-                    .push(PropertyBinding { name, expr });
+                self.members_mut(at, &slot).bindings.push(PropertyBinding {
+                    name,
+                    expr,
+                    name_span,
+                });
             }
             QmlBindingValue::Object(object) => {
                 let values = self

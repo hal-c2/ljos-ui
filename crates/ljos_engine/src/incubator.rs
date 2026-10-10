@@ -11,7 +11,10 @@
 //!    literals, grouped values, object values, children, handlers,
 //!    functions, bindings and attached members. Bindings are lazy, except
 //!    what an effect (a change handler) pulls; a component's own level is
-//!    applied before the level that uses it.
+//!    applied before the level that uses it. In eager mode the bindings
+//!    run once all are in place, in the order Qt runs them
+//!    (`Engine::run_held`), so a binding loop is reported for the same
+//!    member as there.
 //! 3. **Finalize**: initial properties, the required check, native
 //!    completion hooks, then `Component.onCompleted` in Qt's order (each
 //!    object before its children, children last first; a component's own
@@ -23,18 +26,18 @@ use std::rc::{Rc, Weak};
 
 use ljos_ir::{
     Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, Literal, Members, ObjRef, ObjectValue,
-    PropertyDecl, TranslationKind, TypeRef,
+    PropertyBinding, SourceSpan, TranslationKind, TypeRef,
 };
 use ljos_js::{JsValue, Scope};
 use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
 
 use crate::atom::Atom;
-use crate::engine::Engine;
+use crate::engine::{Engine, Held};
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::loader::LoadedFile;
 use crate::meta::{MetaBuilder, MetaRef, PropertyFlags};
-use crate::object::{Location, QmlType};
+use crate::object::{BindingLoc, Location, QmlType};
 use crate::qtqml::{Component, Connections};
 use crate::types::TypeTag;
 use crate::value::{Color, Value};
@@ -49,6 +52,9 @@ pub(crate) struct Instance {
     pub(crate) file: Rc<LoadedFile>,
     pub(crate) comp: CompIdx,
     pub(crate) objects: Vec<ObjectId>,
+    /// Per object: the instance of the component file it is made from
+    /// (`Foo {}`), whose root it is.
+    inner: Vec<Option<Rc<Instance>>>,
     /// The instance a template or delegate was made inside: its ids are in
     /// sight.
     pub(crate) outer: Option<Rc<Instance>>,
@@ -110,12 +116,119 @@ struct Creation {
     all: Vec<ObjectId>,
     nodes: HashMap<ObjectId, CompletionNode>,
     depth: u32,
+    /// The instance the creation was asked for.
+    top: Option<Rc<Instance>>,
+    /// Eager mode: the bindings installed so far, not yet run.
+    held: Vec<Held>,
+}
+
+/// Puts the hold of an outer creation back when an inner one is through,
+/// also if it panics.
+struct HoldGuard<'a> {
+    engine: &'a Engine,
+    outer: Option<Vec<Held>>,
+}
+
+impl Drop for HoldGuard<'_> {
+    fn drop(&mut self) {
+        *self.engine.inner.eager_hold.borrow_mut() = self.outer.take();
+    }
 }
 
 enum RootSpec {
     New(Option<ObjectId>),
     /// The object that uses the component (`Foo {}`), already made.
     Existing(ObjectId),
+}
+
+fn instance_key(inst: &Instance) -> usize {
+    std::ptr::from_ref(inst) as usize
+}
+
+/// The bindings of object `obj` of `inst` and of everything written in
+/// it, as (instance, offset of the name), in the order Qt sets them up:
+/// the component the object is made from first; then what the object is
+/// given by name, from the last written to the first, an object value
+/// set up where it stands; then the objects written in it, first to
+/// last; then what it gives attached objects, and last its groups, each
+/// from the last written to the first.
+fn setup_order(inst: &Rc<Instance>, obj: usize, out: &mut Vec<(usize, u32)>) {
+    if let Some(Some(inner)) = inst.inner.get(obj) {
+        setup_order(inner, 0, out);
+    }
+    let def = inst.file.ir.component(inst.comp);
+    let Some(od) = def.objects.get(obj) else {
+        return;
+    };
+    members_order(inst, &od.members, out);
+    for v in &od.children {
+        if let ObjectValue::Object(j) = v {
+            setup_order(inst, j.index(), out);
+        }
+    }
+    let mut sets: Vec<&Members> = od.attached.iter().map(|a| &a.members).collect();
+    sets.sort_by_key(|m| std::cmp::Reverse(first_binding(inst, m)));
+    for m in sets {
+        members_order(inst, m, out);
+    }
+    let mut sets: Vec<&Members> = od.grouped.iter().map(|g| &g.members).collect();
+    sets.sort_by_key(|m| std::cmp::Reverse(first_binding(inst, m)));
+    for m in sets {
+        members_order(inst, m, out);
+    }
+}
+
+/// The offset of the first binding of `m`.
+fn first_binding(inst: &Instance, m: &Members) -> u32 {
+    m.bindings
+        .iter()
+        .map(|pb| name_place(pb, inst.file.ir.expr(pb.expr).span).start)
+        .min()
+        .unwrap_or(u32::MAX)
+}
+
+/// [`setup_order`] for one set of members.
+fn members_order(inst: &Rc<Instance>, m: &Members, out: &mut Vec<(usize, u32)>) {
+    let def = inst.file.ir.component(inst.comp);
+    // (offset, the objects given there; none for a binding)
+    let mut steps: Vec<(u32, &[ObjectValue])> = m
+        .bindings
+        .iter()
+        .map(|pb| {
+            let at = name_place(pb, inst.file.ir.expr(pb.expr).span).start;
+            (at, &[][..])
+        })
+        .collect();
+    for oa in &m.objects {
+        let at = oa.values.iter().find_map(|v| match v {
+            ObjectValue::Object(j) => def.objects.get(j.index()).map(|o| o.span.start),
+            ObjectValue::Component(_) => None,
+        });
+        if let Some(at) = at {
+            steps.push((at, &oa.values));
+        }
+    }
+    steps.sort_by_key(|s| std::cmp::Reverse(s.0));
+    for (at, values) in steps {
+        if values.is_empty() {
+            out.push((instance_key(inst), at));
+        }
+        for v in values {
+            if let ObjectValue::Object(j) = v {
+                setup_order(inst, j.index(), out);
+            }
+        }
+    }
+}
+
+/// Where Qt says a binding is: at its name. IR built by hand may leave
+/// the name's place out; the expression's is the next best.
+fn name_place(pb: &PropertyBinding, expr: SourceSpan) -> SourceSpan {
+    if pb.name_span.line == 0 {
+        expr
+    } else {
+        pb.name_span
+    }
 }
 
 /// A property (or a dotted group leaf) to write.
@@ -149,7 +262,7 @@ impl Engine {
     }
 
     fn file_template(&self, url: &str) -> Result<Template, EngineError> {
-        let key = Engine::url_key(url);
+        let key = self.url_key(url);
         let file = self.load_file(&key)?;
         let comp = file
             .find_component(None)
@@ -170,12 +283,20 @@ impl Engine {
         let mut cr = Creation::default();
         let root = self.allocate_template(&mut cr, template, parent)?;
         let r = self.batch(|| -> Result<(), EngineError> {
-            self.apply_aliases(&cr);
-            for i in 0..cr.units.len() {
-                self.apply_unit(&cr, i);
-            }
-            self.finish_props(root, &props)
+            let (r, held) = self.hold_eager(|| {
+                self.apply_aliases(&cr);
+                for i in 0..cr.units.len() {
+                    self.apply_unit(&cr, i);
+                }
+                self.finish_props(root, &props)
+            });
+            cr.held = held;
+            self.run_held(&cr);
+            r
         });
+        if r.is_ok() {
+            self.release_held(&cr);
+        }
         self.finalize(cr, root, r)
     }
 
@@ -201,6 +322,7 @@ impl Engine {
             ctx_parent,
         )?;
         let root = inst.objects[0];
+        cr.top = Some(inst.clone());
         // The instance (and so its contexts) lives as long as its root.
         self.keep_with(root, inst.clone());
         if let Some(p) = parent
@@ -296,10 +418,141 @@ impl Engine {
         }
     }
 
-    fn add_binding_loc(&self, obj: ObjectId, prop: PropIndex, at: (u32, u32), declared: bool) {
+    /// Notes where the binding now on `prop` is written; an earlier
+    /// binding's place (the base file's, say) is forgotten.
+    fn set_binding_loc(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        inst: &Instance,
+        at: SourceSpan,
+        member: Option<Atom>,
+    ) {
         if let Some(h) = self.inner.store.borrow_mut().objects.get_mut(obj) {
-            h.ext_mut().binding_locs.push((prop, at.0, at.1, declared));
+            let locs = &mut h.ext_mut().binding_locs;
+            locs.retain(|l| l.prop != prop);
+            locs.push(BindingLoc {
+                prop,
+                at: Location {
+                    url: inst.url().clone(),
+                    line: at.line,
+                    column: at.column,
+                },
+                member,
+            });
         }
+        // The binding was installed just now, so it is at the end.
+        let node = match self.inner.eager_hold.borrow_mut().as_mut() {
+            Some(held) => held
+                .iter_mut()
+                .rev()
+                .find(|h| h.obj == obj && h.prop == prop)
+                .map(|h| {
+                    h.place = Some((instance_key(inst), at.start));
+                    h.node
+                }),
+            None => None,
+        };
+        // Qt installs this one after the others have run; until then
+        // the property reads as what it was.
+        if let Some(n) = node
+            && self.is_qt_bindable(obj, prop)
+        {
+            let _ = self.inner.graph.hold(n);
+        }
+    }
+
+    /// Runs `f` with eager evaluation held back and returns the bindings
+    /// it installed. Nothing is held in lazy mode.
+    fn hold_eager<R>(&self, f: impl FnOnce() -> R) -> (R, Vec<Held>) {
+        if !self.inner.eager_bindings.get() {
+            return (f(), Vec::new());
+        }
+        let outer = self.inner.eager_hold.replace(Some(Vec::new()));
+        let guard = HoldGuard {
+            engine: self,
+            outer,
+        };
+        let r = f();
+        let held = self.inner.eager_hold.borrow_mut().take();
+        drop(guard);
+        (r, held.unwrap_or_default())
+    }
+
+    /// Eager mode: runs the bindings a creation installed, in the order
+    /// Qt runs them (found by running qml6 6.11.2 with bindings that log),
+    /// so that the same member of a binding loop is reported and the
+    /// members are left with the same values.
+    ///
+    /// Qt sets an object up in the order of [`setup_order`] and then runs
+    /// the bindings from the last one set up to the first; a binding that
+    /// reads a property whose binding has not run yet runs that one first.
+    /// That is this function. Bindings on Qt's bindable properties are not
+    /// there yet while this happens (the graph holds them), so a read gives
+    /// the old value; [`Engine::release_held`] brings them in afterwards.
+    fn run_held(&self, cr: &Creation) {
+        let g = &self.inner.graph;
+        for i in self.held_order(cr, false) {
+            let n = cr.held[i].node;
+            if g.is_bound(n) && g.set_eager(n, true).is_ok() {
+                g.untrack(|| g.try_get(n));
+            }
+        }
+    }
+
+    /// The second half of [`Engine::run_held`]: Qt installs the bindings
+    /// on its bindable properties one by one in set-up order and runs each
+    /// as it goes in; what read the property before runs again. Called
+    /// outside the creation's batch so that those run before the next
+    /// binding goes in, as in Qt.
+    fn release_held(&self, cr: &Creation) {
+        let g = &self.inner.graph;
+        for i in self.held_order(cr, true) {
+            let n = cr.held[i].node;
+            if !g.is_held(n) {
+                continue;
+            }
+            g.batch(|| {
+                if g.release(n).is_ok() && g.set_eager(n, true).is_ok() {
+                    g.untrack(|| g.try_get(n));
+                }
+            });
+        }
+    }
+
+    /// Indices into `cr.held`: the held bindable ones in set-up order, or
+    /// the others from the last set up to the first.
+    fn held_order(&self, cr: &Creation, bindable: bool) -> Vec<usize> {
+        if cr.held.is_empty() {
+            return Vec::new();
+        }
+        let mut places: HashMap<(usize, u32), usize> = HashMap::new();
+        if let Some(top) = &cr.top {
+            let mut order = Vec::new();
+            setup_order(top, 0, &mut order);
+            places = order.into_iter().enumerate().map(|(i, k)| (k, i)).collect();
+        }
+        // A binding replaced by a later one (the using file's) is gone.
+        let mut last: HashMap<_, usize> = HashMap::new();
+        for (i, h) in cr.held.iter().enumerate() {
+            last.insert(h.node, i);
+        }
+        let g = &self.inner.graph;
+        let mut run: Vec<(u8, usize, usize)> = cr
+            .held
+            .iter()
+            .enumerate()
+            .filter(|(i, h)| last[&h.node] == *i && g.is_held(h.node) == bindable)
+            .map(|(i, h)| match h.place.and_then(|p| places.get(&p)) {
+                Some(&at) if bindable => (0, at, i),
+                Some(&at) => (0, usize::MAX - at, i),
+                // Installed by a native type: after the written ones, in
+                // the order they came.
+                None => (1, 0, i),
+            })
+            .collect();
+        run.sort_unstable();
+        run.into_iter().map(|r| r.2).collect()
     }
 
     fn add_context(&self, obj: ObjectId, ctx: ContextId) {
@@ -336,6 +589,7 @@ impl Engine {
         let ctx = self.create_context(Some(ctx_parent));
         let def = file.ir.component(comp);
         let mut objects: Vec<ObjectId> = Vec::with_capacity(def.objects.len());
+        let mut inner: Vec<Option<Rc<Instance>>> = Vec::with_capacity(def.objects.len());
         for (i, od) in def.objects.iter().enumerate() {
             let meta = self.object_meta(&file, comp, i)?;
             let id = match (i, &root) {
@@ -360,6 +614,7 @@ impl Engine {
                 self.set_context_id(ctx, name, id);
             }
             objects.push(id);
+            inner.push(None);
             if let TypeRef::Component { file: f, inline } = &od.ty {
                 let inner_file = if *f == file.key {
                     file.clone()
@@ -369,14 +624,14 @@ impl Engine {
                 let inner_comp = inner_file
                     .find_component(inline.as_deref())
                     .ok_or_else(|| EngineError::Load(format!("{}: no component {f}", file.url)))?;
-                self.allocate(
+                inner[i] = Some(self.allocate(
                     cr,
                     inner_file,
                     inner_comp,
                     RootSpec::Existing(id),
                     None,
                     ctx,
-                )?;
+                )?);
             }
         }
         if let Some(&root_id) = objects.first() {
@@ -386,6 +641,7 @@ impl Engine {
             file: file.clone(),
             comp,
             objects,
+            inner,
             outer,
             context: ctx,
         });
@@ -598,10 +854,10 @@ impl Engine {
         let inst = &u.inst;
         let od = &inst.file.ir.component(inst.comp).objects[u.obj];
         let id = inst.objects[u.obj];
-        self.apply_members(inst, id, &od.members, &[], id, &od.properties);
+        self.apply_members(inst, id, &od.members, &[], id);
         for g in &od.grouped {
             if !self.apply_value_members(inst, id, &g.members, &g.path) {
-                self.apply_members(inst, id, &g.members, &g.path, id, &[]);
+                self.apply_members(inst, id, &g.members, &g.path, id);
             }
         }
         for v in &od.children {
@@ -661,6 +917,7 @@ impl Engine {
                 else {
                     continue;
                 };
+                self.inner.destruction_handlers.set(true);
                 self.connect_handler(inst, att, "destruction", h.expr, id);
             }
             return;
@@ -669,7 +926,7 @@ impl Engine {
             .type_meta(&inst.file, &at.ty)
             .and_then(|m| self.attached_object(id, &m));
         match att {
-            Ok(att) => self.apply_members(inst, att, &at.members, &[], id, &[]),
+            Ok(att) => self.apply_members(inst, att, &at.members, &[], id),
             Err(e) => self.warn(format!(
                 "{}{}: {e}",
                 self.location_of(id).unwrap_or_default(),
@@ -687,7 +944,6 @@ impl Engine {
         m: &Members,
         path: &[String],
         scope: ObjectId,
-        decls: &[PropertyDecl],
     ) {
         for a in &m.assignments {
             let t = match self.member_target(obj, path, &a.name) {
@@ -768,12 +1024,7 @@ impl Engine {
                     continue;
                 }
             };
-            // Qt names a declared property by its declaration.
-            let decl = decls
-                .iter()
-                .find(|d| d.name == pb.name)
-                .map(|d| (d.span.line, d.span.column));
-            self.install_binding(inst, &t, pb.expr, decl);
+            self.install_binding(inst, &t, pb);
         }
     }
 
@@ -815,9 +1066,11 @@ impl Engine {
             }
         }
         let mut bound = Vec::new();
+        let mut first: Option<&PropertyBinding> = None;
         for pb in &m.bindings {
             if base.with_member(&ty, &pb.name, &Value::Undefined).is_some() {
                 bound.push((pb.name.clone(), pb.expr));
+                first.get_or_insert(pb);
             } else {
                 let b = inst.file.ir.expr(pb.expr);
                 self.no_property(inst, b.span.line, b.span.column, path, &pb.name);
@@ -847,10 +1100,8 @@ impl Engine {
             }
             return true;
         }
-        let at = {
-            let b = inst.file.ir.expr(bound[0].1);
-            (b.span.line, b.span.column)
-        };
+        let Some(first) = first else { return true };
+        let expr_at = inst.file.ir.expr(first.expr).span;
         let i = inst.clone();
         let r = self.bind_fallible(obj, prop, move |e| {
             let mut v = base.clone();
@@ -863,9 +1114,15 @@ impl Engine {
         match r {
             Ok(()) => {
                 let (o, p) = self.redirect(obj, prop);
-                self.add_binding_loc(o, p, at, false);
+                let member = Atom::new(&format!("{name}.{}", first.name));
+                self.set_binding_loc(o, p, inst, name_place(first, expr_at), Some(member));
             }
-            Err(e) => self.warn(format!("{}:{}:{}: {e}", inst.url(), at.0, at.1)),
+            Err(e) => self.warn(format!(
+                "{}:{}:{}: {e}",
+                inst.url(),
+                expr_at.line,
+                expr_at.column
+            )),
         }
         true
     }
@@ -1016,13 +1273,8 @@ impl Engine {
         }
     }
 
-    fn install_binding(
-        &self,
-        inst: &Rc<Instance>,
-        t: &Target,
-        expr: ExprId,
-        decl: Option<(u32, u32)>,
-    ) {
+    fn install_binding(&self, inst: &Rc<Instance>, t: &Target, pb: &PropertyBinding) {
+        let expr = pb.expr;
         let b = inst.file.ir.expr(expr);
         let hint = self
             .meta_of(t.obj)
@@ -1033,10 +1285,7 @@ impl Engine {
         match r {
             Ok(()) => {
                 let (obj, prop) = self.redirect(t.obj, t.prop);
-                // Without a declaration this is the expression's start,
-                // not the property name's (the IR has no name span).
-                let at = decl.unwrap_or((b.span.line, b.span.column));
-                self.add_binding_loc(obj, prop, at, decl.is_some());
+                self.set_binding_loc(obj, prop, inst, name_place(pb, b.span), None);
             }
             Err(e) => self.warn(format!(
                 "{}:{}:{}: {e}",
@@ -1151,6 +1400,25 @@ impl Engine {
         Some(Some(cur))
     }
 
+    /// A name the running program supplies. One tied to a component is
+    /// a context property of that component's instance (a model role);
+    /// one that is not may also be an id of whatever the instance was
+    /// made in.
+    fn context_arg(
+        &self,
+        inst: &Instance,
+        component: Option<CompIdx>,
+        name: &str,
+    ) -> Option<Value> {
+        match component {
+            Some(c) => {
+                let ctx = inst.find(c).map_or(inst.context, |i| i.context);
+                self.context_property(ctx, name)
+            }
+            None => self.context_name(inst.context, name),
+        }
+    }
+
     /// A parameter as an engine value, for tier 0. `None` for what only JS
     /// can supply.
     fn arg_value(&self, inst: &Instance, arg: &Arg) -> Option<Value> {
@@ -1164,16 +1432,10 @@ impl Engine {
                 component,
                 name,
                 fallback,
-            } => {
-                let ctx = match component {
-                    Some(c) => inst.find(*c).map_or(inst.context, |i| i.context),
-                    None => inst.context,
-                };
-                match self.context_property(ctx, name) {
-                    Some(v) => Some(v),
-                    None => self.arg_value(inst, fallback.as_deref()?),
-                }
-            }
+            } => match self.context_arg(inst, *component, name) {
+                Some(v) => Some(v),
+                None => self.arg_value(inst, fallback.as_deref()?),
+            },
             _ => None,
         }
     }
@@ -1199,20 +1461,14 @@ impl Engine {
                 component,
                 name,
                 fallback,
-            } => {
-                let ctx = match component {
-                    Some(c) => inst.find(*c).map_or(inst.context, |i| i.context),
-                    None => inst.context,
-                };
-                match self.context_property(ctx, name) {
-                    Some(v) => self.to_js(&v),
-                    None => match fallback {
-                        Some(f) => self.arg_js(s, inst, f),
-                        None => global(s, name),
-                    },
-                }
-            }
-            Arg::Dynamic(name) => match self.context_property(inst.context, name) {
+            } => match self.context_arg(inst, *component, name) {
+                Some(v) => self.to_js(&v),
+                None => match fallback {
+                    Some(f) => self.arg_js(s, inst, f),
+                    None => global(s, name),
+                },
+            },
+            Arg::Dynamic(name) => match self.context_name(inst.context, name) {
                 Some(v) => self.to_js(&v),
                 None => global(s, name),
             },
@@ -1518,19 +1774,22 @@ impl CreationJob {
                         Err(err) => return self.finish(Some(&e), Err(err)),
                     }
                 }
-                Phase::Apply(cr, root, mut next) => {
+                Phase::Apply(mut cr, root, mut next) => {
                     if !e.is_alive(root) {
                         return self.finish(Some(&e), Err(EngineError::DeadObject(root)));
                     }
-                    e.batch(|| {
-                        while next < cr.units.len() {
-                            e.apply_unit(&cr, next);
-                            next += 1;
-                            if check() {
-                                break;
+                    let ((), held) = e.hold_eager(|| {
+                        e.batch(|| {
+                            while next < cr.units.len() {
+                                e.apply_unit(&cr, next);
+                                next += 1;
+                                if check() {
+                                    break;
+                                }
                             }
-                        }
+                        })
                     });
+                    cr.held.extend(held);
                     if next < cr.units.len() {
                         self.handle
                             .0
@@ -1540,7 +1799,14 @@ impl CreationJob {
                         return JobPoll::Yield;
                     }
                     let props = std::mem::take(&mut self.props);
-                    let r = e.batch(|| e.finish_props(root, &props));
+                    let r = e.batch(|| {
+                        let r = e.finish_props(root, &props);
+                        e.run_held(&cr);
+                        r
+                    });
+                    if r.is_ok() {
+                        e.release_held(&cr);
+                    }
                     let r = e.finalize(cr, root, r);
                     return self.finish(Some(&e), r);
                 }
