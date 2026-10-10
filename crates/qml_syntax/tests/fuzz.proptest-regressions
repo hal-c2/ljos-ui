@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 822d5c8d2d405050d7a94976ccd5d07c6927558928b4d27c1a84e804cb553c93 # shrinks to pick = 12623077243489409796, damages = [Delete(1472476465791253, 13), Insert(1, 2), Truncate(2), Truncate(73521317166572551), Truncate(293277851539607693)]

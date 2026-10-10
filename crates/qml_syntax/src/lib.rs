@@ -6,6 +6,43 @@
 //! of that fork. Callers name `qml_syntax::ast::QmlDocument`, not the fork's
 //! module path, so a rebase or a rename of the fork touches only this crate.
 //!
+//! # Error recovery
+//!
+//! One typo does not fail the whole file. [`parse`] always returns a
+//! [`Parsed`] whose `document` holds everything that did parse, and whose
+//! `diagnostics` hold one entry per problem, sorted by position.
+//!
+//! - The unit of recovery is an object member (binding, property, signal,
+//!   handler, function, enum, inline component, nested object) and, in the
+//!   header, an import or a pragma. A unit that fails is **omitted** from the
+//!   tree, with no placeholder node, so consumers need not know about errors.
+//!   Errors inside an embedded JavaScript expression or block belong to the
+//!   member that contains them.
+//! - After a failure the parser skips to a synchronisation point: past a `;`,
+//!   or up to a `}` that closes the enclosing object, or up to a name on a new
+//!   line that starts a member (`name:`, `Type {`, `a.b`, `property x`,
+//!   `function`, `enum`). Brackets opened by the broken member are skipped as
+//!   a group. If they are never closed, a member starting no deeper than the
+//!   broken one on a later line ends the skip. An import or pragma is skipped
+//!   to the end of its line.
+//! - Every recovery consumes at least one token, so parsing terminates.
+//! - A diagnostic is placed where the parser noticed the problem, which for an
+//!   unclosed bracket can be a later line than the cause.
+//! - An object that reaches the end of the file unclosed keeps its members and
+//!   reports the missing `}` once per place.
+//! - A root object that lost its `{` keeps its members. A second root object
+//!   is an error but the first is kept.
+//! - [`Parsed::panicked`] is set only when no root object could be started
+//!   (its type name is missing). The document then has the header and an
+//!   empty root whose type name is `""`.
+//!
+//! [`Parsed::is_ok`] is still the test for a clean file. Code that must not
+//! act on a damaged file (the compiler) keeps checking it; code that wants the
+//! best partial tree (hot reload, an editor) reads `document` and shows the
+//! diagnostics.
+//!
+//! # Trees and arenas
+//!
 //! Every binding value, handler and function in the tree is an ordinary Oxc
 //! JavaScript node allocated in the caller's [`Allocator`], with spans that are
 //! byte offsets into the QML source. A document cannot outlive its arena; the
@@ -29,13 +66,15 @@ use oxc_parser::Parser;
 /// What [`parse`] gives back.
 #[derive(Debug)]
 pub struct Parsed<'a> {
-    /// Incomplete when [`panicked`](Self::panicked) is set.
+    /// Everything that parsed, also when `diagnostics` is not empty: members
+    /// that failed are left out (see the crate docs). Only when
+    /// [`panicked`](Self::panicked) is set is the root object missing.
     pub document: ast::QmlDocument<'a>,
     pub comments: ArenaVec<'a, Comment>,
     /// Empty when the file is valid QML.
     pub diagnostics: Vec<Diagnostic>,
-    /// The parser hit an unrecoverable syntax error and stopped early. Error
-    /// recovery is fatal-only for now, so any error usually sets this.
+    /// The parser could not recover and stopped early: the file has no root
+    /// object with a type name. Ordinary syntax errors do not set this.
     pub panicked: bool,
 }
 

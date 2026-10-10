@@ -17,7 +17,7 @@ QML mode is a recursive-descent parser for QML's declarative shell (imports, pra
 
 ## What the fork changes
 
-`mise run oxc:diff` prints the full diff against the registry tarball. Everything outside `src/qml/` is about 65 lines in four files:
+`mise run oxc:diff` prints the full diff against the registry tarball. Everything outside `src/qml/` is about 65 lines in four files, and the error recovery below touches none of them:
 
 | File | Change |
 |---|---|
@@ -26,13 +26,26 @@ QML mode is a recursive-descent parser for QML's declarative shell (imports, pra
 | `src/lexer/mod.rs` | A `pub(crate) qml: bool` field on `Lexer`, initialised to `false`. QML mode sets it. |
 | `src/lexer/string.rs` | When `qml` is set, a string literal may contain line breaks: two match arms keyed on `$lexer.qml` and a cold-path method `read_string_literal_over_lines`. Plain JavaScript lexing is unchanged. |
 | `src/qml/ast.rs` (new, 172 lines) | The QML tree: `QmlDocument`, `QmlPragma`, `QmlImport`/`QmlImportSource`, `QmlQualifiedName`, `QmlObject`, `QmlMember`, `QmlBinding`/`QmlBindingValue`, `QmlPropertyDeclaration`, `QmlTypeName`, `QmlSignalDeclaration`/`QmlSignalParameter`, `QmlInlineComponent`, `QmlEnumDeclaration`/`QmlEnumMember`. All nodes are arena-allocated, and leaves are ordinary Oxc `Expression`, `Statement` and `Function` nodes. |
-| `src/qml/mod.rs` (new, 461 lines) | The parser: `parse_qml_document` reads pragmas and imports, then exactly one root object. Contextual keywords (`property`, `signal`, `required`, `readonly`, `default`, `component`, `enum`) are found by lookahead. `{ ... }` after a binding is an object literal or a block, decided by checkpoint and rewind. |
+| `src/qml/mod.rs` (new, 530 lines) | The parser: `parse_qml_document` reads pragmas and imports, then exactly one root object. Contextual keywords (`property`, `signal`, `required`, `readonly`, `default`, `component`, `enum`) are found by lookahead. `{ ... }` after a binding is an object literal or a block, decided by checkpoint and rewind. Calls `qml_recover` for every import, pragma and object member. |
+| `src/qml/recovery.rs` (new, 212 lines) | Member-level error recovery, see below. |
 
 `Cargo.toml` is byte-for-byte the published one (same name and version), so `[patch.crates-io]` accepts it.
 
+### Error recovery
+
+Oxc reports almost every syntax error as *fatal*: `set_fatal_error` stores it, moves the lexer to the end of the file and the parser unwinds on dummy nodes. QML mode keeps that machinery and contains it. `ParserImpl::qml_recover` (`src/qml/recovery.rs`) runs one unit (an object member, an import, a pragma) under a checkpoint. If the unit ends with `fatal_error` set, it takes the error and files it as an ordinary diagnostic, rewinds to the unit's start, skips to a synchronisation point and returns `None`; the caller carries on with the next unit. A failed unit is omitted from the tree (no error node), so `qml_front` and the IR need no changes. Why rewind and re-scan: the skip then does not depend on how far the JavaScript parser got.
+
+- **Member skip.** From the member's first token (always consumed, so progress is guaranteed), tracks `(`, `[`, `{` and template `${` on a stack; a closer pops to its matching opener (`onClicked: { foo( }` ends at the `}`). Stops after a `;` or before a `}` at depth zero, before a new-line token that starts a member (`name:`, `Type {`, `a.b`, `function`, `enum`, or a declaration word and a name), and, when brackets are still open, before such a token that is indented no deeper than the broken member.
+- **Header skip** (import, pragma): to the end of the line or the next `;`.
+- **Unclosed objects** at end of file are a non-fatal error and keep their members. The object loop tests `Eof` and `fatal_error` instead of `has_fatal_error()`, which is also true at an `Undetermined` token.
+- **Root** without `{` keeps its members (non-fatal error); a second root object is a non-fatal error. `panicked` is now only set when the root has no type name.
+- **Import names** must not continue on the next line (`parse_qml_import_name`), or a half-typed `import Foo.` would swallow the root object's type.
+- **Diagnostics** are sorted by position and de-duplicated in `parse_qml`, because re-lexing a skipped region reports a lexer error a second time.
+- **Rebase notes.** Recovery depends on `checkpoint_with_error_recovery`, `rewind`, `fatal_error`, `errors`, `lexer.errors`, `state.{cover_initialized_name,trailing_commas,not_parenthesized_arrow}` (cleaned of the failed attempt's keys), `re_lex_template_substitution_tail` and `Token::is_on_new_line`. If a rebase renames one, `src/qml/recovery.rs` is the only file to fix. Tests: `crates/qml_syntax/tests/recovery.rs` and `fuzz.rs`.
+
 ### Known limitations (not fixed yet)
 
-- **Error recovery is fatal-only.** The first syntax error sets `panicked` and parsing stops, with no partial tree. Member-level recovery (resynchronise at `;`, at a newline followed by `name:`, at `}`) is the first planned improvement (ARCHITECTURE.md §5.1).
+- **Recovery limits.** A regex literal that contains a bracket or quote, inside a member that is itself broken, can confuse the skip (the skip does not re-lex `/` as a regex). An unterminated string swallows the rest of the file, because QML strings may span lines. A diagnostic is placed where the parser noticed the problem, which for an unclosed bracket can be a later line than the cause. A failed member is omitted whole, even when only its value is broken. A nested object whose header is broken (`Rect` without `{`) is omitted with its body.
 - **Annotations** (`@Foo`) are a fatal "not supported yet" error.
 - **Diagnostics** are message plus span: no codes, no severity, one label.
 

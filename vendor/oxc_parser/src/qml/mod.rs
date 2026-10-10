@@ -7,10 +7,12 @@
 //! where the JavaScript grammar says it ends and all spans are file offsets.
 
 pub mod ast;
+mod recovery;
 
 use oxc_allocator::ArenaVec;
 use oxc_ast::ast::{Comment, Expression, IdentifierName, ObjectPropertyKind, PropertyKey};
 use oxc_diagnostics::Diagnostics;
+use oxc_span::Span;
 
 use crate::{
     ParserImpl,
@@ -22,14 +24,19 @@ use crate::{
 };
 
 use ast::*;
+use recovery::Sync;
 
 /// Return value of [`Parser::parse_qml`](crate::Parser::parse_qml).
 pub struct QmlParserReturn<'a> {
-    /// Incomplete when [`panicked`](Self::panicked) is set.
+    /// Every import, pragma and member that parsed; units that did not are
+    /// left out and have a diagnostic (see `recovery.rs`). Only when
+    /// [`panicked`](Self::panicked) is set is the root object missing, and then
+    /// it is empty with a type name of `""`.
     pub document: QmlDocument<'a>,
     pub comments: ArenaVec<'a, Comment>,
     pub diagnostics: Diagnostics,
-    /// The parser hit an unrecoverable syntax error and stopped early.
+    /// The parser hit a syntax error it could not recover from (the root
+    /// object has no usable type name) and stopped early.
     pub panicked: bool,
 }
 
@@ -43,13 +50,20 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             self.errors.truncate(fatal_error.errors_len);
             self.errors.push(fatal_error.error);
         }
-        let diagnostics = self
+        let mut diagnostics = self
             .lexer
             .errors
             .drain(..)
             .chain(self.errors.drain(..))
             .map(ParserDiagnostic::into_diagnostic)
-            .collect::<Diagnostics>();
+            .collect::<Vec<_>>();
+        // Recovery re-lexes the text it skips, so a lexer error can appear
+        // twice (once as the member's fatal error); and the two lists are in
+        // no particular order. Report each once, in source order.
+        let at = |d: &oxc_diagnostics::OxcDiagnostic| d.labels.first().map_or(0, |l| l.offset());
+        diagnostics.sort_by_key(at);
+        diagnostics.dedup_by(|a, b| at(a) == at(b) && a.message == b.message);
+        let diagnostics = diagnostics.into_iter().collect::<Diagnostics>();
         let comments = self.lexer.trivia_builder.comments;
 
         QmlParserReturn { document, comments, diagnostics, panicked }
@@ -64,20 +78,28 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let mut imports = ArenaVec::new_in(&self.ast);
         while self.fatal_error.is_none() {
             if self.at(Kind::Import) {
-                imports.push(self.parse_qml_import());
+                imports.extend(self.qml_recover(Sync::Line, |p| p.parse_qml_import()));
             } else if self.qml_at_word("pragma") && self.qml_next_is_name() {
-                pragmas.push(self.parse_qml_pragma());
+                pragmas.extend(self.qml_recover(Sync::Line, |p| p.parse_qml_pragma()));
             } else {
                 break;
             }
         }
 
-        let root = self.parse_qml_object();
-        if self.fatal_error.is_none() && !self.at(Kind::Eof) {
-            let span = self.cur_token().span();
-            self.set_fatal_error(diagnostics::qml("A QML document has exactly one root object", span));
+        let root_start = self.cur_start();
+        let root_type = self.parse_qml_qualified_name();
+        let mut root = self.parse_qml_object_rest(root_start, root_type, true);
+        if self.fatal_error.is_some() {
+            root.span = Span::empty(root_start);
         }
-        QmlDocument { span: self.end_span(start), pragmas, imports, root }
+        if !self.at(Kind::Eof) {
+            let span = self.cur_token().span();
+            self.qml_error_here("A QML document has exactly one root object", span);
+        }
+        // With nothing parsed there is no token before `start`; keep the span
+        // well-formed rather than ending before it begins.
+        let span = Span::new(start, self.prev_token_end.max(start));
+        QmlDocument { span, pragmas, imports, root }
     }
 
     fn parse_qml_pragma(&mut self) -> QmlPragma<'a> {
@@ -99,7 +121,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let source = if self.at(Kind::Str) {
             QmlImportSource::Path(self.parse_literal_string().value.as_str())
         } else {
-            QmlImportSource::Module(self.parse_qml_qualified_name())
+            QmlImportSource::Module(self.parse_qml_import_name())
         };
         // A version is only a version when it is on the import's own line;
         // otherwise a number would be the start of something else entirely.
@@ -110,9 +132,35 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         } else {
             None
         };
-        let alias = if self.eat(Kind::As) { Some(self.parse_identifier_name()) } else { None };
+        let alias = if self.eat(Kind::As) {
+            self.qml_expect_same_line("An import alias is on the import's own line");
+            Some(self.parse_identifier_name())
+        } else {
+            None
+        };
         self.bump(Kind::Semicolon);
         QmlImport { span: self.end_span(start), source, version, alias }
+    }
+
+    /// A module URI. Unlike other names it must not run onto the next line:
+    /// `import QtQuick.` followed by `Item {` would otherwise swallow the root
+    /// object's type, and recovery would have no root to resume at.
+    fn parse_qml_import_name(&mut self) -> QmlQualifiedName<'a> {
+        let start = self.cur_start();
+        let mut parts = ArenaVec::new_in(&self.ast);
+        parts.push(self.parse_qml_name().name.as_str());
+        while self.fatal_error.is_none() && self.eat(Kind::Dot) {
+            self.qml_expect_same_line("A module name continues on the import's own line");
+            parts.push(self.parse_qml_name().name.as_str());
+        }
+        QmlQualifiedName { span: self.end_span(start), parts }
+    }
+
+    fn qml_expect_same_line(&mut self, message: &'static str) {
+        if self.cur_token().is_on_new_line() {
+            let span = self.cur_token().span();
+            self.set_fatal_error(diagnostics::qml(message, span));
+        }
     }
 
     fn parse_qml_qualified_name(&mut self) -> QmlQualifiedName<'a> {
@@ -134,13 +182,14 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     fn parse_qml_object(&mut self) -> QmlObject<'a> {
         let start = self.cur_start();
         let type_name = self.parse_qml_qualified_name();
-        self.parse_qml_object_rest(start, type_name)
+        self.parse_qml_object_rest(start, type_name, false)
     }
 
     fn parse_qml_object_rest(
         &mut self,
         start: u32,
         type_name: QmlQualifiedName<'a>,
+        is_root: bool,
     ) -> QmlObject<'a> {
         let on = if self.qml_at_word("on") {
             self.bump_any();
@@ -149,14 +198,33 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             None
         };
         let opening_span = self.cur_token().span();
-        self.expect(Kind::LCurly);
-        let mut members = ArenaVec::new_in(&self.ast);
-        while !self.at(Kind::RCurly) && !self.has_fatal_error() {
-            if let Some(member) = self.parse_qml_member() {
-                members.push(member);
-            }
+        if is_root && !self.at(Kind::LCurly) {
+            // The members of a file whose root lost its `{` are still worth
+            // having. A nested object cannot do this: its siblings would be
+            // taken for its members.
+            self.qml_error_here("Expected `{` after the root object's type", opening_span);
+        } else {
+            self.expect(Kind::LCurly);
         }
-        self.expect_closing(Kind::RCurly, opening_span);
+        let mut members = ArenaVec::new_in(&self.ast);
+        // Not `has_fatal_error`: that is also true at an `Undetermined` token
+        // (an unterminated string), which a member's recovery should skip.
+        while !self.at(Kind::RCurly) && !self.at(Kind::Eof) && self.fatal_error.is_none() {
+            members.extend(self.qml_recover(Sync::Member, |p| p.parse_qml_member()).flatten());
+        }
+        if self.at(Kind::RCurly) {
+            self.bump_any();
+        } else if self.fatal_error.is_none() {
+            // Unclosed at the end of the file. The object keeps its members.
+            let found = self.cur_kind().to_str();
+            let error = diagnostics::expect_closing(
+                Kind::RCurly.to_str(),
+                found,
+                self.cur_token().span(),
+                opening_span,
+            );
+            self.error(error);
+        }
         QmlObject { span: self.end_span(start), type_name, on, members }
     }
 
@@ -205,7 +273,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             let value = self.parse_qml_binding_value();
             return Some(QmlMember::Binding(QmlBinding { span: self.end_span(start), name, value }));
         }
-        Some(QmlMember::Object(self.parse_qml_object_rest(start, name)))
+        Some(QmlMember::Object(self.parse_qml_object_rest(start, name, false)))
     }
 
     fn parse_qml_property(&mut self) -> QmlPropertyDeclaration<'a> {
