@@ -12,7 +12,11 @@
 //! * linear gradients are exact (triangles are split at every stop) but a
 //!   gradient *border* uses its first stop colour;
 //! * path fills assume convex polygons (egui's `PathShape` limit);
-//! * `Image`, `NinePatch`, `Embed` and `layer.*` are not drawn yet;
+//! * `Embed`, `layer.*` and image fills (`Paint::Image`) are not drawn yet;
+//! * an image needs an egui `Context` (it owns the textures); without one it
+//!   is skipped;
+//! * an image larger than the GPU's texture limit is drawn from a smaller
+//!   copy;
 //! * gradient text uses its first stop colour, and colour glyphs (emoji) are
 //!   not drawn;
 //! * the unshaped `Text` op ignores rotation and shear.
@@ -20,6 +24,12 @@
 //! Text ([`DrawOp::Glyphs`]) is drawn as quads that sample the glyph atlas
 //! (the private `glyph_atlas` module). Upright text is placed on the device
 //! pixel grid; a glyph outside the clip rectangle is neither filled nor drawn.
+//!
+//! Images ([`DrawOp::Image`], [`DrawOp::NinePatch`]) are textured quads. Each
+//! image becomes a texture in egui's texture manager the first time it is
+//! drawn, one per sampling mode it is used with. The backend holds the image
+//! only weakly: the texture goes when the image does, or when it has not been
+//! drawn for a while.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -28,7 +38,10 @@ use egui::epaint::{
     ClippedShape, CornerRadius, Mesh, PathShape, PathStroke, RectShape, Shadow, Shape, Stroke,
     StrokeKind, TessellationOptions, Tessellator, TextShape, Vertex,
 };
-use egui::{Color32, Context, FontId, Pos2, Rect as ERect};
+use egui::{
+    Color32, ColorImage, Context, FontId, Pos2, Rect as ERect, TextureFilter, TextureHandle,
+    TextureId, TextureOptions, TextureWrapMode,
+};
 use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 
 use crate::backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RgbaImage};
@@ -38,6 +51,7 @@ use crate::display_list::{
 };
 use crate::glyph::{baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, GlyphAtlas, GlyphKey, Slot};
+use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::rgba::Rgba;
 use crate::tree::NodeId;
 
@@ -85,6 +99,192 @@ enum LocalSeg {
     Mesh(Arc<Mesh>),
     Text(TextCmd),
     Glyphs(GlyphsCmd),
+    Image(ImageSeg),
+}
+
+/// Which texture an image quad samples: the image and how it is sampled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct TextureKey {
+    image: u64,
+    smooth: bool,
+    repeat: bool,
+}
+
+/// Quads of one image under one sampling mode. The mesh names its texture
+/// only once the texture exists, which is when it is first emitted.
+#[derive(Clone)]
+struct ImageSeg {
+    key: TextureKey,
+    /// Weak, so a cached list does not keep pixels alive that no display
+    /// list draws any more.
+    image: WeakImage,
+    mesh: Arc<Mesh>,
+}
+
+struct TextureEntry {
+    handle: TextureHandle,
+    owner: WeakImage,
+    last_used: u64,
+}
+
+/// The most quads one tiled blit becomes. More than this is a tile of a few
+/// pixels over a whole screen; the rest is left out and reported.
+const MAX_TILES: usize = 4096;
+
+fn push_rect(mesh: &mut Mesh, r: Rect, u: (f64, f64), v: (f64, f64)) {
+    let p = |x: f64, y: f64| Pos2::new(x as f32, y as f32);
+    push_quad(
+        mesh,
+        [p(r.x0, r.y0), p(r.x1, r.y0), p(r.x1, r.y1), p(r.x0, r.y1)],
+        [p(u.0, v.0), p(u.1, v.0), p(u.1, v.1), p(u.0, v.1)],
+        Color32::WHITE,
+    );
+}
+
+/// Add the quads of `blit` to `clamp` (sampled with clamped edges) or
+/// `repeat` (sampled with a repeating texture). Returns false when the tile
+/// limit cut it short.
+fn blit_quads(
+    blit: &ImageBlit,
+    size: (u32, u32),
+    smooth: bool,
+    clamp: &mut Mesh,
+    repeat: &mut Mesh,
+) -> bool {
+    if !blit.is_visible() {
+        return true;
+    }
+    let (w, h) = (f64::from(size.0), f64::from(size.1));
+    let whole = Rect::new(0.0, 0.0, w, h);
+    let mut src = blit.src;
+    if blit.isolate && smooth && src != whole {
+        // Linear filtering reads half a texel past the edge; pull the edge in
+        // so a border part never picks up its neighbour's colour.
+        let dx = (src.width() / 2.0).min(0.5);
+        let dy = (src.height() / 2.0).min(0.5);
+        src = Rect::new(src.x0 + dx, src.y0 + dy, src.x1 - dx, src.y1 - dy);
+    }
+    // Texture coordinate at fraction `f` of one copy, along one axis.
+    let coord = |f: f64, s0: f64, s1: f64, full: f64, flip: bool| {
+        let f = if flip { 1.0 - f } else { f };
+        (s0 + f * (s1 - s0)) / full
+    };
+    let u_at = |f: f64| coord(f, src.x0, src.x1, w, blit.mirror[0]);
+    let v_at = |f: f64| coord(f, src.y0, src.y1, h, blit.mirror[1]);
+    let Some(cover) = blit.cover else {
+        push_rect(
+            clamp,
+            blit.dst,
+            (u_at(0.0), u_at(1.0)),
+            (v_at(0.0), v_at(1.0)),
+        );
+        return true;
+    };
+    let tile = blit.dst;
+    let (tw, th) = (tile.width(), tile.height());
+    let fx = |x: f64| (x - tile.x0) / tw;
+    let fy = |y: f64| (y - tile.y0) / th;
+    if blit.src == whole && blit.repeats() == [true, true] {
+        // The texture repeats by itself: one quad whose coordinates run past
+        // 0..1. A flipped copy is the same lattice read backwards.
+        //
+        // This relies on the texture's sampler. A renderer that filters in
+        // its shader instead (egui_kittest's default "predictable" options)
+        // shows one copy with its edges smeared outwards.
+        push_rect(
+            repeat,
+            cover,
+            (u_at(fx(cover.x0)), u_at(fx(cover.x1))),
+            (v_at(fy(cover.y0)), v_at(fy(cover.y1))),
+        );
+        return true;
+    }
+    let first_col = fx(cover.x0).floor() as i64;
+    let last_col = fx(cover.x1).ceil() as i64;
+    let first_row = fy(cover.y0).floor() as i64;
+    let last_row = fy(cover.y1).ceil() as i64;
+    let mut made = 0usize;
+    for row in first_row..last_row {
+        for col in first_col..last_col {
+            let x0 = tile.x0 + col as f64 * tw;
+            let y0 = tile.y0 + row as f64 * th;
+            let part = Rect::new(x0, y0, x0 + tw, y0 + th).intersect(cover);
+            if part.width() <= 0.0 || part.height() <= 0.0 {
+                continue;
+            }
+            if made == MAX_TILES {
+                return false;
+            }
+            made += 1;
+            push_rect(
+                clamp,
+                part,
+                (u_at((part.x0 - x0) / tw), u_at((part.x1 - x0) / tw)),
+                (v_at((part.y0 - y0) / th), v_at((part.y1 - y0) / th)),
+            );
+        }
+    }
+    true
+}
+
+/// The texture for `key`, uploading the image the first time.
+fn texture_for(
+    textures: &mut HashMap<TextureKey, TextureEntry>,
+    uploads: &mut u64,
+    frame: u64,
+    ctx: &Context,
+    seg: &ImageSeg,
+) -> Option<TextureId> {
+    if let Some(t) = textures.get_mut(&seg.key) {
+        t.last_used = frame;
+        return Some(t.handle.id());
+    }
+    let image = seg.image.upgrade()?;
+    let max_side = ctx.input(|i| i.max_texture_side).max(1);
+    let fitted = fit_texture(&image, max_side)?;
+    let pixels = ColorImage::from_rgba_premultiplied(
+        [fitted.width() as usize, fitted.height() as usize],
+        fitted.data(),
+    );
+    let filter = if seg.key.smooth {
+        TextureFilter::Linear
+    } else {
+        TextureFilter::Nearest
+    };
+    let options = TextureOptions {
+        magnification: filter,
+        minification: filter,
+        wrap_mode: if seg.key.repeat {
+            TextureWrapMode::Repeat
+        } else {
+            TextureWrapMode::ClampToEdge
+        },
+        mipmap_mode: None,
+    };
+    let handle = ctx.load_texture(format!("ljos-image-{}", seg.key.image), pixels, options);
+    let id = handle.id();
+    *uploads += 1;
+    textures.insert(
+        seg.key,
+        TextureEntry {
+            handle,
+            owner: seg.image.clone(),
+            last_used: frame,
+        },
+    );
+    Some(id)
+}
+
+/// `image`, or a smaller copy when a side is past the GPU's limit. Texture
+/// coordinates are fractions, so the quads do not change.
+fn fit_texture(image: &ImageHandle, max_side: usize) -> Option<ImageHandle> {
+    let max = u32::try_from(max_side).unwrap_or(u32::MAX);
+    if image.width() <= max && image.height() <= max {
+        return Some(image.clone());
+    }
+    let scale = f64::from(max) / f64::from(image.width().max(image.height()));
+    let side = |n: u32| ((f64::from(n) * scale).round() as u32).clamp(1, max);
+    image.resized(side(image.width()), side(image.height()))
 }
 
 #[derive(Clone)]
@@ -292,6 +492,7 @@ enum WorldSeg {
         align: TextAlign,
     },
     Glyphs(GlyphSeg),
+    Image(ImageSeg),
 }
 
 struct ListEntry {
@@ -324,6 +525,8 @@ pub struct EpaintBackend {
     tessellations: u64,
     world_rebuilds: u64,
     atlas: GlyphAtlas,
+    textures: HashMap<TextureKey, TextureEntry>,
+    texture_uploads: u64,
 }
 
 /// What the glyph atlas holds, for tests and diagnostics.
@@ -504,7 +707,20 @@ impl EpaintBackend {
             tessellations: 0,
             world_rebuilds: 0,
             atlas: GlyphAtlas::default(),
+            textures: HashMap::new(),
+            texture_uploads: 0,
         }
+    }
+
+    /// How many image textures the backend holds now.
+    pub fn image_textures(&self) -> usize {
+        self.textures.len()
+    }
+
+    /// How many image textures were uploaded so far (tests use it to prove an
+    /// image is uploaded once, not once per frame or per item).
+    pub fn texture_uploads(&self) -> u64 {
+        self.texture_uploads
     }
 
     /// The glyph atlas as it is now.
@@ -670,8 +886,38 @@ impl EpaintBackend {
                         align: *align,
                     }));
                 }
-                DrawOp::Image { .. } | DrawOp::NinePatch { .. } => {
-                    warn("image ops are not drawn (no texture cache in M0)");
+                DrawOp::Image {
+                    image,
+                    src,
+                    dst,
+                    tile,
+                    mirror,
+                    smooth,
+                } => {
+                    if !cur.is_empty() {
+                        segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                    }
+                    let blit = image_blit(*src, *dst, *tile, *mirror);
+                    if !image_segs(&mut segs, image, &[blit], *smooth) {
+                        warn("an image is tiled too finely; some tiles are not drawn");
+                    }
+                }
+                DrawOp::NinePatch {
+                    image,
+                    insets,
+                    dst,
+                    tile,
+                    mirror,
+                    smooth,
+                } => {
+                    if !cur.is_empty() {
+                        segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                    }
+                    let size = (image.width(), image.height());
+                    let blits = nine_patch_blits(size, *insets, *dst, *tile, *mirror);
+                    if !image_segs(&mut segs, image, &blits, *smooth) {
+                        warn("a border image is tiled too finely; some tiles are not drawn");
+                    }
                 }
                 DrawOp::Glyphs {
                     run,
@@ -756,26 +1002,7 @@ impl EpaintBackend {
         local
             .iter()
             .map(|seg| match seg {
-                LocalSeg::Mesh(m) => {
-                    let mut out = Mesh {
-                        indices: m.indices.clone(),
-                        vertices: Vec::with_capacity(m.vertices.len()),
-                        texture_id: m.texture_id,
-                    };
-                    for v in &m.vertices {
-                        let p = to_screen * Point::new(f64::from(v.pos.x), f64::from(v.pos.y));
-                        out.vertices.push(Vertex {
-                            pos: Pos2::new(p.x as f32, p.y as f32),
-                            uv: v.uv,
-                            color: if opacity < 1.0 {
-                                v.color.gamma_multiply(opacity)
-                            } else {
-                                v.color
-                            },
-                        });
-                    }
-                    WorldSeg::Mesh(Arc::new(out))
-                }
+                LocalSeg::Mesh(m) => WorldSeg::Mesh(Arc::new(map_mesh(m, to_screen, opacity))),
                 LocalSeg::Text(t) => WorldSeg::Text {
                     rect: to_screen.transform_rect_bbox(t.rect),
                     text: Arc::clone(&t.text),
@@ -790,9 +1017,66 @@ impl EpaintBackend {
                     opacity,
                     mesh: None,
                 }),
+                LocalSeg::Image(seg) => WorldSeg::Image(ImageSeg {
+                    key: seg.key,
+                    image: seg.image.clone(),
+                    mesh: Arc::new(map_mesh(&seg.mesh, to_screen, opacity)),
+                }),
             })
             .collect()
     }
+}
+
+/// `m` moved to the screen and faded by `opacity`.
+fn map_mesh(m: &Mesh, to_screen: Affine, opacity: f32) -> Mesh {
+    let mut out = Mesh {
+        indices: m.indices.clone(),
+        vertices: Vec::with_capacity(m.vertices.len()),
+        texture_id: m.texture_id,
+    };
+    for v in &m.vertices {
+        let p = to_screen * Point::new(f64::from(v.pos.x), f64::from(v.pos.y));
+        out.vertices.push(Vertex {
+            pos: Pos2::new(p.x as f32, p.y as f32),
+            uv: v.uv,
+            color: if opacity < 1.0 {
+                v.color.gamma_multiply(opacity)
+            } else {
+                v.color
+            },
+        });
+    }
+    out
+}
+
+/// Append the quads of `blits`, at most one segment per sampling mode.
+/// Returns false when a blit hit the tile limit.
+fn image_segs(
+    segs: &mut Vec<LocalSeg>,
+    image: &ImageHandle,
+    blits: &[ImageBlit],
+    smooth: bool,
+) -> bool {
+    let size = (image.width(), image.height());
+    let (mut clamp, mut repeat) = (Mesh::default(), Mesh::default());
+    let mut complete = true;
+    for blit in blits {
+        complete &= blit_quads(blit, size, smooth, &mut clamp, &mut repeat);
+    }
+    for (mesh, repeat) in [(clamp, false), (repeat, true)] {
+        if !mesh.is_empty() {
+            segs.push(LocalSeg::Image(ImageSeg {
+                key: TextureKey {
+                    image: image.id(),
+                    smooth,
+                    repeat,
+                },
+                image: image.downgrade(),
+                mesh: Arc::new(mesh),
+            }));
+        }
+    }
+    complete
 }
 
 trait FlattenInto {
@@ -831,6 +1115,9 @@ impl RenderBackend for EpaintBackend {
         let keep_after = self.frame.saturating_sub(KEEP_FRAMES);
         self.lists.retain(|_, e| e.last_used >= keep_after);
         self.nodes.retain(|_, e| e.last_used >= keep_after);
+        // A texture outlives neither its image nor a long stretch unseen.
+        self.textures
+            .retain(|_, t| t.owner.is_alive() && t.last_used >= keep_after);
     }
 
     fn encode(&mut self, view: &FrameView<'_>, sink: &mut EguiSink<'_>) -> EncodeStats {
@@ -942,6 +1229,29 @@ impl RenderBackend for EpaintBackend {
                         clip_rect: clip,
                         shape: Shape::Mesh(Arc::clone(m)),
                     }),
+                    WorldSeg::Image(seg) => {
+                        let Some(ctx) = sink.ctx else {
+                            stats.warnings += 1;
+                            tracing::debug!("B0: an image needs an egui Context; skipped");
+                            continue;
+                        };
+                        let Some(texture) = texture_for(
+                            &mut self.textures,
+                            &mut self.texture_uploads,
+                            self.frame,
+                            ctx,
+                            seg,
+                        ) else {
+                            continue;
+                        };
+                        if seg.mesh.texture_id != texture {
+                            Arc::make_mut(&mut seg.mesh).texture_id = texture;
+                        }
+                        sink.shapes.push(ClippedShape {
+                            clip_rect: clip,
+                            shape: Shape::Mesh(Arc::clone(&seg.mesh)),
+                        });
+                    }
                     WorldSeg::Glyphs(g) => {
                         if sink.ctx.is_none() {
                             continue;
@@ -1010,11 +1320,14 @@ impl RenderBackend for EpaintBackend {
                 self.lists.clear();
                 self.nodes.clear();
                 self.atlas.reset();
+                self.textures.clear();
             }
             MemoryPressure::Moderate => {
                 let keep_after = self.frame.saturating_sub(10);
                 self.lists.retain(|_, e| e.last_used >= keep_after);
                 self.nodes.retain(|_, e| e.last_used >= keep_after);
+                self.textures
+                    .retain(|_, t| t.owner.is_alive() && t.last_used >= keep_after);
             }
         }
     }

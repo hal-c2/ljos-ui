@@ -23,14 +23,9 @@ impl<'a> FrameView<'a> {
     }
 }
 
-/// Why a backend is asked to release caches (Android `onTrimMemory`, suspend).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemoryPressure {
-    /// Drop what has not been used recently.
-    Moderate,
-    /// Drop everything that can be rebuilt.
-    Critical,
-}
+/// Why a backend is asked to release caches. The one type every cache in the
+/// workspace is trimmed with, so a host passes the same level to all of them.
+pub use ljos_runtime::MemoryPressure;
 
 /// What an `encode` call did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

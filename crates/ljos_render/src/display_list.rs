@@ -10,14 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use vello_cpu::kurbo::{BezPath, Point, Rect, Shape, Size, Vec2};
 use vello_cpu::peniko::FontData;
 
+use crate::image::ImageHandle;
 use crate::rgba::Rgba;
 use crate::tree::NodeId;
-
-/// Opaque handle to an image owned by the (future) image cache.
-///
-/// Placeholder: no backend resolves it yet.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct ImageKey(pub u64);
 
 /// Opaque handle to a foreign surface (an embedded egui `Ui`, a video, ...).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -92,8 +87,9 @@ pub enum Paint {
     Solid(Rgba),
     /// Linear gradient.
     LinearGradient(Arc<LinearGradient>),
-    /// Image fill (placeholder: no backend resolves images yet).
-    Image(ImageKey),
+    /// Image fill. No backend draws it yet; [`DrawOp::Image`] is how
+    /// pictures are drawn.
+    Image(ImageHandle),
 }
 
 impl Paint {
@@ -109,7 +105,7 @@ impl Paint {
                 }
                 Self::LinearGradient(Arc::new(g))
             }
-            Self::Image(k) => Self::Image(*k),
+            Self::Image(k) => Self::Image(k.clone()),
         }
     }
 
@@ -295,27 +291,38 @@ pub enum DrawOp {
         /// Shadow colour at full strength.
         color: Rgba,
     },
-    /// Image blit (placeholder: no backend resolves images yet).
+    /// A rectangle of an image drawn into a rectangle of the node.
     Image {
-        /// Image handle.
-        image: ImageKey,
+        /// The pixels.
+        image: ImageHandle,
         /// Source rectangle in image pixels.
         src: Rect,
-        /// Destination rectangle.
+        /// The area painted. Without `tile`, `src` is scaled to fill it.
         dst: Rect,
-        /// Smooth (bilinear) sampling.
+        /// Where one copy of `src` lies. Copies repeat at its width and
+        /// height in both directions and are cut off at `dst`.
+        tile: Option<Rect>,
+        /// Flip the content of every copy left-right and top-bottom. The
+        /// copies stay where they are.
+        mirror: [bool; 2],
+        /// Smooth (bilinear) sampling; otherwise nearest neighbour.
         smooth: bool,
     },
-    /// Nine-patch (placeholder).
+    /// An image cut into nine parts: the corners keep their size, the edges
+    /// and the middle stretch or repeat to fill `dst`.
     NinePatch {
-        /// Image handle.
-        image: ImageKey,
-        /// Fixed border sizes.
+        /// The pixels.
+        image: ImageHandle,
+        /// Border sizes in image pixels.
         insets: Insets,
-        /// Destination rectangle.
+        /// The area painted.
         dst: Rect,
-        /// Horizontal and vertical edge handling.
+        /// How the middle column fills sideways and the middle row downwards.
         tile: [TileMode; 2],
+        /// Flip the whole picture left-right.
+        mirror: bool,
+        /// Smooth (bilinear) sampling; otherwise nearest neighbour.
+        smooth: bool,
     },
     /// Shaped glyphs: how text is drawn. Both backends fill the same outlines
     /// (R directly, B0 through its glyph atlas).
@@ -535,6 +542,19 @@ impl DisplayListBuilder {
             size,
             color,
             align,
+        })
+    }
+
+    /// The whole of `image` scaled into `dst`, smoothly.
+    pub fn image(&mut self, image: ImageHandle, dst: Rect) -> &mut Self {
+        let src = image.rect();
+        self.push(DrawOp::Image {
+            image,
+            src,
+            dst,
+            tile: None,
+            mirror: [false, false],
+            smooth: true,
         })
     }
 

@@ -7,16 +7,18 @@
 //! is applied per op (multiplied down), as Qt does, not by grouping a subtree
 //! into a layer.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use vello_cpu::color::{AlphaColor, Srgb};
 use vello_cpu::kurbo::{Affine, Rect, RoundedRect, RoundedRectRadii, Shape, Stroke, Vec2};
 use vello_cpu::peniko::{
-    ColorStop, ColorStops, Extend, Fill, Gradient, ImageAlphaType, LinearGradientPosition,
+    ColorStop, ColorStops, Extend, Fill, Gradient, ImageAlphaType, ImageQuality, ImageSampler,
+    LinearGradientPosition,
 };
 use vello_cpu::{
-    Level, PaintType, Pixmap, RasterizerSettings, RenderContext, RenderMode, RenderSettings,
-    Resources,
+    Image, ImageSource, Level, PaintType, PixelMetadata, Pixmap, RasterizerSettings, RenderContext,
+    RenderMode, RenderSettings, Resources,
 };
 
 use crate::backend::{
@@ -25,6 +27,7 @@ use crate::backend::{
 use crate::compose::{ClipId, FrameSnapshot};
 use crate::display_list::{Decorations, DrawOp, GlyphRun, Paint, PathStyle};
 use crate::glyph::{OutlineCache, baseline_snap, snap_bar};
+use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::rgba::Rgba;
 
 /// How R draws the unshaped [`DrawOp::Text`], which only egui can lay out.
@@ -61,6 +64,14 @@ pub struct VelloCpuReference {
     ctx: Option<RenderContext>,
     resources: Resources,
     outlines: OutlineCache,
+    /// vello_cpu's own copy of every image drawn (the whole image, or a part
+    /// that must be sampled on its own), until the image itself is dropped.
+    pixmaps: HashMap<(u64, Option<[u32; 4]>), PixmapEntry>,
+}
+
+struct PixmapEntry {
+    owner: WeakImage,
+    pixmap: Arc<Pixmap>,
 }
 
 impl std::fmt::Debug for VelloCpuReference {
@@ -126,7 +137,13 @@ impl VelloCpuReference {
             ctx: None,
             resources: Resources::new(),
             outlines: OutlineCache::default(),
+            pixmaps: HashMap::new(),
         }
+    }
+
+    /// How many image copies R holds (whole images and isolated parts).
+    pub fn cached_images(&self) -> usize {
+        self.pixmaps.len()
     }
 
     /// Render at `viewport.size() * scale_factor` physical pixels.
@@ -196,6 +213,9 @@ impl VelloCpuReference {
                 f64::from(ctx.height()),
             ));
         }
+
+        // Copies of images nothing holds any more are of no use to anyone.
+        self.pixmaps.retain(|_, e| e.owner.is_alive());
 
         let mut pushed: Vec<ClipId> = Vec::new();
         let mut warned: HashSet<&'static str> = HashSet::new();
@@ -304,6 +324,106 @@ impl VelloCpuReference {
             }
         }
         ctx.set_transform(to_device);
+    }
+
+    /// vello_cpu's copy of `image`, or of the part `crop` (x, y, width,
+    /// height) of it. `None` for an image past vello_cpu's 16-bit sizes.
+    fn pixmap(&mut self, image: &ImageHandle, crop: Option<[u32; 4]>) -> Option<Arc<Pixmap>> {
+        if let Some(e) = self.pixmaps.get(&(image.id(), crop)) {
+            return Some(Arc::clone(&e.pixmap));
+        }
+        let part = match crop {
+            Some([x, y, w, h]) => image.cropped(x, y, w, h)?,
+            None => image.clone(),
+        };
+        let (w, h) = (
+            u16::try_from(part.width()).ok()?,
+            u16::try_from(part.height()).ok()?,
+        );
+        let meta = PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, !part.is_opaque());
+        let pixmap = Arc::new(Pixmap::from_parts(part.data().to_vec(), w, h, meta));
+        self.pixmaps.insert(
+            (image.id(), crop),
+            PixmapEntry {
+                owner: image.downgrade(),
+                pixmap: Arc::clone(&pixmap),
+            },
+        );
+        Some(pixmap)
+    }
+
+    fn draw_blit(
+        &mut self,
+        ctx: &mut RenderContext,
+        image: &ImageHandle,
+        blit: &ImageBlit,
+        smooth: bool,
+        opacity: f32,
+        warned: &mut HashSet<&'static str>,
+    ) {
+        if !blit.is_visible() || opacity <= 0.0 {
+            return;
+        }
+        // A part that repeats, or that must not pick up its neighbours'
+        // colours, is sampled from a copy of just that part: the sampler's
+        // extend mode then does both jobs.
+        let alone = (blit.isolate || blit.cover.is_some()) && blit.src != image.rect();
+        let (crop, src) = if alone {
+            let x0 = blit.src.x0.floor().max(0.0);
+            let y0 = blit.src.y0.floor().max(0.0);
+            let x1 = blit.src.x1.ceil().min(f64::from(image.width()));
+            let y1 = blit.src.y1.ceil().min(f64::from(image.height()));
+            (
+                Some([x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32]),
+                blit.src - Vec2::new(x0, y0),
+            )
+        } else {
+            (None, blit.src)
+        };
+        let Some(pixmap) = self.pixmap(image, crop) else {
+            if warned.insert("image-size") {
+                tracing::debug!("R: an image larger than 65535 pixels is not drawn");
+            }
+            return;
+        };
+        let dst = blit.dst;
+        // Image pixels to node coordinates.
+        let mut place = Affine::translate((dst.x0, dst.y0))
+            * Affine::scale_non_uniform(dst.width() / src.width(), dst.height() / src.height())
+            * Affine::translate((-src.x0, -src.y0));
+        // Flipping about the middle of one copy leaves the lattice of copies
+        // where it is.
+        if blit.mirror[0] {
+            place = Affine::translate((dst.x0 + dst.x1, 0.0))
+                * Affine::scale_non_uniform(-1.0, 1.0)
+                * place;
+        }
+        if blit.mirror[1] {
+            place = Affine::translate((0.0, dst.y0 + dst.y1))
+                * Affine::scale_non_uniform(1.0, -1.0)
+                * place;
+        }
+        let extend = |repeat: bool| {
+            if repeat { Extend::Repeat } else { Extend::Pad }
+        };
+        let [repeat_x, repeat_y] = blit.repeats();
+        ctx.set_paint(Image {
+            image: ImageSource::Pixmap(pixmap),
+            sampler: ImageSampler {
+                x_extend: extend(repeat_x),
+                y_extend: extend(repeat_y),
+                quality: if smooth {
+                    ImageQuality::Medium
+                } else {
+                    ImageQuality::Low
+                },
+                alpha: opacity.clamp(0.0, 1.0),
+            },
+        });
+        ctx.set_paint_transform(place);
+        ctx.set_fill_rule(Fill::NonZero);
+        ctx.fill_rect(&blit.area());
+        ctx.reset_paint_transform();
     }
 
     fn draw_op(
@@ -426,9 +546,28 @@ impl VelloCpuReference {
                     to_device,
                 );
             }
-            DrawOp::Image { .. } | DrawOp::NinePatch { .. } => {
-                if warned.insert("image") {
-                    tracing::debug!("R: image ops are not rendered yet (no image cache in M0)");
+            DrawOp::Image {
+                image,
+                src,
+                dst,
+                tile,
+                mirror,
+                smooth,
+            } => {
+                let blit = image_blit(*src, *dst, *tile, *mirror);
+                self.draw_blit(ctx, image, &blit, *smooth, opacity, warned);
+            }
+            DrawOp::NinePatch {
+                image,
+                insets,
+                dst,
+                tile,
+                mirror,
+                smooth,
+            } => {
+                let size = (image.width(), image.height());
+                for blit in nine_patch_blits(size, *insets, *dst, *tile, *mirror) {
+                    self.draw_blit(ctx, image, &blit, *smooth, opacity, warned);
                 }
             }
             DrawOp::Embed { .. } => {
@@ -472,6 +611,7 @@ impl RenderBackend for VelloCpuReference {
         self.ctx = None;
         self.resources = Resources::new();
         self.outlines.clear();
+        self.pixmaps.clear();
     }
 
     fn snapshot_rgba(&mut self, view: &FrameView<'_>) -> Option<RgbaImage> {

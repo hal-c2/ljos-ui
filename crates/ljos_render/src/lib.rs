@@ -11,6 +11,7 @@ mod backend;
 mod compose;
 mod display_list;
 mod glyph;
+mod image;
 mod raster;
 mod rgba;
 mod tree;
@@ -26,10 +27,14 @@ pub use compose::{
 };
 pub use display_list::{
     Border, Decorations, DisplayList, DisplayListBuilder, DisplayListId, DrawOp, EmbedId, GlyphRun,
-    GradientStop, ImageKey, Insets, LinearGradient, Paint, PaintContent, PaintCx, PathStyle,
-    PositionedGlyph, TextAlign, TileMode,
+    GradientStop, Insets, LinearGradient, Paint, PaintContent, PaintCx, PathStyle, PositionedGlyph,
+    TextAlign, TileMode,
 };
 pub use glyph::{FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds};
+pub use image::{
+    ImageAlign, ImageBlit, ImageError, ImageFit, ImageHandle, ImagePlacement, WeakImage,
+    image_blit, nine_patch_blits, painted_size, place_image,
+};
 pub use raster::{RasterConfig, TextMode, VelloCpuReference};
 pub use rgba::Rgba;
 pub use tree::{ClipSpec, Dirty, LayerSpec, NodeId, RenderNode, RenderTree, TreeError};
