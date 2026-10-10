@@ -2,9 +2,11 @@
 #MISE description="Run part of the ledger: features:run [--backend ljos|qt|both] [globs…] [-t tagexpr] [-n name-regex]"
 #MISE depends=[]
 set -euo pipefail
-# A glob is a path under features/ (a directory, a file, or a *.feature pattern);
-# it becomes cucumber's --input. Everything else is passed through (-t, -n, --backlog).
+# A glob is a path under features/ (a directory, a file, or a *.feature pattern).
+# cucumber takes a single --input, so several paths become one {a,b} glob.
+# Everything else is passed through (-t, -n, --backlog).
 args=()
+globs=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --backend) export LJOS_BDD_BACKEND="$2"; shift 2 ;;
@@ -17,8 +19,13 @@ while [ $# -gt 0 ]; do
       else
         g="$(dirname "$g")/**/$(basename "${g%.feature}").feature"
       fi
-      args+=(--input "$PWD/features/$g")
+      globs+=("$g")
       ;;
   esac
 done
+case ${#globs[@]} in
+  0) ;;
+  1) args+=(--input "$PWD/features/${globs[0]}") ;;
+  *) args+=(--input "$PWD/features/{$(IFS=,; echo "${globs[*]}")}") ;;
+esac
 exec cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"
