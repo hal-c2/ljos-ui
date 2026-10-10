@@ -18,7 +18,7 @@ use std::cell::Cell;
 
 use ljos_engine::{Engine, LogLevel, MetaRef, NodeId, ObjectId, QmlObject, QmlType, Value};
 
-use crate::item::{is_a, is_unset};
+use crate::item::{is_a, is_unset_tracked};
 use crate::scene::SCENE_CATEGORY;
 
 /// `LayoutMirroring` (QtQuick): only ever used attached.
@@ -94,7 +94,7 @@ pub(crate) fn mirrored(engine: &Engine, obj: ObjectId) -> bool {
             // of either is seen.
             let on = engine.read(a, enabled).to_boolean();
             let passes = engine.read(a, inherit).to_boolean();
-            let explicit = !is_unset(engine, a, enabled);
+            let explicit = !is_unset_tracked(engine, a, enabled);
             // An item's own setting wins. An ancestor counts only if it
             // passes mirroring on; one that does not, or that has no
             // setting of its own, lets what comes from further up through.

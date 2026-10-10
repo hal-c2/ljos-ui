@@ -57,7 +57,7 @@ pub struct Item {
     #[qml(notify)]
     pub scale: f64,
     /// One of [`crate::enums::transform_origin`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "TransformOrigin")]
     pub transform_origin: i32,
     /// The visual parent. Assigning it reparents the item (see
     /// [`crate::set_parent_item`]); it follows
@@ -99,6 +99,17 @@ pub struct Item {
     pub vertical_center: Value,
     #[qml(rename = "baseline", notify, readonly)]
     pub baseline_line: Value,
+    /// Whether the item is its focus scope's focus item (see
+    /// [`crate::focus`]).
+    #[qml(notify)]
+    pub focus: bool,
+    /// Whether the item, or an item it is the focus scope of, gets the
+    /// keys. Written by the focus tree only.
+    #[qml(notify, readonly)]
+    pub active_focus: bool,
+    /// Whether Tab stops at the item.
+    #[qml(notify)]
+    pub active_focus_on_tab: bool,
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]
     pub accessible: AccessibleInfo,
@@ -111,6 +122,13 @@ pub struct Item {
     /// the engine drops that binding when the size is given.
     #[qml(skip)]
     pub(crate) follows_implicit: [Weak<()>; 2],
+    /// The visual parent the focus tree last saw, so a reparent knows
+    /// which focus scope the item left.
+    #[qml(skip)]
+    pub(crate) focus_parent: Option<ObjectId>,
+    /// Why the item last gained active focus (a `Qt.FocusReason`).
+    #[qml(skip)]
+    pub(crate) focus_reason: i32,
 }
 
 impl Default for Item {
@@ -146,9 +164,14 @@ impl Default for Item {
             horizontal_center: Value::Undefined,
             vertical_center: Value::Undefined,
             baseline_line: Value::Undefined,
+            focus: false,
+            active_focus: false,
+            active_focus_on_tab: false,
             accessible: AccessibleInfo::default(),
             synced_parent: None,
             follows_implicit: [Weak::new(), Weak::new()],
+            focus_parent: None,
+            focus_reason: crate::focus::FocusReason::Other as i32,
         }
     }
 }
@@ -333,6 +356,16 @@ pub(crate) fn is_unset(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     )
 }
 
+/// [`is_unset`] as a tracked read, for where the default means something
+/// else than the same value given on purpose: the effect that asks runs
+/// again when the property gets its first value, whatever the value.
+pub(crate) fn is_unset_tracked(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
+    matches!(
+        engine.provenance_tracked(obj, p),
+        Some(ljos_engine::Provenance::Default) | None
+    )
+}
+
 /// Makes every side margin that has no value of its own read
 /// `anchors.margins`.
 fn follow_margins(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
@@ -453,6 +486,27 @@ impl Item {
     fn contains(&self, point: Point) -> bool {
         point.x >= 0.0 && point.y >= 0.0 && point.x < self.width && point.y < self.height
     }
+
+    /// `forceActiveFocus(reason)`: focus for the item and for every focus
+    /// scope around it. Without a reason, `Qt.OtherFocusReason`.
+    #[qml(invokable, name = "forceActiveFocus")]
+    fn force_active_focus(cx: &Cx, reason: Value) {
+        let reason = match reason.as_number() {
+            Some(n) => crate::focus::FocusReason::from_qt(n as i32),
+            None => crate::focus::FocusReason::Other,
+        };
+        crate::focus::force_active_focus(cx.engine, cx.this, reason);
+    }
+
+    /// `nextItemInFocusChain(forward)`: where Tab (or, with `false`,
+    /// Shift+Tab) goes from the item.
+    #[qml(invokable, name = "nextItemInFocusChain")]
+    fn next_item_in_focus_chain(cx: &Cx, forward: Value) -> Option<ObjectId> {
+        let forward = forward.is_nullish() || forward.to_boolean();
+        Some(crate::focus::next_item_in_focus_chain(
+            cx.engine, cx.this, forward,
+        ))
+    }
 }
 
 /// What `on_complete` does, for trees built natively before completion or
@@ -497,7 +551,9 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             engine.with_mut(obj, |i: &mut Item| {
                 i.follows_implicit[axis] = Rc::downgrade(&token);
             })?;
-            engine.bind(obj, size, move |e| {
+            // Not a value the author wrote: a Behavior on the size does
+            // not animate it, as it does not in Qt.
+            engine.bind_computed(obj, size, move |e| {
                 // Held, not used: see `Item::follows_implicit`.
                 let _alive = &token;
                 e.read(obj, implicit)
@@ -529,6 +585,8 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
                 crate::tree::set_parent_item(engine, obj, declared)?;
             }
         }
+        // After the parent is settled: `focus` is claimed in a scope.
+        crate::focus::init(engine, obj)?;
         Ok(())
     })
 }
@@ -667,4 +725,37 @@ pub(crate) fn write_computed(
         return Ok(());
     }
     engine.write_internal(obj, p, v, WriteKind::Imperative)
+}
+
+/// Writes what a layout or a positioner chose for a child: its position,
+/// its size, or whether a stack shows it. As in Qt this is not an
+/// assignment: a binding the user put on the property stays and gives the
+/// value again when its inputs change, and no `Behavior` animates it.
+pub(crate) fn write_placed(
+    engine: &Engine,
+    obj: ObjectId,
+    p: PropIndex,
+    v: Value,
+) -> Result<(), EngineError> {
+    // Reading first also runs a binding that was due, so that it does not
+    // run after the write and take the place back.
+    if engine.untrack(|| engine.read(obj, p)).change_equals(&v) {
+        return Ok(());
+    }
+    // The binding that makes a size follow the implicit size is ours, and
+    // it goes: a size a layout gave is a given size from then on.
+    let axis = [Item::WIDTH.index, Item::HEIGHT.index]
+        .iter()
+        .position(|size| *size == p);
+    let ours = axis.is_some_and(|axis| {
+        engine
+            .with(obj, |i: &Item| i.follows_implicit[axis].strong_count() > 0)
+            .unwrap_or(false)
+    });
+    let how = if ours {
+        WriteKind::Imperative
+    } else {
+        WriteKind::Layout
+    };
+    engine.write_internal(obj, p, v, how)
 }

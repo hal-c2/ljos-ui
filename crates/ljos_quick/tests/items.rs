@@ -43,12 +43,20 @@ fn row_right_to_left_with_padding_spacing_and_skipped_children() {
         (num(&e, row, "width"), num(&e, row, "height")),
         (49.0, 24.0)
     );
-    assert_eq!((num(&e, kids[0], "x"), num(&e, kids[0], "y")), (37.0, 2.0));
-    assert_eq!((num(&e, kids[1], "x"), num(&e, kids[1], "y")), (12.0, 2.0));
+    // A Row leaves y to the child and moves it by its padding only
+    // (features/layouts/positioner-cross-axis.feature).
+    assert_eq!(
+        (num(&e, kids[0], "x"), num(&e, kids[0], "y")),
+        (37.0, 102.0)
+    );
+    assert_eq!(
+        (num(&e, kids[1], "x"), num(&e, kids[1], "y")),
+        (12.0, 102.0)
+    );
     // Invisible and zero-sized children are not positioned.
     assert_eq!(num(&e, kids[2], "x"), 100.0);
     assert_eq!(num(&e, kids[3], "x"), 100.0);
-    assert_eq!((num(&e, kids[4], "x"), num(&e, kids[4], "y")), (2.0, 2.0));
+    assert_eq!((num(&e, kids[4], "x"), num(&e, kids[4], "y")), (2.0, 102.0));
 }
 
 #[test]

@@ -260,6 +260,46 @@ Item {
     assert_eq!(rig.run_until(ms(60_000)), 0);
 }
 
+/// A binding's new value starts the Behavior where the binding ran, not
+/// at the next frame: by the time the read that ran the binding returns,
+/// the animation runs and `targetValue` is the value.
+#[test]
+fn a_behavior_on_a_bound_property_starts_where_the_binding_runs() {
+    let mut rig = Rig::new(
+        r#"import QtQuick
+Item {
+  id: root; objectName: "root"
+  property real goal: 30
+  property alias gliding: move.running
+  property alias smooth: glide.enabled
+  property var aim: glide.targetValue
+  Rectangle {
+    objectName: "box"; y: root.goal
+    Behavior on y { id: glide; NumberAnimation { id: move; duration: 100 } }
+  }
+}
+"#,
+    );
+    assert!(rig.idle());
+    rig.set("root", "goal", Value::Real(80.0));
+    assert_eq!(rig.num("box", "y"), 30.0, "the value is held back");
+    assert!(rig.flag("root", "gliding"), "no frame was needed");
+    assert_eq!(rig.num("root", "aim"), 80.0);
+    rig.run_until(ms(50));
+    assert_eq!(rig.num("box", "y"), 55.0);
+
+    // Let through, the value is there and the run is over at once.
+    rig.set("root", "smooth", Value::Bool(false));
+    rig.set("root", "goal", Value::Real(90.0));
+    assert_eq!(rig.num("box", "y"), 90.0);
+    assert!(!rig.flag("root", "gliding"));
+    assert_eq!(rig.num("root", "aim"), 90.0);
+    rig.frames_now();
+    assert!(rig.idle());
+    assert_eq!(rig.run_until(ms(60_000)), 0);
+    assert_eq!(rig.num("box", "y"), 90.0);
+}
+
 const HIDDEN: &str = r#"import QtQuick
 Item {
   id: root; objectName: "root"

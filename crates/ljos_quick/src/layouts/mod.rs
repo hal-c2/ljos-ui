@@ -24,12 +24,10 @@ mod place;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos_engine::{
-    Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value, WriteKind,
-};
+use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value};
 
 use crate::enums::{EnumTable, align, layout_direction};
-use crate::item::{Item, is_a, is_unset, num, write_computed};
+use crate::item::{Item, is_a, is_unset, is_unset_tracked, num, write_computed, write_placed};
 use crate::mirroring::mirrored;
 use crate::positioners::{self, Hidden, flow};
 use crate::repeater::Repeater;
@@ -324,10 +322,11 @@ fn read_attached(e: &Engine, child: ObjectId) -> Attached {
     let Some(a) = e.existing_attached_object(child, &attacher()) else {
         return Attached::default();
     };
-    // Read first, so that the property is tracked whether it is set or not.
+    // Whether it is set is read as the value is: a value given later that
+    // equals the default changes what the layout does, not what is read.
     let set = |p: PropIndex| {
         let v = e.read(a, p);
-        (!is_unset(e, a, p)).then_some(v)
+        (!is_unset_tracked(e, a, p)).then_some(v)
     };
     let size = |p: PropIndex| set(p).map(|v| v.to_number()).filter(|v| *v >= 0.0);
     let flag = |p: PropIndex| set(p).map(|v| v.to_boolean());
@@ -915,21 +914,14 @@ fn arrange(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
                 Item::HEIGHT.index,
             ];
             for (p, v) in props.into_iter().zip(g) {
-                if num(e, *c, p) != *v {
-                    e.write(*c, p, Value::Real(*v), WriteKind::Imperative)?;
-                }
+                write_placed(e, *c, p, Value::Real(*v))?;
             }
         }
         if plan.kind == Kind::Stack && visible {
             for (i, c) in plan.cells.iter().enumerate() {
                 let on = i64::try_from(i).is_ok_and(|i| i == plan.current);
-                if e.is_alive(c.item) && e.read(c.item, Item::VISIBLE.index).to_boolean() != on {
-                    e.write(
-                        c.item,
-                        Item::VISIBLE.index,
-                        Value::Bool(on),
-                        WriteKind::Imperative,
-                    )?;
+                if e.is_alive(c.item) {
+                    write_placed(e, c.item, Item::VISIBLE.index, Value::Bool(on))?;
                 }
             }
         }

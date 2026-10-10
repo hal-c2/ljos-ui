@@ -129,6 +129,8 @@ fn intercept(
         let _ = e.with_mut::<Behavior, _>(behavior, |b| b.waiting = None);
     }
     let Some(anim) = anim else {
+        // `targetValue` is the value that came, animated or not.
+        e.after_binding(move |e| note_target(e, behavior, &to));
         return false;
     };
     if through {
@@ -138,20 +140,28 @@ fn intercept(
             // The animation has nothing to say about this property,
             // but it still runs.
             Interception::Write if enabled => retarget(e, behavior, anim, &defaults),
-            Interception::Write => driver::stop_driven(e, anim),
+            Interception::Write => {
+                driver::stop_driven(e, anim);
+                note_target(e, behavior, &to);
+            }
             // Nothing may be written from inside the binding: the run
-            // is dropped now and the rest follows.
+            // is dropped now and the rest follows when the binding has
+            // given its value, before whatever changed its input goes on.
             Interception::Binding => {
                 let had = driver::forget_driven(e, anim);
-                if enabled {
-                    driver::defer(e, move |e| {
-                        if e.is_alive(anim) {
-                            retarget(e, behavior, anim, &defaults);
-                        }
-                    });
-                } else if had {
-                    driver::defer(e, move |e| driver::settle_driven(e, anim));
-                }
+                e.after_binding(move |e| {
+                    if !e.is_alive(behavior) || !e.is_alive(anim) {
+                        return;
+                    }
+                    if enabled {
+                        retarget(e, behavior, anim, &defaults);
+                        return;
+                    }
+                    if had {
+                        driver::settle_driven(e, anim);
+                    }
+                    note_target(e, behavior, &to);
+                });
             }
         }
         return false;
@@ -169,7 +179,7 @@ fn intercept(
         Interception::Write => retarget(e, behavior, anim, &defaults),
         Interception::Binding => {
             let _ = e.with_mut::<Behavior, _>(behavior, |b| b.waiting = Some(to.clone()));
-            driver::defer(e, move |e| {
+            e.after_binding(move |e| {
                 // Unless a later value, or a write, came in between.
                 let still = e
                     .with_mut::<Behavior, _>(behavior, |b| {

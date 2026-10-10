@@ -158,12 +158,16 @@ impl Role {
         self.info().accesskit
     }
 
-    /// Qt's documented default of `Accessible.focusable`: true for these
-    /// roles, false for every other.
+    /// Qt's default of `Accessible.focusable`: true for these roles, false
+    /// for every other. The documentation's list has no `StaticText`, but
+    /// Qt 6.11 answers true for it (a screen reader walks the text of a
+    /// window with its own focus), and what Qt answers is what authors'
+    /// code sees.
     pub fn focusable_by_default(self) -> bool {
         matches!(
             self,
-            Role::CheckBox
+            Role::StaticText
+                | Role::CheckBox
                 | Role::RadioButton
                 | Role::Switch
                 | Role::Button
@@ -351,8 +355,10 @@ mod tests {
     }
 
     #[test]
-    fn focusable_defaults_follow_the_documentation() {
+    fn focusable_defaults_follow_qt() {
+        // The documentation's list, and `StaticText`, which Qt 6.11 adds.
         let on = [
+            Role::StaticText,
             Role::CheckBox,
             Role::RadioButton,
             Role::Switch,

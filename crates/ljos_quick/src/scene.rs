@@ -77,6 +77,8 @@ enum Kind {
     Item,
     Rectangle,
     Text,
+    /// An `Image` or `BorderImage`.
+    Image,
     Row,
     Column,
     /// A layout, `Grid` or `Flow`: polished by `crate::layouts`.
@@ -89,6 +91,8 @@ impl Kind {
             Kind::Text
         } else if is_a::<Rectangle>(engine, obj) {
             Kind::Rectangle
+        } else if is_a::<crate::image::ImageBase>(engine, obj) {
+            Kind::Image
         } else if is_a::<Row>(engine, obj) {
             Kind::Row
         } else if is_a::<Column>(engine, obj) {
@@ -101,7 +105,7 @@ impl Kind {
     }
 
     fn paints(self) -> bool {
-        matches!(self, Kind::Rectangle | Kind::Text)
+        matches!(self, Kind::Rectangle | Kind::Text | Kind::Image)
     }
 
     fn polishes(self) -> bool {
@@ -147,6 +151,7 @@ impl Geom {
 enum Paint {
     Rect(RectanglePaint),
     Text(TextInputs),
+    Image(crate::image::ImagePaint),
 }
 
 /// Dirty state written by effects and drained by `frame`.
@@ -215,6 +220,8 @@ struct Entry {
 enum Grab {
     Mouse(ObjectId),
     Tap(ObjectId),
+    /// An item another crate registered ([`crate::register_pointer_item`]).
+    Item(ObjectId),
 }
 
 #[derive(Debug, Default)]
@@ -229,6 +236,8 @@ struct PointerState {
     /// Last tap per handler: time, position, button, count.
     taps: HashMap<ObjectId, (Time, kurbo::Point, MouseButtons, i32)>,
     hovered: Vec<ObjectId>,
+    /// The hovered items of [`crate::register_pointer_item`] types.
+    item_hovered: Vec<ObjectId>,
 }
 
 /// An item tree, its render tree, and the frame pipeline between them.
@@ -256,6 +265,9 @@ pub struct QuickScene {
     incubator: Scheduler<()>,
     /// The accessibility tree; idle unless an assistive technology listens.
     pub(crate) a11y: A11yPass,
+    /// The engine's picture store, known from the first frame on, so that
+    /// `needs_frame` sees decoded pictures waiting to be shown.
+    images: Option<Rc<crate::image::ImageStore>>,
 }
 
 impl std::fmt::Debug for QuickScene {
@@ -299,6 +311,7 @@ impl QuickScene {
             pointer: PointerState::default(),
             incubator: Scheduler::new(),
             a11y,
+            images: None,
         }
     }
 
@@ -306,6 +319,8 @@ impl QuickScene {
     pub fn set_root(&mut self, engine: &Engine, root: ObjectId) -> Result<(), EngineError> {
         if let Some(old) = self.root.take() {
             self.unadopt(engine, old, true);
+            crate::focus::tree::remove_window(engine, old);
+            crate::keys::reset_shortcuts(engine, old);
         }
         if !is_item(engine, root) {
             return Err(EngineError::WrongType {
@@ -318,6 +333,8 @@ impl QuickScene {
         let top = self.tree.root();
         self.adopt(engine, root, None, top, 0)?;
         self.root = Some(root);
+        // The scene is the window: its focus item gets active focus.
+        crate::focus::tree::add_window(engine, root);
         // A Timer started from a handler changes nothing visible, so
         // without this the host would never ask for its deadline.
         let shared = Rc::downgrade(&self.shared);
@@ -436,6 +453,10 @@ impl QuickScene {
     /// Whether `frame` has work to do.
     pub fn needs_frame(&self) -> bool {
         self.shared.borrow().dirty
+            || self
+                .images
+                .as_ref()
+                .is_some_and(|i| i.has_results() && !i.is_held())
     }
 
     // ------------------------------------------------------------ frame
@@ -451,6 +472,10 @@ impl QuickScene {
         // through `next_wake`; they must not wake the host a second time.
         self.shared.borrow_mut().dirty = true;
         self.follow_text_engine();
+        // Pictures decoded in the background since the last frame.
+        let images = crate::image::ImageStore::of(engine);
+        images.deliver(engine);
+        self.images = Some(images);
         // 3. Timers and animations.
         let engine_now = engine.now();
         engine.advance_timers(engine_now);
@@ -463,6 +488,8 @@ impl QuickScene {
         if deleted > 0 || !dead.is_empty() {
             self.sweep_dead(engine);
         }
+        // Focus asked for while objects were being made.
+        crate::focus::tree::settle(engine);
         // 5. Animations, from the frame's time and nothing else.
         crate::animation::tick(engine, now);
         // 6. Polish.
@@ -510,7 +537,11 @@ impl QuickScene {
         FrameOutput {
             snapshot: snap,
             changed,
-            next_wake: if pending || incubating || engine.has_pending_calls() {
+            next_wake: if pending
+                || incubating
+                || engine.has_pending_calls()
+                || crate::focus::tree::pending(engine)
+            {
                 Some(now)
             } else {
                 let engine_wake = engine
@@ -597,7 +628,7 @@ impl QuickScene {
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
                     Kind::Managed => crate::layouts::polish(engine, obj),
                     Kind::Text => text::polish(engine, obj, &self.text),
-                    Kind::Item | Kind::Rectangle => Ok(()),
+                    Kind::Item | Kind::Rectangle | Kind::Image => Ok(()),
                 };
                 if let Err(e) = r {
                     engine.log(
@@ -694,6 +725,9 @@ impl QuickScene {
             let _ = g.dispose(*n);
         }
         self.a11y.forget(engine, obj);
+        if !engine.is_alive(obj) {
+            crate::focus::tree::forget(engine, obj);
+        }
         if engine.is_alive(obj) {
             entry.anchors.borrow_mut().release(engine, obj);
             let mut inh = entry.inherit.borrow_mut();
@@ -851,6 +885,7 @@ impl QuickScene {
             match p {
                 Paint::Rect(r) => r.paint(cx.size, b),
                 Paint::Text(t) => text::paint(&mut te, t, cx.size, b),
+                Paint::Image(i) => i.paint(cx.size, b),
             }
         });
     }
@@ -894,6 +929,15 @@ impl QuickScene {
                     if e.kind == Kind::Text {
                         self.paint.remove(obj);
                         self.tree.set_content(e.node, None);
+                        dropped = true;
+                    }
+                    // A picture likewise: the display list is what keeps
+                    // its pixels from being dropped under memory pressure
+                    // (ARCHITECTURE §8.5).
+                    if e.kind == Kind::Image {
+                        self.paint.remove(obj);
+                        self.tree.set_content(e.node, None);
+                        crate::image::hidden(engine, *obj);
                         dropped = true;
                     }
                 }
@@ -953,6 +997,12 @@ impl QuickScene {
             );
             return true;
         }
+        if let Some(Grab::Item(o)) = self.pointer.grab
+            && engine.is_alive(o)
+        {
+            // Another button while one is held changes nothing for it.
+            return true;
+        }
         self.pointer.grab = None;
         self.pointer.passive.clear();
         self.pointer.press_pos = ev.pos;
@@ -984,6 +1034,12 @@ impl QuickScene {
                 && accepted_buttons(engine, obj) & button.bits() as i32 != 0
                 && self.press_mouse_area(engine, obj, ev, button)
             {
+                return true;
+            }
+            if let Some(h) = crate::pointer_item::pointer_item(engine, obj)
+                && (h.press)(engine, obj, ev, local_point(engine, obj, ev.pos))
+            {
+                self.pointer.grab = Some(Grab::Item(obj));
                 return true;
             }
         }
@@ -1065,6 +1121,12 @@ impl QuickScene {
                 }
                 handled = true;
             }
+            Some(Grab::Item(o)) if engine.is_alive(o) => {
+                if let Some(h) = crate::pointer_item::pointer_item(engine, o) {
+                    (h.moved)(engine, o, ev, local_point(engine, o, ev.pos));
+                }
+                handled = true;
+            }
             _ => {}
         }
         let hits = self.hits(engine, ev.pos);
@@ -1120,6 +1182,13 @@ impl QuickScene {
                 }
                 handled = true;
             }
+            Some(Grab::Item(o)) if engine.is_alive(o) => {
+                self.pointer.grab = None;
+                if let Some(h) = crate::pointer_item::pointer_item(engine, o) {
+                    (h.release)(engine, o, ev, local_point(engine, o, ev.pos));
+                }
+                handled = true;
+            }
             _ => self.pointer.grab = None,
         }
         for h in std::mem::take(&mut self.pointer.passive) {
@@ -1148,6 +1217,12 @@ impl QuickScene {
             }
             Some(Grab::Tap(h)) if engine.is_alive(h) => {
                 cancel_tap(engine, h, ev.pos);
+                handled = true;
+            }
+            Some(Grab::Item(o)) if engine.is_alive(o) => {
+                if let Some(h) = crate::pointer_item::pointer_item(engine, o) {
+                    (h.cancel)(engine, o);
+                }
                 handled = true;
             }
             _ => {}
@@ -1191,6 +1266,7 @@ impl QuickScene {
     /// the hover-enabled areas it is inside. Areas beneath it get nothing,
     /// even when the top one is disabled.
     fn update_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) -> bool {
+        crate::pointer_item::update_hover(engine, hits, &mut self.pointer.item_hovered);
         let grabbed = match self.pointer.grab {
             Some(Grab::Mouse(m)) => Some(m),
             _ => None,
@@ -1269,7 +1345,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             // Reads the item's size too, where the layout depends on it.
             TextInputs::read(e, obj);
         }
-        Kind::Item | Kind::Rectangle => return,
+        Kind::Item | Kind::Rectangle | Kind::Image => return,
     }
     mark(shared, |s| {
         s.polish.insert(obj);
@@ -1283,6 +1359,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     let p = match kind {
         Kind::Rectangle => Paint::Rect(RectanglePaint::read(e, obj)),
         Kind::Text => Paint::Text(TextInputs::read(e, obj)),
+        Kind::Image => Paint::Image(crate::image::ImagePaint::read(e, obj)),
         _ => return,
     };
     mark(shared, |s| {

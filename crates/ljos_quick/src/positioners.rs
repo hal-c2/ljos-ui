@@ -12,11 +12,11 @@ use std::collections::{HashMap, HashSet};
 
 use ljos_engine::{
     Cx, Engine, EngineError, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value,
-    WriteKind, qml_impl,
+    qml_impl,
 };
 
 use crate::enums::{EnumTable, align, layout_direction};
-use crate::item::{Item, is_a, is_unset, num, size_follows_implicit, write_computed};
+use crate::item::{Item, is_a, is_unset, num, size_follows_implicit, write_computed, write_placed};
 use crate::mirroring::mirrored;
 use crate::repeater::Repeater;
 use crate::scene::SCENE_CATEGORY;
@@ -54,6 +54,12 @@ pub struct Row {
     pub effective_layout_direction: i32,
     #[qml(skip)]
     hidden: Hidden,
+    /// The children it last positioned, in order: what a `Positioner`
+    /// object made later is told.
+    #[qml(skip)]
+    placed: Vec<ObjectId>,
+    #[qml(skip)]
+    across: Across,
 }
 
 /// `Column` (QtQuick).
@@ -76,6 +82,12 @@ pub struct Column {
     pub bottom_padding: f64,
     #[qml(skip)]
     hidden: Hidden,
+    /// The children it last positioned, in order: what a `Positioner`
+    /// object made later is told.
+    #[qml(skip)]
+    placed: Vec<ObjectId>,
+    #[qml(skip)]
+    across: Across,
 }
 
 /// `Grid` (QtQuick).
@@ -128,6 +140,10 @@ pub struct Grid {
     pub bottom_padding: f64,
     #[qml(skip)]
     hidden: Hidden,
+    /// The children it last positioned, in order: what a `Positioner`
+    /// object made later is told.
+    #[qml(skip)]
+    placed: Vec<ObjectId>,
 }
 
 impl Default for Grid {
@@ -151,6 +167,7 @@ impl Default for Grid {
             top_padding: 0.0,
             bottom_padding: 0.0,
             hidden: Hidden::default(),
+            placed: Vec::new(),
         }
     }
 }
@@ -183,6 +200,10 @@ pub struct Flow {
     pub bottom_padding: f64,
     #[qml(skip)]
     hidden: Hidden,
+    /// The children it last positioned, in order: what a `Positioner`
+    /// object made later is told.
+    #[qml(skip)]
+    placed: Vec<ObjectId>,
 }
 
 /// `Positioner` (QtQuick): only ever used attached, by a child of a
@@ -353,6 +374,62 @@ impl Hidden {
             children.iter().map(|c| !self.0.contains(c)).collect()
         }
     }
+}
+
+/// What a Row or a Column remembers of the coordinate it does not place
+/// along: the padding each child was last moved by. A Row leaves `y` to the
+/// child and a Column `x`, apart from moving it by the padding on that side
+/// and, when the padding changes, by the difference (as Qt does: a child
+/// with `x: 7` in a Column with `leftPadding: 5` is at 12).
+#[derive(Debug, Default)]
+struct Across(HashMap<ObjectId, f64>);
+
+impl Across {
+    /// Moves every placed child by what the padding changed since it was
+    /// last moved, and forgets the children that left.
+    fn apply(
+        &mut self,
+        engine: &Engine,
+        children: &[ObjectId],
+        placed: &[Placed],
+        prop: PropIndex,
+        padding: f64,
+    ) -> Result<(), EngineError> {
+        self.0.retain(|c, _| children.contains(c));
+        for k in placed {
+            let before = self.0.insert(k.id, padding).unwrap_or(0.0);
+            if before != padding {
+                let at = num(engine, k.id, prop);
+                write_placed(engine, k.id, prop, Value::Real(at + padding - before))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn swap_across(engine: &Engine, obj: ObjectId, which: Which, with: &mut Across) {
+    // A failure was logged when the other memory was swapped.
+    let _ = match which {
+        Which::Row => engine.with_mut(obj, |p: &mut Row| std::mem::swap(&mut p.across, with)),
+        Which::Column => engine.with_mut(obj, |p: &mut Column| std::mem::swap(&mut p.across, with)),
+        Which::Grid | Which::Flow => Ok(()),
+    };
+}
+
+/// Runs `f` on the list of children the positioner last positioned.
+fn with_placed<R>(
+    engine: &Engine,
+    obj: ObjectId,
+    which: Which,
+    f: impl FnOnce(&mut Vec<ObjectId>) -> R,
+) -> Option<R> {
+    match which {
+        Which::Row => engine.with_mut(obj, |p: &mut Row| f(&mut p.placed)),
+        Which::Column => engine.with_mut(obj, |p: &mut Column| f(&mut p.placed)),
+        Which::Grid => engine.with_mut(obj, |p: &mut Grid| f(&mut p.placed)),
+        Which::Flow => engine.with_mut(obj, |p: &mut Flow| f(&mut p.placed)),
+    }
+    .ok()
 }
 
 /// Swaps the positioner's memory with `with`: the memory is taken out
@@ -664,8 +741,29 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
             } else {
                 pad.left + k.x
             };
-            set_pos(engine, k.id, x, pad.top + k.y)?;
+            let y = pad.top + k.y;
+            match which {
+                Which::Row => write_placed(engine, k.id, Item::X.index, Value::Real(x))?,
+                Which::Column => write_placed(engine, k.id, Item::Y.index, Value::Real(y))?,
+                Which::Grid | Which::Flow => set_pos(engine, k.id, x, y)?,
+            }
         }
+        let across = match which {
+            Which::Row => Some((Item::Y.index, pad.top)),
+            Which::Column => Some((Item::X.index, pad.left)),
+            Which::Grid | Which::Flow => None,
+        };
+        if let Some((prop, padding)) = across {
+            let mut memory = Across::default();
+            swap_across(engine, obj, which, &mut memory);
+            let done = memory.apply(engine, &children, &placed, prop, padding);
+            swap_across(engine, obj, which, &mut memory);
+            done?;
+        }
+        with_placed(engine, obj, which, |last| {
+            last.clear();
+            last.extend(placed.iter().map(|k| k.id));
+        });
         tell(engine, &children, &placed)
     })
 }
@@ -858,9 +956,7 @@ fn wrap(
 
 fn set_pos(engine: &Engine, c: ObjectId, x: f64, y: f64) -> Result<(), EngineError> {
     for (p, v) in [(Item::X.index, x), (Item::Y.index, y)] {
-        if num(engine, c, p) != v {
-            engine.write(c, p, Value::Real(v), WriteKind::Imperative)?;
-        }
+        write_placed(engine, c, p, Value::Real(v))?;
     }
     Ok(())
 }
@@ -880,41 +976,57 @@ fn tell(engine: &Engine, children: &[ObjectId], placed: &[Placed]) -> Result<(),
         };
         let places = places
             .get_or_insert_with(|| placed.iter().enumerate().map(|(i, k)| (k.id, i)).collect());
-        let at = places.get(c).copied();
-        let index = at.and_then(|i| i32::try_from(i).ok()).unwrap_or(-1);
-        write_computed(
-            engine,
-            a,
-            PositionerAttached::INDEX.index,
-            Value::Int(index),
-        )?;
-        write_computed(
-            engine,
-            a,
-            PositionerAttached::IS_FIRST_ITEM.index,
-            Value::Bool(at == Some(0)),
-        )?;
-        write_computed(
-            engine,
-            a,
-            PositionerAttached::IS_LAST_ITEM.index,
-            Value::Bool(at.is_some_and(|i| i + 1 == placed.len())),
-        )?;
+        tell_one(engine, a, places.get(c).copied(), placed.len())?;
     }
     Ok(())
 }
 
-/// A child that gets its `Positioner` object after its positioner was
-/// laid out makes it lay out again, which is when the values are written.
+/// Writes the place `at` of `count` into the `Positioner` object `a`.
+fn tell_one(
+    engine: &Engine,
+    a: ObjectId,
+    at: Option<usize>,
+    count: usize,
+) -> Result<(), EngineError> {
+    let index = at.and_then(|i| i32::try_from(i).ok()).unwrap_or(-1);
+    write_computed(
+        engine,
+        a,
+        PositionerAttached::INDEX.index,
+        Value::Int(index),
+    )?;
+    write_computed(
+        engine,
+        a,
+        PositionerAttached::IS_FIRST_ITEM.index,
+        Value::Bool(at == Some(0)),
+    )?;
+    write_computed(
+        engine,
+        a,
+        PositionerAttached::IS_LAST_ITEM.index,
+        Value::Bool(at.is_some_and(|i| i + 1 == count)),
+    )
+}
+
+/// A child that gets its `Positioner` object after its positioner ran is
+/// told where it stood then, as Qt tells it: in the statement that asked.
+/// A child the positioner has not placed yet (it has only just become
+/// one) has no place until the positioner runs again.
 pub(crate) fn register(engine: &Engine) {
     engine.on_attached_created(|e, item, att| {
         if is_a::<PositionerAttached>(e, att)
             && let Some(parent) = e.untrack(|| e.visual_parent(item))
-            && which(e, parent).is_some()
+            && let Some(which) = which(e, parent)
         {
-            // Not an error worth a warning: the positioner then tells the
-            // child at its next layout.
-            let _ = e.notify(parent, Item::CHILDREN.index);
+            let place = with_placed(e, parent, which, |last| {
+                (last.iter().position(|c| *c == item), last.len())
+            });
+            if let Some((at, count)) = place {
+                // Not an error worth a warning: the values stay the
+                // defaults, which say "not positioned".
+                let _ = e.untrack(|| tell_one(e, att, at, count));
+            }
         }
         true
     });

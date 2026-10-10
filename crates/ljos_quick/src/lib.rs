@@ -11,13 +11,17 @@ mod accessible;
 mod anchors;
 mod animation;
 pub mod enums;
+pub mod focus;
+mod image;
 mod input;
 mod item;
+pub mod keys;
 mod layouts;
 mod loader;
 mod log;
 mod metrics;
 mod mirroring;
+mod pointer_item;
 mod positioners;
 mod rectangle;
 mod repeater;
@@ -33,6 +37,11 @@ pub use animation::{
     RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, easing,
     running_animation_count, set_animation_frame_period,
 };
+pub use image::{
+    BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint, ImageStore, LoadError,
+    Request as ImageRequest, fill_mode, image_status, requested_size, tile_mode,
+};
+pub use input::{KeyEvent, KeyKind};
 pub use input::{
     Modifiers, MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerId, PointerKind,
     TapHandler, tap_handler_target,
@@ -49,6 +58,9 @@ pub use loader::Loader;
 pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
+pub use pointer_item::{
+    PointerItem, contains_point, follows_implicit_size, is_mirrored, register_pointer_item,
+};
 pub use positioners::{Axis, Column, Flow, Grid, Positioner, PositionerAttached, Row};
 pub use rectangle::{Rectangle, RectangleBorder, RectanglePaint, to_rgba};
 pub use repeater::Repeater;
@@ -77,6 +89,10 @@ pub fn register(engine: &Engine) {
         Accessible, Repeater,
         FontMetrics, TextMetrics,
         Grid, Flow, Positioner, LayoutMirroring,
+        Image, BorderImage,
+        focus::FocusScope, focus::Window,
+        keys::Keys, keys::KeyNavigation, keys::KeyEventObject, keys::Shortcut,
+        keys::StandardKey,
     ]));
     engine.register_module(ljos_engine::module!("QtQuick.Layouts" 1.15 => [
         Layout, RowLayout, ColumnLayout, GridLayout, StackLayout,
@@ -96,4 +112,7 @@ pub fn register(engine: &Engine) {
             );
         }
     });
+    // After the listener above: focus reads the lists it keeps.
+    focus::register(engine);
+    keys::register(engine);
 }

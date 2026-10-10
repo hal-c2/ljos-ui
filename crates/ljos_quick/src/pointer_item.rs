@@ -1,0 +1,134 @@
+//! Items of other crates that take the pointer themselves.
+//!
+//! `MouseArea` and `TapHandler` live here and the scene knows them. A
+//! control (`QtQuick.Controls`' `Button`) is an item that reacts to the
+//! pointer without either, and lives in another crate; that crate names
+//! its types and what they do with a press here, and the scene delivers
+//! to them in the same pass, after an item's handlers and beside
+//! `MouseArea`.
+//!
+//! Also what such a crate needs to know of an item that only this crate
+//! can tell: whether its size is still its implicit size, and whether it
+//! is mirrored.
+
+use std::cell::RefCell;
+
+use ljos_engine::{Engine, MetaRef, ObjectId};
+use ljos_render::kurbo;
+
+use crate::input::PointerEvent;
+use crate::item::Item;
+
+/// What an item type does with the pointer. Positions are in the item's
+/// own coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct PointerItem {
+    /// A press landed on the item. True: the item takes it, and gets the
+    /// moves and the release (or cancel) that follow, wherever they are.
+    /// False: the press goes on to the items beneath.
+    pub press: fn(&Engine, ObjectId, &PointerEvent, kurbo::Point) -> bool,
+    /// The pointer moved while the item holds the press.
+    pub moved: fn(&Engine, ObjectId, &PointerEvent, kurbo::Point),
+    /// The press the item holds ended.
+    pub release: fn(&Engine, ObjectId, &PointerEvent, kurbo::Point),
+    /// The press the item holds was taken away.
+    pub cancel: fn(&Engine, ObjectId),
+    /// The pointer came over the item or left it. An item under the
+    /// pointer is hovered together with the registered items it is inside.
+    pub hover: fn(&Engine, ObjectId, bool),
+}
+
+#[derive(Default)]
+struct Registry {
+    types: RefCell<Vec<(MetaRef, PointerItem)>>,
+}
+
+/// Makes the scene deliver the pointer to items of type `meta` (and of the
+/// types derived from it) through `hooks`. A later registration wins, so a
+/// derived type can be given hooks of its own.
+pub fn register_pointer_item(engine: &Engine, meta: MetaRef, hooks: PointerItem) {
+    engine
+        .extension::<Registry>()
+        .types
+        .borrow_mut()
+        .push((meta, hooks));
+}
+
+/// The hooks of `obj`'s type.
+pub(crate) fn pointer_item(engine: &Engine, obj: ObjectId) -> Option<PointerItem> {
+    let reg = engine.extension::<Registry>();
+    let types = reg.types.borrow();
+    if types.is_empty() {
+        return None;
+    }
+    let meta = engine.meta_of(obj)?;
+    types
+        .iter()
+        .rev()
+        .find(|(m, _)| meta.inherits(m))
+        .map(|(_, h)| *h)
+}
+
+/// Brings the hovered registered items in step with the items under the
+/// pointer (`hits`, topmost first): the topmost registered one and the
+/// registered items it is inside.
+pub(crate) fn update_hover(engine: &Engine, hits: &[ObjectId], hovered: &mut Vec<ObjectId>) {
+    if hovered.is_empty() && engine.extension::<Registry>().types.borrow().is_empty() {
+        return;
+    }
+    let mut now: Vec<(ObjectId, PointerItem)> = Vec::new();
+    if let Some(top) = hits
+        .iter()
+        .copied()
+        .find(|o| pointer_item(engine, *o).is_some())
+    {
+        let mut cur = Some(top);
+        // Bounded so a corrupt parent cycle cannot hang.
+        for _ in 0..4096 {
+            let Some(o) = cur else { break };
+            if let Some(h) = pointer_item(engine, o) {
+                now.push((o, h));
+            }
+            cur = engine.untrack(|| engine.visual_parent(o));
+        }
+    }
+    let old = std::mem::take(hovered);
+    for o in &old {
+        if !now.iter().any(|(n, _)| n == o)
+            && engine.is_alive(*o)
+            && let Some(h) = pointer_item(engine, *o)
+        {
+            (h.hover)(engine, *o, false);
+        }
+    }
+    for (o, h) in now.iter().rev() {
+        if !old.contains(o) {
+            (h.hover)(engine, *o, true);
+        }
+        hovered.push(*o);
+    }
+}
+
+/// Whether the point is inside the item's rectangle.
+pub fn contains_point(engine: &Engine, obj: ObjectId, local: kurbo::Point) -> bool {
+    let (w, h) = engine.untrack(|| {
+        (
+            engine.read(obj, Item::WIDTH.index).to_number(),
+            engine.read(obj, Item::HEIGHT.index).to_number(),
+        )
+    });
+    local.x >= 0.0 && local.y >= 0.0 && local.x < w && local.y < h
+}
+
+/// Whether nothing has given the item a size along one axis: it still
+/// follows its implicit size and no pair of anchors stretches it. A
+/// container that sizes an item it was handed (a control's background)
+/// leaves a size the author gave alone.
+pub fn follows_implicit_size(engine: &Engine, obj: ObjectId, horizontal: bool) -> bool {
+    crate::item::size_follows_implicit(engine, obj, horizontal)
+}
+
+/// Whether `LayoutMirroring` mirrors the item (tracked).
+pub fn is_mirrored(engine: &Engine, obj: ObjectId) -> bool {
+    crate::mirroring::mirrored(engine, obj)
+}

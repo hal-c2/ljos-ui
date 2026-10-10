@@ -27,22 +27,14 @@ use ljos_runtime::{FrameScheduler, Time, TimerId, TimerKind};
 use super::timeline::{Ctx, Defaults, FOREVER, Timed, warn};
 use super::types::{Animation, is_managed};
 
-/// Work put off until the next tick: what could not be done where it came
-/// up (inside a binding).
-type Deferred = Box<dyn FnOnce(&Engine)>;
-
 /// Called when a driven run ends by itself.
 pub(crate) type Done = Rc<dyn Fn(&Engine)>;
-
-/// How often one tick lets deferred work queue more of itself.
-const MAX_DEFERRED_ROUNDS: usize = 8;
 
 #[derive(Default)]
 pub(crate) struct Driver {
     /// In the order they started, which is the order they advance in.
     runs: RefCell<Vec<Rc<Run>>>,
     by_anim: RefCell<HashMap<ObjectId, Rc<Run>>>,
-    deferred: RefCell<Vec<Deferred>>,
     /// Turns "a frame per tick" and "a wake at this moment" into one time.
     sched: RefCell<FrameScheduler>,
     /// The wake asked for by the runs that need no frames.
@@ -124,18 +116,6 @@ impl Driver {
                 .get()
                 .map(|(frame, clock)| frame + engine.now().saturating_since(clock))
         })
-    }
-
-    fn run_deferred(&self, engine: &Engine) {
-        for _ in 0..MAX_DEFERRED_ROUNDS {
-            let list = std::mem::take(&mut *self.deferred.borrow_mut());
-            if list.is_empty() {
-                break;
-            }
-            for f in list {
-                f(engine);
-            }
-        }
     }
 }
 
@@ -454,12 +434,6 @@ pub(crate) fn is_paused(engine: &Engine, anim: ObjectId) -> bool {
     driver(engine).find(anim).is_some_and(|r| r.paused.get())
 }
 
-/// Does `f` at the next tick, and asks for the frame that brings it.
-pub(crate) fn defer(engine: &Engine, f: impl FnOnce(&Engine) + 'static) {
-    driver(engine).deferred.borrow_mut().push(Box::new(f));
-    engine.request_wake();
-}
-
 /// The display's refresh period, for the frames a visible animation asks
 /// for. 60 Hz until set.
 pub(crate) fn set_frame_period(engine: &Engine, period: Duration) {
@@ -469,12 +443,11 @@ pub(crate) fn set_frame_period(engine: &Engine, period: Duration) {
 /// Frame step 5: brings every run to `now`, the frame's time.
 pub(crate) fn tick(engine: &Engine, now: Time) {
     let d = driver(engine);
-    if d.runs.borrow().is_empty() && d.deferred.borrow().is_empty() {
+    if d.runs.borrow().is_empty() {
         d.last_frame.set(Some((now, engine.now())));
         return;
     }
     d.ticking.set(Some(now));
-    d.run_deferred(engine);
     let runs: Vec<Rc<Run>> = d.runs.borrow().clone();
     // One batch: what follows several animated values (a layout, a
     // binding on two of them) is worked out once per frame.
@@ -501,9 +474,6 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
     for run in &runs {
         settle(engine, &d, run);
     }
-    // What the batch's end set off (a binding handing a Behavior a new
-    // value) starts in this frame, not the next.
-    d.run_deferred(engine);
     d.ticking.set(None);
     d.last_frame.set(Some((now, engine.now())));
 }
@@ -512,9 +482,6 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
 /// `now`. `None`: not before something else changes.
 pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     let d = driver(engine);
-    if !d.deferred.borrow().is_empty() {
-        return Some(now);
-    }
     if d.runs.borrow().is_empty() && d.boundary.get().is_none() {
         return None;
     }

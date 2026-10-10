@@ -67,10 +67,11 @@ impl DelegateHost for Host {
         // its place and has nothing to append and move.
         let r = e.batch(|| {
             let anchor = before.unwrap_or(me);
-            for p in [Item::CHILDREN.index, Item::DATA.index] {
-                insert_before(e, parent, p, object, anchor)?;
+            if !tree::set_parent_item_before(e, object, parent, anchor)? {
+                // A child of the parent already: only its place changes.
+                place_before(e, parent, &[object], anchor)?;
             }
-            tree::set_parent_item(e, object, Some(parent))
+            Ok::<_, EngineError>(())
         });
         if let Err(err) = r {
             e.log(
@@ -131,34 +132,6 @@ fn place_before(
         reorder(e, parent, p, items, anchor)?;
     }
     Ok(())
-}
-
-/// Puts `item`, which is new to `parent`, right before `anchor` in list
-/// `p`. Without the anchor the list is left alone, and the reparent that
-/// follows appends.
-fn insert_before(
-    e: &Engine,
-    parent: ObjectId,
-    p: PropIndex,
-    item: ObjectId,
-    anchor: ObjectId,
-) -> Result<(), EngineError> {
-    let Value::List(old) = e.untrack(|| e.read(parent, p)) else {
-        return Ok(());
-    };
-    // From the end: a Repeater's items are near it, and it is usually
-    // among the last children.
-    let Some(at) = old.iter().rposition(|v| v.as_object() == Some(anchor)) else {
-        return Ok(());
-    };
-    if old.iter().any(|v| v.as_object() == Some(item)) {
-        return reorder(e, parent, p, &[item], anchor);
-    }
-    let mut new = Vec::with_capacity(old.len() + 1);
-    new.extend_from_slice(&old[..at]);
-    new.push(Value::Object(item));
-    new.extend_from_slice(&old[at..]);
-    e.write_internal(parent, p, Value::list(new), WriteKind::Initial)
 }
 
 fn reorder(

@@ -320,3 +320,174 @@ Item {
     assert_eq!(rect(&e, item("f2")), (0.0, 10.0, 10.0, 10.0));
     assert_eq!(rect(&e, item("g3")), (0.0, 10.0, 10.0, 10.0));
 }
+
+/// A `Positioner` object made after the positioner ran has the child's
+/// place where it is made; no frame is needed. A child that has only just
+/// joined has none until the positioner runs.
+#[test]
+fn a_positioner_object_made_after_the_layout_knows_the_place() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    Row {
+        objectName: "row"
+        Item { objectName: "r1"; width: 10; height: 10 }
+        Item { objectName: "gone"; width: 10; height: 10; visible: false }
+        Item { objectName: "r2"; width: 10; height: 10 }
+    }
+    Flow {
+        width: 15
+        Item { objectName: "f1"; width: 10; height: 10 }
+        Item { objectName: "f2"; width: 10; height: 10 }
+    }
+    Item { objectName: "late"; width: 10; height: 10 }
+}
+"#,
+    );
+    let item = |n: &str| find(&e, root, n);
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    for n in ["r1", "gone", "r2", "f1", "f2", "late"] {
+        positioner_attached(&e, item(n));
+    }
+    assert_eq!(place(&e, item("r1")), (0, true, false));
+    assert_eq!(place(&e, item("gone")), (-1, false, false));
+    assert_eq!(place(&e, item("r2")), (1, false, true));
+    assert_eq!(place(&e, item("f2")), (1, false, true));
+    assert_eq!(place(&e, item("late")), (-1, false, false));
+    assert!(!s.needs_frame(), "asking costs no frame");
+
+    let fresh = load(&e, "import QtQuick\nItem { width: 10; height: 10 }");
+    set(&e, fresh, "parent", Value::Object(item("row")));
+    positioner_attached(&e, fresh);
+    assert_eq!(place(&e, fresh), (-1, false, false));
+    assert_eq!(place(&e, item("r2")), (1, false, true));
+    frame(&mut s, &e);
+    assert_eq!(place(&e, fresh), (2, false, true));
+    assert_eq!(place(&e, item("r2")), (1, false, false));
+}
+
+#[test]
+fn an_attached_value_given_later_counts_though_it_is_the_default() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Layouts
+Item {
+    width: 400; height: 100
+    RowLayout {
+        objectName: "row"; width: 400; height: 100; spacing: 0
+        Item {
+            objectName: "edge"; implicitWidth: 30; implicitHeight: 10
+            Layout.margins: 10; Layout.alignment: Qt.AlignLeft | Qt.AlignTop
+        }
+        RowLayout {
+            objectName: "nested"
+            Layout.alignment: Qt.AlignLeft | Qt.AlignTop
+            Item { implicitWidth: 40; implicitHeight: 10; Layout.fillWidth: true }
+        }
+    }
+}
+"#,
+    );
+    let item = |n: &str| find(&e, root, n);
+    let mut s = scene(&e, root, 400.0, 100.0);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, item("edge"), "x"), 10.0);
+    // A layout in a layout fills until it is told otherwise.
+    assert_eq!(num(&e, item("nested"), "width"), 350.0);
+    let ran = layout_runs(&e, item("row"));
+    assert!(!s.needs_frame());
+
+    // Both are the values the attached object already reads.
+    set(
+        &e,
+        layout_attached(&e, item("edge")),
+        "leftMargin",
+        Value::Real(0.0),
+    );
+    set(
+        &e,
+        layout_attached(&e, item("nested")),
+        "fillWidth",
+        Value::Bool(false),
+    );
+    assert!(s.needs_frame(), "the layout heard about it");
+    frame(&mut s, &e);
+    assert_eq!(layout_runs(&e, item("row")), ran + 1);
+    assert_eq!(num(&e, item("edge"), "x"), 0.0);
+    assert_eq!(num(&e, item("nested"), "width"), 40.0);
+
+    // Given a second time there is nothing to do.
+    set(
+        &e,
+        layout_attached(&e, item("edge")),
+        "leftMargin",
+        Value::Real(0.0),
+    );
+    assert!(!s.needs_frame());
+}
+
+const PLACED: &str = r#"
+import QtQuick
+import QtQuick.Layouts
+Item {
+    id: root
+    objectName: "root"
+    width: 400; height: 100
+    property real w: 50
+    RowLayout {
+        objectName: "layout"; width: 400; spacing: 0
+        Rectangle { objectName: "bound"; width: root.w; height: 20; Layout.preferredWidth: 80 }
+        Rectangle { objectName: "implicit"; implicitWidth: 30; height: 20; Layout.fillWidth: true }
+        Rectangle { objectName: "same"; implicitWidth: 30; height: 20 }
+    }
+    Column {
+        Rectangle { objectName: "across"; x: root.w; width: 10; height: 10 }
+    }
+}
+"#;
+
+#[test]
+fn placing_a_child_leaves_its_binding_and_makes_a_size_a_given_one() {
+    use ljos_engine::Provenance;
+
+    let e = engine();
+    let root = load(&e, PLACED);
+    let mut s = scene(&e, root, 400.0, 100.0);
+    frame(&mut s, &e);
+    let [bound, implicit, same, across] =
+        ["bound", "implicit", "same", "across"].map(|n| find(&e, root, n));
+    let width = e.property_index(bound, "width").unwrap();
+    let x = e.property_index(across, "x").unwrap();
+
+    // The layout chose 80; the binding is still there and still bound.
+    assert_eq!(num(&e, bound, "width"), 80.0);
+    assert!(e.is_bound(bound, width));
+    assert_eq!(e.provenance(bound, width), Some(Provenance::Bound));
+    // A Column does not write x at all.
+    assert_eq!(num(&e, across, "x"), 50.0);
+    assert!(e.is_bound(across, x));
+
+    // A size that followed the implicit size is a given size once a
+    // layout set it to something else: it no longer follows. One the
+    // layout had no reason to change still does (both as in Qt).
+    assert_eq!(num(&e, implicit, "width"), 290.0);
+    assert!(!ljos_quick::follows_implicit_size(&e, implicit, true));
+    assert_eq!(e.provenance(implicit, width), Some(Provenance::Assigned));
+    assert!(ljos_quick::follows_implicit_size(&e, same, true));
+
+    // The binding's next value is the width, and nothing lays out for it.
+    let before = layout_runs(&e, find(&e, root, "layout"));
+    set(&e, root, "w", Value::Real(60.0));
+    assert_eq!(num(&e, bound, "width"), 60.0);
+    assert_eq!(num(&e, across, "x"), 60.0);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, bound, "width"), 60.0);
+    assert_eq!(layout_runs(&e, find(&e, root, "layout")), before);
+}

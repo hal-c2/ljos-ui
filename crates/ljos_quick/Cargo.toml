@@ -16,15 +16,20 @@ ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 ljos_text = { path = "../ljos_text" }
 bitflags.workspace = true
+# Image decoding: PNG and JPEG are the formats Image reads.
+png.workspace = true
 # ObjectId is a slotmap key; an accessibility node is named by its number.
 slotmap.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
+zune-jpeg.workspace = true
 
 [dev-dependencies]
 # Tests compile QML strings; the crate itself never links the parser.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+# Image tests make their JPEG fixtures in code.
+jpeg-encoder.workspace = true
 
 [lints]
 workspace = true

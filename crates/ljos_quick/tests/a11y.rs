@@ -503,10 +503,10 @@ fn focusable_follows_the_role_until_it_is_set() {
 import QtQuick
 Item {
     Rectangle { objectName: "button"; Accessible.role: Accessible.Button }
-    Rectangle { objectName: "text"; Accessible.role: Accessible.StaticText }
+    Rectangle { objectName: "slider"; Accessible.role: Accessible.Slider }
     Rectangle {
         objectName: "forced"
-        Accessible.role: Accessible.StaticText; Accessible.focusable: true
+        Accessible.role: Accessible.Slider; Accessible.focusable: true
     }
     Rectangle {
         objectName: "off"
@@ -518,15 +518,18 @@ Item {
     let focusable =
         |name: &str| get(&e, accessible(&e, find(&e, root, name)), "focusable").to_boolean();
     assert!(focusable("button"));
-    assert!(!focusable("text"));
+    assert!(!focusable("slider"));
     assert!(focusable("forced"));
     assert!(!focusable("off"));
 
     // The default follows a role change; a set value does not.
-    set_a11y(&e, find(&e, root, "text"), "role", role(Role::CheckBox));
+    set_a11y(&e, find(&e, root, "slider"), "role", role(Role::CheckBox));
     set_a11y(&e, find(&e, root, "off"), "role", role(Role::CheckBox));
-    assert!(focusable("text"));
+    assert!(focusable("slider"));
     assert!(!focusable("off"));
+    // Once on, the default stays on, as in Qt.
+    set_a11y(&e, find(&e, root, "slider"), "role", role(Role::Slider));
+    assert!(focusable("slider"));
 
     let sc = active(&e, root);
     let node = |name: &str| {
@@ -536,6 +539,143 @@ Item {
     assert!(node("button"));
     assert!(node("forced"));
     assert!(!node("off"));
+}
+
+const FOCUS: &str = r#"
+import QtQuick
+Item {
+    objectName: "root"
+    width: 200; height: 100
+    FocusScope {
+        objectName: "bar"
+        focus: true
+        Accessible.role: Accessible.ToolBar; Accessible.name: "Tools"
+        Rectangle {
+            objectName: "save"; focus: true
+            Accessible.role: Accessible.Button; Accessible.name: "Save"
+        }
+        Rectangle {
+            objectName: "close"
+            Accessible.role: Accessible.Button; Accessible.name: "Close"
+        }
+        Item { objectName: "bare" }
+    }
+    Rectangle {
+        objectName: "gauge"
+        Accessible.role: Accessible.Slider; Accessible.name: "Gauge"
+    }
+}
+"#;
+
+/// The name of the node that has the keyboard; `"window"` when none has.
+fn focus_name(sc: &QuickScene) -> String {
+    sc.accessible_focus_node().map_or_else(
+        || "window".to_owned(),
+        |k| sc.accessibility_tree().get(k).unwrap().name.clone(),
+    )
+}
+
+#[test]
+fn the_focus_node_follows_active_focus_and_two_nodes_hear_of_it() {
+    let e = engine();
+    let root = load(&e, FOCUS);
+    let mut sc = active(&e, root);
+    assert_eq!(focus_name(&sc), "Save");
+    let update = sc.accessibility_tree_mut().take_update().unwrap();
+    let save = sc.accessible_node(find(&e, root, "save")).unwrap();
+    assert_eq!(update.focus, save.node_id());
+
+    // Inside one scope: the old and the new focus item, not the scope.
+    let before = sc.accessibility_tree().stats();
+    set(&e, find(&e, root, "close"), "focus", Value::Bool(true));
+    frame(&mut sc, &e);
+    assert_eq!(focus_name(&sc), "Close");
+    let after = sc.accessibility_tree().stats();
+    assert_eq!(after.node_updates, before.node_updates + 2);
+    assert_eq!(after.child_updates, before.child_updates);
+    let close = sc.accessible_node(find(&e, root, "close")).unwrap();
+    let update = sc.accessibility_tree_mut().take_update().unwrap();
+    assert_eq!(update.focus, close.node_id());
+    assert_eq!(update.nodes.len(), 2);
+
+    // An item nobody is told about: the scope around it has the keyboard.
+    set(&e, find(&e, root, "bare"), "focus", Value::Bool(true));
+    frame(&mut sc, &e);
+    assert_eq!(focus_name(&sc), "Tools");
+
+    // The window loses the keyboard, and gets it back.
+    sc.set_window_active(&e, false);
+    frame(&mut sc, &e);
+    assert_eq!(focus_name(&sc), "window");
+    let update = sc.accessibility_tree_mut().take_update().unwrap();
+    assert_eq!(update.focus, NodeKey::ROOT.node_id());
+    sc.set_window_active(&e, true);
+    frame(&mut sc, &e);
+    assert_eq!(focus_name(&sc), "Tools");
+
+    // Then nothing runs.
+    assert!(!sc.needs_frame());
+    let idle = sc.accessibility_tree().stats();
+    frame(&mut sc, &e);
+    assert_eq!(sc.accessibility_tree().stats(), idle);
+}
+
+#[test]
+fn the_focus_action_gives_the_item_active_focus() {
+    let e = engine();
+    let root = load(&e, FOCUS);
+    let mut sc = active(&e, root);
+    let key = |sc: &QuickScene, name: &str| sc.accessible_node(find(&e, root, name)).unwrap();
+    let has = |name: &str| get(&e, find(&e, root, name), "activeFocus").to_boolean();
+
+    let close = key(&sc, "close");
+    assert!(sc.accessible_focus(&e, close));
+    frame(&mut sc, &e);
+    assert!(has("close") && has("bar") && !has("save"));
+    assert_eq!(focus_name(&sc), "Close");
+    assert_eq!(sc.active_focus_item(&e), Some(find(&e, root, "close")));
+
+    // A slider is not focusable until its author says so.
+    let gauge = key(&sc, "gauge");
+    assert!(!sc.accessible_focus(&e, gauge));
+    assert!(has("close"));
+    set_a11y(&e, find(&e, root, "gauge"), "focusable", Value::Bool(true));
+    frame(&mut sc, &e);
+    assert!(sc.accessible_focus(&e, gauge));
+    frame(&mut sc, &e);
+    assert!(has("gauge") && !has("bar") && !has("close"));
+    assert_eq!(focus_name(&sc), "Gauge");
+
+    // A disabled item does not take it.
+    set(&e, find(&e, root, "save"), "enabled", Value::Bool(false));
+    frame(&mut sc, &e);
+    let save = key(&sc, "save");
+    assert!(!sc.accessible_focus(&e, save));
+    assert!(has("gauge"));
+
+    // Nor does the window's own node, or one that is not there.
+    assert!(!sc.accessible_focus(&e, NodeKey::ROOT));
+    assert!(!sc.accessible_focus(&e, NodeKey(987_654)));
+    assert!(e.take_warnings().is_empty());
+}
+
+#[test]
+fn an_item_can_say_it_is_focused_itself() {
+    let e = engine();
+    let root = load(&e, FOCUS);
+    let mut sc = active(&e, root);
+    let gauge = find(&e, root, "gauge");
+    // What the property reads is what was assigned, never active focus.
+    let save = accessible(&e, find(&e, root, "save"));
+    assert_eq!(get(&e, save, "focused"), Value::Bool(false));
+
+    set(&e, find(&e, root, "bar"), "focus", Value::Bool(false));
+    frame(&mut sc, &e);
+    assert_eq!(focus_name(&sc), "window");
+    set_a11y(&e, gauge, "focused", Value::Bool(true));
+    frame(&mut sc, &e);
+    assert_eq!(focus_name(&sc), "Gauge");
+    assert!(!get(&e, gauge, "activeFocus").to_boolean());
 }
 
 #[test]

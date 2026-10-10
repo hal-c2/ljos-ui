@@ -61,10 +61,6 @@ Feature: Padding and the Positioner attached properties
       And the property "width" of "row" is 57
       And the property "topPadding" of "row" is 5
 
-  # The numbers are Qt's. Parked: an attached property cannot be read in an
-  # expression yet (the engine gives `Positioner` to JavaScript as its enum
-  # keys only), so nothing in QML can observe these values.
-  @backlog
   Rule: Positioner attached properties
 
     Scenario Outline: A child knows its place among the positioned children
@@ -109,3 +105,47 @@ Feature: Padding and the Positioner attached properties
       When 100 milliseconds pass
       Then the property "at" of "hidden" is -1
       And the property "at" of "a" is 0
+
+  Rule: A child that asks after it was positioned is told at once
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          width: 200; height: 200
+          property string log
+          function say(o) {
+            var p = o.Positioner
+            return p.index + "/" + p.isFirstItem + "/" + p.isLastItem + " "
+          }
+          function ask() { log += say(a) + say(empty) + say(hidden) + say(b) + say(c) }
+          function join() {
+            late.parent = grid
+            log += say(late) + say(c)
+          }
+          function after() { log += say(late) + say(c) }
+          Grid {
+            id: grid; columns: 2
+            Rectangle { id: a; width: 10; height: 10 }
+            Rectangle { id: empty; width: 0; height: 10 }
+            Rectangle { id: hidden; width: 10; height: 10; visible: false }
+            Rectangle { id: b; width: 10; height: 10 }
+            Rectangle { id: c; width: 10; height: 10 }
+          }
+          Rectangle { id: late; width: 10; height: 10 }
+        }
+        """
+      When 100 milliseconds pass
+
+    Scenario: The place is known in the statement that first asks for it
+      When the method "ask" of "root" is called
+      Then the property "log" of "root" is "0/true/false -1/false/false -1/false/false 1/false/false 2/false/true "
+
+    Scenario: A child that joined has no place before the positioner has run
+      When the method "join" of "root" is called
+      Then the property "log" of "root" is "-1/false/false 2/false/true "
+      When 100 milliseconds pass
+      And the method "after" of "root" is called
+      Then the property "log" of "root" is "-1/false/false 2/false/true 3/false/true 2/false/false "

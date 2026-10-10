@@ -40,24 +40,71 @@ pub fn set_parent_item(
     parent: Option<ObjectId>,
 ) -> Result<(), EngineError> {
     if let Some(p) = parent {
-        // Qt refuses a parent inside the item's own subtree.
-        let mut cur = Some(p);
-        for _ in 0..4096 {
-            let Some(c) = cur else { break };
-            if c == child {
-                return Err(EngineError::WrongType {
-                    ty: "Item".into(),
-                    expected: "a parent outside the item's own subtree".into(),
-                });
-            }
-            cur = engine.untrack(|| engine.visual_parent(c));
-        }
+        outside_of(engine, child, p)?;
     }
     engine.batch(|| {
         engine.set_visual_parent(child, parent)?;
         // A no-op when the listener `register` installs already ran.
         sync_parent(engine, child, parent)
     })
+}
+
+/// [`set_parent_item`] for an item that goes right before `anchor` in
+/// `parent`'s `children` and `data` instead of at their end (a Repeater's
+/// delegate, which sits before the Repeater). At the end when `anchor` is
+/// not a child of `parent`.
+///
+/// `false`, and nothing done, when `child` is a child of `parent` already:
+/// moving it among its siblings is the caller's.
+pub(crate) fn set_parent_item_before(
+    engine: &Engine,
+    child: ObjectId,
+    parent: ObjectId,
+    anchor: ObjectId,
+) -> Result<bool, EngineError> {
+    let old = engine.with(child, |i: &Item| i.synced_parent)?;
+    if old == Some(parent) {
+        return Ok(false);
+    }
+    if !is_item(engine, parent) {
+        // No lists to have a place in.
+        set_parent_item(engine, child, Some(parent))?;
+        return Ok(true);
+    }
+    outside_of(engine, child, parent)?;
+    engine.batch(|| {
+        if let Some(o) = old.filter(|o| engine.is_alive(*o) && is_item(engine, *o)) {
+            engine.list_remove(o, Item::CHILDREN.index, child)?;
+            engine.list_remove(o, Item::DATA.index, child)?;
+        }
+        for p in [Item::CHILDREN.index, Item::DATA.index] {
+            if !engine.list_insert_before(parent, p, child, anchor)? {
+                engine.list_push(parent, p, child)?;
+            }
+        }
+        // The lists are in step already, which is what this records: the
+        // reparent below then has nothing to append.
+        engine.with_mut(child, |i: &mut Item| i.synced_parent = Some(parent))?;
+        engine.set_visual_parent(child, Some(parent))?;
+        sync_parent(engine, child, Some(parent))
+    })?;
+    Ok(true)
+}
+
+/// Qt refuses a parent inside the item's own subtree.
+fn outside_of(engine: &Engine, child: ObjectId, parent: ObjectId) -> Result<(), EngineError> {
+    let mut cur = Some(parent);
+    for _ in 0..4096 {
+        let Some(c) = cur else { break };
+        if c == child {
+            return Err(EngineError::WrongType {
+                ty: "Item".into(),
+                expected: "a parent outside the item's own subtree".into(),
+            });
+        }
+        cur = engine.untrack(|| engine.visual_parent(c));
+    }
+    Ok(())
 }
 
 /// Brings `Item.parent` and the lists of `child`'s previous and new visual
@@ -76,12 +123,15 @@ pub fn sync_parent(
     engine.batch(|| {
         if old != parent {
             if let Some(o) = old.filter(|o| engine.is_alive(*o) && is_item(engine, *o)) {
-                remove(engine, o, Item::CHILDREN.index, child)?;
-                remove(engine, o, Item::DATA.index, child)?;
+                engine.list_remove(o, Item::CHILDREN.index, child)?;
+                engine.list_remove(o, Item::DATA.index, child)?;
             }
+            // `synced_parent` says whose lists the item is in, so it is
+            // not in these: no look through them, which would make adding
+            // a child cost more the more children there are.
             if let Some(p) = parent.filter(|p| is_item(engine, *p)) {
-                push_unique(engine, p, Item::CHILDREN.index, child)?;
-                push_unique(engine, p, Item::DATA.index, child)?;
+                engine.list_push(p, Item::CHILDREN.index, child)?;
+                engine.list_push(p, Item::DATA.index, child)?;
             }
         }
         let cur = engine.untrack(|| engine.read(child, Item::PARENT.index));
@@ -107,8 +157,9 @@ pub(crate) fn forget_resource(
     child: ObjectId,
 ) -> Result<(), EngineError> {
     engine.batch(|| {
-        remove(engine, parent, Item::RESOURCES.index, child)?;
-        remove(engine, parent, Item::DATA.index, child)
+        engine.list_remove(parent, Item::RESOURCES.index, child)?;
+        engine.list_remove(parent, Item::DATA.index, child)?;
+        Ok(())
     })
 }
 
@@ -135,36 +186,21 @@ pub(crate) fn list(engine: &Engine, obj: ObjectId, p: PropIndex) -> Vec<ObjectId
     }
 }
 
-fn raw(engine: &Engine, obj: ObjectId, p: PropIndex) -> Vec<ObjectId> {
-    match engine.untrack(|| engine.read(obj, p)) {
-        Value::List(l) => l.iter().filter_map(Value::as_object).collect(),
-        _ => Vec::new(),
-    }
-}
-
+/// Appends a resource unless it is there. A resource has nothing like an
+/// item's `synced_parent` to say so, so the list is looked through (it is
+/// not copied): an item's resources are few next to its children.
 fn push_unique(
     engine: &Engine,
     obj: ObjectId,
     p: PropIndex,
     item: ObjectId,
 ) -> Result<(), EngineError> {
-    if raw(engine, obj, p).contains(&item) {
+    let there = match engine.untrack(|| engine.read(obj, p)) {
+        Value::List(l) => l.iter().any(|v| v.as_object() == Some(item)),
+        _ => false,
+    };
+    if there {
         return Ok(());
     }
     engine.list_push(obj, p, item)
-}
-
-fn remove(engine: &Engine, obj: ObjectId, p: PropIndex, item: ObjectId) -> Result<(), EngineError> {
-    let mut l = raw(engine, obj, p);
-    let before = l.len();
-    l.retain(|c| *c != item);
-    if l.len() == before {
-        return Ok(());
-    }
-    engine.write_internal(
-        obj,
-        p,
-        Value::list(l.into_iter().map(Value::Object).collect()),
-        WriteKind::Initial,
-    )
 }

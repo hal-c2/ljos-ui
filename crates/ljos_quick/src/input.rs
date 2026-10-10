@@ -32,6 +32,8 @@ bitflags::bitflags! {
         const CONTROL = 0x0400_0000;
         const ALT = 0x0800_0000;
         const META = 0x1000_0000;
+        /// The key is on the keypad.
+        const KEYPAD = 0x2000_0000;
     }
 }
 
@@ -303,4 +305,79 @@ pub fn tap_handler_target(engine: &ljos_engine::Engine, h: ObjectId) -> Option<O
         _ => engine.owner(h),
     }
     .filter(|o| crate::item::is_item(engine, *o))
+}
+
+/// Whether a key went down or came up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KeyKind {
+    Press,
+    Release,
+}
+
+/// One key event, as the host saw it. Delivery lives in
+/// [`crate::QuickScene::key_event`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyEvent {
+    pub kind: KeyKind,
+    /// A `Qt.Key` number ([`crate::keys::key`]). Shift+Tab is
+    /// [`crate::keys::key::BACKTAB`], as on a desktop.
+    pub key: i32,
+    /// The modifiers held besides the key itself.
+    pub modifiers: Modifiers,
+    /// What the key types; empty for a key that types nothing.
+    pub text: String,
+    /// The press comes from holding the key down.
+    pub auto_repeat: bool,
+    /// How many presses this event stands for (a host may fold repeats).
+    pub count: u32,
+    /// The platform's number for the physical key; 0 when unknown.
+    pub native_scan_code: u32,
+}
+
+impl KeyEvent {
+    fn base(kind: KeyKind, key: i32) -> Self {
+        Self {
+            kind,
+            key,
+            modifiers: Modifiers::empty(),
+            text: String::new(),
+            auto_repeat: false,
+            count: 1,
+            native_scan_code: 0,
+        }
+    }
+
+    pub fn press(key: i32) -> Self {
+        Self::base(KeyKind::Press, key)
+    }
+
+    pub fn release(key: i32) -> Self {
+        Self::base(KeyKind::Release, key)
+    }
+
+    pub fn with_modifiers(mut self, m: Modifiers) -> Self {
+        self.modifiers = m;
+        self
+    }
+
+    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+        self.text = text.into();
+        self
+    }
+
+    /// Marks the press as one that comes from holding the key.
+    pub fn repeated(mut self) -> Self {
+        self.auto_repeat = true;
+        self
+    }
+
+    pub fn with_count(mut self, count: u32) -> Self {
+        self.count = count;
+        self
+    }
+
+    pub fn with_native_scan_code(mut self, code: u32) -> Self {
+        self.native_scan_code = code;
+        self
+    }
 }

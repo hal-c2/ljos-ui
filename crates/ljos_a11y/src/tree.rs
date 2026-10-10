@@ -6,7 +6,7 @@
 //! toolkit's nodes. Nothing here walks the whole tree unless a host asks
 //! for all of it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use accesskit::{Action, Node, NodeId, Role as AkRole, TreeUpdate};
 
@@ -58,7 +58,12 @@ pub struct NodeData {
     /// The item's `objectName`, so tests and tools can find the node.
     pub author_id: String,
     pub bounds: Bounds,
+    /// Whether an assistive technology may give the node the keyboard.
     pub focusable: bool,
+    /// Whether the keyboard is at or below the node. AccessKit keeps
+    /// focus on the tree, not on a node, so this does not reach
+    /// [`NodeData::apply`]; [`Tree::focus`] reads it.
+    pub focused: bool,
     pub disabled: bool,
     /// Whether the node takes the press action.
     pub press: bool,
@@ -75,6 +80,7 @@ impl NodeData {
             author_id: String::new(),
             bounds: Bounds::default(),
             focusable: false,
+            focused: false,
             disabled: false,
             press: false,
         }
@@ -154,9 +160,14 @@ pub struct Tree {
     top: Vec<NodeKey>,
     dirty: HashSet<NodeKey>,
     removed: Vec<NodeKey>,
+    /// The nodes that say they are focused: the focus item and the focus
+    /// scopes around it, so a handful at most.
+    focused: BTreeSet<NodeKey>,
     stats: TreeStats,
     /// Whether an AccessKit consumer has been given the whole tree.
     sent: bool,
+    /// The focus the AccessKit consumer was last told.
+    sent_focus: Option<NodeKey>,
 }
 
 impl Tree {
@@ -209,6 +220,11 @@ impl Tree {
     /// anything changed.
     pub fn upsert(&mut self, key: NodeKey, data: NodeData) -> bool {
         debug_assert_ne!(key, NodeKey::ROOT, "the root has no data");
+        if data.focused {
+            self.focused.insert(key);
+        } else {
+            self.focused.remove(&key);
+        }
         match self.slots.get_mut(&key) {
             Some(slot) if slot.data == data => return false,
             Some(slot) => slot.data = data,
@@ -263,6 +279,7 @@ impl Tree {
             self.stats.child_updates += 1;
         }
         self.dirty.remove(&key);
+        self.focused.remove(&key);
         self.removed.push(key);
         self.stats.removals += 1;
         true
@@ -326,19 +343,42 @@ impl Tree {
 
     /// Whether the node is reachable from the root.
     pub fn attached(&self, key: NodeKey) -> bool {
+        self.depth(key).is_some()
+    }
+
+    /// How many steps the node is below the root; `None` when it is not
+    /// reachable from it.
+    fn depth(&self, key: NodeKey) -> Option<usize> {
         let mut at = key;
         // A child list cannot loop back unless a caller builds a cycle;
         // the bound keeps that mistake from hanging the host.
-        for _ in 0..=self.slots.len() {
+        for depth in 0..=self.slots.len() {
             if at == NodeKey::ROOT {
-                return true;
+                return Some(depth);
             }
-            match self.slots.get(&at).and_then(|s| s.parent) {
-                Some(p) => at = p,
-                None => return false,
+            at = self.slots.get(&at)?.parent?;
+        }
+        None
+    }
+
+    /// The node that has the keyboard: the deepest reachable node that
+    /// says it is focused, which is the focus item itself or, when that is
+    /// not exposed, the nearest focus scope around it that is. `None`
+    /// when no node is focused; a consumer then reports the root.
+    ///
+    /// Two focused nodes at one depth are an author's doing
+    /// (`Accessible.focused` on an item without the keyboard); the lower
+    /// key wins so that the answer does not change between calls.
+    pub fn focus(&self) -> Option<NodeKey> {
+        let mut best: Option<(usize, NodeKey)> = None;
+        for key in &self.focused {
+            if let Some(depth) = self.depth(*key)
+                && best.is_none_or(|(d, _)| depth > d)
+            {
+                best = Some((depth, *key));
             }
         }
-        false
+        best.map(|(_, key)| key)
     }
 
     /// Visits every node reachable from the root, parents before children
@@ -429,26 +469,32 @@ impl Tree {
         }
         let _ = self.take_changes();
         self.sent = true;
+        self.sent_focus = self.focus();
         TreeUpdate {
             nodes,
             tree: Some(accesskit::Tree::new(NodeKey::ROOT.node_id())),
             tree_id: accesskit::TreeId::ROOT,
-            focus: NodeKey::ROOT.node_id(),
+            focus: self.sent_focus.unwrap_or(NodeKey::ROOT).node_id(),
         }
     }
 
     /// The next AccessKit update: everything the first time, afterwards
-    /// only the nodes that changed. `None` when there is nothing to say.
+    /// only the nodes that changed, with the focus as it is now. `None`
+    /// when there is nothing to say.
     pub fn take_update(&mut self) -> Option<TreeUpdate> {
         if !self.sent {
             return Some(self.full_update());
         }
         let changes = self.take_changes();
-        if changes.changed.is_empty() {
-            // AccessKit drops a node when no child list names it, so a
-            // removal always comes with its parent's new list.
+        // Only reachable nodes are announced, and the focus is one of
+        // them, so the consumer knows the node it is told about.
+        let focus = self.focus();
+        // AccessKit drops a node when no child list names it, so a
+        // removal always comes with its parent's new list.
+        if changes.changed.is_empty() && focus == self.sent_focus {
             return None;
         }
+        self.sent_focus = focus;
         let nodes = changes
             .changed
             .into_iter()
@@ -458,7 +504,7 @@ impl Tree {
             nodes,
             tree: None,
             tree_id: accesskit::TreeId::ROOT,
-            focus: NodeKey::ROOT.node_id(),
+            focus: focus.unwrap_or(NodeKey::ROOT).node_id(),
         })
     }
 }
@@ -669,6 +715,77 @@ mod tests {
         assert_eq!(update.nodes.len(), 1);
         assert_eq!(update.nodes[0].0, NodeId(1));
         assert_eq!(update.nodes[0].1.children(), &[NodeId(3)]);
+    }
+
+    fn focused(mut data: NodeData) -> NodeData {
+        data.focusable = true;
+        data.focused = true;
+        data
+    }
+
+    #[test]
+    fn the_focus_is_the_deepest_focused_node() {
+        let mut t = sample();
+        assert_eq!(t.focus(), None);
+        // A focus scope and the focus item inside it both say so.
+        t.upsert(A, focused(group()));
+        assert_eq!(t.focus(), Some(A));
+        t.upsert(C, focused(button("Close")));
+        assert_eq!(t.focus(), Some(C));
+        // The item stops being exposed: the scope around it has the focus.
+        t.remove(C);
+        assert_eq!(t.focus(), Some(A));
+        t.upsert(A, group());
+        assert_eq!(t.focus(), None);
+    }
+
+    #[test]
+    fn a_node_nobody_can_reach_is_not_the_focus() {
+        let mut t = sample();
+        t.upsert(D, focused(button("Loose")));
+        assert_eq!(t.focus(), None);
+        t.set_children(B, &[D]);
+        assert_eq!(t.focus(), Some(D));
+        t.set_children(B, &[]);
+        assert_eq!(t.focus(), None);
+    }
+
+    #[test]
+    fn updates_say_where_the_focus_is() {
+        let mut t = sample();
+        t.upsert(B, focused(button("Save")));
+        let update = t.take_update().expect("first update");
+        assert_eq!(update.focus, NodeId(2));
+
+        // Focus moves: the two nodes that changed, and the new focus.
+        t.upsert(B, button("Save"));
+        t.upsert(C, focused(button("Close")));
+        let update = t.take_update().expect("focus moved");
+        let ids: Vec<u64> = update.nodes.iter().map(|(id, _)| id.0).collect();
+        assert_eq!(ids, vec![2, 3]);
+        assert_eq!(update.focus, NodeId(3));
+        assert!(t.take_update().is_none(), "nothing changed since");
+
+        // Nobody has it: the root does, as AccessKit asks.
+        t.upsert(C, button("Close"));
+        assert_eq!(t.take_update().expect("focus left").focus, NodeId(0));
+    }
+
+    #[test]
+    fn a_focus_node_that_goes_away_takes_the_focus_with_it() {
+        let mut t = sample();
+        t.upsert(C, focused(button("Close")));
+        let _ = t.take_update();
+        t.remove(C);
+        let update = t.take_update().expect("a removal");
+        assert_eq!(update.focus, NodeId(0));
+        assert!(update.nodes.iter().all(|(id, _)| *id != NodeId(3)));
+    }
+
+    #[test]
+    fn a_new_tree_says_the_root_has_the_focus() {
+        let mut t = sample();
+        assert_eq!(t.full_update().focus, NodeId(0));
     }
 
     #[test]

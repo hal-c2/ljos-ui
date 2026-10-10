@@ -13,7 +13,7 @@
 //!
 //! Behaviour follows doc.qt.io/qt-6/qml-qtquick-accessible.html.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -56,10 +56,17 @@ pub struct AccessibleAttached {
     pub name: Atom,
     #[qml(notify)]
     pub description: Atom,
-    /// Until it is given a value this follows the role, as Qt documents:
-    /// true for buttons, check boxes and the other roles a user tabs to.
+    /// Until it is given a value this follows the role, as Qt does: true
+    /// once the item has had the role of a button, a check box or another
+    /// of the roles a user moves the focus to.
     #[qml(notify)]
     pub focusable: bool,
+    /// What the author assigned and nothing more: Qt tells an assistive
+    /// technology about an item's active focus without this ever reading
+    /// true. Set, it marks an item that draws its own focus (a cell of a
+    /// hand-made grid) as the one a screen reader should read.
+    #[qml(notify)]
+    pub focused: bool,
     #[qml(notify)]
     pub ignored: bool,
 }
@@ -85,9 +92,16 @@ pub(crate) fn register(engine: &Engine) {
             // A binding, so that it follows the role and an assignment
             // replaces it. It is in place before the creator applies the
             // item's own `Accessible.focusable`.
+            //
+            // Qt turns the default on with a focusable role and never off
+            // again: a button that becomes a slider stays focusable.
+            let was = Cell::new(false);
             let r = e.bind(att, AccessibleAttached::FOCUSABLE.index, move |e| {
                 let role = e.read(att, AccessibleAttached::ROLE.index).to_number() as i32;
-                Value::Bool(Role::from_qt(role).is_some_and(Role::focusable_by_default))
+                if Role::from_qt(role).is_some_and(Role::focusable_by_default) {
+                    was.set(true);
+                }
+                Value::Bool(was.get())
             });
             if let Err(err) = r {
                 e.log(
@@ -498,6 +512,11 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
         focusable: e
             .read(att, AccessibleAttached::FOCUSABLE.index)
             .to_boolean(),
+        // Every item on the way to the focus item reads `activeFocus`, so
+        // the tree can name the nearest exposed one when the focus item
+        // itself is not exposed.
+        focused: e.read(obj, Item::ACTIVE_FOCUS.index).to_boolean()
+            || e.read(att, AccessibleAttached::FOCUSED.index).to_boolean(),
         disabled: !e.read(obj, Item::ENABLED.index).to_boolean(),
         press: qt_role.pressable(),
     })
@@ -597,5 +616,33 @@ impl QuickScene {
         // stay hovered.
         self.pointer_event(engine, &PointerEvent::leave(now));
         pressed || released
+    }
+
+    /// The node an assistive technology should read as having the
+    /// keyboard, as of the last [`QuickScene::frame`]: the focus item, or
+    /// the nearest exposed focus scope around it. `None` when nothing
+    /// exposed has it (the window itself does, then).
+    pub fn accessible_focus_node(&self) -> Option<NodeKey> {
+        self.a11y.tree.focus()
+    }
+
+    /// The focus action of an assistive technology: the node's item gets
+    /// active focus as `forceActiveFocus()` gives it, so the focus scopes
+    /// around it come along and a scope hands it on to its own focus
+    /// item. Returns whether the node took it; a disabled node, or one
+    /// that is not `Accessible.focusable`, does not.
+    pub fn accessible_focus(&mut self, engine: &Engine, key: NodeKey) -> bool {
+        let Some(data) = self.a11y.tree.get(key) else {
+            return false;
+        };
+        if data.disabled || !data.focusable {
+            return false;
+        }
+        let item = item_of(key);
+        if !engine.is_alive(item) {
+            return false;
+        }
+        crate::focus::force_active_focus(engine, item, crate::focus::FocusReason::Other);
+        true
     }
 }
