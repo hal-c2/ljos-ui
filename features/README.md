@@ -113,6 +113,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 |---|---|
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet |
+| `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
 
 ### When
 
@@ -143,6 +144,8 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |
 | `Then the accessibility tree has no "role" named "name"` | |
 | `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
+| `Then the "role" named "name" is described as "text"` | its accessible description; `""` when it has none |
+| `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |
 
 ### Planned (backlog scenarios may use them; not built yet)
 

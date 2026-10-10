@@ -63,6 +63,7 @@ pub struct LogEntry {
 pub struct A11yNode {
     pub role: String,
     pub name: String,
+    pub description: String,
     /// The author's `objectName`, when set.
     pub object_name: String,
     pub children: Vec<A11yNode>,
@@ -72,10 +73,24 @@ impl A11yNode {
     /// Depth-first search for `role` + `name`.
     #[must_use]
     pub fn find(&self, role: &str, name: &str) -> Option<&A11yNode> {
-        if self.role == role && self.name == name {
+        if self.is(role, name) {
             return Some(self);
         }
         self.children.iter().find_map(|c| c.find(role, name))
+    }
+
+    #[must_use]
+    pub fn is(&self, role: &str, name: &str) -> bool {
+        self.role == role && self.name == name
+    }
+
+    /// The node that has the first `role` + `name` as a child.
+    #[must_use]
+    pub fn parent_of(&self, role: &str, name: &str) -> Option<&A11yNode> {
+        if self.children.iter().any(|c| c.is(role, name)) {
+            return Some(self);
+        }
+        self.children.iter().find_map(|c| c.parent_of(role, name))
     }
 }
 
@@ -177,5 +192,7 @@ mod tests {
         };
         assert!(tree.find("button", "Save").is_some());
         assert!(tree.find("button", "Open").is_none());
+        assert_eq!(tree.parent_of("button", "Save").unwrap().role, "window");
+        assert!(tree.parent_of("window", "").is_none());
     }
 }

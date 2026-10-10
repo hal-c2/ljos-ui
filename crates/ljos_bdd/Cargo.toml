@@ -27,6 +27,7 @@ thiserror.workspace = true
 regex.workspace = true
 # The Ljós backend. This is a test tool, so it may link the compiler (and so
 # the parser); shipped runtimes never do (ARCHITECTURE.md principle 5).
+ljos_a11y = { path = "../ljos_a11y" }
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }

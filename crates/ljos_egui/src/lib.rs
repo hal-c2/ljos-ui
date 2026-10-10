@@ -5,6 +5,7 @@
 //! This is one of the three crates allowed to name egui (ARCHITECTURE
 //! principle: egui stays in `ljos_egui`, `ljos_shell` and B0).
 
+mod a11y;
 mod input;
 mod measurer;
 mod view;

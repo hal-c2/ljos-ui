@@ -1,11 +1,13 @@
 //! QtQuick for Ljós: `Item`, `Rectangle`, `Text`, anchors, `Row`/`Column`,
-//! `MouseArea`, `TapHandler`, `Loader`, and [`QuickScene`], which mirrors an
-//! item tree into an `ljos_render` [`RenderTree`](ljos_render::RenderTree)
-//! and runs the frame pipeline (ARCHITECTURE §6).
+//! `MouseArea`, `TapHandler`, `Loader`, the attached `Accessible`, and
+//! [`QuickScene`], which mirrors an item tree into an `ljos_render`
+//! [`RenderTree`](ljos_render::RenderTree), runs the frame pipeline
+//! (ARCHITECTURE §6) and keeps the accessibility tree (§14).
 //!
 //! Behaviour follows the documentation at doc.qt.io; this crate never sees
 //! egui (the shell turns its input into [`PointerEvent`]s).
 
+mod accessible;
 mod anchors;
 pub mod enums;
 mod input;
@@ -18,6 +20,7 @@ mod scene;
 mod text;
 mod tree;
 
+pub use accessible::{Accessible, AccessibleAttached};
 pub use anchors::CATEGORY as ANCHORS_CATEGORY;
 pub use input::{
     Modifiers, MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerId, PointerKind,
@@ -51,7 +54,9 @@ use ljos_engine::Engine;
 pub fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
         Item, Rectangle, Text, MouseArea, TapHandler, Row, Column, Loader, MouseEvent,
+        Accessible,
     ]));
+    accessible::register(engine);
     // Idempotent, so registering twice does no harm.
     engine.on_visual_parent_changed(|e, obj, parent| {
         if let Err(err) = tree::sync_parent(e, obj, parent) {

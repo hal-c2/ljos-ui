@@ -59,6 +59,14 @@ fn the_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     Ok(())
 }
 
+// The tree is built once something reads it and then follows every change;
+// without this step a scenario's first `Then` would be that first reader,
+// and would only ever see a tree built in one go.
+#[given("an assistive technology is listening")]
+fn listening(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.a11y_tree().map(drop))
+}
+
 // ----------------------------------------------------------------- When
 
 #[when(regex = r#"^"([^"]+)" is loaded$"#)]
@@ -294,6 +302,56 @@ fn a11y_object(w: &mut LjosWorld, object: String, role: String, name: String) ->
             Err(BackendError::Failed(format!(
                 "object {object:?} is a {:?} named {:?}, expected a {role:?} named {name:?}",
                 node.role, node.name
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is described as "([^"]*)"$"#)]
+fn a11y_described(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = tree.find(&role, &name).ok_or_else(|| {
+            BackendError::Failed(format!(
+                "no {role:?} named {name:?} in:\n{}",
+                render(&tree, 0)
+            ))
+        })?;
+        if node.description == text {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is described as {:?}, expected {text:?}",
+                node.description
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is inside the "([^"]+)" named "([^"]*)"$"#)]
+fn a11y_inside(
+    w: &mut LjosWorld,
+    role: String,
+    name: String,
+    outer_role: String,
+    outer_name: String,
+) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let parent = tree.parent_of(&role, &name).ok_or_else(|| {
+            BackendError::Failed(format!(
+                "no {role:?} named {name:?} in:\n{}",
+                render(&tree, 0)
+            ))
+        })?;
+        if parent.is(&outer_role, &outer_name) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is inside the {:?} named {:?}:\n{}",
+                parent.role,
+                parent.name,
+                render(&tree, 0)
             )))
         }
     })

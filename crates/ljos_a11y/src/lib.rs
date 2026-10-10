@@ -1,0 +1,16 @@
+//! Accessibility for Ljós, free of any windowing or widget toolkit.
+//!
+//! Two things live here: Qt's accessible roles with their AccessKit
+//! counterparts ([`Role`], [`ROLES`]), and a retained tree of exposed
+//! nodes ([`Tree`]) that records which nodes changed, so a host only says
+//! what is new. The scene fills the tree; a host (an egui widget, a
+//! platform adapter, a test) reads it.
+//!
+//! See `docs/ARCHITECTURE.md` §14.
+
+mod role;
+mod tree;
+
+pub use accesskit;
+pub use role::{ROLE_ALIASES, ROLES, Role, RoleInfo, qt_role_keys, role_word};
+pub use tree::{Bounds, Changes, NodeData, NodeKey, Tree, TreeStats};

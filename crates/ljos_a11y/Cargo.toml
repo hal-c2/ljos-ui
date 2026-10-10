@@ -1,0 +1,15 @@
+[package]
+name = "ljos_a11y"
+description = "Accessibility for Ljós without a toolkit: Qt's Accessible roles, their AccessKit mapping, and an incremental tree a scene fills"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+accesskit.workspace = true
+
+[lints]
+workspace = true

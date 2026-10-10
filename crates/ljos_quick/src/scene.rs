@@ -25,6 +25,7 @@ use ljos_engine::{
 use ljos_render::{ClipSpec, FrameSnapshot, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
 
+use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
 use crate::enums::gesture_policy;
 use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
@@ -246,6 +247,8 @@ pub struct QuickScene {
     pointer: PointerState,
     /// Creation jobs of asynchronous Loaders, run a slice per frame.
     incubator: Scheduler<()>,
+    /// The accessibility tree; idle unless an assistive technology listens.
+    pub(crate) a11y: A11yPass,
 }
 
 impl std::fmt::Debug for QuickScene {
@@ -263,9 +266,16 @@ impl QuickScene {
     /// An empty scene showing `viewport` (logical pixels).
     #[allow(deprecated)]
     pub fn new(viewport: kurbo::Size) -> Self {
+        let shared = SharedRc::default();
+        let weak = Rc::downgrade(&shared);
+        let a11y = A11yPass::new(Rc::new(move || {
+            if let Some(s) = weak.upgrade() {
+                mark(&s, |_| {});
+            }
+        }));
         QuickScene {
             tree: RenderTree::new(),
-            shared: SharedRc::default(),
+            shared,
             log: QuickLog::default(),
             entries: HashMap::new(),
             by_node: HashMap::new(),
@@ -280,6 +290,7 @@ impl QuickScene {
             next_timer: None,
             pointer: PointerState::default(),
             incubator: Scheduler::new(),
+            a11y,
         }
     }
 
@@ -458,9 +469,11 @@ impl QuickScene {
             .as_ref()
             .is_some_and(|s| Arc::ptr_eq(s, &snap));
         self.snapshot = Some(Arc::clone(&snap));
+        // Last, so the tree describes the items as this frame left them.
+        self.a11y.sync(engine, self.root);
         let pending = {
             let mut s = self.shared.borrow_mut();
-            let p = s.pending();
+            let p = s.pending() || self.a11y.pending();
             // Unfinished jobs need the next frame although nothing they
             // made shows yet.
             s.dirty = p || incubating;
@@ -625,6 +638,7 @@ impl QuickScene {
         if let Some(e) = self.entries.get_mut(&obj) {
             e.effects = effects;
         }
+        self.a11y.adopt(engine, obj, kind == Kind::Text);
 
         let children: Vec<ObjectId> = engine
             .untrack(|| shown_children(engine, obj))
@@ -647,6 +661,7 @@ impl QuickScene {
         for n in entry.effects.iter().chain(entry.content_effect.iter()) {
             let _ = g.dispose(*n);
         }
+        self.a11y.forget(engine, obj);
         if engine.is_alive(obj) {
             entry.anchors.borrow_mut().release(engine, obj);
             let mut inh = entry.inherit.borrow_mut();
@@ -700,6 +715,7 @@ impl QuickScene {
             let Some(pnode) = self.entries.get(&p).map(|e| e.node) else {
                 continue;
             };
+            self.a11y.children_changed(p);
             let mut want: Vec<ObjectId> = engine
                 .untrack(|| shown_children(engine, p))
                 .into_iter()

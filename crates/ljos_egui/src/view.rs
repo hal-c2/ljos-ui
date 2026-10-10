@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use egui::accesskit::{Action, TreeId};
 use egui::{Context, Event, Id, Pos2, Rect, Response, Sense, TouchId, TouchPhase, Ui, Vec2};
 use ljos_engine::{Engine, EngineError, ObjectId};
 use ljos_quick::{Item, MouseButtons, PointerEvent, PointerId, PointerKind, QuickScene, TimerHook};
@@ -11,6 +12,7 @@ use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::{FrameView, RenderBackend, kurbo};
 use ljos_runtime::{Clock, SystemClock, Time};
 
+use crate::a11y;
 use crate::input::{map_button, map_modifiers};
 use crate::measurer::EguiTextMeasurer;
 
@@ -42,6 +44,11 @@ pub struct ViewStats {
     pub pointer_events: u64,
     /// `request_repaint` / `request_repaint_after` calls made by the view.
     pub repaint_requests: u64,
+    /// Accessibility nodes written in the last pass; 0 while nothing
+    /// listens.
+    pub accessible_nodes: usize,
+    /// Press actions of an assistive technology that an item took.
+    pub accessible_presses: u64,
 }
 
 /// Bridges the scene's waker (an `Rc` closure on the UI thread) to egui.
@@ -85,6 +92,11 @@ struct PointerTrack {
 /// if the scene is dirty or a timer is due, (4) paints the latest snapshot
 /// through B0, and (5) asks egui for another pass only when there is future
 /// work: `request_repaint_after` for the next timer, nothing when idle.
+///
+/// While egui builds an AccessKit tree (an assistive technology listens),
+/// the items that carry `Accessible` are nodes of that tree under one node
+/// for the view, and a press action clicks the item. Otherwise the scene
+/// does no accessibility work.
 pub struct QmlView {
     engine: Rc<Engine>,
     scene: QuickScene,
@@ -98,6 +110,7 @@ pub struct QmlView {
     size: Option<Vec2>,
     ppp: Option<f32>,
     painted_frame: Option<u64>,
+    emitted: a11y::Emitted,
     stats: ViewStats,
 }
 
@@ -134,6 +147,7 @@ impl QmlView {
             size: None,
             ppp: None,
             painted_frame: None,
+            emitted: a11y::Emitted::new(),
             stats: ViewStats::default(),
         })
     }
@@ -178,6 +192,14 @@ impl QmlView {
 
     pub fn stats(&self) -> ViewStats {
         self.stats
+    }
+
+    /// The egui id of an item's accessibility node, if the item is exposed.
+    /// It is made of the view's id and the item, so it is the same every
+    /// pass.
+    pub fn accessible_id(&self, item: ObjectId) -> Option<Id> {
+        let key = self.scene.accessible_node(item)?;
+        Some(a11y::node_id(self.id, key))
     }
 
     /// See [`TimerHook`]; times come from [`QmlView::clock`].
@@ -233,6 +255,13 @@ impl QmlView {
         let ctx = ui.ctx().clone();
         self.gate.held.set(true);
         self.gate.missed.set(false);
+
+        // The accessibility tree exists only while something reads it.
+        // Switched here, so the frame of this pass builds it.
+        let listening = a11y::listening(ui);
+        if listening != self.scene.accessibility_active() {
+            self.scene.set_accessibility_active(&self.engine, listening);
+        }
 
         // 1. Size and scale.
         let ppp = ctx.pixels_per_point();
@@ -291,13 +320,15 @@ impl QmlView {
             sink.paint(&ui.painter_at(rect));
         }
 
-        // Accessibility (later task, spike 04): when
-        // `ctx.accesskit_node_builder(self.id, |_| ()).is_some()`, walk the
-        // snapshot and give every item with `ljos_quick::accessible` info a
-        // child `Ui` built with
-        // `UiBuilder::new().id(Id::new((self.id, item))).max_rect(item_rect)
-        //  .accessibility_parent(parent_id)`, so AccessKit nodes mirror the
-        // item tree. Nothing here depends on that pass existing.
+        // Accessibility. Like the shapes, egui keeps no nodes between
+        // passes, so they are repeated while something listens.
+        if listening {
+            let tree = self.scene.accessibility_tree();
+            a11y::emit(ui, self.id, rect, tree, &mut self.emitted);
+        } else {
+            self.emitted.clear();
+        }
+        self.stats.accessible_nodes = self.emitted.len();
 
         // Schedule the next pass.
         let missed = self.gate.missed.replace(false) && self.scene.needs_frame();
@@ -350,8 +381,17 @@ impl QmlView {
         // one as mouse events; once a touch is seen, the emulation is noise.
         let touch_pass = events.iter().any(|e| matches!(e, Event::Touch { .. }));
         let mut out: Vec<PointerEvent> = Vec::new();
+        let mut presses = Vec::new();
         for e in &events {
             match e {
+                Event::AccessKitActionRequest(req) => {
+                    if req.action == Action::Click
+                        && req.target_tree == TreeId::ROOT
+                        && let Some(key) = self.emitted.get(&req.target_node)
+                    {
+                        presses.push(*key);
+                    }
+                }
                 Event::Touch { id, phase, pos, .. } => {
                     let pid = PointerId(id.0.wrapping_add(1));
                     let following = self.pointer.touch == Some(*id);
@@ -449,6 +489,15 @@ impl QmlView {
             self.scene.pointer_event(&self.engine, ev);
         }
         self.stats.pointer_events += out.len() as u64;
+        // The press is a click of its own on the scene's one pointer; in the
+        // middle of a real press it would break that press's grab.
+        if self.pointer.held.is_empty() && self.pointer.touch.is_none() {
+            for key in presses {
+                if self.scene.accessible_press(&self.engine, key, now) {
+                    self.stats.accessible_presses += 1;
+                }
+            }
+        }
     }
 }
 

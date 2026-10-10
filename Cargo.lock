@@ -2553,6 +2553,13 @@ name = "ljos"
 version = "0.0.0"
 
 [[package]]
+name = "ljos_a11y"
+version = "0.0.0"
+dependencies = [
+ "accesskit",
+]
+
+[[package]]
 name = "ljos_bdd"
 version = "0.0.0"
 dependencies = [
@@ -2560,6 +2567,7 @@ dependencies = [
  "cucumber",
  "futures",
  "gherkin",
+ "ljos_a11y",
  "ljos_compiler",
  "ljos_engine",
  "ljos_quick",
@@ -2615,6 +2623,7 @@ version = "0.0.0"
 dependencies = [
  "egui",
  "egui_kittest",
+ "ljos_a11y",
  "ljos_engine",
  "ljos_quick",
  "ljos_render",
@@ -2711,12 +2720,14 @@ name = "ljos_quick"
 version = "0.0.0"
 dependencies = [
  "bitflags 2.13.2",
+ "ljos_a11y",
  "ljos_compiler",
  "ljos_engine",
  "ljos_reactive",
  "ljos_render",
  "ljos_runtime",
  "qml_front",
+ "slotmap",
  "smallvec",
  "thiserror 2.0.21",
 ]

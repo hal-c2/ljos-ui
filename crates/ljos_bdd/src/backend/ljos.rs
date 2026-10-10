@@ -13,6 +13,7 @@
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duration};
 
+use ljos_a11y::{NodeKey, Tree, role_word};
 use ljos_compiler::{Project, Severity, compile_file};
 use ljos_engine::{Engine, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{PointerEvent, QuickScene};
@@ -265,7 +266,8 @@ impl Live {
 
     /// The object and property a dotted path names: `anchors.margins` is
     /// one (flattened) property of the item; `foo.bar` where `foo` holds an
-    /// object is `bar` of that object.
+    /// object is `bar` of that object; `Accessible.name` is `name` of the
+    /// object that type attaches.
     fn owner(&self, obj: ObjectId, prop: &str) -> Result<(ObjectId, String)> {
         let mut obj = obj;
         let mut rest = prop;
@@ -276,7 +278,11 @@ impl Live {
             let Some((head, tail)) = rest.split_once('.') else {
                 return Ok((obj, rest.to_owned()));
             };
-            match self.engine.read_by_name(obj, head).as_object() {
+            let next = match self.engine.read_by_name(obj, head).as_object() {
+                Some(next) => Some(next),
+                None => self.attached(obj, head),
+            };
+            match next {
                 Some(next) => {
                     obj = next;
                     rest = tail;
@@ -284,6 +290,16 @@ impl Live {
                 None => return Ok((obj, rest.to_owned())),
             }
         }
+    }
+
+    /// The object the type `name` attaches to `obj`, made on first use as
+    /// QML makes it. Type names are capitalised; properties are not.
+    fn attached(&self, obj: ObjectId, name: &str) -> Option<ObjectId> {
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let attacher = self.engine.lookup_type_any(name)?;
+        self.engine.attached_object(obj, &attacher).ok()
     }
 
     fn to_qml(&self, v: &Value) -> Result<QmlValue> {
@@ -382,29 +398,48 @@ impl Live {
         self.settle()
     }
 
-    /// The first item, depth first under the roots, whose accessible role
-    /// and name match.
-    fn find_accessible(&self, role: &str, name: &str) -> Option<ObjectId> {
-        let e = &self.engine;
-        let mut stack: Vec<ObjectId> = self.roots.iter().rev().copied().collect();
-        while let Some(o) = stack.pop() {
-            if !e.is_alive(o) {
-                continue;
-            }
-            if let Ok(info) = ljos_quick::accessible(e, o)
-                && info
-                    .role
-                    .as_ref()
-                    .is_some_and(|r| r.as_str().eq_ignore_ascii_case(role))
-                && info.name.as_ref().is_some_and(|n| n.as_str() == name)
-            {
-                return Some(o);
-            }
-            let mut kids = e.children(o);
-            kids.reverse();
-            stack.extend(kids);
+    /// The scene builds its accessibility tree only while something reads
+    /// it. The first question about the tree starts that, as an assistive
+    /// technology starting up would; from then on the tree follows changes.
+    fn listen(&mut self) -> Result<()> {
+        if !self.scene.accessibility_active() {
+            self.scene.set_accessibility_active(&self.engine, true);
+            self.settle()?;
         }
-        None
+        Ok(())
+    }
+
+    /// The tree as steps see it: role words, names and nesting.
+    fn a11y(&self) -> A11yNode {
+        fn below(tree: &Tree, key: NodeKey) -> Vec<A11yNode> {
+            let node = |k: &NodeKey| {
+                let d = tree.get(*k)?;
+                Some(A11yNode {
+                    role: role_word(d.role),
+                    name: d.name.clone(),
+                    description: d.description.clone(),
+                    object_name: d.author_id.clone(),
+                    children: below(tree, *k),
+                })
+            };
+            tree.children(key).iter().filter_map(node).collect()
+        }
+        A11yNode {
+            role: "window".into(),
+            children: below(self.scene.accessibility_tree(), NodeKey::ROOT),
+            ..A11yNode::default()
+        }
+    }
+
+    /// Where the first node, in tree order, with this role and name is.
+    fn accessible_centre(&self, role: &str, name: &str) -> Option<(f64, f64)> {
+        let mut found = None;
+        self.scene.accessibility_tree().walk(|_, _, d| {
+            if found.is_none() && role_word(d.role) == role && d.name == name {
+                found = Some(d.bounds.center());
+            }
+        });
+        found
     }
 
     fn grab(&mut self) -> Result<Vec<u8>> {
@@ -510,14 +545,13 @@ impl Backend for LjosBackend {
 
     fn click(&mut self, role: &str, name: &str) -> Result<()> {
         let live = self.live()?;
-        let target = live
-            .find_accessible(role, name)
+        live.listen()?;
+        // A user's click: a pointer in the middle of the control, so
+        // whatever covers it there takes the click, as on screen.
+        let (x, y) = live
+            .accessible_centre(role, name)
             .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
-        let w = live.engine.read_by_name(target, "width").to_number();
-        let h = live.engine.read_by_name(target, "height").to_number();
-        let centre =
-            ljos_quick::scene_transform(&live.engine, target) * kurbo::Point::new(w / 2.0, h / 2.0);
-        live.tap(centre.x, centre.y)
+        live.tap(x, y)
     }
 
     fn key(&mut self, _: &str) -> Result<()> {
@@ -529,7 +563,9 @@ impl Backend for LjosBackend {
     }
 
     fn a11y_tree(&mut self) -> Result<A11yNode> {
-        Err(BackendError::NotImplemented("the accessibility tree"))
+        let live = self.live()?;
+        live.listen()?;
+        Ok(live.a11y())
     }
 
     fn log(&mut self) -> Result<Vec<LogEntry>> {
@@ -715,13 +751,73 @@ MouseArea {
         assert_eq!(image.pixel(50, 50)[3], 0);
     }
 
+    const TOOLS: &str = r#"import QtQuick
+Item {
+    objectName: "root"
+    width: 200; height: 100
+    property int clicks: 0
+    Item {
+        objectName: "tools"
+        x: 10; y: 10; width: 180; height: 40
+        Accessible.role: Accessible.ToolBar
+        Accessible.name: "Tools"
+        Rectangle {
+            objectName: "save"
+            x: 5; y: 5; width: 80; height: 30
+            Accessible.role: Accessible.Button
+            Accessible.name: "Save"
+            Accessible.description: "Writes the file"
+            MouseArea { anchors.fill: parent; onClicked: root.clicks++ }
+        }
+    }
+    id: root
+}
+"#;
+
+    #[test]
+    fn the_accessibility_tree_has_roles_names_and_nesting() {
+        let mut b = loaded(TOOLS);
+        let tree = b.a11y_tree().unwrap();
+        assert_eq!(tree.role, "window");
+        let save = tree.find("button", "Save").expect("the button");
+        assert_eq!(save.object_name, "save");
+        assert_eq!(save.description, "Writes the file");
+        assert!(
+            tree.parent_of("button", "Save")
+                .unwrap()
+                .is("toolbar", "Tools")
+        );
+        // The plain root item is not a node.
+        assert_eq!(tree.children.len(), 1);
+    }
+
+    #[test]
+    fn attached_properties_are_set_and_read_by_their_type_name() {
+        let mut b = loaded(TOOLS);
+        assert_eq!(b.get("save", "Accessible.name").unwrap(), json!("Save"));
+        b.set("save", "Accessible.name", &json!("Store")).unwrap();
+        let tree = b.a11y_tree().unwrap();
+        assert!(tree.find("button", "Store").is_some());
+        assert!(tree.find("button", "Save").is_none());
+        // Once read, the tree follows later changes too.
+        b.set("save", "Accessible.ignored", &json!(true)).unwrap();
+        assert!(b.a11y_tree().unwrap().find("button", "Store").is_none());
+    }
+
+    #[test]
+    fn clicks_find_the_control_by_role_and_name() {
+        let mut b = loaded(TOOLS);
+        b.click("button", "Save").unwrap();
+        assert_eq!(b.get("root", "clicks").unwrap(), json!(1));
+        assert!(matches!(
+            b.click("button", "Open"),
+            Err(BackendError::Failed(_))
+        ));
+    }
+
     #[test]
     fn unbuilt_capabilities_stay_pending() {
         let mut b = loaded(BINDING);
-        assert!(matches!(
-            b.a11y_tree(),
-            Err(BackendError::NotImplemented(_))
-        ));
         assert!(matches!(
             b.key("Ctrl+S"),
             Err(BackendError::NotImplemented(_))
