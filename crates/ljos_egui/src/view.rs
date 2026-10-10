@@ -14,7 +14,6 @@ use ljos_runtime::{Clock, SystemClock, Time};
 
 use crate::a11y;
 use crate::input::{map_button, map_modifiers};
-use crate::measurer::EguiTextMeasurer;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
@@ -267,10 +266,9 @@ impl QmlView {
         let ppp = ctx.pixels_per_point();
         if self.ppp != Some(ppp) {
             self.ppp = Some(ppp);
+            // Text is laid out in logical pixels with unhinted metrics, so a
+            // new scale changes how it is painted and not where it breaks.
             self.scene.set_scale_factor(ppp);
-            // Glyph metrics are hinted per scale: relayout every Text.
-            self.scene
-                .set_text_measurer(Rc::new(EguiTextMeasurer::new(ctx.clone())));
         }
         let size = rect.size();
         if self.size != Some(size) {

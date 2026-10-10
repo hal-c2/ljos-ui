@@ -14,6 +14,7 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_reactive = { path = "../ljos_reactive" }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
+ljos_text = { path = "../ljos_text" }
 bitflags.workspace = true
 # ObjectId is a slotmap key; an accessibility node is named by its number.
 slotmap.workspace = true

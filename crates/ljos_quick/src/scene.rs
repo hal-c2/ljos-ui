@@ -37,7 +37,7 @@ use crate::loader::{Loader, shown_children};
 use crate::log::QuickLog;
 use crate::positioners::{self, Axis, Column, Row};
 use crate::rectangle::{Rectangle, RectanglePaint};
-use crate::text::{self, FixedAdvanceMeasurer, Text, TextInputs, TextMeasurer};
+use crate::text::{self, SharedTextEngine, Text, TextInputs};
 use crate::tree::resources;
 
 /// Log category for polish warnings.
@@ -79,6 +79,8 @@ enum Kind {
     Text,
     Row,
     Column,
+    /// A layout, `Grid` or `Flow`: polished by `crate::layouts`.
+    Managed,
 }
 
 impl Kind {
@@ -91,6 +93,8 @@ impl Kind {
             Kind::Row
         } else if is_a::<Column>(engine, obj) {
             Kind::Column
+        } else if crate::layouts::managed(engine, obj) {
+            Kind::Managed
         } else {
             Kind::Item
         }
@@ -101,7 +105,7 @@ impl Kind {
     }
 
     fn polishes(self) -> bool {
-        matches!(self, Kind::Text | Kind::Row | Kind::Column)
+        matches!(self, Kind::Text | Kind::Row | Kind::Column | Kind::Managed)
     }
 }
 
@@ -241,7 +245,10 @@ pub struct QuickScene {
     scale_factor: f32,
     frame: u64,
     snapshot: Option<Arc<FrameSnapshot>>,
-    measurer: Rc<dyn TextMeasurer>,
+    /// The UI thread's text engine, and the font generation the Texts
+    /// were last laid out under.
+    text: SharedTextEngine,
+    text_generation: u64,
     timers: Option<TimerHook>,
     next_timer: Option<Time>,
     pointer: PointerState,
@@ -285,7 +292,8 @@ impl QuickScene {
             scale_factor: 1.0,
             frame: 0,
             snapshot: None,
-            measurer: Rc::new(FixedAdvanceMeasurer::default()),
+            text_generation: text::text_engine().borrow().generation(),
+            text: text::text_engine(),
             timers: None,
             next_timer: None,
             pointer: PointerState::default(),
@@ -351,9 +359,10 @@ impl QuickScene {
         mark(&self.shared, |_| {});
     }
 
-    /// The host's text measurement. Every Text is laid out again.
-    pub fn set_text_measurer(&mut self, m: Rc<dyn TextMeasurer>) {
-        self.measurer = m;
+    /// Lays every Text out again on the next frame, and asks for that frame.
+    /// For a host that changed the fonts of the text engine
+    /// ([`crate::text_engine`]) while the scene is showing.
+    pub fn refresh_text(&mut self) {
         let texts: Vec<ObjectId> = self
             .entries
             .iter()
@@ -370,6 +379,20 @@ impl QuickScene {
             self.tree.mark_content_dirty(*n);
         }
         mark(&self.shared, |s| s.polish.extend(texts));
+    }
+
+    /// Follows the UI thread's text engine: another engine, or other fonts
+    /// in the same one, lay every Text out again. Checked on frames that
+    /// run anyway.
+    fn follow_text_engine(&mut self) {
+        let current = text::text_engine();
+        let generation = current.borrow().generation();
+        if Rc::ptr_eq(&current, &self.text) && generation == self.text_generation {
+            return;
+        }
+        self.text = current;
+        self.text_generation = generation;
+        self.refresh_text();
     }
 
     /// Called (unborrowed, at most once per frame) when the scene goes from
@@ -427,6 +450,7 @@ impl QuickScene {
         // Marks made during the frame are drained by it or reported
         // through `next_wake`; they must not wake the host a second time.
         self.shared.borrow_mut().dirty = true;
+        self.follow_text_engine();
         // 3. Timers and animations.
         let engine_now = engine.now();
         engine.advance_timers(engine_now);
@@ -439,7 +463,8 @@ impl QuickScene {
         if deleted > 0 || !dead.is_empty() {
             self.sweep_dead(engine);
         }
-        // 5. (Animations: none yet.)
+        // 5. Animations, from the frame's time and nothing else.
+        crate::animation::tick(engine, now);
         // 6. Polish.
         self.polish(engine);
         // 7. Incubate. New items join the tree and are laid out in this
@@ -471,6 +496,9 @@ impl QuickScene {
         self.snapshot = Some(Arc::clone(&snap));
         // Last, so the tree describes the items as this frame left them.
         self.a11y.sync(engine, self.root);
+        // Layouts no frame asked for lately are dropped here, on a frame
+        // that runs anyway; nothing ages while the scene is idle.
+        self.text.borrow_mut().end_frame();
         let pending = {
             let mut s = self.shared.borrow_mut();
             let p = s.pending() || self.a11y.pending();
@@ -488,10 +516,13 @@ impl QuickScene {
                 let engine_wake = engine
                     .next_timer_deadline()
                     .map(|d| now + d.saturating_since(engine_now));
-                match (engine_wake, self.next_timer) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                }
+                // A running animation asks for its next frame here, and
+                // for none once it has stopped.
+                let animation_wake = crate::animation::next_wake(engine, now);
+                [engine_wake, self.next_timer, animation_wake]
+                    .into_iter()
+                    .flatten()
+                    .min()
             },
         }
     }
@@ -564,7 +595,8 @@ impl QuickScene {
                 let r = match kind {
                     Kind::Row => positioners::layout(engine, obj, Axis::Horizontal),
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
-                    Kind::Text => polish_text(engine, obj, &*self.measurer),
+                    Kind::Managed => crate::layouts::polish(engine, obj),
+                    Kind::Text => text::polish(engine, obj, &self.text),
                     Kind::Item | Kind::Rectangle => Ok(()),
                 };
                 if let Err(e) = r {
@@ -811,14 +843,14 @@ impl QuickScene {
         }
         let paint = &self.paint;
         let by_node = &self.by_node;
-        let m = &*self.measurer;
+        let mut te = self.text.borrow_mut();
         self.tree.rebuild_content(self.scale_factor, |cx, b| {
             let Some(p) = by_node.get(&cx.node).and_then(|o| paint.get(o)) else {
                 return;
             };
             match p {
                 Paint::Rect(r) => r.paint(cx.size, b),
-                Paint::Text(t) => text::paint(m, t, cx.size, b),
+                Paint::Text(t) => text::paint(&mut te, t, cx.size, b),
             }
         });
     }
@@ -832,6 +864,9 @@ impl QuickScene {
             .filter_map(|i| self.by_node.get(&i.node).copied())
             .collect();
         let mut installed = false;
+        // A dropped display list changes the tree, so the frame composes
+        // again and does not hand out a snapshot that is already stale.
+        let mut dropped = false;
         let mut failed = Vec::new();
         for (obj, e) in &mut self.entries {
             if !e.kind.paints() {
@@ -853,6 +888,14 @@ impl QuickScene {
                 (false, Some(n)) => {
                     let _ = engine.graph().dispose(n);
                     e.content_effect = None;
+                    // Text that left the screen keeps its numbers only: the
+                    // display list holds the glyph runs, so it goes too
+                    // (ARCHITECTURE §7.5). Coming back paints it again.
+                    if e.kind == Kind::Text {
+                        self.paint.remove(obj);
+                        self.tree.set_content(e.node, None);
+                        dropped = true;
+                    }
                 }
                 _ => {}
             }
@@ -864,7 +907,7 @@ impl QuickScene {
                 format!("paint effect failed: {err}"),
             );
         }
-        installed
+        installed || dropped
     }
 
     // ------------------------------------------------------------ input
@@ -1221,9 +1264,10 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     match kind {
         Kind::Row => positioners::read_inputs(e, obj, Axis::Horizontal),
         Kind::Column => positioners::read_inputs(e, obj, Axis::Vertical),
+        Kind::Managed => crate::layouts::read_inputs(e, obj),
         Kind::Text => {
+            // Reads the item's size too, where the layout depends on it.
             TextInputs::read(e, obj);
-            e.read(obj, Item::WIDTH.index);
         }
         Kind::Item | Kind::Rectangle => return,
     }
@@ -1340,82 +1384,6 @@ fn depth(engine: &Engine, obj: ObjectId) -> usize {
         cur = engine.visual_parent(p);
     }
     d
-}
-
-fn polish_text(engine: &Engine, obj: ObjectId, m: &dyn TextMeasurer) -> Result<(), EngineError> {
-    let (t, width) = engine.untrack(|| {
-        (
-            TextInputs::read(engine, obj),
-            num(engine, obj, Item::WIDTH.index),
-        )
-    });
-    let natural = text::layout(m, &t, None);
-    let wraps = t.wrap != crate::enums::wrap_mode::NO_WRAP;
-    let constrained = wraps || t.elide == crate::enums::elide::RIGHT;
-    let actual = if constrained {
-        text::layout(m, &t, Some(width))
-    } else {
-        natural.clone()
-    };
-    // An empty Text is still one line: its height, `contentHeight` and
-    // `lineCount` say so, as in Qt.
-    let empty = natural.lines.is_empty();
-    let implicit_height = if empty {
-        natural.line_advance
-    } else if wraps {
-        actual.height()
-    } else {
-        natural.height()
-    };
-    let content_height = if empty {
-        natural.line_advance
-    } else {
-        actual.height()
-    };
-    engine.batch(|| {
-        write_computed(
-            engine,
-            obj,
-            Item::IMPLICIT_WIDTH.index,
-            Value::Real(natural.width()),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Item::IMPLICIT_HEIGHT.index,
-            Value::Real(implicit_height),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::CONTENT_WIDTH.index,
-            Value::Real(actual.width()),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::CONTENT_HEIGHT.index,
-            Value::Real(content_height),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::LINE_COUNT.index,
-            Value::Int(actual.lines.len().max(1) as i32),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::TRUNCATED.index,
-            Value::Bool(actual.truncated),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Item::BASELINE_OFFSET.index,
-            Value::Real(actual.metrics.ascent),
-        )
-    })
 }
 
 fn set(engine: &Engine, obj: ObjectId, p: PropIndex, v: Value) {

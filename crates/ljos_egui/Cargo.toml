@@ -1,6 +1,6 @@
 [package]
 name = "ljos_egui"
-description = "QmlView: an egui widget that hosts a Ljós QuickScene, plus the egui text measurer stop-gap"
+description = "QmlView: an egui widget that hosts a Ljós QuickScene"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

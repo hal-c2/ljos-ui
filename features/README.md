@@ -16,6 +16,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `items/` | `Item`, `Rectangle`, geometry, visibility, opacity, clipping |
 | `layouts/` | anchors, `Row`/`Column`/`Grid`, `QtQuick.Layouts` |
 | `views/` | `ListView`, `GridView`, `Repeater`, models, delegates |
+| `models/` | `ListModel`, what can be a model, what a delegate sees of its row, `Repeater`, `Instantiator` |
 | `controls/` | one file per Qt Quick Controls type |
 | `input/`, `focus/` | pointer, touch, keyboard, focus scopes, IME |
 | `text/`, `animation/`, `i18n/`, `rendering/` | text, animation and timers, localisation, pixels |
@@ -136,6 +137,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the property "p" of "o" is V` | equals; numbers compare numerically, colours are lower-case hex |
 | `Then the property "p" of "o" is not V` | differs |
 | `Then the property "p" of "o" is at least N` / `is at most N` | numeric bound |
+| `Then the property "p" of "o" is within T of N` | numeric, give or take `T` (values an easing curve computes) |
 | `Then setting the property "p" of "o" to V is rejected` | the application refuses the assignment |
 | `Then loading "X.qml" is rejected` | the file does not load (syntax error, unknown type) |
 | `Then the object "o" exists` / `does not exist` | lookup by `objectName` |

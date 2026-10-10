@@ -15,6 +15,7 @@ use ljos_engine::{
 };
 
 use crate::item::{AnchorLine, AnchorProps, Edge, Item, effective_margin, num};
+use crate::mirroring::mirrored;
 
 /// Log category for anchor warnings.
 pub const CATEGORY: &str = "qt.quick.anchors";
@@ -168,10 +169,16 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
     if let Some(t) = fill {
         let l = cx.edge(t, Edge::Left);
         let r = cx.edge(t, Edge::Right);
+        // `LayoutMirroring` swaps the two margins; the edges are the same.
+        let (near, far) = if mirrored(e, obj) {
+            (a.right_margin, a.left_margin)
+        } else {
+            (a.left_margin, a.right_margin)
+        };
         return match (l, r) {
             (Some(l), Some(r)) => {
-                let l = l + effective_margin(e, obj, a.left_margin);
-                let r = r - effective_margin(e, obj, a.right_margin);
+                let l = l + effective_margin(e, obj, near);
+                let r = r - effective_margin(e, obj, far);
                 Span {
                     pos: Some(l),
                     len: Some(r - l),
@@ -180,8 +187,8 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
             _ => Span::default(),
         };
     }
-    let left = cx.line(a.left, true);
-    let right = cx.line(a.right, true);
+    let mut left = cx.line(a.left, true);
+    let mut right = cx.line(a.right, true);
     let mut hcenter = cx.line(a.horizontal_center, true);
     if hcenter.is_none()
         && let Some(t) = center_in
@@ -191,6 +198,18 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
             edge: Edge::HorizontalCenter,
         });
     }
+    // Under `LayoutMirroring` an item's left anchor holds its right edge,
+    // every line points at the other side of its target, the two margins
+    // change places and the centre offset counts the other way. Asked only
+    // by items that are anchored: the answer walks up the tree.
+    let flip = (left.is_some() || right.is_some() || hcenter.is_some()) && mirrored(e, obj);
+    let (left_margin, right_margin, offset_sign) = if flip {
+        (left, right) = (right.map(other_side), left.map(other_side));
+        hcenter = hcenter.map(other_side);
+        (a.right_margin, a.left_margin, -1.0)
+    } else {
+        (a.left_margin, a.right_margin, 1.0)
+    };
     if left.is_some() && right.is_some() && hcenter.is_some() {
         // Qt warns and goes on with left and right.
         cx.warn("Cannot specify left, right, and horizontalCenter anchors at the same time.");
@@ -198,15 +217,27 @@ fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<Object
     }
     let l = left
         .and_then(|l| cx.edge(l.item, l.edge))
-        .map(|p| p + effective_margin(e, obj, a.left_margin));
+        .map(|p| p + effective_margin(e, obj, left_margin));
     let r = right
         .and_then(|l| cx.edge(l.item, l.edge))
-        .map(|p| p - effective_margin(e, obj, a.right_margin));
+        .map(|p| p - effective_margin(e, obj, right_margin));
     let c = hcenter
         .and_then(|l| cx.edge(l.item, l.edge))
-        .map(|p| p + num(e, obj, a.horizontal_center_offset));
+        .map(|p| p + offset_sign * num(e, obj, a.horizontal_center_offset));
     let align = e.read(obj, a.align_when_centered).to_boolean();
     span(e, obj, Item::WIDTH.index, l, r, c, align)
+}
+
+/// The same line on the other side of its target: left for right.
+fn other_side(l: AnchorLine) -> AnchorLine {
+    AnchorLine {
+        item: l.item,
+        edge: match l.edge {
+            Edge::Left => Edge::Right,
+            Edge::Right => Edge::Left,
+            other => other,
+        },
+    }
 }
 
 fn vertical(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId>) -> Span {

@@ -33,6 +33,14 @@ pub struct ShellConfig {
     /// How much of a frame the inbox drain may take; the rest waits for the
     /// next frame (which the inbox requests itself).
     pub drain_budget: DrainBudget,
+    /// [`run`] lays text out with the fonts installed on the system, and the
+    /// platform's interface font when a `Text` names no family. False keeps
+    /// the bundled font only, so text has the same size on every machine.
+    ///
+    /// Only [`run`] reads this. A host that builds a [`ShellApp`] itself
+    /// keeps the text engine its thread already has (bundled fonts, unless
+    /// it called [`ljos_quick::set_text_engine`]).
+    pub system_fonts: bool,
 }
 
 impl Default for ShellConfig {
@@ -44,6 +52,7 @@ impl Default for ShellConfig {
             background: Color::WHITE,
             inbox_capacity: 1024,
             drain_budget: DrainBudget::time(Duration::from_millis(4)),
+            system_fonts: true,
         }
     }
 }
@@ -271,6 +280,11 @@ pub fn run<M: Send + 'static>(
         &title,
         options,
         Box::new(move |cc| {
+            // Before `setup`: bindings may measure text while the root is
+            // being built.
+            if config.system_fonts {
+                ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+            }
             let app = ShellApp::new(&cc.egui_ctx, &config, Arc::new(SystemClock::new()), setup)
                 // `ShellError` may hold non-Send engine errors; eframe needs Send.
                 .map_err(|e| -> SetupError { e.to_string().into() })?;

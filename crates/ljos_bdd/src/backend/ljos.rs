@@ -18,7 +18,7 @@ use ljos_compiler::{Project, Severity, compile_file};
 use ljos_engine::{Engine, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{PointerEvent, QuickScene};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
-use ljos_runtime::{Clock as _, VirtualClock};
+use ljos_runtime::{Clock as _, Time, VirtualClock};
 use qml_front::QtTypeOracle;
 use serde_json::{Map, Number, Value, json};
 
@@ -70,6 +70,9 @@ struct Live {
     log: Rc<RefCell<Vec<LogEntry>>>,
     /// The staged files the component source was last built from.
     compiled_from: BTreeMap<String, String>,
+    /// When the scene last said it next needs a frame (a running
+    /// animation's next tick). `advance` wakes it then, as a host would.
+    wake: Option<Time>,
 }
 
 #[derive(Default)]
@@ -147,6 +150,7 @@ impl LjosBackend {
             roots: Vec::new(),
             log,
             compiled_from: compiled,
+            wake: None,
         };
         live.settle()?;
         Ok(live)
@@ -197,8 +201,10 @@ impl Live {
     /// sees anything.
     fn settle(&mut self) -> Result<()> {
         for _ in 0..MAX_SETTLE_FRAMES {
-            let out = self.scene.frame(&self.engine, self.clock.now());
-            if !self.scene.needs_frame() && out.next_wake != Some(self.clock.now()) {
+            let now = self.clock.now();
+            let out = self.scene.frame(&self.engine, now);
+            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
+                self.wake = out.next_wake;
                 return Ok(());
             }
         }
@@ -292,6 +298,25 @@ impl Live {
         }
     }
 
+    /// A write to a member of a value type (`font.pixelSize`) as the write
+    /// of the whole value with that member changed, which is what QML does.
+    /// Anything else comes back as it was.
+    fn member_write(&self, owner: ObjectId, prop: String, v: QmlValue) -> (String, QmlValue) {
+        if self.engine.property_index(owner, &prop).is_ok() {
+            return (prop, v);
+        }
+        let whole = prop.split_once('.').and_then(|(head, member)| {
+            let meta = self.engine.meta_of(owner)?;
+            let ty = meta.property(meta.property_index(head)?)?.ty.clone();
+            let changed = self
+                .engine
+                .read_by_name(owner, head)
+                .with_member(&ty, member, &v)?;
+            Some((head.to_owned(), changed))
+        });
+        whole.unwrap_or((prop, v))
+    }
+
     /// The object the type `name` attaches to `obj`, made on first use as
     /// QML makes it. Type names are capitalised; properties are not.
     fn attached(&self, obj: ObjectId, name: &str) -> Option<ObjectId> {
@@ -367,9 +392,14 @@ impl Live {
     fn advance(&mut self, ms: u64) -> Result<()> {
         let end = self.clock.now() + Duration::from_millis(ms);
         // Each timer fires at its own deadline, and the scene is settled in
-        // between, as a host woken at each deadline would.
+        // between, as a host woken at each deadline would. The scene's own
+        // wakes (the frames of a running animation) are kept the same way.
         for _ in 0..MAX_TIMER_STEPS {
-            match self.engine.next_timer_deadline() {
+            let next = [self.engine.next_timer_deadline(), self.wake]
+                .into_iter()
+                .flatten()
+                .min();
+            match next {
                 Some(t) if t <= end => {
                     if t > self.clock.now() {
                         self.clock.set(t);
@@ -470,6 +500,7 @@ impl Backend for LjosBackend {
         let obj = live.find(object)?;
         let (owner, prop) = live.owner(obj, property)?;
         let v = live.to_qml(value)?;
+        let (prop, v) = live.member_write(owner, prop, v);
         live.engine
             .write_by_name(owner, &prop, v)
             .map_err(|e| failed(format!("cannot set {property}: {e}")))?;

@@ -214,33 +214,43 @@ fn renders_the_rectangles() {
 }
 
 #[test]
-fn text_is_measured_with_the_painting_fonts() {
+fn text_is_sized_by_the_text_engine_and_painted_from_the_atlas() {
     let s = scene();
     let mut h = harness(&s, None);
     h.run();
-    let galley = h.ctx.fonts_mut(|f| {
-        f.layout_no_wrap(
-            "Hello".into(),
-            egui::FontId::proportional(14.0),
-            egui::Color32::WHITE,
+    // The size comes from the scene's text engine, not from egui's fonts.
+    let (advance, line) = {
+        let te = ljos_quick::text_engine();
+        let mut te = te.borrow_mut();
+        let style = ljos_quick::TextStyle::default();
+        (
+            te.advance_width("Hello", &style),
+            te.font_metrics(&style).line_height,
         )
-    });
+    };
     let w = s.engine.read_by_name(s.text, "implicitWidth").to_number();
     let ht = s.engine.read_by_name(s.text, "implicitHeight").to_number();
-    assert_eq!(w, f64::from(galley.size().x));
-    assert_eq!(ht, f64::from(galley.size().y));
-    // And the painted text is a TextShape inside the Text's box.
+    assert_eq!(w, advance);
+    assert_eq!(ht, line);
+    // The glyphs are quads that sample a texture of their own, inside the
+    // Text's box (a glyph's ink may reach a pixel past its advance).
     let text_rect = Rect::from_min_size(at(&h, 10.0, 70.0), Vec2::new(w as f32, ht as f32));
     let painted = h.output().shapes.iter().any(|cs| match &cs.shape {
-        egui::Shape::Text(t) => {
-            t.galley.text() == "Hello"
-                && text_rect
-                    .expand(0.5)
-                    .contains_rect(t.visual_bounding_rect())
+        egui::Shape::Mesh(m) => {
+            m.texture_id != egui::TextureId::default()
+                && !m.vertices.is_empty()
+                && text_rect.expand(2.0).contains_rect(m.calc_bounds())
         }
         _ => false,
     });
-    assert!(painted, "no Hello text shape inside {text_rect:?}");
+    assert!(painted, "no glyph mesh inside {text_rect:?}");
+    assert!(
+        !h.output()
+            .shapes
+            .iter()
+            .any(|cs| matches!(cs.shape, egui::Shape::Text(_))),
+        "text must not go through egui's own text layout"
+    );
 }
 
 #[test]

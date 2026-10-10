@@ -1,20 +1,66 @@
-//! `Text`: the M0 stop-gap.
+//! `Text`, laid out and shaped by `ljos_text` (ARCHITECTURE §7.5).
 //!
-//! Layout here is deliberately simple (ARCHITECTURE §7.5 replaces it with
-//! `ljos_text`): lines are broken at `\n` and, with `wrapMode`, at spaces;
-//! only `Text.ElideRight` elides; every line is painted as one
-//! `DrawOp::Text`. Measuring is the host's job through [`TextMeasurer`].
+//! A `Text` keeps numbers only: its implicit size, content size, line count
+//! and baseline. The layout that produced them lives in the text engine's
+//! cache, and the glyph runs that are drawn live in the item's display list,
+//! which the scene drops when the item leaves the screen. So text that is not
+//! shown costs a few numbers, however much of it there is.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos_engine::{Atom, Color, Engine, Font, ObjectId, QmlObject, Value};
-use ljos_render::{DisplayListBuilder, TextAlign, kurbo};
+use ljos_engine::{
+    Atom, Color, Cx, Engine, EngineError, Font, ObjectId, QmlObject, Value, qml_impl,
+};
+use ljos_render::{DisplayListBuilder, kurbo};
+use ljos_text::{
+    ElideMode, LayoutParams, Line, LineHeight, TextEngine, TextLayout, TextStyle, WrapMode,
+    reads_right_to_left,
+};
 
 use crate::enums::{align, elide, line_height_mode, wrap_mode};
-use crate::item::Item;
+use crate::item::{Item, is_unset, num, size_follows_implicit, write_computed};
 use crate::rectangle::to_rgba;
 
-/// `Text` (QtQuick).
+/// A text engine shared by everything on the UI thread.
+pub type SharedTextEngine = Rc<RefCell<TextEngine>>;
+
+thread_local! {
+    // One per UI thread, which is one per application: scenes, `FontMetrics`
+    // and `TextMetrics` have to agree on fonts and share the caches.
+    static ENGINE: RefCell<Option<SharedTextEngine>> = const { RefCell::new(None) };
+}
+
+/// The UI thread's text engine. Until [`set_text_engine`] installs another it
+/// is one with the bundled font only, which lays text out the same on every
+/// machine.
+///
+/// Do not keep it borrowed while reading or writing QML properties: a binding
+/// that runs then may measure text itself.
+pub fn text_engine() -> SharedTextEngine {
+    ENGINE.with(|slot| {
+        Rc::clone(
+            slot.borrow_mut()
+                .get_or_insert_with(|| Rc::new(RefCell::new(TextEngine::new()))),
+        )
+    })
+}
+
+/// Makes `engine` the UI thread's text engine, for example one made by
+/// [`TextEngine::with_system_fonts`]. A scene picks it up on its next frame
+/// and lays its text out again; install it before the first frame, or call
+/// [`crate::QuickScene::refresh_text`] to ask for that frame.
+pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
+    let shared = Rc::new(RefCell::new(engine));
+    ENGINE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&shared)));
+    shared
+}
+
+/// `Text` (QtQuick): plain text.
+///
+/// Not implemented: `textFormat` (rich text and Markdown), `style`, links,
+/// `fontSizeMode`, padding and `renderType`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -32,17 +78,24 @@ pub struct Text {
     #[qml(notify)]
     pub font: Font,
     /// [`crate::enums::align`] `LEFT`, `RIGHT`, `H_CENTER` or `JUSTIFY`.
+    /// Until it is assigned it follows the direction of the text.
     #[qml(notify)]
     pub horizontal_alignment: i32,
+    /// `horizontalAlignment` as it is applied.
+    #[qml(notify, readonly)]
+    pub effective_horizontal_alignment: i32,
     /// [`crate::enums::align`] `TOP`, `BOTTOM` or `V_CENTER`.
     #[qml(notify)]
     pub vertical_alignment: i32,
     /// [`crate::enums::wrap_mode`].
     #[qml(notify)]
     pub wrap_mode: i32,
-    /// [`crate::enums::elide`]; only `RIGHT` is implemented.
+    /// [`crate::enums::elide`].
     #[qml(notify)]
     pub elide: i32,
+    /// At most this many lines are shown.
+    #[qml(notify)]
+    pub maximum_line_count: i32,
     #[qml(notify)]
     pub line_height: f64,
     /// [`crate::enums::line_height_mode`].
@@ -56,6 +109,9 @@ pub struct Text {
     pub line_count: i32,
     #[qml(notify, readonly)]
     pub truncated: bool,
+    /// [`init_text`] ran.
+    #[qml(skip)]
+    initialised: bool,
 }
 
 impl Default for Text {
@@ -70,99 +126,113 @@ impl Default for Text {
             color: Color::BLACK,
             font: Font::default(),
             horizontal_alignment: align::LEFT,
+            effective_horizontal_alignment: align::LEFT,
             vertical_alignment: align::TOP,
             wrap_mode: wrap_mode::NO_WRAP,
             elide: elide::NONE,
+            // Qt's "no limit".
+            maximum_line_count: i32::MAX,
             line_height: 1.0,
             line_height_mode: line_height_mode::PROPORTIONAL,
             content_width: 0.0,
             content_height: 0.0,
-            line_count: 0,
+            // Empty text is still one line.
+            line_count: 1,
             truncated: false,
+            initialised: false,
         }
     }
+}
+
+#[qml_impl]
+impl Text {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        init_text(cx.engine, cx.this)
+    }
+}
+
+/// What completing a `Text` does, for one built natively without completion
+/// (the scene calls it before the first layout). Idempotent.
+pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let done = engine.untrack(|| engine.with(obj, |t: &Text| t.initialised))?;
+    if done {
+        return Ok(());
+    }
+    engine.with_mut(obj, |t: &mut Text| t.initialised = true)?;
+    // Right-to-left text is aligned right until an alignment is assigned;
+    // assigning one replaces this binding, as Qt documents.
+    if is_unset(engine, obj, Text::HORIZONTAL_ALIGNMENT.index) {
+        engine.bind(obj, Text::HORIZONTAL_ALIGNMENT.index, move |e| {
+            let text = e.read(obj, Text::TEXT.index).to_js_string();
+            Value::Int(if reads_right_to_left(text.as_str()) {
+                align::RIGHT
+            } else {
+                align::LEFT
+            })
+        })?;
+    }
+    // Without layout mirroring the effective alignment is the alignment.
+    engine.bind_initial(obj, Text::EFFECTIVE_HORIZONTAL_ALIGNMENT.index, move |e| {
+        e.read(obj, Text::HORIZONTAL_ALIGNMENT.index)
+    })
 }
 
 /// Font size used when neither `pixelSize` nor `pointSize` is set.
 pub const DEFAULT_PIXEL_SIZE: f64 = 14.0;
 
-/// The parts of a QML `font` a measurer needs.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FontSpec {
-    pub family: Atom,
-    /// Logical pixels.
-    pub pixel_size: f64,
-    pub bold: bool,
-    pub italic: bool,
-}
-
-impl FontSpec {
-    /// `pixelSize` wins over `pointSize` (1 pt = 4/3 px at 96 dpi).
-    pub fn from_font(f: &Font) -> Self {
-        let pixel_size = if f.pixel_size > 0 {
-            f64::from(f.pixel_size)
-        } else if f.point_size > 0.0 {
-            f.point_size * 4.0 / 3.0
-        } else {
-            DEFAULT_PIXEL_SIZE
-        };
-        FontSpec {
-            family: f.family.clone(),
-            pixel_size,
-            bold: f.bold(),
-            italic: f.italic,
-        }
+/// A QML `font` as the text engine wants it. `pixelSize` wins over
+/// `pointSize` (1 pt = 4/3 px at 96 dpi).
+///
+/// Qt sets a point size at the nearest whole pixel size (11 pt is 15 px,
+/// 10 pt is 13 px), and so does this.
+pub fn text_style(f: &Font) -> TextStyle {
+    let pixel_size = if f.pixel_size > 0 {
+        f64::from(f.pixel_size)
+    } else if f.point_size > 0.0 {
+        (f.point_size * 4.0 / 3.0).round().max(1.0)
+    } else {
+        DEFAULT_PIXEL_SIZE
+    };
+    TextStyle {
+        family: Arc::from(f.family.as_str()),
+        pixel_size: pixel_size as f32,
+        weight: f.weight.clamp(1, 1000) as f32,
+        italic: f.italic,
+        underline: f.underline,
+        strikeout: f.strikeout,
+        letter_spacing: f.letter_spacing as f32,
+        word_spacing: f.word_spacing as f32,
     }
 }
 
-/// Vertical metrics of a font, in logical pixels.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FontMetrics {
-    pub ascent: f64,
-    pub descent: f64,
-}
-
-impl FontMetrics {
-    pub fn height(&self) -> f64 {
-        self.ascent + self.descent
+/// Reads a `font` property as a style (tracked).
+pub(crate) fn read_style(
+    engine: &Engine,
+    obj: ObjectId,
+    font: ljos_engine::PropIndex,
+) -> TextStyle {
+    match engine.read(obj, font) {
+        Value::Font(f) => text_style(&f),
+        _ => text_style(&Font::default()),
     }
 }
 
-/// Measures text for layout. The host installs one on the scene
-/// ([`crate::QuickScene::set_text_measurer`]); the shell's will use egui's
-/// fonts, tests use [`FixedAdvanceMeasurer`].
-pub trait TextMeasurer {
-    /// Advance width of a single line of text.
-    fn width(&self, text: &str, font: &FontSpec) -> f64;
-    fn metrics(&self, font: &FontSpec) -> FontMetrics;
-}
-
-/// A deterministic measurer: every character is `advance × pixel_size`
-/// wide (bold adds 10 %), ascent is 0.8 and descent 0.2 of the size.
-#[derive(Clone, Copy, Debug)]
-pub struct FixedAdvanceMeasurer {
-    pub advance: f64,
-}
-
-impl Default for FixedAdvanceMeasurer {
-    fn default() -> Self {
-        Self { advance: 0.5 }
+pub(crate) fn elide_mode(v: i32) -> ElideMode {
+    match v {
+        elide::LEFT => ElideMode::Left,
+        elide::RIGHT => ElideMode::Right,
+        elide::MIDDLE => ElideMode::Middle,
+        _ => ElideMode::None,
     }
 }
 
-impl TextMeasurer for FixedAdvanceMeasurer {
-    fn width(&self, text: &str, font: &FontSpec) -> f64 {
-        let bold = if font.bold { 1.1 } else { 1.0 };
-        text.chars().count() as f64 * self.advance * font.pixel_size * bold
-    }
-
-    fn metrics(&self, font: &FontSpec) -> FontMetrics {
-        FontMetrics {
-            ascent: font.pixel_size * 0.8,
-            // Derived from the ascent so the line height is exactly the
-            // pixel size (0.8 + 0.2 is not exact in binary).
-            descent: font.pixel_size - font.pixel_size * 0.8,
-        }
+fn wrap(v: i32) -> WrapMode {
+    match v {
+        wrap_mode::WORD_WRAP => WrapMode::WordWrap,
+        wrap_mode::WRAP_ANYWHERE => WrapMode::WrapAnywhere,
+        wrap_mode::WRAP => WrapMode::Wrap,
+        _ => WrapMode::NoWrap,
     }
 }
 
@@ -171,166 +241,174 @@ impl TextMeasurer for FixedAdvanceMeasurer {
 pub struct TextInputs {
     pub text: Atom,
     pub color: Color,
-    pub font: FontSpec,
+    pub style: TextStyle,
+    /// [`crate::enums::align`] flags.
     pub h_align: i32,
     pub v_align: i32,
-    pub wrap: i32,
-    pub elide: i32,
-    pub line_height: f64,
-    pub line_height_mode: i32,
+    /// The constraints, with the item's own width and height where it has
+    /// them and they matter.
+    pub params: LayoutParams,
+    /// The item's height when the text is not aligned to the top (it moves
+    /// the baseline), otherwise 0 so a height change costs nothing.
+    pub align_height: f64,
 }
 
 impl TextInputs {
-    /// Reads the text properties (tracked).
+    /// Reads the text properties (tracked). The item's size is only read
+    /// where it changes the result, so resizing a plain label does not lay
+    /// it out again.
     pub fn read(engine: &Engine, obj: ObjectId) -> Self {
         let int = |p: ljos_engine::PropIndex| engine.read(obj, p).to_number() as i32;
+        let h_align = int(Text::HORIZONTAL_ALIGNMENT.index);
+        let v_align = int(Text::VERTICAL_ALIGNMENT.index);
+        let wrap = wrap(int(Text::WRAP_MODE.index));
+        let elide = elide_mode(int(Text::ELIDE.index));
+        let line_height = engine.read(obj, Text::LINE_HEIGHT.index).to_number();
+        let max_lines = int(Text::MAXIMUM_LINE_COUNT.index);
+        // Qt wraps and elides to a width the item was given, never to the
+        // one it took from the text itself.
+        let own = |horizontal: bool, p| {
+            (!size_follows_implicit(engine, obj, horizontal)).then(|| num(engine, obj, p))
+        };
+        let constrained = wrap != WrapMode::NoWrap || elide != ElideMode::None;
+        let width = if constrained {
+            own(true, Item::WIDTH.index)
+        } else {
+            None
+        };
+        let height = if elide == ElideMode::Right && width.is_some() {
+            own(false, Item::HEIGHT.index)
+        } else {
+            None
+        };
+        let top = v_align & (align::BOTTOM | align::V_CENTER) == 0;
         TextInputs {
             text: engine.read(obj, Text::TEXT.index).to_js_string(),
             color: match engine.read(obj, Text::COLOR.index) {
                 Value::Color(c) => c,
                 _ => Color::BLACK,
             },
-            font: match engine.read(obj, Text::FONT.index) {
-                Value::Font(f) => FontSpec::from_font(&f),
-                _ => FontSpec::from_font(&Font::default()),
-            },
-            h_align: int(Text::HORIZONTAL_ALIGNMENT.index),
-            v_align: int(Text::VERTICAL_ALIGNMENT.index),
-            wrap: int(Text::WRAP_MODE.index),
-            elide: int(Text::ELIDE.index),
-            line_height: engine.read(obj, Text::LINE_HEIGHT.index).to_number(),
-            line_height_mode: int(Text::LINE_HEIGHT_MODE.index),
-        }
-    }
-
-    fn line_advance(&self, m: &FontMetrics) -> f64 {
-        if self.line_height_mode == line_height_mode::FIXED {
-            self.line_height
-        } else {
-            m.height() * self.line_height
-        }
-    }
-}
-
-/// One laid-out line.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextLine {
-    pub text: Arc<str>,
-    pub width: f64,
-}
-
-/// The result of [`layout`].
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextLayout {
-    pub lines: Vec<TextLine>,
-    /// Distance between baselines.
-    pub line_advance: f64,
-    pub metrics: FontMetrics,
-    pub truncated: bool,
-}
-
-impl TextLayout {
-    pub fn width(&self) -> f64 {
-        self.lines.iter().map(|l| l.width).fold(0.0, f64::max)
-    }
-
-    pub fn height(&self) -> f64 {
-        match self.lines.len() {
-            0 => 0.0,
-            n => self.line_advance * n as f64,
-        }
-    }
-}
-
-/// Lays text out. `width` is the item's width when it constrains the text
-/// (wrapping or eliding), `None` to measure the natural size.
-pub fn layout(m: &dyn TextMeasurer, t: &TextInputs, width: Option<f64>) -> TextLayout {
-    let metrics = m.metrics(&t.font);
-    let line_advance = t.line_advance(&metrics);
-    let mut lines = Vec::new();
-    let mut truncated = false;
-    let text = t.text.as_str();
-    for para in text.split('\n') {
-        match width {
-            Some(w) if t.wrap != wrap_mode::NO_WRAP => wrap_words(m, &t.font, para, w, &mut lines),
-            Some(w) if t.elide == elide::RIGHT => {
-                let full = m.width(para, &t.font);
-                if full > w {
-                    truncated = true;
-                    let s = elide_right(m, &t.font, para, w);
-                    lines.push(TextLine {
-                        width: m.width(&s, &t.font),
-                        text: s.into(),
-                    });
+            style: read_style(engine, obj, Text::FONT.index),
+            h_align,
+            v_align,
+            params: LayoutParams {
+                width,
+                height,
+                wrap,
+                elide,
+                // 0 is the engine's "all of them", and what Qt does with a
+                // limit of zero or less.
+                max_lines: if max_lines == i32::MAX {
+                    0
                 } else {
-                    lines.push(TextLine {
-                        text: para.into(),
-                        width: full,
-                    });
-                }
-            }
-            _ => lines.push(TextLine {
-                text: para.into(),
-                width: m.width(para, &t.font),
-            }),
+                    max_lines.max(0) as u32
+                },
+                line_height: if int(Text::LINE_HEIGHT_MODE.index) == line_height_mode::FIXED {
+                    LineHeight::Fixed(line_height)
+                } else {
+                    LineHeight::Proportional(line_height)
+                },
+                justify: h_align & align::JUSTIFY != 0,
+            },
+            align_height: if top {
+                0.0
+            } else {
+                num(engine, obj, Item::HEIGHT.index)
+            },
         }
     }
-    if text.is_empty() {
-        lines.clear();
-    }
-    TextLayout {
-        lines,
-        line_advance,
-        metrics,
-        truncated,
+
+    fn layout(&self, te: &mut TextEngine) -> Arc<TextLayout> {
+        te.layout(self.text.as_str(), &self.style, &self.params)
     }
 }
 
-fn wrap_words(
-    m: &dyn TextMeasurer,
-    font: &FontSpec,
-    para: &str,
-    max: f64,
-    out: &mut Vec<TextLine>,
-) {
-    let mut line = String::new();
-    for word in para.split(' ') {
-        let candidate = if line.is_empty() {
-            word.to_owned()
-        } else {
-            format!("{line} {word}")
-        };
-        if line.is_empty() || m.width(&candidate, font) <= max {
-            line = candidate;
-        } else {
-            out.push(TextLine {
-                width: m.width(&line, font),
-                text: std::mem::take(&mut line).into(),
-            });
-            line = word.to_owned();
-        }
+/// How far down the text starts in an item of `height`.
+fn vertical_offset(v_align: i32, height: f64, content_height: f64) -> f64 {
+    if v_align & align::BOTTOM != 0 {
+        height - content_height
+    } else if v_align & align::V_CENTER != 0 {
+        (height - content_height) / 2.0
+    } else {
+        0.0
     }
-    out.push(TextLine {
-        width: m.width(&line, font),
-        text: line.into(),
-    });
 }
 
-fn elide_right(m: &dyn TextMeasurer, font: &FontSpec, s: &str, max: f64) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    for n in (0..chars.len()).rev() {
-        let mut c: String = chars[..n].iter().collect();
-        c.push('…');
-        if m.width(&c, font) <= max {
-            return c;
-        }
+/// Where a line starts in an item of `width`.
+fn horizontal_offset(h_align: i32, rtl: bool, width: f64, line: &Line) -> f64 {
+    let free = width - line.width;
+    if line.justified {
+        0.0
+    } else if h_align & align::RIGHT != 0 {
+        free
+    } else if h_align & align::H_CENTER != 0 {
+        free / 2.0
+    } else if h_align & align::JUSTIFY != 0 && rtl {
+        // The last line of a justified paragraph starts where the text does.
+        free
+    } else {
+        0.0
     }
-    "…".to_owned()
 }
 
-/// Paints laid-out text into an item of `size`.
-pub fn paint(
-    m: &dyn TextMeasurer,
+/// Lays a Text out and writes what the layout says about it: implicit size,
+/// content size, line count, `truncated` and the baseline. The layout itself
+/// stays in the engine's cache.
+pub(crate) fn polish(
+    engine: &Engine,
+    obj: ObjectId,
+    te: &SharedTextEngine,
+) -> Result<(), EngineError> {
+    init_text(engine, obj)?;
+    let t = engine.untrack(|| TextInputs::read(engine, obj));
+    // Borrowed for the layout only: the writes below run bindings.
+    let l = t.layout(&mut te.borrow_mut());
+    let shift = vertical_offset(t.v_align, t.align_height, l.content_height);
+    engine.batch(|| {
+        write_computed(
+            engine,
+            obj,
+            Item::IMPLICIT_WIDTH.index,
+            Value::Real(l.natural_width),
+        )?;
+        write_computed(
+            engine,
+            obj,
+            Item::IMPLICIT_HEIGHT.index,
+            Value::Real(l.implicit_height),
+        )?;
+        write_computed(
+            engine,
+            obj,
+            Text::CONTENT_WIDTH.index,
+            Value::Real(l.content_width),
+        )?;
+        write_computed(
+            engine,
+            obj,
+            Text::CONTENT_HEIGHT.index,
+            Value::Real(l.content_height),
+        )?;
+        write_computed(
+            engine,
+            obj,
+            Text::LINE_COUNT.index,
+            Value::Int(l.line_count() as i32),
+        )?;
+        write_computed(engine, obj, Text::TRUNCATED.index, Value::Bool(l.truncated))?;
+        write_computed(
+            engine,
+            obj,
+            Item::BASELINE_OFFSET.index,
+            Value::Real(l.baseline + shift),
+        )
+    })
+}
+
+/// Paints the text into an item of `size`: one glyph run per font and
+/// direction on each line.
+pub(crate) fn paint(
+    te: &mut TextEngine,
     t: &TextInputs,
     size: kurbo::Size,
     out: &mut DisplayListBuilder,
@@ -338,33 +416,20 @@ pub fn paint(
     if t.text.is_empty() || t.color.a == 0 {
         return;
     }
-    let constrained = t.wrap != wrap_mode::NO_WRAP || t.elide == elide::RIGHT;
-    let l = layout(m, t, constrained.then_some(size.width));
-    let total = l.height();
-    let top = if t.v_align & align::BOTTOM != 0 {
-        size.height - total
-    } else if t.v_align & align::V_CENTER != 0 {
-        (size.height - total) / 2.0
-    } else {
-        0.0
-    };
-    let text_align = if t.h_align & align::RIGHT != 0 {
-        TextAlign::Right
-    } else if t.h_align & align::H_CENTER != 0 {
-        TextAlign::Center
-    } else {
-        TextAlign::Left
-    };
+    // The request polish made, so this is a cache hit unless the item was
+    // off screen long enough for the layout to be dropped.
+    let l = t.layout(te);
+    let top = vertical_offset(t.v_align, size.height, l.content_height);
     let color = to_rgba(t.color);
-    for (i, line) in l.lines.iter().enumerate() {
-        let y = top + i as f64 * l.line_advance;
-        let rect = kurbo::Rect::new(0.0, y, size.width.max(line.width), y + l.line_advance);
-        out.text_stopgap(
-            rect,
-            Arc::clone(&line.text),
-            t.font.pixel_size as f32,
-            color,
-            text_align,
-        );
+    for line in &l.lines {
+        let left = horizontal_offset(t.h_align, l.rtl, size.width, line);
+        for run in &line.runs {
+            out.glyphs(
+                Arc::clone(&run.glyphs),
+                kurbo::Vec2::new(left, top),
+                color,
+                run.decorations,
+            );
+        }
     }
 }

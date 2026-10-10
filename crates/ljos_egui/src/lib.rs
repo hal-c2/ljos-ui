@@ -1,15 +1,16 @@
 //! egui integration for Ljós: [`QmlView`] hosts a [`ljos_quick::QuickScene`]
-//! inside any egui `Ui`, and [`EguiTextMeasurer`] is the text stop-gap that
-//! measures with the same fonts the B0 backend paints with.
+//! inside any egui `Ui`.
+//!
+//! Text does not go through egui's fonts: the scene lays it out with
+//! `ljos_text` and B0 paints the glyphs from its own atlas, so a `Text` has
+//! the same size here as in the reference renderer.
 //!
 //! This is one of the three crates allowed to name egui (ARCHITECTURE
 //! principle: egui stays in `ljos_egui`, `ljos_shell` and B0).
 
 mod a11y;
 mod input;
-mod measurer;
 mod view;
 
 pub use input::{map_button, map_modifiers};
-pub use measurer::EguiTextMeasurer;
 pub use view::{QmlView, ResizeMode, ViewError, ViewStats};

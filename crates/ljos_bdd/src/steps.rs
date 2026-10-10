@@ -190,6 +190,27 @@ fn property_bound_check(
     })
 }
 
+// For values an easing curve computes: the two toolkits agree to rounding, not bit for bit.
+#[then(regex = r#"^the property "([^"]+)" of "([^"]+)" is within ([\d.]+) of (-?[\d.]+)$"#)]
+fn property_within(
+    w: &mut LjosWorld,
+    property: String,
+    object: String,
+    tolerance: f64,
+    expected: f64,
+) -> StepResult {
+    expect_value(w, &object, &property, |actual| {
+        let n = value::number(actual).ok_or_else(|| format!("{actual} is not a number"))?;
+        if (n - expected).abs() <= tolerance {
+            Ok(())
+        } else {
+            Err(format!(
+                "expected {expected} give or take {tolerance}, found {n}"
+            ))
+        }
+    })
+}
+
 #[then(regex = r#"^setting the property "([^"]+)" of "([^"]+)" to (.+) is rejected$"#)]
 fn set_rejected(w: &mut LjosWorld, property: String, object: String, v: String) -> StepResult {
     let v = value::parse(&v)?;

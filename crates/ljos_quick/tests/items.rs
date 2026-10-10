@@ -162,18 +162,21 @@ fn map_to_and_from_item() {
 }
 
 #[test]
-fn text_implicit_size_from_the_measurer() {
+fn text_implicit_size_from_the_text_engine() {
     let e = engine();
     let root = make::<Item>(&e, None);
     let t = make::<Text>(&e, Some(root));
     set(&e, t, "text", Value::String(Atom::from("hello")));
     let mut s = scene(&e, root, 300.0, 300.0);
     frame(&mut s, &e);
-    // FixedAdvanceMeasurer: 0.5 px per character per pixel of font size,
-    // line height = ascent + descent = font size (14 px by default).
-    assert_eq!(num(&e, t, "implicitWidth"), 35.0);
-    assert_eq!(num(&e, t, "implicitHeight"), 14.0);
-    assert_eq!((num(&e, t, "width"), num(&e, t, "height")), (35.0, 14.0));
+    // The bundled font at the default 14 px: a line is 16 px tall.
+    let width = ljos_quick::text_engine()
+        .borrow_mut()
+        .advance_width("hello", &ljos_quick::TextStyle::default());
+    assert!(width > 20.0 && width < 40.0, "{width}");
+    assert_eq!(num(&e, t, "implicitWidth"), width);
+    assert_eq!(num(&e, t, "implicitHeight"), 16.0);
+    assert_eq!((num(&e, t, "width"), num(&e, t, "height")), (width, 16.0));
     assert_eq!(get(&e, t, "lineCount"), Value::Int(1));
 }
 
@@ -184,11 +187,12 @@ fn text_wraps_to_its_width() {
     let t = make::<Text>(&e, Some(root));
     set(&e, t, "text", Value::String(Atom::from("aaaa bbbb cccc")));
     set(&e, t, "wrapMode", Value::Int(wrap_mode::WORD_WRAP));
+    // Room for two of the three words.
     set(&e, t, "width", Value::Real(70.0));
     let mut s = scene(&e, root, 300.0, 300.0);
     frame(&mut s, &e);
     assert_eq!(get(&e, t, "lineCount"), Value::Int(2));
-    assert_eq!(num(&e, t, "height"), 28.0);
+    assert_eq!(num(&e, t, "height"), 32.0);
 }
 
 #[test]

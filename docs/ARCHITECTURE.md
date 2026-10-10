@@ -501,8 +501,6 @@ Raw HTML never passes through, because rich text often comes from untrusted sour
 
 Caret and selection geometry come from Parley's `Cursor`/`Selection`. Parley's `PlainEditor` is a reference, not the owner of the model.
 
-**Stop-gap.** Until Parley text lands, demos may use egui text labelled "LTR only".
-
 ---
 
 ## 8. Off-screen and resource policy
@@ -1255,7 +1253,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 - Tier-0 resolution and tier-2 rquickjs (`JsHost` with deadlines). Tier 1 is not in M0.
 
 **Items, rendering and runtime**
-- Item, Rectangle, Text (egui stop-gap), MouseArea, TapHandler, Timer, Connections, QtObject, Component, Loader.
+- Item, Rectangle, Text (egui text; Parley replaces it in M1), MouseArea, TapHandler, Timer, Connections, QtObject, Component, Loader.
 - Anchors, Row and Column.
 - B0 and R backends, `RenderTree`, culling, and the frame pipeline up to step 12 with zero idle CPU.
 - `FrameScheduler`, `Clock`, `UiMsg`/`UiHandle`, and a scheduler skeleton with lanes and `FrameReport`.
