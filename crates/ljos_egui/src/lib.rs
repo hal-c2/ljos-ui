@@ -10,7 +10,9 @@
 
 mod a11y;
 mod input;
+mod keys;
 mod view;
 
 pub use input::{map_button, map_modifiers};
-pub use view::{QmlView, ResizeMode, ViewError, ViewStats};
+pub use keys::map_key;
+pub use view::{KeyboardPolicy, QmlView, ResizeMode, ViewError, ViewStats};

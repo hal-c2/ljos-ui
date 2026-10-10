@@ -5,7 +5,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use egui::accesskit::{Action, TreeId};
-use egui::{Context, Event, Id, Pos2, Rect, Response, Sense, TouchId, TouchPhase, Ui, Vec2};
+use egui::{
+    Context, Event, EventFilter, FocusDirection, Id, Key, Pos2, Rect, Response, Sense, TouchId,
+    TouchPhase, Ui, Vec2,
+};
 use ljos_engine::{Engine, EngineError, ObjectId};
 use ljos_quick::{Item, MouseButtons, PointerEvent, PointerId, PointerKind, QuickScene, TimerHook};
 use ljos_render::b0::{EguiSink, EpaintBackend};
@@ -14,6 +17,7 @@ use ljos_runtime::{Clock, SystemClock, Time};
 
 use crate::a11y;
 use crate::input::{map_button, map_modifiers};
+use crate::keys::{Fallback, KeyTrack};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
@@ -32,6 +36,21 @@ pub enum ResizeMode {
     ViewToRoot,
 }
 
+/// When the view takes the keys: what a Qt Quick window does by being the
+/// window with focus has to be said inside egui, where widgets share one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyboardPolicy {
+    /// The view has the keyboard whenever no egui widget does: for a view
+    /// that is the window's content. Its items have active focus as soon as
+    /// the window does, as in a Qt Quick window.
+    #[default]
+    WhenFree,
+    /// The view has the keyboard only while it has egui's focus: after a
+    /// click on it, a Tab to it or [`QmlView::request_keyboard`]. For a view
+    /// that is one widget among others.
+    WhenFocused,
+}
+
 /// Counters for tests and diagnostics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ViewStats {
@@ -48,6 +67,12 @@ pub struct ViewStats {
     pub accessible_nodes: usize,
     /// Press actions of an assistive technology that an item took.
     pub accessible_presses: u64,
+    /// Focus actions of an assistive technology that an item took.
+    pub accessible_focuses: u64,
+    /// Key events handed to the scene.
+    pub key_events: u64,
+    /// Key events the scene accepted, and so took out of egui's input.
+    pub keys_accepted: u64,
 }
 
 /// Bridges the scene's waker (an `Rc` closure on the UI thread) to egui.
@@ -92,10 +117,16 @@ struct PointerTrack {
 /// through B0, and (5) asks egui for another pass only when there is future
 /// work: `request_repaint_after` for the next timer, nothing when idle.
 ///
+/// Keys go to the scene while the view has the keyboard (see
+/// [`KeyboardPolicy`]); the ones the scene accepts are taken out of egui's
+/// input, the others stay for the widgets shown after the view. The scene's
+/// window is active while the view has the keyboard and the egui viewport
+/// has the system's focus.
+///
 /// While egui builds an AccessKit tree (an assistive technology listens),
 /// the items that carry `Accessible` are nodes of that tree under one node
-/// for the view, and a press action clicks the item. Otherwise the scene
-/// does no accessibility work.
+/// for the view, a press action clicks the item and a focus action gives it
+/// active focus. Otherwise the scene does no accessibility work.
 pub struct QmlView {
     engine: Rc<Engine>,
     scene: QuickScene,
@@ -105,6 +136,10 @@ pub struct QmlView {
     resize: ResizeMode,
     gate: Rc<WakeGate>,
     pointer: PointerTrack,
+    keys: KeyTrack,
+    keyboard: KeyboardPolicy,
+    /// The keyboard was the view's when the last pass ended.
+    had_keyboard: bool,
     next_wake: Option<Time>,
     size: Option<Vec2>,
     ppp: Option<f32>,
@@ -142,6 +177,9 @@ impl QmlView {
             resize: ResizeMode::default(),
             gate,
             pointer: PointerTrack::default(),
+            keys: KeyTrack::default(),
+            keyboard: KeyboardPolicy::default(),
+            had_keyboard: false,
             next_wake: None,
             size: None,
             ppp: None,
@@ -167,6 +205,27 @@ impl QmlView {
     pub fn with_resize_mode(mut self, mode: ResizeMode) -> Self {
         self.resize = mode;
         self
+    }
+
+    pub fn with_keyboard_policy(mut self, policy: KeyboardPolicy) -> Self {
+        self.keyboard = policy;
+        self
+    }
+
+    /// The id of the egui widget that holds egui's focus for the whole
+    /// scene: which item has active focus is the scene's own business.
+    pub fn focus_id(&self) -> Id {
+        self.id.with("keyboard")
+    }
+
+    /// Gives the view egui's focus, and with it the keyboard.
+    pub fn request_keyboard(&self, ctx: &Context) {
+        ctx.memory_mut(|m| m.request_focus(self.focus_id()));
+    }
+
+    /// Whether keys went to the scene when the last pass ended.
+    pub fn has_keyboard(&self) -> bool {
+        self.had_keyboard
     }
 
     pub fn engine(&self) -> &Rc<Engine> {
@@ -214,6 +273,10 @@ impl QmlView {
     /// scene can change before the first pass.
     pub fn bind_context(&mut self, ctx: &Context) {
         *self.gate.ctx.borrow_mut() = Some(ctx.clone());
+        // A decoded picture is waiting: the worker thread wakes egui, and
+        // the pass that follows hands the result to the items.
+        let ctx = ctx.clone();
+        ljos_quick::ImageStore::of(&self.engine).set_waker(move || ctx.request_repaint());
     }
 
     /// Runs `f` with the scene's waker held, for work done right before a
@@ -236,9 +299,133 @@ impl QmlView {
             ResizeMode::RootToView => ui.available_size(),
             ResizeMode::ViewToRoot => self.root_size(),
         };
-        let (rect, response) = ui.allocate_exact_size(desired, Sense::click_and_drag());
+        // Before the view's widget exists in this pass: what the scene
+        // leaves of Tab and the arrows moves egui's focus when it does.
+        self.deliver_keys(ui);
+        // The widget's id does not depend on where in the `Ui` the view is,
+        // so the keyboard stays when the layout around it changes.
+        let (rect, space) = ui.allocate_exact_size(desired, Sense::hover());
+        let mut response = ui.interact(space.rect, self.focus_id(), Sense::click_and_drag());
+        response.set_intrinsic_size(desired);
+        if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed()) {
+            response.request_focus();
+        }
         self.show_at(ui, rect);
         response
+    }
+
+    /// Hands the pass's key events to the scene, if the keyboard was the
+    /// view's when they were typed.
+    fn deliver_keys(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let id = self.focus_id();
+        let focused = ctx.memory(|m| m.focused());
+        let mine = focused == Some(id);
+        // egui drops the focus for Escape before any widget runs, unless
+        // the focused widget asked to keep it; the request only holds from
+        // the second pass with focus on.
+        let dropped = self.had_keyboard
+            && focused.is_none()
+            && (self.keyboard == KeyboardPolicy::WhenFree
+                || ui.input(|i| {
+                    i.events.iter().any(|e| {
+                        matches!(e, Event::Key { key: Key::Escape, pressed: true, modifiers, .. }
+                            if !modifiers.any())
+                    })
+                }));
+        if !(mine || dropped) {
+            self.keys.clear();
+            if focused.is_none() && self.takes_free_keyboard(ui) {
+                ctx.memory_mut(|m| m.request_focus(id));
+            }
+            return;
+        }
+        ctx.memory_mut(|m| {
+            if !mine {
+                m.request_focus(id);
+            }
+            // The scene decides about Tab and the arrows first; egui has
+            // already read them on its own in the first pass with focus.
+            m.move_focus(FocusDirection::None);
+        });
+        let events = ui.input(|i| i.events.clone());
+        let keys = self.keys.translate(&events, ctx.os());
+        if keys.is_empty() {
+            return;
+        }
+
+        // The frame of this pass shows what the keys change.
+        let held = self.gate.held.replace(true);
+        let mut taken: Vec<usize> = Vec::new();
+        let mut released: Vec<Key> = Vec::new();
+        let mut left = None;
+        for k in &keys {
+            self.stats.key_events += 1;
+            if self.scene.key_event(&self.engine, &k.event) {
+                self.stats.keys_accepted += 1;
+                taken.extend(k.sources.iter().flatten());
+                released.extend(k.held);
+            } else if k.fallback.is_some() {
+                left = k.fallback;
+            }
+        }
+        self.gate.held.set(held);
+
+        if !taken.is_empty() {
+            ui.input_mut(|i| {
+                let mut at = 0;
+                i.events.retain(|_| {
+                    at += 1;
+                    !taken.contains(&(at - 1))
+                });
+                for k in &released {
+                    i.keys_down.remove(k);
+                }
+            });
+        }
+        match left {
+            Some(Fallback::Move(direction)) => ctx.memory_mut(|m| m.move_focus(direction)),
+            Some(Fallback::Release) if self.keyboard == KeyboardPolicy::WhenFocused => {
+                ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether a keyboard no widget has is the view's. Not while egui keeps
+    /// the view from input: under a modal layer or in a disabled `Ui`.
+    fn takes_free_keyboard(&self, ui: &Ui) -> bool {
+        self.keyboard == KeyboardPolicy::WhenFree
+            && ui.is_enabled()
+            && ui.ctx().memory(|m| m.allows_interaction(ui.layer_id()))
+    }
+
+    /// Makes the scene's window active exactly while keys reach it.
+    fn sync_keyboard(&mut self, ui: &Ui) {
+        let id = self.focus_id();
+        let focused = ui.ctx().memory_mut(|m| {
+            // From the second pass with focus on, egui leaves Tab, the
+            // arrows and Escape to the view.
+            m.set_focus_lock_filter(
+                id,
+                EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: true,
+                },
+            );
+            m.focused()
+        });
+        // With nothing focused a view that takes the free keyboard gets it
+        // back in the next pass, so its window does not blink inactive in
+        // between (after a Tab nobody else wanted, for one).
+        self.had_keyboard =
+            focused == Some(id) || (focused.is_none() && self.takes_free_keyboard(ui));
+        let active = self.had_keyboard && ui.input(|i| i.focused);
+        if active != self.scene.is_window_active(&self.engine) {
+            self.scene.set_window_active(&self.engine, active);
+        }
     }
 
     fn root_size(&self) -> Vec2 {
@@ -292,6 +479,7 @@ impl QmlView {
         // 2. Input, against the snapshot the user is looking at.
         let now = self.clock.now();
         self.deliver_input(ui, rect, now);
+        self.sync_keyboard(ui);
 
         // 3-9. The pipeline, only when something asked for it.
         let timer_due = self.next_wake.is_some_and(|t| t <= now);
@@ -322,7 +510,8 @@ impl QmlView {
         // passes, so they are repeated while something listens.
         if listening {
             let tree = self.scene.accessibility_tree();
-            a11y::emit(ui, self.id, rect, tree, &mut self.emitted);
+            let holder = self.focus_id();
+            a11y::emit(ui, self.id, holder, rect, tree, &mut self.emitted);
         } else {
             self.emitted.clear();
         }
@@ -380,6 +569,7 @@ impl QmlView {
         let touch_pass = events.iter().any(|e| matches!(e, Event::Touch { .. }));
         let mut out: Vec<PointerEvent> = Vec::new();
         let mut presses = Vec::new();
+        let mut focuses = Vec::new();
         for e in &events {
             match e {
                 Event::AccessKitActionRequest(req) => {
@@ -388,6 +578,12 @@ impl QmlView {
                         && let Some(key) = self.emitted.get(&req.target_node)
                     {
                         presses.push(*key);
+                    }
+                    if req.action == Action::Focus
+                        && req.target_tree == TreeId::ROOT
+                        && let Some(key) = self.emitted.get(&req.target_node)
+                    {
+                        focuses.push(*key);
                     }
                 }
                 Event::Touch { id, phase, pos, .. } => {
@@ -487,6 +683,14 @@ impl QmlView {
             self.scene.pointer_event(&self.engine, ev);
         }
         self.stats.pointer_events += out.len() as u64;
+        for key in focuses {
+            if self.scene.accessible_focus(&self.engine, key) {
+                self.stats.accessible_focuses += 1;
+                // Active focus needs an active window, and the window is
+                // active while the view has egui's focus.
+                ctx.memory_mut(|m| m.request_focus(self.focus_id()));
+            }
+        }
         // The press is a click of its own on the scene's one pointer; in the
         // middle of a real press it would break that press's grab.
         if self.pointer.held.is_empty() && self.pointer.touch.is_none() {

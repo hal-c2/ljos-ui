@@ -168,6 +168,7 @@ impl<M: Send + 'static> ShellApp<M> {
     ) -> Result<Self, ShellError> {
         let engine = Rc::new(Engine::new());
         ljos_quick::register(&engine);
+        ljos_controls::register(&engine);
         let wake_ctx = ctx.clone();
         let (inbox, handle) = UiInbox::channel_with_wake(
             config.inbox_capacity,

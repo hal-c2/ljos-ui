@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use egui::accesskit::{self, Action};
+use egui::accesskit::{self, Role};
 use egui::{Id, Pos2, Rect, Ui, UiBuilder};
 use ljos_a11y::{NodeKey, Tree};
 
@@ -30,13 +30,27 @@ pub(crate) fn node_id(view: Id, key: NodeKey) -> Id {
 }
 
 /// Writes every node of `tree` under a node for the view. `rect` is where
-/// the scene is painted.
-pub(crate) fn emit(ui: &mut Ui, view: Id, rect: Rect, tree: &Tree, emitted: &mut Emitted) {
+/// the scene is painted. `holder` is the widget that has egui's focus for
+/// the scene; the nodes go below it, so that it can point at the one with
+/// the scene's focus.
+pub(crate) fn emit(
+    ui: &mut Ui,
+    view: Id,
+    holder: Id,
+    rect: Rect,
+    tree: &Tree,
+    emitted: &mut Emitted,
+) {
     emitted.clear();
     let ctx = ui.ctx().clone();
     // egui learns a node's parent from the `Ui` that carries its id, so
     // every node gets one. They paint nothing and take no space.
-    let mut host = ui.new_child(UiBuilder::new().id(view).max_rect(rect));
+    let mut host = ui.new_child(
+        UiBuilder::new()
+            .id(view)
+            .max_rect(rect)
+            .accessibility_parent(holder),
+    );
     // Parents come before children and siblings in order, which is the
     // order egui lists children in.
     tree.walk(|key, parent, data| {
@@ -58,9 +72,6 @@ pub(crate) fn emit(ui: &mut Ui, view: Id, rect: Rect, tree: &Tree, emitted: &mut
         // The closure runs under the context lock: it only copies.
         ctx.accesskit_node_builder(id, |node| {
             data.apply(node);
-            // The scene has no key focus yet, so a focus request would do
-            // nothing; do not offer it.
-            node.remove_action(Action::Focus);
             // Logical points; egui's root node scales to pixels.
             node.set_bounds(accesskit::Rect {
                 x0: f64::from(min.x),
@@ -70,5 +81,17 @@ pub(crate) fn emit(ui: &mut Ui, view: Id, rect: Rect, tree: &Tree, emitted: &mut
             });
         });
         emitted.insert(id.accesskit_id(), key);
+    });
+    // egui's focus stays on the holder whichever item has the scene's; an
+    // assistive technology follows the holder's active descendant to it.
+    let focus = tree
+        .focus()
+        .map(|key| node_id(view, key).accesskit_id())
+        .filter(|id| emitted.contains_key(id));
+    ctx.accesskit_node_builder(holder, |node| {
+        node.set_role(Role::Group);
+        if let Some(focus) = focus {
+            node.set_active_descendant(focus);
+        }
     });
 }
