@@ -95,6 +95,8 @@ pub(crate) struct Inner {
     /// objects costs nothing extra in an engine that has none.
     pub(crate) destruction_handlers: Cell<bool>,
     context_serial: Cell<u64>,
+    /// Interceptors, value sources and per-engine extensions.
+    pub(crate) hooks: crate::hooks::Hooks,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -230,6 +232,7 @@ impl Engine {
             attached_listeners: RefCell::new(Vec::new()),
             destruction_handlers: Cell::new(false),
             context_serial: Cell::new(0),
+            hooks: crate::hooks::Hooks::default(),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {
@@ -582,6 +585,7 @@ impl Engine {
             }
         }
         crate::qtqml::forget_timers(self, &order);
+        self.inner.hooks.forget(&order);
         let js = self.inner.js.borrow().clone();
         if let Some(js) = js {
             js.forget(&order);
@@ -1114,12 +1118,27 @@ impl Engine {
         internal: bool,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
-        let (v, node) = {
+        let (v, node, hook) = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
             let ty = self.check_writable(h, prop, internal)?;
-            (coerce_in(&store, &ty, &v)?, h.node(prop))
+            let hook = match &h.ext {
+                Some(ext) if !internal => ext.write_hook.clone(),
+                _ => None,
+            };
+            (coerce_in(&store, &ty, &v)?, h.node(prop), hook)
         };
+        // A model row: the write goes to the model, which writes back.
+        if let Some(hook) = hook
+            && hook(self, prop, &v)
+        {
+            return Ok(());
+        }
+        // A Behavior: the value goes to it, and it moves the property.
+        if !internal && matches!(how, WriteKind::Imperative) && self.intercept_write(obj, prop, &v)
+        {
+            return Ok(());
+        }
         let n = match (node, how) {
             (Some(n), _) => n,
             // An override entry only exists on a node.
@@ -1310,7 +1329,9 @@ impl Engine {
         } else {
             g.untrack(|| g.try_get(n))
         };
-        let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f);
+        // A binding the creator installs gives the property its first
+        // value, which no interceptor animates.
+        let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f, internal);
         g.bind(n, wrapper)?;
         if self.inner.eager_bindings.get() {
             let held = match self.inner.eager_hold.borrow_mut().as_mut() {
@@ -1365,6 +1386,7 @@ impl Engine {
         ty: TypeTag,
         mut last: Value,
         mut f: BindingFn,
+        mut first_is_free: bool,
     ) -> impl FnMut(&Graph<Value>) -> Value + 'static {
         let weak = Rc::downgrade(&self.inner);
         move |_g| {
@@ -1372,6 +1394,7 @@ impl Engine {
                 return last.clone();
             };
             let engine = Engine::from_inner(inner);
+            let free = std::mem::take(&mut first_is_free);
             let v = {
                 let _t = Tracking::enter(&engine.inner.tracking);
                 f(&engine)
@@ -1389,6 +1412,9 @@ impl Engine {
                     let (t, p) = engine.describe(obj, prop);
                     engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
                 }
+            }
+            if !free && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
+                return shown;
             }
             engine.store_value(obj, prop, &last);
             last.clone()
@@ -1497,7 +1523,9 @@ impl Engine {
             OverrideContent::Binding(mut f) => {
                 let last = g.untrack(|| g.try_get(n)).unwrap_or_default();
                 let f: BindingFn = Box::new(move |e| Some(f(e)));
-                OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f))
+                // An override's first value is put in place like a value
+                // override is: no interceptor sees it.
+                OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f, true))
             }
         };
         let id = g.batch(|| {
@@ -1835,17 +1863,33 @@ impl Engine {
         }
     }
 
-    /// A context property, looked up from `ctx` outwards.
+    /// A context property, looked up from `ctx` outwards: what was set by
+    /// name, then the properties of the context's object (a delegate's
+    /// row: `index`, `model`, the roles).
     pub fn context_property(&self, ctx: ContextId, name: &str) -> Option<Value> {
-        let contexts = self.inner.contexts.borrow();
         let mut cur = Some(ctx);
-        while let Some(c) = cur.and_then(|c| contexts.get(c)) {
-            if let Some(v) = c.props.get(name) {
-                return Some(v.clone());
+        while let Some(id) = cur {
+            // Not borrowed across the read below, which may run a binding.
+            let object = {
+                let contexts = self.inner.contexts.borrow();
+                let c = contexts.get(id)?;
+                if let Some(v) = c.props.get(name) {
+                    return Some(v.clone());
+                }
+                cur = c.parent;
+                c.context_object
+            };
+            if let Some(v) = object.and_then(|o| self.context_object_property(o, name)) {
+                return Some(v);
             }
-            cur = c.parent;
         }
         None
+    }
+
+    /// The property `name` of a context object; tracked.
+    fn context_object_property(&self, obj: ObjectId, name: &str) -> Option<Value> {
+        let p = self.property_index(obj, name).ok()?;
+        self.try_read(obj, p).ok()
     }
 
     /// A name the compiler could not place, looked up from `ctx` outwards
@@ -1853,10 +1897,10 @@ impl Engine {
     /// properties. An inline component reads the ids of the file that
     /// uses it this way.
     pub(crate) fn context_name(&self, ctx: ContextId, name: &str) -> Option<Value> {
-        let found = {
-            let contexts = self.inner.contexts.borrow();
-            let mut cur = Some(ctx);
-            loop {
+        let mut cur = Some(ctx);
+        let found = loop {
+            let object = {
+                let contexts = self.inner.contexts.borrow();
                 let c = contexts.get(cur?)?;
                 if let Some(o) = c.ids.get(name) {
                     break *o;
@@ -1865,6 +1909,10 @@ impl Engine {
                     return Some(v.clone());
                 }
                 cur = c.parent;
+                c.context_object
+            };
+            if let Some(v) = object.and_then(|o| self.context_object_property(o, name)) {
+                return Some(v);
             }
         };
         Some(if self.is_alive(found) {

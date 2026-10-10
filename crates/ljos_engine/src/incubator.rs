@@ -306,6 +306,19 @@ impl Engine {
         template: &Template,
         parent: Option<ObjectId>,
     ) -> Result<ObjectId, EngineError> {
+        self.allocate_template_as(cr, template, parent, true)
+    }
+
+    /// [`Engine::allocate_template`]; without `append` the root is owned
+    /// by `parent` but is not a value of its default property (a view's
+    /// delegates are not its children).
+    fn allocate_template_as(
+        &self,
+        cr: &mut Creation,
+        template: &Template,
+        parent: Option<ObjectId>,
+        append: bool,
+    ) -> Result<ObjectId, EngineError> {
         if parent.is_some_and(|p| !self.is_alive(p)) {
             return Err(EngineError::DeadObject(parent.expect("checked")));
         }
@@ -325,12 +338,44 @@ impl Engine {
         cr.top = Some(inst.clone());
         // The instance (and so its contexts) lives as long as its root.
         self.keep_with(root, inst.clone());
-        if let Some(p) = parent
+        if append
+            && let Some(p) = parent
             && self.default_property(p).is_ok()
         {
             self.list_append_default(p, root)?;
         }
         Ok(root)
+    }
+
+    /// Makes one delegate of a view from the `Component` object
+    /// `component`, owned by `owner`. `setup` gets the root and the
+    /// delegate's context as soon as they exist and before anything in
+    /// the delegate runs: the place to give the context its row and the
+    /// root its visual parent.
+    pub(crate) fn create_delegate(
+        &self,
+        component: ObjectId,
+        owner: Option<ObjectId>,
+        setup: impl FnOnce(&Engine, ObjectId, ContextId),
+    ) -> Result<ObjectId, EngineError> {
+        let template = self.component_template(component)?;
+        let mut cr = Creation::default();
+        let root = self.allocate_template_as(&mut cr, &template, owner, false)?;
+        if let Some(top) = &cr.top {
+            setup(self, root, top.context);
+        }
+        self.batch(|| {
+            let ((), held) = self.hold_eager(|| {
+                self.apply_aliases(&cr);
+                for i in 0..cr.units.len() {
+                    self.apply_unit(&cr, i);
+                }
+            });
+            cr.held = held;
+            self.run_held(&cr);
+        });
+        self.release_held(&cr);
+        self.finalize(cr, root, Ok(()))
     }
 
     /// Initial properties, then the required check.
@@ -562,7 +607,7 @@ impl Engine {
     }
 
     /// `url:line:col: ` of an object made from QML.
-    fn location_of(&self, obj: ObjectId) -> Option<String> {
+    pub(crate) fn location_of(&self, obj: ObjectId) -> Option<String> {
         let store = self.inner.store.borrow();
         let loc = store.objects.get(obj)?.ext.as_ref()?.location.as_ref()?;
         Some(format!("{}:{}:{}: ", loc.url, loc.line, loc.column))
@@ -854,6 +899,19 @@ impl Engine {
         let inst = &u.inst;
         let od = &inst.file.ir.component(inst.comp).objects[u.obj];
         let id = inst.objects[u.obj];
+        let list_model = match &od.ty {
+            // Data for its ListModel, read from the IR below: what it is
+            // given are role values, not properties.
+            TypeRef::Native { name, .. } if name == "ListElement" => return,
+            TypeRef::Native { name, .. } if name == "ListModel" => {
+                // Before the members, so `onCountChanged` does not hear
+                // of the rows the model is declared with.
+                let rows = self.list_element_rows(inst, id, &od.children);
+                crate::listmodel::declare_rows(self, id, rows);
+                true
+            }
+            _ => false,
+        };
         self.apply_members(inst, id, &od.members, &[], id);
         for g in &od.grouped {
             if !self.apply_value_members(inst, id, &g.members, &g.path) {
@@ -862,8 +920,14 @@ impl Engine {
         }
         for v in &od.children {
             match v {
+                ObjectValue::Object(_) if list_model => {}
                 ObjectValue::Object(j) => {
                     let child = inst.objects[j.index()];
+                    let child_def = &inst.file.ir.component(inst.comp).objects[j.index()];
+                    if let Some(on) = &child_def.on {
+                        self.apply_value_source(id, child, on);
+                        continue;
+                    }
                     if let Err(e) = self.list_append_default(id, child) {
                         self.warn(format!(
                             "{}Cannot assign to non-existent default property ({e})",
@@ -903,6 +967,72 @@ impl Engine {
         for at in &od.attached {
             self.apply_attached(inst, id, at);
         }
+    }
+
+    /// `Type on property { }`: `source` is not a value of the property but
+    /// operates on it (an animation, a Behavior). It stays owned by `obj`
+    /// and goes to whoever registered for its kind.
+    fn apply_value_source(&self, obj: ObjectId, source: ObjectId, on: &[String]) {
+        let Some((name, path)) = on.split_last() else {
+            return;
+        };
+        let at = self.location_of(source).unwrap_or_default();
+        match self.member_target(obj, path, name) {
+            Ok(t) => {
+                if !self.offer_value_source(source, t.obj, t.prop) {
+                    let ty = self.meta_of(source).map(|m| m.name.to_string());
+                    self.warn(format!(
+                        "{at}\"{}\" cannot operate on \"{}\"",
+                        ty.unwrap_or_default(),
+                        on.join(".")
+                    ));
+                }
+            }
+            Err(_) => self.warn(format!(
+                "{at}Cannot assign to non-existent property \"{}\"",
+                on.join(".")
+            )),
+        }
+    }
+
+    /// The rows the `ListElement`s among `values` declare, as role names
+    /// and values. A list of elements given to a role is a model of its
+    /// own, owned by `model`.
+    fn list_element_rows(
+        &self,
+        inst: &Rc<Instance>,
+        model: ObjectId,
+        values: &[ObjectValue],
+    ) -> Vec<Vec<(String, Value)>> {
+        let comp = inst.file.ir.component(inst.comp);
+        let mut rows = Vec::new();
+        for v in values {
+            let ObjectValue::Object(j) = v else { continue };
+            let ed = &comp.objects[j.index()];
+            if !matches!(&ed.ty, TypeRef::Native { name, .. } if name == "ListElement") {
+                continue;
+            }
+            let mut row = Vec::new();
+            for a in &ed.members.assignments {
+                row.push((a.name.clone(), self.literal_value(inst, &a.value)));
+            }
+            // `cost: -1` is an expression to the compiler. Qt allows only
+            // constants here, so once is enough.
+            for b in &ed.members.bindings {
+                if let Some(v) = self.eval_expr(inst, b.expr, &TypeTag::Var, &[]) {
+                    row.push((b.name.clone(), v));
+                }
+            }
+            for oa in &ed.members.objects {
+                let nested = self.list_element_rows(inst, model, &oa.values);
+                row.push((
+                    oa.name.clone(),
+                    crate::listmodel::nested_model(self, model, nested),
+                ));
+            }
+            rows.push(row);
+        }
+        rows
     }
 
     fn apply_attached(&self, inst: &Rc<Instance>, id: ObjectId, at: &Attached) {
@@ -1281,6 +1411,17 @@ impl Engine {
             .and_then(|m| m.property(t.prop).map(|p| p.ty.clone()))
             .unwrap_or(TypeTag::Var);
         let i = inst.clone();
+        if self.is_script_property(t.obj, t.prop) {
+            // A statement to run when asked, not a value to keep current.
+            self.set_script(
+                t.obj,
+                t.prop,
+                Rc::new(move |e| {
+                    e.call_expr(&i, expr, &[]);
+                }),
+            );
+            return;
+        }
         let r = self.bind_fallible(t.obj, t.prop, move |e| e.eval_expr(&i, expr, &hint, &[]));
         match r {
             Ok(()) => {
@@ -1446,7 +1587,9 @@ impl Engine {
             Arg::Object(_) | Arg::Property { .. } => self
                 .arg_value(inst, arg)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
-            Arg::Type(t) => match self.type_meta(&inst.file, t) {
+            // A singleton type has no instance yet, but its name still
+            // reaches its enums (`Easing[name]`).
+            Arg::Type(t) | Arg::Singleton(t) => match self.type_meta(&inst.file, t) {
                 Ok(m) => JsValue::Map(
                     m.enums
                         .iter()
@@ -1456,7 +1599,7 @@ impl Engine {
                 ),
                 Err(_) => JsValue::Undefined,
             },
-            Arg::Singleton(_) | Arg::Namespace { .. } => JsValue::Undefined,
+            Arg::Namespace { .. } => JsValue::Undefined,
             Arg::Context {
                 component,
                 name,
@@ -1604,6 +1747,9 @@ impl CreationHandle {
 /// What a [`CreationJob`] calls when it ends without being cancelled.
 type DoneFn = Box<dyn FnOnce(&Engine, &Result<ObjectId, EngineError>)>;
 
+/// See [`Engine::create_delegate`].
+type DelegateSetup = Box<dyn FnOnce(&Engine, ObjectId, ContextId)>;
+
 /// What a [`CreationJob`] makes its object from.
 enum JobSource {
     Url(String),
@@ -1626,6 +1772,8 @@ pub struct CreationJob {
     owner: ProcId,
     handle: CreationHandle,
     done: Option<DoneFn>,
+    /// Set for a view's delegate, which is not a child of its owner.
+    setup: Option<DelegateSetup>,
 }
 
 impl std::fmt::Debug for CreationJob {
@@ -1700,9 +1848,31 @@ impl CreationJob {
                 owner,
                 handle: handle.clone(),
                 done: None,
+                setup: None,
             },
             handle,
         )
+    }
+
+    /// [`Engine::create_delegate`] as a job.
+    pub(crate) fn for_delegate(
+        engine: &Engine,
+        component: ObjectId,
+        owner: Option<ObjectId>,
+        lane: Lane,
+        proc: ProcId,
+        setup: impl FnOnce(&Engine, ObjectId, ContextId) + 'static,
+    ) -> (Self, CreationHandle) {
+        let (mut job, handle) = Self::with_source(
+            engine,
+            JobSource::Component(component),
+            owner,
+            Vec::new(),
+            lane,
+            proc,
+        );
+        job.setup = Some(Box::new(setup));
+        (job, handle)
     }
 
     /// Calls `f` with the result when the job ends, unless it was
@@ -1766,8 +1936,12 @@ impl CreationJob {
                 }
                 Phase::Allocate(t) => {
                     let mut cr = Creation::default();
-                    match e.allocate_template(&mut cr, &t, self.parent) {
+                    let setup = self.setup.take();
+                    match e.allocate_template_as(&mut cr, &t, self.parent, setup.is_none()) {
                         Ok(root) => {
+                            if let (Some(setup), Some(top)) = (setup, &cr.top) {
+                                setup(&e, root, top.context);
+                            }
                             e.apply_aliases(&cr);
                             self.phase = Phase::Apply(cr, root, 0);
                         }

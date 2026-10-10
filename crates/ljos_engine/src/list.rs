@@ -79,6 +79,12 @@ impl Engine {
                     ty: h.meta.name.to_string(),
                     name: format!("#{}", prop.0),
                 })?;
+            if !p.is_list() && matches!(p.ty, TypeTag::Object(_)) {
+                // A default property that holds one object
+                // (`Repeater.delegate`): the object written last is it.
+                drop(store);
+                return self.write_internal(obj, prop, Value::Object(item), WriteKind::Initial);
+            }
             p.list_append
         };
         match hook {

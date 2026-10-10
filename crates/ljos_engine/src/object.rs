@@ -251,4 +251,13 @@ pub(crate) struct ObjectExt {
     /// Data kept alive as long as the object (the component instance it
     /// roots, script state).
     pub(crate) keep: Vec<Rc<dyn Any>>,
+    /// Sees every write from QML or JS first (a model row sends it to its
+    /// model); true: the write is done.
+    pub(crate) write_hook: Option<WriteHook>,
+    /// The model this object is to a view (`model: obj`), for types that
+    /// are one.
+    pub(crate) model: Option<Rc<dyn crate::model::ItemModel>>,
 }
+
+/// See [`ObjectExt::write_hook`].
+pub(crate) type WriteHook = Rc<dyn Fn(&Engine, PropIndex, &Value) -> bool>;

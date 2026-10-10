@@ -421,7 +421,10 @@ const MAX_CATCH_UP: u32 = 100;
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(crate::module!("QtQml" 2.0 => [
-        QtObject, Component, Connections, Timer
+        QtObject, Component, Connections, Timer, crate::instantiator::Instantiator
+    ]));
+    engine.register_module(crate::module!("QtQml.Models" 2.0 => [
+        crate::listmodel::ListModel, crate::listmodel::ListElement
     ]));
 }
 

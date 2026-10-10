@@ -45,15 +45,20 @@ mod builtins;
 mod color_names;
 mod context;
 mod cx;
+mod delegates;
 mod engine;
 mod error;
+mod hooks;
 mod ids;
 mod incubator;
+mod instantiator;
 mod js;
 mod list;
+mod listmodel;
 mod loader;
 mod log;
 mod meta;
+mod model;
 mod number;
 mod object;
 mod qtqml;
@@ -66,11 +71,15 @@ pub use atom::Atom;
 pub use builtins::QtObject;
 pub use context::Context;
 pub use cx::Cx;
+pub use delegates::{DelegateHost, Delegates, RemovalOrder};
 pub use engine::{Engine, OverrideContent, ParentListener};
 pub use error::EngineError;
+pub use hooks::{Interception, Interceptor};
 pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey, SignalIndex};
 pub use incubator::{CreationHandle, CreationJob};
+pub use instantiator::Instantiator;
 pub use list::QmlList;
+pub use listmodel::{ListElement, ListModel};
 pub use loader::{ComponentSource, MapSource};
 pub use log::{LogEntry, LogLevel};
 pub use meta::{
@@ -78,6 +87,7 @@ pub use meta::{
     MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess,
     PropertyFlags, PropertyInfo, QmlImplInfo, Setter, SignalDecl, SignalInfo,
 };
+pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};
 pub use number::{number_to_string, string_to_number, to_int32};
 pub use object::{
     ObjectFlags, QmlObject, QmlType, ScriptMethod, downcast_chain, downcast_chain_mut, find_native,
