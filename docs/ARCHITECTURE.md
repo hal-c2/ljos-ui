@@ -407,6 +407,8 @@ Source: 02 §3; text from 05 §3.3.
 | **R vello_cpu** | M0 onward | Deterministic reference renderer: fixed SIMD level, one thread, bundled fonts. Used for the Qt comparison and as a fallback without a GPU. |
 | **B1 wgpu** | M4, or earlier if B0 profiles badly | Plugs in through `egui_wgpu::Callback` segments. Instanced SDF quads for rects, borders, gradients and shadows. Textured quads for glyphs and images. Retained instance buffers per batch root, so scrolling updates one uniform. Offscreen targets for layers, effects and rotated clips. vello_gpu renders paths into cached atlas textures. |
 
+**Images.** A draw op names pixels by `ImageHandle`; the pixels live in `ljos_quick`'s per-engine `ImageStore`, an LRU cache keyed by URL and requested size with a byte budget (section 8.5). Blit geometry (source and destination rectangles, tiling, mirroring) and nine-patch slicing are computed in `ljos_render`, once for both backends. `ljos_render` depends on `ljos_runtime` for `MemoryPressure`, which is defined once. Decoding runs on the `ComputePool`, at most 8 at a time, and wakes the UI once per result.
+
 **Paint order** is implemented once and shared by paint, hit-testing and a11y order:
 1. children with `z < 0`, sorted stably by `(z, declaration index)`;
 2. the node's own content;
@@ -472,6 +474,8 @@ Source: 05 §3.3.
 - `parley::FontContext` (Fontique) and `LayoutContext`;
 - an LRU cache of layouts keyed by `(text hash, style hash, width bucket, scale, locale)`;
 - `GlyphAtlas`: skrifa outlines rasterised by vello_cpu into egui textures, at most 2048² (4096² on desktop), separate per scale, with an RGBA path for colour emoji.
+
+As built: `ljos_quick` holds the engine in a thread-local, since an Engine is `!Send` and there is one per app. Items emit glyph runs, not pixels: R draws the outlines directly and the atlas lives in the B0 backend, the only one that needs textures.
 
 **Version pin.** Parley must share skrifa 0.44 and harfrust 0.12 with egui 0.36's epaint, so the font stack is not duplicated. Report 05 pins Parley 0.11.1 for this. Report 02 says 0.12.0 also matches. The scaffold verifies with `cargo tree -d` and picks the newest version that does not duplicate. Because egui tracks the latest release (D9), each egui bump re-runs this check. A temporary duplicate is allowed but tracked in CI.
 
@@ -696,7 +700,10 @@ Sources: 02 §3.1.6; 05 §3.2.
 - **`InputRouter`** takes egui `RawInput` and hit-tests in reverse paint order. It accounts for inverse world transforms, ancestor clips and `containmentMask`. egui's `Sense` and `ScrollArea` are not used for QML content. Keys that Ljós accepts are removed from egui's input.
 - **`FocusTree`** holds FocusScopes, each with its own focus child. It also holds `activeFocusItem` per window.
   - `activeFocus` is recomputed only along the old and new focus chains.
-  - Tab order is precomputed per scope, honouring `KeyNavigation`, and invalidated when the structure changes.
+  - Tab order is precomputed per scope, honouring `KeyNavigation`, and invalidated when the structure changes. As built it is one flat order per window, built lazily on the first Tab after a change.
+  - Focus and key dispatch start as the `focus` and `keys` modules of `ljos_quick`, free of egui; `ljos_input` is split out when a second crate needs them (section 4, "start small").
+  - A scene starts active. The host calls `set_window_active` when the window loses or gains the keyboard.
+  - egui sees one focusable widget per `QmlView`. Unaccepted Tab and arrow keys go back to egui; assistive technology follows focus inside the view through AccessKit's `active_descendant`.
 - **Key dispatch** runs `ShortcutOverride`, then `Shortcut` (context-aware, with `activatedAmbiguously`), then `Keys` (`priority`, `forwardTo`), bubbling up. `StandardKey` maps to platform-specific key sequences.
 - **Text input** goes through two traits. `TextInputClient` is implemented by TextInput and TextEdit: `surrounding`, `replace`, `set_selection`, `cursor_rect`, `hints`. `PlatformTextInput` has one implementation per platform:
   - desktop: winit IME, moving to 0.31's `ImeRequest`;
@@ -783,6 +790,7 @@ subsecond (Rust hot-patching) is an optional extra for desktop development. It d
 Source: 01 §2.5, §3.6; 08.
 
 - **QtQuick.Controls has two layers.** `ljos_controls` implements behaviour in Rust: the `Control`/`AbstractButton` state machines, `Popup` and the overlay stack, and `Dialog`. Each *style* is QML written clean-room on top, the way Qt layers templates and styles, with the code being ours. A style is chosen with `QT_QUICK_CONTROLS_STYLE`-compatible configuration.
+- **As built.** A style is a directory of QML files compiled to IR by the crate's `build.rs` and registered as a component library, so a shipped app still links no parser. Style parts are not deferred yet: a replaced `background` or `contentItem` is created and then destroyed. `Window` and `ApplicationWindow` are items in the one scene until the shell has more than one window (M2).
 - **Basic style first.** It is the neutral base that other styles and custom controls build on. Real apps lean on it (HAL-C2 imports `QtQuick.Controls.Basic` 87 times and `QtQuick.Controls` twice).
 - **Material** follows for Android, after M3. Material attached properties are accepted as no-ops until then.
 - **Fusion and the native macOS style** are deferred.
@@ -848,8 +856,10 @@ Source: 05 §3.4.
 - **`I18n`** holds a fallback chain (for example `is-IS → is → en`) and three signals: `revision`, `ui_language` and `locale`.
   - Setting `Qt.uiLanguage` swaps the chain, bumps `revision`, and updates the layout direction.
   - Only visible translated bindings re-evaluate immediately. The rest are marked dirty and re-evaluate when shown.
+  - The signals live in the engine (`ljos_engine::i18n`), where bindings can read them through the graph; `ljos_i18n` is plain data and has no reactive dependency. The engine links it without the `ts` feature, so a shipped app has no XML parser.
 - **Plurals.**
   - `%n` uses ICU4X `PluralRules` 2.3. The mapping from `.ts` numerus forms to CLDR categories is validated against `.ts` fixtures produced by running `lupdate` as a black box, never against Qt's plural tables.
+  - Where Qt's numerus forms for a language differ from CLDR's categories, a small override table written from Qt's documented plural rules and checked against those fixtures sits beside ICU4X, so an existing `.ts` file keeps its forms.
   - `%1…%9` use `String.prototype.arg` with `QString::arg` semantics. This, `qsTr` and `%n` are needed from M1.
 - **Formatting.** `Qt.locale()` is built from ICU4X decimal, datetime and collator data. Qt's format tokens get a small formatter of Ljós's own.
 - **ICU4X data.** Use `compiled_data` in development. Release builds use blob data trimmed by datagen to the shipped locales and markers. The size on Android is still to be measured.
@@ -973,7 +983,8 @@ tests/features.rs   [[test]] harness = false
 - **Time.** kittest's `run()` stops at `request_repaint_after`, so "N seconds pass" advances Ljós's `Clock` and runs steps.
 - **The Qt oracle.**
   - The Qt backend interprets `set`, `bind`, `call`, `wait`, `read` and `grab` in a generated driver.
-  - It runs with `QT_FORCE_STDERR_LOGGING=1`, `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKEND=software`, `TZ=UTC` and `LANG=en_US.UTF-8`.
+  - It runs with `QT_FORCE_STDERR_LOGGING=1`, `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKEND=software`, `TZ=UTC`, `LANG=en_US.UTF-8` and `GSETTINGS_BACKEND=memory` (the desktop's theme stays out).
+  - `offscreen` takes no input, so a scenario that presses keys or clicks runs on Qt's `vnc` platform and a minimal RFB client in `backend/rfb.rs` types into it. That server has no password and no bind option, so the run gets a private network namespace and a relay to a unix socket; an open port must be asked for with `LJOS_BDD_OPEN_VNC=1`.
   - A scenario takes about 0.1–0.3 s.
   - It cannot check animation midpoints, default accessible names (those need the `QAccessible` helper) or text pixels.
 - **Step catalogue.** Steps are kept small, with a target of about 80. `features:lint` reports distinct steps per 100 scenarios. Worker prompts include the step catalogue, to avoid phrasing sprawl (a large Gherkin suite studied in 09 reached 13.7k distinct step phrasings).
