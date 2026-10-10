@@ -1352,6 +1352,13 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 - The Gradle template and `ljos android run|bundle`.
 - MCP inspector over `adb forward` (`ljos mcp-connect --android`).
 
+**What the M0 spikes changed** (docs/spikes/01–04):
+- `ljos_shell` drives android-activity directly on Android. winit 0.30 drops GameTextInput's text events, ignores the destroy event (BACK deadlocks) and gives no insets.
+- The `TextInputClient` bridge converts UTF-16 indices. Java glue reports selection and cursor rect to the IME, maps `imeOptions` actions, and supplies insets and predictive back. The manifest sets `configChanges`.
+- AccessKit on Android goes through accesskit_android 0.9 and the spike 04 graft, once egui moves to accesskit 0.25. Before that, 0.7.5 aborts when accessibility is switched off.
+- rquickjs uses the Linux bindings copied for Android (spike 02); system font fallback is needed for CJK.
+- B0 is far under budget in steady state on the emulator. The first frame and real arm64 numbers are measured on a phone first thing in M3 (spike 03).
+
 **Exit criteria**
 - A phone-layout reference app (qtdoc examples, plus HAL-C2's phone layout as validation) runs on a mid-range device within the budgets in section 8.5.
 - `@android` scenarios pass on the emulator.
