@@ -1,0 +1,697 @@
+//! One test per rule in ARCHITECTURE.md §6.2 and §8.3.
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use ljos_reactive::{
+    Diagnostic, Graph, NodeId, NodeState, Options, OverrideValue, Provenance, ReactiveError,
+    RestoreMode, WriteKind,
+};
+
+type Log<T> = Rc<RefCell<Vec<T>>>;
+
+fn log<T>() -> Log<T> {
+    Rc::new(RefCell::new(Vec::new()))
+}
+
+fn counter() -> Rc<Cell<u32>> {
+    Rc::new(Cell::new(0))
+}
+
+fn counted_binding(
+    g: &Graph<i64>,
+    count: &Rc<Cell<u32>>,
+    f: impl Fn(&Graph<i64>) -> i64 + 'static,
+) -> NodeId {
+    let c = count.clone();
+    g.binding(g.root(), 0, move |g| {
+        c.set(c.get() + 1);
+        f(g)
+    })
+    .unwrap()
+}
+
+#[test]
+fn bindings_are_lazy_and_cached() {
+    let g = Graph::new();
+    let a = g.property(g.root(), 1).unwrap();
+    let n = counter();
+    let b = counted_binding(&g, &n, move |g| g.get(a) + 1);
+    assert_eq!(n.get(), 0, "not evaluated until read");
+    assert_eq!(g.state(b), Some(NodeState::Dirty));
+    assert_eq!(g.get(b), 2);
+    assert_eq!(g.get(b), 2);
+    assert_eq!(n.get(), 1, "cached");
+    g.set(a, 5);
+    assert_eq!(n.get(), 1, "a write does not evaluate a lazy binding");
+    assert_eq!(g.get(b), 6);
+    assert_eq!(n.get(), 2);
+}
+
+#[test]
+fn diamond_is_glitch_free_and_runs_effect_once() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(a) * 2).unwrap();
+    let c = g.binding(r, 0, move |g| g.get(a) * 3).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.effect(r, move |g| s.borrow_mut().push((g.get(b), g.get(c))))
+        .unwrap();
+    g.set(a, 2);
+    assert_eq!(*seen.borrow(), vec![(2, 3), (4, 6)]);
+}
+
+#[test]
+fn equal_values_do_not_propagate() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let parity = g.binding(r, 0, move |g| g.get(a) % 2).unwrap();
+    let n = counter();
+    let down = counted_binding(&g, &n, move |g| g.get(parity) + 100);
+    let runs = counter();
+    let rc = runs.clone();
+    g.effect(r, move |g| {
+        g.get(down);
+        rc.set(rc.get() + 1);
+    })
+    .unwrap();
+    assert_eq!((n.get(), runs.get()), (1, 1));
+    g.set(a, 3); // parity unchanged
+    assert_eq!((n.get(), runs.get()), (1, 1), "cut off at parity");
+    let before = g.stats().propagations;
+    g.set(a, 3); // same value
+    assert_eq!(g.stats().propagations, before);
+    g.set(a, 4);
+    assert_eq!((n.get(), runs.get()), (2, 2));
+}
+
+#[test]
+fn custom_equality_is_used() {
+    // Compare modulo 10: 3 -> 13 is "no change".
+    let g: Graph<i64> = Graph::with_options(Options {
+        equals: |a, b| a % 10 == b % 10,
+        ..Options::default()
+    });
+    let a = g.property(g.root(), 3).unwrap();
+    let hits = counter();
+    let h = hits.clone();
+    g.watch(g.root(), a, move |_, _| h.set(h.get() + 1))
+        .unwrap();
+    g.set(a, 13);
+    assert_eq!(hits.get(), 0);
+    assert_eq!(g.get(a), 3, "equal write is not stored");
+    g.set(a, 14);
+    assert_eq!(hits.get(), 1);
+}
+
+#[test]
+fn notify_always_propagates() {
+    let g = Graph::new();
+    let a = g.property(g.root(), 1).unwrap();
+    let hits = log();
+    let h = hits.clone();
+    g.watch(g.root(), a, move |_, v| h.borrow_mut().push(*v))
+        .unwrap();
+    g.notify(a).unwrap();
+    g.notify(a).unwrap();
+    assert_eq!(*hits.borrow(), vec![1, 1]);
+}
+
+#[test]
+fn external_revision_counter_reevaluates_only_its_readers() {
+    // qsTr reads I18n::revision; bumping it re-runs translated bindings only.
+    let g = Graph::new();
+    let r = g.root();
+    let revision = g.property(r, 0).unwrap();
+    let other = g.property(r, 0).unwrap();
+    let tr = counter();
+    let plain = counter();
+    let translated = counted_binding(&g, &tr, move |g| g.get(revision));
+    let untranslated = counted_binding(&g, &plain, move |g| g.get(other));
+    g.get(translated);
+    g.get(untranslated);
+    g.notify(revision).unwrap();
+    g.get(translated);
+    g.get(untranslated);
+    assert_eq!((tr.get(), plain.get()), (2, 1));
+}
+
+#[test]
+fn unbatched_writes_notify_per_write_batched_once() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 0).unwrap();
+    let b = g.property(r, 0).unwrap();
+    let c = g.binding(r, 0, move |g| g.get(a) + g.get(b)).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.watch(r, c, move |_, v| s.borrow_mut().push(*v)).unwrap();
+
+    // Qt quirk apps rely on: one handler call per intermediate value.
+    g.set(a, 1);
+    g.set(b, 2);
+    assert_eq!(*seen.borrow(), vec![1, 3]);
+
+    let flushes = g.stats().flushes;
+    g.batch(|| {
+        g.set(a, 10);
+        g.set(b, 20);
+        // Reads inside a batch pull current values.
+        assert_eq!(g.get(c), 30);
+        g.batch(|| g.set(a, 11));
+    });
+    assert_eq!(*seen.borrow(), vec![1, 3, 31]);
+    assert_eq!(g.stats().flushes, flushes + 1);
+}
+
+#[test]
+fn handlers_are_synchronous_guard_flag_idiom() {
+    let g = Graph::new();
+    let r = g.root();
+    let x = g.property(r, 0).unwrap();
+    let guard = Rc::new(Cell::new(false));
+    let fired = log();
+    let (gd, f) = (guard.clone(), fired.clone());
+    g.watch(r, x, move |_, v| {
+        if !gd.get() {
+            f.borrow_mut().push(*v);
+        }
+    })
+    .unwrap();
+    guard.set(true);
+    g.set(x, 1);
+    guard.set(false);
+    g.set(x, 2);
+    assert_eq!(*fired.borrow(), vec![2]);
+}
+
+#[test]
+fn effects_run_in_height_order() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 0).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(a) + 1).unwrap();
+    let c = g.binding(r, 0, move |g| g.get(b) + 1).unwrap();
+    let order = log();
+    // Created deepest first so creation order cannot explain the result.
+    for (name, node) in [("c", c), ("b", b), ("a", a)] {
+        let o = order.clone();
+        g.effect(r, move |g| {
+            g.get(node);
+            o.borrow_mut().push(name);
+        })
+        .unwrap();
+    }
+    order.borrow_mut().clear();
+    g.set(a, 5);
+    assert_eq!(*order.borrow(), vec!["a", "b", "c"]);
+}
+
+#[test]
+fn dependencies_follow_the_branch_taken() {
+    let g = Graph::new();
+    let r = g.root();
+    let flag = g.property(r, 1).unwrap();
+    let left = g.property(r, 10).unwrap();
+    let right = g.property(r, 20).unwrap();
+    let n = counter();
+    let pick = counted_binding(&g, &n, move |g| {
+        if g.get(flag) != 0 {
+            g.get(left)
+        } else {
+            g.get(right)
+        }
+    });
+    assert_eq!(g.get(pick), 10);
+    assert_eq!(g.sources(pick), vec![flag, left]);
+    g.set(right, 21);
+    assert_eq!(
+        g.state(pick),
+        Some(NodeState::Clean),
+        "right not a dependency"
+    );
+    g.set(flag, 0);
+    assert_eq!(g.get(pick), 21);
+    assert_eq!(g.sources(pick), vec![flag, right]);
+    assert!(g.observers(left).is_empty(), "dead branch unsubscribed");
+    g.set(left, 11);
+    assert_eq!(g.state(pick), Some(NodeState::Clean));
+}
+
+#[test]
+fn binding_loop_is_reported_and_broken() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.property(r, 2).unwrap();
+    g.bind(a, move |g| g.get(b) + 1).unwrap();
+    g.bind(b, move |g| g.get(a) + 1).unwrap();
+    // Reading a evaluates b, which reads a while a is computing.
+    let v = g.get(a);
+    assert_eq!(v, 3, "b saw a's stale value 1");
+    let diags = g.take_diagnostics();
+    assert_eq!(
+        diags,
+        vec![Diagnostic::BindingLoop {
+            node: a,
+            cycle: vec![a, b]
+        }]
+    );
+    // Further reads terminate too.
+    g.get(b);
+    g.get(a);
+}
+
+#[test]
+fn self_reading_binding_is_a_loop() {
+    let g = Graph::new();
+    let a = g.property(g.root(), 5).unwrap();
+    g.bind(a, move |g| g.get(a) + 1).unwrap();
+    assert_eq!(g.get(a), 6);
+    assert!(matches!(
+        g.take_diagnostics()[..],
+        [Diagnostic::BindingLoop { node, .. }] if node == a
+    ));
+    assert!(g.sources(a).is_empty(), "no self edge");
+}
+
+#[test]
+fn handler_ping_pong_is_capped() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 0).unwrap();
+    let b = g.property(r, 0).unwrap();
+    g.watch(r, a, move |g, v| g.set(b, v + 1)).unwrap();
+    g.watch(r, b, move |g, v| g.set(a, v + 1)).unwrap();
+    g.set(a, 1);
+    let diags = g.take_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| matches!(d, Diagnostic::RerunLimit { runs: 100, .. })),
+        "{diags:?}"
+    );
+    // The graph still works afterwards.
+    g.set(a, 1000);
+    assert!(g.get(a) >= 1000);
+}
+
+#[test]
+fn diagnostic_handler_receives_reports() {
+    let g = Graph::new();
+    let got = log();
+    let s = got.clone();
+    g.set_diagnostic_handler(move |d| s.borrow_mut().push(d.clone()));
+    let a = g.property(g.root(), 0).unwrap();
+    g.bind(a, move |g| g.get(a)).unwrap();
+    g.get(a);
+    assert_eq!(got.borrow().len(), 1);
+    assert!(g.take_diagnostics().is_empty());
+}
+
+#[test]
+fn assignment_breaks_binding_and_qt_binding_reinstalls() {
+    let g = Graph::new();
+    let r = g.root();
+    let src = g.property(r, 1).unwrap();
+    let x = g.property(r, 0).unwrap();
+    assert_eq!(g.provenance(x), Some(Provenance::Default));
+    g.bind(x, move |g| g.get(src) * 10).unwrap();
+    assert_eq!(g.get(x), 10);
+    assert_eq!(g.provenance(x), Some(Provenance::Bound));
+
+    g.set(x, 7);
+    assert_eq!(g.provenance(x), Some(Provenance::Assigned));
+    assert!(!g.is_bound(x));
+    assert!(g.observers(src).is_empty());
+    g.set(src, 2);
+    assert_eq!(g.get(x), 7, "binding is gone");
+
+    g.bind(x, move |g| g.get(src) * 100).unwrap();
+    assert_eq!(g.get(x), 200);
+    assert_eq!(g.base_provenance(x), Some(Provenance::Bound));
+}
+
+#[test]
+fn animation_write_keeps_binding() {
+    let g = Graph::new();
+    let r = g.root();
+    let target = g.property(r, 100).unwrap();
+    let x = g.binding(r, 0, move |g| g.get(target)).unwrap();
+    assert_eq!(g.get(x), 100);
+    g.write(x, 50, WriteKind::Animation).unwrap();
+    assert_eq!(g.get(x), 50);
+    assert_eq!(g.provenance(x), Some(Provenance::Animated));
+    assert!(g.is_bound(x));
+    g.set(target, 200);
+    assert_eq!(g.get(x), 200);
+    assert_eq!(g.provenance(x), Some(Provenance::Bound));
+}
+
+#[test]
+fn override_stack_restore_modes() {
+    let g = Graph::new();
+    let r = g.root();
+    let src = g.property(r, 1).unwrap();
+    let x = g.binding(r, 0, move |g| g.get(src)).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.watch(r, x, move |_, v| s.borrow_mut().push(*v)).unwrap();
+
+    // State A: constant override.
+    let a = g.push_override(x, OverrideValue::Value(5)).unwrap();
+    assert_eq!(g.get(x), 5);
+    assert_eq!(g.override_count(x), 1);
+    g.set(src, 2);
+    assert_eq!(g.get(x), 5, "covered binding is inactive");
+
+    // Binding {} on top of the state.
+    let b = g
+        .push_override(x, OverrideValue::binding(move |g| g.get(src) * 100))
+        .unwrap();
+    assert_eq!(g.get(x), 200);
+    assert_eq!(g.provenance(x), Some(Provenance::Bound));
+
+    // Removing the covered state just drops it.
+    g.remove_override(x, a, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 200);
+
+    // Restoring the base binding.
+    g.remove_override(x, b, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 2);
+    assert_eq!(g.override_count(x), 0);
+    g.set(src, 3);
+    assert_eq!(g.get(x), 3, "base binding live again");
+    assert_eq!(*seen.borrow(), vec![5, 200, 2, 3]);
+
+    // RestoreMode::None keeps the current value and breaks the base binding.
+    let c = g.push_override(x, OverrideValue::Value(9)).unwrap();
+    g.remove_override(x, c, RestoreMode::None).unwrap();
+    assert_eq!(g.get(x), 9);
+    assert!(!g.is_bound(x));
+    assert_eq!(g.provenance(x), Some(Provenance::Assigned));
+
+    // RestoreMode::Value restores a plain value...
+    let d = g.push_override(x, OverrideValue::Value(1)).unwrap();
+    g.remove_override(x, d, RestoreMode::Value).unwrap();
+    assert_eq!(g.get(x), 9);
+    // ...but RestoreMode::Binding does not.
+    let e = g.push_override(x, OverrideValue::Value(4)).unwrap();
+    g.remove_override(x, e, RestoreMode::Binding).unwrap();
+    assert_eq!(g.get(x), 4);
+
+    assert_eq!(
+        g.remove_override(x, e, RestoreMode::None),
+        Err(ReactiveError::UnknownOverride(x, e))
+    );
+}
+
+#[test]
+fn restore_binding_mode_brings_binding_back() {
+    let g = Graph::new();
+    let r = g.root();
+    let src = g.property(r, 1).unwrap();
+    let x = g.binding(r, 0, move |g| g.get(src) + 1).unwrap();
+    let o = g.push_override(x, OverrideValue::Value(50)).unwrap();
+    g.set(src, 10);
+    g.remove_override(x, o, RestoreMode::Binding).unwrap();
+    assert_eq!(g.get(x), 11);
+    // RestoreMode::Value over a binding keeps the override's value.
+    let o = g.push_override(x, OverrideValue::Value(50)).unwrap();
+    g.remove_override(x, o, RestoreMode::Value).unwrap();
+    assert_eq!(g.get(x), 50);
+    assert!(!g.is_bound(x));
+}
+
+#[test]
+fn writes_while_overridden() {
+    let g = Graph::new();
+    let r = g.root();
+    let x = g.property(r, 1).unwrap();
+    let o = g.push_override(x, OverrideValue::binding(|_| 42)).unwrap();
+    assert_eq!(g.get(x), 42);
+
+    // Initial targets the base, invisible until restored.
+    g.write(x, 7, WriteKind::Initial).unwrap();
+    assert_eq!(g.get(x), 42);
+
+    // Imperative breaks the override's binding, not the base.
+    g.set(x, 3);
+    assert_eq!(g.get(x), 3);
+    assert_eq!(g.override_count(x), 1);
+
+    // Override(id) rewrites that entry.
+    g.write(x, 4, WriteKind::Override(o)).unwrap();
+    assert_eq!(g.get(x), 4);
+
+    g.remove_override(x, o, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 7);
+}
+
+#[test]
+fn frozen_scope_defers_and_coalesces_effects() {
+    let g = Graph::new();
+    let r = g.root();
+    let page = g.create_scope(r).unwrap();
+    let inner = g.create_scope(page).unwrap();
+    let x = g.property(r, 0).unwrap();
+    let doubled = g.binding(inner, 0, move |g| g.get(x) * 2).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.watch(inner, x, move |_, v| s.borrow_mut().push(*v))
+        .unwrap();
+
+    g.set_frozen(page, true).unwrap();
+    assert!(g.is_frozen(inner), "freezing is inherited");
+    g.set(x, 1);
+    g.set(x, 2);
+    g.set(x, 3);
+    assert!(seen.borrow().is_empty(), "parked while frozen");
+    // Bindings still answer reads while frozen.
+    assert_eq!(g.get(doubled), 6);
+    // A scope created under a frozen one starts frozen.
+    assert!(g.is_frozen(g.create_scope(inner).unwrap()));
+
+    g.set_frozen(page, false).unwrap();
+    assert_eq!(*seen.borrow(), vec![3], "one notification, latest value");
+    g.set(x, 4);
+    assert_eq!(*seen.borrow(), vec![3, 4]);
+}
+
+#[test]
+fn thawing_a_child_of_a_frozen_parent_stays_frozen() {
+    let g: Graph<i64> = Graph::new();
+    let parent = g.create_scope(g.root()).unwrap();
+    let child = g.create_scope(parent).unwrap();
+    g.set_frozen(parent, true).unwrap();
+    g.set_frozen(child, false).unwrap();
+    assert!(g.is_frozen(child));
+    g.set_frozen(child, true).unwrap();
+    g.set_frozen(parent, false).unwrap();
+    assert!(g.is_frozen(child), "still frozen in its own right");
+}
+
+#[test]
+fn disposing_a_scope_is_deterministic() {
+    let g = Graph::new();
+    let r = g.root();
+    let order = log();
+    let outer = g.create_scope(r).unwrap();
+    let child_a = g.create_scope(outer).unwrap();
+    let child_b = g.create_scope(outer).unwrap();
+    for (s, name) in [(outer, "outer"), (child_a, "a"), (child_b, "b")] {
+        let o = order.clone();
+        g.on_dispose(s, move || o.borrow_mut().push(name)).unwrap();
+    }
+    let x = g.property(child_a, 1).unwrap();
+    let survivor_src = g.property(r, 1).unwrap();
+    let y = g
+        .binding(outer, 0, move |g| g.get(x) + g.get(survivor_src))
+        .unwrap();
+    // An observer outside the scope.
+    let watcher = g
+        .binding(r, 0, move |g| g.try_get(y).unwrap_or(-1))
+        .unwrap();
+    assert_eq!(g.get(watcher), 2);
+
+    g.dispose_scope(outer).unwrap();
+    assert_eq!(*order.borrow(), vec!["b", "a", "outer"]);
+    assert!(!g.is_alive(x) && !g.is_alive(y));
+    assert!(!g.scope_alive(child_a));
+    assert_eq!(g.get(watcher), -1, "observer re-ran and saw the dead node");
+    assert!(g.observers(survivor_src).is_empty());
+    assert_eq!(g.dispose_scope(outer), Err(ReactiveError::DeadScope(outer)));
+    assert_eq!(g.dispose_scope(r), Err(ReactiveError::RootScope));
+    assert_eq!(g.try_get(x), None);
+}
+
+#[test]
+fn scope_handle_disposes_on_drop() {
+    let g: Graph<i64> = Graph::new();
+    let n;
+    {
+        let s = g.scope_handle(g.root()).unwrap();
+        n = g.property(s.id(), 1).unwrap();
+        assert!(g.is_alive(n));
+    }
+    assert!(!g.is_alive(n));
+    assert!(g.is_empty());
+}
+
+#[test]
+fn writer_binding_is_promoted_to_effect_root() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let side = g.property(r, 0).unwrap();
+    let writer = g
+        .binding(r, 0, move |g| {
+            let v = g.get(a);
+            g.set(side, v * 10);
+            v
+        })
+        .unwrap();
+    assert!(!g.is_eager(writer));
+    g.get(writer);
+    assert!(g.is_eager(writer), "promoted after writing");
+    // Now it runs without being read.
+    g.set(a, 2);
+    assert_eq!(g.state(writer), Some(NodeState::Clean));
+    assert_eq!(g.get_untracked(side), 20);
+}
+
+#[test]
+fn eager_mode_evaluates_without_reads_with_same_results() {
+    let build = |eager: bool| {
+        let g: Graph<i64> = Graph::with_options(Options {
+            eager,
+            ..Options::default()
+        });
+        let r = g.root();
+        let a = g.property(r, 1).unwrap();
+        let b = g.binding(r, 0, move |g| g.get(a) + 1).unwrap();
+        let c = g.binding(r, 0, move |g| g.get(b) * 2).unwrap();
+        (g, a, c)
+    };
+    let (lazy, la, lc) = build(false);
+    let (eager, ea, ec) = build(true);
+    assert_eq!(lazy.stats().evaluations, 0);
+    assert_eq!(eager.stats().evaluations, 2);
+    lazy.set(la, 5);
+    eager.set(ea, 5);
+    assert_eq!(eager.stats().evaluations, 4);
+    assert_eq!(lazy.get(lc), eager.get(ec));
+}
+
+#[test]
+fn set_eager_makes_a_polish_style_root() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let n = counter();
+    let b = counted_binding(&g, &n, move |g| g.get(a));
+    g.set_eager(b, true).unwrap();
+    assert_eq!(n.get(), 1);
+    g.set(a, 2);
+    assert_eq!(n.get(), 2);
+}
+
+#[test]
+fn watch_does_not_fire_on_creation_and_can_be_disposed() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(a) + 1).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    let w = g.watch(r, b, move |_, v| s.borrow_mut().push(*v)).unwrap();
+    assert!(seen.borrow().is_empty());
+    g.set(a, 2);
+    assert_eq!(*seen.borrow(), vec![3]);
+    g.dispose(w).unwrap();
+    g.set(a, 3);
+    assert_eq!(*seen.borrow(), vec![3]);
+    assert!(g.observers(b).is_empty());
+}
+
+#[test]
+fn panicking_binding_leaves_graph_usable() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 0).unwrap();
+    let b = g
+        .binding(r, 0, move |g| {
+            let v = g.get(a);
+            assert!(v != 1, "boom");
+            v + 1
+        })
+        .unwrap();
+    assert_eq!(g.get(b), 1);
+    g.set(a, 1);
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| g.get(b)));
+    assert!(res.is_err());
+    assert_eq!(g.state(b), Some(NodeState::Dirty));
+    g.set(a, 2);
+    assert_eq!(g.get(b), 3, "retried with the closure reinstalled");
+}
+
+#[test]
+fn effects_can_create_and_dispose_nodes() {
+    let g = Graph::new();
+    let r = g.root();
+    let count = g.property(r, 0).unwrap();
+    let made = Rc::new(RefCell::new(Vec::<NodeId>::new()));
+    let m = made.clone();
+    g.effect(r, move |g| {
+        let n = g.get(count);
+        for old in m.borrow_mut().drain(..) {
+            g.dispose(old).unwrap();
+        }
+        for i in 0..n {
+            let p = g.property(g.root(), i).unwrap();
+            m.borrow_mut().push(p);
+        }
+    })
+    .unwrap();
+    g.set(count, 3);
+    assert_eq!(g.len(), 1 + 1 + 3);
+    g.set(count, 1);
+    assert_eq!(g.len(), 1 + 1 + 1);
+}
+
+#[test]
+fn misuse_is_an_error_not_a_panic() {
+    let g = Graph::new();
+    let r = g.root();
+    let e = g.effect(r, |_| {}).unwrap();
+    assert_eq!(
+        g.write(e, 1, WriteKind::Imperative),
+        Err(ReactiveError::NotAProperty(e))
+    );
+    assert_eq!(g.try_get(e), None);
+    let p = g.property(r, 1).unwrap();
+    g.dispose(p).unwrap();
+    assert_eq!(g.dispose(p), Err(ReactiveError::DeadNode(p)));
+    assert_eq!(g.notify(p), Err(ReactiveError::DeadNode(p)));
+    assert!(g.bind(p, |_| 1).is_err());
+}
+
+#[test]
+fn heights_follow_dependencies() {
+    let g = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(a)).unwrap();
+    let c = g.binding(r, 0, move |g| g.get(b) + g.get(a)).unwrap();
+    g.get(c);
+    assert_eq!(
+        (g.height(a), g.height(b), g.height(c)),
+        (Some(0), Some(1), Some(2))
+    );
+}

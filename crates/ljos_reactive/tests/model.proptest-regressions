@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 468b821c7bfef73c61ef007116ead3463af500c9c0f6ec5057f92edd136a741c # shrinks to (spec, ops) = (Spec { sources: 3, computed: [Sum([0]), Cond(1, 0, 1), Sum([0]), Cond(0, 5, 3), Cond(6, 2, 3), Sum([3])], effects: [Cond(8, 4, 6)] }, [Batch([(1, 1), (0, 1)]), Set(0, 2)])
