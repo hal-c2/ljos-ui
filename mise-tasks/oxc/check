@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+#MISE description="Try the fork's QML patch on the newest oxc_parser release in a scratch copy and report whether it applies and builds"
+set -euo pipefail
+# Drift shows up here before a rebase is due (vendor/FORK.md, 06 §3.4).
+# Nothing in the repository is changed; everything happens under a temp dir.
+root=$(pwd)
+base=$(sed -n 's/^version = "\(.*\)"$/\1/p' vendor/oxc_parser/Cargo.toml | head -n 1)
+latest=$(curl -sSfL -H 'User-Agent: ljos-ui oxc:check' https://crates.io/api/v1/crates/oxc_parser |
+  sed -n 's/.*"max_stable_version":"\([^"]*\)".*/\1/p')
+echo "fork base: oxc_parser $base; newest release: $latest"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+fetch() { curl -sSfL "https://static.crates.io/crates/oxc_parser/oxc_parser-$1.crate" | tar -xz -C "$work"; }
+fetch "$base"
+[ "$latest" = "$base" ] || fetch "$latest"
+
+# The patch to oxc's own files, without the new qml/ directory.
+diff -ru -x qml -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock \
+  "$work/oxc_parser-$base" "$root/vendor/oxc_parser" > "$work/fork.patch" || [ $? -eq 1 ]
+sed -i -e "s|$work/oxc_parser-$base/|a/|g" -e "s|$root/vendor/oxc_parser/|b/|g" "$work/fork.patch"
+
+target="$work/oxc_parser-$latest"
+cp -r "$root/vendor/oxc_parser/src/qml" "$target/src/qml"
+if ! patch -d "$target" -p1 --forward --no-backup-if-mismatch < "$work/fork.patch"; then
+  echo "oxc:check: the patch does not apply to $latest; rebase needed (see vendor/FORK.md)"
+  exit 1
+fi
+
+# Build the patched release on its own, outside this workspace.
+cat >> "$target/Cargo.toml" <<TOML
+
+[workspace]
+TOML
+if cargo build --quiet --manifest-path "$target/Cargo.toml" --target-dir "$root/target/oxc-check"; then
+  echo "oxc:check: the fork applies to and builds on oxc_parser $latest"
+else
+  echo "oxc:check: the patch applies to $latest but does not build; rebase needed"
+  exit 1
+fi

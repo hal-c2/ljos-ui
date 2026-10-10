@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Generate crates/qt_types/src/types.txt from the local Qt's qmldir and .qmltypes files (git-ignored; --qt DIR, --module URI, --out FILE)"
+#MISE sources=["crates/qmltypes/src/**/*.rs"]
+#MISE outputs=["crates/qt_types/src/types.txt"]
+set -euo pipefail
+# The table is derived from Qt's install, so it stays on this machine (D1).
+exec cargo run --quiet -p qmltypes -- "$@"

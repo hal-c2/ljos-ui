@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Diff the vendored oxc_parser fork against the crates.io release it is based on"
+set -euo pipefail
+# What vendor/FORK.md says the patch is, checked against what it really is.
+version=$(sed -n 's/^version = "\(.*\)"$/\1/p' vendor/oxc_parser/Cargo.toml | head -n 1)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+curl -sSfL "https://static.crates.io/crates/oxc_parser/oxc_parser-$version.crate" | tar -xz -C "$work"
+# diff exits 1 when there are differences, which there always are.
+diff -ruN -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock \
+  "$work/oxc_parser-$version" vendor/oxc_parser "$@" || [ $? -eq 1 ]

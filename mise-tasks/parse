@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Parse every .qml file of corpus/qtdoc (or the paths given) and report passed/total"
+set -euo pipefail
+if [ "$#" -eq 0 ]; then
+  git submodule update --init --depth 1 corpus/qtdoc
+  set -- corpus/qtdoc/examples
+fi
+exec cargo run --quiet --release -p qml_syntax --bin qml-parse -- "$@"
