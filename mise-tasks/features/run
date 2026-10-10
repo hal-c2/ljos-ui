@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Run part of the ledger: features:run [--backend ljos|qt|both] [globs…] [-t tagexpr] [-n name-regex]"
+#MISE depends=[]
+set -euo pipefail
+# A glob is a path under features/ (a directory, a file, or a *.feature pattern);
+# it becomes cucumber's --input. Everything else is passed through (-t, -n, --backlog).
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --backend) export LJOS_BDD_BACKEND="$2"; shift 2 ;;
+    -t|--tags|-n|--name|--input|-i) args+=("$1" "$2"); shift 2 ;;
+    -*) args+=("$1"); shift ;;
+    *)
+      g="$1"; shift
+      if [ -d "features/$g" ]; then
+        g="${g%/}/**/*.feature"
+      else
+        g="$(dirname "$g")/**/$(basename "${g%.feature}").feature"
+      fi
+      args+=(--input "$PWD/features/$g")
+      ;;
+  esac
+done
+exec cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"

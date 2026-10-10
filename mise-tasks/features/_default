@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Run the Gherkin ledger (LJOS_BDD_BACKEND=ljos|qt|both; --backlog runs only backlog work)"
+set -euo pipefail
+# The Ljós engine does not exist yet, so the default (ljos) backend fails every
+# scenario as PENDING; `mise run features:parity` is the green check today.
+# The runner continues past failures and prints an ok/FAILED summary.
+if cargo test --quiet -p ljos_bdd --test features -- "$@"; then
+  echo "features: ok"
+else
+  echo "features: FAILED (see the scenarios marked ✘ above; junit at target/features/junit.xml)"
+  exit 1
+fi

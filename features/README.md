@@ -1,0 +1,161 @@
+# Ljós behaviour specifications
+
+Everything Ljós promises to a QML author is written here in Gherkin (ARCHITECTURE.md §18). This
+tree is the source of truth for behaviour; Rust unit tests cover internals only. New behaviour starts
+as a scenario here, then code.
+
+## Directories
+
+One directory per language or toolkit area, not per surface. Surfaces are tags.
+
+| Directory | Covers |
+|---|---|
+| `language/` | QML language semantics: types, imports, JS expressions, signals |
+| `bindings/` | property bindings, `Qt.binding`, `Binding`, loops |
+| `components/` | component files, `Loader`, `Component`, inline components |
+| `items/` | `Item`, `Rectangle`, geometry, visibility, opacity, clipping |
+| `layouts/` | anchors, `Row`/`Column`/`Grid`, `QtQuick.Layouts` |
+| `views/` | `ListView`, `GridView`, `Repeater`, models, delegates |
+| `controls/` | one file per Qt Quick Controls type |
+| `input/`, `focus/` | pointer, touch, keyboard, focus scopes, IME |
+| `text/`, `animation/`, `i18n/`, `rendering/` | text, animation and timers, localisation, pixels |
+| `a11y/` | accessibility tree, names, roles, actions |
+| `offscreen/` | resource policy: delegates near the viewport, freezing, memory |
+| `hot-reload/`, `runtime/`, `network/`, `mobile/` | dev loop, scheduler and faults, network, phones |
+| `tooling/` | MCP servers (`tooling/mcp/`), CLI |
+| `parity/` | generated outlines (API ledger); never hand edited |
+
+## Writing rules
+
+- The reader is a QML author. Binding, property, delegate, anchor and signal are fine words.
+- Never mention egui, kittest, frames, widgets, draw calls or crates. `mise run features:lint` flags them.
+- Time is written "1 second passes" or "500 milliseconds pass".
+- Observe through properties, the log, the accessibility tree and object counts.
+- One behaviour per scenario. Use a `Scenario Outline` instead of copies.
+- Reverse and failure paths are scenarios of their own: unbind, a file that does not parse, a binding loop.
+- QML goes in a doc string labelled `qml`, at most 25 lines, one concept.
+- Counts of live objects are bands (`at most 14`), never exact numbers Qt itself does not guarantee.
+- Every file starts with a `# Sources:` block naming Qt *documentation* URLs or Ljós research
+  reports. Never Qt or Slint source code (CLEAN_ROOM.md).
+- A file with `@qt-parity` also names the Qt version it was verified against, on its own header line:
+  `# Verified on Qt 6.11.2 (qml6, offscreen).`
+
+```gherkin
+# Sources:
+#   https://doc.qt.io/qt-6/qtqml-syntax-propertybinding.html
+# Verified on Qt 6.11.2 (qml6, offscreen).
+
+@qt-parity
+Feature: Property bindings
+```
+
+## Tags
+
+Tags on a `Feature`, `Rule` or `Examples` table apply to everything below them.
+
+| Group | Tags |
+|---|---|
+| Surface | `@headless` (default when no surface tag), `@desktop`, `@android`, `@ios`, `@wgpu`. The headless runner skips scenarios that name only other surfaces. |
+| Status | none = passes everywhere it applies · `@backlog` (passes nowhere yet) · `@backlog-<surface>` (does not pass on that surface yet) · `@dropped` (decided against; a comment gives the reason) · `@blocked` (a comment names what it waits for) · `@priority-high` / `@priority-low` |
+| Oracle | `@qt-parity` · `@qt-diverges` · `@ljos-only` · `@qt-pixels` |
+| Ledger | `@api-<Module>.<Type>.<member>` · `@a11y` |
+
+**Status, as the runner applies it.** A normal run drops `@backlog`, `@backlog-<own surface>`,
+`@dropped` and `@blocked`. `--backlog` runs only the backlog (`@backlog*` that is neither `@dropped`
+nor `@blocked`). A `@backlog-android` scenario still runs headless: it only parks the Android surface.
+
+**Oracle tags.**
+
+- `@qt-parity`: the expectation was checked against real Qt and the scenario runs on both
+  backends. This is the default for `language/` and `bindings/` (decision D14). Any difference needs `@qt-diverges`.
+- `@qt-diverges`: a deliberate difference from Qt, runs on Ljós only. A comment line above it gives the reason.
+- `@ljos-only`: an extension Qt does not have (hot reload, MCP), or something the Qt oracle cannot observe.
+- `@qt-pixels`: compared with a PNG reference captured from Qt.
+- No oracle tag: "our assumption". `features:lint` reports the share that is verified.
+
+A `@backlog @qt-parity` scenario still runs on Qt in `features:parity`: the oracle verifies the
+expectation before Ljós implements it.
+
+## `# Sources:` rule
+
+The first comment block of every file is a `# Sources:` block, one source per line. Comments that
+follow it (such as `# Verified on Qt 6.11.2`) belong to the same header.
+
+## Running
+
+| Command | Does |
+|---|---|
+| `mise run features` | all non-backlog scenarios on the backend named by `LJOS_BDD_BACKEND` (default `ljos`) |
+| `mise run features -- --backlog` | only backlog work |
+| `mise run features:run [--backend qt] items bindings/loops.feature -t "@qt-parity" -n "regex"` | part of the ledger |
+| `mise run features:parity` | every `@qt-parity` scenario on real Qt (`qml6`) |
+| `mise run features:lint` | structure, undefined or ambiguous steps, sprawl |
+
+`LJOS_BDD_BACKEND` is `ljos` (default), `qt`, or `both`. In `both`, a `@qt-parity` scenario runs on
+Qt and Ljós and passes only if both do; scenarios without that tag run on Ljós only. While the Ljós
+engine is not built, the `ljos` backend reports every operation as `PENDING: not implemented yet`
+and those scenarios fail. Results go to `target/features/junit.xml`.
+
+The ledger is not part of `cargo test --workspace` (its test target sets `test = false`); the
+`mise` tasks run it explicitly with `--test features`.
+
+## Step catalogue
+
+Use these phrasings exactly. A scenario that needs something else first adds a step here and in
+`crates/ljos_bdd/src/steps.rs`; `features:lint` fails on a phrasing that is not here.
+`"…"` is a quoted string, `V` a value: `5`, `0.5`, `true`, `false`, `null`, `"text"` or `[1, 2]`.
+Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be dotted
+(`anchors.margins`).
+
+### Given
+
+| Step | Meaning |
+|---|---|
+| `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
+| `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet |
+
+### When
+
+| Step | Meaning |
+|---|---|
+| `When "X.qml" is loaded` | create an instance of `X.qml`; objects become findable by `objectName` |
+| `When the property "p" of "o" is set to V` | assign from JavaScript (breaks a binding) |
+| `When the property "p" of "o" is bound to "expr"` | assign `Qt.binding(() => expr)`; `expr` names `o`'s properties unqualified |
+| `When the method "m" of "o" is called` | call with no arguments |
+| `When the method "m" of "o" is called with V, V` | call with arguments |
+| `When N milliseconds pass` / `When N second(s) pass` | application time passes (`1 second passes`, `0.5 seconds pass`) |
+| `When the user clicks the "role" "name"` | click the control with that accessible role and name |
+| `When the user presses "chord"` | key chord, e.g. `"Ctrl+S"` |
+| `When the user touches X, Y` | touch at a position |
+
+### Then
+
+| Step | Meaning |
+|---|---|
+| `Then the property "p" of "o" is V` | equals; numbers compare numerically, colours are lower-case hex |
+| `Then the property "p" of "o" is not V` | differs |
+| `Then the property "p" of "o" is at least N` / `is at most N` | numeric bound |
+| `Then setting the property "p" of "o" to V is rejected` | the application refuses the assignment |
+| `Then loading "X.qml" is rejected` | the file does not load (syntax error, unknown type) |
+| `Then the object "o" exists` / `does not exist` | lookup by `objectName` |
+| `Then the log has a warning matching "regex"` | some warning matches |
+| `Then the log has no warning matching "regex"` / `Then the log has no warnings` | none do |
+| `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |
+| `Then the accessibility tree has no "role" named "name"` | |
+| `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
+
+### Planned (backlog scenarios may use them; not built yet)
+
+`Given the inspector is connected` · `Given the agent has requested a snapshot` ·
+`When the agent requests a snapshot` · `When the agent clicks the reference of the "role" named "name"` ·
+`When the object "o" is destroyed` · `Then the snapshot has a "role" named "name" with a reference` ·
+`Then the snapshot does not contain "text"` · `Then the agent is told the reference is stale` ·
+`Then the signal "s" of "o" has fired once`.
+
+## Adding a backend operation
+
+Steps call the `Backend` trait in `crates/ljos_bdd/src/backend/mod.rs`; they never see egui or kittest
+types. The Qt oracle (`backend/qt.rs`) replays the scenario's operations in a generated QML driver run
+by `qml6` for every question a step asks (about 0.1–0.3 s each), so keep `@qt-parity` scenarios short.
+It cannot observe animation midpoints, default accessible names or text pixels; such scenarios are
+`@ljos-only` or `@qt-diverges`.
