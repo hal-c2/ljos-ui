@@ -63,3 +63,52 @@ pub fn scene(e: &Engine, root: ObjectId, w: f64, h: f64) -> QuickScene {
 pub fn frame(s: &mut QuickScene, e: &Engine) -> ljos_quick::FrameOutput {
     s.frame(e, Time::ZERO)
 }
+
+/// Compiles `files` (`("Main", source)`) for `e` to load.
+pub fn compile(e: &Engine, files: &[(&str, &str)]) {
+    use ljos_compiler::{Project, compile_file};
+    let mut project = Project::new(qml_front::QtTypeOracle);
+    for (k, s) in files {
+        project.add(k, *s);
+    }
+    let mut source = ljos_engine::MapSource::new();
+    for (k, _) in files {
+        let c = compile_file(&project, k).unwrap_or_else(|d| panic!("{k}: {d:?}"));
+        assert!(!c.has_errors(), "{k}: {:?}", c.diagnostics);
+        source.insert(*k, c.file);
+    }
+    e.set_component_source(source);
+}
+
+/// Compiles `source` as `Main.qml` and creates it.
+pub fn load(e: &Engine, source: &str) -> ObjectId {
+    compile(e, &[("Main", source)]);
+    e.create_from_url("Main", None, Vec::new())
+        .unwrap_or_else(|err| panic!("Main.qml: {err}"))
+}
+
+/// The first object below `root` (depth first, by QObject ownership)
+/// whose objectName is `name`.
+pub fn find(e: &Engine, root: ObjectId, name: &str) -> ObjectId {
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        if e.read_by_name(o, "objectName").to_js_string().as_str() == name {
+            return o;
+        }
+        let mut kids = e.children(o);
+        kids.reverse();
+        stack.extend(kids);
+    }
+    panic!("no object named {name}")
+}
+
+/// The objects in list property `name` of `o`.
+pub fn list(e: &Engine, o: ObjectId, name: &str) -> Vec<ObjectId> {
+    let p = e
+        .meta_of(o)
+        .and_then(|m| m.property_index(name))
+        .unwrap_or_else(|| panic!("no list {name}"));
+    (0..e.list_count(o, p))
+        .filter_map(|i| e.list_at(o, p, i))
+        .collect()
+}

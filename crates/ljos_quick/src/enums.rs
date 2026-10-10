@@ -1,9 +1,108 @@
-//! Integer values of the QtQuick enums this crate uses.
+//! The QtQuick enums this crate uses.
 //!
-//! The registry has no enum registration yet, so enum-typed properties are
-//! `int` properties and QML code writes these numbers. The values follow
-//! the documented Qt enums so a later enum registration can map
-//! `Text.AlignHCenter` and friends onto them without a migration.
+//! Each type registers its enums (`Text.AlignHCenter`, `Item.Center`)
+//! through the `*_enums` functions here. Enum-typed properties are stored
+//! as `i32`, the number QML and JS read; the modules give the values names
+//! for Rust code. The values follow the documented Qt enums.
+
+/// What `#[qml(enums = …)]` takes: every enum's name and its keys.
+pub(crate) type EnumTable = Vec<(&'static str, Vec<(&'static str, i64)>)>;
+
+fn keys(list: &[(&'static str, i32)]) -> Vec<(&'static str, i64)> {
+    list.iter().map(|(k, v)| (*k, i64::from(*v))).collect()
+}
+
+/// `Item`'s enums, which every visual type inherits (`Rectangle.Center`).
+pub(crate) fn item_enums() -> EnumTable {
+    use transform_origin as o;
+    vec![(
+        "TransformOrigin",
+        keys(&[
+            ("TopLeft", o::TOP_LEFT),
+            ("Top", o::TOP),
+            ("TopRight", o::TOP_RIGHT),
+            ("Left", o::LEFT),
+            ("Center", o::CENTER),
+            ("Right", o::RIGHT),
+            ("BottomLeft", o::BOTTOM_LEFT),
+            ("Bottom", o::BOTTOM),
+            ("BottomRight", o::BOTTOM_RIGHT),
+        ]),
+    )]
+}
+
+pub(crate) fn text_enums() -> EnumTable {
+    vec![
+        (
+            "HAlignment",
+            keys(&[
+                ("AlignLeft", align::LEFT),
+                ("AlignRight", align::RIGHT),
+                ("AlignHCenter", align::H_CENTER),
+                ("AlignJustify", align::JUSTIFY),
+            ]),
+        ),
+        (
+            "VAlignment",
+            keys(&[
+                ("AlignTop", align::TOP),
+                ("AlignBottom", align::BOTTOM),
+                ("AlignVCenter", align::V_CENTER),
+            ]),
+        ),
+        (
+            "TextElideMode",
+            keys(&[
+                ("ElideLeft", elide::LEFT),
+                ("ElideRight", elide::RIGHT),
+                ("ElideMiddle", elide::MIDDLE),
+                ("ElideNone", elide::NONE),
+            ]),
+        ),
+        (
+            "WrapMode",
+            keys(&[
+                ("NoWrap", wrap_mode::NO_WRAP),
+                ("WordWrap", wrap_mode::WORD_WRAP),
+                ("WrapAnywhere", wrap_mode::WRAP_ANYWHERE),
+                ("Wrap", wrap_mode::WRAP),
+            ]),
+        ),
+        (
+            "LineHeightMode",
+            keys(&[
+                ("ProportionalHeight", line_height_mode::PROPORTIONAL),
+                ("FixedHeight", line_height_mode::FIXED),
+            ]),
+        ),
+    ]
+}
+
+pub(crate) fn tap_handler_enums() -> EnumTable {
+    use gesture_policy as g;
+    vec![(
+        "GesturePolicy",
+        keys(&[
+            ("DragThreshold", g::DRAG_THRESHOLD),
+            ("WithinBounds", g::WITHIN_BOUNDS),
+            ("ReleaseWithinBounds", g::RELEASE_WITHIN_BOUNDS),
+            ("DragWithinBounds", g::DRAG_WITHIN_BOUNDS),
+        ]),
+    )]
+}
+
+pub(crate) fn loader_enums() -> EnumTable {
+    use loader_status as l;
+    vec![(
+        "Status",
+        keys(&[
+            ("Null", l::NULL),
+            ("Ready", l::READY),
+            ("Loading", l::LOADING),
+            ("Error", l::ERROR),
+        ]),
+    )]
+}
 
 /// `Item.transformOrigin` (`Item.TopLeft` … `Item.BottomRight`).
 pub mod transform_origin {

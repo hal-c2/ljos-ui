@@ -2711,10 +2711,12 @@ name = "ljos_quick"
 version = "0.0.0"
 dependencies = [
  "bitflags 2.13.2",
+ "ljos_compiler",
  "ljos_engine",
  "ljos_reactive",
  "ljos_render",
  "ljos_runtime",
+ "qml_front",
  "smallvec",
  "thiserror 2.0.21",
 ]

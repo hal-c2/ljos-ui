@@ -1,9 +1,9 @@
 //! `Rectangle`.
 
-use ljos_engine::{Color, Engine, ObjectId, QmlObject};
+use ljos_engine::{Color, Cx, Engine, EngineError, ObjectId, QmlObject, Value, qml_impl};
 use ljos_render::{Border as RenderBorder, DisplayListBuilder, DrawOp, Paint, Rgba, kurbo};
 
-use crate::item::Item;
+use crate::item::{Item, is_unset};
 
 /// `Rectangle` (QtQuick): a filled, optionally rounded and bordered box.
 ///
@@ -22,10 +22,6 @@ pub struct Rectangle {
     pub radius: f64,
     #[qml(group)]
     pub border: RectangleBorder,
-    /// Qt's default is on for a rounded rectangle and off otherwise; until
-    /// it is assigned, painting follows that rule.
-    #[qml(notify)]
-    pub antialiasing: bool,
 }
 
 impl Default for Rectangle {
@@ -35,8 +31,23 @@ impl Default for Rectangle {
             color: Color::WHITE,
             radius: 0.0,
             border: RectangleBorder::default(),
-            antialiasing: false,
         }
+    }
+}
+
+#[qml_impl]
+impl Rectangle {
+    /// Qt's default for `antialiasing` is on for a rounded rectangle and
+    /// off otherwise, and it follows `radius` until it is assigned.
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let obj = cx.this;
+        if is_unset(cx.engine, obj, Item::ANTIALIASING.index) {
+            cx.engine.bind(obj, Item::ANTIALIASING.index, move |e| {
+                Value::Bool(e.read(obj, Rectangle::RADIUS.index).to_number() > 0.0)
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -89,8 +100,9 @@ impl RectanglePaint {
         // Qt reads `border.width` as 1 by default but draws no border until
         // the author assigns its width or colour (checked on qml6).
         let has_border = assigned_name("border.width") || assigned_name("border.color");
-        let antialiasing = if assigned(Rectangle::ANTIALIASING.index) {
-            engine.read(obj, Rectangle::ANTIALIASING.index).to_boolean()
+        // A rectangle painted before it completes has no binding yet.
+        let antialiasing = if assigned(Item::ANTIALIASING.index) {
+            engine.read(obj, Item::ANTIALIASING.index).to_boolean()
         } else {
             radius > 0.0
         };

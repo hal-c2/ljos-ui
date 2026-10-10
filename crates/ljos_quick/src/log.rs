@@ -1,9 +1,9 @@
-//! Warnings from this crate.
+//! The scene's former warning log.
 //!
-//! SHIM for contract item 6: the engine's log sink with categories does
-//! not exist yet, and `Engine::warn` is crate-private. Entries collect here
-//! and in an optional handler; when the sink lands, [`QuickLog::warn`]
-//! forwards to it and this type goes away.
+//! Scene, anchor and polish warnings now go to the engine log
+//! (`Engine::log`, category `qt.quick.*`). This type stays for source
+//! compatibility only; the scene never writes to it.
+#![allow(deprecated)]
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -22,6 +22,7 @@ const MAX_ENTRIES: usize = 1024;
 type Handler = Box<dyn FnMut(&LogEntry)>;
 
 /// A shared, bounded warning log.
+#[deprecated(note = "scene warnings go to the engine log (Engine::set_log_handler)")]
 #[derive(Clone, Default)]
 pub struct QuickLog {
     inner: Rc<RefCell<LogInner>>,

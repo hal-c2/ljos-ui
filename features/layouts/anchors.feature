@@ -155,3 +155,52 @@ Feature: Anchors
       }
       """
     Then the log has a warning matching "Cannot anchor to an item that isn't a parent or sibling"
+
+  Rule: A side margin that was never set is anchors.margins
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 100; height: 100
+          Item {
+            objectName: "c"
+            anchors.fill: parent
+            anchors.margins: 7
+            anchors.leftMargin: 3
+          }
+          Item { objectName: "plain"; anchors.fill: parent }
+        }
+        """
+
+    Scenario Outline: Reading a side margin gives its own value or anchors.margins
+      Then the property "anchors.<side>" of "c" is <value>
+
+      Examples:
+        | side         | value |
+        | leftMargin   | 3     |
+        | rightMargin  | 7     |
+        | topMargin    | 7     |
+        | bottomMargin | 7     |
+
+    Scenario: Unset side margins follow a new anchors.margins
+      When the property "anchors.margins" of "c" is set to 9
+      Then the property "anchors.rightMargin" of "c" is 9
+      And the property "anchors.leftMargin" of "c" is 3
+      And the property "width" of "c" is 88
+
+    Scenario: A side margin that was set stops following
+      When the property "anchors.topMargin" of "c" is set to 2
+      And the property "anchors.margins" of "c" is set to 11
+      Then the property "anchors.topMargin" of "c" is 2
+      And the property "anchors.bottomMargin" of "c" is 11
+      And the property "y" of "c" is 2
+
+    Scenario: Setting anchors.margins for the first time reaches every side
+      Then the property "anchors.leftMargin" of "plain" is 0
+      When the property "anchors.margins" of "plain" is set to 5
+      Then the property "anchors.leftMargin" of "plain" is 5
+      And the property "x" of "plain" is 5
+      And the property "height" of "plain" is 90

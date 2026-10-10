@@ -135,8 +135,6 @@ fn demo_renders_and_its_button_clicks() {
 }
 
 #[test]
-#[ignore = "ljos_quick's Item.data has no list_append hook yet, so children the \
-            Engine creates from IR are owned but never become visual children"]
 fn demo_qml_renders_and_its_button_clicks() {
     let source = demo_qml::compile(&demo_qml::default_dir()).unwrap();
     let mut h = harness(move |s| {

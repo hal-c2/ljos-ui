@@ -17,5 +17,10 @@ bitflags.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+# Tests compile QML strings; the crate itself never links the parser.
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+
 [lints]
 workspace = true

@@ -16,7 +16,12 @@ use crate::rectangle::to_rgba;
 
 /// `Text` (QtQuick).
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick", name = "Text", extends = Item)]
+#[qml(
+    module = "QtQuick",
+    name = "Text",
+    extends = Item,
+    enums = crate::enums::text_enums
+)]
 pub struct Text {
     #[qml(base)]
     pub item: Item,
@@ -56,7 +61,11 @@ pub struct Text {
 impl Default for Text {
     fn default() -> Self {
         Self {
-            item: Item::default(),
+            // Text is antialiased unless told otherwise, as in Qt.
+            item: Item {
+                antialiasing: true,
+                ..Item::default()
+            },
             text: Atom::EMPTY,
             color: Color::BLACK,
             font: Font::default(),

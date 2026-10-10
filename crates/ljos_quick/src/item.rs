@@ -1,11 +1,12 @@
 //! `Item`, the base of every visual type, its `anchors` group and anchor
 //! lines.
 
+use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, EnumValue, ObjectId, Point, PropIndex, QmlObject, QmlType,
-    QtObject, Rect, Value, WriteKind, qml_impl,
+    Atom, Cx, Engine, EngineError, EnumValue, LogLevel, ObjectId, Point, PropIndex, QmlList,
+    QmlObject, QmlType, QtObject, Rect, Value, WriteKind, qml_impl,
 };
 use ljos_render::kurbo::{self, Affine};
 
@@ -19,7 +20,13 @@ use crate::enums::transform_origin;
 /// layer, so the value the item was given comes back when the ancestor is
 /// shown again.
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick", name = "Item", extends = QtObject, default = "data")]
+#[qml(
+    module = "QtQuick",
+    name = "Item",
+    extends = QtObject,
+    default = "data",
+    enums = crate::enums::item_enums
+)]
 pub struct Item {
     #[qml(base)]
     pub object: QtObject,
@@ -52,22 +59,28 @@ pub struct Item {
     /// One of [`crate::enums::transform_origin`].
     #[qml(notify)]
     pub transform_origin: i32,
+    /// The visual parent. Assigning it reparents the item (see
+    /// [`crate::set_parent_item`]); it follows
+    /// [`Engine::set_visual_parent`] whoever calls that.
     #[qml(notify)]
     pub parent: Option<ObjectId>,
-    /// Children and resources together, in declaration order.
-    ///
-    /// SHIM: a `var` list until the engine has `#[qml(list)]` (contract
-    /// item 1). Use [`crate::add_data`] / [`crate::set_parent_item`].
-    #[qml(notify, readonly)]
-    pub data: Vec<Value>,
-    #[qml(notify, readonly)]
-    pub children: Vec<Value>,
-    #[qml(notify, readonly)]
-    pub resources: Vec<Value>,
+    /// Children and resources together, in the order they were added.
+    /// Appending sorts: an `Item` becomes a visual child, anything else a
+    /// resource, as Qt documents for the default property.
+    #[qml(notify, list, append = crate::tree::item_data_append)]
+    pub data: QmlList,
+    #[qml(notify, list)]
+    pub children: QmlList,
+    #[qml(notify, list)]
+    pub resources: QmlList,
     #[qml(notify, readonly)]
     pub children_rect: Rect,
     #[qml(notify)]
     pub baseline_offset: f64,
+    /// Off for a plain item; `Text` turns it on and a `Rectangle` follows
+    /// its `radius`, as Qt documents.
+    #[qml(notify)]
+    pub antialiasing: bool,
     #[qml(group)]
     pub anchors: Anchors,
     // Anchor lines (`parent.left`). Set in `on_complete`, when the object
@@ -89,6 +102,15 @@ pub struct Item {
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]
     pub accessible: AccessibleInfo,
+    /// The visual parent `children`/`data` and `parent` were last brought
+    /// in step with, so a change knows which parent's lists to leave.
+    #[qml(skip)]
+    pub(crate) synced_parent: Option<ObjectId>,
+    /// Alive while `width` (0) and `height` (1) still follow the implicit
+    /// size: each is held by the fallback binding [`init_item`] makes, and
+    /// the engine drops that binding when the size is given.
+    #[qml(skip)]
+    pub(crate) follows_implicit: [Weak<()>; 2],
 }
 
 impl Default for Item {
@@ -110,11 +132,12 @@ impl Default for Item {
             scale: 1.0,
             transform_origin: transform_origin::CENTER,
             parent: None,
-            data: Vec::new(),
-            children: Vec::new(),
-            resources: Vec::new(),
+            data: QmlList::new(),
+            children: QmlList::new(),
+            resources: QmlList::new(),
             children_rect: Rect::default(),
             baseline_offset: 0.0,
+            antialiasing: false,
             anchors: Anchors::default(),
             left: Value::Undefined,
             right: Value::Undefined,
@@ -124,6 +147,8 @@ impl Default for Item {
             vertical_center: Value::Undefined,
             baseline_line: Value::Undefined,
             accessible: AccessibleInfo::default(),
+            synced_parent: None,
+            follows_implicit: [Weak::new(), Weak::new()],
         }
     }
 }
@@ -162,7 +187,7 @@ pub struct Anchors {
     pub center_in: Option<ObjectId>,
     #[qml(notify)]
     pub margins: f64,
-    /// Falls back to `margins` until set (see [`effective_margin`]).
+    /// The four side margins follow `margins` until they are set.
     #[qml(notify)]
     pub left_margin: f64,
     #[qml(notify)]
@@ -266,15 +291,58 @@ impl AnchorProps {
 /// A per-side margin: its own value once set, otherwise `anchors.margins`,
 /// as Qt documents.
 ///
-/// Deviation: reading `anchors.leftMargin` from QML before it is set gives
-/// 0, not the `margins` value; only the geometry uses the fallback.
+/// A completed item has its unset sides bound to `margins`
+/// ([`init_item`]), so QML reads the same number. The check here covers an
+/// item that is read before it completes.
 pub fn effective_margin(engine: &Engine, obj: ObjectId, side: PropIndex) -> f64 {
     let own = engine.read(obj, side).to_number();
     let margins = engine.read(obj, AnchorProps::get().margins).to_number();
-    match engine.provenance(obj, side) {
-        Some(ljos_engine::Provenance::Default) | None => margins,
-        _ => own,
+    if is_unset(engine, obj, side) {
+        margins
+    } else {
+        own
     }
+}
+
+/// Whether nothing has given the item a size along one axis: it still
+/// follows its implicit size and no pair of anchors stretches it. Tracks
+/// the anchors, so an effect asking re-runs when they change.
+pub(crate) fn size_follows_implicit(engine: &Engine, obj: ObjectId, horizontal: bool) -> bool {
+    let axis = usize::from(!horizontal);
+    let follows = engine
+        .with(obj, |i: &Item| i.follows_implicit[axis].strong_count() > 0)
+        .unwrap_or(false);
+    if !follows {
+        return false;
+    }
+    let a = AnchorProps::get();
+    let set = |p| !engine.read(obj, p).is_nullish();
+    let (near, far) = if horizontal {
+        (a.left, a.right)
+    } else {
+        (a.top, a.bottom)
+    };
+    !(set(a.fill) || (set(near) && set(far)))
+}
+
+/// Whether nothing has given the property a value yet.
+pub(crate) fn is_unset(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
+    matches!(
+        engine.provenance(obj, p),
+        Some(ljos_engine::Provenance::Default) | None
+    )
+}
+
+/// Makes every side margin that has no value of its own read
+/// `anchors.margins`.
+fn follow_margins(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let a = AnchorProps::get();
+    for side in [a.left_margin, a.right_margin, a.top_margin, a.bottom_margin] {
+        if is_unset(engine, obj, side) {
+            engine.bind(obj, side, move |e| e.read(obj, AnchorProps::get().margins))?;
+        }
+    }
+    Ok(())
 }
 
 /// An anchor edge.
@@ -405,38 +473,70 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
         engine.set_internal(obj, Item::BASELINE_LINE, line(Edge::Baseline))?;
         // An item whose size was never given follows its implicit size.
         // Assigning `width` replaces this binding, as in Qt.
-        let unset = |p| {
-            matches!(
-                engine.provenance(obj, p),
-                Some(ljos_engine::Provenance::Default) | None
-            )
-        };
-        if unset(Item::WIDTH.index) {
-            engine.bind(obj, Item::WIDTH.index, move |e| {
-                e.read(obj, Item::IMPLICIT_WIDTH.index)
+        let unset = |p| is_unset(engine, obj, p);
+        // Most items never set `margins`, so the four side bindings are
+        // only made once it has a value; one watcher waits for that.
+        let margins = AnchorProps::get().margins;
+        if unset(margins) {
+            engine.watch(obj, margins, move |e, _| {
+                if let Err(err) = follow_margins(e, obj) {
+                    e.log(LogLevel::Warning, "qml", format!("anchors.margins: {err}"));
+                }
             })?;
+        } else {
+            follow_margins(engine, obj)?;
         }
-        if unset(Item::HEIGHT.index) {
-            engine.bind(obj, Item::HEIGHT.index, move |e| {
-                e.read(obj, Item::IMPLICIT_HEIGHT.index)
+        for (axis, size, implicit) in [
+            (0, Item::WIDTH.index, Item::IMPLICIT_WIDTH.index),
+            (1, Item::HEIGHT.index, Item::IMPLICIT_HEIGHT.index),
+        ] {
+            if !unset(size) {
+                continue;
+            }
+            let token = Rc::new(());
+            engine.with_mut(obj, |i: &mut Item| {
+                i.follows_implicit[axis] = Rc::downgrade(&token);
+            })?;
+            engine.bind(obj, size, move |e| {
+                // Held, not used: see `Item::follows_implicit`.
+                let _alive = &token;
+                e.read(obj, implicit)
             })?;
         }
         // Lazy: costs nothing until something reads `childrenRect`.
         engine.bind_initial(obj, Item::CHILDREN_RECT.index, move |e| {
             Value::Rect(std::sync::Arc::new(children_rect(e, obj)))
         })?;
+        // Assigning `parent` reparents the item.
+        engine.watch(obj, Item::PARENT.index, move |e, v| {
+            let p = v.as_object();
+            if e.visual_parent(obj) != p
+                && let Err(err) = crate::tree::set_parent_item(e, obj, p)
+            {
+                e.log(
+                    LogLevel::Warning,
+                    "qml",
+                    format!("Cannot set parent: {err}"),
+                );
+            }
+        })?;
+        let declared = engine.untrack(|| engine.read(obj, Item::PARENT.index).as_object());
+        let actual = engine.untrack(|| engine.visual_parent(obj));
+        if declared != actual {
+            if unset(Item::PARENT.index) {
+                crate::tree::sync_parent(engine, obj, actual)?;
+            } else {
+                crate::tree::set_parent_item(engine, obj, declared)?;
+            }
+        }
         Ok(())
     })
 }
 
 /// The union of the children's geometry, in this item's coordinates.
 fn children_rect(engine: &Engine, obj: ObjectId) -> Rect {
-    let children = engine.read(obj, Item::CHILDREN.index);
-    let Value::List(children) = children else {
-        return Rect::default();
-    };
     let mut acc: Option<(f64, f64, f64, f64)> = None;
-    for c in children.iter().filter_map(Value::as_object) {
+    for c in crate::tree::child_items(engine, obj) {
         let x = engine.read(c, Item::X.index).to_number();
         let y = engine.read(c, Item::Y.index).to_number();
         let w = engine.read(c, Item::WIDTH.index).to_number();

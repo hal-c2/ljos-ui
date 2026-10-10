@@ -19,11 +19,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ljos_engine::{
-    Engine, EngineError, NodeId as GraphNode, ObjectId, OverrideContent, OverrideId, Point,
-    PropIndex, Provenance, RestoreMode, Value,
+    Engine, EngineError, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent, OverrideId,
+    Point, PropIndex, Provenance, RestoreMode, Value,
 };
 use ljos_render::{ClipSpec, FrameSnapshot, NodeId, RenderTree, hit_test, kurbo};
-use ljos_runtime::Time;
+use ljos_runtime::{FrameBudget, Scheduler, Time};
 
 use crate::anchors::{self, AnchorState};
 use crate::enums::gesture_policy;
@@ -31,11 +31,13 @@ use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKin
 use crate::item::{
     Item, compose_transform, init_item, is_a, is_item, num, scene_transform, write_computed,
 };
+use crate::loader::{Loader, shown_children};
+#[allow(deprecated)]
 use crate::log::QuickLog;
 use crate::positioners::{self, Axis, Column, Row};
 use crate::rectangle::{Rectangle, RectanglePaint};
 use crate::text::{self, FixedAdvanceMeasurer, Text, TextInputs, TextMeasurer};
-use crate::tree::{child_items, resources, set_parent_item};
+use crate::tree::resources;
 
 /// Log category for polish warnings.
 pub const POLISH_CATEGORY: &str = "qt.quick.polish";
@@ -43,15 +45,20 @@ pub const POLISH_CATEGORY: &str = "qt.quick.polish";
 pub const SCENE_CATEGORY: &str = "qt.quick.scene";
 /// Polish passes per frame before the scene gives up and warns.
 pub const MAX_POLISH_PASSES: usize = 10;
+/// Time per frame for making the items of asynchronous Loaders
+/// (ARCHITECTURE §6.3).
+pub const INCUBATION_BUDGET: Duration = Duration::from_millis(3);
 /// Qt's default `QStyleHints::mouseDoubleClickInterval`.
 pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 /// Qt's default `QStyleHints::startDragDistance`, in logical pixels.
 pub const DRAG_THRESHOLD: f64 = 10.0;
 
-/// A host hook for pipeline step 3 (timers and animations): it advances
-/// everything due at `now` and returns when it next needs a frame.
+/// Extra host work for pipeline step 3: it advances whatever the host
+/// animates itself at `now` and returns when it next needs a frame.
 ///
-/// SHIM for contract item 4 (`Engine::set_clock` / `advance_timers`).
+/// QML `Timer`s and `Qt.callLater` do not need one: [`QuickScene::frame`]
+/// runs the engine's timers itself and folds their deadline into
+/// [`FrameOutput::next_wake`].
 pub type TimerHook = Box<dyn FnMut(&Engine, Time) -> Option<Time>>;
 
 /// What [`QuickScene::frame`] produced.
@@ -223,6 +230,7 @@ struct PointerState {
 pub struct QuickScene {
     tree: RenderTree,
     shared: SharedRc,
+    #[allow(deprecated)]
     log: QuickLog,
     entries: HashMap<ObjectId, Entry>,
     by_node: HashMap<NodeId, ObjectId>,
@@ -236,6 +244,8 @@ pub struct QuickScene {
     timers: Option<TimerHook>,
     next_timer: Option<Time>,
     pointer: PointerState,
+    /// Creation jobs of asynchronous Loaders, run a slice per frame.
+    incubator: Scheduler<()>,
 }
 
 impl std::fmt::Debug for QuickScene {
@@ -251,6 +261,7 @@ impl std::fmt::Debug for QuickScene {
 
 impl QuickScene {
     /// An empty scene showing `viewport` (logical pixels).
+    #[allow(deprecated)]
     pub fn new(viewport: kurbo::Size) -> Self {
         QuickScene {
             tree: RenderTree::new(),
@@ -268,6 +279,7 @@ impl QuickScene {
             timers: None,
             next_timer: None,
             pointer: PointerState::default(),
+            incubator: Scheduler::new(),
         }
     }
 
@@ -287,6 +299,14 @@ impl QuickScene {
         let top = self.tree.root();
         self.adopt(engine, root, None, top, 0)?;
         self.root = Some(root);
+        // A Timer started from a handler changes nothing visible, so
+        // without this the host would never ask for its deadline.
+        let shared = Rc::downgrade(&self.shared);
+        engine.set_timer_wake(move || {
+            if let Some(s) = shared.upgrade() {
+                mark(&s, |_| {});
+            }
+        });
         Ok(())
     }
 
@@ -301,8 +321,23 @@ impl QuickScene {
         }
     }
 
+    /// Device pixels per logical pixel. A change rebuilds the display
+    /// lists of every painting item on the next frame.
     pub fn set_scale_factor(&mut self, scale: f32) {
+        if self.scale_factor == scale {
+            return;
+        }
         self.scale_factor = scale;
+        let nodes: Vec<NodeId> = self
+            .entries
+            .values()
+            .filter(|e| e.kind.paints() && e.content_effect.is_some())
+            .map(|e| e.node)
+            .collect();
+        for n in nodes {
+            self.tree.mark_content_dirty(n);
+        }
+        mark(&self.shared, |_| {});
     }
 
     /// The host's text measurement. Every Text is laid out again.
@@ -332,12 +367,17 @@ impl QuickScene {
         self.shared.borrow_mut().waker = Some(Rc::new(waker));
     }
 
-    /// See [`TimerHook`].
+    /// Adds host work to step 3; see [`TimerHook`]. The engine's own timers
+    /// run without one.
     pub fn set_timer_hook(&mut self, hook: TimerHook) {
         self.timers = Some(hook);
     }
 
-    /// Warnings from the scene and its items.
+    /// Always empty: the scene's warnings go to the engine log
+    /// ([`Engine::set_log_handler`], [`Engine::take_log`]). Kept, and not
+    /// marked deprecated, until its callers are gone: they build with
+    /// warnings as errors.
+    #[allow(deprecated)]
     pub fn log(&self) -> &QuickLog {
         &self.log
     }
@@ -366,10 +406,19 @@ impl QuickScene {
 
     // ------------------------------------------------------------ frame
 
-    /// Pipeline steps 3-9 at time `now`.
+    /// Pipeline steps 3-9 at time `now`, in the host's clock.
+    ///
+    /// Engine timers run against [`Engine::now`]; their next deadline is
+    /// translated into the host's clock for `next_wake`, so the two clocks
+    /// need not share an epoch.
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
         self.frame += 1;
+        // Marks made during the frame are drained by it or reported
+        // through `next_wake`; they must not wake the host a second time.
+        self.shared.borrow_mut().dirty = true;
         // 3. Timers and animations.
+        let engine_now = engine.now();
+        engine.advance_timers(engine_now);
         if let Some(hook) = &mut self.timers {
             self.next_timer = hook(engine, now);
         }
@@ -379,10 +428,12 @@ impl QuickScene {
         if deleted > 0 || !dead.is_empty() {
             self.sweep_dead(engine);
         }
-        // 5. (Loader incubation lands with contract item 5.)
+        // 5. (Animations: none yet.)
         // 6. Polish.
         self.polish(engine);
-        // 7. (Layout of attached layouts: none in QtQuick.)
+        // 7. Incubate. New items join the tree and are laid out in this
+        // same frame, so what is shown is never half placed.
+        let incubating = self.incubate(engine);
         // 8. Sync.
         self.reconcile(engine);
         self.apply_geometry();
@@ -410,14 +461,54 @@ impl QuickScene {
         let pending = {
             let mut s = self.shared.borrow_mut();
             let p = s.pending();
-            s.dirty = p;
+            // Unfinished jobs need the next frame although nothing they
+            // made shows yet.
+            s.dirty = p || incubating;
             p
         };
         FrameOutput {
             snapshot: snap,
             changed,
-            next_wake: if pending { Some(now) } else { self.next_timer },
+            next_wake: if pending || incubating || engine.has_pending_calls() {
+                Some(now)
+            } else {
+                let engine_wake = engine
+                    .next_timer_deadline()
+                    .map(|d| now + d.saturating_since(engine_now));
+                match (engine_wake, self.next_timer) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                }
+            },
         }
+    }
+
+    /// Step 7: runs queued creation jobs for [`INCUBATION_BUDGET`] on the
+    /// engine's clock. Returns whether any are left for the next frame.
+    fn incubate(&mut self, engine: &Engine) -> bool {
+        for job in engine.take_incubations() {
+            self.incubator.spawn(Box::new(job));
+        }
+        if self.incubator.is_empty() {
+            return false;
+        }
+        let clock = engine.clock();
+        let budget = FrameBudget::new(clock.now(), INCUBATION_BUDGET);
+        let report = self.incubator.run_frame(&mut (), budget, &*clock);
+        for (_, fault) in &report.faults {
+            engine.log(
+                LogLevel::Warning,
+                SCENE_CATEGORY,
+                format!("a creation job failed: {fault:?}"),
+            );
+        }
+        if report.jobs_done > 0 {
+            // What was made can be shown and measured now.
+            self.reconcile(engine);
+            self.polish(engine);
+        }
+        // A finished job may have queued another (a Loader in the item).
+        !self.incubator.is_empty() || engine.has_incubations()
     }
 
     fn sweep_dead(&mut self, engine: &Engine) {
@@ -464,14 +555,18 @@ impl QuickScene {
                     Kind::Item | Kind::Rectangle => Ok(()),
                 };
                 if let Err(e) = r {
-                    self.log
-                        .warn(POLISH_CATEGORY, format!("polish failed: {e}"));
+                    engine.log(
+                        LogLevel::Warning,
+                        POLISH_CATEGORY,
+                        format!("polish failed: {e}"),
+                    );
                 }
             }
         }
         let left = std::mem::take(&mut self.shared.borrow_mut().polish);
         if !left.is_empty() {
-            self.log.warn(
+            engine.log(
+                LogLevel::Warning,
                 POLISH_CATEGORY,
                 format!(
                     "Possible polish loop: {} item(s) still dirty after {MAX_POLISH_PASSES} passes",
@@ -516,23 +611,23 @@ impl QuickScene {
 
         let mut effects = Vec::with_capacity(5);
         let shared = Rc::clone(&self.shared);
+        // Root-scoped: an effect scoped to `obj` dies with it silently, and
+        // this one has to see the death to drop the render node.
         effects.push(engine.effect(move |e| structure_effect(e, obj, &shared))?);
-        let log = self.log.clone();
-        effects.push(engine.effect(move |e| inherit_effect(e, obj, &inherit, &log))?);
-        let log = self.log.clone();
-        effects.push(engine.effect(move |e| anchors::run(e, obj, &anchors, &log))?);
+        effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, &inherit))?);
+        effects.push(engine.effect_in(obj, move |e| anchors::run(e, obj, &anchors))?);
         let shared = Rc::clone(&self.shared);
-        effects.push(engine.effect(move |e| geometry_effect(e, obj, &shared))?);
+        effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shared))?);
         if kind.polishes() {
             let shared = Rc::clone(&self.shared);
-            effects.push(engine.effect(move |e| polish_effect(e, obj, kind, &shared))?);
+            effects.push(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?);
         }
         if let Some(e) = self.entries.get_mut(&obj) {
             e.effects = effects;
         }
 
         let children: Vec<ObjectId> = engine
-            .untrack(|| child_items(engine, obj))
+            .untrack(|| shown_children(engine, obj))
             .into_iter()
             .filter(|c| engine.is_alive(*c) && is_item(engine, *c))
             .collect();
@@ -606,7 +701,7 @@ impl QuickScene {
                 continue;
             };
             let mut want: Vec<ObjectId> = engine
-                .untrack(|| child_items(engine, p))
+                .untrack(|| shown_children(engine, p))
                 .into_iter()
                 .filter(|c| engine.is_alive(*c) && is_item(engine, *c))
                 .collect();
@@ -616,7 +711,11 @@ impl QuickScene {
                 match self.entries.get_mut(c) {
                     None => {
                         if let Err(e) = self.adopt(engine, *c, Some(p), pnode, i) {
-                            self.log.warn(SCENE_CATEGORY, format!("adopt failed: {e}"));
+                            engine.log(
+                                LogLevel::Warning,
+                                SCENE_CATEGORY,
+                                format!("adopt failed: {e}"),
+                            );
                         }
                     }
                     Some(ce) => {
@@ -629,8 +728,11 @@ impl QuickScene {
                         if at != Some(node)
                             && let Err(e) = self.tree.reparent(node, pnode, Some(i))
                         {
-                            self.log
-                                .warn(SCENE_CATEGORY, format!("reparent failed: {e}"));
+                            engine.log(
+                                LogLevel::Warning,
+                                SCENE_CATEGORY,
+                                format!("reparent failed: {e}"),
+                            );
                         }
                     }
                 }
@@ -724,7 +826,7 @@ impl QuickScene {
                 (true, None) => {
                     let shared = Rc::clone(&self.shared);
                     let (o, kind) = (*obj, e.kind);
-                    match engine.effect(move |en| content_effect(en, o, kind, &shared)) {
+                    match engine.effect_in(o, move |en| content_effect(en, o, kind, &shared)) {
                         Ok(n) => {
                             e.content_effect = Some(n);
                             installed = true;
@@ -740,8 +842,11 @@ impl QuickScene {
             }
         }
         for err in failed {
-            self.log
-                .warn(SCENE_CATEGORY, format!("paint effect failed: {err}"));
+            engine.log(
+                LogLevel::Warning,
+                SCENE_CATEGORY,
+                format!("paint effect failed: {err}"),
+            );
         }
         installed
     }
@@ -816,7 +921,7 @@ impl QuickScene {
                 }
             }
             if is_a::<MouseArea>(engine, obj)
-                && engine.read(obj, Item::ENABLED.index).to_boolean()
+                && mouse_area_enabled(engine, obj)
                 && accepted_buttons(engine, obj) & button.bits() as i32 != 0
                 && self.press_mouse_area(engine, obj, ev, button)
             {
@@ -1021,25 +1126,24 @@ impl QuickScene {
         }
     }
 
-    /// Hover for `hoverEnabled` MouseAreas. Deviation: every hover-enabled
-    /// MouseArea under the pointer gets it, not just the topmost.
+    /// Hover for `hoverEnabled` MouseAreas, as Qt 6.11 delivers it
+    /// (observed with `qmltestrunner`; see `tests/pointer.rs`): the topmost
+    /// hover-enabled area under the pointer takes the hover, together with
+    /// the hover-enabled areas it is inside. Areas beneath it get nothing,
+    /// even when the top one is disabled.
     fn update_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) -> bool {
         let grabbed = match self.pointer.grab {
             Some(Grab::Mouse(m)) => Some(m),
             _ => None,
         };
-        let now: Vec<ObjectId> = hits
-            .iter()
-            .copied()
-            .filter(|o| {
-                Some(*o) != grabbed
-                    && is_a::<MouseArea>(engine, *o)
-                    && hover_enabled(engine, *o)
-                    && engine.read(*o, Item::ENABLED.index).to_boolean()
-            })
+        let now: Vec<ObjectId> = hover_chain(engine, hits)
+            .into_iter()
+            .filter(|o| Some(*o) != grabbed)
             .collect();
         let old = std::mem::take(&mut self.pointer.hovered);
-        for o in &old {
+        // Leaving runs from the innermost area out, entering from the
+        // outermost in, and every exit comes before the first enter.
+        for o in old.iter().rev() {
             if !now.contains(o)
                 && Some(*o) != grabbed
                 && engine.is_alive(*o)
@@ -1053,8 +1157,9 @@ impl QuickScene {
             set_mouse_pos(engine, *m, local);
             if set_contains(engine, *m, true) {
                 emit(engine, *m, "entered", &[]);
-            }
-            if ev.kind == PointerKind::Move {
+            } else if ev.kind == PointerKind::Move {
+                // The move that enters an area is not also a position
+                // change for it.
                 emit_mouse(engine, *m, "positionChanged", ev, local, false);
             }
         }
@@ -1071,12 +1176,13 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         mark(shared, |s| s.dead.push(obj));
         return;
     }
-    let parent = e.read(obj, Item::PARENT.index).as_object();
-    if parent != e.visual_parent(obj) {
-        // `parent` was assigned directly; bring the lists in step.
-        let _ = e.untrack(|| set_parent_item(e, obj, parent));
+    let _ = crate::tree::child_items(e, obj);
+    if is_a::<Loader>(e, obj) {
+        // A Loader's item is its child from the start but shown only once
+        // it is made (`shown_children`).
+        let _ = e.read(obj, Loader::ITEM.index);
+        let _ = e.read(obj, Loader::STATUS.index);
     }
-    let _ = child_items(e, obj);
     mark(shared, |s| {
         s.structure.insert(obj);
     });
@@ -1084,7 +1190,6 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
 
 fn geometry_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if !e.is_alive(obj) {
-        mark(shared, |s| s.dead.push(obj));
         return;
     }
     let g = Geom::read(e, obj);
@@ -1128,13 +1233,12 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
 /// `visible` and `enabled` read false under a hidden or disabled parent
 /// (Qt documents both as inherited). The item's own value sits below an
 /// override layer and comes back when the parent turns on again.
-fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, log: &QuickLog) {
+fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>) {
     if !e.is_alive(obj) {
         return;
     }
     let parent = e
-        .read(obj, Item::PARENT.index)
-        .as_object()
+        .visual_parent(obj)
         .filter(|p| e.is_alive(*p) && is_item(e, *p));
     let mut st = st.borrow_mut();
     let st = &mut *st;
@@ -1142,9 +1246,19 @@ fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, log: &QuickL
         (Item::VISIBLE.index, &mut st.visible),
         (Item::ENABLED.index, &mut st.enabled),
     ] {
-        let parent_on = parent.is_none_or(|q| e.read(q, p).to_boolean());
+        let parent_on = if p == Item::ENABLED.index {
+            // `MouseArea.enabled` is the area's own switch: it neither
+            // follows a disabled ancestor nor disables what is inside.
+            is_a::<MouseArea>(e, obj) || parent.is_none_or(|q| item_enabled(e, q))
+        } else {
+            parent.is_none_or(|q| e.read(q, p).to_boolean())
+        };
         if let Err(err) = inherit_one(e, obj, p, slot, parent_on) {
-            log.warn(SCENE_CATEGORY, format!("inherit failed: {err}"));
+            e.log(
+                LogLevel::Warning,
+                SCENE_CATEGORY,
+                format!("inherit failed: {err}"),
+            );
         }
     }
 }
@@ -1227,13 +1341,20 @@ fn polish_text(engine: &Engine, obj: ObjectId, m: &dyn TextMeasurer) -> Result<(
     } else {
         natural.clone()
     };
-    // An empty Text is still one line tall.
-    let implicit_height = if natural.lines.is_empty() {
+    // An empty Text is still one line: its height, `contentHeight` and
+    // `lineCount` say so, as in Qt.
+    let empty = natural.lines.is_empty();
+    let implicit_height = if empty {
         natural.line_advance
     } else if wraps {
         actual.height()
     } else {
         natural.height()
+    };
+    let content_height = if empty {
+        natural.line_advance
+    } else {
+        actual.height()
     };
     engine.batch(|| {
         write_computed(
@@ -1258,13 +1379,13 @@ fn polish_text(engine: &Engine, obj: ObjectId, m: &dyn TextMeasurer) -> Result<(
             engine,
             obj,
             Text::CONTENT_HEIGHT.index,
-            Value::Real(actual.height()),
+            Value::Real(content_height),
         )?;
         write_computed(
             engine,
             obj,
             Text::LINE_COUNT.index,
-            Value::Int(actual.lines.len() as i32),
+            Value::Int(actual.lines.len().max(1) as i32),
         )?;
         write_computed(
             engine,
@@ -1287,6 +1408,58 @@ fn set(engine: &Engine, obj: ObjectId, p: PropIndex, v: Value) {
 
 fn emit(engine: &Engine, obj: ObjectId, name: &str, args: &[Value]) {
     let _ = engine.emit_by_name(obj, name, args);
+}
+
+/// Whether `obj` leaves the items inside it enabled. A MouseArea's own
+/// `enabled` does not count (Qt documents that it does not cascade), so
+/// the answer comes from the nearest ancestor that is not one.
+fn item_enabled(e: &Engine, obj: ObjectId) -> bool {
+    let mut cur = Some(obj);
+    // Bounded so a corrupt parent cycle cannot hang.
+    for _ in 0..4096 {
+        let Some(o) = cur.filter(|o| e.is_alive(*o) && is_item(e, *o)) else {
+            break;
+        };
+        if !is_a::<MouseArea>(e, o) {
+            return e.read(o, Item::ENABLED.index).to_boolean();
+        }
+        cur = e.visual_parent(o);
+    }
+    true
+}
+
+/// Whether a MouseArea takes pointer events: its own `enabled`, inside
+/// enabled items.
+fn mouse_area_enabled(e: &Engine, m: ObjectId) -> bool {
+    e.read(m, Item::ENABLED.index).to_boolean()
+        && e.visual_parent(m).is_none_or(|p| item_enabled(e, p))
+}
+
+/// The MouseAreas the pointer hovers, outermost first, given the items
+/// under it (topmost first).
+fn hover_chain(e: &Engine, hits: &[ObjectId]) -> Vec<ObjectId> {
+    let takes_hover = |o: ObjectId| is_a::<MouseArea>(e, o) && hover_enabled(e, o);
+    // A disabled area still takes the hover away from what is beneath it;
+    // one inside a disabled item is not there at all.
+    let Some(top) = hits
+        .iter()
+        .copied()
+        .find(|o| takes_hover(*o) && e.visual_parent(*o).is_none_or(|p| item_enabled(e, p)))
+    else {
+        return Vec::new();
+    };
+    let mut chain = Vec::new();
+    let mut cur = Some(top);
+    for _ in 0..4096 {
+        let Some(o) = cur else { break };
+        // An ancestor is hovered whether or not the pointer is inside it.
+        if takes_hover(o) && e.read(o, Item::ENABLED.index).to_boolean() {
+            chain.push(o);
+        }
+        cur = e.visual_parent(o);
+    }
+    chain.reverse();
+    chain
 }
 
 fn accepted_buttons(engine: &Engine, m: ObjectId) -> i32 {

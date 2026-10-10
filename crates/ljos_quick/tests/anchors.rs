@@ -140,9 +140,9 @@ fn three_horizontal_anchors_warn_and_keep_left_and_right() {
         "anchors.horizontalCenter",
         line(&e, root, "horizontalCenter"),
     );
-    let s = scene(&e, root, 300.0, 300.0);
+    let _s = scene(&e, root, 300.0, 300.0);
     assert_eq!(rect(&e, k), (0.0, 0.0, 200.0, 0.0));
-    let log = s.log().take();
+    let log = e.take_log();
     assert_eq!(log.len(), 1, "{log:?}");
     assert_eq!(log[0].category, ANCHORS_CATEGORY);
     assert_eq!(
@@ -160,8 +160,8 @@ fn anchoring_to_a_non_sibling_warns() {
     let inner = make::<Item>(&e, Some(a));
     let b = make::<Item>(&e, Some(root));
     set(&e, b, "anchors.left", line(&e, inner, "right"));
-    let s = scene(&e, root, 300.0, 300.0);
-    let log = s.log().take();
+    let _s = scene(&e, root, 300.0, 300.0);
+    let log = e.take_log();
     assert!(
         log.iter().any(|l| l
             .message

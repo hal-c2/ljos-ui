@@ -235,7 +235,12 @@ impl MouseArea {
 /// `TapHandler` (QtQuick). Its parent item is the object that owns it,
 /// and it lives in that item's `resources`.
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick", name = "TapHandler", extends = QtObject)]
+#[qml(
+    module = "QtQuick",
+    name = "TapHandler",
+    extends = QtObject,
+    enums = crate::enums::tap_handler_enums
+)]
 pub struct TapHandler {
     #[qml(base)]
     pub object: QtObject,

@@ -10,12 +10,11 @@
 use std::cell::RefCell;
 
 use ljos_engine::{
-    Engine, EngineError, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode, Value,
-    WriteKind,
+    Engine, EngineError, LogLevel, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode,
+    Value, WriteKind,
 };
 
 use crate::item::{AnchorLine, AnchorProps, Edge, Item, effective_margin, num};
-use crate::log::QuickLog;
 
 /// Log category for anchor warnings.
 pub const CATEGORY: &str = "qt.quick.anchors";
@@ -77,9 +76,7 @@ impl Ctx<'_> {
         }
         let (bx, by) = if Some(target) == self.parent {
             (0.0, 0.0)
-        } else if self.parent.is_some()
-            && e.read(target, Item::PARENT.index).as_object() == self.parent
-        {
+        } else if self.parent.is_some() && e.visual_parent(target) == self.parent {
             (num(e, target, Item::X.index), num(e, target, Item::Y.index))
         } else {
             self.warn("Cannot anchor to an item that isn't a parent or sibling.");
@@ -128,7 +125,7 @@ struct Span {
 }
 
 /// The body of an item's anchors effect.
-pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>, log: &QuickLog) {
+pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) {
     if !engine.is_alive(obj) {
         return;
     }
@@ -136,7 +133,7 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>, 
     let mut cx = Ctx {
         engine,
         obj,
-        parent: engine.read(obj, Item::PARENT.index).as_object(),
+        parent: engine.visual_parent(obj),
         warnings: Vec::new(),
     };
     let fill = engine.read(obj, a.fill).as_object();
@@ -157,7 +154,7 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>, 
     if cx.warnings != st.warned {
         for w in &cx.warnings {
             if !st.warned.contains(w) {
-                log.warn(CATEGORY, w.clone());
+                engine.log(LogLevel::Warning, CATEGORY, w.clone());
             }
         }
         st.warned = cx.warnings;

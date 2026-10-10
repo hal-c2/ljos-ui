@@ -236,7 +236,7 @@ fn polish_stops_after_the_pass_limit_and_warns() {
     .unwrap();
     let mut s = scene(&e, root, 300.0, 300.0);
     frame(&mut s, &e);
-    let log = s.log().take();
+    let log = e.take_log();
     assert!(
         log.iter()
             .any(|l| l.category == ljos_quick::POLISH_CATEGORY),
