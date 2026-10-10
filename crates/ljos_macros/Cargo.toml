@@ -1,0 +1,20 @@
+[package]
+name = "ljos_macros"
+description = "Derive and attribute macros that expose Rust types to QML in Ljós"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+[lints]
+workspace = true

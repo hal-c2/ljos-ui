@@ -1,0 +1,28 @@
+[package]
+name = "ljos_js"
+description = "Tier-2 JS host: one rquickjs Runtime and Context per Engine, with deadlines, bytecode and host-object wrappers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `std` is the only rquickjs feature we need: classes, properties and
+# array-buffer are always on in 0.14 (the feature flags are deprecated no-ops),
+# and Ljós has no module imports yet, so `loader` stays off.
+rquickjs = { workspace = true, features = ["std"] }
+ljos_runtime = { path = "../ljos_runtime" }
+slotmap.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[features]
+# Generates the QuickJS bindings at build time instead of using the bundled
+# per-target files. Needed for aarch64-linux-android and other targets without
+# bundled bindings (docs/spikes/02-rquickjs-android-bindgen.md).
+bindgen = ["rquickjs/bindgen"]
+
+[lints]
+workspace = true

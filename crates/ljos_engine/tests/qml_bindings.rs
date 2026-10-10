@@ -1,0 +1,499 @@
+//! QML compiled with `ljos_compiler` and run on the engine: bindings,
+//! geometry and property semantics. Mirrors features/bindings/*.feature
+//! and features/items/geometry.feature.
+
+mod support;
+
+use ljos_engine::{Color, Value};
+use support::engine;
+
+const BINDINGS: &str = r#"
+import QtQuick
+Item {
+  objectName: "root"
+  property int a: 1
+  property int b: a + 1
+}
+"#;
+
+#[test]
+fn a_binding_is_evaluated_once_at_creation() {
+    let h = engine();
+    let root = h.load(BINDINGS);
+    assert_eq!(h.num(root, "b"), 2.0);
+}
+
+#[test]
+fn a_binding_follows_its_dependencies() {
+    let h = engine();
+    let root = h.load(BINDINGS);
+    h.set(root, "a", Value::Int(5));
+    assert_eq!(h.num(root, "b"), 6.0);
+}
+
+#[test]
+fn assigning_a_value_breaks_the_binding() {
+    let h = engine();
+    let root = h.load(BINDINGS);
+    h.set(root, "b", Value::Int(100));
+    h.set(root, "a", Value::Int(8));
+    assert_eq!(h.num(root, "b"), 100.0);
+}
+
+#[test]
+fn qt_binding_puts_a_binding_back() {
+    let h = engine();
+    h.files(&[(
+        "Main",
+        r#"
+import QtQuick
+Item {
+  property int a: 1
+  property int b: a + 1
+  function rebind() { b = Qt.binding(function() { return a + 1 }) }
+  function rebindTimesTen() { b = Qt.binding(() => a * 10) }
+  function assign(v) { b = v }
+}
+"#,
+    )]);
+    let root = h.engine.create_from_url("Main", None, vec![]).unwrap();
+    h.engine
+        .invoke_by_name(root, "assign", &[Value::Int(100)])
+        .unwrap();
+    h.set(root, "a", Value::Int(8));
+    assert_eq!(h.num(root, "b"), 100.0);
+    h.engine.invoke_by_name(root, "rebind", &[]).unwrap();
+    h.set(root, "a", Value::Int(9));
+    assert_eq!(h.num(root, "b"), 10.0);
+    h.engine
+        .invoke_by_name(root, "rebindTimesTen", &[])
+        .unwrap();
+    h.set(root, "a", Value::Int(3));
+    assert_eq!(h.num(root, "b"), 30.0);
+    assert!(h.warnings().is_empty());
+}
+
+#[test]
+fn a_js_assignment_in_a_handler_breaks_a_binding() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property int a: 1
+  property int b: a * 2
+  signal poke()
+  onPoke: b = 7
+}
+"#,
+    );
+    h.engine.emit_by_name(root, "poke", &[]).unwrap();
+    h.set(root, "a", Value::Int(4));
+    assert_eq!(h.num(root, "b"), 7.0);
+}
+
+#[test]
+fn a_binding_loop_is_reported_with_qts_message() {
+    let h = engine();
+    h.engine.set_eager_bindings(true);
+    h.load(
+        r#"
+import QtQuick
+Item {
+  property int p: q + 1
+  property int q: p + 1
+}
+"#,
+    );
+    // Once, in Qt's two-line form for a declared property.
+    let w = h.warnings();
+    let p_msgs: Vec<_> = w.iter().filter(|m| m.contains("\"p\"")).collect();
+    assert_eq!(
+        p_msgs,
+        vec![
+            "file:///Main.qml:3:1: QML Main: Binding loop detected for property \"p\":\n\
+             file:///Main.qml:4:3"
+        ],
+        "{w:?}"
+    );
+    assert!(!w.iter().any(|m| m.contains("re-ran")), "{w:?}");
+}
+
+#[test]
+fn an_acyclic_chain_has_no_warnings() {
+    let h = engine();
+    let root = h.load(
+        "import QtQuick\nItem { property int p: 1; property int q: p + 1; property int r: q + 1 }\n",
+    );
+    assert_eq!(h.num(root, "r"), 3.0);
+    assert!(h.warnings().is_empty());
+}
+
+const GEOMETRY: &str = r##"
+import QtQuick
+Item {
+  objectName: "root"
+  width: 200; height: 100
+  Rectangle {
+    objectName: "box"
+    x: 10; y: 20
+    width: parent.width / 2
+    height: 30
+    color: "#ff0000"
+  }
+}
+"##;
+
+#[test]
+fn a_childs_width_is_bound_to_its_parent() {
+    let h = engine();
+    let root = h.load(GEOMETRY);
+    let box_ = h.find(root, "box");
+    assert_eq!(h.num(box_, "width"), 100.0);
+    assert_eq!(h.num(box_, "x"), 10.0);
+    assert_eq!(h.engine.visual_parent(box_), Some(root));
+}
+
+#[test]
+fn a_child_follows_its_parent_when_the_parent_resizes() {
+    let h = engine();
+    let root = h.load(GEOMETRY);
+    let box_ = h.find(root, "box");
+    h.set(root, "width", Value::Int(400));
+    assert_eq!(h.num(box_, "width"), 200.0);
+}
+
+#[test]
+fn rectangle_reports_its_colour_as_hex() {
+    let h = engine();
+    let root = h.load(GEOMETRY);
+    let box_ = h.find(root, "box");
+    assert_eq!(
+        h.get(box_, "color"),
+        Value::Color(Color::from_rgba8(255, 0, 0, 255))
+    );
+    h.set(box_, "color", Value::from("#0000FF"));
+    assert_eq!(h.get(box_, "color").to_js_string().as_str(), "#0000ff");
+}
+
+#[test]
+fn setting_a_property_that_does_not_exist_is_rejected() {
+    let h = engine();
+    let root = h.load(GEOMETRY);
+    let box_ = h.find(root, "box");
+    assert!(
+        h.engine
+            .write_by_name(box_, "nothing", Value::Int(1))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_parent_path_binding_reads_through_tier_zero_and_js_alike() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  id: root
+  width: 50
+  Item { objectName: "a"; width: root.width }
+  Item { objectName: "b"; width: root.width + 0 }
+  Item { objectName: "c"; width: parent.width * 2 }
+}
+"#,
+    );
+    let (a, b, c) = (h.find(root, "a"), h.find(root, "b"), h.find(root, "c"));
+    h.set(root, "width", Value::Int(70));
+    assert_eq!(h.num(a, "width"), 70.0);
+    assert_eq!(h.num(b, "width"), 70.0);
+    assert_eq!(h.num(c, "width"), 140.0);
+}
+
+#[test]
+fn grouped_properties_set_and_bind() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Rectangle {
+  property int w: 3
+  border.width: w
+  border { color: "blue" }
+}
+"#,
+    );
+    assert_eq!(h.num(root, "border.width"), 3.0);
+    h.set(root, "w", Value::Int(5));
+    assert_eq!(h.num(root, "border.width"), 5.0);
+    assert_eq!(
+        h.get(root, "border.color").to_js_string().as_str(),
+        "#0000ff"
+    );
+}
+
+#[test]
+fn change_handlers_run_for_initial_bindings_before_on_completed() {
+    let h = engine();
+    h.load(
+        r#"
+import QtQuick
+Item {
+  property int a: 1
+  property int b: a + 1
+  property int c: 5
+  onBChanged: console.log("b", b)
+  onCChanged: console.log("c", c)
+  Component.onCompleted: console.log("done")
+}
+"#,
+    );
+    assert_eq!(h.log(), vec!["b 2", "done"]);
+}
+
+#[test]
+fn aliases_read_and_write_their_target() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property alias kidWidth: kid.width
+  property alias kidItem: kid
+  Item { id: kid; objectName: "kid"; width: 10 }
+}
+"#,
+    );
+    let kid = h.find(root, "kid");
+    assert_eq!(h.num(root, "kidWidth"), 10.0);
+    h.set(root, "kidWidth", Value::Int(33));
+    assert_eq!(h.num(kid, "width"), 33.0);
+    assert_eq!(h.get(root, "kidItem"), Value::Object(kid));
+}
+
+#[test]
+fn enums_and_object_literals() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  enum Size { Small, Big = 5 }
+  property int s: Main.Big
+  property var v: ({ a: 1, b: "x" })
+  property var lit: { "k": 2 }
+  property int fromJs: v.a + lit.k
+}
+"#,
+    );
+    assert_eq!(h.num(root, "s"), 5.0);
+    assert_eq!(h.num(root, "fromJs"), 3.0);
+}
+
+#[test]
+fn a_type_error_in_a_binding_is_logged_with_its_location() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property Item none
+  property int w: none.width
+}
+"#,
+    );
+    assert_eq!(h.num(root, "w"), 0.0);
+    let w = h.warnings();
+    assert!(
+        w.iter().any(|m| m.contains("file:///Main.qml:5")
+            && m.contains("TypeError: Cannot read property 'width' of null")),
+        "{w:?}"
+    );
+}
+
+#[test]
+fn script_functions_are_callable_from_js_and_rust() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property int a: 4
+  function twice(x) { return x * 2 }
+  property int b: twice(a)
+}
+"#,
+    );
+    assert_eq!(h.num(root, "b"), 8.0);
+    let r = h
+        .engine
+        .invoke_by_name(root, "twice", &[Value::Int(21)])
+        .unwrap();
+    assert_eq!(r.to_number(), 42.0);
+}
+
+#[test]
+fn signals_with_arguments_reach_handlers() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  signal ping(int n, string s)
+  onPing: (n, s) => console.log("ping", n, s)
+  property int last
+  Item { id: kid; signal pong(int n) }
+  Component.onCompleted: { kid.pong.connect(v => last = v); kid.pong(9) }
+}
+"#,
+    );
+    h.engine
+        .emit_by_name(root, "ping", &[Value::Int(3), Value::from("x")])
+        .unwrap();
+    assert_eq!(h.log(), vec!["ping 3 x"]);
+    assert_eq!(h.num(root, "last"), 9.0);
+}
+
+#[test]
+fn console_messages_go_to_the_log_sink_with_category() {
+    let h = engine();
+    h.load(
+        r#"
+import QtQuick
+Item {
+  Component.onCompleted: {
+    console.log("a", 1)
+    console.warn("w")
+    console.error("e")
+    console.info("i")
+  }
+}
+"#,
+    );
+    let entries = h.log_entries();
+    let got: Vec<(String, String)> = entries
+        .iter()
+        .map(|e| (format!("{:?}", e.level), e.message.clone()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("Debug".into(), "a 1".into()),
+            ("Warning".into(), "w".into()),
+            ("Critical".into(), "e".into()),
+            ("Info".into(), "i".into()),
+        ]
+    );
+    assert!(entries.iter().all(|e| e.category == "qml"));
+}
+
+#[test]
+fn globals_qt_helpers_and_string_arg() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property color c: Qt.rgba(1, 0, 0, 1)
+  property string s: "%1 of %2".arg(3).arg("five")
+  property string t: qsTr("Hello")
+  property real px: Qt.point(3, 4).y
+}
+"#,
+    );
+    assert_eq!(h.get(root, "c").to_js_string().as_str(), "#ff0000");
+    assert_eq!(h.get(root, "s").to_js_string().as_str(), "3 of five");
+    assert_eq!(h.get(root, "t").to_js_string().as_str(), "Hello");
+    assert_eq!(h.num(root, "px"), 4.0);
+}
+
+#[test]
+fn list_properties_take_objects_in_order() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property list<Item> things: [ Item { objectName: "one" }, Item { objectName: "two" } ]
+  property int n: things.length
+  property string second: things[1].objectName
+}
+"#,
+    );
+    assert_eq!(h.num(root, "n"), 2.0);
+    assert_eq!(h.get(root, "second").to_js_string().as_str(), "two");
+    // Not visual children: only `data` routes items to `children`.
+    assert!(h.engine.visual_children(root).is_empty());
+}
+
+#[test]
+fn non_items_in_the_default_property_become_resources() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  Item { objectName: "visual" }
+  QtObject { objectName: "plain" }
+  property int kids: children.length
+  property int res: resources.length
+  property int all: data.length
+}
+"#,
+    );
+    assert_eq!(h.num(root, "kids"), 1.0);
+    assert_eq!(h.num(root, "res"), 1.0);
+    assert_eq!(h.num(root, "all"), 2.0);
+}
+
+#[test]
+fn a_change_handler_sees_the_new_value_after_a_js_assignment() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property int a: 1
+  onAChanged: console.log("a is", a)
+  function set(v) { a = v }
+}
+"#,
+    );
+    h.engine
+        .invoke_by_name(root, "set", &[Value::Int(4)])
+        .unwrap();
+    h.engine
+        .invoke_by_name(root, "set", &[Value::Int(4)])
+        .unwrap();
+    assert_eq!(h.log(), vec!["a is 4"]);
+}
+
+#[test]
+fn translated_strings_re_evaluate_on_a_language_change() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  property string plain: qsTr("Open")
+  property string bound: qsTr("Close") + "!"
+}
+"#,
+    );
+    assert_eq!(h.get(root, "plain").to_js_string().as_str(), "Open");
+    assert_eq!(h.get(root, "bound").to_js_string().as_str(), "Close!");
+    // No translator: retranslating keeps the source text.
+    h.engine.retranslate();
+    assert_eq!(h.get(root, "bound").to_js_string().as_str(), "Close!");
+}
+
+#[test]
+fn eval_js_sees_globals() {
+    let h = engine();
+    h.load("import QtQuick\nItem {}\n");
+    let v = h
+        .engine
+        .eval_js("Qt.rgba(0, 1, 0, 1) + ' ' + '%1-%2'.arg('a').arg('b')")
+        .unwrap();
+    assert_eq!(v.to_js_string().as_str(), "#00ff00 a-b");
+}

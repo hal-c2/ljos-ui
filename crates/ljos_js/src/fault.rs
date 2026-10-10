@@ -1,0 +1,74 @@
+use std::time::Duration;
+
+/// Why a run of JS failed (ARCHITECTURE.md section 9.3).
+///
+/// `ljos_runtime` wraps or converts this into its own supervisor-facing
+/// `JsFault`; the JS-specific variants are defined here because only this crate
+/// can classify rquickjs errors.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum JsFault {
+    #[error("JS exception: {message}{}", location(.file, .line))]
+    JsException {
+        message: String,
+        /// The raw QuickJS stack text (JS positions, not mapped).
+        stack: String,
+        /// Module name, or the QML file when a [`SourceMapper`] knows it.
+        file: Option<String>,
+        line: Option<u32>,
+    },
+    #[error("JS `{label}` interrupted after {after:?}")]
+    JsInterrupted { label: String, after: Duration },
+    #[error("JS heap limit exceeded in `{label}`")]
+    JsOutOfMemory { label: String },
+    #[error("panic in `{label}`: {message}")]
+    Panic { label: String, message: String },
+    /// A bug or misuse on the Rust side (stale handle, re-entrant `enter`,
+    /// unsupported value shape), not a script failure.
+    #[error("JS host: {0}")]
+    Internal(String),
+}
+
+impl From<JsFault> for ljos_runtime::Fault {
+    fn from(f: JsFault) -> Self {
+        use ljos_runtime::{Fault, JsErrorInfo};
+        match f {
+            JsFault::JsException {
+                message,
+                stack,
+                file,
+                line,
+            } => Fault::JsException(JsErrorInfo {
+                message,
+                file: file.map(Into::into),
+                line: line.unwrap_or(0),
+                column: 0,
+                stack: (!stack.is_empty()).then_some(stack),
+            }),
+            JsFault::JsInterrupted { after, .. } => Fault::JsInterrupted { slice: after },
+            JsFault::JsOutOfMemory { .. } => Fault::JsOutOfMemory,
+            JsFault::Panic { label, message } => {
+                Fault::Panic(format!("in `{label}`: {message}").into())
+            }
+            JsFault::Internal(m) => Fault::Internal(m),
+        }
+    }
+}
+
+fn location(file: &Option<String>, line: &Option<u32>) -> String {
+    match (file, line) {
+        (Some(f), Some(l)) => format!(" ({f}:{l})"),
+        (Some(f), None) => format!(" ({f})"),
+        _ => String::new(),
+    }
+}
+
+impl From<rquickjs::Error> for JsFault {
+    fn from(e: rquickjs::Error) -> Self {
+        JsFault::Internal(e.to_string())
+    }
+}
+
+/// Maps a JS position `(module name, line)` to the position in the source file
+/// it was generated from. Source maps plug in here later; until then the
+/// compiler's line table does not exist and the identity mapping applies.
+pub type SourceMapper = Box<dyn Fn(&str, u32) -> Option<(String, u32)>>;
