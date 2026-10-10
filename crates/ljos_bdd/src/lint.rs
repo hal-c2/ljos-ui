@@ -227,11 +227,12 @@ mod tests {
         fs::write(dir.join(name), body).unwrap();
     }
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("ljos-lint-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    // Removed on drop, so test runs leave nothing behind in the temp dir.
+    fn tmp(tag: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("ljos-lint-{tag}-"))
+            .tempdir()
+            .unwrap()
     }
 
     #[test]
@@ -244,11 +245,11 @@ mod tests {
     fn a_clean_file_passes() {
         let d = tmp("clean");
         write(
-            &d,
+            d.path(),
             "a.feature",
             "# Sources:\n#   https://doc.qt.io/\n\n@ljos-only\nFeature: F\n  Scenario: s\n    Given the QML:\n      \"\"\"qml\n      Item {}\n      \"\"\"\n    When \"A.qml\" is loaded\n    Then the object \"x\" exists\n",
         );
-        let r = lint(&d, STEPS);
+        let r = lint(d.path(), STEPS);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!((r.scenarios, r.verified), (1, 1));
     }
@@ -257,11 +258,11 @@ mod tests {
     fn reports_each_kind_of_problem() {
         let d = tmp("bad");
         write(
-            &d,
+            d.path(),
             "b.feature",
             "@qt-parity\nFeature: F\n  Scenario: s\n    When the egui frame is drawn\n",
         );
-        let r = lint(&d, STEPS).errors.join("\n");
+        let r = lint(d.path(), STEPS).errors.join("\n");
         for needle in ["`# Sources:`", "Qt version", "no step definition", "egui"] {
             assert!(r.contains(needle), "missing {needle:?} in:\n{r}");
         }
@@ -272,14 +273,14 @@ mod tests {
         let d = tmp("long");
         let body = "Item {}\n".repeat(26);
         write(
-            &d,
+            d.path(),
             "c.feature",
             &format!(
                 "# Sources:\n#   x\nFeature: F\n  Scenario: s\n    Given the QML:\n      \"\"\"qml\n{body}      \"\"\"\n"
             ),
         );
         assert!(
-            lint(&d, STEPS)
+            lint(d.path(), STEPS)
                 .errors
                 .iter()
                 .any(|e| e.contains("26 lines"))
