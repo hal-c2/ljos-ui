@@ -25,11 +25,17 @@ futures.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 regex.workspace = true
+# Image files for scenarios are made by code (src/fixture.rs).
+png.workspace = true
+jpeg-encoder.workspace = true
 # The Ljós backend. This is a test tool, so it may link the compiler (and so
 # the parser); shipped runtimes never do (ARCHITECTURE.md principle 5).
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_compiler = { path = "../ljos_compiler" }
+ljos_controls = { path = "../ljos_controls" }
 ljos_engine = { path = "../ljos_engine" }
+# `.ts` catalogues of scenarios, read as a development build reads them.
+ljos_i18n = { path = "../ljos_i18n" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
 qml_front = { path = "../qml_front" }

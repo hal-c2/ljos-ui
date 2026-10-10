@@ -114,21 +114,30 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 |---|---|
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
 | `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet |
+| `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
+| `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
+| `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
 
 ### When
 
 | Step | Meaning |
 |---|---|
 | `When "X.qml" is loaded` | create an instance of `X.qml`; objects become findable by `objectName` |
+| `When the UI language is set to "…"` | what assigning `Qt.uiLanguage` does (`"is_IS"`, `"de"`, `""`) |
 | `When the property "p" of "o" is set to V` | assign from JavaScript (breaks a binding) |
 | `When the property "p" of "o" is bound to "expr"` | assign `Qt.binding(() => expr)`; `expr` names `o`'s properties unqualified |
 | `When the method "m" of "o" is called` | call with no arguments |
 | `When the method "m" of "o" is called with V, V` | call with arguments |
 | `When N milliseconds pass` / `When N second(s) pass` | application time passes (`1 second passes`, `0.5 seconds pass`) |
 | `When the user clicks the "role" "name"` | click the control with that accessible role and name |
-| `When the user presses "chord"` | key chord, e.g. `"Ctrl+S"` |
+| `When an assistive technology focuses the "role" named "name"` | what a screen reader's "move the focus here" does; an item may refuse |
+| `When the user presses "chord"` | press and release a key chord: `"Ctrl+S"`, `"Shift+Tab"`, `"Return"`, `"A"` (key names as in a `Shortcut` sequence) |
+| `When the user holds down "chord" until it repeats N times` | one press, `N` auto-repeated presses, one release |
+| `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back |
 | `When the user touches X, Y` | touch at a position |
+| `When the user presses the pointer at X, Y` / `releases the pointer at X, Y` | the two halves of a click, for what happens while the button is held |
+| `When the user moves the pointer to X, Y` | move the pointer, with the button held if it was pressed and not released (a drag), without it otherwise (hover) |
 
 ### Then
 
@@ -148,6 +157,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
 | `Then the "role" named "name" is described as "text"` | its accessible description; `""` when it has none |
 | `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |
+| `Then the accessibility tree's focus is the "role" named "name"` | the one node a screen reader reads as having the keyboard; the `"window"` named `""` when no item has it |
 
 ### Planned (backlog scenarios may use them; not built yet)
 
@@ -164,3 +174,9 @@ types. The Qt oracle (`backend/qt.rs`) replays the scenario's operations in a ge
 by `qml6` for every question a step asks (about 0.1–0.3 s each), so keep `@qt-parity` scenarios short.
 It cannot observe animation midpoints, default accessible names or text pixels; such scenarios are
 `@ljos-only` or `@qt-diverges`.
+
+A scenario that presses keys or clicks runs `qml6` on Qt's `vnc` platform, the one that takes input.
+That server has no password and listens on every interface, so the run gets a private network
+namespace and a relay to a unix socket. This needs Linux with `unshare`, `ip` and `socat`, and
+unprivileged user namespaces. Elsewhere such a scenario fails with a message that says so;
+`LJOS_BDD_OPEN_VNC=1` runs the server on an open port of the host instead.

@@ -14,6 +14,12 @@ Item {
     property var roots: []
     property var out: []
     property int pc: 0
+    // Input steps: `waiting` until the pointer move that ends a step's events
+    // arrives (rfb.rs), counted in `acks`.
+    property bool waiting: false
+    property int acks: 0
+    property bool wantActive: true
+    property var other: null
 
 /*BINDERS*/
     function ser(v) {
@@ -86,6 +92,7 @@ Item {
         case "read": { var r = owner(find(op.obj), op.prop); return ser(r.o[r.p]) }
         case "call": { var t = find(op.obj); return ser(t[op.method].apply(t, op.args)) }
         case "exists": { try { find(op.obj); return true } catch (e) { return false } }
+        case "language": { Qt.uiLanguage = op.value; return null }
         case "nop": return null
         default: throw new Error("unknown op " + op.op)
         }
@@ -105,11 +112,51 @@ Item {
                 driver.grabToImage(function(res) { res.saveToFile(grabPath); run() })
                 return
             }
+            if (op.op === "key" || op.op === "pointer") {
+                out.push({})
+                waiting = true
+                console.log("@@input@@" + (pc - 1))
+                return
+            }
+            if (op.op === "active") { out.push({}); activate(op.value); return }
             try { out.push({ value: exec(op) }) } catch (e) { out.push({ error: String(e.message || e) }) }
         }
         finish()
     }
 
     Timer { id: pause; repeat: false; onTriggered: driver.run() }
-    Component.onCompleted: Qt.callLater(run)
+
+    // Another window takes the keyboard, as when the user switches windows.
+    function activate(on) {
+        if (on) {
+            driver.Window.window.requestActivate()
+        } else {
+            if (!other) other = otherWindow.createObject(driver)
+            other.visible = true
+            other.requestActivate()
+        }
+        wantActive = on
+        settle.restart()
+    }
+    Component { id: otherWindow; Window { x: 0; y: 0; width: 1; height: 1; flags: Qt.FramelessWindowHint } }
+    // An inactive window has no active focus item; an active one always has
+    // one (its content item at least).
+    Timer {
+        id: settle; interval: 5; repeat: true
+        onTriggered: if ((driver.Window.activeFocusItem !== null) === driver.wantActive) { stop(); driver.run() }
+    }
+/*INPUT*/
+
+    // Focus follows the active window, and a window becomes active a moment
+    // after it is shown; the program starts then. The timer is for a platform
+    // that never activates a window: late is better than never.
+    property bool started: false
+    function start() {
+        if (started) return
+        started = true
+        run()
+    }
+    Window.onActiveFocusItemChanged: if (Window.activeFocusItem) Qt.callLater(start)
+    Timer { interval: 1000; running: true; onTriggered: driver.start() }
+    Component.onCompleted: if (Window.activeFocusItem) Qt.callLater(start)
 }

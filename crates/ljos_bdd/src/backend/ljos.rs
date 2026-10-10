@@ -16,13 +16,13 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duratio
 use ljos_a11y::{NodeKey, Tree, role_word};
 use ljos_compiler::{Project, Severity, compile_file};
 use ljos_engine::{Engine, MapSource, ObjectId, Value as QmlValue};
-use ljos_quick::{PointerEvent, QuickScene};
+use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 use qml_front::QtTypeOracle;
 use serde_json::{Map, Number, Value, json};
 
-use super::{A11yNode, Backend, BackendError, LogEntry, LogLevel, QmlFile, Result};
+use super::{A11yNode, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile, Result};
 
 /// The driver's file key. Not a valid QML type name for a scenario author
 /// to collide with by accident.
@@ -57,6 +57,75 @@ const MAX_SETTLE_FRAMES: usize = 64;
 /// reported instead of hanging the run.
 const MAX_TIMER_STEPS: usize = 100_000;
 
+/// The modifier keys in the order a chord presses them.
+const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
+    (Modifiers::CONTROL, key::CONTROL),
+    (Modifiers::SHIFT, key::SHIFT),
+    (Modifiers::ALT, key::ALT),
+    (Modifiers::META, key::META),
+];
+
+/// One key with the modifiers held around it, as a step names it
+/// (`"Ctrl+Shift+S"`, `"Tab"`, `"Ctrl++"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Chord {
+    modifiers: Modifiers,
+    key: i32,
+    /// What the key types with those modifiers.
+    text: String,
+}
+
+impl Chord {
+    fn parse(text: &str) -> std::result::Result<Self, String> {
+        let (mods, name) = match text.strip_suffix("++") {
+            Some(mods) => (mods, "+"),
+            None => match text.rsplit_once('+') {
+                Some((mods, name)) if !name.is_empty() => (mods, name),
+                _ => ("", text),
+            },
+        };
+        let mut modifiers = Modifiers::empty();
+        for m in mods.split('+').filter(|m| !m.is_empty()) {
+            modifiers |= match m.to_ascii_lowercase().as_str() {
+                "shift" => Modifiers::SHIFT,
+                "ctrl" => Modifiers::CONTROL,
+                "alt" => Modifiers::ALT,
+                "meta" => Modifiers::META,
+                _ => return Err(format!("unknown modifier {m:?} in the chord {text:?}")),
+            };
+        }
+        // The spellings the Qt oracle's keyboard also takes.
+        let name = match name {
+            n if n.eq_ignore_ascii_case("PageUp") => "PgUp",
+            n if n.eq_ignore_ascii_case("PageDown") => "PgDown",
+            n => n,
+        };
+        let code = key::from_name(name)
+            .ok_or_else(|| format!("unknown key {name:?} in the chord {text:?}"))?;
+        let shift = modifiers.contains(Modifiers::SHIFT);
+        // A desktop sends Shift+Tab as the Backtab key.
+        let code = if code == key::TAB && shift {
+            key::BACKTAB
+        } else {
+            code
+        };
+        let commands = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
+        let mut chars = name.chars();
+        let typed = match (chars.next(), chars.next()) {
+            _ if modifiers.intersects(commands) => String::new(),
+            (Some(c), None) if shift => c.to_uppercase().collect(),
+            (Some(c), None) => c.to_lowercase().collect(),
+            _ if code == key::SPACE => " ".to_owned(),
+            _ => String::new(),
+        };
+        Ok(Self {
+            modifiers,
+            key: code,
+            text: typed,
+        })
+    }
+}
+
 /// The live parts, made by the first `load`.
 struct Live {
     engine: Engine,
@@ -73,11 +142,18 @@ struct Live {
     /// When the scene last said it next needs a frame (a running
     /// animation's next tick). `advance` wakes it then, as a host would.
     wake: Option<Time>,
+    /// Whether a pointer step pressed the button and none released it.
+    pointer_down: bool,
 }
 
 #[derive(Default)]
 pub struct LjosBackend {
     live: Option<Live>,
+    /// Catalogues given before anything was loaded; the engine gets them
+    /// when it is made.
+    catalogs: Vec<ljos_i18n::Catalog>,
+    /// Picture files given before anything was loaded, by URL.
+    resources: Vec<(String, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for LjosBackend {
@@ -117,6 +193,7 @@ impl LjosBackend {
         // reports a binding loop; lazy evaluation would stay silent.
         engine.set_eager_bindings(true);
         ljos_quick::register(&engine);
+        ljos_controls::register(&engine);
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
         let log: Rc<RefCell<Vec<LogEntry>>> = Rc::default();
@@ -151,7 +228,11 @@ impl LjosBackend {
             log,
             compiled_from: compiled,
             wake: None,
+            pointer_down: false,
         };
+        // A decode takes as long as it takes; scenarios see its result when
+        // time is advanced and not before, whatever the machine's speed.
+        ljos_quick::ImageStore::of(&live.engine).set_held(true);
         live.settle()?;
         Ok(live)
     }
@@ -372,7 +453,13 @@ impl Live {
                 "x": num(r.x), "y": num(r.y), "width": num(r.width), "height": num(r.height)
             }),
             QmlValue::List(items) => Value::Array(items.iter().map(|i| self.to_json(i)).collect()),
-            QmlValue::Font(_) | QmlValue::Js(_) | QmlValue::Object(_) => self.js_json(v),
+            QmlValue::Font(_)
+            | QmlValue::Vector2d(_)
+            | QmlValue::Vector3d(_)
+            | QmlValue::Vector4d(_)
+            | QmlValue::Quaternion(_)
+            | QmlValue::Js(_)
+            | QmlValue::Object(_) => self.js_json(v),
         }
     }
 
@@ -390,6 +477,10 @@ impl Live {
     }
 
     fn advance(&mut self, ms: u64) -> Result<()> {
+        let images = ljos_quick::ImageStore::of(&self.engine);
+        // Pictures asked for before now have arrived by the time any time
+        // has passed: waited for, not slept for.
+        images.finish(&self.engine);
         let end = self.clock.now() + Duration::from_millis(ms);
         // Each timer fires at its own deadline, and the scene is settled in
         // between, as a host woken at each deadline would. The scene's own
@@ -410,6 +501,8 @@ impl Live {
                 _ => {
                     self.clock.set(end);
                     self.engine.advance_timers(end);
+                    // And so have those a timer asked for on the way.
+                    images.finish(&self.engine);
                     return self.settle();
                 }
             }
@@ -419,12 +512,70 @@ impl Live {
         )))
     }
 
+    /// Types a chord as a keyboard does: the modifier keys go down one by
+    /// one, then the key, held until it has repeated `repeats` times, and
+    /// everything comes up in reverse.
+    fn type_chord(&mut self, chord: &Chord, repeats: u32) -> Result<()> {
+        let mut held = Modifiers::empty();
+        for (modifier, code) in MODIFIER_KEYS {
+            if chord.modifiers.contains(modifier) {
+                self.scene
+                    .key_event(&self.engine, &KeyEvent::press(code).with_modifiers(held));
+                held |= modifier;
+            }
+        }
+        let press = KeyEvent::press(chord.key)
+            .with_modifiers(held)
+            .with_text(chord.text.clone());
+        self.scene.key_event(&self.engine, &press);
+        for _ in 0..repeats {
+            self.scene
+                .key_event(&self.engine, &press.clone().repeated());
+        }
+        let release = KeyEvent::release(chord.key)
+            .with_modifiers(held)
+            .with_text(chord.text.clone());
+        self.scene.key_event(&self.engine, &release);
+        for (modifier, code) in MODIFIER_KEYS.into_iter().rev() {
+            if chord.modifiers.contains(modifier) {
+                held -= modifier;
+                self.scene
+                    .key_event(&self.engine, &KeyEvent::release(code).with_modifiers(held));
+            }
+        }
+        self.settle()
+    }
+
     fn tap(&mut self, x: f64, y: f64) -> Result<()> {
         let now = self.clock.now();
         self.scene
             .pointer_event(&self.engine, &PointerEvent::press(x, y, now));
         self.scene
             .pointer_event(&self.engine, &PointerEvent::release(x, y, now));
+        self.settle()
+    }
+
+    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
+        let now = self.clock.now();
+        let event = match step {
+            PointerStep::Press => {
+                self.pointer_down = true;
+                PointerEvent::press(x, y, now)
+            }
+            PointerStep::Move => {
+                let held = if self.pointer_down {
+                    MouseButtons::LEFT
+                } else {
+                    MouseButtons::empty()
+                };
+                PointerEvent::moved(x, y, held, now)
+            }
+            PointerStep::Release => {
+                self.pointer_down = false;
+                PointerEvent::release(x, y, now)
+            }
+        };
+        self.scene.pointer_event(&self.engine, &event);
         self.settle()
     }
 
@@ -441,7 +592,7 @@ impl Live {
 
     /// The tree as steps see it: role words, names and nesting.
     fn a11y(&self) -> A11yNode {
-        fn below(tree: &Tree, key: NodeKey) -> Vec<A11yNode> {
+        fn below(tree: &Tree, key: NodeKey, focus: Option<NodeKey>) -> Vec<A11yNode> {
             let node = |k: &NodeKey| {
                 let d = tree.get(*k)?;
                 Some(A11yNode {
@@ -449,16 +600,31 @@ impl Live {
                     name: d.name.clone(),
                     description: d.description.clone(),
                     object_name: d.author_id.clone(),
-                    children: below(tree, *k),
+                    focused: focus == Some(*k),
+                    children: below(tree, *k, focus),
                 })
             };
             tree.children(key).iter().filter_map(node).collect()
         }
+        let focus = self.scene.accessible_focus_node();
         A11yNode {
             role: "window".into(),
-            children: below(self.scene.accessibility_tree(), NodeKey::ROOT),
+            // With no node to name, the window is what has the keyboard.
+            focused: focus.is_none(),
+            children: below(self.scene.accessibility_tree(), NodeKey::ROOT, focus),
             ..A11yNode::default()
         }
+    }
+
+    /// The first node, in tree order, with this role and name.
+    fn accessible_key(&self, role: &str, name: &str) -> Option<NodeKey> {
+        let mut found = None;
+        self.scene.accessibility_tree().walk(|key, _, d| {
+            if found.is_none() && role_word(d.role) == role && d.name == name {
+                found = Some(key);
+            }
+        });
+        found
     }
 
     /// Where the first node, in tree order, with this role and name is.
@@ -490,7 +656,15 @@ impl Backend for LjosBackend {
 
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         if self.live.is_none() {
-            self.live = Some(Self::start()?);
+            let live = Self::start()?;
+            for catalog in self.catalogs.drain(..) {
+                live.engine.install_catalog(Box::new(catalog));
+            }
+            let images = ljos_quick::ImageStore::of(&live.engine);
+            for (url, bytes) in self.resources.drain(..) {
+                images.register_resource(url, bytes);
+            }
+            self.live = Some(live);
         }
         self.live()?.load(files, entry)
     }
@@ -542,7 +716,11 @@ impl Backend for LjosBackend {
             let whole = live.to_json(&live.engine.read_by_name(owner, head));
             return Ok(members
                 .split('.')
-                .try_fold(whole, |v, m| v.get(m).cloned())
+                .try_fold(whole, |v, m| match (&v, m) {
+                    // A list has a length, as it has in a binding.
+                    (Value::Array(items), "length") => Some(Value::from(items.len())),
+                    _ => v.get(m).cloned(),
+                })
                 .unwrap_or(Value::Null));
         }
         let v = live.engine.read_by_name(owner, &prop);
@@ -585,18 +763,45 @@ impl Backend for LjosBackend {
         live.tap(x, y)
     }
 
-    fn key(&mut self, _: &str) -> Result<()> {
-        Err(BackendError::NotImplemented("key input"))
+    fn key(&mut self, chord: &str) -> Result<()> {
+        let chord = Chord::parse(chord).map_err(failed)?;
+        self.live()?.type_chord(&chord, 0)
+    }
+
+    fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()> {
+        let chord = Chord::parse(chord).map_err(failed)?;
+        self.live()?.type_chord(&chord, repeats)
+    }
+
+    fn window_active(&mut self, active: bool) -> Result<()> {
+        let live = self.live()?;
+        live.scene.set_window_active(&live.engine, active);
+        live.settle()
     }
 
     fn touch(&mut self, x: f64, y: f64) -> Result<()> {
         self.live()?.tap(x, y)
     }
 
+    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
+        self.live()?.pointer(step, x, y)
+    }
+
     fn a11y_tree(&mut self) -> Result<A11yNode> {
         let live = self.live()?;
         live.listen()?;
         Ok(live.a11y())
+    }
+
+    fn a11y_focus(&mut self, role: &str, name: &str) -> Result<()> {
+        let live = self.live()?;
+        live.listen()?;
+        let key = live
+            .accessible_key(role, name)
+            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
+        // A node may refuse; the scenario says what it expects of that.
+        live.scene.accessible_focus(&live.engine, key);
+        live.settle()
     }
 
     fn log(&mut self) -> Result<Vec<LogEntry>> {
@@ -610,6 +815,43 @@ impl Backend for LjosBackend {
 
     fn grab(&mut self) -> Result<Vec<u8>> {
         self.live()?.grab()
+    }
+
+    // The `.ts` file is read as it is, the way a development build reads
+    // one; a shipped application would have compiled it to `.ljl`.
+    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
+        let catalog = ljos_i18n::ts::TsFile::read(ts)
+            .map_err(|e| failed(format!("{name}: {e}")))?
+            .catalog();
+        match self.live.as_mut() {
+            Some(live) => {
+                live.engine.install_catalog(Box::new(catalog));
+                live.settle()
+            }
+            None => {
+                self.catalogs.push(catalog);
+                Ok(())
+            }
+        }
+    }
+
+    fn set_ui_language(&mut self, language: &str) -> Result<()> {
+        let live = self.live()?;
+        live.engine.set_ui_language(language);
+        live.settle()
+    }
+
+    // Scenario files live at `file:///<name>`, so a picture beside them
+    // does too; nothing is written to disk.
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+        let url = format!("file:///{name}");
+        match self.live.as_ref() {
+            Some(live) => {
+                ljos_quick::ImageStore::of(&live.engine).register_resource(url, bytes.to_vec());
+            }
+            None => self.resources.push((url, bytes.to_vec())),
+        }
+        Ok(())
     }
 }
 
@@ -847,11 +1089,55 @@ Item {
     }
 
     #[test]
-    fn unbuilt_capabilities_stay_pending() {
-        let mut b = loaded(BINDING);
-        assert!(matches!(
-            b.key("Ctrl+S"),
-            Err(BackendError::NotImplemented(_))
-        ));
+    fn chords_name_modifiers_then_a_key() {
+        let c = Chord::parse("Ctrl+Shift+S").unwrap();
+        assert_eq!(c.modifiers, Modifiers::CONTROL | Modifiers::SHIFT);
+        assert_eq!((c.key, c.text.as_str()), (0x53, ""));
+        let c = Chord::parse("a").unwrap();
+        assert_eq!((c.key, c.text.as_str()), (key::A, "a"));
+        let c = Chord::parse("Shift+A").unwrap();
+        assert_eq!((c.key, c.text.as_str()), (key::A, "A"));
+        let c = Chord::parse("Ctrl++").unwrap();
+        assert_eq!((c.modifiers, c.key), (Modifiers::CONTROL, key::PLUS));
+        assert_eq!(Chord::parse("+").unwrap().key, key::PLUS);
+        assert_eq!(Chord::parse("Shift+Tab").unwrap().key, key::BACKTAB);
+        assert_eq!(Chord::parse("PageUp").unwrap().key, key::PAGE_UP);
+        assert_eq!(Chord::parse("Space").unwrap().text, " ");
+        assert_eq!(Chord::parse("F12").unwrap().text, "");
+        assert!(Chord::parse("Hyper+A").is_err());
+        assert!(Chord::parse("Nonsense").is_err());
+    }
+
+    const KEYS: &str = r#"import QtQuick
+Item {
+    objectName: "root"
+    focus: true
+    property string log: ""
+    property bool lit: activeFocus
+    Keys.onPressed: (event) => log += event.key + (event.isAutoRepeat ? "r " : " ")
+    Keys.onReleased: (event) => log += "up "
+}
+"#;
+
+    #[test]
+    fn keys_reach_the_focus_item() {
+        let mut b = loaded(KEYS);
+        b.key("A").unwrap();
+        assert_eq!(b.get("root", "log").unwrap(), json!("65 up "));
+        b.key_hold("B", 2).unwrap();
+        assert_eq!(b.get("root", "log").unwrap(), json!("65 up 66 66r 66r up "));
+    }
+
+    #[test]
+    fn an_inactive_window_gets_no_keys() {
+        let mut b = loaded(KEYS);
+        assert_eq!(b.get("root", "lit").unwrap(), json!(true));
+        b.window_active(false).unwrap();
+        assert_eq!(b.get("root", "lit").unwrap(), json!(false));
+        b.key("A").unwrap();
+        assert_eq!(b.get("root", "log").unwrap(), json!(""));
+        b.window_active(true).unwrap();
+        b.key("A").unwrap();
+        assert_eq!(b.get("root", "log").unwrap(), json!("65 up "));
     }
 }

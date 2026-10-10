@@ -6,6 +6,7 @@ use serde_json::Value;
 
 pub mod ljos;
 pub mod qt;
+mod rfb;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
@@ -66,6 +67,9 @@ pub struct A11yNode {
     pub description: String,
     /// The author's `objectName`, when set.
     pub object_name: String,
+    /// Whether this is the one node the keyboard is at: what a screen
+    /// reader reads out. The top node when nothing below it has it.
+    pub focused: bool,
     pub children: Vec<A11yNode>,
 }
 
@@ -84,6 +88,15 @@ impl A11yNode {
         self.role == role && self.name == name
     }
 
+    /// The node the keyboard is at.
+    #[must_use]
+    pub fn focus(&self) -> Option<&A11yNode> {
+        if self.focused {
+            return Some(self);
+        }
+        self.children.iter().find_map(A11yNode::focus)
+    }
+
     /// The node that has the first `role` + `name` as a child.
     #[must_use]
     pub fn parent_of(&self, role: &str, name: &str) -> Option<&A11yNode> {
@@ -92,6 +105,15 @@ impl A11yNode {
         }
         self.children.iter().find_map(|c| c.parent_of(role, name))
     }
+}
+
+/// What a pointer does in one step of a press, drag and release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerStep {
+    Press,
+    /// With the button held if it was pressed and not yet released.
+    Move,
+    Release,
 }
 
 /// The surface the steps drive. `!Send` is fine: cucumber 0.23 does not need `Send`.
@@ -108,12 +130,33 @@ pub trait Backend: fmt::Debug {
     /// Let `ms` of application time pass (virtual on Ljós, real on Qt).
     fn advance(&mut self, ms: u64) -> Result<()>;
     fn click(&mut self, role: &str, name: &str) -> Result<()>;
+    /// Press and release a key chord (`"Ctrl+S"`, `"Tab"`), as a keyboard does.
     fn key(&mut self, chord: &str) -> Result<()>;
+    /// Hold a chord down until the keyboard has repeated it `repeats` times,
+    /// then let go.
+    fn key_hold(&mut self, chord: &str, repeats: u32) -> Result<()>;
+    /// The window becomes, or stops being, the one the keyboard types into.
+    fn window_active(&mut self, active: bool) -> Result<()>;
     fn touch(&mut self, x: f64, y: f64) -> Result<()>;
+    /// One half of a click, or a move between the two: what a held or
+    /// dragged pointer is made of.
+    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()>;
     fn a11y_tree(&mut self) -> Result<A11yNode>;
+    /// What a screen reader's "move the focus here" does to the node with
+    /// this role and name. A node that refuses is not an error.
+    fn a11y_focus(&mut self, role: &str, name: &str) -> Result<()>;
     fn log(&mut self) -> Result<Vec<LogEntry>>;
     /// PNG bytes of the window.
     fn grab(&mut self) -> Result<Vec<u8>>;
+    /// Make the translations of a Qt Linguist `.ts` file available for the
+    /// language its `language` attribute names. Nothing is shown in that
+    /// language until it is the UI language.
+    fn translation(&mut self, name: &str, ts: &str) -> Result<()>;
+    /// What assigning `Qt.uiLanguage` does.
+    fn set_ui_language(&mut self, language: &str) -> Result<()>;
+    /// Put a file that is not QML (an image) beside the QML files, where a
+    /// relative URL in them finds it.
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()>;
 }
 
 /// Which backends run a scenario (`LJOS_BDD_BACKEND=qt|ljos|both`).
@@ -191,6 +234,7 @@ mod tests {
             ..A11yNode::default()
         };
         assert!(tree.find("button", "Save").is_some());
+        assert!(tree.focus().is_none());
         assert!(tree.find("button", "Open").is_none());
         assert_eq!(tree.parent_of("button", "Save").unwrap().role, "window");
         assert!(tree.parent_of("window", "").is_none());

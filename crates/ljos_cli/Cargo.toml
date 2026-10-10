@@ -15,6 +15,9 @@ path = "src/main.rs"
 [dependencies]
 ljos_mcp_core = { path = "../ljos_mcp_core" }
 ljos_mcp_author = { path = "../ljos_mcp_author" }
+# `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts`.
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_i18n = { path = "../ljos_i18n" }
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

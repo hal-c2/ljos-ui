@@ -8,6 +8,8 @@ use clap::{Parser, Subcommand};
 use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
+mod i18n;
+
 #[derive(Parser)]
 #[command(name = "ljos", version, about = "Ljós UI toolkit")]
 struct Cli {
@@ -26,6 +28,11 @@ enum Command {
         /// inspect, input, mutate, eval, fs, run. Authoring is read-only by default.
         #[arg(long, value_parser = CapSet::parse_list, default_value = "")]
         caps: CapSet,
+    },
+    /// Translation catalogues.
+    I18n {
+        #[command(subcommand)]
+        command: i18n::I18nCommand,
     },
 }
 
@@ -64,5 +71,6 @@ fn run() -> anyhow::Result<()> {
                 .block_on(ljos_mcp_author::serve_stdio(server, caps))?;
             Ok(())
         }
+        Command::I18n { command } => i18n::run(command),
     }
 }

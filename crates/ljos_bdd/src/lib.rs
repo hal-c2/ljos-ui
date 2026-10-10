@@ -5,6 +5,7 @@
 
 pub mod backend;
 pub mod filter;
+pub mod fixture;
 pub mod lint;
 pub mod runner;
 pub mod steps;

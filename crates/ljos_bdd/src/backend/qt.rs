@@ -11,20 +11,44 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::Read,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
 
-use super::{A11yNode, Backend, BackendError, LogEntry, LogLevel, QmlFile, Result};
+use super::{
+    A11yNode, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile, Result,
+    rfb::{Chord, Endpoint, Rfb, SCREEN},
+};
 
 /// Marks the driver's result line among ordinary Qt log output.
 const MARKER: &str = "@@ljos@@";
+/// The driver's request for the input of the op with the index that follows.
+const INPUT_MARKER: &str = "@@input@@";
+/// The input platform's start-up notice, a warning that no scenario caused.
+const VNC_NOTICE: &str = "QVncServer created on port";
+
+/// What the driver gets only in a run that sends input: the handler that
+/// sees the pointer move ending each input step (see `rfb.rs`).
+const INPUT_HANDLER: &str = r"    HoverHandler {
+        onPointChanged: {
+            var p = point.position
+            if (driver.waiting && p.y === driver.height - 1 && p.x === driver.width - 2 + driver.acks % 2) {
+                driver.waiting = false
+                driver.acks++
+                driver.run()
+            }
+        }
+    }
+";
 static RUN_ID: AtomicU32 = AtomicU32::new(0);
 
 const DRIVER_TEMPLATE: &str = include_str!("driver.qml");
@@ -34,6 +58,10 @@ pub struct QtBackend {
     qml: String,
     dir: Option<PathBuf>,
     files: BTreeMap<String, String>,
+    /// `.ts` sources by file name; released next to the driver before a run.
+    translations: BTreeMap<String, String>,
+    /// Files that are not QML (images), written beside the QML files.
+    resources: BTreeMap<String, Vec<u8>>,
     program: Vec<Value>,
     /// Expressions of `bind` ops, emitted as functions in the driver.
     binders: Vec<String>,
@@ -60,6 +88,8 @@ impl QtBackend {
             qml: std::env::var("QML6").unwrap_or_else(|_| "qml6".into()),
             dir: None,
             files: BTreeMap::new(),
+            translations: BTreeMap::new(),
+            resources: BTreeMap::new(),
             program: Vec::new(),
             binders: Vec::new(),
             cache: None,
@@ -96,6 +126,10 @@ impl QtBackend {
         for (name, source) in &self.files {
             fs::write(dir.join(name), source)?;
         }
+        for (name, bytes) in &self.resources {
+            fs::write(dir.join(name), bytes)?;
+        }
+        self.release_translations(&dir)?;
         let program = serde_json::to_string(&self.program)
             .map_err(|e| BackendError::Failed(e.to_string()))?;
         let binders: String = self
@@ -111,6 +145,14 @@ impl QtBackend {
         let driver = DRIVER_TEMPLATE
             .replace("/*PROGRAM*/[]", &program)
             .replace("/*BINDERS*/", &binders)
+            .replace(
+                "/*INPUT*/\n",
+                if self.sends_input() {
+                    INPUT_HANDLER
+                } else {
+                    ""
+                },
+            )
             .replace("/*DIR*/\"\"", &json!(file_url(&dir)).to_string())
             .replace(
                 "/*GRAB*/\"\"",
@@ -126,42 +168,171 @@ impl QtBackend {
         Ok(run)
     }
 
+    /// Qt loads translations only from `.qm` files, so each staged `.ts` is
+    /// compiled by Qt's own `lrelease`, to where `qml6` looks for the
+    /// catalogue of the UI language: `i18n/qml_<language>.qm` beside the
+    /// main file. The `.qm` is an opaque artefact of the oracle; nothing
+    /// here reads it.
+    fn release_translations(&self, dir: &Path) -> Result<()> {
+        if self.translations.is_empty() {
+            return Ok(());
+        }
+        let out_dir = dir.join("i18n");
+        fs::create_dir_all(&out_dir)?;
+        for (name, ts) in &self.translations {
+            let language = ts_language(ts).ok_or_else(|| {
+                BackendError::Failed(format!("{name}: the TS element has no language attribute"))
+            })?;
+            let ts_path = dir.join(name);
+            fs::write(&ts_path, ts)?;
+            let qm = out_dir.join(format!("qml_{language}.qm"));
+            let tool = lrelease();
+            let out = Command::new(&tool)
+                .arg(&ts_path)
+                .arg("-qm")
+                .arg(&qm)
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| BackendError::Failed(format!("cannot start {tool}: {e}")))?;
+            if !out.status.success() {
+                return Err(BackendError::Failed(format!(
+                    "{tool} rejected {name}: {}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the program presses keys or clicks. Only then does the replay
+    /// run on Qt's `vnc` platform, the one that takes input (`rfb.rs`); every
+    /// other scenario stays on `offscreen`.
+    fn sends_input(&self) -> bool {
+        self.program
+            .iter()
+            .any(|op| matches!(op["op"].as_str(), Some("key" | "pointer")))
+    }
+
+    /// Sends what the op at `index` asks for, then the acknowledgement move.
+    fn send_input(&self, rfb: &mut Rfb, index: usize) -> Result<()> {
+        let op = self
+            .program
+            .get(index)
+            .ok_or_else(|| BackendError::Failed(format!("the driver asked for input {index}")))?;
+        match op["op"].as_str() {
+            Some("key") => {
+                let chord = Chord::parse(op["chord"].as_str().unwrap_or_default())
+                    .map_err(BackendError::Failed)?;
+                rfb.press(&chord)?;
+            }
+            Some("pointer") => {
+                let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
+                let (x, y) = at("x").zip(at("y")).ok_or_else(|| {
+                    BackendError::Failed(format!("op {index} has no pointer position"))
+                })?;
+                rfb.click(x, y)?;
+            }
+            other => {
+                return Err(BackendError::Failed(format!(
+                    "the driver asked for input at op {index}, which is {other:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn spawn(&self, driver: &Path, timeout: Duration) -> Result<String> {
-        let mut child = Command::new(&self.qml)
+        let input = if self.sends_input() {
+            Some(Endpoint::choose()?)
+        } else {
+            None
+        };
+        let platform = input
+            .as_ref()
+            .map_or_else(|| "offscreen".to_owned(), Endpoint::platform);
+        let mut command = input
+            .as_ref()
+            .map_or_else(|| Command::new(&self.qml), |i| i.command(&self.qml));
+        let mut child = command
             .arg(driver)
             .env("QT_FORCE_STDERR_LOGGING", "1")
-            .env("QT_QPA_PLATFORM", "offscreen")
+            .env("QT_QPA_PLATFORM", platform)
             .env("QT_QUICK_BACKEND", "software")
             .env("QT_MESSAGE_PATTERN", "%{type}|%{message}")
             .env("TZ", "UTC")
             .env("LANG", "en_US.UTF-8")
+            // The desktop's settings stay out: a platform theme that reads
+            // them would give the controls a dark palette on a desktop that
+            // prefers one, and a parity scenario has one expectation.
+            .env("GSETTINGS_BACKEND", "memory")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| BackendError::Failed(format!("cannot start {}: {e}", self.qml)))?;
-        let mut pipe = child.stderr.take().expect("stderr is piped");
+        let pipe = child.stderr.take().expect("stderr is piped");
         // Read on a thread so a chatty app cannot fill the pipe while we wait.
+        // The driver's requests for input come out of the same pipe; they are
+        // passed on as they arrive and kept out of the log.
+        let (requests, wanted) = mpsc::channel::<usize>();
         let reader = thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = pipe.read_to_end(&mut buf);
-            String::from_utf8_lossy(&buf).into_owned()
+            let mut text = String::new();
+            let mut pipe = BufReader::new(pipe);
+            let mut line = Vec::new();
+            while pipe.read_until(b'\n', &mut line).is_ok_and(|n| n > 0) {
+                let l = String::from_utf8_lossy(&line);
+                if let Some((_, index)) = l.split_once(INPUT_MARKER) {
+                    if let Ok(index) = index.trim().parse() {
+                        let _ = requests.send(index);
+                    }
+                } else if !l.contains(VNC_NOTICE) {
+                    text.push_str(&l);
+                }
+                line.clear();
+            }
+            text
         });
         let deadline = Instant::now() + timeout;
-        loop {
+        let mut rfb: Option<Rfb> = None;
+        let outcome = loop {
             if child.try_wait()?.is_some() {
-                break;
+                break Ok(());
             }
             if Instant::now() > deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(BackendError::Failed(format!(
+                break Err(BackendError::Failed(format!(
                     "qml6 timed out after {timeout:?}"
                 )));
             }
-            thread::sleep(Duration::from_millis(5));
+            match wanted.recv_timeout(Duration::from_millis(5)) {
+                Ok(index) => {
+                    let sent = input
+                        .as_ref()
+                        .ok_or_else(|| BackendError::Failed("input on a run without it".into()))
+                        .and_then(|endpoint| {
+                            if rfb.is_none() {
+                                rfb = Some(Rfb::connect(endpoint, deadline)?);
+                            }
+                            let rfb = rfb.as_mut().expect("just connected");
+                            self.send_input(rfb, index)
+                        });
+                    if let Err(e) = sent {
+                        break Err(e);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                // The pipe closed: the process is on its way out.
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+        };
+        if outcome.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        Ok(reader.join().unwrap_or_default())
+        let text = reader.join().unwrap_or_default();
+        outcome.map(|()| text)
     }
 
     /// Record `op`, replay, and return the record of that op.
@@ -186,6 +357,36 @@ impl Drop for QtBackend {
             let _ = fs::remove_dir_all(d);
         }
     }
+}
+
+/// Qt 6's `lrelease`. Distributions that also ship Qt 5 put the Qt 5 tool
+/// first on the path, so the Qt 6 names are tried before the bare one.
+fn lrelease() -> String {
+    if let Ok(tool) = std::env::var("LRELEASE") {
+        return tool;
+    }
+    let candidates = ["lrelease6", "lrelease-qt6", "/usr/lib/qt6/bin/lrelease"];
+    candidates
+        .iter()
+        .find(|c| {
+            Command::new(c)
+                .arg("-version")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+        .map_or_else(|| "lrelease".to_owned(), |c| (*c).to_owned())
+}
+
+/// The `language` attribute of the `TS` element.
+fn ts_language(ts: &str) -> Option<String> {
+    let start = ts.find("<TS")?;
+    let tag = &ts[start..start + ts[start..].find('>')?];
+    let rest = &tag[tag.find("language=\"")? + "language=\"".len()..];
+    let language = &rest[..rest.find('"')?];
+    (!language.is_empty()).then(|| language.to_owned())
 }
 
 fn file_url(p: &Path) -> String {
@@ -284,17 +485,43 @@ impl Backend for QtBackend {
         })
     }
 
-    fn key(&mut self, _: &str) -> Result<()> {
+    fn key(&mut self, chord: &str) -> Result<()> {
+        // Recorded only, like a wait; a chord the oracle cannot type is
+        // reported by the step that names it.
+        Chord::parse(chord).map_err(BackendError::Failed)?;
+        self.push(json!({"op": "key", "chord": chord}));
+        Ok(())
+    }
+
+    fn key_hold(&mut self, _: &str, _: u32) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: "qt",
-            what: "key input",
+            what: "auto-repeat: the input platform does not mark repeated presses",
         })
     }
 
-    fn touch(&mut self, _: f64, _: f64) -> Result<()> {
+    fn window_active(&mut self, active: bool) -> Result<()> {
+        self.push(json!({"op": "active", "value": active}));
+        Ok(())
+    }
+
+    /// A click of the left mouse button: what the input platform can send,
+    /// and what a touch becomes for a `MouseArea` or a `TapHandler`.
+    fn touch(&mut self, x: f64, y: f64) -> Result<()> {
+        let inside = |v: f64| (0.0..f64::from(SCREEN)).contains(&v);
+        if !inside(x) || !inside(y) {
+            return Err(BackendError::Failed(format!(
+                "{x}, {y} is outside the {SCREEN} pixel window"
+            )));
+        }
+        self.push(json!({"op": "pointer", "x": x as u16, "y": y as u16}));
+        Ok(())
+    }
+
+    fn pointer(&mut self, _: PointerStep, _: f64, _: f64) -> Result<()> {
         Err(BackendError::Unsupported {
             backend: "qt",
-            what: "touch input",
+            what: "a held pointer: the replay sends whole clicks",
         })
     }
 
@@ -302,6 +529,13 @@ impl Backend for QtBackend {
         Err(BackendError::Unsupported {
             backend: "qt",
             what: "default accessible names need a QAccessible helper",
+        })
+    }
+
+    fn a11y_focus(&mut self, _: &str, _: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an assistive technology's requests need the accessibility bridge",
         })
     }
 
@@ -315,6 +549,23 @@ impl Backend for QtBackend {
         self.ask(json!({"op": "grab"}))?;
         let path = self.work_dir()?.join("grab.png");
         Ok(fs::read(path)?)
+    }
+
+    fn translation(&mut self, name: &str, ts: &str) -> Result<()> {
+        self.translations.insert(name.to_owned(), ts.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn set_ui_language(&mut self, language: &str) -> Result<()> {
+        self.ask(json!({"op": "language", "value": language}))
+            .map(drop)
+    }
+
+    fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.resources.insert(name.to_owned(), bytes.to_vec());
+        self.cache = None;
+        Ok(())
     }
 }
 
@@ -333,6 +584,13 @@ mod tests {
             run.log[0].message,
             "x.qml:3: Binding loop detected\nsecond line"
         );
+    }
+
+    #[test]
+    fn language_comes_from_the_ts_element() {
+        let ts = "<?xml version=\"1.0\"?>\n<!DOCTYPE TS>\n<TS version=\"2.1\" language=\"is_IS\">\n</TS>";
+        assert_eq!(ts_language(ts).as_deref(), Some("is_IS"));
+        assert_eq!(ts_language("<TS version=\"2.1\">"), None);
     }
 
     #[test]

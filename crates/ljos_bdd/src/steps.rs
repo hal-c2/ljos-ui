@@ -7,8 +7,8 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::{
-    backend::{A11yNode, BackendError, LogLevel},
-    value,
+    backend::{A11yNode, BackendError, LogLevel, PointerStep},
+    fixture, value,
     world::{LjosWorld, MAIN_FILE},
 };
 
@@ -25,7 +25,7 @@ fn docstring(step: &Step) -> Result<String, String> {
 
 fn strip_label(text: &str) -> &str {
     match text.split_once('\n') {
-        Some((first, rest)) if first.trim() == "qml" => rest,
+        Some((first, rest)) if matches!(first.trim(), "qml" | "xml") => rest,
         _ => text,
     }
 }
@@ -67,7 +67,43 @@ fn listening(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.a11y_tree().map(drop))
 }
 
+// A Qt Linguist file, as a translator hands it over. Its `language`
+// attribute says which language it is for.
+#[given(regex = r#"^the translation file "([^"]+\.ts)":$"#)]
+fn the_translation_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let ts = docstring(step)?;
+    // An XML declaration must be the first thing in the file, and the doc
+    // string keeps the indentation it has in the scenario.
+    let ts = ts.trim_start();
+    w.each(|b| b.translation(&name, ts))
+}
+
+// An image the QML can name by a relative URL. It is made here, in one
+// colour, so that no binary file has to live beside the scenarios.
+#[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+)" filled with "(#[0-9a-fA-F]{6})"$"#)]
+fn an_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    colour: String,
+) -> StepResult {
+    let bytes = fixture::image_file(&name, width, height, &colour)?;
+    w.each(|b| b.resource(&name, &bytes))
+}
+
+// A file with an image's name and something else inside.
+#[given(regex = r#"^a file "([^"]+)" that is not an image$"#)]
+fn not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.resource(&name, &fixture::not_an_image()))
+}
+
 // ----------------------------------------------------------------- When
+
+#[when(regex = r#"^the UI language is set to "([^"]*)"$"#)]
+fn ui_language_set(w: &mut LjosWorld, language: String) -> StepResult {
+    w.each(|b| b.set_ui_language(&language))
+}
 
 #[when(regex = r#"^"([^"]+)" is loaded$"#)]
 fn file_loaded(w: &mut LjosWorld, name: String) -> StepResult {
@@ -123,14 +159,47 @@ fn user_clicks(w: &mut LjosWorld, role: String, name: String) -> StepResult {
     w.each(|b| b.click(&role, &name))
 }
 
+#[when(regex = r#"^an assistive technology focuses the "([^"]+)" named "([^"]*)"$"#)]
+fn a11y_focuses(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    w.each(|b| b.a11y_focus(&role, &name))
+}
+
 #[when(regex = r#"^the user presses "([^"]+)"$"#)]
 fn user_presses(w: &mut LjosWorld, chord: String) -> StepResult {
     w.each(|b| b.key(&chord))
 }
 
+// A key held down repeats; the repeats are presses without a release between.
+#[when(regex = r#"^the user holds down "([^"]+)" until it repeats (\d+) times?$"#)]
+fn user_holds(w: &mut LjosWorld, chord: String, repeats: u32) -> StepResult {
+    w.each(|b| b.key_hold(&chord, repeats))
+}
+
+// Another window takes the keyboard, or gives it back.
+#[when(regex = r"^the window (loses|gains) focus$")]
+fn window_focus(w: &mut LjosWorld, which: String) -> StepResult {
+    w.each(|b| b.window_active(which == "gains"))
+}
+
 #[when(regex = r"^the user touches (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
 fn user_touches(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
     w.each(|b| b.touch(x, y))
+}
+
+// A click in parts, for what happens while the button is held.
+#[when(regex = r"^the user presses the pointer at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
+fn user_presses_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.pointer(PointerStep::Press, x, y))
+}
+
+#[when(regex = r"^the user moves the pointer to (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
+fn user_moves_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.pointer(PointerStep::Move, x, y))
+}
+
+#[when(regex = r"^the user releases the pointer at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
+fn user_releases_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.pointer(PointerStep::Release, x, y))
 }
 
 // ----------------------------------------------------------------- Then
@@ -374,6 +443,26 @@ fn a11y_inside(
                 parent.name,
                 render(&tree, 0)
             )))
+        }
+    })
+}
+
+#[then(regex = r#"^the accessibility tree's focus is the "([^"]+)" named "([^"]*)"$"#)]
+fn a11y_focus_is(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        match tree.focus() {
+            Some(n) if n.is(&role, &name) => Ok(()),
+            Some(n) => Err(BackendError::Failed(format!(
+                "the focus is the {:?} named {:?}, expected the {role:?} named {name:?}:\n{}",
+                n.role,
+                n.name,
+                render(&tree, 0)
+            ))),
+            None => Err(BackendError::Failed(format!(
+                "nothing has the focus:\n{}",
+                render(&tree, 0)
+            ))),
         }
     })
 }
