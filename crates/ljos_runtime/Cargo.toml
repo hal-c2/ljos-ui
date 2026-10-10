@@ -1,0 +1,21 @@
+[package]
+name = "ljos_runtime"
+description = "Ljós runtime core: bounded UI inbox, clocks, frame scheduler, lanes and supervision types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
