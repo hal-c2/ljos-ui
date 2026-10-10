@@ -1449,7 +1449,7 @@ All decided by the user on 2026-10-10. Every decision except D9 took the recomme
 |---|---|
 | Toolchain | Rust 1.98.1, edition 2024, resolver 3 |
 | egui stack | egui / eframe / egui-winit / egui-wgpu / egui_kittest 0.36.2 (wgpu 30, winit 0.30.13, kittest 0.4) |
-| Accessibility | accesskit 0.25.1 (+ winit, android 0.9.0, ios 0.2.1 adapters) |
+| Accessibility | accesskit 0.24.1, the version egui 0.36 uses (accesskit_winit 0.32, android 0.7.5). Moving to 0.25 (android 0.9, ios 0.2) waits for egui; see spike 04 |
 | JS | rquickjs 0.14.0 (quickjs-ng 0.16.2, `BC_VERSION` 28), `parallel` off |
 | Text | parley + fontique (section 7.5 rule), skrifa 0.44 / harfrust 0.12 via egui, pulldown-cmark 0.13.4 |
 | Render | vello_cpu (egui's pin), kurbo/peniko (vello's), lyon or vello_cpu for paths at M2 |

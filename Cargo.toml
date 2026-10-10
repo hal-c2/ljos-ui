@@ -37,7 +37,8 @@ postcard = { version = "1.1", features = ["alloc"] }
 egui = "0.36.2"
 eframe = "0.36.2"
 egui_kittest = "0.36.2"
-accesskit = "0.25.1"
+# Must match egui's accesskit: its types do not interoperate across minor versions.
+accesskit = "0.24.1"
 vello_cpu = "0.3"
 parley = "0.12"
 
