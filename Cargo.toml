@@ -44,6 +44,17 @@ parley = "0.12"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
 skrifa = "0.44"
 
+# Images
+zune-jpeg = "0.5.15"
+# Test fixtures only: nothing shipped encodes JPEG.
+jpeg-encoder = "0.7.1"
+
+# Localisation
+icu_plurals = "2.3"
+icu_locale = "2.3"
+icu_decimal = "2.3"
+quick-xml = "0.42"
+
 # Async, services and MCP
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std"] }
 futures = "0.3"
