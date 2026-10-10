@@ -14,6 +14,9 @@ ljos_macros = { path = "../ljos_macros" }
 ljos_ir = { path = "../ljos_ir" }
 ljos_js = { path = "../ljos_js" }
 ljos_runtime = { path = "../ljos_runtime" }
+# Catalogues, plural rules and locales. Without `ts`: a shipped runtime reads
+# `.ljl`, not Qt Linguist XML.
+ljos_i18n = { path = "../ljos_i18n", default-features = false }
 slotmap.workspace = true
 smallvec.workspace = true
 bitflags.workspace = true
@@ -28,6 +31,8 @@ proptest.workspace = true
 # Tests compile QML strings; the engine itself never links the parser.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+# Catalogues for tests; the engine itself links ljos_i18n without `.ts`.
+ljos_i18n = { path = "../ljos_i18n" }
 
 [lints]
 workspace = true

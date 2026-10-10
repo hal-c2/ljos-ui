@@ -39,7 +39,7 @@ pub use config::{JsConfig, Slice};
 pub use fault::{JsFault, SourceMapper};
 pub use host::{FnId, HostFn, JsHost, MemoryStats, ModuleHandle, Scope};
 pub use objects::{HostError, HostObjects, HostTypeId, MethodDef, PropDef, SignalDef, TypeDef};
-pub use value::{JsArg, JsOut, JsRef, JsValue};
+pub use value::{JsArg, JsOut, JsRef, JsValue, ValueKind};
 
 /// Re-export so callers write closures against the exact rquickjs we link.
 pub use rquickjs;

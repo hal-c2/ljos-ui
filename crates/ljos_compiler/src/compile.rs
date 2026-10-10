@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use ljos_ir::*;
 use qml_front::{
     Special, TypeOracle,
-    names::{Global, Names, Target},
+    names::{self, Global, Names, Resolution, Target},
     project::Source,
     scope::{Tree, alias_target, handled, is_group},
     types::{Found, Kind, Origin, Types},
@@ -73,6 +73,9 @@ pub fn compile_file<O: TypeOracle>(
     );
     let mut compiler = Compiler::new(project, key, source, lines, types, &tree);
     compiler.diagnostics = diagnostics;
+    if let Some(context) = translator(&parsed.document) {
+        compiler.context = context.to_string();
+    }
     compiler.collect_enums(&parsed.document.root, None);
     compiler.object(&parsed.document.root, None);
     Ok(compiler.finish(&parsed.document))
@@ -136,6 +139,10 @@ struct Plan {
     param: Option<Param>,
     /// The name is read through this parameter: `width` is `$scope.width`.
     rewrite: Option<String>,
+    /// The name, and this many of the members read off it, are this
+    /// parameter: `Layout` of `Layout.row` and `L.Layout` of `L.Layout.row`
+    /// are what the type attached to the scope object.
+    replace: Option<(String, usize)>,
 }
 
 struct Compiler<'t, 'a, 'p, O: TypeOracle> {
@@ -159,6 +166,9 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     diagnostics: Vec<Diagnostic>,
     /// `qsTr`'s context: the file's stem, or `pragma Translator`.
     context: String,
+    /// Whether a script of the file calls `qsTr`, which then needs the
+    /// context at run time.
+    translates: bool,
     /// The type a property is declared with, by object and name.
     declared: HashMap<(usize, String), String>,
     /// The enums of the file's components: inline name, enum, keys.
@@ -222,6 +232,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             translations: Vec::new(),
             diagnostics: Vec::new(),
             context: stem(key).to_string(),
+            translates: false,
             declared: HashMap::new(),
             enums: Vec::new(),
             qt,
@@ -546,7 +557,25 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             QmlBindingValue::Expression(expression) => {
                 let color = self.is_color(owner, &slot, &name);
-                if let Some(literal) = self.literal(expression, color) {
+                let key = match self.held_enum(owner, &slot, &name) {
+                    Some(held) => match self.plain_key(expression, &held) {
+                        Ok(key) => key,
+                        Err(()) => {
+                            let span = self.span(expression.span());
+                            self.diagnostics.push(Diagnostic::error(
+                                "Invalid property assignment: unknown enumeration",
+                                span,
+                            ));
+                            return;
+                        }
+                    },
+                    None => None,
+                };
+                let literal = match key {
+                    Some(key) => Some(key),
+                    None => self.literal(expression, color),
+                };
+                if let Some(literal) = literal {
                     let span = self.span(expression.span());
                     self.members_mut(at, &slot).assignments.push(Assignment {
                         name,
@@ -744,8 +773,21 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
 
     /// Whether the property a member names holds a colour.
     fn is_color(&self, owner: usize, slot: &Slot, name: &str) -> bool {
+        self.member_type(owner, slot, name)
+            .is_some_and(|(_, ty)| is_color(&ty))
+    }
+
+    /// The type of the property a member names, and the built-in type whose
+    /// property it is (None for a property a QML file declares).
+    fn member_type(
+        &self,
+        owner: usize,
+        slot: &Slot,
+        name: &str,
+    ) -> Option<(Option<O::Type>, String)> {
         let oracle = self.types.oracle;
-        let ty = match slot {
+        let of = |ty: O::Type| Some((Some(ty), oracle.property_type(ty, name)?));
+        match slot {
             Slot::Own => {
                 // What a PropertyChanges changes is its target's.
                 let object = self.tree.target(owner).unwrap_or(owner);
@@ -762,7 +804,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     _ => self
                         .tree
                         .property(self.types, owner, &refs)
-                        .and_then(|property| oracle.property_type(property.value?, name)),
+                        .and_then(|property| of(property.value?)),
                 }
             }
             Slot::Attached(parts) => {
@@ -771,26 +813,105 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     .find(&refs)
                     .and_then(|found| self.types.base(&found.kind))
                     .and_then(|base| oracle.attached(base))
-                    .and_then(|attached| oracle.property_type(attached, name))
+                    .and_then(of)
             }
-        };
-        ty.is_some_and(|ty| is_color(&ty))
+        }
+    }
+
+    /// The enum a member holds a key of, where the type table says it holds
+    /// one: the type that has the enum, and the enum's name.
+    fn held_enum(&self, owner: usize, slot: &Slot, name: &str) -> Option<(O::Type, String)> {
+        // What a PropertyChanges is given for its target is for the state
+        // to check when it is entered: Qt loads such a file.
+        if matches!(slot, Slot::Own) && self.tree.target(owner).is_some() {
+            return None;
+        }
+        let (ty, type_name) = self.member_type(owner, slot, name)?;
+        let ty = ty?;
+        if self.types.oracle.has_enum(ty, &type_name) {
+            return Some((ty, type_name));
+        }
+        // `Qt::Alignment`: the `Qt` namespace has nothing but enums, and
+        // the oracle finds its keys though not, by name, the enum itself.
+        let of_qt = type_name.strip_prefix("Qt::")?;
+        Some((self.qt?, of_qt.to_string()))
+    }
+
+    /// A plain value written for a member that holds a key of `held`: the
+    /// key a string names, with its number where the type table has one.
+    /// `Err` for a string that names no key, and for a number, a bool or
+    /// `null`: Qt takes none of them written in the source ("unknown
+    /// enumeration"), though a script may give the same number.
+    fn plain_key(
+        &self,
+        expression: &Expression<'a>,
+        held: &(O::Type, String),
+    ) -> Result<Option<Literal>, ()> {
+        let oracle = self.types.oracle;
+        let (ty, name) = held;
+        match expression {
+            Expression::StringLiteral(string) => {
+                let written = string.value.as_str();
+                // Flags take several keys, "LeftButton | RightButton". The
+                // oracle does not say which enums are flags, so a plain
+                // enum is let off with the same, where Qt refuses it.
+                let keys: Vec<&str> = if written.contains('|') {
+                    written.split('|').map(str::trim).collect()
+                } else {
+                    vec![written]
+                };
+                if keys
+                    .iter()
+                    .any(|key| !oracle.has_enum_key(*ty, Some(name), key))
+                {
+                    return Err(());
+                }
+                // Without a number the runtime, which has its own table,
+                // finds the key in the type by its name, as it does for
+                // `Text.AlignRight`.
+                let value = keys
+                    .iter()
+                    .map(|key| oracle.enum_value(*ty, Some(name), key))
+                    .try_fold(0, |all, one| Some(all | one?));
+                Ok(Some(Literal::Enum(EnumRef {
+                    ty: TypeRef::Native {
+                        module: oracle.module(*ty).unwrap_or_default(),
+                        name: oracle.name(*ty).to_string(),
+                    },
+                    scope: Some(name.clone()),
+                    key: keys.join("|"),
+                    value,
+                })))
+            }
+            Expression::NumericLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::NullLiteral(_) => Err(()),
+            Expression::UnaryExpression(unary)
+                if unary.operator == UnaryOperator::UnaryNegation
+                    && matches!(unary.argument, Expression::NumericLiteral(_)) =>
+            {
+                Err(())
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The type of a property of an object: one it declares, or one of its
-    /// type's.
-    fn declared_type(&self, object: usize, name: &str) -> Option<String> {
+    /// type's, then with the built-in type that has it.
+    fn declared_type(&self, object: usize, name: &str) -> Option<(Option<O::Type>, String)> {
         if let Some(ty) = self.declared.get(&(object, name.to_string())) {
-            return Some(ty.clone());
+            return Some((None, ty.clone()));
         }
         let mut kind = self.tree.objects[object].kind.clone()?;
         for _ in 0..64 {
             match kind {
-                Kind::Builtin(ty) => return self.types.oracle.property_type(ty, name),
+                Kind::Builtin(ty) => {
+                    return Some((Some(ty), self.types.oracle.property_type(ty, name)?));
+                }
                 Kind::Component(key) => {
                     let shape = self.project.front.shape(&key)?;
                     if let Some(declaration) = shape.properties.get(name) {
-                        return Some(declaration.type_name.clone());
+                        return Some((None, declaration.type_name.clone()));
                     }
                     let types = Types::new(&self.project.front, &self.project.oracle, &key.file);
                     let parts: Vec<&str> = shape.root.iter().map(String::as_str).collect();
@@ -936,9 +1057,26 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     fn is_global(&self, name: &str, offset: u32) -> bool {
-        self.names
-            .lookup(name, offset)
+        self.lookup(name, offset)
             .is_some_and(|r| r.roles.is_empty() && matches!(r.target, Some(Target::Global(_))))
+    }
+
+    /// What a free name is. In a delegate any name nothing declares may be a
+    /// role of the model, except the functions that translate: a text marked
+    /// for translation has to be the same text to the tool that lists them
+    /// and to the running program, and `qsTr` has to be the file's own (it
+    /// carries the context), not the global one a look-up at run time finds.
+    fn lookup(&self, name: &str, offset: u32) -> Option<Resolution<O::Type>> {
+        let mut resolution = self.names.lookup(name, offset)?;
+        if marks_translation(name)
+            && resolution.aimed.is_none()
+            && matches!(resolution.target, Some(Target::Context { .. }))
+            && let Some(global) = names::global(name)
+        {
+            resolution.roles.clear();
+            resolution.target = Some(Target::Global(global));
+        }
+        Some(resolution)
     }
 
     /// `Text.AlignLeft`, `Image.Fill.Stretch`, `C.Text.AlignLeft`,
@@ -1134,11 +1272,34 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let mut refs: Vec<Ref> = Vec::new();
         let mut edits = analysis.edits.clone();
         let mut plans: HashMap<(String, Vec<String>), Plan> = HashMap::new();
+        let written: HashSet<&str> = analysis
+            .free
+            .iter()
+            .filter(|free| free.written)
+            .map(|free| free.name.as_str())
+            .collect();
+        // Names whose members the script writes: a value type read through
+        // one has to be written back through it.
+        let value_bases: HashSet<u32> = analysis
+            .member_writes
+            .iter()
+            .filter_map(|write| match write {
+                js::ValueSource::Free(start) => Some(*start),
+                _ => None,
+            })
+            .collect();
         for free in &analysis.free {
             let offset = span.start + free.span.start;
             let plan = plans
                 .entry((free.name.clone(), free.chain.clone()))
-                .or_insert_with(|| self.resolve(&free.name, offset, &free.chain, scope))
+                .or_insert_with(|| {
+                    let plan = self.resolve(&free.name, offset, &free.chain, scope);
+                    if written.contains(free.name.as_str()) {
+                        held(plan)
+                    } else {
+                        plan
+                    }
+                })
                 .clone();
             if let Some(param) = &plan.param
                 && !params.iter().any(|p| p.name == param.name)
@@ -1149,12 +1310,18 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 name: free.name.clone(),
                 resolved: plan.resolved.clone(),
             };
+            if free.name == "qsTr" && matches!(r.resolved, Resolved::Global { .. }) {
+                self.translates = true;
+            }
             if !refs.contains(&r) {
                 refs.push(r);
             }
+            let value_base = value_bases.contains(&free.span.start);
             if let Some(through) = &plan.rewrite {
                 let text = if free.shorthand {
                     format!("{0}: {through}.{0}", free.name)
+                } else if value_base {
+                    format!("{VALUE_AT}({through}, {:?})", free.name)
                 } else {
                     format!("{through}.{}", free.name)
                 };
@@ -1162,7 +1329,102 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     span: free.span,
                     text,
                 });
+            } else if value_base
+                && plan.replace.is_none()
+                && plan.param.as_ref().is_some_and(|param| {
+                    param.name == free.name
+                        && matches!(param.arg, Arg::Context { .. } | Arg::Dynamic(_))
+                })
+            {
+                // The name reached the function by value: it is a variable
+                // of the function's like any other.
+                edits.push(js::Edit {
+                    span: free.span,
+                    text: value_in(&free.name),
+                });
             }
+            if let Some((text, members)) = &plan.replace {
+                let end = match members.checked_sub(1) {
+                    Some(last) => free.chain_ends.get(last).copied(),
+                    None => Some(free.span.end),
+                };
+                if let Some(end) = end {
+                    edits.push(js::Edit {
+                        span: Span::new(free.span.start, end),
+                        text: text.clone(),
+                    });
+                }
+            }
+        }
+        // Before the edits for attached objects: where both start at the same
+        // place, this one is the outer call.
+        for write in &analysis.member_writes {
+            match write {
+                js::ValueSource::Member { object, name, end } => {
+                    edits.push(js::Edit {
+                        span: Span::new(object.start, object.start),
+                        text: format!("{VALUE_AT}("),
+                    });
+                    edits.push(js::Edit {
+                        span: Span::new(object.end, *end),
+                        text: format!(", {name:?})"),
+                    });
+                }
+                js::ValueSource::Element { object, key, end } => {
+                    edits.push(js::Edit {
+                        span: Span::new(object.start, object.start),
+                        text: format!("{VALUE_AT}("),
+                    });
+                    edits.push(js::Edit {
+                        span: Span::new(object.end, key.start),
+                        text: ", ".into(),
+                    });
+                    edits.push(js::Edit {
+                        span: Span::new(key.end, *end),
+                        text: ")".into(),
+                    });
+                }
+                js::ValueSource::Local { span, name } => edits.push(js::Edit {
+                    span: *span,
+                    text: value_in(name),
+                }),
+                js::ValueSource::Free(_) => {}
+            }
+        }
+        for member in &analysis.type_members {
+            // `Text.AlignLeft`, `Controls.Button`: a name that is a type or
+            // a module has no object a type could have attached to.
+            let named = member.base.is_some_and(|start| {
+                analysis
+                    .free
+                    .iter()
+                    .filter(|free| free.span.start == start)
+                    .filter_map(|free| plans.get(&(free.name.clone(), free.chain.clone())))
+                    .any(|plan| {
+                        matches!(
+                            plan.resolved,
+                            Resolved::ImportNs(_)
+                                | Resolved::Type(_)
+                                | Resolved::Enum(_)
+                                | Resolved::Attached { .. }
+                                | Resolved::Global { .. }
+                        )
+                    })
+            });
+            if named {
+                continue;
+            }
+            let Some((module, name)) = self.attaching(&member.name) else {
+                continue;
+            };
+            edits.push(js::Edit {
+                span: Span::new(member.object.start, member.object.start),
+                text: format!("{ATTACHED}("),
+            });
+            edits.push(js::Edit {
+                span: Span::new(member.object.end, member.end),
+                text: format!(", {module:?}, {name:?})"),
+            });
         }
         for local in &analysis.locals {
             refs.push(Ref {
@@ -1236,7 +1498,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// What a free name at `offset` is, and how the function gets it.
     fn resolve(&mut self, name: &str, offset: u32, chain: &[String], scope: usize) -> Plan {
         let context = self.tree.objects[self.tree.object_at(offset)].context;
-        let Some(resolution) = self.names.lookup(name, offset) else {
+        let Some(resolution) = self.lookup(name, offset) else {
             if self.project.dynamic_names().contains(name) {
                 return Plan {
                     resolved: Resolved::ContextProp {
@@ -1252,6 +1514,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         },
                     }),
                     rewrite: None,
+                    replace: None,
                 };
             }
             if self.warned.insert(name.to_string()) {
@@ -1272,6 +1535,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     arg: Arg::Dynamic(name.to_string()),
                 }),
                 rewrite: None,
+                replace: None,
             };
         };
         let base = resolution
@@ -1312,6 +1576,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 },
             }),
             rewrite: None,
+            replace: None,
         }
     }
 
@@ -1341,6 +1606,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     resolved,
                     param: as_is(Arg::Object(at)),
                     rewrite: None,
+                    replace: None,
                 }
             }
             Target::Property { object, .. } => {
@@ -1363,6 +1629,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         arg: Arg::Object(at),
                     }),
                     rewrite: Some(through),
+                    replace: None,
                 }
             }
             Target::Context { context, .. } => {
@@ -1378,26 +1645,35 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         fallback: None,
                     }),
                     rewrite: None,
+                    replace: None,
                 }
             }
-            Target::Type(found) => self.type_plan(name, found, None, chain),
+            Target::Type(found) => self.type_plan(name, found, None, chain, scope),
             Target::Namespace(source) => {
                 let source = import_source(source);
                 // `S.Theme.accent`: the script reads a type of the module,
                 // which is what the reference is, through the namespace.
-                let resolved = chain
+                let through = chain
                     .first()
                     .filter(|ty| is_key_name(ty))
                     .and_then(|ty| Some((self.types.find(&[name, ty.as_str()])?, &chain[1..])))
-                    .map(|(found, rest)| self.type_plan(name, &found, Some(name), rest).resolved)
-                    .unwrap_or_else(|| Resolved::ImportNs(source.clone()));
+                    .map(|(found, rest)| self.type_plan(name, &found, Some(name), rest, scope));
+                // `L.Layout.row`: what the type attached is all the script
+                // needs, where the namespace alone is nothing to it.
+                if let Some(plan) = &through
+                    && plan.replace.is_some()
+                {
+                    return plan.clone();
+                }
                 Plan {
-                    resolved,
+                    resolved: through
+                        .map_or_else(|| Resolved::ImportNs(source.clone()), |plan| plan.resolved),
                     param: as_is(Arg::Namespace {
                         alias: name.to_string(),
                         source,
                     }),
                     rewrite: None,
+                    replace: None,
                 }
             }
             Target::Global(global) => {
@@ -1409,6 +1685,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         resolved: Resolved::Enum(value),
                         param: None,
                         rewrite: None,
+                        replace: None,
                     };
                 }
                 Plan {
@@ -1417,18 +1694,33 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     },
                     param: None,
                     rewrite: None,
+                    replace: None,
                 }
             }
         }
     }
 
-    /// A type named in a script: what of it the script reads.
+    /// The module and name of the type `name` is in this file, when it is
+    /// one that attaches an object to others.
+    fn attaching(&self, name: &str) -> Option<(String, String)> {
+        let found = self.types.find(&[name])?;
+        let base = self.types.base(&found.kind)?;
+        self.types.oracle.attached(base)?;
+        match self.type_ref(&found, None) {
+            TypeRef::Native { module, name } => Some((module, name)),
+            _ => None,
+        }
+    }
+
+    /// A type named in a script: what of it the script reads. `scope` is
+    /// the object the script is written in.
     fn type_plan(
         &self,
         name: &str,
         found: &Found<O::Type>,
         qualifier: Option<&str>,
         chain: &[String],
+        scope: usize,
     ) -> Plan {
         let ty = self.type_ref(found, qualifier);
         let kind = &found.kind;
@@ -1447,6 +1739,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }),
             param: param(Arg::Type(ty.clone())),
             rewrite: None,
+            replace: None,
         };
         if let Some(first) = chain.first() {
             match self.types.declared_enum(kind, first) {
@@ -1466,6 +1759,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 resolved: Resolved::Singleton(ty.clone()),
                 param: param(Arg::Singleton(ty)),
                 rewrite: None,
+                replace: None,
             };
         }
         let attaches = self
@@ -1473,19 +1767,37 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .base(kind)
             .and_then(|base| self.types.oracle.attached(base))
             .is_some();
-        let resolved = match chain.first() {
+        match chain.first() {
             Some(member) if attaches && member.starts_with(|c: char| c.is_ascii_lowercase()) => {
-                Resolved::Attached {
-                    ty: ty.clone(),
-                    member: member.clone(),
+                // Its own parameter: the type's name may also be read for an
+                // enum in the same script (`Accessible.Button`), and that is
+                // the type, not what it attached.
+                let through = match qualifier {
+                    Some(qualifier) => format!("$a_{qualifier}_{}", type_name(&ty)),
+                    None => format!("$a_{name}"),
+                };
+                Plan {
+                    resolved: Resolved::Attached {
+                        ty: ty.clone(),
+                        member: member.clone(),
+                    },
+                    param: Some(Param {
+                        name: through.clone(),
+                        arg: Arg::Attached {
+                            ty,
+                            object: self.place[scope],
+                        },
+                    }),
+                    rewrite: None,
+                    replace: Some((through, usize::from(qualifier.is_some()))),
                 }
             }
-            _ => Resolved::Type(ty.clone()),
-        };
-        Plan {
-            resolved,
-            param: param(Arg::Type(ty)),
-            rewrite: None,
+            _ => Plan {
+                resolved: Resolved::Type(ty.clone()),
+                param: param(Arg::Type(ty)),
+                rewrite: None,
+                replace: None,
+            },
         }
     }
 
@@ -1529,6 +1841,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             "// {}.qml, compiled by ljos_compiler: a function per binding, handler and method.\n",
             self.key
         );
+        if self.translates {
+            // `qsTr` looks a text up in the file's context, which a script
+            // cannot know: the module binds its own `qsTr` to it, over the
+            // global one. `qsTranslate` and `qsTrId` carry theirs.
+            source.push_str(&format!(
+                "const qsTr = {TR_IN}({});\n",
+                js_string(&self.context)
+            ));
+        }
         let mut functions = Vec::new();
         for (function, code) in self.functions {
             source.push('\n');
@@ -1602,13 +1923,136 @@ fn block(body: &str) -> String {
     }
 }
 
+/// The plan for a name the script assigns to. A name the running program
+/// supplies reaches a script by value, and assigning to a value changes
+/// nothing but the script's copy: such a name is read and written through
+/// the object that has it instead.
+fn held(plan: Plan) -> Plan {
+    let Some(Param { name, arg }) = &plan.param else {
+        return plan;
+    };
+    let (component, fallback) = match arg {
+        Arg::Context {
+            component,
+            fallback,
+            ..
+        } => match fallback.as_deref() {
+            Some(Arg::Property { object, .. }) => (*component, Some(*object)),
+            // An outer context is on the way out from the inner one.
+            None | Some(Arg::Context { .. }) => (*component, None),
+            // An id or a type: nothing an assignment can change.
+            Some(_) => return plan,
+        },
+        Arg::Dynamic(_) => (None, None),
+        _ => return plan,
+    };
+    let through = format!("$w_{name}");
+    Plan {
+        resolved: plan.resolved,
+        param: Some(Param {
+            name: through.clone(),
+            arg: Arg::Holder {
+                component,
+                name: name.clone(),
+                fallback,
+            },
+        }),
+        rewrite: Some(through),
+        replace: None,
+    }
+}
+
+/// The global that gives what `object[name]` is for a write to one of its
+/// members: the member itself, or a stand-in for a value type that writes
+/// the changed value back. The engine defines it, and [`VALUE_IN`].
+const VALUE_AT: &str = "__ljos_vt";
+
+/// The same for a variable: `(value, put)`, where `put` assigns to it.
+const VALUE_IN: &str = "__ljos_vl";
+
+/// A variable, for a write to one of its members. It has to start with a
+/// name: QML is mostly written without semicolons, and a line that starts
+/// with a parenthesis would be read as a call of the line before.
+fn value_in(name: &str) -> String {
+    format!("{VALUE_IN}({name}, ($v) => {name} = $v)")
+}
+
+/// The global that gives what a type attached to an object. The engine
+/// defines it.
+const ATTACHED: &str = "__ljos_att";
+
+/// The runtime's maker of a file's `qsTr`: `(context) => qsTr`.
+const TR_IN: &str = "__ljos_qsTr";
+
+/// A string as a JavaScript literal.
+fn js_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            // The two line ends JavaScript has besides those, and what
+            // cannot be seen.
+            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The name of a type, without its module.
+fn type_name(ty: &TypeRef) -> &str {
+    match ty {
+        TypeRef::Native { name, .. } | TypeRef::Unresolved(name) => name,
+        TypeRef::Component { file, inline } => inline.as_deref().unwrap_or(stem(file)),
+    }
+}
+
 fn is_key_name(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_uppercase())
 }
 
 /// `Main` of `app/Main`: `qsTr`'s context and the file component's name.
+/// The global functions that translate a text or mark one for translation.
+fn marks_translation(name: &str) -> bool {
+    matches!(
+        name,
+        "qsTr"
+            | "qsTranslate"
+            | "qsTrId"
+            | "qsTrNoOp"
+            | "qsTranslateNoOp"
+            | "qsTrIdNoOp"
+            | "QT_TR_NOOP"
+            | "QT_TRANSLATE_NOOP"
+            | "QT_TRID_NOOP"
+    )
+}
+
 fn stem(key: &str) -> &str {
     key.rsplit('/').next().unwrap_or(key)
+}
+
+/// `pragma Translator: Name`: the context of the file's `qsTr` calls,
+/// instead of its name. Written as a name or as a string.
+pub(crate) fn translator<'a>(document: &QmlDocument<'a>) -> Option<&'a str> {
+    let value = document
+        .pragmas
+        .iter()
+        .find(|pragma| pragma.name == "Translator")?
+        .value?;
+    let value = value.trim();
+    let unquoted = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .unwrap_or(value);
+    (!unquoted.is_empty()).then_some(unquoted)
 }
 
 fn segment_text(segment: &KeySeg) -> String {

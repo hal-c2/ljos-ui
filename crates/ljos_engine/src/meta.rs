@@ -121,6 +121,9 @@ pub type CompleteThunk = fn(&Cx<'_>) -> Result<(), EngineError>;
 /// Intercepts appends to a list property (`Item.data` sorts children into
 /// `children` and `resources`). `cx.this` is the list's object.
 pub type ListAppend = fn(&Cx<'_>, crate::ids::ObjectId) -> Result<(), EngineError>;
+/// Gets a native list field from the struct that declares it, to change it
+/// where it is: an append then costs the same however long the list is.
+pub type ListField = fn(&mut dyn QmlObject) -> &mut crate::list::QmlList;
 
 /// Where a property's value is stored.
 #[derive(Clone, Copy)]
@@ -169,6 +172,8 @@ pub struct PropertyInfo {
     pub access: PropertyAccess,
     /// For a list property, the hook appends go through.
     pub list_append: Option<ListAppend>,
+    /// For a native list property, the field itself.
+    pub list_field: Option<ListField>,
 }
 
 impl PropertyInfo {
@@ -357,6 +362,52 @@ impl MetaObject {
             .iter()
             .rev()
             .find_map(|e| e.keys.iter().find(|(k, _)| k == key).map(|(_, v)| *v))
+    }
+
+    /// The enum called `name`, the type's own or an inherited one. Later
+    /// wins.
+    pub fn enumeration(&self, name: &str) -> Option<&EnumInfo> {
+        self.enums.iter().rev().find(|e| e.name == name)
+    }
+
+    /// Converts `v` for a property that holds the enum `name` of this type
+    /// (see [`TypeTag::Enum`]): a number as it is (a real is rounded), a
+    /// bool as 0 or 1, and a string when it is one of the enum's keys. The
+    /// result is the key's number, a [`Value::Int`]: an enum reads as a
+    /// number in QML.
+    ///
+    /// A number that is no key is taken as it is, as Qt takes it. What Qt
+    /// then keeps of it differs from one property to the next (some store
+    /// a few bits), which is not copied here.
+    pub fn coerce_enum(&self, name: &str, v: &Value) -> Result<Value, ConvertError> {
+        let whole = match v {
+            Value::Int(i) => Some(*i),
+            Value::Enum(e) => Some(e.value),
+            Value::Bool(b) => Some(i32::from(*b)),
+            // Half away from zero; past the range it wraps, as `int` does.
+            Value::Real(r) if !r.is_nan() => Some(r.round() as i64 as i32),
+            Value::String(key) => self
+                .enumeration(name)
+                .and_then(|e| e.keys.iter().find(|(k, _)| k == key))
+                .and_then(|(_, n)| i32::try_from(*n).ok()),
+            _ => None,
+        };
+        whole.map(Value::Int).ok_or_else(|| ConvertError {
+            from: crate::types::describe(v),
+            to: self.enum_name(name),
+        })
+    }
+
+    /// An enum as messages name it: `Item::TransformOrigin`, with the type
+    /// that declares it.
+    fn enum_name(&self, name: &str) -> String {
+        let has = |m: &MetaObject| m.enums.iter().any(|e| e.name == name);
+        // Enums are inherited, so the last type of the chain to have it is
+        // where it was declared.
+        match self.chain().filter(|m| has(m)).last() {
+            Some(owner) => format!("{}::{name}", owner.name),
+            None => name.to_owned(),
+        }
     }
 }
 
@@ -549,6 +600,7 @@ impl MetaBuilder {
             notify,
             access,
             list_append: None,
+            list_field: None,
         });
     }
 
@@ -659,6 +711,14 @@ impl MetaBuilder {
     pub fn list_append(mut self, f: ListAppend) -> Self {
         if let Some(p) = self.meta.properties.last_mut() {
             p.list_append = Some(f);
+        }
+        self
+    }
+
+    /// Says where the list property just added keeps its items.
+    pub fn list_field(mut self, f: ListField) -> Self {
+        if let Some(p) = self.meta.properties.last_mut() {
+            p.list_field = Some(f);
         }
         self
     }

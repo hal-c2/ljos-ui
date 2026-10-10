@@ -17,6 +17,7 @@ use qml_front::{QtTypeOracle, TypeOracle};
 pub mod baseline;
 mod compile;
 mod dump;
+pub mod i18n;
 mod js;
 mod oracle;
 mod project;

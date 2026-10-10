@@ -15,10 +15,15 @@
 //! | `string` | anything but `undefined` | `ToString`; `null` is `""` |
 //! | `color` | colours, colour strings | `#rgb`, `#argb`, `#rrggbb`, `#aarrggbb`, CSS keywords |
 //! | `url` | urls, strings | |
-//! | `point`/`size`/`rect`/`font` | the same value type | |
+//! | `point` | points, `"x,y"`, a `vector2d`, `null` (the origin) | |
+//! | `size` | sizes, `"WxH"` | |
+//! | `rect` | rects, `"x,y,WxH"` | |
+//! | `vector2d` | the same, `"x,y"`, a `point`, a longer vector (cut short) | |
+//! | `vector3d`/`vector4d`/`quaternion` | the same, numbers in a string | |
+//! | `font` | fonts | |
 //! | object types | objects, `null`, `undefined` (as `null`) | the engine checks the class |
 //! | `list<T>` | lists, a single object (a list of one), `null` (empty) | |
-//! | enums | numbers | |
+//! | enums | numbers (a real is rounded), bools, the name of a key | the engine looks the key up in the property's type ([`crate::MetaObject::coerce_enum`]); the value is the number |
 //!
 //! `undefined` is rejected everywhere but `var` and object types, matching
 //! Qt's "Unable to assign [undefined] to …". The `null`-to-`string` and
@@ -30,6 +35,7 @@ use crate::atom::Atom;
 use crate::ids::ObjectId;
 use crate::number::to_int32;
 use crate::value::{Color, EnumValue, Font, Point, Rect, Size, Value};
+use crate::value_types::{Quaternion, Vector2d, Vector3d, Vector4d, area, extent, list};
 
 /// The declared type of a property, signal parameter or method return.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -44,13 +50,19 @@ pub enum TypeTag {
     Size,
     Rect,
     Font,
+    Vector2d,
+    Vector3d,
+    Vector4d,
+    Quaternion,
     Url,
     /// An object reference. `Some(name)` restricts it to a QML type (and
     /// what derives from it).
     Object(Option<Atom>),
     /// `list<T>`.
     List(Option<Atom>),
-    /// An enum, by its (qualified) name.
+    /// An enum, by its name: `TransformOrigin`. A property of this type
+    /// holds one of the enum's numbers, and reads as a number; the enum is
+    /// looked up in the type of the object that has the property.
     Enum(Atom),
     /// A grouped property (`border` in `border.width`); the group's type.
     Group(Atom),
@@ -72,6 +84,10 @@ impl TypeTag {
             TypeTag::Size => "size".into(),
             TypeTag::Rect => "rect".into(),
             TypeTag::Font => "font".into(),
+            TypeTag::Vector2d => "vector2d".into(),
+            TypeTag::Vector3d => "vector3d".into(),
+            TypeTag::Vector4d => "vector4d".into(),
+            TypeTag::Quaternion => "quaternion".into(),
             TypeTag::Url => "url".into(),
             TypeTag::Object(None) => "QtObject".into(),
             TypeTag::Object(Some(n)) | TypeTag::Enum(n) | TypeTag::Group(n) => n.to_string(),
@@ -96,6 +112,10 @@ impl TypeTag {
             "size" => TypeTag::Size,
             "rect" => TypeTag::Rect,
             "font" => TypeTag::Font,
+            "vector2d" => TypeTag::Vector2d,
+            "vector3d" => TypeTag::Vector3d,
+            "vector4d" => TypeTag::Vector4d,
+            "quaternion" => TypeTag::Quaternion,
             "url" => TypeTag::Url,
             "QtObject" => TypeTag::Object(None),
             "list" => TypeTag::List(None),
@@ -124,6 +144,10 @@ impl TypeTag {
             TypeTag::Size => Value::Size(Arc::default()),
             TypeTag::Rect => Value::Rect(Arc::default()),
             TypeTag::Font => Value::Font(Arc::default()),
+            TypeTag::Vector2d => Value::Vector2d(Vector2d::default()),
+            TypeTag::Vector3d => Value::Vector3d(Vector3d::default()),
+            TypeTag::Vector4d => Value::Vector4d(Arc::default()),
+            TypeTag::Quaternion => Value::Quaternion(Arc::default()),
             TypeTag::Url => Value::Url(Atom::EMPTY),
             TypeTag::Object(_) => Value::Null,
             TypeTag::List(_) => Value::List(Arc::default()),
@@ -192,14 +216,65 @@ impl TypeTag {
             },
             TypeTag::Point => match v {
                 Value::Point(_) => v.clone(),
+                Value::Vector2d(p) => Value::point(p.x.into(), p.y.into()),
+                Value::Null => self.default_value(),
+                Value::String(s) => match list(s) {
+                    Some([x, y]) => Value::point(x, y),
+                    None => return fail(),
+                },
                 _ => return fail(),
             },
             TypeTag::Size => match v {
                 Value::Size(_) => v.clone(),
+                Value::String(s) => match extent(s) {
+                    Some([w, h]) => Value::size(w, h),
+                    None => return fail(),
+                },
                 _ => return fail(),
             },
             TypeTag::Rect => match v {
                 Value::Rect(_) => v.clone(),
+                Value::String(s) => match area(s) {
+                    Some([x, y, w, h]) => Value::rect(x, y, w, h),
+                    None => return fail(),
+                },
+                _ => return fail(),
+            },
+            TypeTag::Vector2d => match v {
+                Value::Vector2d(_) => v.clone(),
+                Value::Point(p) => Value::vector2d(p.x as f32, p.y as f32),
+                Value::Vector3d(p) => Value::vector2d(p.x, p.y),
+                Value::Vector4d(p) => Value::vector2d(p.x, p.y),
+                Value::String(s) => match list(s) {
+                    Some([x, y]) => Value::vector2d(x as f32, y as f32),
+                    None => return fail(),
+                },
+                _ => return fail(),
+            },
+            TypeTag::Vector3d => match v {
+                Value::Vector3d(_) => v.clone(),
+                Value::String(s) => match list(s) {
+                    Some([x, y, z]) => Value::vector3d(x as f32, y as f32, z as f32),
+                    None => return fail(),
+                },
+                _ => return fail(),
+            },
+            TypeTag::Vector4d => match v {
+                Value::Vector4d(_) => v.clone(),
+                Value::String(s) => match list(s) {
+                    Some([x, y, z, w]) => Value::vector4d(x as f32, y as f32, z as f32, w as f32),
+                    None => return fail(),
+                },
+                _ => return fail(),
+            },
+            TypeTag::Quaternion => match v {
+                Value::Quaternion(_) => v.clone(),
+                Value::String(s) => match list(s) {
+                    Some([scalar, x, y, z]) => {
+                        Value::quaternion(scalar as f32, x as f32, y as f32, z as f32)
+                    }
+                    None => return fail(),
+                },
                 _ => return fail(),
             },
             TypeTag::Font => match v {
@@ -232,7 +307,7 @@ impl TypeTag {
 
 /// Qt-style description of a value in assignment errors: `[undefined]`,
 /// `QString`, `double`.
-fn describe(v: &Value) -> String {
+pub(crate) fn describe(v: &Value) -> String {
     match v {
         Value::Undefined => "[undefined]".into(),
         Value::Null => "null".into(),
@@ -245,6 +320,10 @@ fn describe(v: &Value) -> String {
         Value::Size(_) => "QSizeF".into(),
         Value::Rect(_) => "QRectF".into(),
         Value::Font(_) => "QFont".into(),
+        Value::Vector2d(_) => "QVector2D".into(),
+        Value::Vector3d(_) => "QVector3D".into(),
+        Value::Vector4d(_) => "QVector4D".into(),
+        Value::Quaternion(_) => "QQuaternion".into(),
         Value::Url(_) => "QUrl".into(),
         Value::Object(_) => "QObject*".into(),
         Value::List(_) => "QJSValue".into(),
@@ -308,6 +387,10 @@ qml_value!(Point, TypeTag::Point, |s| Value::Point(Arc::new(*s)), Value::Point(p
 qml_value!(Size, TypeTag::Size, |s| Value::Size(Arc::new(*s)), Value::Size(p) => *p);
 qml_value!(Rect, TypeTag::Rect, |s| Value::Rect(Arc::new(*s)), Value::Rect(p) => *p);
 qml_value!(Font, TypeTag::Font, |s| Value::Font(Arc::new(s.clone())), Value::Font(f) => (*f).clone());
+qml_value!(Vector2d, TypeTag::Vector2d, |s| Value::Vector2d(*s), Value::Vector2d(v) => v);
+qml_value!(Vector3d, TypeTag::Vector3d, |s| Value::Vector3d(*s), Value::Vector3d(v) => v);
+qml_value!(Vector4d, TypeTag::Vector4d, |s| Value::Vector4d(Arc::new(*s)), Value::Vector4d(v) => *v);
+qml_value!(Quaternion, TypeTag::Quaternion, |s| Value::Quaternion(Arc::new(*s)), Value::Quaternion(q) => *q);
 qml_value!(EnumValue, TypeTag::Enum(Atom::intern("enum")), |s| Value::Enum(*s), Value::Enum(e) => e);
 qml_value!(
     Vec<Value>,
@@ -380,6 +463,54 @@ mod tests {
         assert_eq!(<Option<ObjectId>>::from_value(&Value::Undefined), Ok(None));
         let err = f64::from_value(&Value::Undefined).unwrap_err();
         assert_eq!(err.to_string(), "Unable to assign [undefined] to real");
+    }
+
+    #[test]
+    fn value_types_are_read_from_strings_and_from_each_other() {
+        let to = |ty: &str, v: Value| {
+            TypeTag::parse(ty)
+                .coerce(&v)
+                .map(|v| v.to_js_string().to_string())
+        };
+        let text = |s: &str| Value::string(s);
+        assert_eq!(to("point", text("7,8")).unwrap(), "QPointF(7, 8)");
+        assert_eq!(
+            to("point", Value::vector2d(1.0, 2.0)).unwrap(),
+            "QPointF(1, 2)"
+        );
+        assert_eq!(to("point", Value::Null).unwrap(), "QPointF(0, 0)");
+        assert_eq!(to("size", text("7x8")).unwrap(), "QSizeF(7, 8)");
+        assert_eq!(
+            to("rect", text("1, 2, 3 x 4")).unwrap(),
+            "QRectF(1, 2, 3, 4)"
+        );
+        assert_eq!(
+            to("vector2d", Value::point(7.0, 8.0)).unwrap(),
+            "QVector2D(7, 8)"
+        );
+        assert_eq!(
+            to("vector2d", Value::vector3d(1.0, 2.0, 3.0)).unwrap(),
+            "QVector2D(1, 2)"
+        );
+        assert_eq!(to("vector3d", text("7,8,9")).unwrap(), "QVector3D(7, 8, 9)");
+        assert_eq!(
+            to("vector4d", text("5,6,7,8")).unwrap(),
+            "QVector4D(5, 6, 7, 8)"
+        );
+        assert_eq!(
+            to("quaternion", text("5,6,7,8")).unwrap(),
+            "QQuaternion(5, 6, 7, 8)"
+        );
+        assert_eq!(to("quaternion", Value::Null).ok(), None);
+        assert_eq!(
+            to("point", text("nope")).unwrap_err().to_string(),
+            "Unable to assign QString to point"
+        );
+        assert!(to("point", Value::Int(5)).is_err());
+        assert!(to("rect", text("1,2")).is_err());
+        assert!(to("size", Value::Bool(true)).is_err());
+        assert!(to("vector3d", Value::Int(5)).is_err());
+        assert!(to("point", Value::size(1.0, 2.0)).is_err());
     }
 
     #[test]

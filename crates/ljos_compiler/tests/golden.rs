@@ -105,6 +105,49 @@ ListView {
 }
 
 #[test]
+fn attached_in_expressions() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+import QtQuick as Q
+
+Item {
+    id: root
+    Item { id: other }
+    property bool on: Keys.enabled && other.Keys.enabled
+    property bool qualified: Q.Keys.enabled
+    property int both: Keys.priority + Keys.BeforeItem
+    property var plain: ({ Keys: 1 })
+    property int untouched: plain?.Keys + Text.AlignLeft
+    function set(v) { Keys.enabled = v; parent.Keys.enabled = v; other.children[0].Keys.priority++ }
+}
+"##,
+    )]));
+}
+
+#[test]
+fn assignments_to_names_from_outside() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+ListView {
+    id: view
+    property int created: 0
+    property int seen: 0
+    delegate: Rectangle {
+        property int own: 0
+        Component.onCompleted: { created++; own = created; cost = 2 }
+        width: created + seen
+    }
+}
+"##,
+    )]));
+}
+
+#[test]
 fn grouped() {
     insta::assert_snapshot!(compile(&[(
         "Main",
@@ -310,6 +353,41 @@ ListView {
     )]));
 }
 
+/// A write to a member of a value type goes back to where the value was
+/// read from: a property, a member of another object, an element, or a
+/// variable the script can assign to.
+#[test]
+fn writes_to_members_of_values() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    id: root
+    property rect area
+    property var list: []
+    Item { id: other; property point spot }
+    signal moved(point to)
+    onMoved: to.x = 1
+    function change(given) {
+        area.x = 1
+        root.area.width += 2
+        other.spot.y++
+        list[0].x = 3
+        other.Layout.row = 4
+        var kept = area
+        kept.x = 5
+        given.x = 6
+        const fixed = area
+        fixed.x = 7
+        this.area.height = 8
+    }
+}
+"##
+    )]));
+}
+
 #[test]
 fn a_file_with_errors_compiles_in_part() {
     insta::assert_snapshot!(compile(&[(
@@ -351,6 +429,83 @@ Item {
         ),
         ("Child", "import QtQuick\nBase { enum Mine { Small } }\n"),
     ]));
+}
+
+/// A string written for a property that holds an enum is the key it names;
+/// what a script gives is for the runtime to check.
+#[test]
+fn plain_values_for_enum_properties() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    transformOrigin: "Center"
+    Text { horizontalAlignment: "AlignRight"; transformOrigin: "TopLeft" }
+    MouseArea { acceptedButtons: "RightButton" }
+    MouseArea { acceptedButtons: "LeftButton | MiddleButton" }
+    Item { transformOrigin: +1 }
+    Item { transformOrigin: (1) }
+    Item { transformOrigin: Text.AlignRight }
+    Item { transformOrigin: `Center` }
+}
+"##,
+    )]));
+}
+
+/// Qt 6.11.2 does not load a file with any of these: "Invalid property
+/// assignment: unknown enumeration", at the value.
+#[test]
+fn a_plain_value_that_is_no_key_is_an_error() {
+    for (object, column) in [
+        ("Item { transformOrigin: \"Nowhere\" }", 29),
+        ("Item { transformOrigin: \"center\" }", 29),
+        ("Item { transformOrigin: \"Item.Center\" }", 29),
+        ("Item { transformOrigin: \"AlignRight\" }", 29),
+        ("Item { transformOrigin: \"\" }", 29),
+        ("Item { transformOrigin: \"TopLeft|Nowhere\" }", 29),
+        ("Item { transformOrigin: 4 }", 29),
+        ("Item { transformOrigin: -1 }", 29),
+        ("Item { transformOrigin: 2.5 }", 29),
+        ("Item { transformOrigin: true }", 29),
+        ("Item { transformOrigin: null }", 29),
+        ("Text { horizontalAlignment: 2 }", 33),
+        ("MouseArea { acceptedButtons: 1 }", 34),
+        ("MouseArea { acceptedButtons: \"LeftButton|\" }", 34),
+        ("MouseArea { acceptedButtons: \"AlignLeft\" }", 34),
+    ] {
+        let source = format!("import QtQuick\nItem {{\n    {object}\n}}\n");
+        let out = compile(&[("Main", &source)]);
+        assert!(
+            out.contains(&format!(
+                "3:{column}: error: Invalid property assignment: unknown enumeration"
+            )),
+            "{object}\n{out}"
+        );
+    }
+}
+
+/// What a PropertyChanges is given for its target is checked when the state
+/// is entered, and a property a file declares holds what its type says.
+#[test]
+fn numbers_that_are_not_for_an_enum_property_are_taken() {
+    let out = compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    id: root
+    property int transformOrigins: 3
+    property var origin: 2
+    states: State {
+        PropertyChanges { target: root; transformOrigin: 1 }
+    }
+}
+"##,
+    )]);
+    assert!(!out.contains("diagnostics"), "{out}");
 }
 
 #[test]

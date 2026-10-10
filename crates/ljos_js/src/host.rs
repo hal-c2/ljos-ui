@@ -20,7 +20,7 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    PropDef, SignalDef, Slice, SourceMapper, TypeDef, objects::HostWrapper,
+    PropDef, SignalDef, Slice, SourceMapper, TypeDef, ValueKind, objects::HostWrapper,
 };
 
 /// A Rust function callable from JS as a global (see
@@ -66,7 +66,21 @@ pub(crate) struct HostState {
     /// Made by the first colour that crosses; most hosts never see one
     /// before their first QML file does.
     color: RefCell<Option<ColorFace>>,
+    /// Indexed by [`ValueKind`].
+    kinds: RefCell<Vec<KindFace>>,
 }
+
+/// The JS side of one [`ValueKind`].
+struct KindFace {
+    make: Persistent<Function<'static>>,
+    /// What tells a value of the kind from any other object.
+    proto: Persistent<Object<'static>>,
+    fields: Vec<String>,
+}
+
+/// The property of a kind's prototype that holds the kind's number. It only
+/// finds the candidate; the prototype itself is what is trusted.
+const KIND_MARK: &str = "__ljos_kind";
 
 /// The JS side of [`JsValue::Color`] (see [`crate::color`]).
 struct ColorFace {
@@ -345,7 +359,55 @@ impl<'js> Scope<'js> {
                 let (make, _) = self.color_face()?;
                 make.call((i32::from(*r), i32::from(*g), i32::from(*b), i32::from(*a)))?
             }
+            JsValue::Typed(kind, fields) => {
+                let make = self
+                    .state
+                    .kinds
+                    .borrow()
+                    .get(kind.index())
+                    .map(|k| k.make.clone())
+                    .ok_or_else(|| Exception::throw_type(ctx, "unknown kind of value"))?;
+                let args = fields
+                    .iter()
+                    .map(|f| self.to_value(f))
+                    .collect::<rquickjs::Result<Vec<_>>>()?;
+                make.restore(ctx)?.call((Rest(args),))?
+            }
         })
+    }
+
+    /// The fields of `o` when it is a value of a defined kind.
+    fn read_typed(&self, o: &Object<'js>, depth: u32) -> rquickjs::Result<Option<JsValue>> {
+        if self.state.kinds.borrow().is_empty() {
+            return Ok(None);
+        }
+        let Some(proto) = o.get_prototype() else {
+            return Ok(None);
+        };
+        let Some(index) = proto.get::<_, Value<'js>>(KIND_MARK)?.as_int() else {
+            return Ok(None);
+        };
+        let known = usize::try_from(index).ok().and_then(|i| {
+            let kinds = self.state.kinds.borrow();
+            kinds.get(i).map(|k| (k.proto.clone(), k.fields.clone()))
+        });
+        let Some((kind_proto, names)) = known else {
+            return Ok(None);
+        };
+        if kind_proto.restore(&self.ctx)? != proto {
+            return Ok(None);
+        }
+        let mut fields = Vec::with_capacity(names.len());
+        for name in &names {
+            let v: Value<'js> = o.get(name.as_str())?;
+            // Script can build an object on the prototype by hand; without
+            // the fields it is just an object.
+            if v.is_undefined() {
+                return Ok(None);
+            }
+            fields.push(self.read_value_at(&v, depth + 1)?);
+        }
+        Ok(Some(JsValue::Typed(ValueKind(index as u32), fields)))
     }
 
     fn color_face(&self) -> rquickjs::Result<(Function<'js>, Object<'js>)> {
@@ -418,7 +480,10 @@ impl<'js> Scope<'js> {
                     Some(c) => JsValue::Object(c.borrow().id),
                     None => match self.read_color(o)? {
                         Some(c) => JsValue::Color(c),
-                        None => JsValue::Handle(self.keep(v.clone())),
+                        None => match self.read_typed(o, depth)? {
+                            Some(typed) => typed,
+                            None => JsValue::Handle(self.keep(v.clone())),
+                        },
                     },
                 }
             }
@@ -508,6 +573,7 @@ impl Drop for JsHost {
         self.state.wrappers.borrow_mut().clear();
         self.state.handles.borrow_mut().clear();
         self.state.color.borrow_mut().take();
+        self.state.kinds.borrow_mut().clear();
     }
 }
 
@@ -564,6 +630,7 @@ impl JsHost {
             next_handle: Cell::new(1),
             handle_release: Arc::default(),
             color: RefCell::default(),
+            kinds: RefCell::default(),
         });
         Ok(Self {
             state,
@@ -696,6 +763,31 @@ impl JsHost {
         self.enter(&format!("eval {name}"), self.cfg.load_slice, |scope| {
             let v: Value = scope.ctx.eval(source)?;
             scope.from_value(&v)
+        })
+    }
+
+    /// Defines a kind of value that crosses as [`JsValue::Typed`].
+    ///
+    /// `source` is a JS expression that gives `{ make, proto, fields }`:
+    /// `fields` names what a value of the kind holds, `make(...fields)`
+    /// gives the object JS sees for those, and `proto` is the prototype of
+    /// every such object, by which one coming back is known. The kind
+    /// decides everything else: what the object prints as, its methods, and
+    /// whether equal values are one object (and so `===`).
+    pub fn define_value_kind(&self, source: &str) -> Result<ValueKind, JsFault> {
+        self.enter("define_value_kind", self.cfg.load_slice, |scope| {
+            let face: Object = scope.ctx.eval(source)?;
+            let make: Function = face.get("make")?;
+            let proto: Object = face.get("proto")?;
+            let fields: Vec<String> = face.get("fields")?;
+            let index = scope.state.kinds.borrow().len() as u32;
+            proto.prop(KIND_MARK, Property::from(index as i32))?;
+            scope.state.kinds.borrow_mut().push(KindFace {
+                make: Persistent::save(&scope.ctx, make),
+                proto: Persistent::save(&scope.ctx, proto),
+                fields,
+            });
+            Ok(ValueKind(index))
         })
     }
 
@@ -1181,12 +1273,18 @@ fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMap
             let file = o.get::<_, Option<String>>("fileName").ok().flatten();
             let line = o.get::<_, Option<u32>>("lineNumber").ok().flatten();
             let (sf, sl) = first_frame(&stack);
-            (
-                e.message().unwrap_or_default(),
-                stack,
-                file.or(sf),
-                line.or(sl),
-            )
+            // A TypeError or a ReferenceError is reported with its name, as
+            // QML reports one; a plain Error's message already says what a
+            // host or a script meant it to say.
+            let message = e.message().unwrap_or_default();
+            let message = match o.get::<_, Option<String>>("name").ok().flatten() {
+                // Heap exhaustion is told apart by its bare message below.
+                Some(name) if !name.is_empty() && name != "Error" && name != "InternalError" => {
+                    format!("{name}: {message}")
+                }
+                _ => message,
+            };
+            (message, stack, file.or(sf), line.or(sl))
         }
         None => (
             as_text(thrown).unwrap_or_else(|| "<non-error value thrown>".into()),

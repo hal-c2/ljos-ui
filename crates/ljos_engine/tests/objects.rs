@@ -788,3 +788,42 @@ fn an_effect_in_an_object_dies_with_its_new_owner() {
     assert_eq!(runs.get(), 2, "and died with it");
     e.graph().check_invariants().unwrap();
 }
+
+#[test]
+fn asking_whether_a_property_was_given_follows_it() {
+    let e = engine();
+    let r = rect(&e);
+    let before = e.graph().len();
+    assert_eq!(
+        e.provenance_tracked(r, Item::WIDTH.index),
+        Some(Provenance::Default)
+    );
+    assert_eq!(e.graph().len(), before, "asked outside a reader: no node");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    e.effect_in(r, move |e| {
+        s.borrow_mut()
+            .push(e.provenance_tracked(r, Item::WIDTH.index));
+    })
+    .unwrap();
+    // The value the property had anyway, given on purpose.
+    e.set(r, Item::WIDTH, 0.0).unwrap();
+    assert_eq!(
+        *seen.borrow(),
+        [Some(Provenance::Default), Some(Provenance::Assigned)]
+    );
+    e.set(r, Item::WIDTH, 0.0).unwrap();
+    assert_eq!(seen.borrow().len(), 2, "given again is no news");
+    e.bind(r, Item::WIDTH.index, |_| Value::Real(0.0)).unwrap();
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "given in another way is still given"
+    );
+    assert_eq!(
+        e.provenance_tracked(r, Item::WIDTH.index),
+        Some(Provenance::Bound)
+    );
+    e.graph().check_invariants().unwrap();
+}

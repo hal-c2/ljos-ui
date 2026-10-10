@@ -63,12 +63,6 @@ Feature: What a delegate sees of its row
       Then the property "price" of "d-a" is 11
       And the property "count" of "lm" is 2
 
-    # A free name reaches a script by value (the compiler passes context
-    # names as parameters), so assigning to one changes only the script's
-    # copy. `model.<role> = v` is the way that works.
-    # Passing needs the compiler to turn the assignment into a context
-    # write.
-    @backlog
     Scenario: Assigning to a role name changes the model
       When the method "assign" of "d-b" is called
       Then the property "viaModel" of "d-b" is 50

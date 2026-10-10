@@ -1,0 +1,47 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    id: root\n    property rect area\n    property var list: []\n    Item { id: other; property point spot }\n    signal moved(point to)\n    onMoved: to.x = 1\n    function change(given) {\n        area.x = 1\n        root.area.width += 2\n        other.spot.y++\n        list[0].x = 3\n        other.Layout.row = 4\n        var kept = area\n        kept.x = 5\n        given.x = 6\n        const fixed = area\n        fixed.x = 7\n        this.area.height = 8\n    }\n}\n\"##)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=d818a054
+  o0 QtQuick/Item key=/
+    property rect area
+    property var list
+    signal moved(to: point)
+    function change = e1
+    list = []
+    on moved => e0
+    child o1
+  o1 QtQuick/Item key=/other parent=o0
+    property point spot
+
+exprs
+  e0 handler f0 scope=c0o0 at 10:14 params[] args[to] refs[to:local]
+  e1 function f1 scope=c0o0 at 11:5 params[$scope=c0o0, root=c0o0, other=c0o1] args[given] refs[area:scope, root:id c0o0, other:id c0o1, list:scope]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:10:14 Item.onMoved
+export function f0(to) {
+  return (__ljos_vl(to, ($v) => to = $v).x = 1);
+}
+
+// Main.qml:11:5 Item.change()
+export function f1($scope, root, other, ...$args) {
+  return (function change(given) {
+        __ljos_vt($scope, "area").x = 1
+        __ljos_vt(root, "area").width += 2
+        __ljos_vt(other, "spot").y++
+        __ljos_vt($scope.list, 0).x = 3
+        other.Layout.row = 4
+        var kept = $scope.area
+        __ljos_vl(kept, ($v) => kept = $v).x = 5
+        __ljos_vl(given, ($v) => given = $v).x = 6
+        const fixed = $scope.area
+        fixed.x = 7
+        __ljos_vt(this, "area").height = 8
+    }).apply(this, $args);
+}

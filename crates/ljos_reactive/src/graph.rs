@@ -122,6 +122,10 @@ struct Node<V> {
     /// Bumped whenever the active layer changes, so a closure that was
     /// running when its binding was replaced is not put back.
     binding_gen: u32,
+    /// Something asked whether the property was given a value at all
+    /// ([`Graph::provenance_tracked`]): its observers are told when that
+    /// changes, also when the value stays what it was.
+    asked_if_set: bool,
 }
 
 impl<V> Node<V> {
@@ -188,6 +192,9 @@ struct Inner<V> {
     mark_stack: Vec<(NodeId, NodeState, u64)>,
     /// Nodes currently computing, outermost first.
     eval_stack: Vec<NodeId>,
+    /// Work put off until a node that was computing has its value, with
+    /// the node it waits for.
+    after: Vec<(NodeId, Box<dyn FnOnce()>)>,
     /// The node whose freshly computed value is being announced. A mark
     /// that travels back to it closes a dependency cycle.
     wave_origin: Option<NodeId>,
@@ -344,6 +351,7 @@ impl<V: Clone + 'static> Graph<V> {
                 walk_pool: Vec::new(),
                 mark_stack: Vec::new(),
                 eval_stack: Vec::new(),
+                after: Vec::new(),
                 wave_origin: None,
                 batch_depth: 0,
                 flush_depth: 0,
@@ -869,6 +877,7 @@ impl<V: Clone + 'static> Graph<V> {
             {
                 r.eager = true;
             }
+            let was_unset = i.unset(n);
             let Kind::Property(p) = &mut i.nodes[n].kind else {
                 unreachable!()
             };
@@ -898,6 +907,20 @@ impl<V: Clone + 'static> Graph<V> {
                     p.animated = true;
                     i.set_value(n, v);
                 }
+                WriteKind::Layout if p.is_bound() => {
+                    // The binding and its edges stay; a run that was
+                    // already due still comes and wins.
+                    dropped = Content::Value(None);
+                    i.set_value(n, v);
+                }
+                WriteKind::Layout => {
+                    let top = p.top_mut();
+                    dropped = std::mem::replace(&mut top.content, Content::Value(None));
+                    top.provenance = Provenance::Assigned;
+                    p.animated = false;
+                    i.make_plain(n);
+                    i.set_value(n, v);
+                }
                 WriteKind::Override(id) => {
                     let idx = p
                         .overrides
@@ -917,10 +940,89 @@ impl<V: Clone + 'static> Graph<V> {
                     }
                 }
             }
+            i.tell_if_set(n, was_unset);
         }
         drop(dropped);
         self.flush_if_idle();
         Ok(())
+    }
+
+    /// Changes the value of a plain property where it sits, and notifies as
+    /// a write does. What it is for: a value that is costly to copy (a long
+    /// list) and changes a little (one more item); [`Graph::write`] needs
+    /// the whole new value, and making it costs a copy each time.
+    ///
+    /// `f` must change the value (observers are told it changed without a
+    /// comparison) and must not use the graph. It runs only when the
+    /// property holds a plain value with nothing over it: no binding, no
+    /// override, not animated. Otherwise this returns `false` and the
+    /// caller writes the usual way.
+    pub fn modify(&self, n: NodeId, f: impl FnOnce(&mut V)) -> Result<bool, ReactiveError> {
+        {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            let Kind::Property(p) = &node.kind else {
+                return Err(ReactiveError::NotAProperty(n));
+            };
+            let plain = p.overrides.is_empty()
+                && !p.animated
+                && matches!(p.base.content, Content::Value(None))
+                && node.state == NodeState::Clean
+                && !node.held;
+            let Some(v) = node.value.as_mut().filter(|_| plain) else {
+                return Ok(false);
+            };
+            f(v);
+            // As in `write`: a binding that changes another property is
+            // side-effecting, so it may not stay lazy.
+            if let Some(&running) = i.eval_stack.last()
+                && running != n
+                && let Some(r) = i.nodes.get_mut(running)
+                && matches!(r.kind, Kind::Property(_))
+            {
+                r.eager = true;
+            }
+            if let Kind::Property(p) = &mut i.nodes[n].kind {
+                p.base.provenance = Provenance::Assigned;
+            }
+            i.stats.propagations += 1;
+            i.mark_observers(n, NodeState::Dirty);
+        }
+        self.flush_if_idle();
+        Ok(true)
+    }
+
+    /// Changes what a plain property reads as and tells nobody. A later read
+    /// finds the new value; what read the old one is not run again for it.
+    ///
+    /// What it is for: a value that stops being there rather than changes
+    /// (a role of a model row that was removed). Qt has no change signal
+    /// for that either, and a binding that read the value keeps its result.
+    ///
+    /// Only for a property that holds a plain value with nothing over it,
+    /// as in [`Graph::modify`]; otherwise this returns `false`, nothing is
+    /// changed, and the caller writes the usual way.
+    pub fn replace_quietly(&self, n: NodeId, v: V) -> Result<bool, ReactiveError> {
+        let old = {
+            let mut g = self.inner.borrow_mut();
+            let node = g.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            let Kind::Property(p) = &node.kind else {
+                return Err(ReactiveError::NotAProperty(n));
+            };
+            let plain = p.overrides.is_empty()
+                && !p.animated
+                && matches!(p.base.content, Content::Value(None))
+                && node.state == NodeState::Clean
+                && !node.held;
+            if !plain || node.value.is_none() {
+                return Ok(false);
+            }
+            node.value.replace(v)
+        };
+        // Outside the borrow: dropping a value may run the embedder's code.
+        drop(old);
+        Ok(true)
     }
 
     /// Installs a binding on the top layer (`x = Qt.binding(...)`), replacing
@@ -933,6 +1035,7 @@ impl<V: Clone + 'static> Graph<V> {
         let dropped = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
+            let was_unset = i.unset(n);
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
             let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
@@ -942,6 +1045,7 @@ impl<V: Clone + 'static> Graph<V> {
             top.provenance = Provenance::Bound;
             let dropped = std::mem::replace(&mut top.content, Content::Binding(Some(Box::new(f))));
             i.make_bound_dirty(n);
+            i.tell_if_set(n, was_unset);
             dropped
         };
         drop(dropped);
@@ -1064,6 +1168,7 @@ impl<V: Clone + 'static> Graph<V> {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             let id = OverrideId(i.next_override);
+            let was_unset = i.unset(n);
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
             let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
@@ -1092,6 +1197,7 @@ impl<V: Clone + 'static> Graph<V> {
                     i.make_bound_dirty(n);
                 }
             }
+            i.tell_if_set(n, was_unset);
             id
         };
         self.flush_if_idle();
@@ -1113,6 +1219,7 @@ impl<V: Clone + 'static> Graph<V> {
         let dropped = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
+            let was_unset = i.unset(n);
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
             let Kind::Property(p) = &mut node.kind else {
                 return Err(ReactiveError::NotAProperty(n));
@@ -1149,6 +1256,7 @@ impl<V: Clone + 'static> Graph<V> {
                 } else {
                     i.make_bound_dirty(n);
                 }
+                i.tell_if_set(n, was_unset);
                 Some(removed)
             }
         };
@@ -1175,6 +1283,19 @@ impl<V: Clone + 'static> Graph<V> {
             Kind::Property(p) => Some(p.top().provenance),
             Kind::Effect(_) => None,
         }
+    }
+
+    /// [`Graph::provenance`] as a tracked read: what reads it runs again
+    /// when the property stops being [`Provenance::Default`] or becomes it
+    /// again, whether or not the value changes with that. For a default
+    /// that means something else than the same value given on purpose (a
+    /// margin that follows another until it is set).
+    pub fn provenance_tracked(&self, n: NodeId) -> Option<Provenance> {
+        let p = self.provenance(n)?;
+        let mut g = self.inner.borrow_mut();
+        g.nodes[n].asked_if_set = true;
+        g.record_read(n);
+        Some(p)
     }
 
     /// Provenance of the base layer, ignoring overrides and animation. Hot
@@ -1581,6 +1702,41 @@ impl<V: Clone + 'static> Graph<V> {
         // `finish` runs here; a cycle it found is settled outside it.
         drop(guard);
         self.settle(n);
+        self.run_after(n);
+    }
+
+    /// Runs `f` when the node that is computing now has its value: at
+    /// once when none is. For what a binding's evaluation sets off but may
+    /// not do itself, a write to its own property above all; the property
+    /// then has the binding's value before the statement that changed the
+    /// binding's input returns, and `f` has run too.
+    pub fn after_evaluation(&self, f: impl FnOnce() + 'static) {
+        let running = self.inner.borrow().eval_stack.last().copied();
+        match running {
+            Some(n) => self.inner.borrow_mut().after.push((n, Box::new(f))),
+            None => f(),
+        }
+    }
+
+    /// What waited for `n`, in the order it was put off. Whatever is left
+    /// when nothing computes goes too (the node it waited for unwound).
+    fn run_after(&self, n: NodeId) {
+        let due: Vec<Box<dyn FnOnce()>> = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            if i.after.is_empty() {
+                return;
+            }
+            let all = i.eval_stack.is_empty();
+            let (due, rest) = std::mem::take(&mut i.after)
+                .into_iter()
+                .partition(|(id, _)| all || *id == n);
+            i.after = rest;
+            due.into_iter().map(|(_, f)| f).collect()
+        };
+        for f in due {
+            f();
+        }
     }
 
     /// Breaks the dependency cycle `finish` found through `n`.
@@ -1792,6 +1948,7 @@ impl<V: Clone + 'static> Inner<V> {
             runs: 0,
             run_epoch: 0,
             binding_gen: 0,
+            asked_if_set: false,
         });
         self.scopes[scope].nodes.push(n);
         Ok(n)
@@ -1897,6 +2054,25 @@ impl<V: Clone + 'static> Inner<V> {
         self.stats.propagations += 1;
         self.mark_observers(n, NodeState::Dirty);
         true
+    }
+
+    /// Whether nothing has given the property a value: what
+    /// [`Graph::provenance`] calls [`Provenance::Default`].
+    fn unset(&self, n: NodeId) -> bool {
+        match self.nodes.get(n).map(|node| &node.kind) {
+            Some(Kind::Property(p)) => !p.animated && p.top().provenance == Provenance::Default,
+            _ => false,
+        }
+    }
+
+    /// After a change of the active layer: tells the observers of a
+    /// property that was asked about ([`Graph::provenance_tracked`]) that
+    /// it is now set where it was not, or the other way round. A change of
+    /// the value has told them already; telling twice costs nothing.
+    fn tell_if_set(&mut self, n: NodeId, was_unset: bool) {
+        if self.nodes.get(n).is_some_and(|node| node.asked_if_set) && self.unset(n) != was_unset {
+            self.mark_observers(n, NodeState::Dirty);
+        }
     }
 
     /// The active layer is now a plain value: drop dependency edges.

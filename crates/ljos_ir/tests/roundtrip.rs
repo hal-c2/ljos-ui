@@ -215,6 +215,21 @@ fn sample() -> CompiledFile {
                 arg: Arg::Singleton(native("Theme")),
             },
             Param {
+                name: "$w_count".into(),
+                arg: Arg::Holder {
+                    component: Some(CompIdx(1)),
+                    name: "count".into(),
+                    fallback: Some(scope),
+                },
+            },
+            Param {
+                name: "$a_Layout".into(),
+                arg: Arg::Attached {
+                    ty: native("Layout"),
+                    object: scope,
+                },
+            },
+            Param {
                 name: "Logic".into(),
                 arg: Arg::Namespace {
                     alias: "Logic".into(),

@@ -162,6 +162,23 @@ impl Engine {
         taken.then(|| self.peek(obj, prop))
     }
 
+    /// Does `f` once the binding that is being evaluated has given its
+    /// value: at once when none is. An interceptor called for a binding's
+    /// value ([`Interception::Binding`]) may not write the property from
+    /// there; what it does here is done before the statement that changed
+    /// the binding's input returns.
+    pub fn after_binding(&self, f: impl FnOnce(&Engine) + 'static) {
+        let weak = Rc::downgrade(&self.inner);
+        self.inner.graph.after_evaluation(move || {
+            if let Some(inner) = weak.upgrade() {
+                let e = Engine::from_inner(inner);
+                // An evaluation further out may still be running; what `f`
+                // reads is not one of its inputs.
+                e.untrack(|| f(&e));
+            }
+        });
+    }
+
     /// The value `prop` last had, without running its binding. Usable
     /// where a read is not: inside the property's own binding.
     pub fn peek(&self, obj: ObjectId, prop: PropIndex) -> Value {

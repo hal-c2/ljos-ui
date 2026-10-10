@@ -267,25 +267,61 @@ Rectangle {
     assert_eq!(h.num(root, "blue"), 1.0);
 }
 
-/// Qt writes the channel back to the property. Here one object stands for
-/// every use of a colour, so the write is refused out loud instead of being
-/// lost or changing other colours.
+/// One object stands for every use of a colour, so the channel is not
+/// written on it: the write is compiled as one of the whole colour, changed,
+/// to the property it was read from. That is the write-back Qt does.
 #[test]
-fn writing_a_channel_is_refused_and_leaves_the_colour() {
+fn writing_a_channel_changes_the_property_it_was_read_from() {
     let h = engine();
     let root = h.load(
         r##"import QtQuick
 Rectangle {
+  id: root
   color: "red"
+  property int changes: 0
+  onColorChanged: changes++
   function tint() { color.b = 1 }
+  function same() { root.color.r = 1 }
+  function fade() { root.color.a = 0.5; color.hsvHue = 0.5 }
 }
 "##,
     );
-    let _ = h.engine.invoke_by_name(root, "tint", &[]);
-    assert_eq!(color(h.get(root, "color")), [65535, 0, 0, 65535]);
-    let warnings = h.warnings();
-    assert!(
-        warnings.iter().any(|w| w.contains("'b' is read-only")),
-        "{warnings:?}"
+    h.engine.invoke_by_name(root, "tint", &[]).unwrap();
+    assert_eq!(color(h.get(root, "color")), [65535, 0, 65535, 65535]);
+    assert_eq!(h.num(root, "changes"), 1.0);
+    h.engine.invoke_by_name(root, "same", &[]).unwrap();
+    assert_eq!(h.num(root, "changes"), 1.0);
+    h.engine.invoke_by_name(root, "fade", &[]).unwrap();
+    assert_eq!(color(h.get(root, "color")), [0, 65535, 65535, 32768]);
+    assert!(h.warnings().is_empty(), "{:?}", h.warnings());
+}
+
+/// What Qt makes from a colour, in the channels qml6 gives.
+#[test]
+fn qt_makes_colours_from_colours() {
+    let h = engine();
+    let root = h.load(
+        r##"import QtQuick
+Item {
+  property color lighter: Qt.lighter("#336699")
+  property color darker: Qt.darker("#336699", 3)
+  property color tinted: Qt.tint("#336699", "#80ff0000")
+  property color faded: Qt.alpha("red", 0.5)
+  property color named: Qt.color("steelblue")
+  property var nothing: Qt.lighter("nope")
+  property bool equal: Qt.colorEqual("red", Qt.rgba(1, 0, 0, 1))
+  property string kind: typeof Qt.red
+}
+"##,
     );
+    let hex = |prop: &str| h.get(root, prop).to_js_string().to_string();
+    assert_eq!(hex("lighter"), "#4c99e5");
+    assert_eq!(hex("darker"), "#112233");
+    assert_eq!(hex("tinted"), "#99334c");
+    assert_eq!(hex("faded"), "#80ff0000");
+    assert_eq!(hex("named"), "#4682b4");
+    assert_eq!(h.get(root, "nothing"), Value::Null);
+    assert_eq!(h.get(root, "equal"), Value::Bool(true));
+    assert_eq!(h.get(root, "kind").to_js_string().as_str(), "number");
+    assert!(h.warnings().is_empty(), "{:?}", h.warnings());
 }

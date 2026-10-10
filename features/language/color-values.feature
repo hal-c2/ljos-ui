@@ -264,9 +264,6 @@ Feature: Colour values in JavaScript
       """
     Then the property "color" of "root" is "#808fbf60"
 
-  # Writing one channel needs a colour object that knows which property it was read from, and one
-  # object for each distinct colour is what makes === compare channels.
-  @backlog
   Scenario: Writing a channel changes the colour it was read from
     Given the QML:
       """qml

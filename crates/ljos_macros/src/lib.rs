@@ -24,8 +24,11 @@
 //! derives `QmlObject` too), `list` (a QML `list<T>` property, on a
 //! `QmlList` field), `append = path` (with `list`: a
 //! `fn(&Cx, ObjectId) -> Result<(), EngineError>` every append goes
-//! through), `skip`, `rename = "name"`. Field names are exposed in camelCase
-//! unless renamed.
+//! through), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
+//! field: the property holds a key of that enum of the type, one of those
+//! `enums` lists or an inherited one; QML may then give the key by name, and
+//! what is neither a key's name nor a number is refused). Field names are
+//! exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -122,6 +125,7 @@ struct FieldAttrs {
     append: Option<syn::Path>,
     skip: bool,
     rename: Option<String>,
+    enumeration: Option<String>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -178,9 +182,11 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.skip = true;
             } else if p.is_ident("rename") {
                 f.rename = Some(m.value()?.parse::<LitStr>()?.value());
+            } else if p.is_ident("enumeration") {
+                f.enumeration = Some(m.value()?.parse::<LitStr>()?.value());
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename",
+                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration",
                 ));
             }
             Ok(())
@@ -282,6 +288,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         let index = quote!(#base_count #(+ #count)*);
 
         if a.group {
+            if a.enumeration.is_some() {
+                return Err(Error::new(
+                    ident.span(),
+                    "a group holds no enum; put `enumeration` on the group type's field",
+                ));
+            }
             if a.notify {
                 return Err(Error::new(
                     ident.span(),
@@ -320,11 +332,36 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                 #p::Result::Ok(())
             }
         });
+        let tag = match &a.enumeration {
+            Some(enumeration) => {
+                if a.list {
+                    return Err(Error::new(
+                        ident.span(),
+                        "`enumeration` is for a field that holds one number, not a list",
+                    ));
+                }
+                // The field keeps the number: the engine has turned a key's
+                // name into it before the setter runs.
+                quote!(#e::TypeTag::Enum(#e::Atom::intern(#enumeration)))
+            }
+            None => quote!(<#fty as #e::QmlValue>::type_tag()),
+        };
         builder.push(quote! {
-            .field(#name, <#fty as #e::QmlValue>::type_tag(), #flags, #notify, #get, #set)
+            .field(#name, #tag, #flags, #notify, #get, #set)
         });
         if let Some(append) = &a.append {
             builder.push(quote!(.list_append(#append)));
+        }
+        if a.list {
+            // The engine appends to the field where it is, so that adding
+            // a child does not cost more the more children there are.
+            let list = format_ident!("__qml_list_{}", ident);
+            accessors.push(quote! {
+                fn #list(o: &mut dyn #e::QmlObject) -> &mut #e::QmlList {
+                    &mut #p::downcast_mut::<#ty>(o).#ident
+                }
+            });
+            builder.push(quote!(.list_field(#list)));
         }
         let cname = format_ident!(
             "{}",

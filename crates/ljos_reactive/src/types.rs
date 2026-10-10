@@ -84,6 +84,11 @@ pub enum WriteKind {
     /// An animation step. Sets the current value without removing any
     /// binding.
     Animation,
+    /// A value from whatever arranges the property's owner: a layout or a
+    /// positioner placing a child. A binding on the top layer stays and
+    /// gives the property its value again when it next runs; without one
+    /// this is [`WriteKind::Imperative`].
+    Layout,
     /// Writes the value of one override entry (for example a
     /// `PropertyChanges` whose value changed).
     Override(OverrideId),

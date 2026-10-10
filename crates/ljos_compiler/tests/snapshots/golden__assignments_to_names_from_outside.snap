@@ -1,0 +1,37 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nListView {\n    id: view\n    property int created: 0\n    property int seen: 0\n    delegate: Rectangle {\n        property int own: 0\n        Component.onCompleted: { created++; own = created; cost = 2 }\n        width: created + seen\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=cc0433fd
+  o0 QtQuick/ListView key=/
+    property int created
+    property int seen
+    created = 0
+    seen = 0
+    delegate: c1
+
+component c1 Rectangle (template of c0, delegate) id=Main.delegate signature=6c50841f
+  o0 QtQuick/Rectangle key=/
+    property int own
+    own = 0
+    width := e1
+    attached Component = QtQml/Component
+      on completed => e0
+
+exprs
+  e0 handler f0 scope=c1o0 at 10:32 params[$w_created=holder of c1.created else c0o0, $scope=c1o0, $w_cost=holder of c1.cost] args[] refs[created:context c1 else prop of c0o0, own:scope, cost:context c1]
+  e1 property f1 scope=c1o0 at 11:16 params[created=context c1.created else c0o0.created, seen=context c1.seen else c0o0.seen] args[] refs[created:context c1 else prop of c0o0, seen:context c1 else prop of c0o0]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:10:32 Rectangle.Component.onCompleted
+export function f0($w_created, $scope, $w_cost) { $w_created.created++; $scope.own = $w_created.created; $w_cost.cost = 2 }
+
+// Main.qml:11:16 Rectangle.width
+export function f1(created, seen) {
+  return (created + seen);
+}

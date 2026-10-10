@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the serialised shape changes, so a cache written by an
 /// older compiler is rebuilt instead of misread.
-pub const IR_VERSION: u32 = 2;
+pub const IR_VERSION: u32 = 4;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -610,6 +610,9 @@ pub enum Arg {
     Type(TypeRef),
     /// The one object a singleton type is.
     Singleton(TypeRef),
+    /// What the type attaches to `object`, made if it was not there:
+    /// `Layout` of `Layout.row` written in that object.
+    Attached { ty: TypeRef, object: ObjRef },
     /// What the file imports as `alias`.
     Namespace { alias: String, source: ImportSource },
     /// What the context of `component` is given (`index`, `modelData`, a
@@ -620,6 +623,18 @@ pub enum Arg {
         component: Option<CompIdx>,
         name: String,
         fallback: Option<Box<Arg>>,
+    },
+    /// The object that has `name`, for a script that assigns to it: the
+    /// first context object from the context of `component` outwards (from
+    /// the instance's own without one) that has a property so named, else
+    /// `fallback`. The script reads and writes the name as a member of
+    /// what it is given, so an assignment reaches the object. When nothing
+    /// has the name the engine gives an object with only that member, set
+    /// to what [`Arg::Context`] would have been.
+    Holder {
+        component: Option<CompIdx>,
+        name: String,
+        fallback: Option<ObjRef>,
     },
     /// The value of a property of an object: only ever a fallback of
     /// [`Arg::Context`], since a property the body uses directly is read

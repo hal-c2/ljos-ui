@@ -44,10 +44,16 @@ impl Runtime {
             Ty {
                 name: "Qt",
                 module: "QtQml",
-                enums: vec![(
-                    "AlignmentFlag",
-                    vec![("AlignLeft", 1), ("AlignRight", 2), ("AlignHCenter", 4)],
-                )],
+                enums: vec![
+                    (
+                        "AlignmentFlag",
+                        vec![("AlignLeft", 1), ("AlignRight", 2), ("AlignHCenter", 4)],
+                    ),
+                    (
+                        "MouseButtons",
+                        vec![("LeftButton", 1), ("RightButton", 2), ("MiddleButton", 4)],
+                    ),
+                ],
                 methods: vec!["rgba", "darker"],
                 ..Ty::default()
             },
@@ -79,6 +85,21 @@ impl Runtime {
                 ..Ty::default()
             },
             Ty {
+                name: "State",
+                module: "QtQuick",
+                prototype: Some("QtObject"),
+                properties: vec![p("name", "QString"), p("changes", "QQuickStateOperation*")],
+                default: Some("changes"),
+                ..Ty::default()
+            },
+            Ty {
+                name: "PropertyChanges",
+                module: "QtQuick",
+                special: Some(Special::PropertyChanges),
+                properties: vec![p("target", "QObject*")],
+                ..Ty::default()
+            },
+            Ty {
                 name: "Item",
                 module: "QtQuick",
                 prototype: Some("QtObject"),
@@ -94,6 +115,7 @@ impl Runtime {
                     g("anchors", "QQuickAnchors*", "Anchors"),
                     p("state", "QString"),
                     p("states", "QQuickState*"),
+                    p("transformOrigin", "TransformOrigin"),
                 ],
                 signals: vec![("widthChanged", vec![])],
                 methods: vec!["forceActiveFocus"],
@@ -133,7 +155,10 @@ impl Runtime {
                 name: "MouseArea",
                 module: "QtQuick",
                 prototype: Some("Item"),
-                properties: vec![p("pressed", "bool")],
+                properties: vec![
+                    p("pressed", "bool"),
+                    p("acceptedButtons", "Qt::MouseButtons"),
+                ],
                 signals: vec![("clicked", vec!["mouse"]), ("pressed", vec!["mouse"])],
                 ..Ty::default()
             },

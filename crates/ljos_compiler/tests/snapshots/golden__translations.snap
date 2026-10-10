@@ -50,6 +50,7 @@ exprs
 
 module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+const qsTr = __ljos_qsTr("Main");
 
 // Main.qml:8:18 Text.text
 export function f0($root) {

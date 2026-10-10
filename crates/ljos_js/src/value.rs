@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 /// This is deliberately small. The Engine's own `Value` maps onto it. JS
 /// values with identity that are not host objects (functions, plain objects)
 /// cross as a [`JsRef`]; value types such as `point` go into JS as a
-/// [`JsValue::Map`] (a fresh plain object). A colour is the exception: it
-/// compares by value in QML, so it has a variant of its own.
+/// [`JsValue::Map`] (a fresh plain object) unless the embedder has said how
+/// they look ([`JsValue::Typed`]). A colour compares by value in QML and
+/// every embedder has it, so it has a variant of its own.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum JsValue {
     #[default]
@@ -26,6 +27,31 @@ pub enum JsValue {
     /// premultiplied. JS sees one frozen object per distinct colour, so two
     /// equal colours are `===` there as well.
     Color([u16; 4]),
+    /// A value of a kind the embedder defined
+    /// ([`crate::JsHost::define_value_kind`]): what its fields hold, in the
+    /// kind's order. What JS sees of it is the kind's business; a kind that
+    /// keeps one object per distinct value makes equal values `===`.
+    Typed(ValueKind, Vec<JsValue>),
+}
+
+/// Names a kind of value defined with [`crate::JsHost::define_value_kind`].
+/// It only means something to the host that gave it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ValueKind(pub(crate) u32);
+
+impl ValueKind {
+    /// The kind a host defined after `index` others. An embedder that
+    /// defines its kinds in a fixed order can name them as constants and
+    /// check them against what the host returns.
+    pub const fn nth(index: u32) -> Self {
+        ValueKind(index)
+    }
+
+    /// The kinds of one host are numbered from zero in the order they were
+    /// defined, so an embedder can keep a table beside them.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 /// A strong reference to a JS value held by Rust (a function given to

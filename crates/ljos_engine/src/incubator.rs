@@ -660,7 +660,16 @@ impl Engine {
             }
             objects.push(id);
             inner.push(None);
-            if let TypeRef::Component { file: f, inline } = &od.ty {
+            // A component file, or a module type that is written in QML
+            // (`Engine::register_qml_type`).
+            let component = match &od.ty {
+                TypeRef::Component { file: f, inline } => Some((f.clone(), inline.clone())),
+                TypeRef::Native { module, name } => {
+                    self.qml_type_key(module, name).map(|k| (k, None))
+                }
+                TypeRef::Unresolved(name) => self.qml_type_key_any(name).map(|k| (k, None)),
+            };
+            if let Some((f, inline)) = &component {
                 let inner_file = if *f == file.key {
                     file.clone()
                 } else {
@@ -717,7 +726,7 @@ impl Engine {
 
     /// The type of object `obj` of `comp`: its declared type, or a type
     /// made for it when it declares members or roots a component.
-    fn object_meta(
+    pub(crate) fn object_meta(
         &self,
         file: &Rc<LoadedFile>,
         comp: CompIdx,
@@ -849,6 +858,19 @@ impl Engine {
                 uri: module.to_owned(),
                 name: name.to_owned(),
             })
+    }
+
+    /// What the type `name` of `module` attaches to `obj`, made on first
+    /// use: `other.Layout` in a script.
+    pub(crate) fn attached_by_name(
+        &self,
+        obj: ObjectId,
+        module: &str,
+        name: &str,
+    ) -> Option<ObjectId> {
+        let meta = self.native_meta(module, name).ok()?;
+        meta.attached?;
+        self.attached_object(obj, &meta).ok()
     }
 
     // --------------------------------------------------------------- apply
@@ -1183,7 +1205,14 @@ impl Engine {
         };
         if !matches!(
             ty,
-            TypeTag::Font | TypeTag::Point | TypeTag::Size | TypeTag::Rect
+            TypeTag::Font
+                | TypeTag::Point
+                | TypeTag::Size
+                | TypeTag::Rect
+                | TypeTag::Vector2d
+                | TypeTag::Vector3d
+                | TypeTag::Vector4d
+                | TypeTag::Quaternion
         ) {
             return false;
         }
@@ -1306,10 +1335,10 @@ impl Engine {
         if let Literal::Translatable(tr) = lit
             && tr.kind != TranslationKind::NoOp
         {
-            let text = Value::String(Atom::new(&tr.source));
+            // A binding, so that it runs again when the language changes.
+            let tr = tr.clone();
             let r = self.bind_fallible(t.obj, t.prop, move |e| {
-                e.track_translation();
-                Some(text.clone())
+                Some(Value::String(Atom::new(&e.translate_literal(&tr))))
             });
             if let Err(e) = r {
                 self.warn(e.to_string());
@@ -1334,19 +1363,22 @@ impl Engine {
                 Color::parse(s).map_or_else(|| Value::String(Atom::new(s)), Value::Color)
             }
             Literal::Enum(e) => {
-                let v = e
-                    .value
-                    .or_else(|| {
-                        self.type_meta(&inst.file, &e.ty)
-                            .ok()
-                            .and_then(|m| m.enum_key(&e.key))
-                    })
-                    .or_else(|| {
-                        // `Qt` is a namespace, not a registered type.
-                        matches!(&e.ty, TypeRef::Native { name, .. } if name == "Qt")
-                            .then(|| crate::js::qt_enum_key(&e.key))
-                            .flatten()
-                    });
+                let v = e.value.or_else(|| {
+                    let meta = self.type_meta(&inst.file, &e.ty).ok();
+                    // `Qt` is a namespace, not a registered type.
+                    let of_qt = matches!(&e.ty, TypeRef::Native { name, .. } if name == "Qt");
+                    let named = |key: &str| {
+                        meta.as_ref()
+                            .and_then(|m| m.enum_key(key))
+                            .or_else(|| of_qt.then(|| crate::js::qt_enum_key(key)).flatten())
+                    };
+                    // A string written for a flags property names several
+                    // keys: "LeftButton|RightButton".
+                    e.key
+                        .split('|')
+                        .map(named)
+                        .try_fold(0, |all, one| Some(all | one?))
+                });
                 Value::Int(v.and_then(|v| i32::try_from(v).ok()).unwrap_or(0))
             }
             Literal::Translatable(t) => Value::String(Atom::new(&t.source)),
@@ -1577,6 +1609,12 @@ impl Engine {
                 Some(v) => Some(v),
                 None => self.arg_value(inst, fallback.as_deref()?),
             },
+            Arg::Attached { ty, object } => {
+                let o = inst.resolve(*object)?;
+                let meta = self.type_meta(&inst.file, ty).ok()?;
+                let attached = self.attached_object(o, &meta).ok()?;
+                Some(Value::Object(attached))
+            }
             _ => None,
         }
     }
@@ -1584,7 +1622,7 @@ impl Engine {
     /// A parameter as JS sees it.
     fn arg_js(&self, s: &Scope<'_>, inst: &Instance, arg: &Arg) -> JsValue {
         match arg {
-            Arg::Object(_) | Arg::Property { .. } => self
+            Arg::Object(_) | Arg::Property { .. } | Arg::Attached { .. } => self
                 .arg_value(inst, arg)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
             // A singleton type has no instance yet, but its name still
@@ -1615,6 +1653,25 @@ impl Engine {
                 Some(v) => self.to_js(&v),
                 None => global(s, name),
             },
+            Arg::Holder {
+                component,
+                name,
+                fallback,
+            } => {
+                let ctx = match component {
+                    Some(c) => inst.find(*c).map_or(inst.context, |i| i.context),
+                    None => inst.context,
+                };
+                let held = |v: JsValue| JsValue::Map(vec![(name.clone(), v)]);
+                match self.context_holder(ctx, name, component.is_none()) {
+                    Some(Ok(o)) => self.to_js(&Value::Object(o)),
+                    Some(Err(v)) => held(self.to_js(&v)),
+                    None => match fallback.and_then(|r| inst.resolve(r)) {
+                        Some(o) => self.to_js(&Value::Object(o)),
+                        None => held(global(s, name)),
+                    },
+                }
+            }
         }
     }
 

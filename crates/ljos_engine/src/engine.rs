@@ -51,6 +51,15 @@ use crate::value::Value;
 /// A binding's evaluator; `None` keeps the old value (it threw).
 pub(crate) type BindingFn = Box<dyn FnMut(&Engine) -> Option<Value>>;
 
+/// Which values of a binding no interceptor sees.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Free {
+    Never,
+    /// The first: the value the property is created with.
+    First,
+    Always,
+}
+
 pub type ParentListener = Rc<dyn Fn(&Engine, ObjectId, Option<ObjectId>)>;
 
 /// Called when an attached object is first made: (object, attached object).
@@ -366,6 +375,15 @@ impl Engine {
             (_, None, Some(b)) => format!("{b}: {what}"),
             (_, None, None) => what,
         }
+    }
+
+    /// Where the binding of `prop` was written (`file.qml:4:9`), when it was
+    /// written in a file.
+    fn binding_place(&self, obj: ObjectId, prop: PropIndex) -> Option<String> {
+        let store = self.inner.store.borrow();
+        let ext = store.objects.get(obj)?.ext.as_ref()?;
+        let l = &ext.binding_locs.iter().find(|l| l.prop == prop)?.at;
+        Some(format!("{}:{}:{}", l.url, l.line, l.column))
     }
 
     /// Type and property name, for messages.
@@ -1088,6 +1106,35 @@ impl Engine {
         self.write_impl(obj, prop, v, how, true)
     }
 
+    /// Writes a value the property did not get from its author: one that
+    /// follows something else (a control's font and palette follow its
+    /// ancestors'). Readers see it and a binding stays in place, as with
+    /// an animation step, and the property does not read as assigned:
+    /// [`Engine::provenance`] says `Default` or `Animated` afterwards,
+    /// unless it was assigned before.
+    pub fn write_derived(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        v: Value,
+    ) -> Result<(), EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        {
+            let mut store = self.inner.store.borrow_mut();
+            let h = store
+                .objects
+                .get_mut(obj)
+                .ok_or(EngineError::DeadObject(obj))?;
+            if h.node(prop).is_none() {
+                // Nobody observes it: the field is the only copy, and it
+                // is not marked assigned.
+                store_in(h, prop, &v)?;
+                return Ok(());
+            }
+        }
+        self.write_impl(obj, prop, v, WriteKind::Animation, true)
+    }
+
     fn check_writable(
         &self,
         h: &ObjectHeader,
@@ -1126,7 +1173,7 @@ impl Engine {
                 Some(ext) if !internal => ext.write_hook.clone(),
                 _ => None,
             };
-            (coerce_in(&store, &ty, &v)?, h.node(prop), hook)
+            (coerce_for(&store, Some(obj), &ty, &v)?, h.node(prop), hook)
         };
         // A model row: the write goes to the model, which writes back.
         if let Some(hook) = hook
@@ -1305,12 +1352,46 @@ impl Engine {
         self.bind_impl(obj, prop, Box::new(f), false)
     }
 
+    /// [`Engine::bind`] for a value native code computes (a size that
+    /// follows the implicit size): nobody wrote it, so no interceptor sees
+    /// what it gives, the first time or later. In Qt such a value is set
+    /// from C++, which a `Behavior` does not animate either.
+    pub fn bind_computed(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        f: impl FnMut(&Engine) -> Value + 'static,
+    ) -> Result<(), EngineError> {
+        let mut f = f;
+        self.bind_free(
+            obj,
+            prop,
+            Box::new(move |e| Some(f(e))),
+            false,
+            Free::Always,
+        )
+    }
+
     fn bind_impl(
         &self,
         obj: ObjectId,
         prop: PropIndex,
         f: BindingFn,
         internal: bool,
+    ) -> Result<(), EngineError> {
+        // A binding the creator installs gives the property its first
+        // value, which no interceptor animates.
+        let free = if internal { Free::First } else { Free::Never };
+        self.bind_free(obj, prop, f, internal, free)
+    }
+
+    fn bind_free(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        f: BindingFn,
+        internal: bool,
+        free: Free,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
         let ty = {
@@ -1329,9 +1410,7 @@ impl Engine {
         } else {
             g.untrack(|| g.try_get(n))
         };
-        // A binding the creator installs gives the property its first
-        // value, which no interceptor animates.
-        let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f, internal);
+        let wrapper = self.binding_wrapper(obj, prop, ty, last.unwrap_or_default(), f, free);
         g.bind(n, wrapper)?;
         if self.inner.eager_bindings.get() {
             let held = match self.inner.eager_hold.borrow_mut().as_mut() {
@@ -1386,7 +1465,7 @@ impl Engine {
         ty: TypeTag,
         mut last: Value,
         mut f: BindingFn,
-        mut first_is_free: bool,
+        mut free: Free,
     ) -> impl FnMut(&Graph<Value>) -> Value + 'static {
         let weak = Rc::downgrade(&self.inner);
         move |_g| {
@@ -1394,7 +1473,10 @@ impl Engine {
                 return last.clone();
             };
             let engine = Engine::from_inner(inner);
-            let free = std::mem::take(&mut first_is_free);
+            let unseen = free != Free::Never;
+            if free == Free::First {
+                free = Free::Never;
+            }
             let v = {
                 let _t = Tracking::enter(&engine.inner.tracking);
                 f(&engine)
@@ -1404,16 +1486,23 @@ impl Engine {
             };
             let coerced = {
                 let store = engine.inner.store.borrow();
-                coerce_in(&store, &ty, &v)
+                coerce_for(&store, Some(obj), &ty, &v)
             };
             match coerced {
                 Ok(v) => last = v,
                 Err(e) => {
-                    let (t, p) = engine.describe(obj, prop);
-                    engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                    // Qt's message is the binding's place and the error; a
+                    // binding made at run time has no place to give.
+                    match engine.binding_place(obj, prop) {
+                        Some(at) => engine.warn(format!("{at}: {e}")),
+                        None => {
+                            let (t, p) = engine.describe(obj, prop);
+                            engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                        }
+                    }
                 }
             }
-            if !free && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
+            if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
                 return shown;
             }
             engine.store_value(obj, prop, &last);
@@ -1487,6 +1576,21 @@ impl Engine {
         }
     }
 
+    /// [`Engine::provenance`] as a tracked read: the binding or effect
+    /// that asks runs again when the property is given its first value,
+    /// also when that value is the one it had by default. For a default
+    /// that means something else than the same value given on purpose
+    /// (`Layout.leftMargin` follows `Layout.margins` until it is set).
+    pub fn provenance_tracked(&self, obj: ObjectId, prop: PropIndex) -> Option<Provenance> {
+        let (obj, prop) = self.redirect(obj, prop);
+        if self.inner.tracking.get() == 0 {
+            return self.provenance(obj, prop);
+        }
+        // A node is what a reader can depend on.
+        let n = self.ensure_node(obj, prop).ok()?;
+        self.inner.graph.provenance_tracked(n)
+    }
+
     /// Whether a binding is active on the property.
     pub fn is_bound(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
@@ -1517,7 +1621,7 @@ impl Engine {
         let g = &self.inner.graph;
         let value = match content {
             OverrideContent::Value(v) => {
-                let v = coerce_in(&self.inner.store.borrow(), &ty, &v)?;
+                let v = coerce_for(&self.inner.store.borrow(), Some(obj), &ty, &v)?;
                 OverrideValue::Value(v)
             }
             OverrideContent::Binding(mut f) => {
@@ -1525,7 +1629,7 @@ impl Engine {
                 let f: BindingFn = Box::new(move |e| Some(f(e)));
                 // An override's first value is put in place like a value
                 // override is: no interceptor sees it.
-                OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f, true))
+                OverrideValue::binding(self.binding_wrapper(obj, prop, ty, last, f, Free::First))
             }
         };
         let id = g.batch(|| {
@@ -1922,6 +2026,43 @@ impl Engine {
         })
     }
 
+    /// Where `name` is from `ctx` outwards: the context object that has a
+    /// property of the name, or the value when it is a name a context was
+    /// given outright (or, with `ids`, an id). As
+    /// [`Engine::context_property`] and [`Engine::context_name`] look.
+    pub(crate) fn context_holder(
+        &self,
+        ctx: ContextId,
+        name: &str,
+        ids: bool,
+    ) -> Option<Result<ObjectId, Value>> {
+        let mut cur = Some(ctx);
+        while let Some(id) = cur {
+            let object = {
+                let contexts = self.inner.contexts.borrow();
+                let c = contexts.get(id)?;
+                if ids && let Some(o) = c.ids.get(name) {
+                    return Some(Err(if self.is_alive(*o) {
+                        Value::Object(*o)
+                    } else {
+                        Value::Null
+                    }));
+                }
+                if let Some(v) = c.props.get(name) {
+                    return Some(Err(v.clone()));
+                }
+                cur = c.parent;
+                c.context_object
+            };
+            if let Some(o) = object
+                && self.property_index(o, name).is_ok()
+            {
+                return Some(Ok(o));
+            }
+        }
+        None
+    }
+
     pub fn context_object(&self, ctx: ContextId) -> Option<ObjectId> {
         self.inner.contexts.borrow().get(ctx)?.context_object
     }
@@ -1994,6 +2135,13 @@ impl Engine {
     pub fn object_scope(&self, obj: ObjectId) -> Option<ScopeId> {
         self.inner.store.borrow().objects.get(obj)?.scope
     }
+
+    /// Where `obj` was declared, as Qt writes it before an object's own
+    /// warning (`file.qml:5:9: QML Image: Cannot open: …`): the file's URL,
+    /// line and column, then `": "`. `None` for an object not made from QML.
+    pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
+        self.location_of(obj)
+    }
 }
 
 fn not_in(order: &[ObjectId], id: ObjectId) -> bool {
@@ -2008,7 +2156,18 @@ fn unknown_index(meta: &MetaObject, prop: PropIndex) -> EngineError {
 }
 
 /// Coerces for a property of type `ty`, checking object classes.
-pub(crate) fn coerce_in(store: &Store, ty: &TypeTag, v: &Value) -> Result<Value, EngineError> {
+/// `owner` has the property: its type has the enums a property of it may hold.
+pub(crate) fn coerce_for(
+    store: &Store,
+    owner: Option<ObjectId>,
+    ty: &TypeTag,
+    v: &Value,
+) -> Result<Value, EngineError> {
+    if let TypeTag::Enum(name) = ty
+        && let Some(h) = owner.and_then(|o| store.objects.get(o))
+    {
+        return Ok(h.meta.coerce_enum(name, v)?);
+    }
     let c = ty.coerce(v)?;
     if let (TypeTag::Object(Some(name)), Value::Object(id)) = (ty, &c) {
         match store.objects.get(*id) {

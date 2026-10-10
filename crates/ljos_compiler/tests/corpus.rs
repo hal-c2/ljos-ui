@@ -57,3 +57,32 @@ fn the_corpus_baseline() {
     // What the parser gives up on is a regression of the front end.
     assert_eq!(measured.failed, 0, "{:?}", measured.errors);
 }
+
+/// Qt loads every example, so none of them writes a plain value that is no
+/// key for a property that holds an enum: an "unknown enumeration" here is
+/// the compiler refusing what Qt takes.
+#[test]
+#[ignore = "compiles the whole corpus"]
+fn no_example_is_refused_for_an_enum_value() {
+    let Some(root) = examples() else {
+        return;
+    };
+    let mut refused = Vec::new();
+    for dir in baseline::project_dirs(&root) {
+        let Ok(project) = Project::load(&dir, QtTypeOracle) else {
+            continue;
+        };
+        for key in project.files() {
+            let diagnostics = match ljos_compiler::compile_file(&project, key) {
+                Ok(compiled) => compiled.diagnostics,
+                Err(diagnostics) => diagnostics,
+            };
+            for diagnostic in diagnostics {
+                if diagnostic.message.contains("unknown enumeration") {
+                    refused.push(format!("{}/{key}:{diagnostic}", dir.display()));
+                }
+            }
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+}

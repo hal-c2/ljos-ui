@@ -299,6 +299,9 @@ fn arg(arg: &Arg) -> String {
         Arg::Object(at) => obj(*at),
         Arg::Type(ty) => format!("type {}", type_ref(ty)),
         Arg::Singleton(ty) => format!("singleton {}", type_ref(ty)),
+        Arg::Attached { ty, object } => {
+            format!("attached {} of {}", type_ref(ty), obj(*object))
+        }
         Arg::Namespace { alias, source } => format!("ns {alias}={source:?}"),
         Arg::Context {
             component,
@@ -311,6 +314,17 @@ fn arg(arg: &Arg) -> String {
                 .map(|f| format!(" else {}", self::arg(f)))
                 .unwrap_or_default();
             format!("context {component}.{name}{fallback}")
+        }
+        Arg::Holder {
+            component,
+            name,
+            fallback,
+        } => {
+            let component = component.map(|c| format!("c{}", c.0)).unwrap_or("?".into());
+            let fallback = fallback
+                .map(|f| format!(" else {}", obj(f)))
+                .unwrap_or_default();
+            format!("holder of {component}.{name}{fallback}")
         }
         Arg::Property { object, name } => format!("{}.{name}", obj(*object)),
         Arg::Dynamic(name) => format!("dynamic {name}"),

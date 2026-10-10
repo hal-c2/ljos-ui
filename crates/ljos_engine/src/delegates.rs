@@ -17,7 +17,7 @@
 //! The view says what it wants done with the objects through a
 //! [`DelegateHost`].
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_runtime::{Lane, ProcId};
@@ -83,17 +83,78 @@ struct State {
     next_id: u64,
     asynchronous: bool,
     created: u64,
+    /// Where a row was last found. Rows are made one after the other, so
+    /// the next one asked for is this one or its neighbour, and making n
+    /// delegates does not look through n rows for each.
+    near: Cell<usize>,
+    /// What [`State::object_from`] last found.
+    later: Cell<Option<Later>>,
+}
+
+/// No row in `from..at` has a delegate and the row at `at` has one, or
+/// none from `from` on has when `at` is `None`.
+#[derive(Clone, Copy)]
+struct Later {
+    from: usize,
+    at: Option<usize>,
 }
 
 impl State {
     fn position(&self, id: u64) -> Option<usize> {
-        self.rows.iter().position(|r| r.id == id)
+        let near = self.near.get();
+        let is = |i: usize| self.rows.get(i).is_some_and(|r| r.id == id);
+        let found = if is(near) {
+            near
+        } else if is(near + 1) {
+            near + 1
+        } else {
+            self.rows.iter().position(|r| r.id == id)?
+        };
+        self.near.set(found);
+        Some(found)
+    }
+
+    /// The delegate of the nearest row from `from` on that has one.
+    ///
+    /// While many rows are being made, every row after the one in hand is
+    /// still empty, so the answer is remembered: looking again for each
+    /// row would make n delegates cost n squared.
+    fn object_from(&self, from: usize) -> Option<ObjectId> {
+        if let Some(l) = self.later.get()
+            && from >= l.from
+            && l.at.is_none_or(|at| from <= at)
+        {
+            // Narrowed to what was asked, so that the row before `from`
+            // getting its delegate does not make this stale.
+            self.later.set(Some(Later { from, at: l.at }));
+            return l.at.and_then(|at| self.rows.get(at)?.object);
+        }
+        let at = self
+            .rows
+            .get(from..)?
+            .iter()
+            .position(|r| r.object.is_some())
+            .map(|i| from + i);
+        self.later.set(Some(Later { from, at }));
+        at.and_then(|at| self.rows[at].object)
+    }
+
+    /// The row at `index` has its delegate.
+    fn set_object(&mut self, index: usize, object: ObjectId) {
+        self.rows[index].object = Some(object);
+        if let Some(l) = self.later.get()
+            && index >= l.from
+            && l.at.is_none_or(|at| index < at)
+        {
+            self.later.set(None);
+        }
     }
 
     fn placeholders(&mut self, at: usize, count: usize) -> Vec<u64> {
         let ids: Vec<u64> = (0..count as u64).map(|i| self.next_id + i).collect();
         self.next_id += count as u64;
         let at = at.min(self.rows.len());
+        self.later.set(None);
         self.rows.splice(
             at..at,
             ids.iter().map(|id| Row {
@@ -238,7 +299,11 @@ impl Shared {
     }
 
     fn remove_all(&self, engine: &Engine) {
-        let rows = std::mem::take(&mut self.state.borrow_mut().rows);
+        let rows = {
+            let mut st = self.state.borrow_mut();
+            st.later.set(None);
+            std::mem::take(&mut st.rows)
+        };
         let rows = rows.into_iter().enumerate();
         match self.removal {
             RemovalOrder::FirstToLast => rows.for_each(|(i, r)| self.dispose(engine, i, r)),
@@ -254,6 +319,7 @@ impl Shared {
             let mut st = self.state.borrow_mut();
             let first = first.min(st.rows.len());
             let end = first.saturating_add(count).min(st.rows.len());
+            st.later.set(None);
             let gone: Vec<Row> = st.rows.drain(first..end).collect();
             (gone, st.rows.len())
         };
@@ -261,10 +327,13 @@ impl Shared {
             return;
         }
         for row in &gone {
-            if let Some(d) = &row.data
-                && let Some(p) = d.shape.index
-            {
-                let _ = engine.write_internal(d.id, p, Value::Int(-1), WriteKind::Imperative);
+            if let Some(d) = &row.data {
+                // Before the index: what runs because the index changed
+                // already finds the roles gone, as in Qt.
+                engine.empty_row(d, row.object);
+                if let Some(p) = d.shape.index {
+                    let _ = engine.write_internal(d.id, p, Value::Int(-1), WriteKind::Imperative);
+                }
             }
         }
         self.reindex(engine, first, n);
@@ -281,8 +350,10 @@ impl Shared {
         }
         if let Some(obj) = row.object {
             self.host.removed(engine, index, obj);
-            // Deferred: the handler that removed the row may be the
-            // delegate's own.
+            // `Component.onDestruction` runs now, before the next row
+            // goes, as in Qt. The object itself goes later: the handler
+            // that removed the row may be the delegate's own.
+            engine.tell_destruction(obj, false);
             engine.destroy(obj);
         }
     }
@@ -331,7 +402,7 @@ impl Shared {
         let found = {
             let st = self.state.borrow();
             st.position(id).and_then(|i| {
-                let before = st.rows[i + 1..].iter().find_map(|r| r.object);
+                let before = st.object_from(i + 1);
                 Some((i, st.model.clone()?, before))
             })
         };
@@ -366,12 +437,11 @@ impl Shared {
             let mut st = self.state.borrow_mut();
             let i = st.position(id);
             if let Some(i) = i {
-                let row = &mut st.rows[i];
-                row.pending = None;
+                st.rows[i].pending = None;
                 match &made {
-                    Ok(obj) => row.object = Some(*obj),
+                    Ok(obj) => st.set_object(i, *obj),
                     // The row object went with the failed delegate.
-                    Err(_) => row.data = None,
+                    Err(_) => st.rows[i].data = None,
                 }
             }
             if made.is_ok() {
@@ -430,6 +500,7 @@ impl Shared {
                     if from + count > n || to + count > n {
                         return;
                     }
+                    st.later.set(None);
                     let moved: Vec<Row> = st.rows.drain(*from..from + count).collect();
                     st.rows.splice(*to..*to, moved);
                 }

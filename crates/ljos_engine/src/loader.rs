@@ -173,6 +173,8 @@ pub(crate) struct LoaderState {
     /// Creation jobs waiting for the host's scheduler
     /// ([`Engine::incubate`]).
     pub(crate) incubating: Vec<crate::incubator::CreationJob>,
+    /// Module types written in QML ([`Engine::register_qml_type`]).
+    pub(crate) qml_types: crate::qml_types::QmlTypes,
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -197,7 +199,12 @@ pub(crate) struct LoadedFile {
 }
 
 impl LoadedFile {
-    fn new(key: &str, url: String, ir: Arc<CompiledFile>, bytecode: Option<Bytecode>) -> Self {
+    pub(crate) fn new(
+        key: &str,
+        url: String,
+        ir: Arc<CompiledFile>,
+        bytecode: Option<Bytecode>,
+    ) -> Self {
         let tier0 = tier0_table(&ir);
         Self {
             key: key.to_owned(),
@@ -365,6 +372,10 @@ impl Engine {
     pub(crate) fn load_file(&self, key: &str) -> Result<Rc<LoadedFile>, EngineError> {
         if let Some(f) = self.inner.loader.borrow().files.get(key) {
             return Ok(f.clone());
+        }
+        // A file of a component library (a style's `Button.qml`).
+        if let Some(f) = self.library_file(key)? {
+            return Ok(f);
         }
         let source = self
             .inner

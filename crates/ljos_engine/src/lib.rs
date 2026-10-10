@@ -49,6 +49,7 @@ mod delegates;
 mod engine;
 mod error;
 mod hooks;
+mod i18n;
 mod ids;
 mod incubator;
 mod instantiator;
@@ -61,11 +62,15 @@ mod meta;
 mod model;
 mod number;
 mod object;
+mod qml_types;
+mod qt_keys;
 mod qtqml;
 mod registry;
 mod signal;
 mod types;
 mod value;
+mod value_faces;
+mod value_types;
 
 pub use atom::Atom;
 pub use builtins::QtObject;
@@ -84,8 +89,8 @@ pub use loader::{ComponentSource, MapSource};
 pub use log::{LogEntry, LogLevel};
 pub use meta::{
     AttachedTypeId, CompleteThunk, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo, ListAppend,
-    MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop, PropertyAccess,
-    PropertyFlags, PropertyInfo, QmlImplInfo, Setter, SignalDecl, SignalInfo,
+    ListField, MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop,
+    PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Setter, SignalDecl, SignalInfo,
 };
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};
 pub use number::{number_to_string, string_to_number, to_int32};
@@ -101,6 +106,7 @@ pub use registry::{
 pub use signal::Handler;
 pub use types::{ConvertError, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Value};
+pub use value_types::{Quaternion, Vector2d, Vector3d, Vector4d, general as number_to_general};
 
 pub use ljos_macros::{QmlObject, qml_impl};
 pub use ljos_reactive::{NodeId, OverrideId, Provenance, RestoreMode, ScopeId, WriteKind};

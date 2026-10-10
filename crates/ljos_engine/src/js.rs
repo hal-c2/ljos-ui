@@ -27,6 +27,7 @@ use crate::log::LogLevel;
 use crate::meta::{MetaRef, PropertyFlags};
 use crate::types::TypeTag;
 use crate::value::{Color, Font, JsHandle, Value};
+use crate::value_faces;
 
 /// Property id of the synthetic `parent` (the visual parent) on types that
 /// do not declare one.
@@ -547,9 +548,9 @@ impl Engine {
             .map_err(|e| EngineError::Js(e.to_string()))
     }
 
-    /// An engine value as JS sees it. URLs are strings; a colour is the one
-    /// object there is for that colour, so it compares by value; the other
-    /// value types are fresh plain objects; a destroyed object is `null`.
+    /// An engine value as JS sees it. URLs are strings; a colour or another
+    /// value type is the one object there is for that value, so it compares
+    /// by value (see value_faces.rs); a destroyed object is `null`.
     pub(crate) fn to_js(&self, v: &Value) -> JsValue {
         match v {
             Value::Undefined => JsValue::Undefined,
@@ -559,26 +560,14 @@ impl Engine {
             Value::Real(r) => JsValue::Number(*r),
             Value::String(s) | Value::Url(s) => JsValue::String(s.to_string()),
             Value::Color(c) => JsValue::Color([c.r, c.g, c.b, c.a]),
-            Value::Point(p) => map(&[("x", p.x), ("y", p.y)]),
-            Value::Size(s) => map(&[("width", s.width), ("height", s.height)]),
-            Value::Rect(r) => map(&[
-                ("x", r.x),
-                ("y", r.y),
-                ("width", r.width),
-                ("height", r.height),
-            ]),
-            Value::Font(f) => JsValue::Map(vec![
-                ("family".into(), JsValue::String(f.family.to_string())),
-                ("pointSize".into(), JsValue::Number(f.point_size)),
-                ("pixelSize".into(), JsValue::Number(f64::from(f.pixel_size))),
-                ("weight".into(), JsValue::Number(f64::from(f.weight))),
-                ("bold".into(), JsValue::Bool(f.bold())),
-                ("italic".into(), JsValue::Bool(f.italic)),
-                ("underline".into(), JsValue::Bool(f.underline)),
-                ("strikeout".into(), JsValue::Bool(f.strikeout)),
-                ("letterSpacing".into(), JsValue::Number(f.letter_spacing)),
-                ("wordSpacing".into(), JsValue::Number(f.word_spacing)),
-            ]),
+            Value::Point(_)
+            | Value::Size(_)
+            | Value::Rect(_)
+            | Value::Font(_)
+            | Value::Vector2d(_)
+            | Value::Vector3d(_)
+            | Value::Vector4d(_)
+            | Value::Quaternion(_) => value_faces::to_js(v).unwrap_or_default(),
             Value::Object(id) if self.is_alive(*id) => JsValue::Object(obj_to_u64(*id)),
             Value::Object(_) => JsValue::Null,
             Value::List(items) => JsValue::Array(items.iter().map(|i| self.to_js(i)).collect()),
@@ -610,6 +599,9 @@ impl Engine {
             }
             JsValue::Object(id) => Value::Object(u64_to_obj(id)),
             JsValue::Color([r, g, b, a]) => Value::Color(Color { r, g, b, a }),
+            // Whatever it is going to: a `var` keeps the value, and a
+            // property of another type refuses it by its name.
+            JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
             JsValue::Handle(r) => {
                 let num = |k: &str| match scope.get_field(&r, k) {
                     Ok(JsValue::Number(n)) => n,
@@ -619,6 +611,16 @@ impl Engine {
                     TypeTag::Point => Value::point(num("x"), num("y")),
                     TypeTag::Size => Value::size(num("width"), num("height")),
                     TypeTag::Rect => Value::rect(num("x"), num("y"), num("width"), num("height")),
+                    TypeTag::Vector2d => Value::vector2d(num("x") as f32, num("y") as f32),
+                    TypeTag::Vector3d => {
+                        Value::vector3d(num("x") as f32, num("y") as f32, num("z") as f32)
+                    }
+                    TypeTag::Vector4d => Value::vector4d(
+                        num("x") as f32,
+                        num("y") as f32,
+                        num("z") as f32,
+                        num("w") as f32,
+                    ),
                     TypeTag::Color => {
                         // A colour object (`{r, g, b, a}`) from a JS helper.
                         let a = match scope.get_field(&r, "a") {
@@ -681,13 +683,6 @@ impl Engine {
             Ok(JsValue::Undefined)
         });
         let w = weak.clone();
-        let tr: HostFn = Rc::new(move |_scope, _args| {
-            if let Some(inner) = w.upgrade() {
-                Engine::from_inner(inner).track_translation();
-            }
-            Ok(JsValue::Undefined)
-        });
-        let w = weak.clone();
         let call_later: HostFn = Rc::new(move |scope, args| {
             let Some(inner) = w.upgrade() else {
                 return Ok(JsValue::Undefined);
@@ -706,7 +701,7 @@ impl Engine {
             engine.call_later(scope, f.clone(), rest);
             Ok(JsValue::Undefined)
         });
-        let w = weak;
+        let w = weak.clone();
         let quit: HostFn = Rc::new(move |_scope, _args| {
             if let Some(inner) = w.upgrade() {
                 Engine::from_inner(inner).request_quit();
@@ -721,15 +716,47 @@ impl Engine {
             };
             Ok(JsValue::Color([ch(0), ch(1), ch(2), ch(3)]))
         });
+        // A colour by its name or `#rrggbb`; `null` for what is not one.
+        let color_of: HostFn = Rc::new(|_scope, args| {
+            Ok(match args.first() {
+                Some(JsValue::String(s)) => {
+                    Color::parse(s).map_or(JsValue::Null, |c| JsValue::Color([c.r, c.g, c.b, c.a]))
+                }
+                _ => JsValue::Null,
+            })
+        });
+        let w = weak;
+        // What a type attached to an object, made on first use; `undefined`
+        // for what is not an object of the engine's or a type that attaches.
+        let attached: HostFn = Rc::new(move |_scope, args| {
+            let (
+                Some(inner),
+                [
+                    JsValue::Object(o),
+                    JsValue::String(module),
+                    JsValue::String(name),
+                ],
+            ) = (w.upgrade(), args)
+            else {
+                return Ok(JsValue::Undefined);
+            };
+            let engine = Engine::from_inner(inner);
+            Ok(engine
+                .attached_by_name(u64_to_obj(*o), module, name)
+                .map_or(JsValue::Undefined, |a| engine.to_js(&Value::Object(a))))
+        });
         let err = |e: JsFault| EngineError::Js(e.to_string());
+        js.host
+            .set_global_function("__ljos_attached", attached)
+            .map_err(err)?;
         js.host
             .set_global_function("__ljos_color", color)
             .map_err(err)?;
         js.host
-            .set_global_function("__ljos_log", log)
+            .set_global_function("__ljos_colorOf", color_of)
             .map_err(err)?;
         js.host
-            .set_global_function("__ljos_trTrack", tr)
+            .set_global_function("__ljos_log", log)
             .map_err(err)?;
         js.host
             .set_global_function("__ljos_callLater", call_later)
@@ -737,9 +764,18 @@ impl Engine {
         js.host
             .set_global_function("__ljos_quit", quit)
             .map_err(err)?;
+        // The value types first: the prelude puts their makers on `Qt`.
+        value_faces::define(&js.host).map_err(err)?;
         js.host.eval_script("prelude", PRELUDE).map_err(err)?;
+        js.host
+            .eval_script("colors", value_faces::COLORS)
+            .map_err(err)?;
+        // `qsTr` and its family, `String.prototype.arg`, `Qt.uiLanguage`,
+        // `Qt.locale()`: see i18n.rs.
+        self.install_i18n_globals(js)?;
         let keys: Vec<String> = QT_ENUM_KEYS
             .iter()
+            .chain(crate::qt_keys::QT_KEY_ENUMS)
             .map(|(k, v)| format!("{k}:{v}"))
             .collect();
         js.host
@@ -750,15 +786,6 @@ impl Engine {
             .map_err(err)?;
         Ok(())
     }
-}
-
-fn map(fields: &[(&str, f64)]) -> JsValue {
-    JsValue::Map(
-        fields
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), JsValue::Number(*v)))
-            .collect(),
-    )
 }
 
 /// The enum keys of the `Qt` namespace this runtime knows.
@@ -797,12 +824,16 @@ pub(crate) const QT_ENUM_KEYS: &[(&str, i64)] = &[
     ("ControlModifier", 0x0400_0000),
     ("AltModifier", 0x0800_0000),
     ("MetaModifier", 0x1000_0000),
+    ("Unchecked", 0),
+    ("PartiallyChecked", 1),
+    ("Checked", 2),
 ];
 
 /// The value of `Qt.<key>`, when it is an enum key.
 pub(crate) fn qt_enum_key(key: &str) -> Option<i64> {
     QT_ENUM_KEYS
         .iter()
+        .chain(crate::qt_keys::QT_KEY_ENUMS)
         .find(|(k, _)| *k == key)
         .map(|(_, v)| *v)
 }
@@ -846,6 +877,14 @@ const PRELUDE: &str = r##"
       });
     }
     return o;
+  };
+
+  // `other.Layout`, compiled: what the type attached to an object. For
+  // anything else it is the member the script wrote.
+  const hostAttached = g.__ljos_attached;
+  g.__ljos_att = function (o, module, name) {
+    const a = hostAttached(o, module, name);
+    return a === undefined ? o[name] : a;
   };
 
   // Colours come from the host: there is one object per colour, so that two
@@ -945,9 +984,8 @@ const PRELUDE: &str = r##"
   const Qt = {
     rgba, hsla, hsva,
     rgb: (r, gr, b) => hostColor(to16(r), to16(gr), to16(b), 65535),
-    point: (x, y) => ({ x: Number(x), y: Number(y) }),
-    size: (width, height) => ({ width: Number(width), height: Number(height) }),
-    rect: (x, y, width, height) => ({ x: Number(x), y: Number(y), width: Number(width), height: Number(height) }),
+    // point, size, rect, the vectors, quaternion, font.
+    ...g.__ljos_faces.qt,
     binding(f) {
       if (typeof f !== "function") throw new TypeError("Qt.binding(): argument must be a function");
       return Object.freeze({ __ljosBinding: f });
@@ -958,36 +996,11 @@ const PRELUDE: &str = r##"
     formatDate: (d, f) => formatDateTime(d, f === undefined ? "yyyy-MM-dd" : f),
     formatTime: (d, f) => formatDateTime(d, f === undefined ? "HH:mm:ss" : f),
     isQtObject: (o) => o !== null && typeof o === "object" && typeof o.destroy === "function",
-    transparent: "#00000000", black: "#000000", white: "#ffffff",
-    red: "#ff0000", green: "#008000", blue: "#0000ff",
+    // The colours Qt names are numbers in QML, not colours.
+    color0: 0, color1: 1, black: 2, white: 3, darkGray: 4, gray: 5, lightGray: 6, red: 7,
+    green: 8, blue: 9, cyan: 10, magenta: 11, yellow: 12, darkRed: 13, darkGreen: 14,
+    darkBlue: 15, darkCyan: 16, darkMagenta: 17, darkYellow: 18, transparent: 19,
   };
   Object.defineProperty(g, "Qt", { value: Qt, writable: true, configurable: true });
-
-  // String.prototype.arg: replaces the lowest-numbered %N, as QString::arg.
-  Object.defineProperty(String.prototype, "arg", {
-    value: function (v) {
-      const s = String(this);
-      let min = 100;
-      s.replace(/%(\d\d?)/g, (m, n) => { n = Number(n); if (n > 0 && n < min) min = n; return m; });
-      if (min === 100) return s;
-      const re = new RegExp("%0?" + min + "(?!\\d)", "g");
-      const rep = String(v);
-      return s.replace(re, () => rep);
-    },
-    writable: true, configurable: true,
-  });
-
-  const plural = (s, n) => (n === undefined ? s : s.replace(/%n/g, String(n)));
-  const defs = {
-    qsTr(s, disambiguation, n) { g.__ljos_trTrack(); return plural(String(s), n); },
-    qsTranslate(ctx, s, disambiguation, n) { g.__ljos_trTrack(); return plural(String(s), n); },
-    qsTrId(id, n) { g.__ljos_trTrack(); return plural(String(id), n); },
-    QT_TR_NOOP: (s) => s,
-    QT_TRANSLATE_NOOP: (ctx, s) => s,
-    QT_TRID_NOOP: (id) => id,
-  };
-  for (const k of Object.keys(defs)) {
-    Object.defineProperty(g, k, { value: defs[k], writable: true, configurable: true });
-  }
 })();
 "##;

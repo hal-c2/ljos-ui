@@ -17,6 +17,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use ljos_reactive::{NodeId, NodeKind, NodeState};
+
 use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
@@ -551,6 +553,83 @@ impl Engine {
             shape,
             aliased: source.is_some(),
         })
+    }
+}
+
+impl Engine {
+    /// The row a row object showed left its model: its roles and its
+    /// `modelData` read `undefined` from here on.
+    ///
+    /// Nothing is told that they changed. Measured on Qt 6.11: a binding
+    /// in the delegate that read a role keeps what it read, and no change
+    /// handler runs; only a new read finds the role gone.
+    ///
+    /// `delegate` is what was made for the row. Its bindings that have not
+    /// run yet run first, while the roles are there: in Qt they ran when
+    /// the delegate was made, and what they read then is what they hold.
+    pub(crate) fn empty_row(&self, row: &RowObject, delegate: Option<ObjectId>) {
+        // The roles of a row that is an object are the properties of an
+        // object that is still there. A model of plain values (a number,
+        // an array) has no roles, and its delegates keep `modelData`.
+        if row.aliased || row.shape.roles.is_empty() {
+            return;
+        }
+        let g = &self.inner.graph;
+        if let Some(delegate) = delegate {
+            let due: Vec<NodeId> = {
+                let store = self.inner.store.borrow();
+                let mut due = Vec::new();
+                let mut stack = vec![delegate];
+                while let Some(id) = stack.pop() {
+                    let Some(h) = store.objects.get(id) else {
+                        continue;
+                    };
+                    stack.extend(h.children.iter().copied());
+                    let nodes = h.nodes.iter().flat_map(|n| n.iter().flatten());
+                    due.extend(nodes.filter(|n| g.state(**n) != Some(NodeState::Clean)));
+                }
+                due
+            };
+            for n in due {
+                if g.is_bound(n) {
+                    let _ = self.untrack(|| g.try_get(n));
+                }
+            }
+        }
+        let roles = row.shape.roles.iter().map(|(_, p)| *p);
+        for prop in roles.chain(row.shape.model_data) {
+            let node = {
+                let store = self.inner.store.borrow();
+                let Some(h) = store.objects.get(row.id) else {
+                    return;
+                };
+                h.node(prop)
+            };
+            let quiet = match node {
+                // Nobody has read it: the object's copy is the only one.
+                None => true,
+                Some(n) => {
+                    // A binding that an earlier change left to run again
+                    // runs now, while the role is there: in Qt it ran
+                    // when that change came, and holds that result.
+                    for reader in g.observers(n) {
+                        if g.kind(reader) == Some(NodeKind::Property)
+                            && g.state(reader) != Some(NodeState::Clean)
+                        {
+                            let _ = self.untrack(|| g.try_get(reader));
+                        }
+                    }
+                    g.replace_quietly(n, Value::Undefined).unwrap_or(false)
+                }
+            };
+            if quiet {
+                self.store_value(row.id, prop, &Value::Undefined);
+            } else {
+                // Something sits on the property (nothing of the engine's
+                // does): the usual write decides what becomes of it.
+                let _ = self.write_internal(row.id, prop, Value::Undefined, WriteKind::Initial);
+            }
+        }
     }
 }
 

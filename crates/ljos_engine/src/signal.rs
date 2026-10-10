@@ -287,6 +287,21 @@ impl Engine {
         self.emit(obj, signal, args)
     }
 
+    /// Whether anything is connected to `obj`'s `signal`. For a signal
+    /// whose event counts as taken once a handler has seen it (the
+    /// per-key signals of `Keys`), where "no handler" must not take it.
+    pub fn signal_connected(&self, obj: ObjectId, signal: SignalIndex) -> bool {
+        let signals = self.inner.signals.borrow();
+        signals.by_object.get(obj).is_some_and(|ids| {
+            ids.iter().any(|id| {
+                signals
+                    .conns
+                    .get(*id)
+                    .is_some_and(|c| c.sender == obj && c.signal == signal)
+            })
+        })
+    }
+
     /// Number of live connections.
     pub fn connection_count(&self) -> usize {
         self.inner.signals.borrow().conns.len()

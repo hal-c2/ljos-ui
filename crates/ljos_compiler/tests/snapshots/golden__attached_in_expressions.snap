@@ -1,0 +1,58 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\nimport QtQuick as Q\n\nItem {\n    id: root\n    Item { id: other }\n    property bool on: Keys.enabled && other.Keys.enabled\n    property bool qualified: Q.Keys.enabled\n    property int both: Keys.priority + Keys.BeforeItem\n    property var plain: ({ Keys: 1 })\n    property int untouched: plain?.Keys + Text.AlignLeft\n    function set(v) { Keys.enabled = v; parent.Keys.enabled = v; other.children[0].Keys.priority++ }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+import QtQuick as Q
+
+component c0 Main (file) id=Main signature=736975ab
+  o0 QtQuick/Item key=/
+    property bool on
+    property bool qualified
+    property int both
+    property var plain
+    property int untouched
+    function set = e4
+    plain = {Keys: 1}
+    on := e0
+    qualified := e1
+    both := e2
+    untouched := e3
+    child o1
+  o1 QtQuick/Item key=/other parent=o0
+
+exprs
+  e0 property f0 scope=c0o0 at 8:23 params[$a_Keys=attached QtQuick/Keys of c0o0, other=c0o1] args[] refs[Keys:attached QtQuick/Keys.enabled, other:id c0o1]
+  e1 property f1 scope=c0o0 at 9:30 params[$a_Q_Keys=attached QtQuick/Keys of c0o0] args[] refs[Q:attached QtQuick/Keys.enabled]
+  e2 property f2 scope=c0o0 at 10:24 params[$a_Keys=attached QtQuick/Keys of c0o0, Keys=type QtQuick/Keys] args[] refs[Keys:attached QtQuick/Keys.priority, Keys:type QtQuick/Keys]
+  e3 property f3 scope=c0o0 at 12:29 params[$scope=c0o0, Text=type QtQuick/Text] args[] refs[plain:scope, Text:enum(QtQuick/Text.AlignLeft=1)]
+  e4 function f4 scope=c0o0 at 13:5 params[$a_Keys=attached QtQuick/Keys of c0o0, $scope=c0o0, other=c0o1] args[v] refs[Keys:attached QtQuick/Keys.enabled, parent:scope, other:id c0o1]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:8:23 Item.on
+export function f0($a_Keys, other) {
+  return ($a_Keys.enabled && __ljos_att(other, "QtQuick", "Keys").enabled);
+}
+
+// Main.qml:9:30 Item.qualified
+export function f1($a_Q_Keys) {
+  return ($a_Q_Keys.enabled);
+}
+
+// Main.qml:10:24 Item.both
+export function f2($a_Keys, Keys) {
+  return ($a_Keys.priority + Keys.BeforeItem);
+}
+
+// Main.qml:12:29 Item.untouched
+export function f3($scope, Text) {
+  return ($scope.plain?.Keys + Text.AlignLeft);
+}
+
+// Main.qml:13:5 Item.set()
+export function f4($a_Keys, $scope, other, ...$args) {
+  return (function set(v) { $a_Keys.enabled = v; __ljos_att($scope.parent, "QtQuick", "Keys").enabled = v; __ljos_att(other.children[0], "QtQuick", "Keys").priority++ }).apply(this, $args);
+}

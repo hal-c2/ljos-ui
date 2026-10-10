@@ -5,9 +5,10 @@
 //!
 //! `Value` is 16 bytes: a tag plus an 8-byte payload. Payloads that would
 //! not fit inline are shared behind an `Arc` (`Point`, `Size`, `Rect`,
-//! `Font`, `List`); they are immutable, so a clone is a reference-count
-//! bump and a write builds a new one, which is what QML's value-type
-//! write-back does anyway. Strings are [`Atom`]s (8 bytes, see
+//! `Font`, `Vector4d`, `Quaternion`, `List`); they are immutable, so a
+//! clone is a reference-count bump and a write builds a new one, which is
+//! what QML's value-type write-back does anyway. The two small vectors are
+//! single precision and fit beside the tag. Strings are [`Atom`]s (8 bytes, see
 //! [`crate::atom`]). `Value` is `Send + Sync` so services can ship values in
 //! messages; `Object` and `Js` ids only mean something on the engine's
 //! thread.
@@ -30,6 +31,7 @@ use crate::atom::Atom;
 use crate::ids::ObjectId;
 use crate::number::{number_to_string, string_to_number};
 use crate::types::TypeTag;
+use crate::value_types::{Quaternion, Vector2d, Vector3d, Vector4d, font_text, named};
 
 /// A colour with 16 bits per channel, **not premultiplied**.
 ///
@@ -267,6 +269,10 @@ pub enum Value {
     Size(Arc<Size>),
     Rect(Arc<Rect>),
     Font(Arc<Font>),
+    Vector2d(Vector2d),
+    Vector3d(Vector3d),
+    Vector4d(Arc<Vector4d>),
+    Quaternion(Arc<Quaternion>),
     /// A URL as written; resolution against the component's base URL
     /// happens where it is used.
     Url(Atom),
@@ -279,8 +285,9 @@ pub enum Value {
 const _: () = assert!(std::mem::size_of::<Value>() <= 16);
 
 impl Value {
-    /// This value of the value type `ty` (`font`, `point`, `size`, `rect`)
-    /// with its member `name` (`pixelSize`) set to `v`: what a QML
+    /// This value of the value type `ty` (`font`, `point`, `size`, `rect`,
+    /// a vector, `quaternion`) with its member `name` (`pixelSize`) set to
+    /// `v`: what a QML
     /// `font.pixelSize: 24` does. A value of another type starts from the
     /// type's default. `None` when `ty` has no member `name`.
     pub fn with_member(&self, ty: &TypeTag, name: &str, v: &Value) -> Option<Value> {
@@ -344,6 +351,59 @@ impl Value {
                 }
                 Some(Value::Rect(Arc::new(r)))
             }
+            TypeTag::Vector2d => {
+                let mut p = match self {
+                    Value::Vector2d(p) => *p,
+                    _ => Vector2d::default(),
+                };
+                match name {
+                    "x" => p.x = n as f32,
+                    "y" => p.y = n as f32,
+                    _ => return None,
+                }
+                Some(Value::Vector2d(p))
+            }
+            TypeTag::Vector3d => {
+                let mut p = match self {
+                    Value::Vector3d(p) => *p,
+                    _ => Vector3d::default(),
+                };
+                match name {
+                    "x" => p.x = n as f32,
+                    "y" => p.y = n as f32,
+                    "z" => p.z = n as f32,
+                    _ => return None,
+                }
+                Some(Value::Vector3d(p))
+            }
+            TypeTag::Vector4d => {
+                let mut p = match self {
+                    Value::Vector4d(p) => **p,
+                    _ => Vector4d::default(),
+                };
+                match name {
+                    "x" => p.x = n as f32,
+                    "y" => p.y = n as f32,
+                    "z" => p.z = n as f32,
+                    "w" => p.w = n as f32,
+                    _ => return None,
+                }
+                Some(Value::Vector4d(Arc::new(p)))
+            }
+            TypeTag::Quaternion => {
+                let mut q = match self {
+                    Value::Quaternion(q) => **q,
+                    _ => Quaternion::default(),
+                };
+                match name {
+                    "scalar" => q.scalar = n as f32,
+                    "x" => q.x = n as f32,
+                    "y" => q.y = n as f32,
+                    "z" => q.z = n as f32,
+                    _ => return None,
+                }
+                Some(Value::Quaternion(Arc::new(q)))
+            }
             _ => None,
         }
     }
@@ -368,6 +428,22 @@ impl Value {
             width,
             height,
         }))
+    }
+
+    pub fn vector2d(x: f32, y: f32) -> Self {
+        Value::Vector2d(Vector2d { x, y })
+    }
+
+    pub fn vector3d(x: f32, y: f32, z: f32) -> Self {
+        Value::Vector3d(Vector3d { x, y, z })
+    }
+
+    pub fn vector4d(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Value::Vector4d(Arc::new(Vector4d { x, y, z, w }))
+    }
+
+    pub fn quaternion(scalar: f32, x: f32, y: f32, z: f32) -> Self {
+        Value::Quaternion(Arc::new(Quaternion { scalar, x, y, z }))
     }
 
     pub fn list(items: Vec<Value>) -> Self {
@@ -411,6 +487,10 @@ impl Value {
             | Value::Size(_)
             | Value::Rect(_)
             | Value::Font(_)
+            | Value::Vector2d(_)
+            | Value::Vector3d(_)
+            | Value::Vector4d(_)
+            | Value::Quaternion(_)
             | Value::Url(_)
             | Value::Object(_)
             | Value::List(_) => "object",
@@ -440,6 +520,10 @@ impl Value {
             | Value::Size(_)
             | Value::Rect(_)
             | Value::Font(_)
+            | Value::Vector2d(_)
+            | Value::Vector3d(_)
+            | Value::Vector4d(_)
+            | Value::Quaternion(_)
             | Value::Object(_)
             | Value::List(_)
             | Value::Js(_) => true,
@@ -467,6 +551,10 @@ impl Value {
             | Value::Size(_)
             | Value::Rect(_)
             | Value::Font(_)
+            | Value::Vector2d(_)
+            | Value::Vector3d(_)
+            | Value::Vector4d(_)
+            | Value::Quaternion(_)
             | Value::Object(_)
             | Value::Js(_) => f64::NAN,
         }
@@ -476,7 +564,8 @@ impl Value {
     ///
     /// Numbers follow `Number::toString`; lists join their elements with
     /// `,` (`null`/`undefined` elements print empty). Value types print as
-    /// QML does (`#rrggbb`, `QPointF(1, 2)`). Objects print a generic
+    /// QML does (`#rrggbb`, `QPointF(1, 2)`, their numbers as
+    /// [`crate::value_types::general`] writes them). Objects print a generic
     /// `[object Object]` here; [`crate::Engine::to_js_string`] prints the
     /// QML type name instead.
     pub fn to_js_string(&self) -> Atom {
@@ -490,24 +579,22 @@ impl Value {
             Value::Enum(e) => Atom::from(e.value.to_string()),
             Value::String(s) | Value::Url(s) => s.clone(),
             Value::Color(c) => Atom::from(c.to_string()),
-            Value::Point(p) => Atom::from(format!(
-                "QPointF({}, {})",
-                number_to_string(p.x),
-                number_to_string(p.y)
+            Value::Point(p) => Atom::from(named("QPointF", &[p.x, p.y])),
+            Value::Size(s) => Atom::from(named("QSizeF", &[s.width, s.height])),
+            Value::Rect(r) => Atom::from(named("QRectF", &[r.x, r.y, r.width, r.height])),
+            Value::Font(f) => Atom::from(font_text(f)),
+            Value::Vector2d(v) => Atom::from(named("QVector2D", &[v.x.into(), v.y.into()])),
+            Value::Vector3d(v) => {
+                Atom::from(named("QVector3D", &[v.x.into(), v.y.into(), v.z.into()]))
+            }
+            Value::Vector4d(v) => Atom::from(named(
+                "QVector4D",
+                &[v.x.into(), v.y.into(), v.z.into(), v.w.into()],
             )),
-            Value::Size(s) => Atom::from(format!(
-                "QSizeF({}, {})",
-                number_to_string(s.width),
-                number_to_string(s.height)
+            Value::Quaternion(q) => Atom::from(named(
+                "QQuaternion",
+                &[q.scalar.into(), q.x.into(), q.y.into(), q.z.into()],
             )),
-            Value::Rect(r) => Atom::from(format!(
-                "QRectF({}, {}, {}, {})",
-                number_to_string(r.x),
-                number_to_string(r.y),
-                number_to_string(r.width),
-                number_to_string(r.height)
-            )),
-            Value::Font(f) => Atom::from(format!("QFont({})", f.family)),
             Value::List(items) => {
                 let mut out = String::new();
                 for (i, v) in items.iter().enumerate() {
@@ -551,6 +638,10 @@ impl Value {
             (Value::Size(a), Value::Size(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Rect(a), Value::Rect(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Font(a), Value::Font(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Value::Vector2d(a), Value::Vector2d(b)) => a == b,
+            (Value::Vector3d(a), Value::Vector3d(b)) => a == b,
+            (Value::Vector4d(a), Value::Vector4d(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Value::Quaternion(a), Value::Quaternion(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Object(a), Value::Object(b)) => a == b,
             // Arrays are references in JS.
             (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b),
@@ -581,6 +672,10 @@ impl fmt::Debug for Value {
             Value::Size(s) => write!(f, "{s:?}"),
             Value::Rect(r) => write!(f, "{r:?}"),
             Value::Font(x) => write!(f, "{x:?}"),
+            Value::Vector2d(v) => write!(f, "{v:?}"),
+            Value::Vector3d(v) => write!(f, "{v:?}"),
+            Value::Vector4d(v) => write!(f, "{v:?}"),
+            Value::Quaternion(q) => write!(f, "{q:?}"),
             Value::Url(u) => write!(f, "url({u:?})"),
             Value::Object(o) => write!(f, "{o:?}"),
             Value::List(l) => f.debug_list().entries(l.iter()).finish(),

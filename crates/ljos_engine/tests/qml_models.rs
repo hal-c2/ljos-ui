@@ -107,7 +107,8 @@ fn list_model_methods_edit_the_rows() {
     call(&h, lm, "clear", &[]);
     assert_eq!(h.num(lm, "count"), 0.0);
     assert_eq!(call(&h, lm, "get", &[Value::Int(0)]), Value::Undefined);
-    assert!(h.warnings().is_empty());
+    let w = h.warnings();
+    assert!(w.is_empty(), "{w:?}");
 }
 
 #[test]
@@ -544,4 +545,201 @@ Item {
     e.destroy_now(inst);
     assert!(labels.listeners.is_empty());
     assert!(h.warnings().is_empty());
+}
+
+/// Writes down, for each delegate, the one it was told to go before.
+#[derive(Default)]
+struct Placed {
+    before: RefCell<Vec<(ObjectId, Option<ObjectId>)>>,
+}
+
+impl ljos_engine::DelegateHost for Placed {
+    fn allocated(&self, _: &Engine, _: usize, object: ObjectId, before: Option<ObjectId>) {
+        self.before.borrow_mut().push((object, before));
+    }
+    fn added(&self, _: &Engine, _: usize, _: ObjectId) {}
+    fn removed(&self, _: &Engine, _: usize, _: ObjectId) {}
+    fn count_changed(&self, _: &Engine, _: usize) {}
+}
+
+// The engine remembers where the next delegate is rather than looking
+// through the rows for each one it makes (that was n squared); what it
+// remembers has to stay right through every kind of change.
+#[test]
+fn each_delegate_is_told_the_one_that_follows_it() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property Component c: Component { QtObject { property string text: label } }
+}
+"#,
+    );
+    let e = &h.engine;
+    let Value::Object(component) = h.get(root, "c") else {
+        panic!("no component");
+    };
+    let labels = Rc::new(Labels::default());
+    let insert = |at: usize, count: usize| {
+        for i in 0..count {
+            let key = labels.rows.borrow().len() as u64;
+            labels
+                .rows
+                .borrow_mut()
+                .insert(at + i, (key, format!("r{key}")));
+        }
+        labels
+            .listeners
+            .emit(e, &ModelChange::RowsInserted { first: at, count });
+    };
+    let host = Rc::new(Placed::default());
+    let delegates =
+        ljos_engine::Delegates::new(root, host.clone(), ljos_engine::RemovalOrder::LastToFirst);
+    // What each delegate made since the last look was told, as the row
+    // it should go before (by where that row is now).
+    let told = || -> Vec<(usize, Option<usize>)> {
+        let now = delegates.objects();
+        let at = |o: ObjectId| now.iter().position(|x| *x == o).expect("a live delegate");
+        host.before
+            .borrow_mut()
+            .drain(..)
+            .map(|(o, b)| (at(o), b.map(at)))
+            .collect()
+    };
+
+    labels
+        .rows
+        .borrow_mut()
+        .extend((0..5).map(|i| (i, format!("r{i}"))));
+    delegates.set_source(e, Some(labels.clone()), Some(component));
+    assert_eq!(told(), (0..5).map(|i| (i, None)).collect::<Vec<_>>());
+
+    // Three in the middle: each goes before the row that was third.
+    insert(2, 3);
+    assert_eq!(told(), [(2, Some(5)), (3, Some(5)), (4, Some(5))]);
+    // At the end there is nothing to go before.
+    insert(8, 2);
+    assert_eq!(told(), [(8, None), (9, None)]);
+    insert(0, 1);
+    assert_eq!(told(), [(0, Some(1))]);
+    // After a move and a removal the answer is looked for again.
+    let moved = labels.rows.borrow_mut().remove(0);
+    labels.rows.borrow_mut().insert(9, moved);
+    labels.listeners.emit(
+        e,
+        &ModelChange::RowsMoved {
+            from: 0,
+            to: 9,
+            count: 1,
+        },
+    );
+    insert(9, 1);
+    assert_eq!(told(), [(9, Some(10))]);
+    labels.rows.borrow_mut().drain(9..);
+    labels
+        .listeners
+        .emit(e, &ModelChange::RowsRemoved { first: 9, count: 3 });
+    insert(9, 2);
+    assert_eq!(told(), [(9, None), (10, None)]);
+    insert(4, 2);
+    assert_eq!(told(), [(4, Some(6)), (5, Some(6))]);
+    assert_eq!(delegates.count(), 13);
+    assert_eq!(delegates.created(), 16);
+    assert!(h.warnings().is_empty());
+}
+
+// `features/models/delegate-removal-roles.feature` has what Qt does; this
+// counts what the scenario cannot: no change handler runs for a role
+// that went with its row.
+#[test]
+fn the_roles_of_a_removed_row_go_without_a_change() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+import QtQml.Models
+Item {
+  id: root
+  property string log: ""
+  property int changes: 0
+  ListModel {
+    id: lm
+    objectName: "lm"
+    ListElement { name: "a"; cost: 1 }
+    ListElement { name: "b"; cost: 2 }
+  }
+  Instantiator {
+    model: lm
+    QtObject {
+      property string label: name
+      property var price: model.cost
+      property string place: index + ":" + name
+      property var unread: cost
+      onLabelChanged: root.changes++
+      onPriceChanged: root.changes++
+      function now() { return name + "," + model.name + "," + cost + "," + index }
+    }
+    onObjectRemoved: (i, o) => root.log += o.now() + "/" + o.label + "," + o.price + "," + o.place
+  }
+}
+"#,
+    );
+    let lm = h.find(root, "lm");
+    let before = h.num(root, "changes");
+    call(&h, lm, "remove", &[Value::Int(0)]);
+    assert_eq!(
+        text(&h, root, "log"),
+        "undefined,undefined,undefined,-1/a,1,-1:undefined"
+    );
+    assert_eq!(h.num(root, "changes"), before);
+
+    // The row that stays is still its row.
+    call(
+        &h,
+        lm,
+        "setProperty",
+        &[Value::Int(0), Value::from("name"), Value::from("B")],
+    );
+    h.set(root, "log", Value::from(""));
+    call(&h, lm, "clear", &[]);
+    assert_eq!(
+        text(&h, root, "log"),
+        "undefined,undefined,undefined,-1/B,2,-1:undefined"
+    );
+    assert!(h.warnings().is_empty());
+}
+
+#[test]
+fn a_removed_delegate_is_told_of_its_end_before_the_next_row_goes() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+import QtQml.Models
+Item {
+  id: root
+  property string log: ""
+  ListModel {
+    id: lm
+    objectName: "lm"
+    ListElement { name: "a" }
+    ListElement { name: "b" }
+  }
+  Instantiator {
+    model: lm
+    QtObject {
+      id: q
+      property string keep: name
+      Component.onDestruction: root.log += " ~" + q.keep
+    }
+    onObjectRemoved: (i, o) => root.log += " -" + o.keep
+  }
+}
+"#,
+    );
+    let lm = h.find(root, "lm");
+    call(&h, lm, "clear", &[]);
+    // Told at once, each after its own removal; the objects themselves
+    // go with the deferred deletes, and are told once only.
+    assert_eq!(text(&h, root, "log"), " -a ~a -b ~b");
+    h.engine.process_deferred_deletes();
+    assert_eq!(text(&h, root, "log"), " -a ~a -b ~b");
 }
