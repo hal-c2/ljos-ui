@@ -106,7 +106,8 @@ fn every_qml_file_of_the_crates_survives_formatting() {
 
 #[test]
 fn every_qml_file_of_the_qtdoc_corpus_survives_formatting() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/qtdoc");
+    // A submodule that was not fetched leaves its directory behind, empty.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/qtdoc/examples");
     if !root.is_dir() {
         // The corpus is fetched, not checked in: without it there is
         // nothing to prove here.
