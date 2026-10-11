@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use cucumber::World;
 
+use crate::backend::testrun::{TestReport, TestRun};
 use crate::backend::{Backend, BackendError, BackendMode, QmlFile};
 
 /// File the `Given the QML:` doc string is written to.
@@ -15,6 +16,9 @@ pub struct LjosWorld {
     mode: BackendMode,
     backends: Vec<Box<dyn Backend>>,
     files: BTreeMap<String, String>,
+    /// What each backend's test runner said, for the scenarios that run
+    /// `tst_*.qml` files.
+    test_reports: Vec<(&'static str, TestReport)>,
 }
 
 impl LjosWorld {
@@ -23,6 +27,7 @@ impl LjosWorld {
             mode: BackendMode::from_env(),
             backends: Vec::new(),
             files: BTreeMap::new(),
+            test_reports: Vec::new(),
         }
     }
 
@@ -81,6 +86,53 @@ impl LjosWorld {
                 "{entry:?} loaded without an error"
             ))),
         })
+    }
+
+    /// Run every staged file with each backend's test runner and keep
+    /// what the runners said.
+    ///
+    /// # Errors
+    /// A runner could not be run. A failing test is not an error.
+    pub fn run_tests(&mut self, run: &TestRun) -> Result<(), String> {
+        let files: Vec<QmlFile> = self
+            .files
+            .iter()
+            .map(|(name, source)| QmlFile {
+                name: name.clone(),
+                source: source.clone(),
+            })
+            .collect();
+        let mut reports = Vec::new();
+        let ran = self.each(|b| {
+            reports.push((b.name(), b.run_tests(&files, run)?));
+            Ok(())
+        });
+        self.test_reports = reports;
+        ran
+    }
+
+    /// Check what each runner said; the failures are labelled with the
+    /// backend, as [`Self::each`] labels them.
+    ///
+    /// # Errors
+    /// No tests were run, or one line per backend whose report fails `f`.
+    pub fn each_test_report(
+        &self,
+        f: impl Fn(&TestReport) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if self.test_reports.is_empty() {
+            return Err("no tests were run; use `When the tests are run`".into());
+        }
+        let failures: Vec<String> = self
+            .test_reports
+            .iter()
+            .filter_map(|(name, report)| f(report).err().map(|e| format!("[{name}] FAILED: {e}")))
+            .collect();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("\n"))
+        }
     }
 
     fn files_for(&self, entry: &str) -> Result<Vec<QmlFile>, String> {

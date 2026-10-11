@@ -1,0 +1,9 @@
+# Scenarios that must keep passing on Ljos. `mise run features:acceptance
+# example --raise` adds what passes; nothing else changes this file.
+
+features/counter.feature :: A fresh counter starts at the number it was given
+features/counter.feature :: Adding one
+features/counter.feature :: Taking away several
+features/counter.feature :: The counter has an Add and a Remove button
+features/greeting.feature :: The headline names the guest [Ada]
+features/greeting.feature :: The headline names the guest [Grace]

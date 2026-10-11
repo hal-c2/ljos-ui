@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Run an external acceptance suite on Ljós: features:acceptance <suite> [--path DIR] [--raise] [--allow-dirty] [--digest]"
+set -euo pipefail
+# The suite is somebody else's repository, read in place and never written:
+# acceptance/<suite>/PIN says which revision, features.globs which files,
+# RATCHET which scenarios must pass, steps/ is the adapter crate. The adapter
+# is a crate of its own workspace (the repository's workspace is crates/*),
+# so it is built through its manifest path.
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ $# -lt 1 ] || [[ "$1" == -* ]]; then
+  echo "usage: mise run features:acceptance <suite> [--path DIR] [--raise]" >&2
+  echo "suites:" $(cd "$root/acceptance" && ls -d */ 2>/dev/null | tr -d /) >&2
+  exit 2
+fi
+suite="$1"
+shift
+dir="$root/acceptance/$suite"
+if [ ! -f "$dir/PIN" ] || [ ! -f "$dir/steps/Cargo.toml" ]; then
+  echo "no suite $suite: expected $dir/PIN and $dir/steps/Cargo.toml" >&2
+  exit 2
+fi
+# Same versions as the repository's own build; the copy is not committed.
+[ -f "$dir/steps/Cargo.lock" ] || cp "$root/Cargo.lock" "$dir/steps/Cargo.lock"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
+exec cargo run --quiet --manifest-path "$dir/steps/Cargo.toml" -- --suite "$dir" "$@"

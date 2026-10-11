@@ -155,6 +155,10 @@ impl QtBackend {
         }
         let dir = self.work_dir()?;
         for (name, source) in &self.files {
+            // `look/Palette.qml`: a file of a directory the scenario imports.
+            if let Some(parent) = dir.join(name).parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(dir.join(name), source)?;
         }
         for (name, bytes) in &self.resources {
@@ -362,6 +366,9 @@ impl QtBackend {
             .env("QT_QPA_PLATFORM", platform)
             .env("QT_QUICK_BACKEND", "software")
             .env("QT_MESSAGE_PATTERN", "%{type}|%{message}")
+            // A module the scenario writes (`Kit/qmldir`) is found by its
+            // name from the scenario's own directory.
+            .env("QML_IMPORT_PATH", driver.parent().unwrap_or(Path::new(".")))
             .env("TZ", "UTC")
             .env("LANG", "en_US.UTF-8")
             // The desktop's settings stay out: a platform theme that reads
@@ -537,6 +544,14 @@ fn parse_stderr(stderr: &str) -> Result<Run> {
 impl Backend for QtBackend {
     fn name(&self) -> &'static str {
         "qt"
+    }
+
+    fn run_tests(
+        &mut self,
+        files: &[QmlFile],
+        run: &super::testrun::TestRun,
+    ) -> Result<super::testrun::TestReport> {
+        super::testrun::run_qt(files, run)
     }
 
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {

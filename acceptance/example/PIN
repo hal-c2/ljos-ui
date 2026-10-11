@@ -1,0 +1,5 @@
+# The example suite lives inside this repository, so there is no git
+# revision to pin: the digest covers every file of fixture/. After changing a
+# fixture file, `mise run features:acceptance example --digest` prints the new one.
+digest = blake3:e01af8df2388fee12abb810dd4b4b9ee968379765973705bdd7ce4be59b17419
+path = fixture

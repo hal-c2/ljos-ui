@@ -1,0 +1,69 @@
+{
+  "examples": {
+    "android-splashscreen": {},
+    "snippet-alias-application": {
+      "pixels": 0.01,
+      "content": 0.01
+    },
+    "snippet-borderimage-defaults": {
+      "pixels": 0.04,
+      "content": 0.02
+    },
+    "snippet-components-application": {
+      "pixels": 0.08,
+      "content": 0.08
+    },
+    "snippet-flow-diagram": {
+      "pixels": 0.23,
+      "content": 0.23
+    },
+    "snippet-focus-column": {
+      "pixels": 0.33,
+      "content": 0.33
+    },
+    "snippet-methods-app": {
+      "pixels": 0.08,
+      "content": 0.08
+    },
+    "snippet-properties-application": {
+      "pixels": 0.01,
+      "content": 0.01
+    },
+    "snippet-property-signals": {
+      "pixels": 0.0,
+      "content": 0.0
+    },
+    "snippet-rectangle-smooth": {
+      "pixels": 0.66,
+      "content": 0.66
+    },
+    "snippet-signals-basic": {
+      "pixels": 0.08,
+      "content": 0.08
+    },
+    "snippet-signals-connectdynamic": {
+      "pixels": 0.24,
+      "content": 0.24
+    },
+    "snippet-signals-connectslots": {
+      "pixels": 0.33,
+      "content": 0.33
+    },
+    "snippet-signals-no-parameters": {
+      "pixels": 0.08,
+      "content": 0.08
+    },
+    "snippet-signals-parameters": {
+      "pixels": 0.08,
+      "content": 0.08
+    },
+    "snippet-text-lines": {
+      "pixels": 0.13,
+      "content": 0.11
+    },
+    "snippet-texteditor": {
+      "pixels": 0.0,
+      "content": 0.0
+    }
+  }
+}

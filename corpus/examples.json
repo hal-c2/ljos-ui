@@ -1,0 +1,642 @@
+{
+ "root": "qtdoc",
+ "examples": [
+  {
+   "id": "calqlatr",
+   "dir": "examples/demos/calqlatr",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 320,
+    "height": 480
+   },
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "clocks",
+   "dir": "examples/demos/clocks",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "time",
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "coffee",
+   "dir": "examples/demos/coffee",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "its files sit in a Qt resource module (qrc), which plain qml6 cannot resolve"
+   }
+  },
+  {
+   "id": "dice",
+   "dir": "examples/demos/dice",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "needs the QtSensors module, which is not installed"
+   }
+  },
+  {
+   "id": "fx-material-showroom",
+   "dir": "examples/demos/FX_Material_Showroom",
+   "entry": "main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "needs QtQuick3D.Helpers and QtQuick3D.Effects, which are not installed"
+   }
+  },
+  {
+   "id": "graphs-csv",
+   "dir": "examples/demos/graphs_csv",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "qt": {
+    "runnable": false,
+    "reason": "needs the QtGraphs module and a C++ data module, which are not installed"
+   }
+  },
+  {
+   "id": "hangman",
+   "dir": "examples/demos/hangman",
+   "entry": "main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 320,
+    "height": 480
+   },
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "maroon",
+   "dir": "examples/demos/maroon",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 320,
+    "height": 480
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "osmbuildings",
+   "dir": "examples/demos/osmbuildings",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "network",
+   "qt": {
+    "runnable": false,
+    "reason": "needs QtQuick3D.Helpers and a C++ module"
+   }
+  },
+  {
+   "id": "qtjennydemo",
+   "dir": "examples/demos/qtjennydemo",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "qt": {
+    "runnable": false,
+    "reason": "uses BackEnd, a type registered by C++"
+   }
+  },
+  {
+   "id": "robotarm",
+   "dir": "examples/demos/robotarm",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "needs the C++ module Backend"
+   }
+  },
+  {
+   "id": "rssnews",
+   "dir": "examples/demos/rssnews",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "network",
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "samegame",
+   "dir": "examples/demos/samegame",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "stocqt",
+   "dir": "examples/demos/stocqt",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "network",
+   "qt": {
+    "runnable": false,
+    "reason": "needs the module content, which only the CMake build registers"
+   }
+  },
+  {
+   "id": "thermostat",
+   "dir": "examples/demos/thermostat",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 1440,
+    "height": 1080
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "todolist",
+   "dir": "examples/demos/todolist",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 360,
+    "height": 800
+   },
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "toycustomizer",
+   "dir": "examples/demos/toycustomizer",
+   "entry": "qml/Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "needs QtQuick3D.Helpers and QtQuick3D.Effects, which are not installed"
+   }
+  },
+  {
+   "id": "windowembedding",
+   "dir": "examples/demos/windowembedding",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "qt": {
+    "runnable": false,
+    "reason": "its window is created by C++ (1x1 picture)"
+   }
+  },
+  {
+   "id": "photosurface",
+   "dir": "examples/demos/photosurface",
+   "entry": "photosurface.qml",
+   "kind": "demo",
+   "window": {
+    "width": 1024,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "car-configurator",
+   "dir": "examples/demos/car-configurator",
+   "entry": "content/App.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "needs Qt.labs.assetdownloader and Quick3D, which are not installed"
+   }
+  },
+  {
+   "id": "colorpaletteclient",
+   "dir": "examples/demos/colorpaletteclient",
+   "entry": "ColorPalette/Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "network",
+   "qt": {
+    "runnable": false,
+    "reason": "uses RestService, a type registered by C++"
+   }
+  },
+  {
+   "id": "lightningviewer",
+   "dir": "examples/demos/lightningviewer",
+   "entry": "LightningViewerModule/Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "network",
+   "qt": {
+    "runnable": false,
+    "reason": "needs the QtLocation module, which is not installed"
+   }
+  },
+  {
+   "id": "mediaplayer",
+   "dir": "examples/demos/mediaplayer",
+   "entry": "MediaPlayer/Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "volatile": "animation",
+   "qt": {
+    "runnable": false,
+    "reason": "needs io.qt.filenameprovider, a C++ module"
+   }
+  },
+  {
+   "id": "android-splashscreen",
+   "dir": "examples/demos/android/splashscreen/quick",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "qt": {
+    "runnable": false,
+    "reason": "the window is empty without the Android platform (1x1 picture)"
+   }
+  },
+  {
+   "id": "android-feature-delivery",
+   "dir": "examples/demos/android/feature-delivery/fdmaploader",
+   "entry": "Main.qml",
+   "kind": "demo",
+   "window": {
+    "width": 800,
+    "height": 600
+   },
+   "qt": {
+    "runnable": false,
+    "reason": "needs io.qt.fdmaploader, a C++ module"
+   }
+  },
+  {
+   "id": "alarms",
+   "dir": "examples/tutorials/alarms",
+   "entry": "Main.qml",
+   "kind": "tutorial",
+   "window": {
+    "width": 400,
+    "height": 500
+   },
+   "qt": {
+    "runnable": true
+   }
+  },
+  {
+   "id": "snippet-borderimage-defaults",
+   "dir": "doc/src/snippets/declarative/borderimage",
+   "entry": "borderimage-defaults.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-vertical-positioner-transition",
+   "dir": "doc/src/snippets/declarative/column",
+   "entry": "vertical-positioner-transition.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-flow-diagram",
+   "dir": "doc/src/snippets/declarative",
+   "entry": "flow-diagram.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-focus-column",
+   "dir": "doc/src/snippets/declarative/focus",
+   "entry": "focusColumn.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-focus-scope-widget",
+   "dir": "doc/src/snippets/declarative/focus",
+   "entry": "focusscopewidget.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": false,
+    "reason": "names a file in another letter case than the file on disk"
+   }
+  },
+  {
+   "id": "snippet-focus-scopes",
+   "dir": "doc/src/snippets/declarative",
+   "entry": "focusscopes.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-rectangle-smooth",
+   "dir": "doc/src/snippets/declarative/rectangle",
+   "entry": "rectangle-smooth.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-texteditor",
+   "dir": "doc/src/snippets/declarative",
+   "entry": "texteditor.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-text-lines",
+   "dir": "doc/src/snippets/declarative",
+   "entry": "text-lines.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-components-application",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/components",
+   "entry": "application.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-properties-application",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/properties",
+   "entry": "application.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-alias-application",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/properties/alias",
+   "entry": "application.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-property-signals",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/properties",
+   "entry": "property-signals.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-signals-basic",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/signals",
+   "entry": "basic.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-signals-parameters",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/signals",
+   "entry": "parameters.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-signals-no-parameters",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/signals",
+   "entry": "no-parameters.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-signals-connectslots",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/signals",
+   "entry": "connectslots.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-signals-connectdynamic",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/signals",
+   "entry": "connectdynamic.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  },
+  {
+   "id": "snippet-methods-app",
+   "dir": "doc/src/snippets/declarative/qml-extending-types/methods",
+   "entry": "app.qml",
+   "kind": "snippet",
+   "window": {
+    "width": 400,
+    "height": 300
+   },
+   "qt": {
+    "runnable": true,
+    "settle": 300
+   }
+  }
+ ]
+}

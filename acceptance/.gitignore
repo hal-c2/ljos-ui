@@ -1,0 +1,3 @@
+# Seeded from the root Cargo.lock by `mise run features:acceptance`.
+Cargo.lock
+/*/steps/target

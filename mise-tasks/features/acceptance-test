@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Test the acceptance mechanism end to end on the example suite (pass, regression, --raise, wrong commit, empty glob)"
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+dir="$root/acceptance/example"
+[ -f "$dir/steps/Cargo.lock" ] || cp "$root/Cargo.lock" "$dir/steps/Cargo.lock"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
+exec cargo test --quiet --manifest-path "$dir/steps/Cargo.toml" "$@"

@@ -66,6 +66,12 @@ impl Example {
             .unwrap_or(Self::DEFAULT_SETTLE_MS)
     }
 
+    /// Whether the reference tool can render it. An example that says
+    /// nothing about Qt is taken to be renderable.
+    pub fn qt_runnable(&self) -> bool {
+        self.qt.as_ref().is_none_or(|qt| qt.runnable)
+    }
+
     /// Why the reference tool could not render it, if it could not.
     pub fn qt_reason(&self) -> Option<&str> {
         self.qt

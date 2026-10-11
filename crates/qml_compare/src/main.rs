@@ -32,6 +32,18 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Print one example per line for a shell script to read: id, directory,
+    /// entry, width, height, settle milliseconds and whether the reference
+    /// tool can render it, separated by tabs.
+    List {
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Only examples the reference tool can render.
+        #[arg(long)]
+        runnable: bool,
+        /// Only these ids (all when empty).
+        ids: Vec<String>,
+    },
     /// Run every example of a corpus through a renderer and score it.
     Run {
         #[arg(long)]
@@ -46,6 +58,14 @@ enum Command {
         /// Add newly rendering examples to the ratchet file.
         #[arg(long, requires = "ratchet")]
         update: bool,
+        /// Add newly rendering examples and lift every floor to the score
+        /// the example has now (cut to a hundredth). Floors are never lowered,
+        /// and nothing is written while an example is under its floor.
+        #[arg(long, requires = "ratchet")]
+        raise: bool,
+        /// How many of the most common first errors the summary lists.
+        #[arg(long, default_value_t = 10)]
+        top: usize,
         /// Where the report and pictures go.
         #[arg(long, default_value = "report")]
         report_dir: PathBuf,
@@ -90,11 +110,37 @@ fn real_main() -> Result<ExitCode> {
                 }
             }
         }
+        Command::List {
+            manifest,
+            runnable,
+            ids,
+        } => {
+            let manifest = Manifest::read(&manifest)?;
+            for e in &manifest.examples {
+                let can = e.qt_runnable();
+                if (runnable && !can) || (!ids.is_empty() && !ids.contains(&e.id)) {
+                    continue;
+                }
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    e.id,
+                    manifest.directory(e).display(),
+                    e.entry,
+                    e.window.width,
+                    e.window.height,
+                    e.settle_ms(),
+                    can
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Run {
             manifest,
             renderer,
             ratchet,
             update,
+            raise,
+            top,
             report_dir,
             threshold,
             ids,
@@ -119,6 +165,7 @@ fn real_main() -> Result<ExitCode> {
             println!(
                 "pixels: pixels the same as the reference; content: the same, not counting background."
             );
+            println!("\n{}", report::summary(&rows, top));
 
             let mut text = serde_json::to_string_pretty(&rows)?;
             text.push('\n');
@@ -137,7 +184,24 @@ fn real_main() -> Result<ExitCode> {
             if let Some(path) = ratchet {
                 let mut floors = Ratchet::read(&path)?;
                 failures = floors.check(&rows);
-                if update {
+                if raise && !failures.is_empty() {
+                    println!(
+                        "{}: not raised while an example is under its floor",
+                        path.display()
+                    );
+                } else if raise {
+                    let changes = floors.raise(&rows);
+                    floors.write(&path)?;
+                    println!(
+                        "{}: {}",
+                        path.display(),
+                        if changes.is_empty() {
+                            "nothing to raise".into()
+                        } else {
+                            format!("raised\n  {}", changes.join("\n  "))
+                        }
+                    );
+                } else if update {
                     let added = floors.extend(&rows);
                     floors.write(&path)?;
                     println!(

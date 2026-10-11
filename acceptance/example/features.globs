@@ -1,0 +1,2 @@
+# Which of the suite's feature files Ljos runs, relative to its checkout.
+features/*.feature

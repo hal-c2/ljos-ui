@@ -23,7 +23,8 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `text-input/` | `TextInput` and `TextEdit`: typing, keys, selection, the clipboard, undo, validators, echo modes, composing with an input method |
 | `a11y/` | accessibility tree, names, roles, actions |
 | `offscreen/` | resource policy: delegates near the viewport, freezing, memory |
-| `hot-reload/`, `runtime/`, `network/`, `mobile/` | dev loop, scheduler and faults, network, phones |
+| `hot-reload/`, `network/`, `mobile/` | dev loop, network, phones |
+| `runtime/` | faults (a script's exception, a panic in a native type, a script that is interrupted), `ErrorBoundary` and `Loader` as the boundaries that contain them, `Component.incubateObject` |
 | `tooling/` | MCP servers (`tooling/mcp/`), CLI |
 | `parity/` | generated outlines (API ledger); never hand edited |
 
@@ -92,6 +93,9 @@ follow it (such as `# Verified on Qt 6.11.2`) belong to the same header.
 | `mise run features:run [--backend qt] items bindings/loops.feature -t "@qt-parity" -n "regex"` | part of the ledger |
 | `mise run features:parity` | every `@qt-parity` scenario on real Qt (`qml6`) |
 | `mise run features:lint` | structure, undefined or ambiguous steps, sprawl |
+| `mise run features:acceptance <suite> [--path DIR] [--raise]` | an external suite's scenarios on Ljós, held by its `RATCHET` (see below) |
+| `mise run features:acceptance-test` | the acceptance mechanism's own tests, on the example suite |
+| `mise run gallery` | the qtdoc examples on Ljós against qml6 pictures, held by `corpus/expected.json` (see below) |
 
 `LJOS_BDD_BACKEND` is `ljos` (default), `qt`, or `both`. In `both`, a `@qt-parity` scenario runs on
 Qt and Ljós and passes only if both do; scenarios without that tag run on Ljós only. While the Ljós
@@ -114,9 +118,10 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | Step | Meaning |
 |---|---|
 | `Given the QML:` + doc string | write the source as `Scenario.qml` and create it |
-| `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet |
+| `Given the file "X.qml":` + doc string | make `X.qml` available; nothing is created yet. The name may be a path (`kit/Badge.qml`), and a file named `qmldir` (`kit/qmldir`) describes the module of its directory |
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
+| `Given the system setting "color scheme" is "dark"` | what the system says before the application starts: `"color scheme"` (`"light"`, `"dark"`), `"contrast"` (`"normal"`, `"high"`), `"reduced motion"` and `"screen reader"` (`true`, `false`), `"font scale"` (a number; `1` is the size the application was written for) (`@ljos-only`: the oracle cannot be given a system) |
 | `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
 | `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
@@ -127,6 +132,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 |---|---|
 | `When "X.qml" is loaded` | create an instance of `X.qml`; objects become findable by `objectName` |
 | `When the UI language is set to "…"` | what assigning `Qt.uiLanguage` does (`"is_IS"`, `"de"`, `""`) |
+| `When the system setting "font scale" changes to 1.5` | the user changes a setting of the system while the application runs; the settings and values of `Given the system setting` (`@ljos-only`) |
 | `When the property "p" of "o" is set to V` | assign from JavaScript (breaks a binding) |
 | `When the property "p" of "o" is bound to "expr"` | assign `Qt.binding(() => expr)`; `expr` names `o`'s properties unqualified |
 | `When the method "m" of "o" is called` | call with no arguments |
@@ -134,7 +140,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When N milliseconds pass` / `When N second(s) pass` | application time passes (`1 second passes`, `0.5 seconds pass`) |
 | `When the user clicks the "role" "name"` | click the control with that accessible role and name |
 | `When an assistive technology focuses the "role" named "name"` | what a screen reader's "move the focus here" does; an item may refuse |
-| `When an assistive technology asks the "role" named "name" to increase` | any other request of a screen reader: `increase`, `decrease`, `take the value N`, `scroll down` (or `up`, `left`, `right`) and `scroll down a page`; an item may refuse (`@ljos-only`) |
+| `When an assistive technology asks the "role" named "name" to increase` | any other request of a screen reader: `press`, `increase`, `decrease`, `take the value N`, `expand`, `collapse`, `show itself`, `scroll down` (or `up`, `left`, `right`) and `scroll down a page`; an item may refuse (`@ljos-only`) |
 | `When an assistive technology selects characters N to M of the "role" named "name"` | a screen reader selects in the node's text, from the first character to the second, which may be before it (`@ljos-only`) |
 | `When an assistive technology replaces the selection of the "role" named "name" with "text"` | a screen reader types over the selection (`@ljos-only`) |
 | `When an assistive technology sets the text of the "role" named "name" to "text"` | a screen reader types over the whole text (`@ljos-only`) |
@@ -153,7 +159,11 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When the input method commits "text"` | an input method ends the composition and types the text (`@ljos-only`) |
 | `When the file "X.qml" is changed to:` + doc string | a file of the running application is saved with that text, or made if there was none; it is applied once the files have been quiet for 120 milliseconds (`@ljos-only`: hot reload is a Ljós extension) |
 | `When the file "X.qml" is removed` | the file is deleted while the application runs (`@ljos-only`) |
+| `When a native handler of "o" panics with "message"` | a method of a native type panics while it runs for that object, as a bug in the type would (`@ljos-only`: faults and their boundaries are Ljós's own) |
 | `When a reload happens` | the quiet time ends now: what was saved is applied, or refused with a reload error (`@ljos-only`) |
+| `When the tests are run` | run every `tst_*.qml` file given with `Given the file` with the test runner (`ljos test`; `qmltestrunner` on Qt); nothing is loaded as an application |
+| `When the tests are run with the import path "dir"` | the same, with a directory of test-only modules given to the runner (`-import`) |
+| `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
 
 ### Then
 
@@ -177,17 +187,96 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the clipboard holds "text"` | the text a paste would insert |
 | `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |
 | `Then the accessibility tree's focus is the "role" named "name"` | the one node a screen reader reads as having the keyboard; the `"window"` named `""` when no item has it |
+| `Then the "role" named "name" is checked` / `is not checked` | a state a screen reader reads of the node: `checkable`, `checked`, `partially checked`, `pressed`, `expandable`, `expanded`, `selectable`, `selected`, `read-only`, `disabled` (`@ljos-only`: what Qt hands an assistive technology cannot be read from QML) |
+| `Then the "role" named "name" is item N of M` | its place among the ones it is listed with, from 1, and how many there are (`@ljos-only`) |
+| `Then the "role" named "name" is not an item of a set` | it tells no place (`@ljos-only`) |
+| `Then the "role" named "name" is at N in the range N to N` | the value of a slider, a spin box or a scroll bar, and its least and greatest (`@ljos-only`) |
+| `Then the "role" named "name" has no range` | it tells no value of that kind (`@ljos-only`) |
+| `Then the "role" named "name" is labelled by the "role" named "name"` | the second is what names the first (`Accessible.labelledBy`) (`@ljos-only`) |
+| `Then the "role" named "name" is labelled by nothing` | (`@ljos-only`) |
+| `Then the "role" named "name" is called a "words"` | what a screen reader says the node is when its role has no name of its own on the platform (`@ljos-only`) |
 | `Then the reload error matches "regex"` | the message of the last reload that failed, which stays until a reload succeeds (`@ljos-only`) |
 | `Then there is no reload error` | no reload has failed, or one succeeded since (`@ljos-only`) |
 | `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
 | `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
+| `Then the application has no fault` | no fault got past every boundary, or the one that did was cleared (`@ljos-only`) |
+| `Then the application fault is a "kind" matching "regex"` | the fault no boundary contained, which the host shows: its kind (`"JsException"`, `"JsInterrupted"`, `"JsOutOfMemory"`, `"Panic"`, `"Startup"`) and its message (`@ljos-only`) |
+| `Then the test report is:` + doc string | everything the test runner printed, without its banner lines, the directory of the files, the runner's own name in front of a test, and the time after `skipped` |
+| `Then the test report has the lines:` + doc string | those lines are in the report, one after the other |
+| `Then the test run exits with status N` | the runner's exit status: the number of failed tests |
+| `Then the test results' "/pointer" is V` | a value of the machine-readable report, by JSON pointer (`@ljos-only`) |
+
+### The inspector (`tooling/mcp/`; all `@ljos-only`)
+
+An agent asks the development build's inspector (ARCHITECTURE.md 19.4) through a real MCP client.
+In a quoted text `\"` is a quote. A locator is written as the agent writes it
+(`role=button[name=\"Save\"]`, `#objectName`, `text=…`, `ref=e3`). A `"/pointer"` is a JSON pointer
+into the answer's structured content.
+
+| Step | Meaning |
+|---|---|
+| `Given the inspector is connected` | an agent with the `inspect` capability is connected; before or after the QML |
+| `Given the inspector is connected and masks every editable value` | the same, started so that the value of every editable field is masked, not only passwords |
+| `Given the inspector is served on the loopback address` | the inspector also listens on `127.0.0.1` with a token file, as `ljos run --mcp` serves it |
+| `When the agent requests a snapshot` / `Given the agent has requested a snapshot` | `app_snapshot` |
+| `When the agent requests a snapshot of at most N nodes` / `Given the agent has requested a snapshot of at most N nodes` | `app_snapshot` with `max_nodes` |
+| `When the agent requests the next part of the snapshot` | `app_snapshot` with the cursor the cut snapshot gave |
+| `When the agent requests a snapshot below "locator"` | `app_snapshot` of one subtree |
+| `When the agent requests a snapshot N levels deep` | `app_snapshot` with `depth` |
+| `When the agent requests what changed since the last snapshot` | `app_snapshot` with `since` |
+| `When the agent searches for "locator"` / `Given the agent has searched for "locator"` | `app_find` |
+| `When the agent inspects "locator"` | `app_inspect` |
+| `When the agent inspects every property of "locator"` | `app_inspect` with `all`, which also lists properties at their default |
+| `When the agent inspects the reference of the "role" named "name"` | `app_inspect` with the reference a snapshot or a search gave for that item |
+| `When the agent calls the tool "name"` / `Given the agent has called the tool "name"` | any tool, without arguments |
+| `When the agent calls the tool "name" with:` + doc string | any tool, with the arguments in the doc string (labelled `json`) |
+| `When the agent asks for the log since its last request` | `app_logs` from where the last `app_logs` answer ended |
+| `When the agent reads the resource "ljos://…"` | an MCP resource |
+| `When a client asks for a snapshot with the right token` | a plain HTTP client of the served inspector calls `app_snapshot`. Also `no token`, `a wrong token`, `the token of an older start`; and `… from the origin "https://…"` or `… for the host "name"` after the token |
+| `When the method "m" of "o" is called N times` | the method, N times over |
+| `Then the snapshot is:` + doc string | the whole outline (labelled `text`), or the whole list of changes |
+| `Then the snapshot contains "text"` / `does not contain "text"` | part of the outline |
+| `Then the snapshot matches "regex"` / `does not match "regex"` | |
+| `Then the snapshot has a "role" named "name" with a reference` / `Then the snapshot has no "role" named "name"` | one line of the outline |
+| `Then the snapshot lists N nodes` | how many items this answer lists |
+| `Then the snapshot is complete` / `Then the snapshot is cut short` | whether there is a next part |
+| `Then the search finds N nodes` / `Then the search finds a "role" named "name"` | |
+| `Then the answer's "/pointer" is V` / `matches "regex"` / `is at least N` | a value of the last answer |
+| `Then the answer does not contain "text"` | neither its text nor its structured content |
+| `Then the inspected property "p" is "provenance"` | `"assigned"`, `"bound"`, `"animated"` or `"default"` |
+| `Then the inspected property "p" has the value "text"` / `was written at line N` / `is bound at tier T` | the tier is `0`, `1` or `js` |
+| `Then the answer has no inspected property "p"` | |
+| `Then the agent is refused with "code"` | the error code of 19.4: `"not_found"`, `"ambiguous"`, `"stale_ref"`, `"invalid_argument"`, `"capability_denied"`, … |
+| `Then the agent is told the reference is stale` | refused with `"stale_ref"` |
+| `Then the refusal mentions "text"` / `Then the refusal names N candidates` | what the refusal says to do next |
+| `Then the agent is offered the tools "a, b, c"` | the tool list, in order |
+| `Then every tool the agent is offered is marked read-only` | |
+| `Then the inspector's instructions match "regex"` | what the server tells an agent when it connects |
+| `Then the answer has a PNG picture W by H pixels` / `Then the pixel at X, Y of the picture is "#rrggbb"` | the picture of `app_screenshot` |
+| `Then the resource contains "text"` | |
+| `Then the client is answered` / `Then the client is refused with status N` | the HTTP client's answer |
+| `Then the client's answer contains "text"` / `does not contain "text"` | |
+| `Then the token file can be read by its owner alone` / `Then the token file names an address on this machine` | |
+| `Then the application is left idle` | no request waits, no frame is asked for and nothing woke the application since it last ran |
+| `Then the accessibility tree is not being kept` | the tree the inspector read is no longer followed |
+
+### The `top` overlay (`tooling/top.feature`; all `@ljos-only`)
+
+A development build's overlay (ARCHITECTURE.md 19.10) of where the last frame's time went. The steps
+come after the QML. Showing it runs no frame: it is given the frames the application runs anyway.
+
+| Step | Meaning |
+|---|---|
+| `When the top overlay is shown` / `When the top overlay is hidden` | as `ljos run --top` shows it; hiding forgets what it recorded |
+| `Then the top overlay shows nothing` | it is hidden |
+| `Then the top overlay's title is "text"` / `Then the top overlay's title matches "regex"` | its first line: `no frame yet`, or the frame's number and time |
+| `Then the top overlay lists the lanes "a, b, c"` | the lanes of its rows, in order |
+| `Then the top overlay has charged "owner"` / `Then the top overlay has charged nobody` | an owner charged for scheduled work in any frame since it was shown: `application`, `inspector`, or a boundary by type and name (`Loader \"loader\"`) |
+| `Then the top overlay keeps no frame coming` | with it shown, the scene asks for no frame and for no wake |
 
 ### Planned (backlog scenarios may use them; not built yet)
 
-`Given the inspector is connected` · `Given the agent has requested a snapshot` ·
-`When the agent requests a snapshot` · `When the agent clicks the reference of the "role" named "name"` ·
-`When the object "o" is destroyed` · `Then the snapshot has a "role" named "name" with a reference` ·
-`Then the snapshot does not contain "text"` · `Then the agent is told the reference is stale` ·
+`When the agent clicks the reference of the "role" named "name"` · `When the object "o" is destroyed` ·
 `Then the signal "s" of "o" has fired once`.
 
 ## Adding a backend operation
@@ -208,3 +297,21 @@ A pointer that is pressed, moved and released in steps of its own is sent to Qt 
 real time. Qt measures how fast a drag was going when it was let go, so a scenario that does not mean
 a flick lets time pass before the release (`And 500 milliseconds pass`). The input channel has no
 wheel: wheel steps are `@ljos-only`.
+
+## External suites and the gallery
+
+Two checks sit beside the ledger. Neither adds scenarios to `features/`.
+
+**External acceptance suites** (ARCHITECTURE.md 18.4) run somebody else's Gherkin features, read in
+place from their repository, on the Ljós backend. Ljós keeps `acceptance/<suite>/PIN` (which revision),
+`features.globs` (which files), `RATCHET` (which scenarios must pass) and `steps/` (an adapter crate
+that maps the suite's own step wording onto `Backend`). `mise run features:acceptance <suite>` fails
+when a held scenario fails; `--raise` adds what passes now and never lowers. Scenarios tagged
+`@backlog-ljos` are skipped and counted. The layout, the file formats and how to add a suite are in
+`acceptance/README.md`; `acceptance/example/` is a small working suite.
+
+**The qtdoc gallery** (18.1, 18.6) renders the examples listed in `corpus/examples.json` on Ljós
+(R backend, no window) and on `qml6` (offscreen), scores each pair with `qml-compare` (`pixels` and
+`content`) and holds `corpus/expected.json`. `mise run gallery:reference` takes the Qt pictures
+(local only, never committed); `mise run gallery [--raise]` renders, scores and reports. See
+`corpus/README.md`.

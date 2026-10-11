@@ -4,9 +4,12 @@ use std::fmt;
 
 use serde_json::Value;
 
+pub mod inspector;
 pub mod ljos;
 pub mod qt;
 mod rfb;
+pub mod testrun;
+pub mod top;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackendError {
@@ -74,6 +77,22 @@ pub struct A11yNode {
     pub value: String,
     /// The part of `value` that is selected.
     pub selected: String,
+    /// What the node says of itself, in the words of the steps:
+    /// "checkable", "checked", "partially checked", "pressed",
+    /// "expandable", "expanded", "selectable", "selected", "read-only",
+    /// "disabled".
+    pub states: Vec<String>,
+    /// Its place among the rows it is one of, counted from 1, and how
+    /// many there are.
+    pub set: Option<(usize, usize)>,
+    /// The value of a slider-like node, then its least and its most, as
+    /// numbers are written.
+    pub range: Option<(String, String, String)>,
+    /// The role and name of each node that labels this one.
+    pub labelled_by: Vec<(String, String)>,
+    /// What a screen reader calls the node when its role alone does not
+    /// say ("dial" for a slider).
+    pub called: String,
     pub children: Vec<A11yNode>,
 }
 
@@ -121,6 +140,14 @@ pub struct ReloadFailure {
     pub message: String,
 }
 
+/// A fault no UI boundary took: what a host shows over the application.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApplicationFault {
+    /// `"Panic"`, `"JsInterrupted"`, `"Startup"`, ...
+    pub kind: String,
+    pub message: String,
+}
+
 /// What a pointer does in one step of a press, drag and release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerStep {
@@ -153,6 +180,24 @@ pub enum A11yAction {
         dy: i8,
         page: bool,
     },
+    /// The node's default action: what a screen reader's "activate" does.
+    Press,
+    /// Come into view.
+    ShowOnScreen,
+    Expand,
+    Collapse,
+}
+
+/// A setting of the system an application adapts to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SystemSetting {
+    DarkScheme(bool),
+    HighContrast(bool),
+    ReducedMotion(bool),
+    /// How much larger than written the user wants text.
+    FontScale(f64),
+    /// Whether an assistive technology reads the application.
+    ScreenReader(bool),
 }
 
 /// What an assistive technology asks of a node that holds text.
@@ -229,6 +274,12 @@ pub trait Backend: fmt::Debug {
             "an assistive technology's requests",
         ))
     }
+    /// The system says what the user prefers: before anything is loaded
+    /// it is what the application starts with, after that it is a setting
+    /// the user changed.
+    fn system_setting(&mut self, _setting: SystemSetting) -> Result<()> {
+        Err(BackendError::NotImplemented("system settings"))
+    }
     /// An assistive technology asks the node with this role and name to
     /// select or change its text. A node that refuses is not an error.
     fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {
@@ -275,6 +326,62 @@ pub trait Backend: fmt::Debug {
     /// How many reloads were applied.
     fn reload_count(&mut self) -> Result<u64> {
         Err(self.no_reload())
+    }
+    /// Native code running for the object panics with `message`, as a
+    /// bug in a type written in Rust does.
+    fn panic_in(&mut self, _object: &str, _message: &str) -> Result<()> {
+        Err(self.no_faults())
+    }
+    /// The last fault that no UI boundary took.
+    fn application_fault(&mut self) -> Result<Option<ApplicationFault>> {
+        Err(self.no_faults())
+    }
+    /// Runs the staged `tst_*.qml` files with this backend's test runner
+    /// and gives what it printed. Nothing is loaded for this: the runner
+    /// is a program of its own.
+    fn run_tests(
+        &mut self,
+        _files: &[QmlFile],
+        _run: &testrun::TestRun,
+    ) -> Result<testrun::TestReport> {
+        Err(BackendError::NotImplemented("running QML tests"))
+    }
+    /// An agent's inspector is asked something (ARCHITECTURE.md §19.4).
+    fn inspector(&mut self, _ask: &inspector::Ask) -> Result<()> {
+        Err(self.no_inspector())
+    }
+    /// What the agent has been offered and was last answered.
+    fn inspector_seen(&mut self) -> Result<inspector::Seen> {
+        Err(self.no_inspector())
+    }
+    /// The `top` overlay is shown or hidden (ARCHITECTURE.md §19.10).
+    fn top(&mut self, _shown: bool) -> Result<()> {
+        Err(self.no_top())
+    }
+    /// The overlay as it stands.
+    fn top_seen(&mut self) -> Result<top::TopSeen> {
+        Err(self.no_top())
+    }
+    /// The overlay is Ljós's own tooling; the oracle has none.
+    fn no_top(&self) -> BackendError {
+        BackendError::Unsupported {
+            backend: self.name(),
+            what: "the top overlay",
+        }
+    }
+    /// The inspector is Ljós's own tooling; the oracle has none.
+    fn no_inspector(&self) -> BackendError {
+        BackendError::Unsupported {
+            backend: self.name(),
+            what: "the inspector",
+        }
+    }
+    /// Faults and their boundaries are Ljós's own.
+    fn no_faults(&self) -> BackendError {
+        BackendError::Unsupported {
+            backend: self.name(),
+            what: "faults and UI boundaries",
+        }
     }
     /// Hot reload is a Ljós extension; the oracle has nothing like it.
     fn no_reload(&self) -> BackendError {

@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The gallery ratchet needs qml6 for its reference pictures, so it runs nightly.
+  schedule:
+    - cron: "17 3 * * *"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,6 +14,7 @@ concurrency:
 
 jobs:
   check:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -26,3 +30,21 @@ jobs:
       # Every scenario that is not backlog passes on the Ljós backend, so the whole ledger gates.
       # The Qt oracle (features:parity) runs nightly where Qt is installed (ARCHITECTURE.md 18.6).
       - run: mise run features
+      # External acceptance suites (acceptance/README.md): the in-repo example proves the
+      # mechanism; both tasks read a fixture in this repository and need no Qt.
+      - run: mise run features:acceptance example
+      - run: mise run features:acceptance-test
+
+  gallery:
+    # Needs the corpus/qtdoc submodule and qml6 (a black box, offscreen). See corpus/README.md.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: jdx/mise-action@v3
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-window qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qt6-declarative-dev-tools
+      - run: mise run gallery:reference
+      - run: mise run gallery

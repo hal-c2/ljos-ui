@@ -199,6 +199,11 @@ fn run_one(manifest: &Manifest, example: &Example, options: &Options) -> Result<
         }
     }
 
+    // A picture that did not come out is as far from its reference as can be.
+    if reference.is_some() && !renders {
+        (pixels, content) = (Some(0.0), Some(0.0));
+    }
+
     let has_files = notes.files.unwrap_or(1);
     Ok(Row {
         id: example.id.clone(),

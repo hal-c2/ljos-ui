@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Render the qtdoc corpus on Ljós (R backend, headless), score it against the qml6 pictures, write an HTML report and hold the committed ratchet"
+set -euo pipefail
+# Arguments: --raise (lift the ratchet, corpus/expected.json, to what scores
+# now; a floor is never lowered), --top N (how many first errors to list),
+# and example ids to run only those.
+# Needs the pictures `mise run gallery:reference` makes (Qt-derived, never
+# committed, so a checkout without them scores nothing and the ratchet has
+# nothing to hold). Where the report goes: GALLERY_DIR, default target/gallery.
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+report="${GALLERY_DIR:-$target/gallery}"
+mkdir -p "$report"
+"$(dirname "$0")/build"
+
+extra=()
+top=10
+ids=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --raise) extra+=(--raise) ;;
+    --top) top="$2"; shift ;;
+    *) ids+=("$1") ;;
+  esac
+  shift
+done
+
+# The shell wrapper keeps one slow or stuck example from stopping the run.
+renderer="timeout -k 5 120 '$target/debug/ljos' render \"\$QML_COMPARE_DIR\" --entry \"\$QML_COMPARE_ENTRY\" --size \"\${QML_COMPARE_WIDTH}x\${QML_COMPARE_HEIGHT}\" --settle \"\$QML_COMPARE_SETTLE_MS\" --out {out}"
+
+exec "$target/debug/qml-compare" run \
+  --manifest "$root/corpus/examples.json" \
+  --renderer "$renderer" \
+  --ratchet "$root/corpus/expected.json" \
+  --report-dir "$report" \
+  --top "$top" \
+  "${extra[@]}" "${ids[@]}"

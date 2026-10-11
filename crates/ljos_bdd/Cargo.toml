@@ -25,6 +25,10 @@ futures.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 regex.workspace = true
+# External acceptance suites: PIN digests of a suite that is a plain directory,
+# and the allowlist globs of features.globs (src/acceptance/).
+blake3.workspace = true
+globset.workspace = true
 # Image files for scenarios are made by code (src/fixture.rs).
 png.workspace = true
 jpeg-encoder.workspace = true
@@ -35,7 +39,12 @@ ljos_compiler = { path = "../ljos_compiler" }
 ljos_controls = { path = "../ljos_controls" }
 # Hot reload scenarios run the dev loop's own pipeline (in memory, on the
 # virtual clock).
-ljos_dev = { path = "../ljos_dev" }
+ljos_dev = { path = "../ljos_dev", features = ["mcp"] }
+# Inspector scenarios (features/tooling/mcp) ask the development build's
+# own inspector, through an in-process MCP client and over loopback HTTP.
+ljos_mcp_core = { path = "../ljos_mcp_core", features = ["client", "inspect", "http"] }
+# The directory of a served inspector's token file.
+tempfile.workspace = true
 ljos_engine = { path = "../ljos_engine" }
 # `.ts` catalogues of scenarios, read as a development build reads them.
 ljos_i18n = { path = "../ljos_i18n" }
@@ -44,9 +53,6 @@ ljos_runtime = { path = "../ljos_runtime" }
 qml_front = { path = "../qml_front" }
 # Only the R (vello_cpu) backend: egui stays out of this crate.
 ljos_render = { path = "../ljos_render", default-features = false }
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

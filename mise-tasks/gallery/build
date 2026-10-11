@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Build the two programs the gallery runs (ljos and qml-compare)"
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+exec cargo build --quiet -p ljos_cli -p qml_compare

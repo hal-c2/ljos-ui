@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+#MISE description="Take the qml6 reference pictures of the corpus into corpus/reference/ (offscreen, software, every run under timeout); local only, never committed"
+set -euo pipefail
+# Arguments: example ids to take only those.
+# qml6 is a black box here: it is only run, and its pictures are test input.
+# They are Qt output and large, so corpus/reference/ is git-ignored and each
+# machine makes its own.
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+work="${GALLERY_DIR:-$target/gallery}/reference-work"
+refs="$root/corpus/reference"
+mkdir -p "$work" "$refs"
+cargo build --quiet -p qml_compare --manifest-path "$root/Cargo.toml"
+
+export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 \
+  TZ=UTC LANG=en_US.UTF-8 GSETTINGS_BACKEND=memory QML_DISABLE_DISK_CACHE=1
+
+made=0
+failed=0
+while IFS=$'\t' read -r id dir entry width height settle _; do
+  png="$refs/$id.png"
+  overlay="$work/overlay/$id"
+  log="$work/$id.log"
+  rm -rf "$overlay" "$png"
+  mkdir -p "$overlay"
+  # Examples built with CMake name their modules there; a qmldir per module
+  # lets plain qml6 find them without building anything.
+  "$root/corpus/harness/overlay.sh" "$dir" "$overlay"
+  # `timeout` also ends the process group's child when it hangs; -k makes sure.
+  if timeout -k 5 60 qml6 -I "$dir" -I "$overlay" "$root/corpus/harness/reference.qml" \
+      -- "file://$dir/$entry" "$width" "$height" "$settle" "$png" >"$log" 2>&1 && [ -s "$png" ]; then
+    made=$((made + 1))
+  else
+    rm -f "$png"
+    failed=$((failed + 1))
+    echo "no picture: $id ($(grep -m1 -E 'Error|error|not installed|unavailable|No such' "$log" | cut -c1-160))" >&2
+  fi
+done < <("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json" --runnable "$@")
+
+# When each picture was taken, read back from the files themselves.
+{
+  printf '{'
+  sep=''
+  for png in "$refs"/*.png; do
+    [ -e "$png" ] || continue
+    printf '%s"%s":{"capturedAt":"%s"}' "$sep" "$(basename "$png" .png)" "$(date -u -r "$png" +%Y-%m-%dT%H:%M:%SZ)"
+    sep=','
+  done
+  printf '}\n'
+} >"$refs/reference.json"
+
+# A run that hung must not leave qml6 behind.
+# (Only ours: other jobs on the machine may be running qml6 too.)
+if pgrep -f "$root/corpus/harness/reference.qml" >/dev/null; then echo "a reference qml6 process is still running" >&2; fi
+echo "reference pictures: $made made, $failed failed (in $refs)"

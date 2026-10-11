@@ -188,3 +188,77 @@ fn run_scores_reports_and_enforces_the_ratchet() {
     );
     assert!(!out.contains("good must"), "{out}");
 }
+
+#[test]
+fn list_prints_what_a_script_needs() {
+    let dir = scratch("cli_list");
+    let manifest = corpus(&dir);
+    let o = bin()
+        .args(["list", "--manifest"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    let out = stdout(&o);
+    let first: Vec<&str> = out.lines().next().unwrap().split('\t').collect();
+    assert_eq!(first[0], "good");
+    assert!(first[1].ends_with("ex/good"), "{first:?}");
+    assert_eq!(&first[2..], ["Main.qml", "8", "8", "50", "true"]);
+    // No `qt` notes means nothing is said against rendering it.
+    assert!(out.lines().nth(1).unwrap().ends_with("1500\ttrue"), "{out}");
+}
+
+#[test]
+fn raise_lifts_floors_to_the_scores_and_holds_them() {
+    let dir = scratch("cli_raise");
+    let manifest = corpus(&dir);
+    let renderer = renderer(&dir);
+    let ratchet = dir.join("expected.json");
+    let report = dir.join("report");
+    let run = || {
+        bin()
+            .args(["run", "--manifest"])
+            .arg(&manifest)
+            .args(["--renderer", &renderer, "--ratchet"])
+            .arg(&ratchet)
+            .arg("--report-dir")
+            .arg(&report)
+            .arg("--raise")
+            .output()
+            .unwrap()
+    };
+    let o = run();
+    assert!(o.status.success(), "{}", stdout(&o));
+    let floors: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&ratchet).unwrap()).unwrap();
+    assert_eq!(
+        floors["examples"]["good"],
+        serde_json::json!({"pixels": 1.0, "content": 1.0})
+    );
+    assert_eq!(
+        floors["examples"]["bad"],
+        serde_json::json!({"pixels": 0.0, "content": 0.0})
+    );
+    assert!(floors["examples"].get("broken").is_none());
+    // The summary is printed, and the example that does not render scores 0.
+    assert!(
+        stdout(&o).contains("3 examples: 2 compile their entry file, 2 render"),
+        "{}",
+        stdout(&o)
+    );
+
+    // A second run changes nothing; a regression stops it and writes nothing.
+    std::fs::write(
+        &ratchet,
+        r#"{"examples":{"good":{"pixels":1.0},"bad":{"pixels":0.5}}}"#,
+    )
+    .unwrap();
+    let o = run();
+    assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));
+    assert!(stdout(&o).contains("not raised while an example is under its floor"));
+    let floors: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&ratchet).unwrap()).unwrap();
+    assert_eq!(
+        floors["examples"]["bad"],
+        serde_json::json!({"pixels": 0.5})
+    );
+}

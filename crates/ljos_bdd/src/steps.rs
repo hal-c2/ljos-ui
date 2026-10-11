@@ -6,6 +6,8 @@ use gherkin::Step;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::backend::SystemSetting;
+use crate::backend::testrun::{TestRun, expected_lines};
 use crate::{
     backend::{A11yAction, A11yNode, A11yTextAction, BackendError, LogLevel, PointerStep, WheelBy},
     fixture, value,
@@ -179,6 +181,10 @@ fn a11y_action(what: &str) -> Result<A11yAction, String> {
     match way {
         "increase" if !page => Ok(A11yAction::Increase),
         "decrease" if !page => Ok(A11yAction::Decrease),
+        "press" if !page => Ok(A11yAction::Press),
+        "show itself" if !page => Ok(A11yAction::ShowOnScreen),
+        "expand" if !page => Ok(A11yAction::Expand),
+        "collapse" if !page => Ok(A11yAction::Collapse),
         "scroll up" => scroll(0, -1, page),
         "scroll down" => scroll(0, 1, page),
         "scroll left" => scroll(-1, 0, page),
@@ -188,6 +194,41 @@ fn a11y_action(what: &str) -> Result<A11yAction, String> {
             _ => Err(format!("{what:?} is not something to ask of a node")),
         },
     }
+}
+
+// What the system prefers, as a scenario writes it.
+fn system_setting(setting: &str, value: &str) -> Result<SystemSetting, String> {
+    let flag = || match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("{value} is not true or false")),
+    };
+    let word = value.trim_matches('"');
+    match (setting, word) {
+        ("color scheme", "dark") => Ok(SystemSetting::DarkScheme(true)),
+        ("color scheme", "light") => Ok(SystemSetting::DarkScheme(false)),
+        ("contrast", "high") => Ok(SystemSetting::HighContrast(true)),
+        ("contrast", "normal") => Ok(SystemSetting::HighContrast(false)),
+        ("reduced motion", _) => flag().map(SystemSetting::ReducedMotion),
+        ("screen reader", _) => flag().map(SystemSetting::ScreenReader),
+        ("font scale", _) => value
+            .parse()
+            .map(SystemSetting::FontScale)
+            .map_err(|_| format!("{value} is not a number")),
+        _ => Err(format!("{value} is not a {setting:?} the system has")),
+    }
+}
+
+#[given(regex = r#"^the system setting "([^"]+)" is (.+)$"#)]
+fn system_setting_is(w: &mut LjosWorld, setting: String, value: String) -> StepResult {
+    let setting = system_setting(&setting, &value)?;
+    w.each(|b| b.system_setting(setting))
+}
+
+#[when(regex = r#"^the system setting "([^"]+)" changes to (.+)$"#)]
+fn system_setting_changes(w: &mut LjosWorld, setting: String, value: String) -> StepResult {
+    let setting = system_setting(&setting, &value)?;
+    w.each(|b| b.system_setting(setting))
 }
 
 #[when(regex = r#"^an assistive technology asks the "([^"]+)" named "([^"]*)" to (.+)$"#)]
@@ -471,6 +512,40 @@ fn log_clean(w: &mut LjosWorld) -> StepResult {
     log_matches(w, ".*", LogLevel::Warning, false)
 }
 
+// ------------------------------------------------------------- faults
+//
+// Faults and the boundaries that contain them are Ljós's own; the oracle
+// has nothing to compare with.
+
+#[when(regex = r#"^a native handler of "([^"]+)" panics with "([^"]*)"$"#)]
+fn native_handler_panics(w: &mut LjosWorld, object: String, message: String) -> StepResult {
+    w.each(|b| b.panic_in(&object, &message))
+}
+
+#[then("the application has no fault")]
+fn no_application_fault(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.application_fault()? {
+        None => Ok(()),
+        Some(f) => Err(BackendError::Failed(format!(
+            "the application has a {} fault: {}",
+            f.kind, f.message
+        ))),
+    })
+}
+
+#[then(regex = r#"^the application fault is an? "([^"]+)" matching "([^"]+)"$"#)]
+fn application_fault_is(w: &mut LjosWorld, kind: String, pattern: String) -> StepResult {
+    let re = Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
+    w.each(|b| match b.application_fault()? {
+        Some(f) if f.kind == kind && re.is_match(&f.message) => Ok(()),
+        Some(f) => Err(BackendError::Failed(format!(
+            "the application fault is a {:?}: {:?}; expected a {kind:?} matching {pattern:?}",
+            f.kind, f.message
+        ))),
+        None => Err(BackendError::Failed("the application has no fault".into())),
+    })
+}
+
 #[then(regex = r#"^the accessibility tree has an? "([^"]+)" named "([^"]*)"$"#)]
 fn a11y_has(w: &mut LjosWorld, role: String, name: String) -> StepResult {
     w.each(|b| {
@@ -625,6 +700,181 @@ fn a11y_inside(
     })
 }
 
+// The node a step names, or what the tree has instead.
+fn a11y_node<'t>(tree: &'t A11yNode, role: &str, name: &str) -> Result<&'t A11yNode, BackendError> {
+    tree.find(role, name).ok_or_else(|| {
+        BackendError::Failed(format!(
+            "no {role:?} named {name:?} in:\n{}",
+            render(tree, 0)
+        ))
+    })
+}
+
+#[rustfmt::skip]
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is (not )?(checkable|checked|partially checked|pressed|expandable|expanded|selectable|selected|read-only|disabled)$"#)]
+fn a11y_state(
+    w: &mut LjosWorld,
+    role: String,
+    name: String,
+    not: String,
+    state: String,
+) -> StepResult {
+    let want = not.is_empty();
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = a11y_node(&tree, &role, &name)?;
+        if node.states.contains(&state) == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is {}{state}; it says {:?}",
+                if want { "not " } else { "" },
+                node.states
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is item (\d+) of (\d+)$"#)]
+fn a11y_item_of(
+    w: &mut LjosWorld,
+    role: String,
+    name: String,
+    place: usize,
+    of: usize,
+) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = a11y_node(&tree, &role, &name)?;
+        match node.set {
+            Some(set) if set == (place, of) => Ok(()),
+            Some((p, n)) => Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is item {p} of {n}, expected {place} of {of}"
+            ))),
+            None => Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} does not say which item it is"
+            ))),
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is not an item of a set$"#)]
+fn a11y_not_item_of(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        match a11y_node(&tree, &role, &name)?.set {
+            None => Ok(()),
+            Some((p, n)) => Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is item {p} of {n}, expected no place in a set"
+            ))),
+        }
+    })
+}
+
+#[rustfmt::skip]
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is at (-?[\d.]+) in the range (-?[\d.]+) to (-?[\d.]+)$"#)]
+fn a11y_range(
+    w: &mut LjosWorld,
+    role: String,
+    name: String,
+    value: f64,
+    min: f64,
+    max: f64,
+) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = a11y_node(&tree, &role, &name)?;
+        let Some((v, lo, hi)) = &node.range else {
+            return Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} has no range"
+            )));
+        };
+        let same = |found: &str, want: f64| {
+            found
+                .parse::<f64>()
+                .is_ok_and(|f| (f - want).abs() <= 1e-6 * want.abs().max(1.0))
+        };
+        if same(v, value) && same(lo, min) && same(hi, max) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is at {v} in the range {lo} to {hi}, \
+                 expected {value} in {min} to {max}"
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" has no range$"#)]
+fn a11y_no_range(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        match &a11y_node(&tree, &role, &name)?.range {
+            None => Ok(()),
+            Some((v, lo, hi)) => Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is at {v} in the range {lo} to {hi}"
+            ))),
+        }
+    })
+}
+
+#[rustfmt::skip]
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is labelled by the "([^"]+)" named "([^"]*)"$"#)]
+fn a11y_labelled_by(
+    w: &mut LjosWorld,
+    role: String,
+    name: String,
+    label_role: String,
+    label_name: String,
+) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = a11y_node(&tree, &role, &name)?;
+        let label = (label_role.clone(), label_name.clone());
+        if node.labelled_by.contains(&label) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is labelled by {:?}, \
+                 expected the {label_role:?} named {label_name:?}",
+                node.labelled_by
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is labelled by nothing$"#)]
+fn a11y_unlabelled(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = a11y_node(&tree, &role, &name)?;
+        if node.labelled_by.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is labelled by {:?}",
+                node.labelled_by
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is called an? "([^"]+)"$"#)]
+fn a11y_called(w: &mut LjosWorld, role: String, name: String, called: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = a11y_node(&tree, &role, &name)?;
+        if node.called == called {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} is called {:?}, expected {called:?}",
+                node.called
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^the accessibility tree's focus is the "([^"]+)" named "([^"]*)"$"#)]
 fn a11y_focus_is(w: &mut LjosWorld, role: String, name: String) -> StepResult {
     w.each(|b| {
@@ -695,6 +945,91 @@ fn reloads_happened(w: &mut LjosWorld, want: u64) -> StepResult {
     })
 }
 
+// ------------------------------------------------- QML tests (QtTest)
+//
+// These steps run the staged `tst_*.qml` files with a test runner and read
+// what it printed. Nothing is loaded as an application for them.
+
+#[when("the tests are run")]
+fn tests_run(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun::default())
+}
+
+#[when(regex = r#"^the tests are run with the import path "([^"]+)"$"#)]
+fn tests_run_with_import(w: &mut LjosWorld, dir: String) -> StepResult {
+    w.run_tests(&TestRun {
+        import_paths: vec![dir],
+        ..TestRun::default()
+    })
+}
+
+#[when(regex = r#"^the tests matching "([^"]+)" are run$"#)]
+fn tests_run_matching(w: &mut LjosWorld, filter: String) -> StepResult {
+    w.run_tests(&TestRun {
+        filters: vec![filter],
+        ..TestRun::default()
+    })
+}
+
+#[then("the test report is:")]
+fn test_report_is(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = expected_lines(&docstring(step)?);
+    w.each_test_report(|report| {
+        if report.lines == want {
+            Ok(())
+        } else {
+            Err(format!("the report is\n{}", report.text()))
+        }
+    })
+}
+
+#[then("the test report has the lines:")]
+fn test_report_has(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = expected_lines(&docstring(step)?);
+    w.each_test_report(|report| {
+        if report.has_lines(&want) {
+            Ok(())
+        } else {
+            Err(format!(
+                "these lines are not in the report, which is\n{}",
+                report.text()
+            ))
+        }
+    })
+}
+
+#[then(regex = r"^the test run exits with status (\d+)$")]
+fn test_run_status(w: &mut LjosWorld, want: i32) -> StepResult {
+    w.each_test_report(|report| {
+        if report.status == want {
+            Ok(())
+        } else {
+            Err(format!(
+                "the run exited with status {}; the report is\n{}",
+                report.status,
+                report.text()
+            ))
+        }
+    })
+}
+
+// The machine-readable report, by JSON pointer (`/totals/failed`).
+#[then(regex = r#"^the test results' "([^"]*)" is (.+)$"#)]
+fn test_results_value(w: &mut LjosWorld, pointer: String, want: String) -> StepResult {
+    let want = value::parse(&want)?;
+    w.each_test_report(|report| {
+        let json = report
+            .json
+            .as_ref()
+            .ok_or("this runner writes no machine-readable report")?;
+        match json.pointer(&pointer) {
+            Some(actual) if value::same(&want, actual) => Ok(()),
+            Some(actual) => Err(format!("{pointer} is {actual}, expected {want}")),
+            None => Err(format!("the results have no {pointer}: {json}")),
+        }
+    })
+}
+
 fn find_object<'a>(n: &'a A11yNode, object: &str) -> Option<&'a A11yNode> {
     if n.object_name == object {
         return Some(n);
@@ -708,6 +1043,535 @@ fn render(n: &A11yNode, depth: usize) -> String {
         out.push_str(&render(c, depth + 1));
     }
     out
+}
+
+// ------------------------------------------------------------ Inspector
+//
+// The agent's side of ARCHITECTURE.md §19.4 (features/tooling/mcp). The
+// attributes stay on one line each: `features:lint` reads them from here.
+
+use crate::backend::inspector::{self, Ask, Seen, Token};
+
+fn inspector_ask(w: &mut LjosWorld, ask: Ask) -> StepResult {
+    w.each(|b| b.inspector(&ask))
+}
+
+fn inspector_call(w: &mut LjosWorld, tool: &str, args: Value) -> StepResult {
+    inspector_ask(
+        w,
+        Ask::Call {
+            tool: tool.to_owned(),
+            args,
+        },
+    )
+}
+
+fn inspector_seen(w: &mut LjosWorld, check: impl Fn(&Seen) -> Result<(), String>) -> StepResult {
+    w.each(|b| check(&b.inspector_seen()?).map_err(BackendError::Failed))
+}
+
+/// A `"""text` or `"""json` doc string as it was meant.
+fn inspector_doc(step: &Step) -> Result<String, String> {
+    let text = docstring(step)?;
+    let text = match text.split_once('\n') {
+        Some((first, rest)) if matches!(first.trim(), "text" | "json") => rest,
+        _ => &text,
+    };
+    Ok(inspector::dedent(text))
+}
+
+/// A step's quoted text with `\"` for a quote in it. Other backslashes
+/// are the text's own (a pattern's `\d`).
+fn unquoted(text: &str) -> String {
+    text.replace("\\\"", "\"")
+}
+
+fn inspector_token(words: &str) -> Result<Token, String> {
+    match words {
+        "the right token" => Ok(Token::Right),
+        "no token" => Ok(Token::Missing),
+        "a wrong token" => Ok(Token::Wrong),
+        "the token of an older start" => Ok(Token::OlderStart),
+        other => Err(format!("{other:?} is not a token this step knows")),
+    }
+}
+
+#[given("the inspector is connected")]
+fn inspector_connected(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::Connect { redact_all: false })
+}
+
+#[given("the inspector is connected and masks every editable value")]
+fn inspector_connected_masking(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::Connect { redact_all: true })
+}
+
+#[given("the inspector is served on the loopback address")]
+fn inspector_served(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::Serve)
+}
+
+#[given("the agent has requested a snapshot")]
+#[when("the agent requests a snapshot")]
+fn snapshot_requested(w: &mut LjosWorld) -> StepResult {
+    inspector_call(w, "app_snapshot", serde_json::json!({}))
+}
+
+#[given(regex = r"^the agent has requested a snapshot of at most (\d+) nodes$")]
+#[when(regex = r"^the agent requests a snapshot of at most (\d+) nodes$")]
+fn snapshot_requested_capped(w: &mut LjosWorld, nodes: u64) -> StepResult {
+    inspector_call(w, "app_snapshot", serde_json::json!({ "max_nodes": nodes }))
+}
+
+#[when("the agent requests the next part of the snapshot")]
+fn snapshot_next_part(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::NextPart)
+}
+
+#[when(regex = r#"^the agent requests a snapshot below "(.*)"$"#)]
+fn snapshot_below(w: &mut LjosWorld, root: String) -> StepResult {
+    inspector_call(
+        w,
+        "app_snapshot",
+        serde_json::json!({ "root": unquoted(&root) }),
+    )
+}
+
+#[when(regex = r"^the agent requests a snapshot (\d+) levels? deep$")]
+fn snapshot_deep(w: &mut LjosWorld, depth: u64) -> StepResult {
+    inspector_call(w, "app_snapshot", serde_json::json!({ "depth": depth }))
+}
+
+#[when("the agent requests what changed since the last snapshot")]
+fn snapshot_changes(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::ChangedSince)
+}
+
+// The locator is everything between the outer quotes, so that a table of
+// examples can give `role=button[name="Save"]` as it is typed.
+#[given(regex = r#"^the agent has searched for "(.*)"$"#)]
+#[when(regex = r#"^the agent searches for "(.*)"$"#)]
+fn agent_searches(w: &mut LjosWorld, locator: String) -> StepResult {
+    inspector_call(
+        w,
+        "app_find",
+        serde_json::json!({ "locator": unquoted(&locator) }),
+    )
+}
+
+#[when(regex = r#"^the agent inspects "(.*)"$"#)]
+fn agent_inspects(w: &mut LjosWorld, target: String) -> StepResult {
+    inspector_call(
+        w,
+        "app_inspect",
+        serde_json::json!({ "target": unquoted(&target) }),
+    )
+}
+
+#[when(regex = r#"^the agent inspects every property of "(.*)"$"#)]
+fn agent_inspects_all(w: &mut LjosWorld, target: String) -> StepResult {
+    let args = serde_json::json!({ "target": unquoted(&target), "all": true });
+    inspector_call(w, "app_inspect", args)
+}
+
+#[when(regex = r#"^the agent inspects the reference of the "([^"]+)" named "([^"]*)"$"#)]
+fn agent_inspects_reference(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    inspector_ask(w, Ask::InspectRef { role, name })
+}
+
+#[given(regex = r#"^the agent has called the tool "([^"]+)"$"#)]
+#[when(regex = r#"^the agent calls the tool "([^"]+)"$"#)]
+fn agent_calls(w: &mut LjosWorld, tool: String) -> StepResult {
+    inspector_call(w, &tool, serde_json::json!({}))
+}
+
+#[when(regex = r#"^the agent calls the tool "([^"]+)" with:$"#)]
+fn agent_calls_with(w: &mut LjosWorld, tool: String, step: &Step) -> StepResult {
+    let args = inspector_doc(step)?;
+    let args =
+        serde_json::from_str(&args).map_err(|e| format!("the arguments are not JSON: {e}"))?;
+    inspector_call(w, &tool, args)
+}
+
+#[when("the agent asks for the log since its last request")]
+fn agent_reads_log_on(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::LogSince)
+}
+
+#[when(regex = r#"^the agent reads the resource "([^"]+)"$"#)]
+fn agent_reads_resource(w: &mut LjosWorld, uri: String) -> StepResult {
+    inspector_ask(w, Ask::Resource(uri))
+}
+
+// On one line, as the lint reads the patterns.
+#[rustfmt::skip]
+#[when(regex = r"^a client asks for a snapshot with (the right token|no token|a wrong token|the token of an older start)$")]
+fn client_asks(w: &mut LjosWorld, token: String) -> StepResult {
+    let token = inspector_token(&token)?;
+    inspector_ask(
+        w,
+        Ask::Client {
+            token,
+            origin: None,
+            host: None,
+        },
+    )
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^a client asks for a snapshot with (the right token|no token|a wrong token) from the origin "([^"]+)"$"#)]
+fn client_asks_from(w: &mut LjosWorld, token: String, origin: String) -> StepResult {
+    let token = inspector_token(&token)?;
+    inspector_ask(
+        w,
+        Ask::Client {
+            token,
+            origin: Some(origin),
+            host: None,
+        },
+    )
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^a client asks for a snapshot with (the right token|no token|a wrong token) for the host "([^"]+)"$"#)]
+fn client_asks_for_host(w: &mut LjosWorld, token: String, host: String) -> StepResult {
+    let token = inspector_token(&token)?;
+    inspector_ask(
+        w,
+        Ask::Client {
+            token,
+            origin: None,
+            host: Some(host),
+        },
+    )
+}
+
+#[when(regex = r#"^the method "([^"]+)" of "([^"]+)" is called (\d+) times$"#)]
+fn method_called_often(
+    w: &mut LjosWorld,
+    method: String,
+    object: String,
+    times: u32,
+) -> StepResult {
+    w.each(|b| (0..times).try_for_each(|_| b.call(&object, &method, &[]).map(drop)))
+}
+
+#[then(regex = r#"^the snapshot has a "([^"]+)" named "([^"]*)" with a reference$"#)]
+fn snapshot_has(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_has(&role, &name, true))
+}
+
+#[then(regex = r#"^the snapshot has no "([^"]+)" named "([^"]*)"$"#)]
+fn snapshot_has_no(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_has(&role, &name, false))
+}
+
+#[then("the snapshot is:")]
+fn snapshot_is(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = inspector_doc(step)?;
+    inspector_seen(w, |s| s.outline_is(&want))
+}
+
+#[then(regex = r#"^the snapshot contains "(.*)"$"#)]
+fn snapshot_contains(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_contains(&unquoted(&text), true))
+}
+
+#[then(regex = r#"^the snapshot does not contain "(.*)"$"#)]
+fn snapshot_contains_no(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_contains(&unquoted(&text), false))
+}
+
+#[then(regex = r#"^the snapshot matches "(.*)"$"#)]
+fn snapshot_matches(w: &mut LjosWorld, re: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_matches(&unquoted(&re), true))
+}
+
+#[then(regex = r#"^the snapshot does not match "(.*)"$"#)]
+fn snapshot_matches_not(w: &mut LjosWorld, re: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_matches(&unquoted(&re), false))
+}
+
+#[then(regex = r"^the snapshot lists (\d+) nodes?$")]
+fn snapshot_lists(w: &mut LjosWorld, count: u64) -> StepResult {
+    inspector_seen(w, |s| s.outline_lists(count))
+}
+
+#[then(regex = r"^the snapshot is (complete|cut short)$")]
+fn snapshot_cut(w: &mut LjosWorld, how: String) -> StepResult {
+    inspector_seen(w, |s| s.outline_cut(how == "cut short"))
+}
+
+#[then(regex = r"^the search finds (\d+) nodes?$")]
+fn search_finds(w: &mut LjosWorld, count: u64) -> StepResult {
+    inspector_seen(w, |s| s.found(count))
+}
+
+#[then(regex = r#"^the search finds an? "([^"]+)" named "([^"]*)"$"#)]
+fn search_finds_one(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    inspector_seen(w, |s| s.found_one(&role, &name))
+}
+
+// The place is a JSON pointer into the answer's structured content and the
+// value is JSON, which never starts with the `a` of "at least".
+#[then(regex = r#"^the answer's "(/[^"]*)" is ([^a].*)$"#)]
+fn answer_is(w: &mut LjosWorld, pointer: String, json: String) -> StepResult {
+    let want = value::parse(&json)?;
+    inspector_seen(w, |s| s.answer_is(&pointer, &want))
+}
+
+#[then(regex = r#"^the answer's "(/[^"]*)" is at least (-?\d+(?:\.\d+)?)$"#)]
+fn answer_at_least(w: &mut LjosWorld, pointer: String, least: f64) -> StepResult {
+    inspector_seen(w, |s| s.answer_at_least(&pointer, least))
+}
+
+#[then(regex = r#"^the answer's "(/[^"]*)" matches "(.*)"$"#)]
+fn answer_matches(w: &mut LjosWorld, pointer: String, re: String) -> StepResult {
+    inspector_seen(w, |s| s.answer_matches(&pointer, &unquoted(&re)))
+}
+
+#[then(regex = r#"^the answer does not contain "(.*)"$"#)]
+fn answer_lacks(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.answer_lacks(&unquoted(&text)))
+}
+
+#[then(regex = r#"^the answer has no inspected property "([^"]+)"$"#)]
+fn inspected_property_absent(w: &mut LjosWorld, name: String) -> StepResult {
+    inspector_seen(w, |s| s.property_absent(&name))
+}
+
+#[then(regex = r#"^the inspected property "([^"]+)" is "([^"]+)"$"#)]
+fn inspected_property_provenance(
+    w: &mut LjosWorld,
+    name: String,
+    provenance: String,
+) -> StepResult {
+    inspector_seen(w, |s| {
+        s.property_says(&name, "provenance", &Value::from(provenance.as_str()))
+    })
+}
+
+#[then(regex = r#"^the inspected property "([^"]+)" has the value "(.*)"$"#)]
+fn inspected_property_value(w: &mut LjosWorld, name: String, text: String) -> StepResult {
+    inspector_seen(w, |s| {
+        s.property_says(&name, "value", &Value::from(unquoted(&text)))
+    })
+}
+
+#[then(regex = r#"^the inspected property "([^"]+)" was written at line (\d+)$"#)]
+fn inspected_property_line(w: &mut LjosWorld, name: String, line: u64) -> StepResult {
+    inspector_seen(w, |s| s.property_says(&name, "line", &Value::from(line)))
+}
+
+#[then(regex = r#"^the inspected property "([^"]+)" is bound at tier (\w+)$"#)]
+fn inspected_property_tier(w: &mut LjosWorld, name: String, tier: String) -> StepResult {
+    inspector_seen(w, |s| {
+        s.property_says(&name, "tier", &Value::from(tier.as_str()))
+    })
+}
+
+#[then(regex = r#"^the agent is refused with "([a-z_]+)"$"#)]
+fn agent_refused(w: &mut LjosWorld, code: String) -> StepResult {
+    inspector_seen(w, |s| s.refused_with(&code))
+}
+
+#[then("the agent is told the reference is stale")]
+fn agent_told_stale(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, |s| s.refused_with("stale_ref"))
+}
+
+#[then(regex = r#"^the refusal mentions "(.*)"$"#)]
+fn refusal_mentions(w: &mut LjosWorld, word: String) -> StepResult {
+    inspector_seen(w, |s| s.refusal_mentions(&unquoted(&word)))
+}
+
+#[then(regex = r"^the refusal names (\d+) candidates?$")]
+fn refusal_candidates(w: &mut LjosWorld, count: usize) -> StepResult {
+    inspector_seen(w, |s| s.refusal_candidates(count))
+}
+
+#[then(regex = r#"^the agent is offered the tools "([^"]+)"$"#)]
+fn agent_offered(w: &mut LjosWorld, names: String) -> StepResult {
+    let names: Vec<&str> = names.split(',').map(str::trim).collect();
+    inspector_seen(w, |s| s.offered(&names))
+}
+
+#[then("every tool the agent is offered is marked read-only")]
+fn tools_read_only(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::all_read_only)
+}
+
+#[then(regex = r#"^the inspector's instructions match "(.*)"$"#)]
+fn instructions_match(w: &mut LjosWorld, re: String) -> StepResult {
+    inspector_seen(w, |s| s.instructions_match(&unquoted(&re)))
+}
+
+#[then(regex = r"^the answer has a PNG picture (\d+) by (\d+) pixels$")]
+fn answer_picture(w: &mut LjosWorld, width: u32, height: u32) -> StepResult {
+    inspector_seen(w, |s| s.picture_is(width, height))
+}
+
+#[then(regex = r#"^the pixel at (\d+), (\d+) of the picture is "(#[0-9a-fA-F]{6})"$"#)]
+fn answer_pixel(w: &mut LjosWorld, x: u32, y: u32, colour: String) -> StepResult {
+    inspector_seen(w, |s| s.pixel_is(x, y, &colour))
+}
+
+#[then(regex = r#"^the resource contains "(.*)"$"#)]
+fn resource_contains(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.resource_contains(&unquoted(&text)))
+}
+
+#[then("the client is answered")]
+fn client_answered(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::client_answered)
+}
+
+#[then(regex = r"^the client is refused with status (\d+)$")]
+fn client_refused(w: &mut LjosWorld, status: u16) -> StepResult {
+    inspector_seen(w, |s| s.client_refused(status))
+}
+
+#[then(regex = r#"^the client's answer contains "(.*)"$"#)]
+fn client_contains(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.client_contains(&unquoted(&text), true))
+}
+
+#[then(regex = r#"^the client's answer does not contain "(.*)"$"#)]
+fn client_contains_no(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.client_contains(&unquoted(&text), false))
+}
+
+#[then("the token file can be read by its owner alone")]
+fn token_file_private(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::token_file_private)
+}
+
+#[then("the token file names an address on this machine")]
+fn token_file_local(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::token_file_local)
+}
+
+// Nothing is waiting, no frame is asked for and nothing woke the
+// application since it last ran: a host would be asleep.
+#[then("the application is left idle")]
+fn application_idle(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::Rests)
+}
+
+#[then("the accessibility tree is not being kept")]
+fn tree_given_back(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::TreeGivenBack)
+}
+
+// The `top` overlay (ARCHITECTURE.md §3.4, §19.10). Ljós only.
+
+use crate::backend::top::TopSeen;
+
+fn top_seen(w: &mut LjosWorld, check: impl Fn(&TopSeen) -> Result<(), String>) -> StepResult {
+    w.each(|b| check(&b.top_seen()?).map_err(BackendError::Failed))
+}
+
+#[when("the top overlay is shown")]
+fn top_shown(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.top(true))
+}
+
+#[when("the top overlay is hidden")]
+fn top_hidden(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.top(false))
+}
+
+#[then("the top overlay shows nothing")]
+fn top_shows_nothing(w: &mut LjosWorld) -> StepResult {
+    top_seen(w, |seen| match &seen.sheet {
+        None => Ok(()),
+        Some(sheet) => Err(format!("the top overlay shows {:?}", sheet.title)),
+    })
+}
+
+#[then(regex = r#"^the top overlay's title is "([^"]*)"$"#)]
+fn top_title_is(w: &mut LjosWorld, title: String) -> StepResult {
+    top_seen(w, |seen| {
+        let sheet = seen.sheet()?;
+        if sheet.title == title {
+            Ok(())
+        } else {
+            Err(format!(
+                "the top overlay's title is {:?}, expected {title:?}",
+                sheet.title
+            ))
+        }
+    })
+}
+
+#[then(regex = r#"^the top overlay's title matches "(.+)"$"#)]
+fn top_title_matches(w: &mut LjosWorld, pattern: String) -> StepResult {
+    let wanted = Regex::new(&pattern).map_err(|e| format!("{pattern:?}: {e}"))?;
+    top_seen(w, |seen| {
+        let sheet = seen.sheet()?;
+        if wanted.is_match(&sheet.title) {
+            Ok(())
+        } else {
+            Err(format!(
+                "the top overlay's title is {:?}, which does not match {pattern:?}",
+                sheet.title
+            ))
+        }
+    })
+}
+
+#[then(regex = r#"^the top overlay lists the lanes "([^"]*)"$"#)]
+fn top_lists_lanes(w: &mut LjosWorld, lanes: String) -> StepResult {
+    top_seen(w, |seen| {
+        let listed = seen.sheet()?.lanes.join(", ");
+        if listed == lanes {
+            Ok(())
+        } else {
+            Err(format!(
+                "the top overlay lists the lanes {listed:?}, expected {lanes:?}"
+            ))
+        }
+    })
+}
+
+#[then(regex = r#"^the top overlay has charged "(.+)"$"#)]
+fn top_has_charged(w: &mut LjosWorld, owner: String) -> StepResult {
+    let owner = unquoted(&owner);
+    top_seen(w, |seen| {
+        let charged = &seen.sheet()?.charged;
+        if charged.contains(&owner) {
+            Ok(())
+        } else {
+            Err(format!(
+                "the top overlay has charged {charged:?}, and not {owner:?}"
+            ))
+        }
+    })
+}
+
+#[then("the top overlay has charged nobody")]
+fn top_has_charged_nobody(w: &mut LjosWorld) -> StepResult {
+    top_seen(w, |seen| {
+        let charged = &seen.sheet()?.charged;
+        if charged.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("the top overlay has charged {charged:?}"))
+        }
+    })
+}
+
+// A host would be asleep: the scene asks for no frame and for no wake,
+// with the overlay over it.
+#[then("the top overlay keeps no frame coming")]
+fn top_keeps_no_frame_coming(w: &mut LjosWorld) -> StepResult {
+    top_seen(w, |seen| {
+        seen.sheet()?;
+        match &seen.frame_wanted {
+            None => Ok(()),
+            Some(why) => Err(format!("a frame is wanted: {why}")),
+        }
+    })
 }
 
 #[cfg(test)]

@@ -22,9 +22,15 @@ use ljos_runtime::{Clock as _, Time, VirtualClock};
 use qml_front::QtTypeOracle;
 use serde_json::{Map, Number, Value, json};
 
-use super::{A11yNode, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile, Result};
+use super::{
+    A11yNode, ApplicationFault, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile,
+    Result,
+};
 
+mod inspect;
 mod reload;
+mod text;
+mod top;
 
 /// The driver's file key. Not a valid QML type name for a scenario author
 /// to collide with by accident.
@@ -150,6 +156,8 @@ struct Live {
     pointer_down: bool,
     /// The reload session of a scenario that changes files while it runs.
     reloads: Option<reload::Rig>,
+    /// The `top` overlay; hidden unless a scenario shows it.
+    top: ljos_dev::Top,
 }
 
 #[derive(Default)]
@@ -162,6 +170,10 @@ pub struct LjosBackend {
     resources: Vec<(String, Vec<u8>)>,
     /// Whether the scenario changes files while it runs.
     watching: bool,
+    /// What the system prefers, said before anything was loaded.
+    settings: Vec<super::SystemSetting>,
+    /// The inspector of a scenario that an agent looks at.
+    inspector: Option<inspect::Rig>,
 }
 
 impl std::fmt::Debug for LjosBackend {
@@ -170,6 +182,30 @@ impl std::fmt::Debug for LjosBackend {
             .field("loaded", &self.live.as_ref().map_or(0, |l| l.roots.len()))
             .finish()
     }
+}
+
+/// The system says what the user prefers.
+fn apply_setting(engine: &Engine, setting: super::SystemSetting) {
+    use super::SystemSetting as S;
+    ljos_quick::update_system_prefs(engine, |p| match setting {
+        S::DarkScheme(dark) => {
+            p.color_scheme = if dark {
+                ljos_a11y::ColorScheme::Dark
+            } else {
+                ljos_a11y::ColorScheme::Light
+            }
+        }
+        S::HighContrast(high) => {
+            p.contrast = if high {
+                ljos_a11y::Contrast::High
+            } else {
+                ljos_a11y::Contrast::NoPreference
+            }
+        }
+        S::ReducedMotion(reduced) => p.reduced_motion = reduced,
+        S::FontScale(scale) => p.font_scale = scale,
+        S::ScreenReader(active) => p.screen_reader_active = active,
+    });
 }
 
 fn failed(e: impl std::fmt::Display) -> BackendError {
@@ -183,6 +219,15 @@ fn not_loaded() -> BackendError {
 /// `Scenario.qml` → `Scenario`, the engine's file key.
 fn key_of(name: &str) -> &str {
     name.strip_suffix(".qml").unwrap_or(name)
+}
+
+/// The directory `name` is the `qmldir` file of (empty for the scenario's
+/// own), if it is one: it describes a module and is not QML.
+fn qmldir_of(name: &str) -> Option<&str> {
+    match name.strip_suffix("qmldir")? {
+        "" => Some(""),
+        dir => dir.strip_suffix('/'),
+    }
 }
 
 impl LjosBackend {
@@ -238,6 +283,7 @@ impl LjosBackend {
             wake: None,
             pointer_down: false,
             reloads: None,
+            top: ljos_dev::Top::new(),
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -262,10 +308,18 @@ fn level(l: ljos_engine::LogLevel) -> LogLevel {
 fn compile(files: &BTreeMap<String, String>) -> Result<MapSource> {
     let mut project = Project::new(QtTypeOracle);
     for (name, source) in files {
-        project.add(key_of(name), source.as_str());
+        if qmldir_of(name).is_none() {
+            project.add(key_of(name), source.as_str());
+        }
+    }
+    // After the files, which are what a module's lines name.
+    for (name, source) in files {
+        if let Some(dir) = qmldir_of(name) {
+            project.add_qmldir(dir, source);
+        }
     }
     let mut out = MapSource::new();
-    for name in files.keys() {
+    for name in files.keys().filter(|name| qmldir_of(name).is_none()) {
         let key = key_of(name);
         let compiled = compile_file(&project, key).map_err(|d| {
             let lines: Vec<String> = d.iter().map(ToString::to_string).collect();
@@ -293,6 +347,7 @@ impl Live {
         for _ in 0..MAX_SETTLE_FRAMES {
             let now = self.clock.now();
             let out = self.scene.frame(&self.engine, now);
+            self.note_frame();
             if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
                 self.wake = out.next_wake;
                 return Ok(());
@@ -315,6 +370,8 @@ impl Live {
                 let source = compile(&wanted)?;
                 self.engine.set_component_source(source);
             }
+            self.engine
+                .set_qml_text_compiler(Some(text::compiler(&wanted)));
             self.compiled_from = wanted;
         }
         let obj = self
@@ -694,6 +751,26 @@ impl Live {
 
     /// The tree as steps see it: role words, names and nesting.
     fn a11y(&self) -> A11yNode {
+        // In the words of the steps.
+        fn states(d: &ljos_a11y::NodeData) -> Vec<String> {
+            use ljos_a11y::accesskit::Toggled;
+            let says = [
+                ("checkable", d.toggled.is_some()),
+                ("checked", d.toggled == Some(Toggled::True)),
+                ("partially checked", d.toggled == Some(Toggled::Mixed)),
+                ("pressed", d.pressed),
+                ("expandable", d.expanded.is_some()),
+                ("expanded", d.expanded == Some(true)),
+                ("selectable", d.selected.is_some()),
+                ("selected", d.selected == Some(true)),
+                ("read-only", d.read_only),
+                ("disabled", d.disabled),
+            ];
+            says.iter()
+                .filter(|(_, is)| *is)
+                .map(|(word, _)| (*word).to_owned())
+                .collect()
+        }
         fn below(tree: &Tree, key: NodeKey, focus: Option<NodeKey>) -> Vec<A11yNode> {
             let node = |k: &NodeKey| {
                 let d = tree.get(*k)?;
@@ -712,6 +789,19 @@ impl Live {
                             t.value.get(a..b).map(str::to_owned)
                         })
                         .unwrap_or_default(),
+                    states: states(d),
+                    set: d.position_in_set.zip(d.size_of_set),
+                    range: d
+                        .range
+                        .as_ref()
+                        .map(|r| (r.value.to_string(), r.min.to_string(), r.max.to_string())),
+                    labelled_by: d
+                        .labelled_by
+                        .iter()
+                        .filter_map(|l| tree.get(*l))
+                        .map(|l| (role_word(l.role), l.name.clone()))
+                        .collect(),
+                    called: d.role_description.clone(),
                     children: below(tree, *k, focus),
                 })
             };
@@ -765,17 +855,33 @@ impl Backend for LjosBackend {
         "ljos"
     }
 
+    fn run_tests(
+        &mut self,
+        files: &[QmlFile],
+        run: &super::testrun::TestRun,
+    ) -> Result<super::testrun::TestReport> {
+        super::testrun::run_ljos(files, run)
+    }
+
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         if self.live.is_none() {
             let live = Self::start()?;
             for catalog in self.catalogs.drain(..) {
                 live.engine.install_catalog(Box::new(catalog));
             }
+            for setting in self.settings.drain(..) {
+                apply_setting(&live.engine, setting);
+            }
             let images = ljos_quick::ImageStore::of(&live.engine);
             for (url, bytes) in self.resources.drain(..) {
                 images.register_resource(url, bytes);
             }
             self.live = Some(live);
+            // An inspector connected before anything was loaded reads
+            // this application's log from its first message.
+            if let (Some(rig), Some(live)) = (&self.inspector, &self.live) {
+                rig.attach(live);
+            }
             // Before the scenario's first object: a reload knows only
             // what was made while it was noted.
             if self.watching
@@ -965,6 +1071,19 @@ impl Backend for LjosBackend {
         live.settle()
     }
 
+    fn system_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
+        match self.live.as_mut() {
+            Some(live) => {
+                apply_setting(&live.engine, setting);
+                live.settle()
+            }
+            None => {
+                self.settings.push(setting);
+                Ok(())
+            }
+        }
+    }
+
     fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {
         use ljos_quick::AccessibleAction as To;
         let live = self.live()?;
@@ -973,6 +1092,14 @@ impl Backend for LjosBackend {
             .accessible_key(role, name)
             .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
         let action = match action {
+            super::A11yAction::Press => {
+                let now = live.clock.now();
+                live.scene.accessible_press(&live.engine, key, now);
+                return live.settle();
+            }
+            super::A11yAction::ShowOnScreen => To::ShowOnScreen,
+            super::A11yAction::Expand => To::Expand,
+            super::A11yAction::Collapse => To::Collapse,
             super::A11yAction::Increase => To::Increase,
             super::A11yAction::Decrease => To::Decrease,
             super::A11yAction::SetValue(to) => To::SetValue(to),
@@ -1095,6 +1222,42 @@ impl Backend for LjosBackend {
 
     fn reload_count(&mut self) -> Result<u64> {
         self.live()?.reload_count()
+    }
+
+    fn panic_in(&mut self, object: &str, message: &str) -> Result<()> {
+        let live = self.live()?;
+        let obj = live.find(object)?;
+        let message = message.to_owned();
+        // A turn of the object's own code, as a host runs one: the panic
+        // is caught where the turn ends.
+        let _: Option<()> = live
+            .engine
+            .turn(Some(obj), move || std::panic::panic_any(message));
+        live.settle()
+    }
+
+    fn application_fault(&mut self) -> Result<Option<ApplicationFault>> {
+        let live = self.live()?;
+        Ok(live.engine.application_fault().map(|f| ApplicationFault {
+            kind: f.kind().to_owned(),
+            message: f.message(),
+        }))
+    }
+
+    fn inspector(&mut self, ask: &super::inspector::Ask) -> Result<()> {
+        self.ask_inspector(ask)
+    }
+
+    fn inspector_seen(&mut self) -> Result<super::inspector::Seen> {
+        self.seen_by_inspector()
+    }
+
+    fn top(&mut self, shown: bool) -> Result<()> {
+        self.show_top(shown)
+    }
+
+    fn top_seen(&mut self) -> Result<super::top::TopSeen> {
+        self.top_as_seen()
     }
 }
 

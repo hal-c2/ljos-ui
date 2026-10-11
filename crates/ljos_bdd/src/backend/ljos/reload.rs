@@ -52,8 +52,12 @@ impl Live {
         let Some(rig) = self.reloads.as_mut() else {
             return Ok(false);
         };
+        // The session compiles files; what a `qmldir` file says of a
+        // module is not watched.
         for (name, source) in wanted {
-            rig.reloader.save(key_of(name), Some(source.clone()));
+            if super::qmldir_of(name).is_none() {
+                rig.reloader.save(key_of(name), Some(source.clone()));
+            }
         }
         for name in self.compiled_from.keys() {
             if !wanted.contains_key(name) {
