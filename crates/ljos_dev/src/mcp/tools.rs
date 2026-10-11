@@ -4,11 +4,15 @@
 //! program. Each is kept under the size its tool allows by leaving out the
 //! end of a list and saying so, never by cutting in the middle of a line.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
-use ljos_engine::{Engine, ObjectId, Provenance, Value as QmlValue};
+use ljos_engine::{
+    BindingGraph, DependencyReport, Engine, EngineError, ObjectId, Provenance, Value as QmlValue,
+};
 use ljos_mcp_core::{
-    Delta, ErrorCode, LineOptions, Locator, Outline, RefTable, SurfaceError, ToolReply, render_line,
+    CapSet, Delta, ErrorCode, LineOptions, Locator, Outline, RefTable, SurfaceError, ToolReply,
+    render_line,
 };
 use ljos_quick::QuickScene;
 use ljos_render::{FrameView, RasterConfig, Rgba, RgbaImage, VelloCpuReference, kurbo};
@@ -27,8 +31,10 @@ pub(crate) const MAX_PICTURE_BYTES: usize = 1024 * 1024;
 const MAX_VALUE_CHARS: usize = 200;
 /// How many candidates an `ambiguous` refusal lists.
 const MAX_CANDIDATES: usize = 10;
+/// The most properties `dependencies` lists on each side.
+const MAX_DEPENDENCIES: usize = 50;
 /// The properties whose value is what was typed.
-const TYPED: [&str; 4] = ["text", "displayText", "preeditText", "selectedText"];
+pub(crate) const TYPED: [&str; 4] = ["text", "displayText", "preeditText", "selectedText"];
 
 /// What a tool reads: the application as it is now.
 pub(crate) struct Look<'a> {
@@ -64,28 +70,28 @@ fn micros(d: std::time::Duration) -> Value {
     json!(u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
 }
 
-fn clip(text: &str, max: usize) -> String {
+pub(crate) fn clip(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         Some((at, _)) => format!("{}…", &text[..at]),
         None => text.to_string(),
     }
 }
 
-fn text_property(engine: &Engine, obj: ObjectId, name: &str) -> Option<String> {
+pub(crate) fn text_property(engine: &Engine, obj: ObjectId, name: &str) -> Option<String> {
     match engine.read_by_name(obj, name) {
         QmlValue::String(s) if !s.is_empty() => Some(s.to_string()),
         _ => None,
     }
 }
 
-fn flag(engine: &Engine, obj: ObjectId, name: &str) -> Option<bool> {
+pub(crate) fn flag(engine: &Engine, obj: ObjectId, name: &str) -> Option<bool> {
     match engine.read_by_name(obj, name) {
         QmlValue::Undefined | QmlValue::Null => None,
         v => Some(v.to_boolean()),
     }
 }
 
-fn number_property(engine: &Engine, obj: ObjectId, name: &str) -> f64 {
+pub(crate) fn number_property(engine: &Engine, obj: ObjectId, name: &str) -> f64 {
     match engine.read_by_name(obj, name) {
         QmlValue::Undefined | QmlValue::Null => 0.0,
         v => v.to_number(),
@@ -94,7 +100,7 @@ fn number_property(engine: &Engine, obj: ObjectId, name: &str) -> f64 {
 
 /// Where an item is in the window: `[x, y, width, height]` of the box
 /// around it after every transform above it.
-fn window_box(engine: &Engine, obj: ObjectId) -> [f64; 4] {
+pub(crate) fn window_box(engine: &Engine, obj: ObjectId) -> [f64; 4] {
     let w = number_property(engine, obj, "width");
     let h = number_property(engine, obj, "height");
     let r = ljos_quick::scene_transform(engine, obj)
@@ -103,7 +109,7 @@ fn window_box(engine: &Engine, obj: ObjectId) -> [f64; 4] {
 }
 
 /// Whether `obj` and everything above it is visible. Call untracked.
-fn visible_to_the_top(engine: &Engine, obj: ObjectId) -> bool {
+pub(crate) fn visible_to_the_top(engine: &Engine, obj: ObjectId) -> bool {
     let mut up = Some(obj);
     // A parent chain is finite; the bound is against a cycle made by a bug.
     for _ in 0..4096 {
@@ -114,6 +120,81 @@ fn visible_to_the_top(engine: &Engine, obj: ObjectId) -> bool {
         up = engine.visual_parent(o);
     }
     true
+}
+
+/// One end of a dependency, as an agent reads it.
+fn dependency_end(engine: &Engine, d: &DependencyReport) -> Value {
+    let (ty, object_name) = match d.object {
+        Some(o) if engine.is_alive(o) => (
+            engine
+                .inspect_object(o)
+                .and_then(|r| r.types.first().cloned()),
+            engine.untrack(|| text_property(engine, o, "objectName")),
+        ),
+        _ => (None, None),
+    };
+    json!({
+        "object": ty,
+        "object_name": object_name,
+        "property": d.property,
+        "bound": d.bound,
+        "tier": d.tier.map(|t| t.as_str()),
+    })
+}
+
+/// The `dependencies` of `app_inspect`: what the binding of `name` read when
+/// it last ran, what reads `name`, and the tier its binding runs at.
+fn dependencies(engine: &Engine, name: &str, graph: &BindingGraph) -> (Value, String) {
+    let reads: Vec<Value> = graph
+        .reads
+        .iter()
+        .map(|d| dependency_end(engine, d))
+        .collect();
+    let read_by: Vec<Value> = graph
+        .read_by
+        .iter()
+        .map(|d| dependency_end(engine, d))
+        .collect();
+    let value = json!({
+        "property": name,
+        "bound": graph.bound,
+        "tier": graph.tier.map(|t| t.as_str()),
+        "reads": reads,
+        "read_by": read_by,
+        "truncated": graph.truncated,
+    });
+    let end = |v: &Value| {
+        let property = v["property"].as_str().unwrap_or("(a handler)");
+        let object = match (v["object_name"].as_str(), v["object"].as_str()) {
+            (Some(n), _) => format!(" of #{n}"),
+            (None, Some(t)) => format!(" of a {t}"),
+            _ => String::new(),
+        };
+        format!("{property}{object}")
+    };
+    let list = |items: &[Value]| {
+        if items.is_empty() {
+            "nothing".to_string()
+        } else {
+            items.iter().map(end).collect::<Vec<_>>().join(", ")
+        }
+    };
+    let mut text = format!(
+        "dependencies of `{name}`: {}",
+        match (graph.bound, graph.tier) {
+            (false, _) => "not bound".to_string(),
+            (true, Some(t)) => format!("bound at tier {}", t.as_str()),
+            (true, None) => "bound".to_string(),
+        }
+    );
+    let _ = write!(
+        text,
+        "\n  reads: {}\n  read by: {}{}\n",
+        list(&reads),
+        list(&read_by),
+        if graph.truncated { " (cut)" } else { "" }
+    );
+    (value, text)
 }
 
 fn no_match(what: &str) -> SurfaceError {
@@ -290,7 +371,12 @@ impl Look<'_> {
 
     // ----- app_inspect ----------------------------------------------------
 
-    pub(crate) fn inspect(&mut self, args: &InspectArgs, per_copy: usize) -> Answer {
+    pub(crate) fn inspect(
+        &mut self,
+        args: &InspectArgs,
+        per_copy: usize,
+        assigned: &HashSet<(ObjectId, String)>,
+    ) -> Answer {
         let target = self.resolve(&args.target, "app_inspect")?;
         let engine = self.engine;
         let (obj, listed) = match target {
@@ -411,6 +497,22 @@ impl Look<'_> {
             state["visible"], state["enabled"], state["focus"], state["lattice"]
         );
 
+        if let Some(name) = &args.dependencies {
+            let graph = engine
+                .untrack(|| engine.binding_graph(obj, name, MAX_DEPENDENCIES))
+                .map_err(|e| match e {
+                    EngineError::UnknownProperty { .. } => SurfaceError::not_found(format!(
+                        "`{}` has no property `{name}`. `app_inspect` without `dependencies` \
+                         lists its properties",
+                        args.target
+                    )),
+                    other => SurfaceError::invalid_argument(other.to_string()),
+                })?;
+            let (value, text) = dependencies(engine, name, &graph);
+            out.insert("dependencies".into(), value);
+            head.push_str(&text);
+        }
+
         let mut defaults = 0usize;
         let mut rows: Vec<(Value, String)> = Vec::new();
         for p in &properties {
@@ -443,6 +545,11 @@ impl Look<'_> {
             row.insert("type".into(), json!(p.ty));
             row.insert("value".into(), value.clone());
             row.insert("provenance".into(), json!(provenance));
+            let by_devtools =
+                p.provenance == Provenance::Assigned && assigned.contains(&(obj, p.name.clone()));
+            if by_devtools {
+                row.insert("assigned_by".into(), json!("devtools"));
+            }
             let mut line = format!(
                 "  {}: {} = {}  ({provenance}",
                 p.name,
@@ -460,6 +567,9 @@ impl Look<'_> {
                 row.insert("file".into(), json!(at.file));
                 row.insert("line".into(), json!(at.line));
                 let _ = write!(line, ", line {}", at.line);
+            }
+            if by_devtools {
+                line.push_str(", by devtools");
             }
             if p.read_only {
                 row.insert("read_only".into(), json!(true));
@@ -635,7 +745,13 @@ impl Look<'_> {
 
     // ----- app_status -----------------------------------------------------
 
-    pub(crate) fn status(&mut self, virtual_clock: bool) -> Answer {
+    pub(crate) fn status(
+        &mut self,
+        virtual_clock: bool,
+        caps: CapSet,
+        reload: &Value,
+        windows: usize,
+    ) -> Answer {
         let engine = self.engine;
         let viewport = self.scene.viewport();
         let prefs = ljos_quick::system_prefs(engine);
@@ -682,11 +798,14 @@ impl Look<'_> {
         let nodes = self.capture.tree.len();
         let value = json!({
             "windows": [Value::Object(window)],
+            "window_count": windows,
+            "inspected": "primary_window_only",
             "clock": clock,
             "reload_generation": engine.reload_generation(),
             "objects": engine.object_count(),
             "outline_nodes": nodes,
-            "capabilities": ["inspect"],
+            "capabilities": caps.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+            "reload": reload,
         });
         let mut text = format!(
             "window {}x{} at scale {}{}{}\n",
@@ -699,6 +818,11 @@ impl Look<'_> {
                 format!(", title {:?}", clip(&title, MAX_VALUE_CHARS))
             },
             if visible { "" } else { ", not visible" },
+        );
+        let _ = writeln!(
+            text,
+            "{windows} {}; only the primary window is inspected",
+            if windows == 1 { "window" } else { "windows" }
         );
         let _ = writeln!(
             text,
@@ -719,10 +843,33 @@ impl Look<'_> {
         let _ = write!(
             text,
             "{nodes} items in the outline, {} objects, {clock} clock, reload generation {}\n\
-             capabilities: inspect (read-only)",
+             capabilities: {}",
             engine.object_count(),
-            engine.reload_generation()
+            engine.reload_generation(),
+            if caps.iter().next().is_none() {
+                "none".to_string()
+            } else {
+                caps.iter()
+                    .map(|c| c.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
         );
+        let last = &reload["last"];
+        if !last.is_null() {
+            let _ = write!(
+                text,
+                "\nlast reload: {}{}",
+                last["outcome"].as_str().unwrap_or_default(),
+                match last["message"].as_str() {
+                    Some(m) => format!(": {m}"),
+                    None => String::new(),
+                }
+            );
+        }
+        if reload["watched"] == json!(false) {
+            text.push_str("\nfiles are not watched");
+        }
         Ok(ToolReply::from(value).with_text(text))
     }
 }

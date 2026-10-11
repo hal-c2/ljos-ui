@@ -53,6 +53,10 @@ pub enum DevMsg {
     Failed(Vec<CompileFault>),
     /// The files are what the application runs again: nothing is wrong.
     Cleared,
+    /// The answer to [`Watcher::flush`], after whatever that brought: the
+    /// files were read and nothing else is coming for it. It has a key of
+    /// its own in the inbox, so that it never replaces the news it follows.
+    Idle,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -71,6 +75,7 @@ pub enum WatchError {
 enum Cmd {
     Touched(PathBuf, bool),
     Rescan,
+    Flush,
     Ack(u64),
     Reject(u64),
     Stop,
@@ -156,6 +161,7 @@ impl Watcher {
             wakes: wakes.clone(),
             debounce: Debounce::with_quiet(quiet),
             in_flight: None,
+            flushing: false,
         };
         let thread = std::thread::Builder::new()
             .name("ljos-dev-watcher".to_owned())
@@ -178,6 +184,14 @@ impl Watcher {
     /// The application refused the patch of this generation.
     pub fn reject(&self, generation: u64) {
         let _ = self.tx.send(Cmd::Reject(generation));
+    }
+
+    /// Reads the files and builds now, without the quiet time: the host
+    /// is asked for a reload by a person or an agent who has just saved.
+    /// Whatever the build brings is sent, then [`DevMsg::Idle`], so the
+    /// asker is always answered, even when no file changed.
+    pub fn flush(&self) {
+        let _ = self.tx.send(Cmd::Flush);
     }
 
     /// How often the watcher's thread has woken: for a test that it does
@@ -251,6 +265,9 @@ struct Run<O> {
     debounce: Debounce<Instant>,
     /// The generation of the patch the application has not answered.
     in_flight: Option<u64>,
+    /// A [`Watcher::flush`] waits for the build; it waits for the patch
+    /// in flight to be answered first.
+    flushing: bool,
 }
 
 impl<O: TypeOracle + Clone> Run<O> {
@@ -282,6 +299,11 @@ impl<O: TypeOracle + Clone> Run<O> {
                     self.reloader.touch_all();
                     self.debounce.touch(Instant::now());
                 }
+                Some(Cmd::Flush) => {
+                    // Events may be late or lost; the directory is read.
+                    self.reloader.touch_all();
+                    self.flushing = true;
+                }
                 Some(Cmd::Ack(generation)) => {
                     self.reloader.ack(generation);
                     if self.in_flight == Some(generation) {
@@ -301,14 +323,30 @@ impl<O: TypeOracle + Clone> Run<O> {
                 self.reloader.touch_all();
                 self.debounce.touch(Instant::now());
             }
-            if self.in_flight.is_none() && self.debounce.fire(Instant::now()) && !self.build() {
-                return;
+            if self.in_flight.is_none() {
+                let due = self.debounce.fire(Instant::now());
+                if (due || self.flushing) && !self.build() {
+                    return;
+                }
             }
         }
     }
 
     /// False when nobody listens any more.
     fn build(&mut self) -> bool {
+        let flushed = std::mem::take(&mut self.flushing);
+        if flushed {
+            // What is asked for is built now, so the quiet time has
+            // nothing left to wait for.
+            self.debounce.flush();
+        }
+        if !self.build_files() {
+            return false;
+        }
+        !flushed || (self.sink)(DevMsg::Idle)
+    }
+
+    fn build_files(&mut self) -> bool {
         let started = Instant::now();
         if self.reloader.rescan_pending() {
             // Before the directory is read: what is written into a new

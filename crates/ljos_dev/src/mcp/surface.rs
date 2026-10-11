@@ -20,18 +20,14 @@ use ljos_runtime::UiHandle;
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use super::args::{self, INSTRUCTIONS, Kind, RESERVED, Resource, SERVER_NAME};
+use super::args::{self, Act, INSTRUCTIONS, Kind, Resource, SERVER_NAME};
+use super::reload::{ReloadFeed, ReloadState};
 
 /// Requests that may wait for the UI thread at one time (§19.5). One more
 /// is answered `busy`.
 pub const INBOX_CAPACITY: usize = 16;
 /// Snapshots that may be in the making at one time (§19.7).
 pub const MAX_SNAPSHOT_JOBS: usize = 2;
-
-/// What this inspector grants, whatever a client was started with.
-pub(crate) fn granted() -> CapSet {
-    CapSet::of([Cap::Inspect])
-}
 
 /// One of the [`MAX_SNAPSHOT_JOBS`] places, held until the snapshot is
 /// answered or given up.
@@ -80,6 +76,8 @@ pub(crate) struct DevReq {
     pub(crate) slot: Option<SlotGuard>,
     /// The size each copy of the answer (text and JSON) may have.
     pub(crate) per_copy: usize,
+    /// What the connection that asked may do: `app_status` lists it.
+    pub(crate) caps: CapSet,
 }
 
 /// The inspector as an MCP server sees it. `Send + Sync`: it holds the
@@ -89,6 +87,7 @@ pub struct InspectorSurface {
     handle: UiHandle<DevReq>,
     snapshots: Arc<AtomicUsize>,
     timeout: Duration,
+    feed: Arc<ReloadFeed>,
 }
 
 impl fmt::Debug for InspectorSurface {
@@ -100,40 +99,84 @@ impl fmt::Debug for InspectorSurface {
     }
 }
 
-fn read_only_refusal(tool: &str, needs: Cap) -> SurfaceError {
+/// The refusal of a tool whose capability the connection does not hold. It
+/// names the capability and says how to be given it: a client cannot ask
+/// for more than it was started with, so the person who starts the
+/// application has to.
+fn refusal(what: &str, needs: Cap, held: CapSet) -> SurfaceError {
+    let grant = held
+        .with(needs)
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let have = if held.iter().next().is_none() {
+        "none".to_string()
+    } else {
+        held.iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let never = if needs == Cap::Eval {
+        " (`eval` is never implied by another capability; it has to be named)"
+    } else {
+        ""
+    };
     SurfaceError::new(
         ErrorCode::CapabilityDenied,
         format!(
-            "tool `{tool}` needs the `{needs}` capability, and this inspector is read-only: it \
-             grants `inspect` and nothing else, whatever it was started with. It has: {}",
-            args::TOOLS.join(", ")
+            "{what} needs the `{needs}` capability{never}, and this connection holds: {have}. \
+             Start the application with `--mcp={grant}` to grant it"
         ),
     )
-    .with_details(json!({ "required": needs.as_str(), "granted": ["inspect"] }))
+    .with_details(json!({
+        "required": needs.as_str(),
+        "granted": held.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+    }))
 }
 
 impl InspectorSurface {
-    pub(crate) fn new(handle: UiHandle<DevReq>, timeout: Duration) -> Self {
+    pub(crate) fn new(handle: UiHandle<DevReq>, timeout: Duration, feed: Arc<ReloadFeed>) -> Self {
         InspectorSurface {
             registry: args::registry(),
             handle,
             snapshots: Arc::new(AtomicUsize::new(0)),
             timeout,
+            feed,
         }
     }
 
-    /// What a caller may do here: `inspect` if it has it, nothing else.
-    fn narrowed(ctx: &CallCtx) -> CallCtx {
-        CallCtx {
-            caps: if ctx.caps.contains(Cap::Inspect) {
-                granted()
-            } else {
-                CapSet::EMPTY
-            },
+    /// Waits until a reload newer than `after` was applied or one has
+    /// failed, for at most `wait_ms`. Whether it had to wait.
+    ///
+    /// It sleeps on the reload feed and on one deadline, and wakes nobody:
+    /// the host publishes every outcome it observes, and it observes one
+    /// whenever the watcher wakes it. A timer that poked the UI thread
+    /// meanwhile would make an idle application run for a client that only
+    /// waits.
+    async fn wait_for_reload(&self, after: u64, wait_ms: u64) -> bool {
+        let mut rx = self.feed.subscribe();
+        let start: ReloadState = rx.borrow().clone();
+        let arrived = |s: &ReloadState| s.generation > after || s.seq != start.seq;
+        if arrived(&start) {
+            return false;
         }
+        let waiting = async {
+            loop {
+                match rx.changed().await {
+                    Ok(()) if arrived(&rx.borrow()) => return,
+                    Ok(()) => {}
+                    // The application is gone.
+                    Err(_) => return,
+                }
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_millis(wait_ms), waiting).await;
+        true
     }
 
-    async fn ask(&self, kind: Kind, per_copy: usize) -> Answer {
+    async fn ask(&self, kind: Kind, per_copy: usize, caps: CapSet) -> Answer {
         let slot = if kind.is_snapshot() {
             Some(SlotGuard::take(&self.snapshots)?)
         } else {
@@ -146,6 +189,7 @@ impl InspectorSurface {
             deadline: Instant::now() + self.timeout,
             slot,
             per_copy,
+            caps,
         };
         if let Err(e) = self.handle.send(request) {
             return Err(if e.is_full() {
@@ -198,19 +242,46 @@ impl McpSurface for InspectorSurface {
 
     fn call_tool<'a>(&'a self, name: &'a str, ctx: &'a CallCtx, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
-            // A tool that acts is refused by name, before its arguments are
-            // read: there is no request it could become (`Kind`).
-            if let Some((_, needs)) = RESERVED.iter().find(|(tool, _)| *tool == name) {
-                return Err(read_only_refusal(name, *needs));
-            }
             if !args::TOOLS.contains(&name) {
                 // Says which tools there are.
                 return args::parse(name, Value::Null).map(|_| ToolReply::from(Value::Null));
             }
-            let def = self.registry.check(name, &Self::narrowed(ctx))?;
-            let per_copy = def.per_copy_bytes();
+            // The capability is checked before the arguments are read, so
+            // that a connection that may not use a tool learns nothing about
+            // it but that.
+            let def = self.registry.all().find(|d| d.name == name);
+            if let Some(needs) = def.and_then(|d| d.required_cap)
+                && !ctx.caps.contains(needs)
+            {
+                return Err(refusal(&format!("tool `{name}`"), needs, ctx.caps));
+            }
+            let per_copy = def.map_or(ljos_mcp_core::DEFAULT_RESULT_BYTES / 2, |d| {
+                d.per_copy_bytes()
+            });
             let kind = args::parse(name, args)?;
-            self.ask(kind, per_copy).await
+            if let Kind::Act(Act::Batch(steps)) = &kind {
+                // Everything a batch will do is allowed before any of it is.
+                for (i, (tool, act)) in steps.iter().enumerate() {
+                    if !ctx.caps.contains(act.needs()) {
+                        return Err(refusal(
+                            &format!("step {i} of the batch (`{tool}`)"),
+                            act.needs(),
+                            ctx.caps,
+                        ));
+                    }
+                }
+            }
+            let mut waited = None;
+            if let Kind::Status(a) = &kind
+                && let Some(after) = a.after_reload
+            {
+                waited = Some(self.wait_for_reload(after, a.wait_ms.unwrap_or(0)).await);
+            }
+            let mut reply = self.ask(kind, per_copy, ctx.caps).await?;
+            if let Some(waited) = waited {
+                reply.structured["reload"]["waited"] = json!(waited);
+            }
+            Ok(reply)
         })
     }
 
@@ -248,6 +319,7 @@ impl McpSurface for InspectorSurface {
                 .ask(
                     Kind::Resource(resource),
                     ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
+                    ctx.caps,
                 )
                 .await?;
             let text = match reply.text {

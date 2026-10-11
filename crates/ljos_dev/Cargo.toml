@@ -1,6 +1,6 @@
 [package]
 name = "ljos_dev"
-description = "Dev tools for Ljós: hot reload, the error overlay's model, the `top` overlay's model and the read-only MCP inspector"
+description = "Dev tools for Ljós: hot reload, the error overlay's model, the `top` overlay's model and the MCP inspector"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ publish.workspace = true
 
 [features]
 default = []
-# The read-only MCP inspector (ARCHITECTURE.md §19.4). Off by default: a
+# The MCP inspector (ARCHITECTURE.md §19.4). Off by default: a
 # build without it links no MCP SDK and no HTTP server.
 mcp = [
     "dep:ljos_mcp_core",
@@ -59,6 +59,10 @@ required-features = ["mcp"]
 
 [[test]]
 name = "inspector_http"
+required-features = ["mcp"]
+
+[[test]]
+name = "conformance"
 required-features = ["mcp"]
 
 [lints]

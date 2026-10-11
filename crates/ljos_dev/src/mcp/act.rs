@@ -1,0 +1,1120 @@
+//! The tools that act, run on the UI thread.
+//!
+//! **No back door.** Input is made into the events a device sends
+//! (`PointerEvent`, `KeyEvent`, `WheelEvent`) and given to the scene's
+//! router, so a click lands on what is on top, a key goes to the item with
+//! focus and a field gets its text through the text-input path, exactly as
+//! for a person. A property is assigned and a method called through the
+//! engine the way a script does it; script runs in the engine's JS host
+//! with a time limit.
+//!
+//! Every act answers once the frame has settled, with what changed: the
+//! difference between the outline before the act and the one after it.
+
+use std::collections::HashSet;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use ljos_engine::{Engine, EngineError, ObjectId, Value as QmlValue};
+use ljos_mcp_core::{ErrorCode, RefTable, SurfaceError, ToolReply, delta};
+use ljos_quick::keys::key;
+use ljos_quick::{
+    KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent,
+};
+use ljos_render::kurbo;
+use ljos_runtime::{Clock, Time, VirtualClock};
+use serde_json::{Map, Value, json};
+
+use super::args::{
+    Act, AdvanceArgs, AppearanceArgs, Button, ClickArgs, EvalArgs, InvokeArgs, PressArgs,
+    ResizeArgs, Scheme, ScrollArgs, SetPropertyArgs, TouchAction, TouchArgs, TypeArgs,
+};
+use super::capture::{self, Capture, REDACTED};
+use super::surface::Answer;
+use super::tools::{Look, TYPED, Target, clip, flag, num, visible_to_the_top, window_box};
+use super::{Inspector, MAX_DELTA_LINES, View};
+
+/// Frames one settle runs before it gives up and says so.
+const MAX_SETTLE_FRAMES: usize = 64;
+/// How long one settle may take on the wall clock. A scene that animates
+/// for ever is not settled, and an agent is told so rather than kept waiting.
+const SETTLE_WALL: Duration = Duration::from_millis(250);
+/// Timer firings per `app_advance` before a zero-interval timer is reported
+/// instead of hanging the application.
+const MAX_TIMER_STEPS: usize = 100_000;
+/// Chords one `app_press` may name.
+const MAX_CHORDS: usize = 16;
+/// The distance between the points of a swipe, in logical pixels.
+const SWIPE_STEP: f64 = 8.0;
+/// The touch identity of the one finger.
+const FINGER: PointerId = PointerId(1);
+/// The time a script may run unless asked for less or more.
+const DEFAULT_EVAL: Duration = Duration::from_millis(1000);
+
+/// The modifier keys in the order a chord presses them.
+const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
+    (Modifiers::CONTROL, key::CONTROL),
+    (Modifiers::SHIFT, key::SHIFT),
+    (Modifiers::ALT, key::ALT),
+    (Modifiers::META, key::META),
+];
+
+// ----- keys ------------------------------------------------------------------
+
+/// One key with the modifiers held around it, as `app_press` names it
+/// (`Ctrl+Shift+S`, `Tab`, `Ctrl++`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Chord {
+    modifiers: Modifiers,
+    key: i32,
+    /// What the key types with those modifiers.
+    text: String,
+}
+
+/// The chords of one `app_press`, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Chords(Vec<Chord>);
+
+impl Chord {
+    fn parse(text: &str) -> Result<Chord, String> {
+        let (mods, name) = match text.strip_suffix("++") {
+            Some(mods) => (mods, "+"),
+            None => match text.rsplit_once('+') {
+                Some((mods, name)) if !name.is_empty() => (mods, name),
+                _ => ("", text),
+            },
+        };
+        let mut modifiers = Modifiers::empty();
+        for m in mods.split('+').filter(|m| !m.is_empty()) {
+            modifiers |= match m.to_ascii_lowercase().as_str() {
+                "shift" => Modifiers::SHIFT,
+                "ctrl" | "control" => Modifiers::CONTROL,
+                "alt" => Modifiers::ALT,
+                "meta" | "super" | "cmd" => Modifiers::META,
+                _ => {
+                    return Err(format!(
+                        "unknown modifier {m:?} in the chord {text:?}; the modifiers are Ctrl, \
+                         Shift, Alt and Meta"
+                    ));
+                }
+            };
+        }
+        // Spellings a person would use. A desktop's Enter key is the Return
+        // key; `Keys.onReturnPressed` is what a form listens to.
+        let name = match name {
+            n if n.eq_ignore_ascii_case("PageUp") => "PgUp",
+            n if n.eq_ignore_ascii_case("PageDown") => "PgDown",
+            n if n.eq_ignore_ascii_case("Enter") => "Return",
+            n => n,
+        };
+        let code = key::from_name(name).ok_or_else(|| {
+            format!(
+                "unknown key {name:?} in the chord {text:?}; keys are named as `Enter`, `Tab`, \
+                 `Escape`, `Backspace`, `Left`, `F5`, a letter or digit, with modifiers before \
+                 them such as `Ctrl+Shift+S`"
+            )
+        })?;
+        let shift = modifiers.contains(Modifiers::SHIFT);
+        // A desktop sends Shift+Tab as the Backtab key.
+        let code = if code == key::TAB && shift {
+            key::BACKTAB
+        } else {
+            code
+        };
+        let commands = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
+        let mut chars = name.chars();
+        let typed = match (chars.next(), chars.next()) {
+            _ if modifiers.intersects(commands) => String::new(),
+            (Some(c), None) if shift => c.to_uppercase().collect(),
+            (Some(c), None) => c.to_lowercase().collect(),
+            _ if code == key::SPACE => " ".to_owned(),
+            _ if code == key::TAB && !shift => "\t".to_owned(),
+            _ => String::new(),
+        };
+        Ok(Chord {
+            modifiers,
+            key: code,
+            text: typed,
+        })
+    }
+}
+
+impl Chords {
+    /// Reads `keys`: chords separated by spaces.
+    pub(super) fn parse(keys: &str) -> Result<Chords, String> {
+        let chords: Vec<Chord> = keys
+            .split_whitespace()
+            .map(Chord::parse)
+            .collect::<Result<_, _>>()?;
+        if chords.is_empty() {
+            return Err("`keys` names no key; give `Enter`, `Tab`, `Ctrl+A`, …".into());
+        }
+        if chords.len() > MAX_CHORDS {
+            return Err(format!(
+                "`keys` names {} keys and one call presses at most {MAX_CHORDS}",
+                chords.len()
+            ));
+        }
+        Ok(Chords(chords))
+    }
+}
+
+// ----- errors ----------------------------------------------------------------
+
+fn stale(what: &str) -> SurfaceError {
+    SurfaceError::new(
+        ErrorCode::StaleRef,
+        format!(
+            "`{what}` is gone: the object was destroyed. Take a new `app_snapshot` for current \
+             references"
+        ),
+    )
+}
+
+fn not_actionable(why: impl Into<String>) -> SurfaceError {
+    SurfaceError::new(ErrorCode::NotActionable, why)
+}
+
+/// The newest fault on record and whether faults wait: what to compare with
+/// after a call to see whether the call added one.
+type FaultMark = (bool, Option<(u64, String)>);
+
+fn last_fault(engine: &Engine) -> FaultMark {
+    let last = engine
+        .faults()
+        .last()
+        .map(|f| (f.line.into(), f.fault.to_string()));
+    (engine.has_pending_faults(), last)
+}
+
+/// The fault a call added since `before`, as text.
+fn new_fault(engine: &Engine, before: FaultMark) -> Option<String> {
+    let (was_pending, was_last) = before;
+    let (pending, last) = last_fault(engine);
+    // The same text twice in a row is still new when it queued up again.
+    ((pending && !was_pending) || last != was_last)
+        .then(|| last.map(|(_, text)| text))
+        .flatten()
+}
+
+/// How an engine failure is told to an agent.
+fn engine_error(what: &str, e: EngineError) -> SurfaceError {
+    match e {
+        EngineError::DeadObject(_) => stale(what),
+        EngineError::UnknownProperty { .. }
+        | EngineError::UnknownSignal { .. }
+        | EngineError::UnknownMethod { .. } => SurfaceError::not_found(e.to_string()),
+        EngineError::ReadOnly(_) | EngineError::GroupProperty(_) => not_actionable(e.to_string()),
+        EngineError::Convert(_) | EngineError::ArgumentCount { .. } => {
+            SurfaceError::invalid_argument(e.to_string())
+        }
+        // A method that throws is the application's fault, not the agent's.
+        other => SurfaceError::new(ErrorCode::AppFaulted, other.to_string()),
+    }
+}
+
+// ----- values ----------------------------------------------------------------
+
+/// A JSON value as the engine holds one: a whole number that fits is an
+/// `int`, an array a list, and an object made by JS so that it is one.
+fn to_qml(engine: &Engine, v: &Value) -> Result<QmlValue, SurfaceError> {
+    Ok(match v {
+        Value::Null => QmlValue::Null,
+        Value::Bool(b) => QmlValue::Bool(*b),
+        Value::Number(n) => match n.as_i64().and_then(|i| i32::try_from(i).ok()) {
+            Some(i) => QmlValue::Int(i),
+            None => QmlValue::Real(n.as_f64().unwrap_or(f64::NAN)),
+        },
+        Value::String(s) => QmlValue::string(s.as_str()),
+        Value::Array(items) => QmlValue::list(
+            items
+                .iter()
+                .map(|i| to_qml(engine, i))
+                .collect::<Result<_, _>>()?,
+        ),
+        Value::Object(_) => engine
+            .eval_js(&format!("({v})"))
+            .map_err(|e| SurfaceError::invalid_argument(format!("that value is no object: {e}")))?,
+    })
+}
+
+/// An engine value as JSON: what a script's `JSON.stringify` would show for
+/// the plain kinds, and the text JS gives for the rest.
+fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
+    match v {
+        QmlValue::Undefined | QmlValue::Null => Value::Null,
+        QmlValue::Bool(b) => json!(b),
+        QmlValue::Int(i) => json!(i),
+        QmlValue::Real(r) => num(*r),
+        QmlValue::String(s) | QmlValue::Url(s) => json!(s.to_string()),
+        QmlValue::Color(c) => json!(c.to_string()),
+        QmlValue::Enum(e) => json!(e.value),
+        QmlValue::Point(p) => json!({ "x": num(p.x), "y": num(p.y) }),
+        QmlValue::Size(s) => json!({ "width": num(s.width), "height": num(s.height) }),
+        QmlValue::Rect(r) => json!({
+            "x": num(r.x), "y": num(r.y), "width": num(r.width), "height": num(r.height)
+        }),
+        QmlValue::List(items) if depth < 4 => Value::Array(
+            items
+                .iter()
+                .take(100)
+                .map(|i| to_json(engine, i, depth + 1))
+                .collect(),
+        ),
+        other => json!(clip(&engine.to_js_string(other), 200)),
+    }
+}
+
+/// Replaces every secret that is in `v`, inside strings too, by the mask.
+/// `secrets` is longest first so that a secret that contains another is
+/// masked whole.
+fn mask_json(v: &mut Value, secrets: &[String]) {
+    match v {
+        Value::String(s) => {
+            if secrets.iter().any(|x| x == s) {
+                *s = REDACTED.to_string();
+                return;
+            }
+            for secret in secrets {
+                if s.contains(secret.as_str()) {
+                    *s = s.replace(secret.as_str(), REDACTED);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|i| mask_json(i, secrets)),
+        Value::Object(map) => map.values_mut().for_each(|i| mask_json(i, secrets)),
+        _ => {}
+    }
+}
+
+fn secrets_of(capture: &Capture) -> Vec<String> {
+    let mut all: Vec<String> = capture.secrets.iter().cloned().collect();
+    all.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    all
+}
+
+// ----- the hands -------------------------------------------------------------
+
+/// What an act reports about itself, before what changed is added.
+struct Done {
+    fields: Map<String, Value>,
+    summary: String,
+}
+
+impl Done {
+    fn new(summary: impl Into<String>) -> Self {
+        Done {
+            fields: Map::new(),
+            summary: summary.into(),
+        }
+    }
+
+    fn with(mut self, key: &str, value: Value) -> Self {
+        self.fields.insert(key.to_string(), value);
+        self
+    }
+}
+
+/// Where an input is aimed.
+struct Aim {
+    x: f64,
+    y: f64,
+}
+
+/// What the acts work with while one request is run.
+struct Hands<'a> {
+    engine: &'a Engine,
+    scene: &'a mut QuickScene,
+    clock: &'a dyn Clock,
+    vclock: Option<&'a VirtualClock>,
+    refs: &'a mut RefTable,
+    assigned: &'a mut HashSet<(ObjectId, String)>,
+    redact_all: bool,
+    /// The scene as it was after the last act; replaced by [`refresh`](Self::refresh).
+    capture: Rc<Capture>,
+    per_copy: usize,
+    frames: usize,
+    unsettled: bool,
+    /// When the scene said it next wants a frame.
+    wake: Option<Time>,
+}
+
+impl Hands<'_> {
+    /// Runs frames until the scene is idle, as a host does before the user
+    /// sees anything. A scene that will not settle is reported, not waited
+    /// for.
+    fn settle(&mut self) {
+        let started = Instant::now();
+        for _ in 0..MAX_SETTLE_FRAMES {
+            let now = self.clock.now();
+            let out = self.scene.frame(self.engine, now);
+            self.frames += 1;
+            self.wake = out.next_wake;
+            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
+                return;
+            }
+            if started.elapsed() > SETTLE_WALL {
+                break;
+            }
+        }
+        self.unsettled = true;
+    }
+
+    /// Copies the scene again, so that the next act and the answer see what
+    /// the last one did.
+    fn refresh(&mut self) {
+        self.capture = Rc::new(capture::capture(self.engine, self.scene, self.redact_all));
+    }
+
+    fn look(&mut self) -> Look<'_> {
+        Look {
+            engine: self.engine,
+            scene: self.scene,
+            capture: &self.capture,
+            refs: self.refs,
+        }
+    }
+
+    /// The object `what` names.
+    fn object(&mut self, what: &str, tool: &str) -> Result<ObjectId, SurfaceError> {
+        let target = self.look().resolve(what, tool)?;
+        let obj = match target {
+            Target::Node(index) => self.capture.items[index],
+            Target::Unlisted(obj) => Some(obj),
+        };
+        match obj {
+            Some(o) if self.engine.is_alive(o) => Ok(o),
+            Some(_) => Err(stale(what)),
+            None => Err(not_actionable(format!(
+                "`{what}` is the window, which has no QML object of its own. Name an item in it"
+            ))),
+        }
+    }
+
+    /// The point in the window an input for `what` is aimed at: its centre,
+    /// provided that it can be reached.
+    fn aim(&mut self, what: &str, tool: &str) -> Result<Aim, SurfaceError> {
+        let target = self.look().resolve(what, tool)?;
+        let engine = self.engine;
+        let (bounds, obj, listed_disabled) = match target {
+            Target::Node(index) => {
+                let node = self.capture.node(index);
+                (
+                    node.bounds,
+                    self.capture.items[index],
+                    node.states.contains(&"disabled"),
+                )
+            }
+            Target::Unlisted(obj) => {
+                if !engine.is_alive(obj) {
+                    return Err(stale(what));
+                }
+                if !engine.untrack(|| visible_to_the_top(engine, obj)) {
+                    return Err(not_actionable(format!(
+                        "`{what}` is not shown (it, or an item above it, has `visible: false`), \
+                         so nothing can be clicked there"
+                    )));
+                }
+                (engine.untrack(|| window_box(engine, obj)), Some(obj), false)
+            }
+        };
+        let own_disabled =
+            obj.is_some_and(|o| engine.untrack(|| flag(engine, o, "enabled")) == Some(false));
+        if listed_disabled || own_disabled {
+            return Err(not_actionable(format!(
+                "`{what}` is disabled (`enabled: false`, or something above it is), so it takes \
+                 no input. `app_set_property` can enable it"
+            )));
+        }
+        let [x, y, w, h] = bounds;
+        if w <= 0.0 || h <= 0.0 {
+            return Err(not_actionable(format!(
+                "`{what}` has no size ({w}x{h}), so there is nowhere on it to put the pointer"
+            )));
+        }
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        let view = self.scene.viewport();
+        if cx < 0.0 || cy < 0.0 || cx >= view.width() || cy >= view.height() {
+            return Err(not_actionable(format!(
+                "`{what}` is outside the window: its centre is at {},{} in a window of {}x{}. \
+                 Scroll it into view, or make the window larger with `app_resize`",
+                num(cx),
+                num(cy),
+                num(view.width()),
+                num(view.height())
+            )));
+        }
+        Ok(Aim { x: cx, y: cy })
+    }
+
+    fn pointer(&mut self, event: PointerEvent) {
+        self.scene.pointer_event(self.engine, &event);
+    }
+
+    fn key(&mut self, event: KeyEvent) {
+        self.scene.key_event(self.engine, &event);
+    }
+
+    /// A move, then `count` presses and releases of `button` at the point.
+    fn click_at(&mut self, at: &Aim, button: MouseButtons, count: u32) {
+        let t = self.clock.now();
+        self.pointer(PointerEvent::moved(at.x, at.y, MouseButtons::empty(), t));
+        for _ in 0..count {
+            self.pointer(PointerEvent::press(at.x, at.y, t).with_button(button));
+            self.pointer(PointerEvent::release(at.x, at.y, t).with_button(button));
+        }
+    }
+
+    // ----- the acts -----
+
+    fn click(&mut self, a: &ClickArgs) -> Result<Done, SurfaceError> {
+        let at = self.aim(&a.target, "app_click")?;
+        let button = match a.button {
+            Button::Left => MouseButtons::LEFT,
+            Button::Right => MouseButtons::RIGHT,
+            Button::Middle => MouseButtons::MIDDLE,
+        };
+        let count = a.count.unwrap_or(1);
+        self.click_at(&at, button, count);
+        Ok(Done::new(format!(
+            "clicked `{}` at {},{}",
+            a.target,
+            num(at.x),
+            num(at.y)
+        ))
+        .with("at", json!([num(at.x), num(at.y)])))
+    }
+
+    /// The item that has the keyboard, or why nothing does.
+    fn keyboard(&mut self, tool: &str) -> Result<ObjectId, SurfaceError> {
+        let engine = self.engine;
+        let focus = self.scene.active_focus_item(engine);
+        let nowhere = || {
+            not_actionable(format!(
+                "nothing has keyboard focus, so `{tool}` has nowhere to send keys. Give `target` \
+                 to click an item first, or press `Tab`"
+            ))
+        };
+        let obj = focus.ok_or_else(nowhere)?;
+        // The scene's root holds the keyboard when no item asked for it: keys
+        // go there and nothing listens.
+        if Some(obj) == self.scene.root()
+            && engine.untrack(|| flag(engine, obj, "focus")) != Some(true)
+        {
+            return Err(nowhere());
+        }
+        Ok(obj)
+    }
+
+    fn type_text(&mut self, a: &TypeArgs) -> Result<Done, SurfaceError> {
+        if let Some(target) = &a.target {
+            let at = self.aim(target, "app_type")?;
+            self.click_at(&at, MouseButtons::LEFT, 1);
+            self.settle();
+        }
+        let focus = self.keyboard("app_type")?;
+        let hidden = capture::is_secret(self.engine, focus, self.redact_all);
+        for c in a.text.chars() {
+            let (code, held, typed) = match c {
+                '\n' => (key::RETURN, Modifiers::empty(), "\n".to_string()),
+                '\t' => (key::TAB, Modifiers::empty(), "\t".to_string()),
+                c => (
+                    key::from_char(c).unwrap_or(0),
+                    if c.is_uppercase() {
+                        Modifiers::SHIFT
+                    } else {
+                        Modifiers::empty()
+                    },
+                    c.to_string(),
+                ),
+            };
+            self.key(
+                KeyEvent::press(code)
+                    .with_modifiers(held)
+                    .with_text(typed.clone()),
+            );
+            self.key(
+                KeyEvent::release(code)
+                    .with_modifiers(held)
+                    .with_text(typed),
+            );
+        }
+        // What a field that hides its text was given is not said again.
+        let typed = if hidden {
+            REDACTED.to_string()
+        } else {
+            a.text.clone()
+        };
+        let summary = format!("typed {} characters", a.text.chars().count());
+        Ok(Done::new(summary)
+            .with("typed", json!(typed))
+            .with("characters", json!(a.text.chars().count())))
+    }
+
+    /// A chord as a keyboard sends it: the modifier keys go down one by one,
+    /// then the key, and everything comes up in reverse.
+    fn chord(&mut self, c: &Chord) {
+        let mut held = Modifiers::empty();
+        for (modifier, code) in MODIFIER_KEYS {
+            if c.modifiers.contains(modifier) {
+                self.key(KeyEvent::press(code).with_modifiers(held));
+                held |= modifier;
+            }
+        }
+        self.key(
+            KeyEvent::press(c.key)
+                .with_modifiers(held)
+                .with_text(c.text.clone()),
+        );
+        self.key(
+            KeyEvent::release(c.key)
+                .with_modifiers(held)
+                .with_text(c.text.clone()),
+        );
+        for (modifier, code) in MODIFIER_KEYS.into_iter().rev() {
+            if c.modifiers.contains(modifier) {
+                held -= modifier;
+                self.key(KeyEvent::release(code).with_modifiers(held));
+            }
+        }
+    }
+
+    fn press(&mut self, a: &PressArgs) -> Result<Done, SurfaceError> {
+        let chords = Chords::parse(&a.keys).map_err(SurfaceError::invalid_argument)?;
+        if let Some(target) = &a.target {
+            let at = self.aim(target, "app_press")?;
+            self.click_at(&at, MouseButtons::LEFT, 1);
+            self.settle();
+        }
+        let repeat = a.repeat.unwrap_or(1);
+        for _ in 0..repeat {
+            for c in &chords.0 {
+                self.chord(c);
+            }
+        }
+        Ok(Done::new(format!("pressed {} × {repeat}", a.keys))
+            .with("pressed", json!(a.keys))
+            .with("repeat", json!(repeat)))
+    }
+
+    /// The middle of the window, or of `target`.
+    fn spot(&mut self, target: &Option<String>, tool: &str) -> Result<Aim, SurfaceError> {
+        match target {
+            Some(what) => self.aim(what, tool),
+            None => {
+                let view = self.scene.viewport();
+                Ok(Aim {
+                    x: view.width() / 2.0,
+                    y: view.height() / 2.0,
+                })
+            }
+        }
+    }
+
+    fn scroll(&mut self, a: &ScrollArgs) -> Result<Done, SurfaceError> {
+        let at = self.spot(&a.target, "app_scroll")?;
+        let (dx, dy) = (a.dx.unwrap_or(0.0), a.dy.unwrap_or(0.0));
+        let t = self.clock.now();
+        self.pointer(PointerEvent::moved(at.x, at.y, MouseButtons::empty(), t));
+        self.scene
+            .wheel_event(self.engine, &WheelEvent::notches(at.x, at.y, dx, dy, t));
+        Ok(Done::new(format!(
+            "turned the wheel by {},{} notches at {},{}",
+            num(dx),
+            num(dy),
+            num(at.x),
+            num(at.y)
+        )))
+    }
+
+    fn touch(&mut self, a: &TouchArgs) -> Result<Done, SurfaceError> {
+        if a.action == TouchAction::Pinch {
+            return Err(SurfaceError::unavailable(
+                "`pinch` is not supported yet: the scene routes one finger as a pointer with an \
+                 identity and has no gesture of two fingers. `tap` and `swipe` are",
+            ));
+        }
+        let at = self.spot(&a.target, "app_touch")?;
+        let t = self.clock.now();
+        self.pointer(PointerEvent::press(at.x, at.y, t).with_id(FINGER));
+        let mut end = (at.x, at.y);
+        if a.action == TouchAction::Swipe {
+            let (dx, dy) = (a.dx.unwrap_or(0.0), a.dy.unwrap_or(0.0));
+            let steps = (dx.hypot(dy) / SWIPE_STEP).ceil().max(1.0) as u32;
+            for i in 1..=steps {
+                let f = f64::from(i) / f64::from(steps);
+                end = (at.x + dx * f, at.y + dy * f);
+                self.pointer(
+                    PointerEvent::moved(end.0, end.1, MouseButtons::LEFT, t).with_id(FINGER),
+                );
+            }
+        }
+        self.pointer(PointerEvent::release(end.0, end.1, t).with_id(FINGER));
+        let what = if a.action == TouchAction::Swipe {
+            "swiped"
+        } else {
+            "tapped"
+        };
+        Ok(
+            Done::new(format!("{what} at {},{}", num(at.x), num(at.y))).with(
+                "gesture",
+                json!(if a.action == TouchAction::Swipe {
+                    "swipe"
+                } else {
+                    "tap"
+                }),
+            ),
+        )
+    }
+
+    fn advance(&mut self, a: &AdvanceArgs) -> Result<Done, SurfaceError> {
+        let Some(vclock) = self.vclock else {
+            return Err(SurfaceError::unavailable(
+                "this application runs on the system clock, which only moves with time. \
+                 `app_advance` is for an application on a virtual clock (a test); \
+                 `app_status` says which clock there is",
+            ));
+        };
+        let images = ljos_quick::ImageStore::of(self.engine);
+        images.finish(self.engine);
+        // The scene says when it next wants a frame only after a frame.
+        self.settle();
+        let end = vclock.now() + Duration::from_millis(a.ms);
+        // Each timer fires at its own deadline and the scene is settled in
+        // between, as a host woken at each deadline would.
+        for _ in 0..MAX_TIMER_STEPS {
+            let next = [self.engine.next_timer_deadline(), self.wake]
+                .into_iter()
+                .flatten()
+                .min();
+            match next {
+                Some(t) if t <= end => {
+                    if t > vclock.now() {
+                        vclock.set(t);
+                    }
+                    self.engine.advance_timers(vclock.now());
+                    self.settle();
+                }
+                _ => {
+                    vclock.set(end);
+                    self.engine.advance_timers(end);
+                    images.finish(self.engine);
+                    self.settle();
+                    return Ok(Done::new(format!("moved the clock by {} ms", a.ms))
+                        .with("advanced_ms", json!(a.ms)));
+                }
+            }
+        }
+        Err(SurfaceError::new(
+            ErrorCode::AppFaulted,
+            format!(
+                "timers fired more than {MAX_TIMER_STEPS} times in {} ms; a timer with no \
+                 interval never lets time pass",
+                a.ms
+            ),
+        ))
+    }
+
+    fn resize(&mut self, a: &ResizeArgs) -> Result<Done, SurfaceError> {
+        self.scene.set_viewport(kurbo::Rect::new(
+            0.0,
+            0.0,
+            f64::from(a.width),
+            f64::from(a.height),
+        ));
+        if let Some(scale) = a.scale {
+            self.scene.set_scale_factor(scale as f32);
+        }
+        Ok(
+            Done::new(format!("resized the window to {}x{}", a.width, a.height))
+                .with("width", json!(a.width))
+                .with("height", json!(a.height))
+                .with("scale", num(f64::from(self.scene.scale_factor()))),
+        )
+    }
+
+    fn appearance(&mut self, a: &AppearanceArgs) -> Result<Done, SurfaceError> {
+        ljos_quick::update_system_prefs(self.engine, |p| {
+            match a.color_scheme {
+                Some(Scheme::Light) => p.color_scheme = ljos_a11y::ColorScheme::Light,
+                Some(Scheme::Dark) => p.color_scheme = ljos_a11y::ColorScheme::Dark,
+                None => {}
+            }
+            if let Some(r) = a.reduced_motion {
+                p.reduced_motion = r;
+            }
+            if let Some(s) = a.font_scale {
+                p.font_scale = s;
+            }
+        });
+        let now = ljos_quick::system_prefs(self.engine);
+        let scheme = match now.color_scheme {
+            ljos_a11y::ColorScheme::Unknown => "unknown",
+            ljos_a11y::ColorScheme::Light => "light",
+            ljos_a11y::ColorScheme::Dark => "dark",
+        };
+        Ok(Done::new(format!(
+            "appearance: {scheme} colour scheme, reduced motion {}, font scale {}",
+            if now.reduced_motion { "on" } else { "off" },
+            num(now.font_scale)
+        ))
+        .with(
+            "appearance",
+            json!({
+                "color_scheme": scheme,
+                "reduced_motion": now.reduced_motion,
+                "font_scale": num(now.font_scale),
+            }),
+        ))
+    }
+
+    fn set_property(&mut self, a: &SetPropertyArgs) -> Result<Done, SurfaceError> {
+        let obj = self.object(&a.target, "app_set_property")?;
+        let engine = self.engine;
+        if let Err(e) = engine.property_index(obj, &a.property) {
+            return Err(match e {
+                EngineError::UnknownProperty { .. } => SurfaceError::not_found(format!(
+                    "{e}. `app_inspect` lists the properties of `{}`",
+                    a.target
+                )),
+                other => engine_error(&a.target, other),
+            });
+        }
+        let value = to_qml(engine, &a.value)?;
+        let previous = engine.read_by_name(obj, &a.property);
+        engine
+            .write_by_name(obj, &a.property, value)
+            .map_err(|e| engine_error(&a.target, e))?;
+        self.assigned.insert((obj, a.property.clone()));
+        let now = engine.read_by_name(obj, &a.property);
+        // What is typed into a field that hides it is not said back.
+        let hidden = TYPED.contains(&a.property.as_str())
+            && capture::is_secret(engine, obj, self.redact_all);
+        let show = |v: &QmlValue| {
+            if hidden {
+                json!(REDACTED)
+            } else {
+                to_json(engine, v, 0)
+            }
+        };
+        Ok(
+            Done::new(format!("assigned `{}` of `{}`", a.property, a.target))
+                .with("property", json!(a.property))
+                .with("value", show(&now))
+                .with("previous", show(&previous)),
+        )
+    }
+
+    fn invoke(&mut self, a: &InvokeArgs) -> Result<Done, SurfaceError> {
+        let obj = self.object(&a.target, "app_invoke")?;
+        let engine = self.engine;
+        let args: Vec<QmlValue> = a
+            .args
+            .iter()
+            .map(|v| to_qml(engine, v))
+            .collect::<Result<_, _>>()?;
+        if engine.method_index(obj, &a.name).is_ok() {
+            let before = last_fault(engine);
+            let result = engine
+                .invoke_by_name(obj, &a.name, &args)
+                .map_err(|e| engine_error(&a.target, e))?;
+            // A function that throws is logged and answers `undefined`; to an
+            // agent that is a failure, so it is told as one.
+            if let Some(fault) = new_fault(engine, before) {
+                return Err(SurfaceError::new(
+                    ErrorCode::AppFaulted,
+                    format!("`{}` of `{}` threw: {fault}", a.name, a.target),
+                ));
+            }
+            let result = if capture::is_secret(engine, obj, self.redact_all) {
+                json!(REDACTED)
+            } else {
+                to_json(engine, &result, 0)
+            };
+            return Ok(
+                Done::new(format!("called `{}` of `{}`", a.name, a.target)).with("result", result)
+            );
+        }
+        if engine.signal_index(obj, &a.name).is_ok() {
+            engine
+                .emit_by_name(obj, &a.name, &args)
+                .map_err(|e| engine_error(&a.target, e))?;
+            return Ok(Done::new(format!("sent `{}` of `{}`", a.name, a.target))
+                .with("result", Value::Null)
+                .with("emitted", json!(true)));
+        }
+        Err(SurfaceError::not_found(format!(
+            "`{}` has no method or signal `{}`. `app_inspect` lists its properties; a method is \
+             one declared as `function {}(…)` or by its type",
+            a.target, a.name, a.name
+        )))
+    }
+
+    fn eval(&mut self, a: &EvalArgs) -> Result<Done, SurfaceError> {
+        if self.redact_all {
+            return Err(SurfaceError::new(
+                ErrorCode::CapabilityDenied,
+                "`app_eval` is refused while this inspector masks every editable value \
+                 (`--mcp-redact`): a script reads values around the mask, and cannot be held to \
+                 it. Start without `--mcp-redact` to run script",
+            ));
+        }
+        let this = match &a.target {
+            None => None,
+            Some(what) => {
+                let obj = self.object(what, "app_eval")?;
+                if capture::is_secret(self.engine, obj, self.redact_all) {
+                    return Err(SurfaceError::new(
+                        ErrorCode::CapabilityDenied,
+                        format!(
+                            "`{what}` hides its text (`echoMode`), and a script run in it reads \
+                             the text around the mask. Run the script in another object"
+                        ),
+                    ));
+                }
+                Some(obj)
+            }
+        };
+        let limit = a.timeout_ms.map_or(DEFAULT_EVAL, Duration::from_millis);
+        let budget = (self.per_copy / 4).clamp(2000, 16_000) as u32;
+        let out = self
+            .engine
+            .eval_js_in(this, &a.source, limit, [6, 100, 2000, 2000, budget]);
+        let text = match out {
+            Ok(text) => text,
+            Err(e) => {
+                let said = e.to_string();
+                let lower = said.to_lowercase();
+                return Err(if lower.contains("interrupt") || lower.contains("time") {
+                    SurfaceError::new(
+                        ErrorCode::Timeout,
+                        format!(
+                            "the script did not finish in {} ms and was stopped; the \
+                             application goes on. Give `timeout_ms` more (at most {}), or write \
+                             it to end",
+                            limit.as_millis(),
+                            ljos_engine::MAX_EVAL_TIME.as_millis()
+                        ),
+                    )
+                } else {
+                    SurfaceError::new(
+                        ErrorCode::AppFaulted,
+                        format!("the script host failed: {said}"),
+                    )
+                });
+            }
+        };
+        let parsed: Value = serde_json::from_str(&text).map_err(|e| {
+            SurfaceError::new(
+                ErrorCode::Internal,
+                format!("the script's answer is no JSON: {e}"),
+            )
+        })?;
+        if let Some(message) = parsed.get("error") {
+            let name = parsed
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Error");
+            return Err(SurfaceError::invalid_argument(format!(
+                "the script threw {name}: {}",
+                clip(message.as_str().unwrap_or_default(), 500)
+            )));
+        }
+        let mut value = parsed.get("value").cloned().unwrap_or(Value::Null);
+        let mut truncated = parsed
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        // A script may have changed what the fields hold.
+        self.settle();
+        self.refresh();
+        mask_json(&mut value, &secrets_of(&self.capture));
+        // The serialiser bounded what it wrote; this is for the sum of it
+        // with the escaping of both copies.
+        if value.to_string().len() > self.per_copy / 2 {
+            value = json!("[too large to give; return less]");
+            truncated = true;
+        }
+        Ok(Done::new(format!(
+            "{}{}",
+            clip(&value.to_string(), 2000),
+            if truncated { " (cut)" } else { "" }
+        ))
+        .with("value", value)
+        .with("truncated", json!(truncated)))
+    }
+
+    /// One act, then the frame settled and the scene copied again.
+    fn step(&mut self, act: &Act) -> Result<Done, SurfaceError> {
+        let done = match act {
+            Act::Click(a) => self.click(a),
+            Act::Type(a) => self.type_text(a),
+            Act::Press(a) => self.press(a),
+            Act::Scroll(a) => self.scroll(a),
+            Act::Touch(a) => self.touch(a),
+            Act::Advance(a) => self.advance(a),
+            Act::Resize(a) => self.resize(a),
+            Act::Appearance(a) => self.appearance(a),
+            Act::SetProperty(a) => self.set_property(a),
+            Act::Invoke(a) => self.invoke(a),
+            Act::Eval(a) => self.eval(a),
+            Act::Reload | Act::Batch(_) => Err(SurfaceError::new(
+                ErrorCode::Internal,
+                "this act is not run by itself",
+            )),
+        };
+        self.settle();
+        self.refresh();
+        done
+    }
+}
+
+// ----- the pipeline ----------------------------------------------------------
+
+fn error_json(e: &SurfaceError) -> Value {
+    json!({ "code": e.code.as_str(), "message": e.message })
+}
+
+impl Inspector {
+    /// Runs `act` and answers with the capture to go on with: the scene as it
+    /// is after the act.
+    pub(super) fn run_act(
+        &mut self,
+        engine: &Engine,
+        scene: &mut QuickScene,
+        clock: &dyn Clock,
+        capture: Rc<Capture>,
+        act: &Act,
+        per_copy: usize,
+    ) -> (Answer, Rc<Capture>) {
+        let before = capture.clone();
+        let started = Instant::now();
+        let mut hands = Hands {
+            engine,
+            scene,
+            clock,
+            vclock: self.vclock.as_ref(),
+            refs: &mut self.refs,
+            assigned: &mut self.devtools_assigned,
+            redact_all: self.cfg.redact_all,
+            capture,
+            per_copy,
+            frames: 0,
+            unsettled: false,
+            wake: None,
+        };
+        let body = match act {
+            Act::Batch(steps) => Ok(hands.batch(steps)),
+            one => hands.step(one),
+        };
+        let Hands {
+            capture: after,
+            unsettled,
+            scene,
+            ..
+        } = hands;
+        // The host paints what the act did.
+        scene.request_frame();
+        let done = match body {
+            Ok(done) => done,
+            Err(e) => return (Err(e), after),
+        };
+        // What changed: the outline before this act against the one now.
+        let since = self.kept.back().map_or(0, |k| k.epoch);
+        let changes = delta(
+            &before.tree,
+            &after.tree,
+            since,
+            &mut self.refs,
+            MAX_DELTA_LINES,
+        );
+        let epoch = self.next_epoch();
+        self.keep(epoch, after.clone(), View::whole(&after));
+        let Done {
+            mut fields,
+            summary,
+        } = done;
+        fields.insert("epoch".into(), json!(epoch));
+        fields.insert("changed".into(), json!(changes.changed));
+        fields.insert("added".into(), json!(changes.added));
+        fields.insert("removed".into(), json!(changes.removed));
+        fields.insert("delta".into(), json!(changes.text));
+        fields.insert("settled".into(), json!(!unsettled));
+        let mut value = Value::Object(fields);
+        mask_json(&mut value, &secrets_of(&after));
+        let mut text = summary;
+        if !changes.text.is_empty() {
+            text.push('\n');
+            text.push_str(&changes.text);
+        }
+        let _ = std::fmt::Write::write_fmt(
+            &mut text,
+            format_args!(
+                "\n(snapshot {epoch}: {} changed, {} added, {} removed{}; {} ms)",
+                changes.changed,
+                changes.added,
+                changes.removed,
+                if unsettled {
+                    "; the scene had not settled"
+                } else {
+                    ""
+                },
+                started.elapsed().as_millis()
+            ),
+        );
+        let mut reply = ToolReply::from(value);
+        reply = reply.with_text(text);
+        (Ok(reply), after)
+    }
+}
+
+impl Hands<'_> {
+    /// The steps one after the other. The first that fails stops the rest.
+    /// Each says what it cost; what changed is told once, by the caller.
+    fn batch(&mut self, steps: &[(&'static str, Act)]) -> Done {
+        let mut results = Vec::new();
+        let mut failed = Value::Null;
+        for (i, (tool, act)) in steps.iter().enumerate() {
+            let frames = self.frames;
+            let started = Instant::now();
+            let outcome = self.step(act);
+            let cost = json!({
+                "frames": self.frames - frames,
+                "ms": started.elapsed().as_millis() as u64,
+            });
+            match outcome {
+                Ok(done) => results.push(json!({
+                    "tool": tool,
+                    "ok": true,
+                    "result": Value::Object(done.fields),
+                    "summary": done.summary,
+                    "cost": cost,
+                })),
+                Err(e) => {
+                    results.push(json!({
+                        "tool": tool,
+                        "ok": false,
+                        "error": error_json(&e),
+                        "cost": cost,
+                    }));
+                    failed = json!({ "step": i, "code": e.code.as_str(), "message": e.message });
+                    break;
+                }
+            }
+        }
+        let completed = results.iter().filter(|r| r["ok"] == json!(true)).count();
+        let summary = match failed.get("step") {
+            None => format!("{completed} of {} steps done", steps.len()),
+            Some(step) => format!(
+                "{completed} of {} steps done; step {step} failed ({}): {}",
+                steps.len(),
+                failed["code"].as_str().unwrap_or_default(),
+                failed["message"].as_str().unwrap_or_default()
+            ),
+        };
+        Done::new(summary)
+            .with("completed", json!(completed))
+            .with("failed", failed)
+            .with("steps", Value::Array(results))
+    }
+}

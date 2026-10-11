@@ -24,7 +24,7 @@
 //!
 //! - [`top`]: the model of the `top` overlay, "which component ate the
 //!   frame" (§9.1, §3.4).
-//! - `mcp` (feature `mcp`, off by default): the read-only MCP inspector
+//! - `mcp` (feature `mcp`, off by default): the MCP inspector
 //!   of a running application (§19.4 to §19.7).
 //!
 //! The devtools socket for a device comes with a later milestone.

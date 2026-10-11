@@ -141,6 +141,30 @@ impl<M> ShellApp<M> {
         self.dev.as_ref().map(|d| d.session.reloads())
     }
 
+    /// Whether the files of the application are watched.
+    pub fn is_watched(&self) -> bool {
+        self.dev.is_some()
+    }
+
+    /// Asks the watcher to read the files and build now, for an agent
+    /// that asked for a reload. What it brings is applied by the next
+    /// [`pump_dev`](Self::pump_dev), which the watcher's wake causes.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn reload_now(&self) {
+        if let Some(dev) = &self.dev {
+            dev.session.reload_now();
+        }
+    }
+
+    /// True once after the watcher answered a [`reload_now`](Self::reload_now)
+    /// and the result was applied.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn take_flushed(&mut self) -> bool {
+        self.dev
+            .as_mut()
+            .is_some_and(|dev| dev.session.take_flushed())
+    }
+
     /// What the error overlay says; None when it is not shown.
     pub fn reload_overlay(&self) -> Option<Overlay> {
         let dev = self.dev.as_ref()?;

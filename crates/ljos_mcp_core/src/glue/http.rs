@@ -9,8 +9,10 @@
 //! stateless mode), which is also what lets a client reconnect after the
 //! application was restarted without a handshake to repeat.
 //!
-//! There is no way to listen on another machine's behalf: [`Listen`] names
-//! the loopback address and a Unix socket and nothing else.
+//! The server listens on this machine: the loopback address or a Unix
+//! socket only its owner can open. Any other address needs two words, an
+//! address given on purpose and [`HttpConfig::insecure_lan`], and comes
+//! with a loud warning ([`LAN_WARNING`]); the token still has to be shown.
 
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -34,11 +36,19 @@ use crate::{CapSet, McpSurface, RateLimit, Token, TokenFile, TokenFileError};
 /// The path the server answers on.
 pub const MCP_PATH: &str = "/mcp";
 
+/// What is printed, loudly, when the server listens beyond this machine.
+pub const LAN_WARNING: &str = "the inspector listens on an address that is not this machine's: \
+     anyone on the network who gets the token can read this application and, with the \
+     capabilities granted, drive it. Use it on a network you trust, for as long as you need it";
+
 /// Where the server listens.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Listen {
     /// `127.0.0.1` and this port; `0` lets the system choose one.
     Loopback(u16),
+    /// An address given on purpose (`--mcp-bind`). One that is not this
+    /// machine's is refused unless [`HttpConfig::insecure_lan`] is set.
+    Address(SocketAddr),
     /// A Unix socket only its owner can connect to.
     #[cfg(unix)]
     Unix(PathBuf),
@@ -55,6 +65,15 @@ pub struct HttpConfig {
     pub calls_per_second: usize,
     /// More connections than this are closed as they come.
     pub max_connections: usize,
+    /// The second word that an address beyond this machine needs
+    /// (`--mcp-insecure-lan`).
+    pub insecure_lan: bool,
+    /// Remove the token file and the socket, and end the process as the
+    /// signal would have, when it gets SIGINT or SIGTERM. A process that is
+    /// killed by a signal runs no destructor, so without this its token
+    /// file would stay and name an address where nothing listens. For the
+    /// process of an application, not for a test that hosts a server.
+    pub clean_up_on_signals: bool,
 }
 
 impl HttpConfig {
@@ -65,6 +84,8 @@ impl HttpConfig {
             token_file: None,
             calls_per_second: 20,
             max_connections: 32,
+            insecure_lan: false,
+            clean_up_on_signals: false,
         }
     }
 
@@ -82,10 +103,36 @@ pub enum HttpError {
         what: String,
         source: std::io::Error,
     },
+    #[error(
+        "cannot listen on {addr}: it is not an address of this machine. Start the application \
+         with `--mcp-bind {addr}` and `--mcp-insecure-lan` to listen there anyway"
+    )]
+    NotLoopback { addr: SocketAddr },
+    #[error(transparent)]
+    SocketPath(#[from] crate::SocketPathError),
     #[error(transparent)]
     Token(#[from] TokenFileError),
     #[error("cannot start the MCP server thread: {0}")]
     Thread(std::io::Error),
+}
+
+/// Whether the server may listen on `addr`: any address of this machine,
+/// and one beyond it only with `insecure_lan`. Returns the warning that
+/// must be shown when it is one beyond.
+///
+/// # Errors
+/// `addr` is not this machine's and `insecure_lan` is not set.
+pub fn bind_policy(
+    addr: SocketAddr,
+    insecure_lan: bool,
+) -> Result<Option<&'static str>, HttpError> {
+    if addr.ip().is_loopback() {
+        Ok(None)
+    } else if insecure_lan {
+        Ok(Some(LAN_WARNING))
+    } else {
+        Err(HttpError::NotLoopback { addr })
+    }
 }
 
 /// A running server. It stops, and its token file and socket are removed,
@@ -96,6 +143,7 @@ pub struct HttpServer {
     token: Token,
     token_file: Option<TokenFile>,
     socket: Option<PathBuf>,
+    warning: Option<&'static str>,
     shutdown: Arc<Notify>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -120,6 +168,8 @@ type Body = BoxBody<Bytes, Infallible>;
 struct State<S: McpSurface> {
     token: Token,
     port: Option<u16>,
+    /// Bound beyond this machine: `Host` may be any address.
+    lan: bool,
     rate: Mutex<RateLimit>,
     service: StreamableHttpService<RmcpServer<S>, NeverSessionManager>,
 }
@@ -129,13 +179,25 @@ impl HttpServer {
     /// address in the token file is one a client can connect to at once.
     pub fn start<S: McpSurface>(surface: Arc<S>, config: HttpConfig) -> Result<Self, HttpError> {
         let token = Token::generate()?;
+        let wanted = match &config.listen {
+            Listen::Loopback(port) => Some(SocketAddr::from((Ipv4Addr::LOCALHOST, *port))),
+            Listen::Address(addr) => Some(*addr),
+            #[cfg(unix)]
+            Listen::Unix(_) => None,
+        };
+        let mut warning = None;
+        if let Some(addr) = wanted {
+            warning = bind_policy(addr, config.insecure_lan)?;
+        }
+        let lan = warning.is_some();
         let (listener, url, addr, socket) = match &config.listen {
-            Listen::Loopback(port) => {
+            Listen::Loopback(_) | Listen::Address(_) => {
+                let wanted = wanted.unwrap_or_else(|| SocketAddr::from((Ipv4Addr::LOCALHOST, 0)));
                 let bind = |source| HttpError::Bind {
-                    what: format!("127.0.0.1:{port}"),
+                    what: wanted.to_string(),
                     source,
                 };
-                let l = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, *port)).map_err(bind)?;
+                let l = std::net::TcpListener::bind(wanted).map_err(bind)?;
                 l.set_nonblocking(true).map_err(bind)?;
                 let addr = l.local_addr().map_err(bind)?;
                 let url = format!("http://{addr}{MCP_PATH}");
@@ -144,6 +206,9 @@ impl HttpServer {
             #[cfg(unix)]
             Listen::Unix(path) => {
                 use std::os::unix::fs::PermissionsExt as _;
+                // Before anything is removed or made, and never answered by
+                // choosing another place.
+                crate::check_socket_path(path)?;
                 let bind = |source| HttpError::Bind {
                     what: path.display().to_string(),
                     source,
@@ -164,14 +229,29 @@ impl HttpServer {
                 (Listener::Unix(l), url, None, Some(path.clone()))
             }
         };
-        let token_file = match &config.token_file {
-            Some(path) => Some(TokenFile::write(path, &url, &token, config.caps)?),
-            None => None,
-        };
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(HttpError::Thread)?;
+        // The handlers are in place before the token file names this
+        // process, so a signal that comes the moment a client reads the
+        // file is already cleaned up after.
+        let ends = if config.clean_up_on_signals {
+            let _in_runtime = runtime.enter();
+            Ends::install()
+        } else {
+            None
+        };
+        let token_file = match &config.token_file {
+            Some(path) => Some(TokenFile::write(path, &url, &token, config.caps)?),
+            None => None,
+        };
+        let leftovers: Vec<PathBuf> = config
+            .token_file
+            .iter()
+            .cloned()
+            .chain(socket.clone())
+            .collect();
         let shutdown = Arc::new(Notify::new());
         let thread = {
             let (token, shutdown) = (token.clone(), shutdown.clone());
@@ -194,10 +274,25 @@ impl HttpServer {
                         let state = Arc::new(State {
                             token,
                             port,
+                            lan,
                             rate: Mutex::new(RateLimit::per_second(config.calls_per_second)),
                             service,
                         });
-                        accept(listener, state, config.max_connections, shutdown).await;
+                        let serving = accept(listener, state, config.max_connections, shutdown);
+                        match ends {
+                            Some(mut ends) => tokio::select! {
+                                () = serving => {}
+                                code = ends.wait() => {
+                                    for path in leftovers {
+                                        let _ = std::fs::remove_file(path);
+                                    }
+                                    // As a shell reports a process that
+                                    // a signal ended.
+                                    std::process::exit(code);
+                                }
+                            },
+                            None => serving.await,
+                        }
                     });
                 })
                 .map_err(HttpError::Thread)?
@@ -208,6 +303,7 @@ impl HttpServer {
             token,
             token_file,
             socket,
+            warning,
             shutdown,
             thread: Some(thread),
         })
@@ -225,6 +321,12 @@ impl HttpServer {
 
     pub fn token(&self) -> &Token {
         &self.token
+    }
+
+    /// What must be shown to whoever started the server, when it listens
+    /// beyond this machine.
+    pub fn warning(&self) -> Option<&'static str> {
+        self.warning
     }
 
     pub fn token_file(&self) -> Option<&Path> {
@@ -327,11 +429,22 @@ async fn answer<S: McpSurface>(state: &State<S>, request: Request<Incoming>) -> 
     };
     // A browser page on another site can reach 127.0.0.1 (by a name it
     // made resolve there, or plainly). It cannot choose these two headers.
-    if !text(header::HOST).is_some_and(|h| crate::loopback_host(h, state.port)) {
+    let host_ok = |h: &str| {
+        if state.lan {
+            crate::address_host(h, state.port)
+        } else {
+            crate::loopback_host(h, state.port)
+        }
+    };
+    if !text(header::HOST).is_some_and(host_ok) {
         return refuse(
             StatusCode::FORBIDDEN,
             "forbidden_host",
-            "this server answers only requests addressed to this machine (Host: 127.0.0.1)",
+            if state.lan {
+                "this server answers only requests addressed to it by address, not by a name"
+            } else {
+                "this server answers only requests addressed to this machine (Host: 127.0.0.1)"
+            },
         );
     }
     if text(header::ORIGIN).is_some_and(|o| !crate::loopback_origin(o)) {
@@ -378,4 +491,47 @@ async fn answer<S: McpSurface>(state: &State<S>, request: Request<Incoming>) -> 
         );
     }
     state.service.handle(request).await
+}
+
+/// SIGINT and SIGTERM, awaited by the server's thread.
+#[cfg(unix)]
+struct Ends {
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl Ends {
+    /// Must be called inside the runtime. `None` when the system will not
+    /// say: the server then runs as it would without the wish.
+    fn install() -> Option<Ends> {
+        use tokio::signal::unix::{SignalKind, signal};
+        Some(Ends {
+            interrupt: signal(SignalKind::interrupt()).ok()?,
+            terminate: signal(SignalKind::terminate()).ok()?,
+        })
+    }
+
+    /// The exit status a shell reports for the signal that came.
+    async fn wait(&mut self) -> i32 {
+        tokio::select! {
+            _ = self.interrupt.recv() => 128 + 2,
+            _ = self.terminate.recv() => 128 + 15,
+        }
+    }
+}
+
+/// Where there are no such signals the server has nothing to wait for.
+#[cfg(not(unix))]
+struct Ends;
+
+#[cfg(not(unix))]
+impl Ends {
+    fn install() -> Option<Ends> {
+        None
+    }
+
+    async fn wait(&mut self) -> i32 {
+        std::future::pending().await
+    }
 }

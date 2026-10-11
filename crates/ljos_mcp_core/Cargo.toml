@@ -19,6 +19,7 @@ http = [
     "rmcp/transport-streamable-http-server",
     "tokio/net",
     "tokio/rt",
+    "tokio/signal",
     "dep:hyper",
     "dep:hyper-util",
     "dep:http",

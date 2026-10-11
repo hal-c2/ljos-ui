@@ -1,10 +1,32 @@
 [
   {
-    "description": "What is running: window size and scale, colour scheme, reduced motion, font scale, which item has keyboard focus, whether the clock is real or virtual, the reload generation, and the capabilities of this connection. Cheap; use it to check that the app is up.",
+    "description": "What is running: windows (how many; only the primary is inspected), size, scale, colour scheme, keyboard focus, clock, reload generation and last reload, and the capabilities of this connection. `after_reload` with `wait_ms` waits for a reload.",
     "input_schema": {
       "additionalProperties": false,
-      "description": "No arguments.",
-      "title": "Nothing",
+      "description": "What `app_status` may be asked besides the state itself.",
+      "properties": {
+        "after_reload": {
+          "default": null,
+          "description": "Wait until the reload generation is greater than this, or a reload\nfails, up to `wait_ms`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "wait_ms": {
+          "default": null,
+          "description": "How long to wait for a reload, in milliseconds (at most 30000).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "StatusArgs",
       "type": "object"
     },
     "name": "app_status",
@@ -132,7 +154,7 @@
     "read_only": true
   },
   {
-    "description": "One item in depth: QML type, id, object key, the file and line that declare it, geometry, and its properties with where each value comes from (assigned, bound at tier 0, 1 or js, animated, default). `target` is a reference or a locator matching exactly one item. `all` adds defaults.",
+    "description": "One item in depth: type, id, declaring file and line, geometry, and its properties with where each value comes from (assigned, bound at tier 0, 1 or js, animated, default). `target` is a reference or locator. `all` adds defaults; `dependencies` names a property: its reads, readers and tier.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
@@ -140,6 +162,14 @@
           "default": false,
           "description": "List every property, including those still at their default.",
           "type": "boolean"
+        },
+        "dependencies": {
+          "default": null,
+          "description": "The name of one property: adds what its binding read when it last\nran, which bindings read it, and the tier its binding runs at.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "target": {
           "description": "A reference (`e12`) or a locator that matches exactly one item.\n`#objectName` and `id=qmlId` also reach items the outline does not\nlist (not exposed, or not shown).",
@@ -250,5 +280,460 @@
     },
     "name": "app_metrics",
     "read_only": true
+  },
+  {
+    "description": "Click the item `target` (a reference or locator) at its centre: a move, a press and a release through the same hit test as a mouse, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
+    "input_schema": {
+      "$defs": {
+        "Button": {
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "button": {
+          "$ref": "#/$defs/Button",
+          "description": "`left` (default), `right` or `middle`."
+        },
+        "count": {
+          "default": null,
+          "description": "1 (default) or 2 for a double click; at most 3.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "target": {
+          "description": "A reference (`e12`) or a locator that matches exactly one item.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "ClickArgs",
+      "type": "object"
+    },
+    "name": "app_click",
+    "read_only": false
+  },
+  {
+    "description": "Type `text` into the item that has keyboard focus, as key presses with text, like a keyboard. With `target` the item is clicked first. Refused when nothing has focus. Text typed into a field that hides its text is not echoed back. Answers with what changed.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "default": null,
+          "description": "An item to click first, so that it has keyboard focus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The text to type (at most 4000 characters).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TypeArgs",
+      "type": "object"
+    },
+    "name": "app_type",
+    "read_only": false
+  },
+  {
+    "description": "Press keys: `Enter`, `Tab`, `Escape`, `F5`, a chord such as `Ctrl+A` or `Shift+Tab`; several separated by a space. `repeat` presses them again (up to 100). With `target` the item is clicked first. Goes to the item with keyboard focus. Answers with what changed.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "keys": {
+          "description": "Keys: `Enter`, `Ctrl+A`, `Shift+Tab`; several separated by a space.",
+          "type": "string"
+        },
+        "repeat": {
+          "default": null,
+          "description": "Press them this many times (default 1, at most 100).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "target": {
+          "default": null,
+          "description": "An item to click first, so that it has keyboard focus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "title": "PressArgs",
+      "type": "object"
+    },
+    "name": "app_press",
+    "read_only": false
+  },
+  {
+    "description": "Turn the mouse wheel over `target` (default: the middle of the window) by `dx`, `dy` notches. Negative `dy` shows what is further down. Whatever scrolls under the pointer takes it. Answers with what changed.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "dx": {
+          "default": null,
+          "description": "Notches to the right (default 0).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "dy": {
+          "default": null,
+          "description": "Notches away from you, which shows what is further up (default 0);\nnegative shows what is further down.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "target": {
+          "default": null,
+          "description": "Where the wheel is turned: a reference or locator. Default: the\nmiddle of the window.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "ScrollArgs",
+      "type": "object"
+    },
+    "name": "app_scroll",
+    "read_only": false
+  },
+  {
+    "description": "A finger on `target` (default: the middle of the window): `tap`, or `swipe` by `dx`, `dy` logical pixels. It is a pointer with a touch identity, through the same router as a mouse. `pinch` is not supported yet. Answers with what changed.",
+    "input_schema": {
+      "$defs": {
+        "TouchAction": {
+          "enum": [
+            "tap",
+            "swipe",
+            "pinch"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/TouchAction",
+          "description": "`tap` (default), `swipe` or `pinch` (not supported yet)."
+        },
+        "dx": {
+          "default": null,
+          "description": "A swipe moves the finger this far to the right, in logical pixels.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "dy": {
+          "default": null,
+          "description": "A swipe moves the finger this far down.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "scale": {
+          "default": null,
+          "description": "A pinch's scale.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "target": {
+          "default": null,
+          "description": "Where the finger is put: a reference or locator. Default: the\nmiddle of the window.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "TouchArgs",
+      "type": "object"
+    },
+    "name": "app_touch",
+    "read_only": false
+  },
+  {
+    "description": "Move the virtual clock by `ms` (at most 60000), firing the timers and animation frames it passes in order. Only for an application on a virtual clock (a test); otherwise unavailable. Answers with what changed.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "ms": {
+          "description": "Milliseconds to move the virtual clock (1 to 60000).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ms"
+      ],
+      "title": "AdvanceArgs",
+      "type": "object"
+    },
+    "name": "app_advance",
+    "read_only": false
+  },
+  {
+    "description": "Give the window another size in logical pixels, and optionally another `scale`. The application sees it as a resize of the window; the operating-system window is not moved. Answers with what changed.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "description": "Logical pixels, 1 to 8192.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scale": {
+          "default": null,
+          "description": "Device pixels per logical pixel (0.5 to 4). Unchanged when left out.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "width": {
+          "description": "Logical pixels, 1 to 8192.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "title": "ResizeArgs",
+      "type": "object"
+    },
+    "name": "app_resize",
+    "read_only": false
+  },
+  {
+    "description": "Change what the system prefers: `color_scheme` (light or dark), `reduced_motion`, `font_scale` (0.25 to 4). The application reads them as it reads the real ones. Give at least one. Answers with the appearance now and what changed.",
+    "input_schema": {
+      "$defs": {
+        "Scheme": {
+          "enum": [
+            "light",
+            "dark"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "color_scheme": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Scheme"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "font_scale": {
+          "default": null,
+          "description": "0.25 to 4.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reduced_motion": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "title": "AppearanceArgs",
+      "type": "object"
+    },
+    "name": "app_set_appearance",
+    "read_only": false
+  },
+  {
+    "description": "Several act steps in one call: `steps` is a list of `{tool, args}` of the input, mutate and eval tools (at most 32). They run in order and stop at the first failure. One difference of the screen is given at the end; each step says what it cost. Every step's capability is needed up front.",
+    "input_schema": {
+      "$defs": {
+        "Step": {
+          "additionalProperties": false,
+          "properties": {
+            "args": {
+              "default": null,
+              "description": "The tool's arguments."
+            },
+            "tool": {
+              "description": "An input, mutate or eval tool, e.g. `app_click`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "tool"
+          ],
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "description": "1 to 32 steps.",
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "steps"
+      ],
+      "title": "BatchArgs",
+      "type": "object"
+    },
+    "name": "app_batch",
+    "read_only": false
+  },
+  {
+    "description": "Assign `value` to `property` of `target`, as a script would: a binding on it is replaced. The assignment is recorded as made by devtools (`app_inspect` says so). Refused for a read-only property or a value of the wrong kind. Answers with the value now, the previous one and what changed.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "property": {
+          "type": "string"
+        },
+        "target": {
+          "description": "A reference or a locator that matches exactly one object.",
+          "type": "string"
+        },
+        "value": {
+          "description": "A JSON value: a number, text, true or false, null, a list, or an\nobject for a `var` property."
+        }
+      },
+      "required": [
+        "target",
+        "property",
+        "value"
+      ],
+      "title": "SetPropertyArgs",
+      "type": "object"
+    },
+    "name": "app_set_property",
+    "read_only": false
+  },
+  {
+    "description": "Call the method `name` of `target` with `args`, or send the signal of that name so its handlers run. Answers with the result and what changed. A method that throws is an `app_faulted` answer with the message.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "default": [],
+          "items": true,
+          "type": "array"
+        },
+        "name": {
+          "description": "A method or signal of the object.",
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "name"
+      ],
+      "title": "InvokeArgs",
+      "type": "object"
+    },
+    "name": "app_invoke",
+    "read_only": false
+  },
+  {
+    "description": "Reload the changed files now instead of waiting for them to be quiet. Answers `applied`, `failed` (with the message; the application goes on as it was) or `unchanged`. Needs an application that is watched (`--watch`).",
+    "input_schema": {
+      "additionalProperties": false,
+      "description": "No arguments.",
+      "title": "Nothing",
+      "type": "object"
+    },
+    "name": "app_reload",
+    "read_only": false
+  },
+  {
+    "description": "Run JavaScript in the context of `target` (default: global scope): its properties are named bare, as in a binding. Stopped after `timeout_ms` (default 1000, at most 10000). The result is written bounded (depth, items, text); it can be as much as the application can do, so it is its own capability.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "description": "The script. Its last expression is the result.",
+          "type": "string"
+        },
+        "target": {
+          "default": null,
+          "description": "The object it runs in; default: the global scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_ms": {
+          "default": null,
+          "description": "Milliseconds it may run (default 1000, at most 10000).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "EvalArgs",
+      "type": "object"
+    },
+    "name": "app_eval",
+    "read_only": false
   }
 ]

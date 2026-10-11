@@ -1,20 +1,23 @@
-//! The read-only MCP inspector of a running application (ARCHITECTURE.md
-//! §19.4 to §19.7).
+//! The MCP inspector of a running application (ARCHITECTURE.md §19.4 to
+//! §19.7).
 //!
 //! ```text
 //! client ── HTTP on loopback, bearer token ──▶ server thread
-//!   InspectorSurface: is there such a tool, may this client use it, are
-//!   the arguments right
+//!   InspectorSurface: is there such a tool, does this connection hold its
+//!   capability, are the arguments right
 //!     └─ UiHandle<request> (16 places; full is `busy`) ── wake ──▶ UI thread
 //!          Inspector::pump: copy what the scene shows, answer; a snapshot
-//!          is written by a Deferred job that yields
+//!          is written by a Deferred job that yields; an act is run as an
+//!          event, an assignment or a script and answered once the frame
+//!          has settled
 //! ```
 //!
-//! **Read-only by construction.** The only requests there are ([`Kind`])
-//! read. A tool that acts (`app_click`, `app_set_property`, `app_eval`, …)
-//! is refused by name with `capability_denied` before anything is sent to
-//! the UI thread, and the capability a client is given is `inspect`
-//! whatever it asked for.
+//! **Capabilities.** A connection holds the capabilities it was started
+//! with (`--mcp=inspect,input,mutate,eval`) and no other: `inspect` reads,
+//! `input` makes events like a person's, `mutate` assigns and calls and
+//! reloads, `eval` runs script. None implies another; in particular `eval`
+//! is never given by `mutate`. A tool without its capability is refused by
+//! name, with how to grant it, before anything is sent to the UI thread.
 //!
 //! **Idle.** Nothing here has a timer. The UI thread runs for the
 //! inspector when a request arrives (the inbox's wake hook) and while a
@@ -26,43 +29,51 @@
 //! **What is never shown.** The text of a field whose `echoMode` is not
 //! `Normal` (and of every editable field when
 //! [`InspectorConfig::redact_all`] is set) is `<redacted>` in outlines,
-//! searches, properties and pictures, and so is any name or string
-//! property that is exactly that text.
+//! searches, properties, pictures and in what the acts report back, and
+//! so is any name or string property that is exactly that text. A script
+//! cannot be held to the mask, so `app_eval` is refused under `redact_all`
+//! and in a field that hides its text; elsewhere what it returns has the
+//! secrets masked wherever they occur in a string.
 
+mod act;
 mod args;
 mod capture;
 mod logs;
+mod reload;
 mod surface;
 mod tools;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ljos_engine::{Engine, LogEntry};
+use ljos_engine::{Engine, LogEntry, ObjectId};
 use ljos_mcp_core::{
     ErrorCode, LineOptions, OutlineOptions, OutlineWriter, RefTable, SurfaceError, ToolReply, delta,
 };
 use ljos_quick::QuickScene;
 use ljos_runtime::{
     Clock, DrainBudget, FrameBudget, FrameReport, Job, JobCx, JobPoll, Lane, ProcId, Scheduler,
-    UiInbox, WakeHook,
+    UiInbox, VirtualClock, WakeHook,
 };
+use serde_json::json;
 use tokio::sync::oneshot;
 
-pub use args::{
-    INSTRUCTIONS, MAX_LOG_LINES, MAX_NODES, MAX_SCREENSHOT_SIDE, RESERVED, SERVER_NAME, TOOLS,
+pub use args::{INSTRUCTIONS, MAX_LOG_LINES, MAX_NODES, MAX_SCREENSHOT_SIDE, SERVER_NAME, TOOLS};
+pub use ljos_mcp_core::glue::http::{
+    HttpConfig, HttpError, HttpServer, LAN_WARNING, Listen, bind_policy,
 };
-pub use ljos_mcp_core::glue::http::{HttpError, HttpServer, Listen};
+pub use ljos_mcp_core::{Cap, CapSet, SOCKET_PATH_MAX, SocketPathError, check_socket_path};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 
-use args::{Include as Col, Kind, Resource, SnapshotArgs};
+use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
 use capture::{Capture, Lease};
 use logs::LogRing;
+use reload::ReloadFeed;
 use surface::{Answer, DevReq, SlotGuard};
 use tools::{Look, Target};
 
@@ -116,6 +127,18 @@ struct View {
     max_depth: Option<u32>,
     line: LineOptions,
     max_nodes: usize,
+}
+
+impl View {
+    /// The whole outline, as `app_snapshot` without arguments asks for it.
+    fn whole(capture: &Capture) -> View {
+        View {
+            root_id: capture.node(0).id,
+            max_depth: None,
+            line: LineOptions::default(),
+            max_nodes: MAX_NODES,
+        }
+    }
 }
 
 struct Kept {
@@ -187,6 +210,14 @@ fn timed_out() -> SurfaceError {
     )
 }
 
+/// An `app_reload` waiting for the host to read the changed files.
+struct Parked {
+    reply: oneshot::Sender<Answer>,
+    deadline: Instant,
+    /// The reload count when it was asked for, to tell whether one happened.
+    seq: u64,
+}
+
 /// The inspector's side on the UI thread. The host makes one, hands the
 /// [`InspectorSurface`] to a server ([`serve`]) or an in-process client,
 /// and calls [`pump`](Self::pump) when woken.
@@ -203,6 +234,18 @@ pub struct Inspector {
     /// What the inspector did since the host last asked
     /// ([`take_work`](Self::take_work)).
     work: Option<FrameReport>,
+    /// The clock `app_advance` moves; none on the system clock.
+    vclock: Option<VirtualClock>,
+    feed: Arc<ReloadFeed>,
+    /// The reload generation and error as of the last [`observe`](Self::observe).
+    seen: Option<(u64, Option<String>)>,
+    parked: Option<Parked>,
+    reload_wanted: bool,
+    /// How many windows the application has, as the host last said.
+    windows: usize,
+    /// Properties assigned by `app_set_property`, so that `app_inspect`
+    /// can say they were assigned by devtools and not by the application.
+    devtools_assigned: HashSet<(ObjectId, String)>,
 }
 
 impl fmt::Debug for Inspector {
@@ -237,7 +280,8 @@ impl Inspector {
     /// snapshot is not finished.
     pub fn new(cfg: InspectorConfig, wake: WakeHook) -> (Inspector, Arc<InspectorSurface>) {
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX_CAPACITY, wake.clone());
-        let surface = Arc::new(InspectorSurface::new(handle, cfg.timeout));
+        let feed = ReloadFeed::new();
+        let surface = Arc::new(InspectorSurface::new(handle, cfg.timeout, feed.clone()));
         let inspector = Inspector {
             cfg,
             inbox,
@@ -249,8 +293,152 @@ impl Inspector {
             logs: Rc::new(RefCell::new(LogRing::default())),
             stats: FrameStats::new(),
             work: None,
+            vclock: None,
+            feed,
+            seen: None,
+            parked: None,
+            reload_wanted: false,
+            windows: 1,
+            devtools_assigned: HashSet::new(),
         };
         (inspector, surface)
+    }
+
+    /// Says that the application runs on `clock`, which `app_advance` may
+    /// move. Without it that tool is `unavailable`.
+    pub fn set_virtual_clock(&mut self, clock: VirtualClock) {
+        self.cfg.virtual_clock = true;
+        self.vclock = Some(clock);
+    }
+
+    /// Says whether the host watches the files and so can reload them when
+    /// asked ([`take_reload_request`](Self::take_reload_request)). Without
+    /// it `app_reload` is `unavailable`.
+    pub fn set_watched(&mut self, watched: bool) {
+        self.feed.set_watched(watched);
+    }
+
+    /// Says how many windows the application has. The inspector sees the
+    /// scene of the primary window only; `app_status` tells a client how
+    /// many there are so that it does not take the one it sees for all.
+    pub fn set_windows(&mut self, count: usize) {
+        self.windows = count.max(1);
+    }
+
+    /// Notes a reload that happened since the last call, so that clients
+    /// are told. The host calls this after every reload outcome it has
+    /// handled, applied or failed, and whenever it has run a frame; it
+    /// compares two numbers and does nothing else. A client that waits for
+    /// a reload sleeps until this publishes one: nothing wakes the host on
+    /// its behalf, so a host that does not call this leaves it waiting out
+    /// its time.
+    pub fn observe(&mut self, engine: &Engine) {
+        let generation = engine.reload_generation();
+        let error = engine.last_reload_error().map(|e| e.to_string());
+        let Some((was, was_error)) = self.seen.as_mut() else {
+            // The first look is the baseline: what happened before the
+            // inspector attached is not an event.
+            self.feed.baseline(generation);
+            self.seen = Some((generation, error));
+            return;
+        };
+        if generation != *was {
+            *was = generation;
+            *was_error = error;
+            self.feed.applied(generation);
+        } else {
+            match error {
+                Some(e) if was_error.as_deref() != Some(e.as_str()) => {
+                    *was_error = Some(e.clone());
+                    self.feed.failed(e);
+                }
+                Some(_) => {}
+                None => *was_error = None,
+            }
+        }
+    }
+
+    /// Whether an agent asked for a reload that the host has not done. The
+    /// host reads the changed files now, however recent the change
+    /// ([`DevSession::reload_now`](crate::DevSession::reload_now)), applies
+    /// what that brings and calls [`finish_reload`](Self::finish_reload)
+    /// once [`DevSession::take_flushed`](crate::DevSession::take_flushed)
+    /// says it is done.
+    pub fn take_reload_request(&mut self) -> bool {
+        std::mem::take(&mut self.reload_wanted)
+    }
+
+    /// Answers the `app_reload` that was waiting, with how the reload went.
+    pub fn finish_reload(&mut self, engine: &Engine) {
+        self.observe(engine);
+        let Some(parked) = self.parked.take() else {
+            return;
+        };
+        let now = self.feed.state();
+        let value = match &now.last {
+            Some(o) if now.seq != parked.seq => {
+                if o.applied {
+                    json!({ "outcome": "applied", "generation": now.generation })
+                } else {
+                    json!({
+                        "outcome": "failed",
+                        "generation": now.generation,
+                        "message": o.message,
+                    })
+                }
+            }
+            // Nothing new, but the files may be what they were when the
+            // reload before failed: "unchanged" would hide that.
+            _ => match engine.last_reload_error() {
+                Some(fault) => json!({
+                    "outcome": "failed",
+                    "generation": now.generation,
+                    "message": fault.to_string(),
+                }),
+                None => json!({ "outcome": "unchanged", "generation": now.generation }),
+            },
+        };
+        let text = match value["outcome"].as_str() {
+            Some("applied") => format!("reloaded; generation {}", now.generation),
+            Some("failed") => format!(
+                "the reload failed and the application goes on as it was: {}",
+                value["message"].as_str().unwrap_or_default()
+            ),
+            _ => "no file changed; nothing was reloaded".to_string(),
+        };
+        let _ = parked
+            .reply
+            .send(Ok(ToolReply::from(value).with_text(text)));
+    }
+
+    fn start_reload(&mut self, reply: oneshot::Sender<Answer>, deadline: Instant) {
+        let state = self.feed.state();
+        if !state.watched {
+            let _ = reply.send(Err(SurfaceError::unavailable(
+                "this application does not watch its files, so there is nothing to reload. Start \
+                 it with `--watch` (`ljos run --watch`)",
+            )));
+            return;
+        }
+        if self
+            .parked
+            .as_ref()
+            .is_some_and(|p| !p.reply.is_closed() && Instant::now() < p.deadline)
+        {
+            let _ = reply.send(Err(SurfaceError::new(
+                ErrorCode::Busy,
+                "another `app_reload` is waiting for the application; ask again when it is answered",
+            )));
+            return;
+        }
+        self.parked = Some(Parked {
+            reply,
+            deadline,
+            seq: state.seq,
+        });
+        self.reload_wanted = true;
+        // The host reads the files the next time it runs.
+        (self.wake)();
     }
 
     /// Makes the engine's log the one `app_logs` reads. An engine has one
@@ -292,6 +480,7 @@ impl Inspector {
     /// nothing to do. Call it before the frame is painted: a request that
     /// looks at the scene leaves it asking for a frame.
     pub fn pump(&mut self, engine: &Engine, scene: &mut QuickScene, clock: &dyn Clock) {
+        self.observe(engine);
         if !self.has_work() {
             return;
         }
@@ -318,7 +507,7 @@ impl Inspector {
                     self.cfg.redact_all,
                 )));
             }
-            self.answer(engine, scene, capture.as_ref(), request);
+            self.answer(engine, scene, clock, &mut capture, request);
         }
         if let Some(lease) = lease {
             lease.release(engine, scene);
@@ -367,8 +556,9 @@ impl Inspector {
     fn answer(
         &mut self,
         engine: &Engine,
-        scene: &QuickScene,
-        capture: Option<&Rc<Capture>>,
+        scene: &mut QuickScene,
+        clock: &dyn Clock,
+        capture: &mut Option<Rc<Capture>>,
         request: DevReq,
     ) {
         let DevReq {
@@ -377,7 +567,28 @@ impl Inspector {
             deadline,
             slot,
             per_copy,
+            caps,
         } = request;
+        if let Kind::Act(act) = &kind {
+            if matches!(act, Act::Reload) {
+                self.start_reload(reply, deadline);
+                return;
+            }
+            let Some(before) = capture.clone() else {
+                let _ = reply.send(Err(SurfaceError::new(
+                    ErrorCode::Internal,
+                    "the scene was not looked at for an act that needs it",
+                )));
+                return;
+            };
+            let (answer, after) = self.run_act(engine, scene, clock, before, act, per_copy);
+            // The next request of this round sees what the act did.
+            *capture = Some(after);
+            let _ = reply.send(answer);
+            return;
+        }
+        let scene: &QuickScene = scene;
+        let capture = capture.as_ref();
         let queued = self.inbox.len();
         let capacity = self.inbox.capacity();
         let background = self.cfg.background;
@@ -389,6 +600,12 @@ impl Inspector {
                 .logs
                 .borrow()
                 .answer(&args::LogsArgs::default(), per_copy)),
+            (Kind::Resource(Resource::Reload), _) => {
+                self.observe(engine);
+                let value = self.feed.state().json(false);
+                let text = serde_json::to_string_pretty(&value).unwrap_or_default();
+                Ok(ToolReply::from(value).with_text(text))
+            }
             (Kind::Metrics, _) => Ok(tools::metrics(engine, &self.stats, queued, capacity, false)),
             (Kind::Resource(Resource::Metrics), _) => {
                 Ok(tools::metrics(engine, &self.stats, queued, capacity, true))
@@ -432,6 +649,8 @@ impl Inspector {
                 return;
             }
             (kind, Some(capture)) => {
+                let reload = self.feed.state().json(false);
+                let windows = self.windows;
                 let mut look = Look {
                     engine,
                     scene,
@@ -439,9 +658,9 @@ impl Inspector {
                     refs: &mut self.refs,
                 };
                 match kind {
-                    Kind::Status => look.status(virtual_clock),
+                    Kind::Status(_) => look.status(virtual_clock, caps, &reload, windows),
                     Kind::Find(args) => look.find(args, per_copy),
-                    Kind::Inspect(args) => look.inspect(args, per_copy),
+                    Kind::Inspect(args) => look.inspect(args, per_copy, &self.devtools_assigned),
                     Kind::Screenshot(args) => look.screenshot(args, background),
                     // Answered above.
                     _ => Err(SurfaceError::new(
@@ -624,7 +843,8 @@ fn needs_scene(kind: &Kind) -> bool {
         Kind::Logs(_) | Kind::Metrics => false,
         Kind::Resource(r) => *r == Resource::Tree,
         Kind::Snapshot(args) => args.cursor.is_none() || args.image,
-        Kind::Status | Kind::Find(_) | Kind::Inspect(_) | Kind::Screenshot(_) => true,
+        Kind::Act(act) => !matches!(act, Act::Reload),
+        Kind::Status(_) | Kind::Find(_) | Kind::Inspect(_) | Kind::Screenshot(_) => true,
     }
 }
 
@@ -647,17 +867,40 @@ pub fn default_token_file(dir: impl Into<PathBuf>) -> PathBuf {
 ///
 /// The server has a thread of its own that sleeps in the kernel until a
 /// client writes; it does not touch the application.
+///
+/// Clients hold the capability `inspect` and no other; [`serve_as`] grants
+/// more.
 pub fn serve(
     surface: Arc<InspectorSurface>,
     listen: Listen,
     token_file: impl Into<PathBuf>,
 ) -> Result<HttpServer, HttpError> {
+    serve_as(surface, listen, token_file, CapSet::of([Cap::Inspect]))
+}
+
+/// As [`serve`], with every client holding `caps`.
+pub fn serve_as(
+    surface: Arc<InspectorSurface>,
+    listen: Listen,
+    token_file: impl Into<PathBuf>,
+    caps: CapSet,
+) -> Result<HttpServer, HttpError> {
+    let mut config = HttpConfig::loopback(caps);
+    config.listen = listen;
+    serve_with(surface, config, token_file)
+}
+
+/// As [`serve_as`], with everything about the transport given: the address
+/// (and the word that lets it be one beyond this machine), and whether the
+/// token file is removed when a signal ends the process.
+pub fn serve_with(
+    surface: Arc<InspectorSurface>,
+    config: HttpConfig,
+    token_file: impl Into<PathBuf>,
+) -> Result<HttpServer, HttpError> {
     let token_file = token_file.into();
     forget_dead_starts(&token_file);
-    let mut config =
-        ljos_mcp_core::glue::http::HttpConfig::loopback(surface::granted()).token_file(token_file);
-    config.listen = listen;
-    HttpServer::start(surface, config)
+    HttpServer::start(surface, config.token_file(token_file))
 }
 
 /// The process id in a token file's name, when it is named as

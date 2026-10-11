@@ -327,6 +327,14 @@ pub trait Backend: fmt::Debug {
     fn reload_count(&mut self) -> Result<u64> {
         Err(self.no_reload())
     }
+    /// Whether the application asked to end (`Qt.quit()`). The oracle is
+    /// itself the application that would end, so it cannot say.
+    fn quit_requested(&mut self) -> Result<bool> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "seeing a request to quit",
+        })
+    }
     /// Native code running for the object panics with `message`, as a
     /// bug in a type written in Rust does.
     fn panic_in(&mut self, _object: &str, _message: &str) -> Result<()> {

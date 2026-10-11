@@ -28,12 +28,42 @@ pub enum Token {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ask {
     /// An agent connects. With `redact_all` the inspector was started to
-    /// mask the value of every editable field.
+    /// mask the value of every editable field. `caps` is what the agent was
+    /// granted, as `--mcp=` writes it (`None`: `inspect` alone).
     Connect {
+        caps: Option<String>,
         redact_all: bool,
     },
+    /// The files of the application are watched, so that it can be told to
+    /// reload (a host that does not watch them cannot).
+    Watched,
+    /// The host says the application has this many windows.
+    Windows(usize),
     /// The inspector is served on the loopback address, with a token file.
     Serve,
+    /// The inspector is served on a Unix socket, with a token file.
+    ServeOnSocket,
+    /// The inspector is asked to listen on `address`; with `lan` the word
+    /// for a network was given.
+    Listen {
+        address: String,
+        lan: bool,
+    },
+    /// The inspector is asked to listen on a Unix socket whose path has
+    /// this many characters (`None`: as many as the system allows).
+    ListenOnSocket {
+        path_len: Option<usize>,
+    },
+    /// The served inspector is stopped, as when the application ends.
+    Stop,
+    /// A tool with the reference the agent was last given for the item with
+    /// this role and name as its `target`.
+    CallOn {
+        tool: String,
+        role: String,
+        name: String,
+        args: Value,
+    },
     Call {
         tool: String,
         args: Value,
@@ -56,6 +86,8 @@ pub enum Ask {
         token: Token,
         origin: Option<String>,
         host: Option<String>,
+        /// Asked on the Unix socket and not the loopback address.
+        socket: bool,
     },
     /// Fails unless the application has nothing left to do: no request
     /// waits, no frame is asked for and nothing woke it since it last ran.
@@ -113,6 +145,30 @@ pub struct Seen {
     pub answer: Option<Answer>,
     pub client: Option<ClientAnswer>,
     pub token_file: Option<TokenFile>,
+    /// The permission bits of the socket the inspector is served on.
+    pub socket_mode: Option<u32>,
+    /// What the last request to listen on an address came to.
+    pub listening: Option<Listening>,
+    /// What was left in the file system after the inspector was stopped.
+    pub stopped: Option<Stopped>,
+}
+
+/// The outcome of asking the inspector to listen on an address.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Listening {
+    /// Why it was refused.
+    pub refused: Option<String>,
+    /// What was said, loudly, to whoever started it.
+    pub warning: Option<String>,
+    /// Whether a server is running there now.
+    pub served: bool,
+}
+
+/// What a stopped inspector left behind.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Stopped {
+    pub socket_left: bool,
+    pub token_file_left: bool,
 }
 
 /// One line of an outline: `- button "Save" [e2] obj=save`.
@@ -472,6 +528,49 @@ impl Seen {
     }
 
     /// # Errors
+    /// The answer has no array or object at `pointer` with `count` entries.
+    pub fn answer_has(&self, pointer: &str, count: usize) -> Result<(), String> {
+        let actual = self.at(pointer)?;
+        let have = match actual {
+            Value::Array(a) => a.len(),
+            Value::Object(o) => o.len(),
+            other => return Err(format!("the answer's {pointer} is {other}, a single value")),
+        };
+        if have == count {
+            Ok(())
+        } else {
+            Err(format!(
+                "the answer's {pointer} has {have} entries, not {count}: {actual}"
+            ))
+        }
+    }
+
+    /// # Errors
+    /// The answer has something at `pointer`.
+    pub fn answer_absent(&self, pointer: &str) -> Result<(), String> {
+        match self.answered()?.structured.pointer(pointer) {
+            None => Ok(()),
+            Some(found) => Err(format!("the answer's {pointer} is there: {found}")),
+        }
+    }
+
+    /// # Errors
+    /// Either copy of the answer, the structured one and the text, is longer
+    /// than `most` bytes: each is what a client has to hold.
+    pub fn answer_at_most(&self, most: usize) -> Result<(), String> {
+        let answer = self.answered()?;
+        let structured = answer.structured.to_string().len();
+        let text = answer.text.len();
+        if structured <= most && text <= most {
+            Ok(())
+        } else {
+            Err(format!(
+                "the answer is {structured} bytes as data and {text} as text; at most {most}"
+            ))
+        }
+    }
+
+    /// # Errors
     /// The answer has no number at `pointer` that is `least` or more.
     pub fn answer_at_least(&self, pointer: &str, least: f64) -> Result<(), String> {
         let actual = self.at(pointer)?;
@@ -486,8 +585,17 @@ impl Seen {
     /// # Errors
     /// `text` is somewhere in what the agent was told.
     pub fn answer_lacks(&self, text: &str) -> Result<(), String> {
-        let answer = self.answered()?;
-        if answer.text.contains(text) || answer.structured.to_string().contains(text) {
+        // A refusal is an answer too, and its message must not leak either.
+        let answer = self
+            .answer
+            .as_ref()
+            .ok_or("the agent has not asked anything yet")?;
+        let in_refusal = answer
+            .refusal
+            .as_ref()
+            .is_some_and(|r| r.message.contains(text));
+        if in_refusal || answer.text.contains(text) || answer.structured.to_string().contains(text)
+        {
             Err(format!("{text:?} is in the answer:\n{}", answer.text))
         } else {
             Ok(())
@@ -525,6 +633,19 @@ impl Seen {
                 "the {field} of the property {name:?} is {}, not {want}: {row}",
                 row[field]
             ))
+        }
+    }
+
+    /// # Errors
+    /// The property is not listed, or is listed as assigned by `by`.
+    pub fn property_not_assigned_by(&self, name: &str, by: &str) -> Result<(), String> {
+        let row = self.property(name)?;
+        if row["assigned_by"] == by {
+            Err(format!(
+                "the property {name:?} was assigned by {by:?}: {row}"
+            ))
+        } else {
+            Ok(())
         }
     }
 
@@ -691,6 +812,92 @@ impl Seen {
         self.token_file
             .as_ref()
             .ok_or_else(|| "the inspector is not served, so there is no token file".to_owned())
+    }
+
+    /// # Errors
+    /// Somebody else than the owner may use the socket.
+    pub fn socket_private(&self) -> Result<(), String> {
+        let mode = self
+            .socket_mode
+            .ok_or("the inspector is not served on a socket")?
+            & 0o777;
+        if mode == 0o600 {
+            Ok(())
+        } else {
+            Err(format!("the socket has the mode {mode:o}, not 600"))
+        }
+    }
+
+    fn listening(&self) -> Result<&Listening, String> {
+        self.listening
+            .as_ref()
+            .ok_or_else(|| "the inspector was not asked to listen on an address".to_owned())
+    }
+
+    /// # Errors
+    /// The request to listen was not refused, or for another reason.
+    pub fn listening_refused(&self, word: &str) -> Result<(), String> {
+        match &self.listening()?.refused {
+            Some(why) if why.contains(word) => Ok(()),
+            Some(why) => Err(format!("it was refused, but not with {word:?}: {why}")),
+            None => Err("it was not refused".to_owned()),
+        }
+    }
+
+    /// # Errors
+    /// The request to listen was refused.
+    pub fn listening_allowed(&self) -> Result<(), String> {
+        match &self.listening()?.refused {
+            None => Ok(()),
+            Some(why) => Err(format!("it was refused: {why}")),
+        }
+    }
+
+    /// # Errors
+    /// No server is running at the address asked for.
+    pub fn listening_served(&self) -> Result<(), String> {
+        self.listening_allowed()?;
+        if self.listening()?.served {
+            Ok(())
+        } else {
+            Err("no server was started there".to_owned())
+        }
+    }
+
+    /// # Errors
+    /// The warning was not given, or does not say `text`.
+    pub fn listening_warned(&self, text: &str) -> Result<(), String> {
+        match &self.listening()?.warning {
+            Some(w) if w.contains(text) => Ok(()),
+            Some(w) => Err(format!("the warning does not say {text:?}: {w}")),
+            None => Err("nothing was warned of".to_owned()),
+        }
+    }
+
+    fn stopped(&self) -> Result<&Stopped, String> {
+        self.stopped
+            .as_ref()
+            .ok_or_else(|| "the inspector has not been stopped".to_owned())
+    }
+
+    /// # Errors
+    /// The socket is still in the file system.
+    pub fn socket_gone(&self) -> Result<(), String> {
+        if self.stopped()?.socket_left {
+            Err("the socket is still there".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// # Errors
+    /// The token file is still in the file system.
+    pub fn token_file_gone(&self) -> Result<(), String> {
+        if self.stopped()?.token_file_left {
+            Err("the token file is still there".to_owned())
+        } else {
+            Ok(())
+        }
     }
 
     /// # Errors

@@ -390,3 +390,42 @@ fn the_watcher_sleeps_while_nothing_changes() {
     assert!(app.sleeps(QUIET * 4));
     assert_eq!(app.session.watcher().wakes(), after);
 }
+
+#[test]
+fn a_flush_with_nothing_changed_is_answered_and_nothing_is_applied() {
+    let mut app = app(&[("Main.qml", MAIN)]);
+    app.session.reload_now();
+    let reports = app.wait();
+    assert_eq!(reports, [], "nothing was applied");
+    assert!(app.session.take_flushed(), "the flush was answered");
+    assert!(!app.session.take_flushed(), "and only once");
+    assert!(app.sleeps(Duration::from_millis(300)), "then it rests");
+}
+
+#[test]
+fn a_flush_applies_the_save_before_the_answer_to_it() {
+    let mut app = app(&[("Main.qml", MAIN)]);
+    app.save("Main.qml", &MAIN.replace("width: 10;", "width: 50;"));
+    app.session.reload_now();
+    let mut reports = Vec::new();
+    while !app.session.take_flushed() {
+        reports.extend(app.wait());
+    }
+    reloaded(&reports);
+    assert_eq!(app.num("box", "width"), 50.0);
+}
+
+#[test]
+fn a_flush_with_a_broken_save_reports_it_and_is_answered() {
+    let mut app = app(&[("Main.qml", MAIN)]);
+    app.save("Main.qml", "import QtQuick\nItem {\n");
+    app.session.reload_now();
+    let mut reports = Vec::new();
+    while !app.session.take_flushed() {
+        reports.extend(app.wait());
+    }
+    assert!(
+        matches!(reports[..], [Report::Failed { .. }]),
+        "{reports:?}"
+    );
+}

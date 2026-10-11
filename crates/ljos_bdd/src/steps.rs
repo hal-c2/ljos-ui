@@ -963,6 +963,20 @@ fn reload_error_matches(w: &mut LjosWorld, pattern: String) -> StepResult {
     })
 }
 
+#[then(regex = r"^the application was (not )?asked to quit$")]
+fn asked_to_quit(w: &mut LjosWorld, not: String) -> StepResult {
+    let want = not.is_empty();
+    w.each(|b| match b.quit_requested()? {
+        asked if asked == want => Ok(()),
+        true => Err(BackendError::Failed(
+            "the application was asked to quit".into(),
+        )),
+        false => Err(BackendError::Failed(
+            "the application was not asked to quit".into(),
+        )),
+    })
+}
+
 #[then("there is no reload error")]
 fn no_reload_error(w: &mut LjosWorld) -> StepResult {
     w.each(|b| match b.reload_error()? {
@@ -1185,12 +1199,87 @@ fn inspector_token(words: &str) -> Result<Token, String> {
 
 #[given("the inspector is connected")]
 fn inspector_connected(w: &mut LjosWorld) -> StepResult {
-    inspector_ask(w, Ask::Connect { redact_all: false })
+    inspector_ask(
+        w,
+        Ask::Connect {
+            caps: None,
+            redact_all: false,
+        },
+    )
 }
 
 #[given("the inspector is connected and masks every editable value")]
 fn inspector_connected_masking(w: &mut LjosWorld) -> StepResult {
-    inspector_ask(w, Ask::Connect { redact_all: true })
+    inspector_ask(
+        w,
+        Ask::Connect {
+            caps: None,
+            redact_all: true,
+        },
+    )
+}
+
+#[given(regex = r#"^the inspector is connected with the capabilities "([^"]*)"$"#)]
+fn inspector_connected_with(w: &mut LjosWorld, caps: String) -> StepResult {
+    let caps = Some(caps);
+    inspector_ask(
+        w,
+        Ask::Connect {
+            caps,
+            redact_all: false,
+        },
+    )
+}
+
+#[rustfmt::skip]
+#[given(regex = r#"^the inspector is connected with the capabilities "([^"]*)" and masks every editable value$"#)]
+fn inspector_connected_with_masking(w: &mut LjosWorld, caps: String) -> StepResult {
+    let caps = Some(caps);
+    inspector_ask(
+        w,
+        Ask::Connect {
+            caps,
+            redact_all: true,
+        },
+    )
+}
+
+#[given("the files are watched")]
+fn inspector_files_watched(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::Watched)
+}
+
+#[given(regex = r"^the host says the application has (\d+) windows?$")]
+fn inspector_windows(w: &mut LjosWorld, count: usize) -> StepResult {
+    inspector_ask(w, Ask::Windows(count))
+}
+
+#[given("the inspector is served on a socket")]
+fn inspector_served_on_socket(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::ServeOnSocket)
+}
+
+#[when("the inspector is stopped")]
+fn inspector_stopped(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::Stop)
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^the inspector is asked to listen on "([^"]+)" (with|without) the word for a network$"#)]
+fn inspector_listens(w: &mut LjosWorld, address: String, word: String) -> StepResult {
+    let lan = word == "with";
+    inspector_ask(w, Ask::Listen { address, lan })
+}
+
+#[rustfmt::skip]
+#[when(regex = r"^the inspector is asked to listen on a socket whose path is (\d+) characters long$")]
+fn inspector_listens_on_long_socket(w: &mut LjosWorld, len: usize) -> StepResult {
+    inspector_ask(w, Ask::ListenOnSocket { path_len: Some(len) })
+}
+
+#[when("the inspector is asked to listen on a socket whose path is as long as the system allows")]
+fn inspector_listens_on_longest_socket(w: &mut LjosWorld) -> StepResult {
+    inspector_ask(w, Ask::ListenOnSocket { path_len: None })
 }
 
 #[given("the inspector is served on the loopback address")]
@@ -1281,6 +1370,40 @@ fn agent_calls_with(w: &mut LjosWorld, tool: String, step: &Step) -> StepResult 
     inspector_call(w, &tool, args)
 }
 
+// One line, whatever its length: the feature lint reads attributes line by line.
+#[rustfmt::skip]
+#[when(regex = r#"^the agent calls the tool "([^"]+)" on the reference of the "([^"]+)" named "([^"]*)"$"#)]
+fn agent_calls_on(w: &mut LjosWorld, tool: String, role: String, name: String) -> StepResult {
+    let args = serde_json::json!({});
+    inspector_ask(
+        w,
+        Ask::CallOn {
+            tool,
+            role,
+            name,
+            args,
+        },
+    )
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^the agent calls the tool "([^"]+)" on the reference of the "([^"]+)" named "([^"]*)" with:$"#)]
+fn agent_calls_on_with(w: &mut LjosWorld, tool: String, role: String, name: String, step: &Step) -> StepResult {
+    let args = inspector_doc(step)?;
+    let args =
+        serde_json::from_str(&args).map_err(|e| format!("the arguments are not JSON: {e}"))?;
+    inspector_ask(w, Ask::CallOn { tool, role, name, args })
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^the agent calls the tool "([^"]+)" with (\d+) steps of "([^"]+)"$"#)]
+fn agent_calls_batch(w: &mut LjosWorld, tool: String, count: usize, inner: String) -> StepResult {
+    let steps: Vec<Value> = (0..count)
+        .map(|_| serde_json::json!({ "tool": inner, "args": { "keys": "Tab" } }))
+        .collect();
+    inspector_call(w, &tool, serde_json::json!({ "steps": steps }))
+}
+
 #[when("the agent asks for the log since its last request")]
 fn agent_reads_log_on(w: &mut LjosWorld) -> StepResult {
     inspector_ask(w, Ask::LogSince)
@@ -1302,6 +1425,22 @@ fn client_asks(w: &mut LjosWorld, token: String) -> StepResult {
             token,
             origin: None,
             host: None,
+            socket: false,
+        },
+    )
+}
+
+#[rustfmt::skip]
+#[when(regex = r"^a client asks on the socket for a snapshot with (the right token|no token|a wrong token)$")]
+fn client_asks_on_socket(w: &mut LjosWorld, token: String) -> StepResult {
+    let token = inspector_token(&token)?;
+    inspector_ask(
+        w,
+        Ask::Client {
+            token,
+            origin: None,
+            host: None,
+            socket: true,
         },
     )
 }
@@ -1316,6 +1455,7 @@ fn client_asks_from(w: &mut LjosWorld, token: String, origin: String) -> StepRes
             token,
             origin: Some(origin),
             host: None,
+            socket: false,
         },
     )
 }
@@ -1330,6 +1470,7 @@ fn client_asks_for_host(w: &mut LjosWorld, token: String, host: String) -> StepR
             token,
             origin: None,
             host: Some(host),
+            socket: false,
         },
     )
 }
@@ -1418,6 +1559,21 @@ fn answer_matches(w: &mut LjosWorld, pointer: String, re: String) -> StepResult 
     inspector_seen(w, |s| s.answer_matches(&pointer, &unquoted(&re)))
 }
 
+#[then(regex = r#"^the answer's "(/[^"]*)" has (\d+) entries$"#)]
+fn answer_has(w: &mut LjosWorld, pointer: String, count: usize) -> StepResult {
+    inspector_seen(w, |s| s.answer_has(&pointer, count))
+}
+
+#[then(regex = r#"^the answer's "(/[^"]*)" is absent$"#)]
+fn answer_absent(w: &mut LjosWorld, pointer: String) -> StepResult {
+    inspector_seen(w, |s| s.answer_absent(&pointer))
+}
+
+#[then(regex = r"^the answer is at most (\d+) bytes$")]
+fn answer_at_most(w: &mut LjosWorld, most: usize) -> StepResult {
+    inspector_seen(w, |s| s.answer_at_most(most))
+}
+
 #[then(regex = r#"^the answer does not contain "(.*)"$"#)]
 fn answer_lacks(w: &mut LjosWorld, text: String) -> StepResult {
     inspector_seen(w, |s| s.answer_lacks(&unquoted(&text)))
@@ -1439,6 +1595,18 @@ fn inspected_property_provenance(
     })
 }
 
+#[then(regex = r#"^the inspected property "([^"]+)" is assigned by "([^"]+)"$"#)]
+fn inspected_property_assigned(w: &mut LjosWorld, name: String, by: String) -> StepResult {
+    inspector_seen(w, |s| {
+        s.property_says(&name, "assigned_by", &Value::from(by.as_str()))
+    })
+}
+
+#[then(regex = r#"^the inspected property "([^"]+)" is not assigned by "([^"]+)"$"#)]
+fn inspected_property_not_assigned(w: &mut LjosWorld, name: String, by: String) -> StepResult {
+    inspector_seen(w, |s| s.property_not_assigned_by(&name, &by))
+}
+
 #[then(regex = r#"^the inspected property "([^"]+)" has the value "(.*)"$"#)]
 fn inspected_property_value(w: &mut LjosWorld, name: String, text: String) -> StepResult {
     inspector_seen(w, |s| {
@@ -1456,6 +1624,41 @@ fn inspected_property_tier(w: &mut LjosWorld, name: String, tier: String) -> Ste
     inspector_seen(w, |s| {
         s.property_says(&name, "tier", &Value::from(tier.as_str()))
     })
+}
+
+#[then("the socket can be used by its owner alone")]
+fn socket_private(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::socket_private)
+}
+
+#[then("the socket is gone")]
+fn socket_gone(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::socket_gone)
+}
+
+#[then("the token file is gone")]
+fn token_file_gone(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::token_file_gone)
+}
+
+#[then(regex = r#"^the inspector is refused with "(.*)"$"#)]
+fn inspector_refused(w: &mut LjosWorld, word: String) -> StepResult {
+    inspector_seen(w, |s| s.listening_refused(&unquoted(&word)))
+}
+
+#[then("the inspector is served")]
+fn inspector_is_served(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::listening_served)
+}
+
+#[then("the inspector is allowed to listen there")]
+fn inspector_allowed(w: &mut LjosWorld) -> StepResult {
+    inspector_seen(w, Seen::listening_allowed)
+}
+
+#[then(regex = r#"^the warning mentions "(.*)"$"#)]
+fn warning_mentions(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.listening_warned(&unquoted(&text)))
 }
 
 #[then(regex = r#"^the agent is refused with "([a-z_]+)"$"#)]

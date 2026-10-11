@@ -1,6 +1,6 @@
 //! Development tools in the shell (feature `dev`): the `top` overlay
 //! (ARCHITECTURE.md §3.4, §19.10) and, with the feature `mcp`, the
-//! read-only inspector an agent connects to (§19.4).
+//! inspector an agent connects to (§19.4).
 //!
 //! Neither keeps the window awake. The overlay is given the report of a
 //! pass in which the scene ran a frame anyway and is painted in that same
@@ -125,9 +125,27 @@ impl<M> ShellApp<M> {
     pub(crate) fn pump_tools(&mut self) {
         #[cfg(feature = "mcp")]
         {
+            let watched = self.is_watched();
             let Self { view, tools, .. } = self;
             if let Some(served) = tools.inspector.as_mut() {
+                served.set_watched(watched);
                 view.without_wake(|view| served.pump(view));
+            }
+            // An agent asked for a reload: the watcher reads the files at
+            // once and wakes this window when it has built them. Its answer
+            // is given in the pass that applied the result.
+            let asked = tools
+                .inspector
+                .as_mut()
+                .is_some_and(|served| served.take_reload_request());
+            if asked {
+                self.reload_now();
+            }
+            if self.take_flushed() {
+                let Self { view, tools, .. } = self;
+                if let Some(served) = tools.inspector.as_mut() {
+                    served.finish_reload(view);
+                }
             }
         }
     }
@@ -208,15 +226,18 @@ const TITLE: egui::Color32 = egui::Color32::from_rgb(0x9c, 0xdc, 0xfe);
 const TEXT: egui::Color32 = egui::Color32::from_rgb(0xe6, 0xe6, 0xe6);
 
 #[cfg(feature = "mcp")]
-pub use inspector::{InspectorAddress, InspectorOptions};
+pub use inspector::{InspectorAccess, InspectorAddress, InspectorOptions};
 
 #[cfg(feature = "mcp")]
 mod inspector {
+    use std::net::SocketAddr;
     use std::path::PathBuf;
     use std::rc::Rc;
     use std::sync::Arc;
 
-    use ljos_dev::mcp::{self, HttpServer, Inspector, InspectorConfig, Listen};
+    use ljos_dev::mcp::{
+        self, Cap, CapSet, HttpConfig, HttpServer, Inspector, InspectorConfig, Listen,
+    };
     use ljos_egui::QmlView;
     use ljos_engine::LogEntry;
     use ljos_runtime::FrameReport;
@@ -248,6 +269,36 @@ mod inspector {
         }
     }
 
+    /// What clients of the inspector may do and where it listens, beyond
+    /// the defaults: the capabilities `inspect` only, a loopback port.
+    #[derive(Clone, Debug)]
+    pub struct InspectorAccess {
+        /// Granted to every client. `eval` is never implied by another.
+        pub caps: CapSet,
+        /// An address given on purpose (`--mcp-bind`) instead of the
+        /// loopback port of the options.
+        pub bind: Option<SocketAddr>,
+        /// A Unix socket instead of a port; the owner alone can use it.
+        pub socket: Option<PathBuf>,
+        /// The second word an address beyond this machine needs.
+        pub insecure_lan: bool,
+        /// Remove the token file and the socket when SIGINT or SIGTERM
+        /// ends the process. For an application's own process.
+        pub clean_up_on_signals: bool,
+    }
+
+    impl Default for InspectorAccess {
+        fn default() -> Self {
+            Self {
+                caps: CapSet::of([Cap::Inspect]),
+                bind: None,
+                socket: None,
+                insecure_lan: false,
+                clean_up_on_signals: false,
+            }
+        }
+    }
+
     /// Where a served inspector is.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct InspectorAddress {
@@ -255,6 +306,9 @@ mod inspector {
         pub url: String,
         /// The file with the URL and the bearer token a client shows.
         pub token_file: PathBuf,
+        /// Said to the person who started it, for a server that listens
+        /// beyond this machine; empty otherwise.
+        pub warning: Option<String>,
     }
 
     /// The inspector of a window and its server. The server goes first:
@@ -267,12 +321,32 @@ mod inspector {
 
     impl Served {
         pub(crate) fn pump(&mut self, view: &mut QmlView) {
+            let engine = Rc::clone(view.engine());
+            // Clients are told of a reload the watcher applied before this
+            // step; it compares two numbers.
+            self.inspector.observe(&engine);
             if !self.inspector.has_work() {
                 return;
             }
-            let engine = Rc::clone(view.engine());
+            self.inspector.set_windows(window_count(view));
             let clock = Arc::clone(view.clock());
             self.inspector.pump(&engine, view.scene_mut(), &*clock);
+        }
+
+        /// Says whether the application's files are watched, which is
+        /// what lets an agent ask for a reload.
+        pub(crate) fn set_watched(&mut self, watched: bool) {
+            self.inspector.set_watched(watched);
+        }
+
+        /// Whether an agent asked for a reload that nobody has started.
+        pub(crate) fn take_reload_request(&mut self) -> bool {
+            self.inspector.take_reload_request()
+        }
+
+        /// Answers the agent that waits for a reload, with how it went.
+        pub(crate) fn finish_reload(&mut self, view: &QmlView) {
+            self.inspector.finish_reload(view.engine());
         }
 
         pub(crate) fn record_frame(&mut self, report: &FrameReport) {
@@ -282,6 +356,29 @@ mod inspector {
         pub(crate) fn take_work(&mut self) -> Option<FrameReport> {
             self.inspector.take_work()
         }
+    }
+
+    /// How many windows the user sees. The inspector looks at the primary
+    /// one only; it says how many there are so that an agent does not take
+    /// what it sees for all of the application.
+    pub(super) fn window_count(view: &QmlView) -> usize {
+        let engine = view.engine();
+        let sys = ljos_controls::WindowSystem::of(engine);
+        if !sys.is_hosted() {
+            // A `Window` is an item of the one scene.
+            return 1;
+        }
+        let shown = sys
+            .windows(engine)
+            .into_iter()
+            .filter(|w| sys.spec(engine, *w).is_some_and(|s| s.visible))
+            .count();
+        // The shell makes a window for a root that is no `Window`.
+        let root_is_window = view
+            .scene()
+            .root()
+            .is_some_and(|r| sys.spec(engine, r).is_some());
+        shown + usize::from(!root_is_window)
     }
 
     impl<M> Setup<'_, M> {
@@ -302,6 +399,21 @@ mod inspector {
             options: InspectorOptions,
             on_log: impl FnMut(&LogEntry) + 'static,
         ) -> Result<InspectorAddress, SetupError> {
+            self.serve_inspector_as(options, InspectorAccess::default(), on_log)
+        }
+
+        /// As [`serve_inspector`](Self::serve_inspector), with the
+        /// capabilities clients hold and the transport given.
+        ///
+        /// # Errors
+        /// As there, and an address beyond this machine without
+        /// `insecure_lan`.
+        pub fn serve_inspector_as(
+            &mut self,
+            options: InspectorOptions,
+            access: InspectorAccess,
+            on_log: impl FnMut(&LogEntry) + 'static,
+        ) -> Result<InspectorAddress, SetupError> {
             let cfg = InspectorConfig {
                 redact_all: options.redact_all,
                 background: self.tools.background,
@@ -309,10 +421,19 @@ mod inspector {
             };
             let (inspector, surface) = Inspector::new(cfg, Arc::clone(&self.tools.wake));
             inspector.watch_log(self.engine, on_log);
-            let server = mcp::serve(surface, Listen::Loopback(options.port), &options.token_file)?;
+            let mut config = HttpConfig::loopback(access.caps);
+            config.listen = match (access.socket, access.bind) {
+                (Some(path), _) => Listen::Unix(path),
+                (None, Some(addr)) => Listen::Address(addr),
+                (None, None) => Listen::Loopback(options.port),
+            };
+            config.insecure_lan = access.insecure_lan;
+            config.clean_up_on_signals = access.clean_up_on_signals;
+            let server = mcp::serve_with(surface, config, &options.token_file)?;
             let address = InspectorAddress {
                 url: server.url().to_owned(),
                 token_file: options.token_file,
+                warning: server.warning().map(str::to_owned),
             };
             self.tools.inspector = Some(Served {
                 server,
@@ -336,5 +457,64 @@ mod inspector {
                 served.server.stop();
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "mcp"))]
+mod tests {
+    use std::sync::Arc;
+
+    use ljos_runtime::SystemClock;
+
+    use crate::{Hosting, ShellApp, ShellConfig};
+
+    fn count_in(qml: &str, hosted: bool) -> usize {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = dir.path().canonicalize().unwrap().join("Main.qml");
+        std::fs::write(&entry, qml).unwrap();
+        let ctx = egui::Context::default();
+        let setup = |setup: &mut crate::Setup<'_, ()>| setup.watch(&entry);
+        let app = if hosted {
+            let hosting = Hosting {
+                tree: egui::accesskit::TreeId::ROOT,
+                changed: Box::new(|| {}),
+            };
+            ShellApp::hosted(
+                &ctx,
+                &ShellConfig::default(),
+                Arc::new(SystemClock::new()),
+                setup,
+                hosting,
+            )
+        } else {
+            ShellApp::new(
+                &ctx,
+                &ShellConfig::default(),
+                Arc::new(SystemClock::new()),
+                setup,
+            )
+        }
+        .unwrap();
+        super::inspector::window_count(app.view())
+    }
+
+    const WINDOWS: &str = "import QtQuick\nimport QtQuick.Window\nItem {\n  Window { visible: true; width: 100; height: 100 }\n  Window { visible: true; width: 50; height: 50 }\n  Window { visible: false }\n}\n";
+
+    #[test]
+    fn the_windows_the_user_sees_are_counted_and_the_shell_one_for_a_plain_root() {
+        // Two shown, one hidden, and the window the shell makes for the
+        // item that is the root.
+        assert_eq!(count_in(WINDOWS, true), 3);
+    }
+
+    #[test]
+    fn a_root_that_is_a_window_is_one_of_them() {
+        let qml = "import QtQuick\nimport QtQuick.Window\nWindow { visible: true; width: 10; height: 10 }\n";
+        assert_eq!(count_in(qml, true), 1);
+    }
+
+    #[test]
+    fn without_a_host_for_windows_there_is_one() {
+        assert_eq!(count_in(WINDOWS, false), 1);
     }
 }

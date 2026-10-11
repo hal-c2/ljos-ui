@@ -54,6 +54,7 @@ fn changes_files(
             .any(|s| {
                 let text = s.value.as_str();
                 text.contains("reload")
+                    || text == "the files are watched"
                     || (text.starts_with("the file ")
                         && (text.ends_with(" is changed to:") || text.ends_with(" is removed")))
             })

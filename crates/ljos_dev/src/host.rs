@@ -164,6 +164,8 @@ pub enum DevError {
 /// state messages replace each other.
 const INBOX: usize = 4;
 const DEV_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6576);
+/// The answer to a flush is not news of the files: it does not replace it.
+const IDLE_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6577);
 
 /// An application under the watcher: its files compiled, its root made,
 /// and every save applied as it comes.
@@ -181,6 +183,8 @@ pub struct DevSession {
     settling: bool,
     more_errors: usize,
     reloads: u64,
+    /// The watcher answered a [`reload_now`](Self::reload_now).
+    flushed: bool,
     /// What `Qt.createQmlObject` compiles against.
     texts: Rc<ProjectTexts>,
 }
@@ -229,8 +233,13 @@ impl DevSession {
         }
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
         let watcher = Watcher::spawn(reloader, move |msg| {
+            let key = if matches!(msg, DevMsg::Idle) {
+                IDLE_KEY
+            } else {
+                DEV_KEY
+            };
             !handle
-                .send_coalesced(DEV_KEY, msg)
+                .send_coalesced(key, msg)
                 .is_err_and(|e| e.is_disconnected())
         })?;
         Ok(Self {
@@ -241,6 +250,7 @@ impl DevSession {
             settling: false,
             more_errors,
             reloads: 0,
+            flushed: false,
             texts,
         })
     }
@@ -253,6 +263,21 @@ impl DevSession {
 
     pub fn watcher(&self) -> &Watcher {
         &self.watcher
+    }
+
+    /// Reads the files and builds now, however recent the save, for a
+    /// person or an agent who asked for a reload. What it brings is
+    /// applied by [`pump`](Self::pump) as any save is; when everything
+    /// that was asked for has been, [`take_flushed`](Self::take_flushed)
+    /// says so.
+    pub fn reload_now(&self) {
+        self.watcher.flush();
+    }
+
+    /// True once after a [`reload_now`](Self::reload_now) was answered and
+    /// its result applied by `pump`.
+    pub fn take_flushed(&mut self) -> bool {
+        std::mem::take(&mut self.flushed)
     }
 
     /// How many reloads were applied.
@@ -285,6 +310,7 @@ impl DevSession {
         }
         for message in messages {
             match message {
+                DevMsg::Idle => self.flushed = true,
                 DevMsg::Cleared => {
                     engine.set_last_reload_error(None);
                     self.more_errors = 0;

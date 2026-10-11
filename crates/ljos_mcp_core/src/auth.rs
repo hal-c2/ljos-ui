@@ -174,6 +174,22 @@ pub fn loopback_host(header: &str, port: Option<u16>) -> bool {
     }
 }
 
+/// Whether a `Host` header is an address, not a name: what a server bound
+/// beyond this machine accepts. A page that made its own name resolve here
+/// (DNS rebinding) sends that name, and an address it cannot make its own.
+pub fn address_host(header: &str, port: Option<u16>) -> bool {
+    match authority(header) {
+        Some((host, given)) => {
+            (is_loopback_name(host) || host.parse::<std::net::IpAddr>().is_ok())
+                && match (given, port) {
+                    (Some(g), Some(p)) => g == p,
+                    _ => true,
+                }
+        }
+        None => false,
+    }
+}
+
 /// Whether an `Origin` header is a page served from this machine. A client
 /// that is not a browser sends no `Origin` at all.
 pub fn loopback_origin(header: &str) -> bool {
@@ -233,6 +249,18 @@ impl RateLimit {
 mod tests {
     use super::*;
     use crate::Cap;
+
+    #[test]
+    fn a_server_beyond_this_machine_answers_to_an_address_and_not_to_a_name() {
+        assert!(address_host("192.168.1.20:7600", Some(7600)));
+        assert!(address_host("[fe80::1]:7600", Some(7600)));
+        assert!(address_host("localhost:7600", Some(7600)));
+        // The port has to be the one listened on, when it is given.
+        assert!(!address_host("192.168.1.20:7601", Some(7600)));
+        // A page that made its own name resolve here sends that name.
+        assert!(!address_host("rebind.example:7600", Some(7600)));
+        assert!(!address_host("", Some(7600)));
+    }
 
     #[test]
     fn tokens_are_long_differ_and_compare() {

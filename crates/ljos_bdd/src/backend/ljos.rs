@@ -879,7 +879,7 @@ impl Backend for LjosBackend {
             self.live = Some(live);
             // An inspector connected before anything was loaded reads
             // this application's log from its first message.
-            if let (Some(rig), Some(live)) = (&self.inspector, &self.live) {
+            if let (Some(rig), Some(live)) = (&mut self.inspector, &self.live) {
                 rig.attach(live);
             }
             // Before the scenario's first object: a reload knows only
@@ -1208,7 +1208,9 @@ impl Backend for LjosBackend {
     }
 
     fn reload(&mut self) -> Result<()> {
-        self.live()?.reload_flush()
+        self.live()?.reload_flush()?;
+        self.note_reload();
+        Ok(())
     }
 
     fn reload_error(&mut self) -> Result<Option<super::ReloadFailure>> {
@@ -1222,6 +1224,10 @@ impl Backend for LjosBackend {
 
     fn reload_count(&mut self) -> Result<u64> {
         self.live()?.reload_count()
+    }
+
+    fn quit_requested(&mut self) -> Result<bool> {
+        Ok(self.live()?.engine.quit_requested())
     }
 
     fn panic_in(&mut self, object: &str, message: &str) -> Result<()> {

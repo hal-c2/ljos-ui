@@ -18,10 +18,13 @@ mod reply;
 mod size;
 #[cfg(feature = "inspect")]
 mod snapshot;
+mod socket;
 mod surface;
 
 #[cfg(feature = "http")]
-pub use auth::{RateLimit, Token, TokenFile, TokenFileError, loopback_host, loopback_origin};
+pub use auth::{
+    RateLimit, Token, TokenFile, TokenFileError, address_host, loopback_host, loopback_origin,
+};
 
 pub use caps::{Cap, CapSet, ParseCapError};
 pub use error::{ErrorCode, SurfaceError};
@@ -40,6 +43,7 @@ pub use snapshot::{
     Delta, LineOptions, MAX_NAME_CHARS, NodeValue, Outline, OutlineOptions, OutlineWriter,
     SnapNode, SnapTree, delta, number, render_line,
 };
+pub use socket::{SOCKET_PATH_MAX, SocketPathError, check_socket_path};
 pub use surface::{
     McpSurface, PromptArg, PromptDef, PromptText, ResourceContent, ResourceDef,
     ResourceTemplateDef, ServerMeta,

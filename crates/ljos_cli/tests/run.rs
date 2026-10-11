@@ -20,27 +20,51 @@ fn run_offers_to_watch() {
 }
 
 #[test]
-fn run_offers_the_inspector_and_says_that_it_only_looks() {
+fn run_offers_the_inspector_and_says_what_each_capability_is_for() {
     let out = ljos(&["run", "--help"]);
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);
     assert!(help.contains("--mcp[=<CAPS>]"), "{help}");
-    assert!(help.contains("Read-only"), "{help}");
+    assert!(help.contains("--mcp=inspect,input,mutate,eval"), "{help}");
+    assert!(help.contains("never implied"), "{help}");
+    assert!(help.contains("--mcp-bind"), "{help}");
+    assert!(help.contains("--mcp-socket"), "{help}");
     assert!(help.contains("loopback"), "{help}");
     assert!(help.contains("--mcp-redact"), "{help}");
     assert!(help.contains("--top"), "{help}");
 }
 
 #[test]
-fn a_capability_the_inspector_does_not_have_is_refused_before_a_window_opens() {
+fn a_capability_for_the_authoring_server_is_refused_before_a_window_opens() {
     let dir = tempfile::tempdir().unwrap();
     let main = dir.path().join("Main.qml");
     std::fs::write(&main, "import QtQuick\nItem {}\n").unwrap();
-    let out = ljos(&["run", main.to_str().unwrap(), "--mcp=inspect,input"]);
+    let out = ljos(&["run", main.to_str().unwrap(), "--mcp=inspect,fs"]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("read-only"), "{err}");
-    assert!(err.contains("input"), "{err}");
+    assert!(err.contains("authoring server"), "{err}");
+    assert!(err.contains("fs"), "{err}");
+}
+
+#[test]
+fn a_socket_path_that_is_too_long_is_refused_before_a_window_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(&main, "import QtQuick\nItem {}\n").unwrap();
+    let long = format!("/tmp/{}", "s".repeat(200));
+    let out = ljos(&[
+        "run",
+        main.to_str().unwrap(),
+        "--mcp",
+        "--mcp-socket",
+        &long,
+    ]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&long), "{err}");
+    assert!(err.contains("205"), "{err}");
+    assert!(err.contains("at most"), "{err}");
+    assert!(err.contains("--mcp-socket"), "{err}");
 }
 
 #[test]

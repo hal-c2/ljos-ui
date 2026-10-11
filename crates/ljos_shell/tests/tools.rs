@@ -223,7 +223,8 @@ mod inspector {
         thread,
     };
 
-    use ljos_shell::{InspectorAddress, InspectorOptions};
+    use ljos_dev::mcp::{Cap, CapSet};
+    use ljos_shell::{InspectorAccess, InspectorAddress, InspectorOptions};
 
     use super::*;
 
@@ -259,13 +260,23 @@ mod inspector {
     /// One `tools/call` over HTTP, as a client that is no MCP library
     /// writes it. Returns the status and the body.
     fn call(address: &InspectorAddress, bearer: &str, tool: &str) -> (u16, String) {
+        call_with(address, bearer, tool, "{}")
+    }
+
+    /// As [`call`], with the arguments (a JSON object) of the tool.
+    fn call_with(
+        address: &InspectorAddress,
+        bearer: &str,
+        tool: &str,
+        arguments: &str,
+    ) -> (u16, String) {
         let host = address
             .url
             .strip_prefix("http://")
             .and_then(|u| u.strip_suffix("/mcp"))
             .expect("a loopback URL");
         let body = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}","arguments":{{}}}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}","arguments":{arguments}}}}}"#
         );
         let mut stream = TcpStream::connect(host).unwrap();
         stream.set_read_timeout(Some(PATIENCE)).unwrap();
@@ -298,6 +309,136 @@ mod inspector {
         w.h.run();
         w.forget_wakes();
         client.join().unwrap()
+    }
+
+    /// A window whose clients hold `caps`.
+    fn served_with(caps: &[Cap]) -> (Window, InspectorAddress) {
+        let (tx, rx) = mpsc::channel();
+        let caps = CapSet::of(caps.iter().copied());
+        let w = window(move |setup| {
+            let dir = tempfile::tempdir()?.keep();
+            let address = setup.serve_inspector_as(
+                InspectorOptions {
+                    port: 0,
+                    token_file: dir.join("mcp.json"),
+                    redact_all: false,
+                },
+                InspectorAccess {
+                    caps,
+                    ..InspectorAccess::default()
+                },
+                |_| {},
+            )?;
+            let _ = tx.send(address);
+            Ok(())
+        });
+        (w, rx.recv().unwrap())
+    }
+
+    /// The answer's structured content: the JSON object in the body.
+    fn structured(body: &str) -> serde_json::Value {
+        let (from, to) = (body.find('{').unwrap(), body.rfind('}').unwrap());
+        let reply: serde_json::Value =
+            serde_json::from_str(&body[from..=to]).unwrap_or_else(|e| panic!("{e}: {body}"));
+        reply["result"]["structuredContent"].clone()
+    }
+
+    /// The project's entry file, changed to say `name` on its button.
+    fn save_as(w: &Window, name: &str) {
+        let entry = w._tmp.path().canonicalize().unwrap().join("Main.qml");
+        fs::write(entry, MAIN.replace("\"Save\"", &format!("\"{name}\""))).unwrap();
+    }
+
+    #[test]
+    fn a_watched_window_says_that_its_files_are_watched() {
+        let (mut w, address) = served_with(&[Cap::Inspect]);
+        let (status, body) = answer(&mut w, &address, "app_status");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(structured(&body)["reload"]["watched"], true, "{body}");
+        assert!(!body.contains("files are not watched"), "{body}");
+    }
+
+    #[test]
+    fn app_status_says_how_many_windows_there_are_and_which_is_inspected() {
+        let (mut w, address) = served();
+        let (status, body) = answer(&mut w, &address, "app_status");
+        assert_eq!(status, 200, "{body}");
+        let s = structured(&body);
+        assert_eq!(s["window_count"], 1, "{body}");
+        assert_eq!(s["inspected"], "primary_window_only", "{body}");
+    }
+
+    #[test]
+    fn app_reload_applies_a_save_at_once() {
+        let (mut w, address) = served_with(&[Cap::Inspect, Cap::Mutate]);
+        save_as(&w, "Saved");
+        let (status, body) = answer(&mut w, &address, "app_reload");
+        assert_eq!(status, 200, "{body}");
+        let s = structured(&body);
+        assert_eq!(s["generation"], 1, "{body}");
+        assert!(
+            matches!(s["outcome"].as_str(), Some("applied" | "unchanged")),
+            "{body}"
+        );
+        let (_, body) = answer(&mut w, &address, "app_snapshot");
+        assert!(body.contains("button \\\"Saved\\\""), "{body}");
+        assert_eq!(w.h.state().reloads(), Some(1));
+    }
+
+    #[test]
+    fn app_reload_with_nothing_changed_says_so() {
+        let (mut w, address) = served_with(&[Cap::Inspect, Cap::Mutate]);
+        let (status, body) = answer(&mut w, &address, "app_reload");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(structured(&body)["outcome"], "unchanged", "{body}");
+        assert_eq!(w.h.state().reloads(), Some(0));
+        w.assert_idle();
+    }
+
+    #[test]
+    fn app_reload_tells_a_save_that_does_not_compile() {
+        let (mut w, address) = served_with(&[Cap::Inspect, Cap::Mutate]);
+        let entry = w._tmp.path().canonicalize().unwrap().join("Main.qml");
+        fs::write(entry, "import QtQuick\nItem {\n").unwrap();
+        let (status, body) = answer(&mut w, &address, "app_reload");
+        assert_eq!(status, 200, "{body}");
+        let s = structured(&body);
+        assert_eq!(s["outcome"], "failed", "{body}");
+        assert_eq!(s["generation"], 0, "{body}");
+        assert_eq!(w.h.state().reloads(), Some(0));
+    }
+
+    #[test]
+    fn a_client_that_waits_for_a_reload_does_not_wake_the_window() {
+        let (mut w, address) = served_with(&[Cap::Inspect]);
+        let (a, bearer) = (address.clone(), token(&address));
+        let client = thread::spawn(move || {
+            call_with(
+                &a,
+                &bearer,
+                "app_status",
+                r#"{"after_reload":0,"wait_ms":25000}"#,
+            )
+        });
+        // A few seconds, in which a timer on the window's thread or on
+        // the server's would show as a wake.
+        assert!(
+            w.woke.recv_timeout(Duration::from_secs(3)).is_err(),
+            "a waiting client woke the window"
+        );
+        assert!(!client.is_finished());
+        save_as(&w, "Waited");
+        while !client.is_finished() {
+            if w.woke.recv_timeout(Duration::from_millis(20)).is_ok() {
+                w.h.run();
+            }
+        }
+        w.h.run();
+        let (status, body) = client.join().unwrap();
+        assert_eq!(status, 200, "{body}");
+        let s = structured(&body);
+        assert_eq!(s["reload"]["generation"], 1, "{body}");
+        assert_eq!(s["reload"]["waited"], true, "{body}");
     }
 
     #[test]
@@ -339,6 +480,37 @@ mod inspector {
         let (status, body) = answer(&mut w, &address, "app_metrics");
         assert_eq!(status, 200, "{body}");
         assert!(body.contains("frames"), "{body}");
+    }
+
+    #[test]
+    fn a_window_serves_the_capabilities_it_was_given_and_no_other() {
+        let (tx, rx) = mpsc::channel();
+        let mut w = window(move |setup| {
+            let dir = tempfile::tempdir()?.keep();
+            let address = setup.serve_inspector_as(
+                InspectorOptions {
+                    port: 0,
+                    token_file: dir.join("mcp.json"),
+                    redact_all: false,
+                },
+                InspectorAccess {
+                    caps: CapSet::of([Cap::Inspect, Cap::Input]),
+                    ..InspectorAccess::default()
+                },
+                |_| {},
+            )?;
+            let _ = tx.send(address);
+            Ok(())
+        });
+        let address = rx.recv().unwrap();
+        let (status, body) = answer(&mut w, &address, "app_status");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("capabilities: inspect, input"), "{body}");
+        // `eval` is not among them, and the refusal says how to get it.
+        let (status, body) = answer(&mut w, &address, "app_eval");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("capability_denied"), "{body}");
+        assert!(body.contains("--mcp=inspect,input,eval"), "{body}");
     }
 
     #[test]

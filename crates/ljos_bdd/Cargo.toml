@@ -51,6 +51,9 @@ ljos_i18n = { path = "../ljos_i18n" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
 qml_front = { path = "../qml_front" }
+# Which table of types the build reads QML against: a `@no-qt-table` scenario
+# is for a build without Qt's.
+qt_types = { path = "../qt_types" }
 # Only the R (vello_cpu) backend: egui stays out of this crate.
 ljos_render = { path = "../ljos_render", default-features = false }
 

@@ -40,6 +40,28 @@ Feature: Status, log, measurements and pictures from the inspector
       And the answer's "/clock" is "virtual"
       And the answer's "/capabilities" is ["inspect"]
 
+    Scenario: Only the primary window is inspected, and the agent is told so
+      When the agent calls the tool "app_status"
+      Then the answer's "/window_count" is 1
+      And the answer's "/inspected" is "primary_window_only"
+
+    Scenario: An application with several windows says how many there are
+      Given the host says the application has 3 windows
+      When the agent calls the tool "app_status"
+      Then the answer's "/window_count" is 3
+      And the answer's "/inspected" is "primary_window_only"
+      And the answer's "/windows" has 1 entries
+
+    Scenario: What may be done is what the agent was started with
+      Given the inspector is connected with the capabilities "inspect, input, mutate"
+      When the agent calls the tool "app_status"
+      Then the answer's "/capabilities" is ["inspect", "input", "mutate"]
+
+    Scenario: A reload that nobody has made is told as none
+      When the agent calls the tool "app_status"
+      Then the answer's "/reload/generation" is 0
+      And the answer's "/reload/watched" is false
+
     Scenario: The item with the keyboard is named
       When the agent calls the tool "app_status"
       Then the answer's "/windows/0/focus/role" is "textinput"

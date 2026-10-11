@@ -19,10 +19,10 @@ use std::{
 };
 
 use ljos_dev::{
-    DevSession,
+    DevSession, Host,
     mcp::{self, HttpServer, Inspector, InspectorConfig, Listen},
 };
-use ljos_engine::Engine;
+use ljos_engine::{Engine, ObjectId};
 use ljos_quick::QuickScene;
 use ljos_render::{RgbaImage, kurbo};
 use ljos_runtime::{Clock as _, SystemClock};
@@ -55,6 +55,27 @@ struct Bell {
     count: AtomicUsize,
 }
 
+impl Bell {
+    fn wake(&self) {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        *self.rung.lock().unwrap() = true;
+        self.ring.notify_one();
+    }
+}
+
+/// The scene the watcher's reloads are shown in.
+struct SceneHost<'a>(&'a mut QuickScene);
+
+impl Host for SceneHost<'_> {
+    fn window(&self) -> Option<ObjectId> {
+        self.0.root()
+    }
+
+    fn show(&mut self, engine: &Engine, _old: Option<ObjectId>, new: ObjectId) {
+        self.0.set_root(engine, new).expect("the root is an Item");
+    }
+}
+
 struct Served {
     server: HttpServer,
     inspector: Inspector,
@@ -63,7 +84,7 @@ struct Served {
     clock: SystemClock,
     bell: Arc<Bell>,
     token_file: PathBuf,
-    _session: DevSession,
+    session: DevSession,
     tmp: tempfile::TempDir,
 }
 
@@ -159,7 +180,15 @@ fn serve(listen: impl FnOnce(&std::path::Path) -> Listen) -> Served {
     fs::write(dir.join("Main.qml"), MAIN).unwrap();
     let engine = Engine::new();
     ljos_quick::register(&engine);
-    let session = DevSession::open(&engine, &dir.join("Main.qml"), Arc::new(|| {})).unwrap();
+    let bell = Arc::new(Bell::default());
+    // The watcher wakes the host as it does the shell's: through the bell
+    // the inspector's own wake rings, so every wake of the "UI thread" is
+    // counted in one place.
+    let wake: ljos_runtime::WakeHook = {
+        let bell = bell.clone();
+        Arc::new(move || bell.wake())
+    };
+    let session = DevSession::open(&engine, &dir.join("Main.qml"), wake.clone()).unwrap();
     let root = session.root().expect("Main.qml loads");
     let mut scene = QuickScene::new(kurbo::Size::new(200.0, 100.0));
     scene.set_root(&engine, root).unwrap();
@@ -171,16 +200,10 @@ fn serve(listen: impl FnOnce(&std::path::Path) -> Listen) -> Served {
         }
     }
 
-    let bell = Arc::new(Bell::default());
-    let wake = {
-        let bell = bell.clone();
-        Arc::new(move || {
-            bell.count.fetch_add(1, Ordering::SeqCst);
-            *bell.rung.lock().unwrap() = true;
-            bell.ring.notify_one();
-        })
-    };
-    let (inspector, surface) = Inspector::new(InspectorConfig::default(), wake);
+    let (mut inspector, surface) = Inspector::new(InspectorConfig::default(), wake);
+    // A host attaches before it runs a frame: what came before is not a
+    // reload to tell.
+    inspector.observe(&engine);
     let token_file = mcp::default_token_file(&dir);
     let server = mcp::serve(surface, listen(&dir), &token_file).expect("the server starts");
     Served {
@@ -191,7 +214,7 @@ fn serve(listen: impl FnOnce(&std::path::Path) -> Listen) -> Served {
         clock,
         bell,
         token_file,
-        _session: session,
+        session,
         tmp,
     }
 }
@@ -217,6 +240,35 @@ impl Served {
         self.bell.count.load(Ordering::SeqCst)
     }
 
+    /// What the UI thread does when it is woken: the watcher's news first,
+    /// then the inspector, as the shell does.
+    fn service(&mut self) {
+        let _ = self
+            .session
+            .pump(&self.engine, &self.clock, &mut SceneHost(&mut self.scene));
+        self.inspector.observe(&self.engine);
+        self.inspector
+            .pump(&self.engine, &mut self.scene, &self.clock);
+        self.scene.frame(&self.engine, self.clock.now());
+    }
+
+    /// Sleeps until woken, at most `limit`, and serves the wake. Whether
+    /// there was one.
+    fn sleep_until_woken(&mut self, limit: Duration) -> bool {
+        let rung = self.bell.rung.lock().unwrap();
+        let (mut rung, _) = self
+            .bell
+            .ring
+            .wait_timeout_while(rung, limit, |rung| !*rung)
+            .unwrap();
+        let woken = std::mem::take(&mut *rung);
+        drop(rung);
+        if woken {
+            self.service();
+        }
+        woken
+    }
+
     /// Runs `request` on a thread of its own, as a client is one, while
     /// this thread does what a UI thread does: sleep until woken, then
     /// let the inspector work.
@@ -224,19 +276,7 @@ impl Served {
         std::thread::scope(|threads| {
             let client = threads.spawn(request);
             while !client.is_finished() {
-                let rung = self.bell.rung.lock().unwrap();
-                let (mut rung, _) = self
-                    .bell
-                    .ring
-                    .wait_timeout_while(rung, Duration::from_millis(20), |rung| !*rung)
-                    .unwrap();
-                let woken = std::mem::take(&mut *rung);
-                drop(rung);
-                if woken {
-                    self.inspector
-                        .pump(&self.engine, &mut self.scene, &self.clock);
-                    self.scene.frame(&self.engine, self.clock.now());
-                }
+                self.sleep_until_woken(Duration::from_millis(20));
             }
             client.join().unwrap()
         })
@@ -334,7 +374,7 @@ fn the_instructions_and_the_tools_are_told_to_a_client_that_connects() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(names, mcp::TOOLS);
+    assert_eq!(names, &mcp::TOOLS[..7]);
     assert_eq!(served.wakes(), 0, "none of this is the application's work");
 }
 
@@ -469,13 +509,14 @@ fn the_token_file_is_its_owners_alone_and_goes_with_the_server() {
 
 #[test]
 fn a_unix_socket_only_its_owner_can_open_serves_the_same() {
-    let mut served = serve(|dir| Listen::Unix(dir.join("inspector.sock")));
-    let socket = served
-        .tmp
-        .path()
-        .canonicalize()
-        .unwrap()
-        .join("inspector.sock");
+    // A directory of its own and a short one: a socket path has a length
+    // limit and `TMPDIR` may be longer than it, so the test does not use it.
+    let short = tempfile::Builder::new()
+        .prefix("lj")
+        .tempdir_in("/tmp")
+        .expect("/tmp is there to hold a socket");
+    let mut served = serve(|_| Listen::Unix(short.path().join("i.sock")));
+    let socket = short.path().join("i.sock");
     let mode = fs::metadata(&socket).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
     assert!(served.server.addr().is_none(), "no TCP port is open");
@@ -506,4 +547,93 @@ fn a_unix_socket_only_its_owner_can_open_serves_the_same() {
 
     served.server.stop();
     assert!(!socket.exists(), "the socket goes with the server");
+}
+
+/// Main.qml with a changed body: the watcher builds it and wakes the host.
+fn edit(served: &Served, marker: &str) {
+    let path = served.tmp.path().join("Main.qml");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replace("width: 200; height: 100", marker)).unwrap();
+}
+
+fn waiting(client: &Client, addr: SocketAddr, wait_ms: u64) -> Answer {
+    let body = call(
+        "app_status",
+        json!({ "after_reload": 0, "wait_ms": wait_ms }),
+    );
+    exchange(TcpStream::connect(addr).unwrap(), &client.headers(), &body)
+}
+
+#[test]
+fn a_client_that_waits_for_a_reload_does_not_wake_the_ui_thread() {
+    let mut served = Served::tcp();
+    let client = served.client();
+    let addr = served.addr();
+    // A long time: only a timer that wakes somebody every so often would
+    // show in a few seconds of it.
+    let waited = std::thread::scope(|threads| {
+        let waiter = threads.spawn(|| waiting(&client, addr, 20_000));
+        let mut woken = 0;
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
+            woken += usize::from(served.sleep_until_woken(left));
+        }
+        assert_eq!(woken, 0, "the UI thread was woken for a client that waits");
+        assert_eq!(served.wakes(), 0);
+        assert!(!waiter.is_finished(), "the wait ended with nothing to tell");
+        // Now a reload happens: the client is answered at once.
+        let began = std::time::Instant::now();
+        edit(&served, "width: 220; height: 100");
+        while !waiter.is_finished() {
+            served.sleep_until_woken(Duration::from_millis(50));
+            assert!(
+                began.elapsed() < Duration::from_secs(15),
+                "the reload did not end the wait"
+            );
+        }
+        (waiter.join().unwrap(), began.elapsed())
+    });
+    let (answer, took) = waited;
+    assert_eq!(answer.status, 200, "{}", answer.body);
+    let status = &answer.json()["result"]["structuredContent"];
+    assert_eq!(status["reload"]["generation"], 1, "{status}");
+    assert_eq!(status["reload"]["waited"], true, "{status}");
+    assert!(took < Duration::from_secs(15), "{took:?}");
+}
+
+#[test]
+fn a_client_that_waits_is_told_when_a_reload_fails() {
+    let mut served = Served::tcp();
+    let client = served.client();
+    let addr = served.addr();
+    let answer = std::thread::scope(|threads| {
+        let waiter = threads.spawn(|| waiting(&client, addr, 20_000));
+        std::thread::sleep(Duration::from_millis(300));
+        let path = served.tmp.path().join("Main.qml");
+        fs::write(&path, "import QtQuick\nItem {\n").unwrap();
+        let began = std::time::Instant::now();
+        while !waiter.is_finished() {
+            served.sleep_until_woken(Duration::from_millis(50));
+            assert!(
+                began.elapsed() < Duration::from_secs(15),
+                "the failed reload did not end the wait"
+            );
+        }
+        waiter.join().unwrap()
+    });
+    let status = &answer.json()["result"]["structuredContent"];
+    assert_eq!(status["reload"]["last"]["outcome"], "failed", "{status}");
+    assert_eq!(status["reload"]["generation"], 0, "{status}");
+}
+
+#[test]
+fn a_wait_that_runs_out_wakes_the_ui_thread_once_for_its_answer() {
+    let mut served = Served::tcp();
+    let client = served.client();
+    let addr = served.addr();
+    let answer = served.during(|| waiting(&client, addr, 2_000));
+    let status = &answer.json()["result"]["structuredContent"];
+    assert_eq!(status["reload"]["waited"], true, "{status}");
+    // The one wake is the request for the status, made when time was up.
+    assert_eq!(served.wakes(), 1);
 }

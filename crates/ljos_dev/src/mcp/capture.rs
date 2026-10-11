@@ -98,7 +98,7 @@ fn truthy(v: &Value) -> bool {
 
 /// Whether `obj` is a field that hides what is typed into it: any
 /// `echoMode` but the normal one (0).
-fn hides_its_text(engine: &Engine, obj: ObjectId) -> bool {
+pub(crate) fn hides_its_text(engine: &Engine, obj: ObjectId) -> bool {
     match engine.read_by_name(obj, "echoMode") {
         Value::Undefined | Value::Null => false,
         v => v.to_number() != 0.0,
@@ -107,7 +107,7 @@ fn hides_its_text(engine: &Engine, obj: ObjectId) -> bool {
 
 /// Whether `obj` holds text a person types (`TextInput`, `TextEdit` and
 /// what is made from them).
-fn is_editor(engine: &Engine, obj: ObjectId) -> bool {
+pub(crate) fn is_editor(engine: &Engine, obj: ObjectId) -> bool {
     engine.property_index(obj, "cursorPosition").is_ok()
         && engine.property_index(obj, "text").is_ok()
 }
@@ -143,6 +143,12 @@ fn states(d: &ljos_a11y::NodeData, focused: bool) -> Vec<&'static str> {
         out.push("readonly");
     }
     out
+}
+
+/// Whether the text of `obj` must not be shown: it hides what is typed, or
+/// it is an editor and every editor is masked.
+pub(crate) fn is_secret(engine: &Engine, obj: ObjectId, redact_all: bool) -> bool {
+    engine.untrack(|| hides_its_text(engine, obj) || (redact_all && is_editor(engine, obj)))
 }
 
 /// Copies what `scene` shows. The scene's accessibility tree must be up to

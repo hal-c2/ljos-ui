@@ -45,6 +45,8 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# `tests/own_types.rs` asks which table of types the build has.
+qt_types = { path = "../qt_types" }
 
 [lints]
 workspace = true

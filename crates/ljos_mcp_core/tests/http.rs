@@ -351,11 +351,36 @@ fn stopping_closes_a_connection_that_was_left_open() {
     assert!(std::net::TcpStream::connect(addr).is_err());
 }
 
+/// A directory with a path short enough for a socket: `TMPDIR` may be
+/// longer than the system allows, so these tests do not use it.
+#[cfg(unix)]
+fn short_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("lj")
+        .tempdir_in("/tmp")
+        .expect("/tmp holds the socket")
+}
+
+#[cfg(unix)]
+#[test]
+fn a_unix_socket_path_that_is_too_long_is_refused_naming_the_path() {
+    let dir = short_dir();
+    let path = dir.path().join("s".repeat(200));
+    let mut cfg = config();
+    cfg.listen = Listen::Unix(path.clone());
+    let err = HttpServer::start(Demo::new(), cfg).unwrap_err().to_string();
+    assert!(err.contains(&path.display().to_string()), "{err}");
+    assert!(err.contains(&path.as_os_str().len().to_string()), "{err}");
+    assert!(err.contains("at most"), "{err}");
+    assert!(err.contains("--mcp-socket"), "{err}");
+    assert!(!path.exists(), "nothing was made, nothing moved");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_unix_socket_is_its_owners_alone() {
     use std::os::unix::fs::PermissionsExt as _;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = short_dir();
     let path = dir.path().join("mcp.sock");
     let mut cfg = config();
     cfg.listen = Listen::Unix(path.clone());
@@ -376,4 +401,135 @@ fn a_unix_socket_is_its_owners_alone() {
     );
     server.stop();
     assert!(!path.exists());
+}
+
+#[test]
+fn an_address_given_on_purpose_is_served_and_told() {
+    let mut cfg = config();
+    cfg.listen = Listen::Address("127.0.0.1:0".parse().unwrap());
+    let rig = Rig::start(cfg);
+    let addr = rig.server.addr().unwrap();
+    assert!(addr.ip().is_loopback() && addr.port() != 0, "{addr}");
+    assert_eq!(rig.server.warning(), None);
+    assert_eq!(rig.call(&rig.bearer).status, 200);
+}
+
+#[test]
+fn an_address_beyond_this_machine_needs_the_second_word() {
+    use ljos_mcp_core::glue::http::{HttpError, LAN_WARNING, bind_policy};
+    let lan: std::net::SocketAddr = "0.0.0.0:7600".parse().unwrap();
+    // Decided before anything is opened, so that no port is ever bound.
+    let refused = bind_policy(lan, false).unwrap_err();
+    let said = refused.to_string();
+    assert!(said.contains("--mcp-bind 0.0.0.0:7600"), "{said}");
+    assert!(said.contains("--mcp-insecure-lan"), "{said}");
+    assert!(matches!(refused, HttpError::NotLoopback { .. }));
+    assert_eq!(bind_policy(lan, true).unwrap(), Some(LAN_WARNING));
+    assert_eq!(
+        bind_policy("127.0.0.1:7600".parse().unwrap(), false).unwrap(),
+        None
+    );
+    assert_eq!(
+        bind_policy("[::1]:7600".parse().unwrap(), false).unwrap(),
+        None
+    );
+    // The server itself refuses too, and says the same.
+    let mut cfg = config();
+    cfg.listen = Listen::Address(lan);
+    let err = HttpServer::start(Demo::new(), cfg).err().unwrap();
+    assert!(err.to_string().contains("--mcp-insecure-lan"), "{err}");
+    assert!(
+        LAN_WARNING.contains("anyone on the network"),
+        "{LAN_WARNING}"
+    );
+}
+
+/// The process the signal tests end: this test binary, started again with
+/// the path of a token file. It serves until a signal comes and does not
+/// return from the test function, so a signal is the only way out.
+#[cfg(unix)]
+fn serve_until_signalled(token: &std::path::Path, socket: &std::path::Path) -> ! {
+    let mut cfg = config().token_file(token);
+    cfg.listen = Listen::Unix(socket.to_path_buf());
+    cfg.clean_up_on_signals = true;
+    let _server = HttpServer::start(Demo::new(), cfg).unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+/// Starts the server in a child process, ends it with `signal` and returns
+/// its exit code with whether its token file and socket are left.
+#[cfg(unix)]
+fn end_a_server_with(test: &str, signal: &str) -> (Option<i32>, bool, bool) {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let dir = short_dir();
+    let token = dir.path().join("mcp-1.json");
+    let socket = dir.path().join("mcp.sock");
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([test, "--exact", "--test-threads=1", "--nocapture"])
+        .env("LJOS_TEST_SERVE_TOKEN", &token)
+        .env("LJOS_TEST_SERVE_SOCKET", &socket)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    // The token file is written after the signal handlers are in place, so
+    // its appearing is the moment a signal is certain to be handled.
+    while !token.exists() {
+        assert!(started.elapsed() < Duration::from_secs(30), "no token file");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(socket.exists());
+    let sent = Command::new("kill")
+        .args([signal, &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(sent.success());
+    let code = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status.code();
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            child.kill().unwrap();
+            panic!("the server did not end");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    (code, token.exists(), socket.exists())
+}
+
+#[cfg(unix)]
+fn child_of(test: &str) {
+    if let (Some(token), Some(socket)) = (
+        std::env::var_os("LJOS_TEST_SERVE_TOKEN"),
+        std::env::var_os("LJOS_TEST_SERVE_SOCKET"),
+    ) {
+        let _ = test;
+        serve_until_signalled(token.as_ref(), socket.as_ref());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sigterm_removes_the_token_file_and_the_socket() {
+    child_of("sigterm_removes_the_token_file_and_the_socket");
+    let (code, token, socket) =
+        end_a_server_with("sigterm_removes_the_token_file_and_the_socket", "-TERM");
+    assert_eq!(code, Some(143));
+    assert!(!token, "the token file was left");
+    assert!(!socket, "the socket was left");
+}
+
+#[cfg(unix)]
+#[test]
+fn sigint_removes_the_token_file_and_the_socket() {
+    child_of("sigint_removes_the_token_file_and_the_socket");
+    let (code, token, socket) =
+        end_a_server_with("sigint_removes_the_token_file_and_the_socket", "-INT");
+    assert_eq!(code, Some(130));
+    assert!(!token, "the token file was left");
+    assert!(!socket, "the socket was left");
 }
