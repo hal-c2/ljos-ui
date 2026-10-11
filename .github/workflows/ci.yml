@@ -23,7 +23,8 @@ jobs:
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
       # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
+      # Font discovery links fontconfig on Linux (the test fonts themselves are in the repository).
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev pkg-config
       - run: mise run check
       - run: mise run test
       - run: mise run features:lint
