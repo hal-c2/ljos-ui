@@ -32,16 +32,21 @@ mod positioners;
 mod rectangle;
 mod repeater;
 mod scene;
+mod shapes;
+mod states;
 mod system_prefs;
 mod text;
 pub mod text_input;
 mod tree;
+mod views;
 mod wheel;
 mod wheel_handler;
 
 pub use accessible::{Accessible, AccessibleAttached};
 pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
 pub use anchors::CATEGORY as ANCHORS_CATEGORY;
+pub use animation::SpringAnimation;
+pub use animation::{AnchorAnimation, ParentAnimation};
 pub use animation::{
     Animation, AnimationController, Behavior, BehaviorTarget, ColorAnimation, Easing, EasingGroup,
     NumberAnimation, ParallelAnimation, PauseAnimation, PropertyAction, PropertyAnimation,
@@ -92,6 +97,11 @@ pub use scene::{
     DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, FrameOutput, INCUBATION_BUDGET, MAX_POLISH_PASSES,
     POLISH_CATEGORY, QuickScene, SCENE_CATEGORY, TimerHook,
 };
+pub use shapes::{Shape, ShapePaint, ShapePath};
+pub use states::{
+    AnchorChanges, AnchorChangesAnchors, Binding, ParentChange, PropertyChanges, State,
+    StateChangeScript, StateGroup,
+};
 pub use system_prefs::{
     AccessibilityHints, StyleHints, color_scheme, contrast, font_scale, reduced_motion,
     screen_reader_active, set_system_prefs, system_prefs, update_system_prefs,
@@ -100,11 +110,17 @@ pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, set_text_engine, text_engine,
     text_style,
 };
+pub use text::{RichHandle, SelectionScope};
 pub use text_input::{
     AccessibleTextAction, Clipboard, DoubleValidator, ImeState, IntValidator, PlatformTextInput,
     RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
 pub use tree::{add_data, child_items, resources, set_parent_item, sync_parent};
+pub use views::{
+    DelegateModel, ObjectModel, drive_delegate_model, object_model_changed, object_model_rows,
+};
+pub use views::{GridView, ItemView, ListView, ViewAttached, ViewSection};
+pub use views::{view_index_of, view_item_at};
 pub use wheel_handler::WheelHandler;
 
 /// The text engine's types, for hosts that configure fonts.
@@ -129,6 +145,8 @@ pub fn register(engine: &Engine) {
         keys::StandardKey,
         WheelEventObject, WheelHandler,
     ]));
+    // A file that imports `QtQuick` has `Timer` and `QtObject` too.
+    engine.register_import("QtQuick", "QtQml");
     engine.register_module(ljos_engine::module!("QtQuick.Layouts" 1.15 => [
         Layout, RowLayout, ColumnLayout, GridLayout, StackLayout,
     ]));
@@ -138,6 +156,7 @@ pub fn register(engine: &Engine) {
     accessible::register(engine);
     system_prefs::register(engine);
     animation::register(engine);
+    states::register(engine);
     font_enums::register(engine);
     // Idempotent, so registering twice does no harm.
     engine.on_visual_parent_changed(|e, obj, parent| {
@@ -153,8 +172,11 @@ pub fn register(engine: &Engine) {
     focus::register(engine);
     keys::register(engine);
     flickable::register(engine);
+    views::register(engine);
     text_input::register(engine);
+    text::register(engine);
     // Module `Ljos`, and Loader and ErrorBoundary as UI boundaries.
     error_boundary::register(engine);
     loader::register(engine);
+    shapes::register(engine);
 }

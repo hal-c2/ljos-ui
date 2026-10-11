@@ -69,7 +69,11 @@ pub use text_area::TextArea;
 pub use text_field::TextField;
 pub use tooltip::{ToolTip, ToolTipAttached};
 pub use util::CATEGORY;
-pub use window::{ApplicationWindow, Window};
+pub use window::{
+    Application, ApplicationState, ApplicationWindow, CloseEvent, FRAMELESS, KIND_MASK, Modality,
+    STAYS_ON_BOTTOM, STAYS_ON_TOP, ScreenInfo, ScreenSpec, Window, WindowRequest, WindowShow,
+    WindowSpec, WindowSystem,
+};
 
 use style::{BASIC, StyleLibrary};
 
@@ -107,8 +111,11 @@ pub fn register(engine: &Engine) {
             MetaRef::Static(Window::static_meta()),
         );
     }
+    // A file that imports `QtQuick.Window` has what `QtQuick` has.
+    engine.register_import("QtQuick.Window", "QtQuick");
     // The button's hooks after the control's: the later registration is
     // the one a button gets.
+    window::register(engine);
     control::register(engine);
     button::register(engine);
     label::register(engine);
@@ -156,7 +163,7 @@ pub fn register(engine: &Engine) {
         util::warn(
             engine,
             "QtQuick.Controls has no types: the Basic style was not compiled when ljos_controls \
-             was built (Qt's type table was missing)",
+             was built (its build script says why)",
         );
     }
     for uri in CONTROLS {

@@ -47,9 +47,12 @@ mod color_names;
 mod context;
 mod cx;
 mod delegates;
+mod describe;
+mod devtools;
 mod engine;
 mod error;
 mod fault;
+mod foreign;
 mod hooks;
 mod i18n;
 mod ids;
@@ -87,9 +90,13 @@ pub use builtins::QtObject;
 pub use context::Context;
 pub use cx::Cx;
 pub use delegates::{DelegateHost, Delegates, RemovalOrder};
+pub use delegates::{Made, Urgency, ViewDelegates, ViewHost};
+pub use describe::{QtNamespaceEnum, VALUE_TYPES, ValueType, qt_namespace};
+pub use devtools::{BindingGraph, DependencyReport, EvalJson, MAX_EVAL_TIME};
 pub use engine::{Engine, OverrideContent, ParentListener};
 pub use error::EngineError;
 pub use fault::{FaultReport, StackFrame, fault_kind};
+pub use foreign::{ForeignBinding, ForeignKeeper, ForeignMember, ForeignValue};
 pub use hooks::{Interception, Interceptor};
 pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey, SignalIndex};
 pub use incubate::Incubator;
@@ -110,7 +117,9 @@ pub use meta::{
     PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Reset, ResetApply, ResetValue,
     Setter, SignalDecl, SignalInfo,
 };
+pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, ObjectRows};
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};
+pub use model::{ModelSignals, QmlListModel, list_model};
 pub use number::{number_to_string, string_to_number, to_int32};
 pub use object::{
     ObjectFlags, QmlObject, QmlType, ScriptMethod, downcast_chain, downcast_chain_mut, find_native,

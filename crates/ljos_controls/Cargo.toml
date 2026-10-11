@@ -32,6 +32,8 @@ qt_types = { path = "../qt_types" }
 # Tests compile QML strings.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+# Tests that hold Ljós's types to Qt's description say so where there is none.
+qt_types = { path = "../qt_types" }
 # The accessibility audit goes over the style in both colour schemes.
 ljos_test = { path = "../ljos_test" }
 
