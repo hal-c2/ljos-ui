@@ -34,6 +34,34 @@ fn clamp(mut pos: f64, size: f64, bound: f64, near: f64, far: f64) -> f64 {
     pos
 }
 
+/// How large an open popup that was given no size of its own is along
+/// one axis: as large as it `wanted`, and no larger than the room between
+/// its margins when it has one at both ends (read off qml6: a margin at
+/// one end only moves the popup, and a closed popup is as large as it
+/// wants to be). Everything it reads is a dependency of the caller.
+pub(super) fn fitted(engine: &Engine, popup: ObjectId, horizontal: bool, wanted: f64) -> f64 {
+    let (near, far, extent) = if horizontal {
+        (Popup::LEFT_MARGIN, Popup::RIGHT_MARGIN, Item::WIDTH)
+    } else {
+        (Popup::TOP_MARGIN, Popup::BOTTOM_MARGIN, Item::HEIGHT)
+    };
+    let (near, far) = (
+        num(engine, popup, near.index),
+        num(engine, popup, far.index),
+    );
+    if near < 0.0 || far < 0.0 || !flag(engine, popup, Popup::VISIBLE.index) {
+        return wanted;
+    }
+    let Some(overlay) = item_of(engine, popup).and_then(|item| engine.visual_parent(item)) else {
+        return wanted;
+    };
+    let bound = num(engine, overlay, extent.index);
+    if bound <= 0.0 {
+        return wanted;
+    }
+    wanted.min((bound - near - far).max(0.0))
+}
+
 /// Puts an open popup's item where the popup belongs, and makes `x` and
 /// `y` read as where that is. Everything it reads is a dependency when
 /// it runs in an effect, except `x` and `y` themselves: those it writes.

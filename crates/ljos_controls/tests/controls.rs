@@ -1,6 +1,6 @@
 //! What the scenarios in `features/controls/` cannot see: that an idle
-//! scene of controls schedules nothing, that the parts a style gave and
-//! the application replaced are gone, and what native code reads.
+//! scene of controls schedules nothing, that the parts a style has and
+//! the application replaced are never made, and what native code reads.
 
 use ljos_a11y::Role;
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
@@ -178,9 +178,34 @@ fn a_held_button_somebody_listens_to_waits_on_one_deadline() {
     assert_eq!(e.read_by_name(root, "holds"), Value::Int(0));
 }
 
+/// Every object under `root`, itself included.
+fn subtree(e: &Engine, root: ObjectId) -> Vec<ObjectId> {
+    let mut all = Vec::new();
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        all.push(o);
+        stack.extend(e.children(o));
+    }
+    all
+}
+
+/// The items under `root` that a file of the style declared: the parts
+/// the style made.
+fn made_by_the_style(e: &Engine, root: ObjectId) -> usize {
+    subtree(e, root)
+        .into_iter()
+        .filter(|o| *o != root && ljos_quick::is_item(e, *o))
+        .filter(|o| {
+            e.declared_at(*o)
+                .is_some_and(|at| at.starts_with("ljos-controls:/"))
+        })
+        .count()
+}
+
 #[test]
-fn a_replaced_part_of_the_style_is_destroyed() {
+fn a_replaced_part_of_the_style_is_never_made() {
     let e = engine();
+    let before = e.object_count();
     let root = load(
         &e,
         r#"
@@ -197,16 +222,74 @@ Item {
 "#,
     );
     let (styled, own) = (find(&e, root, "styled"), find(&e, root, "own"));
-    // `destroy` is deferred, as it is in QML, to the end of the turn.
-    e.process_deferred_deletes();
+    // The style's button is a background and a content item; the picture
+    // and the text in it are the content item's own doing.
+    assert_eq!(made_by_the_style(&e, styled), 2);
+    // Counting what was made: nothing of the style's is under the button
+    // that has its own parts, and nothing was made to be destroyed at the
+    // end of the turn, as a deferred `destroy` is.
+    assert_eq!(made_by_the_style(&e, own), 0);
+    let made = e.object_count() - before;
+    assert_eq!(e.process_deferred_deletes(), 0);
+    assert_eq!(e.object_count() - before, made);
     assert_eq!(e.visual_children(styled).len(), 2);
-    // Only the application's two parts: the style's are not kept around,
-    // hidden or otherwise.
     let kids = e.visual_children(own);
     assert_eq!(kids.len(), 2, "{kids:?}");
     assert!(kids.contains(&find(&e, root, "bg")));
     assert!(kids.contains(&find(&e, root, "label")));
-    assert_eq!(e.children(own).len(), e.children(styled).len());
+}
+
+/// Each part of each control, replaced: none of the style's is made.
+#[test]
+fn no_part_of_the_style_is_made_where_the_application_gives_its_own() {
+    let cases = [
+        ("CheckBox", "indicator: Item {}; contentItem: Item {}"),
+        ("RadioButton", "indicator: Item {}; contentItem: Item {}"),
+        ("Switch", "indicator: Item {}; contentItem: Item {}"),
+        ("ToolButton", "background: Item {}; contentItem: Item {}"),
+        ("Pane", "background: Item {}"),
+        ("Frame", "background: Item {}"),
+        ("GroupBox", "background: Item {}; label: Item {}"),
+        ("ToolBar", "background: Item {}"),
+        ("Page", "background: Item {}"),
+        ("TextField", "background: Item {}"),
+        ("TextArea", "background: Item {}"),
+        ("ItemDelegate", "background: Item {}; contentItem: Item {}"),
+        ("ScrollBar", "contentItem: Item {}"),
+        ("ScrollIndicator", "contentItem: Item {}"),
+        (
+            "SpinBox",
+            "background: Item {}; contentItem: TextInput {}; up.indicator: Item {}; \
+             down.indicator: Item {}",
+        ),
+        (
+            "ComboBox",
+            "background: Item {}; contentItem: Item {}; indicator: Item {}; popup: Popup {}",
+        ),
+    ];
+    for (ty, parts) in cases {
+        let e = engine();
+        let parts = parts.replace("; ", "\n");
+        let root = load(
+            &e,
+            &format!(
+                "import QtQuick\nimport QtQuick.Controls.Basic\n\
+                 Item {{ {ty} {{\nobjectName: \"own\"\n{parts}\n}} }}"
+            ),
+        );
+        let own = find(&e, root, "own");
+        assert_eq!(e.process_deferred_deletes(), 0, "{ty}");
+        let kept = match ty {
+            // The popup the application gave is the style's `Popup` type:
+            // its background is that popup's own.
+            "ComboBox" => continue,
+            // The placeholder is no part: it is the style's text in the
+            // field, whatever the background.
+            "TextField" | "TextArea" => 1,
+            _ => 0,
+        };
+        assert_eq!(made_by_the_style(&e, own), kept, "{ty}");
+    }
 }
 
 #[test]

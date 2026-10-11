@@ -759,8 +759,8 @@ Feature: ComboBox
       Then the property "background.visible" of "d" is true
       And the property "background.color" of "d" is "#e4e4e4"
 
-  # TODO(text-input): an editable combo box holds a text field.
-  @backlog @api-QtQuick.Controls.ComboBox.editable
+  # More of the field is in combobox-editable.feature.
+  @api-QtQuick.Controls.ComboBox.editable
   Rule: An editable combo box takes text
 
     Scenario: The text typed into an editable combo box is its edit text
@@ -796,12 +796,9 @@ Feature: ComboBox
       And the user presses "Return"
       Then the property "times" of "c" is 1
 
-  # TODO(scroll): the popup's rows are in a column until there is a list
-  # view; a popup with more rows than fit does not scroll.
-  @backlog
   Rule: A popup with more rows than fit scrolls
 
-    Scenario: The popup is no taller than the window less its margins
+    Background:
       Given the QML:
         """qml
         import QtQuick
@@ -809,10 +806,63 @@ Feature: ComboBox
         Item {
           width: 400; height: 400
           ComboBox {
-            objectName: "c"; width: 100; height: 30; model: 40
+            objectName: "c"; width: 100; height: 30; model: 40; focus: true
             delegate: ItemDelegate { width: 100; height: 30; text: modelData }
           }
         }
         """
+
+    Scenario: The popup is no taller than the window less its margins
       When the property "popup.visible" of "c" is set to true
       Then the property "popup.height" of "c" is 388
+      And the property "popup.y" of "c" is 6
+
+    Scenario: The rows are in a view that is as tall as the popup
+      When the property "popup.visible" of "c" is set to true
+      Then the property "popup.contentItem.height" of "c" is 388
+      And the property "popup.contentItem.contentHeight" of "c" is 1200
+      And the property "popup.contentItem.contentY" of "c" is 0
+      And the property "popup.contentItem.clip" of "c" is true
+
+    Scenario Outline: The popup opens with the current row <row> at the top, as far as the rows go
+      When the property "currentIndex" of "c" is set to <row>
+      And the property "popup.visible" of "c" is set to true
+      Then the property "popup.contentItem.contentY" of "c" is <at>
+
+      Examples:
+        | row | at  |
+        | 2   | 60  |
+        | 13  | 390 |
+        | 20  | 600 |
+        | 30  | 812 |
+        | 39  | 812 |
+
+    Scenario: The row a key highlights is brought into view
+      When the property "popup.visible" of "c" is set to true
+      And the user presses "End"
+      And 1 second passes
+      Then the property "highlightedIndex" of "c" is 39
+      And the property "popup.contentItem.contentY" of "c" is 812
+
+    Scenario: A row that is in view moves nothing
+      When the property "popup.visible" of "c" is set to true
+      And the user presses "End"
+      And the user presses "Up"
+      And 1 second passes
+      Then the property "highlightedIndex" of "c" is 38
+      And the property "popup.contentItem.contentY" of "c" is 812
+
+    Scenario: The first row is brought back into view
+      When the property "popup.visible" of "c" is set to true
+      And the user presses "End"
+      And 1 second passes
+      And the user presses "Home"
+      And 1 second passes
+      Then the property "popup.contentItem.contentY" of "c" is 0
+
+    Scenario: A touch chooses the row that is seen there
+      When the property "currentIndex" of "c" is set to 20
+      And the property "popup.visible" of "c" is set to true
+      And the user touches 50, 100
+      Then the property "currentIndex" of "c" is 23
+      And the property "popup.visible" of "c" is false

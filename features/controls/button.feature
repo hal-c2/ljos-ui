@@ -180,6 +180,11 @@ Feature: Button
       And the property "parent.objectName" of "bg" is "b"
       And the property "parent.objectName" of "label" is "b"
 
+    Scenario: The parts the style would have given are not made beside the new ones
+      Then the property "children.length" of "b" is 2
+      And the property "data.length" of "b" is 2
+      And the property "resources.length" of "b" is 0
+
     Scenario: The new background sees the state of the button
       When the property "down" of "b" is set to true
       Then the property "color" of "bg" is "#0d47a1"

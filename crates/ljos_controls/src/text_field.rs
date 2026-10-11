@@ -49,6 +49,11 @@ pub struct TextField {
     /// Why the field last got or lost the keyboard (`Qt.FocusReason`).
     #[qml(notify, readonly, enumeration = "Qt.FocusReason")]
     pub focus_reason: i32,
+    /// How the field takes the keyboard (`Qt.FocusPolicy`). Nothing is
+    /// written here to begin with: Tab stops at the field because
+    /// `activeFocusOnTab` is true, which reads back as `Qt.TabFocus`.
+    #[qml(notify, enumeration = "Qt.FocusPolicy")]
+    pub focus_policy: i32,
     #[qml(group)]
     pub palette: Palette,
     #[qml(skip)]
@@ -76,6 +81,7 @@ impl Default for TextField {
             hovered: false,
             hover_enabled: true,
             focus_reason: FocusReason::Other as i32,
+            focus_policy: crate::control::focus_policy::NONE,
             palette: Palette::default(),
             inherit: Rc::default(),
             state: Rc::default(),
@@ -103,6 +109,7 @@ impl TextField {
             hovered: Self::HOVERED.index,
             hover_enabled: Self::HOVER_ENABLED.index,
             focus_reason: Self::FOCUS_REASON.index,
+            focus_policy: Self::FOCUS_POLICY.index,
         })
     }
 }

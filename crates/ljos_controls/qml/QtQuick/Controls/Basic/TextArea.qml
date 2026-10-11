@@ -43,11 +43,13 @@ T.TextArea {
     // Qt's Basic style has the frame and does not show it, on its own
     // or inside a Frame or a ScrollView (checked on qml6). An author's
     // background is shown.
-    background: Rectangle {
-        visible: false
-        color: "transparent"
-        border.width: control.activeFocus ? 2 : 1
-        border.color: control.activeFocus ? control.palette.highlight
-                      : control.enabled ? control.palette.mid : control.palette.midlight
+    background: Component {
+        Rectangle {
+            visible: false
+            color: "transparent"
+            border.width: control.activeFocus ? 2 : 1
+            border.color: control.activeFocus ? control.palette.highlight
+                          : control.enabled ? control.palette.mid : control.palette.midlight
+        }
     }
 }

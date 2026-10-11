@@ -17,11 +17,13 @@ use ljos_render::kurbo;
 use crate::containers::{Page, Pane, page_bars};
 use crate::inherit::{self, InheritState, Kind};
 use crate::palette::Palette;
-use crate::parts::{PartKind, destroy_replaced_style_parts, manage_part};
-use crate::util::{bind_default, check, flag, is_a, is_unset, num, object, set_computed};
+use crate::parts::{PartKind, manage_part, settle_parts};
+use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 
 /// `Qt.FocusPolicy`, the bits of it.
 pub(crate) mod focus_policy {
+    /// `Qt.NoFocus`: the keyboard does not come to the control.
+    pub const NONE: i32 = 0;
     /// Tab stops at the control.
     pub const TAB: i32 = 1;
     /// A click gives the control the keyboard.
@@ -40,7 +42,12 @@ pub(crate) mod focus_policy {
 /// type and these rules are what Qt 6.11 shows from QML
 /// (`features/controls/focus.feature`).
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick.Templates", name = "Control", extends = Item)]
+#[qml(
+    module = "QtQuick.Templates",
+    name = "Control",
+    extends = Item,
+    reset_inherited(baseline_offset = CONTENT_BASELINE)
+)]
 pub struct Control {
     #[qml(base)]
     pub item: Item,
@@ -93,13 +100,13 @@ pub struct Control {
     pub wheel_enabled: bool,
     #[qml(notify, readonly)]
     pub mirrored: bool,
-    #[qml(notify)]
+    #[qml(notify, reset = inherit::FONT_RESET)]
     pub font: Font,
     #[qml(group)]
     pub palette: Palette,
-    /// Accepted and stored. TODO(i18n): a right-to-left locale should
-    /// mirror the control.
-    #[qml(notify)]
+    /// The nearest control's above until it is given (`inherit.rs`).
+    /// TODO(i18n): a right-to-left locale should mirror the control.
+    #[qml(notify, reset = inherit::LOCALE_RESET)]
     pub locale: Value,
     #[qml(notify, enumeration = "Qt.FocusPolicy")]
     pub focus_policy: i32,
@@ -142,7 +149,7 @@ impl Default for Control {
             font: Font::default(),
             palette: Palette::default(),
             locale: Value::Undefined,
-            focus_policy: 0,
+            focus_policy: focus_policy::NONE,
             focus_reason: FocusReason::Other as i32,
             visual_focus: false,
             inherit: Rc::default(),
@@ -164,6 +171,22 @@ fn wider_padding(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> V
         Control::PADDING
     };
     engine.read(obj, from.index)
+}
+
+/// `baselineOffset = undefined`: a control that was given no baseline has
+/// its content item's, moved down by the top padding, so that controls
+/// line up on their text. Without a content item it is 0 (checked on
+/// qml6; `features/bindings/property-reset-baseline.feature`).
+const CONTENT_BASELINE: ljos_engine::Reset = ljos_engine::Reset::Follow(content_baseline);
+
+fn content_baseline(engine: &Engine, obj: ObjectId, _baseline: ljos_engine::PropIndex) -> Value {
+    let at = object(engine, obj, Control::CONTENT_ITEM.index)
+        .filter(|c| is_a::<Item>(engine, *c))
+        .map_or(0.0, |c| {
+            num(engine, obj, Control::TOP_PADDING.index)
+                + num(engine, c, Item::BASELINE_OFFSET.index)
+        });
+    Value::Real(at)
 }
 
 #[qml_impl]
@@ -188,6 +211,10 @@ fn init_control(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     follow(Control::RIGHT_PADDING, Control::HORIZONTAL_PADDING)?;
     follow(Control::TOP_PADDING, Control::VERTICAL_PADDING)?;
     follow(Control::BOTTOM_PADDING, Control::VERTICAL_PADDING)?;
+    let baseline = Item::BASELINE_OFFSET.index;
+    bind_default(engine, obj, baseline, move |e| {
+        content_baseline(e, obj, baseline)
+    })?;
 
     engine.bind_initial(obj, Control::AVAILABLE_WIDTH.index, move |e| {
         let w = num(e, obj, Item::WIDTH.index)
@@ -232,7 +259,7 @@ fn init_control(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
         Value::Bool(is_mirrored(e, obj))
     })?;
 
-    destroy_replaced_style_parts(engine, obj);
+    settle_parts(engine, obj);
     manage_part(
         engine,
         obj,
@@ -266,22 +293,7 @@ fn init_control(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
 /// Tab stops where the policy says, and the control knows why it has the
 /// keyboard.
 fn init_focus(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    let stop = Item::ACTIVE_FOCUS_ON_TAB.index;
-    // What the author wrote for `activeFocusOnTab` stands whatever the
-    // policy the control starts with.
-    if is_unset(engine, obj, stop) {
-        let policy = engine.untrack(|| num(engine, obj, Control::FOCUS_POLICY.index)) as i32;
-        engine.write_derived(obj, stop, Value::Bool(policy & focus_policy::TAB != 0))?;
-    }
-    // A policy given later takes Tab with it.
-    engine.watch(obj, Control::FOCUS_POLICY.index, move |e, v| {
-        let on = v.to_number() as i32 & focus_policy::TAB != 0;
-        check(
-            e,
-            "activeFocusOnTab",
-            set_computed(e, obj, stop, Value::Bool(on)),
-        );
-    })?;
+    crate::focus::link_policy(engine, obj, Control::FOCUS_POLICY.index, false)?;
     // Why the keyboard came, and why it went: the scene knows both by the
     // time the flag changes. Only a key shows where the keyboard is.
     engine.watch(obj, Item::ACTIVE_FOCUS.index, move |e, v| {

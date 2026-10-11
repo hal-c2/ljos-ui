@@ -10,8 +10,8 @@ use std::sync::OnceLock;
 
 use ljos_a11y::Role;
 use ljos_engine::{
-    Engine, EngineError, MetaRef, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Value,
-    WriteKind,
+    Engine, EngineError, MetaRef, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Reset,
+    Value, WriteKind,
 };
 use ljos_quick::focus::{
     FocusReason, active_focus_item, force_active_focus, next_item_in_focus_chain,
@@ -177,9 +177,25 @@ pub(super) fn mirror_look(
         &engine.untrack(|| engine.read(popup, mine)),
     );
     engine.watch(popup, mine, move |e, v| hand_down(e, mine, theirs, v))?;
+    let (my_locale, their_locale) = (Popup::LOCALE.index, Control::LOCALE.index);
+    hand_down(
+        engine,
+        my_locale,
+        their_locale,
+        &engine.untrack(|| engine.read(popup, my_locale)),
+    );
+    engine.watch(popup, my_locale, move |e, v| {
+        hand_down(e, my_locale, their_locale, v);
+    })?;
     engine.effect_in(popup, move |e| {
         let font = e.read(item, theirs);
-        e.untrack(|| check(e, "font", put(e, popup, mine, font)));
+        let locale = e.read(item, their_locale);
+        e.untrack(|| {
+            check(e, "font", put(e, popup, mine, font));
+            if !author_set(e, popup, my_locale) {
+                check(e, "locale", put(e, popup, my_locale, locale));
+            }
+        });
     })?;
 
     let (mine, theirs) = (popup_roles(), item_roles());
@@ -204,6 +220,73 @@ pub(super) fn mirror_look(
         }
     })?;
     Ok(())
+}
+
+/// `font = undefined` and `locale = undefined` on a popup: its item hands
+/// its own back, and the popup has what the item then has.
+pub(super) const FONT_RESET: Reset = Reset::Custom {
+    apply: take_back,
+    value: from_above,
+};
+pub(super) const LOCALE_RESET: Reset = FONT_RESET;
+
+/// The property of the popup's item that `prop` of the popup is kept the
+/// same as.
+fn of_item(popup_prop: PropIndex) -> Option<PropIndex> {
+    if popup_prop == Popup::FONT.index {
+        Some(Control::FONT.index)
+    } else if popup_prop == Popup::LOCALE.index {
+        Some(Control::LOCALE.index)
+    } else {
+        let i = popup_roles().iter().position(|p| *p == popup_prop)?;
+        Some(item_roles()[i])
+    }
+}
+
+fn from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Value {
+    look_from_above(engine, popup, prop).unwrap_or_else(|| engine.default_value(popup, prop))
+}
+
+/// What the popup's item would have in the property of a popup's look if
+/// nobody gave it one (tracked). None for an object that is no popup, a
+/// popup without an item, or another property.
+pub(crate) fn look_from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Option<Value> {
+    if !crate::util::is_a::<Popup>(engine, popup) {
+        return None;
+    }
+    let item = super::item_of(engine, popup)?;
+    let theirs = of_item(prop)?;
+    let reset = engine.reset_of(item, theirs)?;
+    Some(match reset {
+        Reset::Default => engine.default_value(item, theirs),
+        Reset::Follow(value) | Reset::Custom { value, .. } | Reset::Absent { value, .. } => {
+            value(engine, item, theirs)
+        }
+    })
+}
+
+fn take_back(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
+    match take_look_back(engine, popup, prop) {
+        Some(done) => done,
+        None => engine.reset_to_default(popup, prop),
+    }
+}
+
+/// Hands a property of a popup's look back; None as [`look_from_above`].
+pub(crate) fn take_look_back(
+    engine: &Engine,
+    popup: ObjectId,
+    prop: PropIndex,
+) -> Option<Result<(), EngineError>> {
+    if !crate::util::is_a::<Popup>(engine, popup) {
+        return None;
+    }
+    let item = super::item_of(engine, popup)?;
+    let theirs = of_item(prop)?;
+    Some(engine.reset(item, theirs).and_then(|()| {
+        let now = engine.untrack(|| engine.read(item, theirs));
+        engine.reset_to(popup, prop, now)
+    }))
 }
 
 // ------------------------------------------------------------------ input

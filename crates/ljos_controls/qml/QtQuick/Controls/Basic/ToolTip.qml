@@ -18,15 +18,19 @@ T.ToolTip {
     margins: 6
     padding: 6
 
-    contentItem: Text {
-        text: control.text
-        font: control.font
-        wrapMode: Text.Wrap
-        color: control.palette.toolTipText
+    contentItem: Component {
+        Text {
+            text: control.text
+            font: control.font
+            wrapMode: Text.Wrap
+            color: control.palette.toolTipText
+        }
     }
 
-    background: Rectangle {
-        color: control.palette.toolTipBase
-        border.color: control.palette.dark
+    background: Component {
+        Rectangle {
+            color: control.palette.toolTipBase
+            border.color: control.palette.dark
+        }
     }
 }

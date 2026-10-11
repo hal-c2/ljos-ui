@@ -18,32 +18,34 @@ T.ScrollBar {
 
     // The handle. It shows while the bar is in use and fades a while after:
     // at once it would flicker between the notches of a wheel.
-    contentItem: Rectangle {
-        id: handle
+    contentItem: Component {
+        Rectangle {
+            id: handle
 
-        readonly property bool shown: control.policy === T.ScrollBar.AlwaysOn
-                                      || (control.active && control.size < 1.0)
+            readonly property bool shown: control.policy === T.ScrollBar.AlwaysOn
+                                          || (control.active && control.size < 1.0)
 
-        implicitWidth: control.interactive ? 6 : 2
-        implicitHeight: control.interactive ? 6 : 2
-        radius: width / 2
-        color: control.pressed ? control.palette.dark : control.palette.mid
-        opacity: 0.0
+            implicitWidth: control.interactive ? 6 : 2
+            implicitHeight: control.interactive ? 6 : 2
+            radius: width / 2
+            color: control.pressed ? control.palette.dark : control.palette.mid
+            opacity: 0.0
 
-        onShownChanged: {
-            if (shown) {
-                fade.stop()
-                opacity = 0.75
-            } else {
-                fade.restart()
+            onShownChanged: {
+                if (shown) {
+                    fade.stop()
+                    opacity = 0.75
+                } else {
+                    fade.restart()
+                }
             }
-        }
-        Component.onCompleted: if (shown) opacity = 0.75
+            Component.onCompleted: if (shown) opacity = 0.75
 
-        SequentialAnimation {
-            id: fade
-            PauseAnimation { duration: 450 }
-            NumberAnimation { target: handle; property: "opacity"; to: 0.0; duration: 200 }
+            SequentialAnimation {
+                id: fade
+                PauseAnimation { duration: 450 }
+                NumberAnimation { target: handle; property: "opacity"; to: 0.0; duration: 200 }
+            }
         }
     }
 }

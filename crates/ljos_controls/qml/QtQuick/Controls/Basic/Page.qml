@@ -15,7 +15,9 @@ T.Page {
                              + (implicitHeaderHeight > 0 ? implicitHeaderHeight + spacing : 0)
                              + (implicitFooterHeight > 0 ? implicitFooterHeight + spacing : 0))
 
-    background: Rectangle {
-        color: control.palette.window
+    background: Component {
+        Rectangle {
+            color: control.palette.window
+        }
     }
 }

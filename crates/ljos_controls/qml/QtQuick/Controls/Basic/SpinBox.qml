@@ -21,86 +21,94 @@ T.SpinBox {
                              : (up.indicator ? up.indicator.width : 0))
 
     // Above the buttons, so that a press on the number is the number's.
-    contentItem: TextInput {
-        z: 2
-        text: control.displayText
-        padding: 6
+    contentItem: Component {
+        TextInput {
+            z: 2
+            text: control.displayText
+            padding: 6
 
-        font: control.font
-        color: control.palette.text
-        selectionColor: control.palette.highlight
-        selectedTextColor: control.palette.highlightedText
-        horizontalAlignment: Qt.AlignHCenter
-        verticalAlignment: Qt.AlignVCenter
+            font: control.font
+            color: control.palette.text
+            selectionColor: control.palette.highlight
+            selectedTextColor: control.palette.highlightedText
+            horizontalAlignment: Qt.AlignHCenter
+            verticalAlignment: Qt.AlignVCenter
 
-        readOnly: !control.editable
-        validator: control.validator
-        inputMethodHints: control.inputMethodHints
+            readOnly: !control.editable
+            validator: control.validator
+            inputMethodHints: control.inputMethodHints
 
-        // The box speaks for its number: one thing with a value, a name
-        // and steps, and not a nameless field inside it.
-        Accessible.ignored: true
+            // The box speaks for its number: one thing with a value, a name
+            // and steps, and not a nameless field inside it.
+            Accessible.ignored: true
 
-        // The frame of the box that has the keyboard.
-        Rectangle {
-            width: parent.width
-            height: parent.height
-            visible: control.activeFocus
-            color: "transparent"
-            border.color: control.palette.highlight
-            border.width: 2
+            // The frame of the box that has the keyboard.
+            Rectangle {
+                width: parent.width
+                height: parent.height
+                visible: control.activeFocus
+                color: "transparent"
+                border.color: control.palette.highlight
+                border.width: 2
+            }
         }
     }
 
-    up.indicator: Rectangle {
-        x: control.mirrored ? 0 : control.width - width
-        height: control.height
-        implicitWidth: 40
-        implicitHeight: 40
-        color: control.up.pressed ? control.palette.mid : control.palette.button
-        border.color: enabled ? control.palette.text : control.palette.mid
-        border.width: 0
-
-        // A plus sign: two bars of our own.
+    up.indicator: Component {
         Rectangle {
-            x: (parent.width - width) / 2
-            y: (parent.height - height) / 2
-            width: parent.width / 3
-            height: 2
-            color: enabled ? control.palette.buttonText : control.palette.mid
-        }
+            x: control.mirrored ? 0 : control.width - width
+            height: control.height
+            implicitWidth: 40
+            implicitHeight: 40
+            color: control.up.pressed ? control.palette.mid : control.palette.button
+            border.color: enabled ? control.palette.text : control.palette.mid
+            border.width: 0
 
-        Rectangle {
-            x: (parent.width - width) / 2
-            y: (parent.height - height) / 2
-            width: 2
-            height: parent.width / 3
-            color: enabled ? control.palette.buttonText : control.palette.mid
-        }
-    }
+            // A plus sign: two bars of our own.
+            Rectangle {
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+                width: parent.width / 3
+                height: 2
+                color: enabled ? control.palette.buttonText : control.palette.mid
+            }
 
-    down.indicator: Rectangle {
-        x: control.mirrored ? control.width - width : 0
-        height: control.height
-        implicitWidth: 40
-        implicitHeight: 40
-        color: control.down.pressed ? control.palette.mid : control.palette.button
-        border.color: enabled ? control.palette.text : control.palette.mid
-        border.width: 0
-
-        // A minus sign.
-        Rectangle {
-            x: (parent.width - width) / 2
-            y: (parent.height - height) / 2
-            width: parent.width / 3
-            height: 2
-            color: enabled ? control.palette.buttonText : control.palette.mid
+            Rectangle {
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+                width: 2
+                height: parent.width / 3
+                color: enabled ? control.palette.buttonText : control.palette.mid
+            }
         }
     }
 
-    background: Rectangle {
-        implicitWidth: 140
-        color: enabled ? control.palette.base : control.palette.button
-        border.color: control.palette.button
+    down.indicator: Component {
+        Rectangle {
+            x: control.mirrored ? control.width - width : 0
+            height: control.height
+            implicitWidth: 40
+            implicitHeight: 40
+            color: control.down.pressed ? control.palette.mid : control.palette.button
+            border.color: enabled ? control.palette.text : control.palette.mid
+            border.width: 0
+
+            // A minus sign.
+            Rectangle {
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+                width: parent.width / 3
+                height: 2
+                color: enabled ? control.palette.buttonText : control.palette.mid
+            }
+        }
+    }
+
+    background: Component {
+        Rectangle {
+            implicitWidth: 140
+            color: enabled ? control.palette.base : control.palette.button
+            border.color: control.palette.button
+        }
     }
 }

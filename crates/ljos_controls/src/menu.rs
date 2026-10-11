@@ -12,8 +12,9 @@
 //! menu.feature` and `menu-pointer.feature` pin them.
 //!
 //! TODO(listview): the column is laid out here. Qt's is a `ListView` on
-//! `contentModel`, which reads null until there is one, and a menu
-//! taller than its window does not scroll.
+//! `contentModel`, which reads null until there is one. A menu taller
+//! than its window scrolls when its content item is a `Flickable`
+//! ([`crate::rows`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,16 +27,17 @@ use ljos_engine::{
 use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_quick::keys::key;
 use ljos_quick::{
-    Item, KeyEvent, follows_implicit_size, is_item, scene_transform, set_parent_item,
+    Item, KeyEvent, Repeater, follows_implicit_size, is_item, scene_transform, set_parent_item,
 };
 use ljos_render::kurbo;
 
 use crate::action::Action;
 use crate::button::{AbstractButton, Icon};
 use crate::containers::{Page, host_append};
-use crate::control::{Control, takes_input};
+use crate::control::{Control, focus_policy, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::popup::{self, POPUP, Popup};
+use crate::rows;
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 
 /// How long the pointer rests on an item before its sub-menu opens
@@ -74,7 +76,7 @@ impl Default for MenuItem {
         let mut button = AbstractButton::default();
         // `Qt.StrongFocus`: the current item of an open menu has the
         // keyboard.
-        button.control.focus_policy = 11;
+        button.control.focus_policy = focus_policy::STRONG;
         Self {
             button,
             highlighted: false,
@@ -156,6 +158,8 @@ pub(crate) struct MenuState {
     making: Cell<bool>,
     /// The item the menu gave the keyboard.
     focused: Cell<Option<ObjectId>>,
+    /// The repeaters whose items are items of the menu.
+    repeaters: RefCell<Vec<ObjectId>>,
 }
 
 /// `Menu`.
@@ -514,6 +518,9 @@ fn take_in(
     obj: ObjectId,
     at: Option<usize>,
 ) -> Result<(), EngineError> {
+    if is_a::<Repeater>(e, obj) {
+        return take_in_repeater(e, menu, obj);
+    }
     if is_item(e, obj) {
         return join(e, menu, obj, at, None);
     }
@@ -558,6 +565,68 @@ fn take_in(
         })?;
     }
     join(e, menu, item, at, Some(obj))
+}
+
+/// A `Repeater` declared in a menu is no item of it: what it makes are,
+/// where the repeater stands among the items (as on qml6).
+fn take_in_repeater(e: &Engine, menu: ObjectId, repeater: ObjectId) -> Result<(), EngineError> {
+    let Some(st) = state_of(e, menu) else {
+        return Ok(());
+    };
+    keep(e, menu, repeater)?;
+    if st.repeaters.borrow().contains(&repeater) {
+        return Ok(());
+    }
+    st.repeaters.borrow_mut().push(repeater);
+    let item_of = |args: &[Value]| args.get(1).and_then(Value::as_object);
+    e.connect_by_name(repeater, "itemAdded", move |e, args| {
+        if let Some(item) = item_of(args).filter(|_| e.is_alive(menu)) {
+            let r = join_repeated(e, menu, item).and_then(|()| changed(e, menu));
+            check(e, "menu", r);
+        }
+    })?;
+    e.connect_by_name(repeater, "itemRemoved", move |e, args| {
+        if let Some(item) = item_of(args).filter(|_| e.is_alive(menu)) {
+            let r = leave(e, menu, item).and_then(|_| changed(e, menu));
+            check(e, "menu", r);
+        }
+    })?;
+    // Among the rows, so that what it makes is made there.
+    if let Some(ci) = e.untrack(|| object(e, menu, POPUP.content_item)) {
+        set_parent_item(e, repeater, Some(rows::home(e, ci)))?;
+    }
+    let made = e
+        .with::<Repeater, _>(repeater, |r| r.delegates().map(|d| d.objects()))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    for item in made {
+        join_repeated(e, menu, item)?;
+    }
+    Ok(())
+}
+
+/// Takes in an item a repeater made, where it is among the children of
+/// what holds the rows: a repeater puts its items in order before itself.
+fn join_repeated(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<(), EngineError> {
+    if !is_item(e, item) || items(e, menu).contains(&item) {
+        return Ok(());
+    }
+    let siblings: Vec<ObjectId> = e
+        .untrack(|| e.visual_parent(item))
+        .map(
+            |parent| match e.untrack(|| e.read(parent, Item::CHILDREN.index)) {
+                Value::List(l) => l.iter().filter_map(Value::as_object).collect(),
+                _ => Vec::new(),
+            },
+        )
+        .unwrap_or_default();
+    let before: &[ObjectId] = siblings
+        .iter()
+        .position(|s| *s == item)
+        .map_or(&siblings[..], |at| &siblings[..at]);
+    let at = items(e, menu).iter().filter(|i| before.contains(i)).count();
+    join(e, menu, item, Some(at), None)
 }
 
 /// Lists `obj` in the menu's `contentData` if it is not there.
@@ -621,7 +690,7 @@ fn join(
     }
     keep(e, menu, item)?;
     if let Some(ci) = e.untrack(|| object(e, menu, POPUP.content_item)) {
-        set_parent_item(e, item, Some(ci))?;
+        set_parent_item(e, item, Some(rows::home(e, ci)))?;
     }
     let own_width = e.untrack(|| !follows_implicit_size(e, item, true));
     let hold = |prop: PropIndex| {
@@ -851,6 +920,7 @@ fn layout(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
             }
             top += height;
         }
+        rows::set_extent(e, ci, top);
         Ok(())
     })
 }
@@ -891,6 +961,11 @@ fn apply_current(e: &Engine, menu: ObjectId) {
     }
     if st.waiting_for.get().is_some() && st.waiting_for.get() != current {
         stop_timer(e, &st);
+    }
+    if let Some(item) = current
+        && let Some(ci) = e.untrack(|| object(e, menu, POPUP.content_item))
+    {
+        rows::keep_in_view(e, ci, item);
     }
     let has_keyboard = popup::is_shown(e, menu) && e.untrack(|| flag(e, menu, Popup::FOCUS.index));
     if !has_keyboard {
@@ -1165,6 +1240,18 @@ fn step(e: &Engine, menu: ObjectId, from: i32, forward: bool, wrap: bool) -> i32
     from
 }
 
+/// The menu `menu` is a sub-menu of, at the top.
+fn root_of(e: &Engine, menu: ObjectId) -> ObjectId {
+    let mut cur = menu;
+    for _ in 0..64 {
+        match state_of(e, cur).and_then(|s| s.parent_menu.get()) {
+            Some(parent) if e.is_alive(parent) => cur = parent,
+            _ => break,
+        }
+    }
+    cur
+}
+
 /// A key pressed in a popup that may be a menu. True if the menu took
 /// it.
 pub(crate) fn key_press(e: &Engine, menu: ObjectId, ev: &KeyEvent) -> bool {
@@ -1213,20 +1300,22 @@ pub(crate) fn key_press(e: &Engine, menu: ObjectId, ev: &KeyEvent) -> bool {
             None => false,
         },
         k if k == into => {
-            let Some(item) = current_item(e, menu) else {
-                return false;
-            };
-            match sub_menu_of(e, item) {
-                Some(sub) if takes_input(e, item) => {
+            let sub = current_item(e, menu)
+                .filter(|item| takes_input(e, *item))
+                .and_then(|item| sub_menu_of(e, item).map(|sub| (item, sub)));
+            match sub {
+                Some((item, sub)) => {
                     check(e, "menu", open_sub(e, menu, item, sub, true));
                     true
                 }
-                _ => false,
+                // Nothing to go into here: the next menu of the bar.
+                None => crate::menu_bar::step(e, root_of(e, menu), true),
             }
         }
         k if k == back => {
             let Some(parent) = st.parent_menu.get().filter(|p| e.is_alive(*p)) else {
-                return false;
+                // Nothing to go back to: the menu before it in the bar.
+                return crate::menu_bar::step(e, menu, false);
             };
             // What a sub-menu took the place of comes back.
             let reopen = !is_open(e, parent);

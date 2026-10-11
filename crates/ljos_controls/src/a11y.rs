@@ -51,7 +51,9 @@ pub(crate) fn defaults(
 
 /// A button is named by its text.
 pub(crate) fn button_defaults(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    let role = if is_a::<crate::menu::MenuItem>(engine, obj) {
+    let role = if is_a::<crate::menu::MenuItem>(engine, obj)
+        || is_a::<crate::menu_bar::MenuBarItem>(engine, obj)
+    {
         Role::MenuItem
     } else if is_a::<crate::combobox::ItemDelegate>(engine, obj) {
         Role::ListItem

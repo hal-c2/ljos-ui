@@ -9,7 +9,9 @@
 //! A button has `Qt.StrongFocus`: Tab stops at it, a press brings the
 //! keyboard to it, and Space, Return or Enter presses the one that has the keyboard
 //! (`features/controls/focus.feature`).
-//! TODO(image): `icon` is stored; nothing draws it.
+//!
+//! The `icon` and the `display` of a button are drawn by the `IconLabel`
+//! its style gives as content item ([`crate::icon_label`]).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,7 +19,8 @@ use std::time::Duration;
 
 use ljos_engine::{
     Atom, Color, ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent,
-    OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Timer, Url, Value, WriteKind, qml_impl,
+    OverrideId, PropIndex, Provenance, QmlObject, QmlType, RestoreMode, Timer, Url, Value,
+    WriteKind, qml_impl,
 };
 use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::{
@@ -108,16 +111,27 @@ mod follows {
     pub const CHECKABLE: u8 = 2;
     pub const CHECKED: u8 = 4;
     pub const ENABLED: u8 = 8;
+    pub const ICON_NAME: u8 = 16;
+    pub const ICON_SOURCE: u8 = 32;
+    pub const ICON_COLOR: u8 = 64;
+}
+
+/// `AbstractButton.display`.
+pub(crate) mod display {
+    pub const ICON_ONLY: i32 = 0;
+    pub const TEXT_ONLY: i32 = 1;
+    pub const TEXT_BESIDE_ICON: i32 = 2;
+    pub const TEXT_UNDER_ICON: i32 = 3;
 }
 
 fn button_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![(
         "Display",
         vec![
-            ("IconOnly", 0),
-            ("TextOnly", 1),
-            ("TextBesideIcon", 2),
-            ("TextUnderIcon", 3),
+            ("IconOnly", i64::from(display::ICON_ONLY)),
+            ("TextOnly", i64::from(display::TEXT_ONLY)),
+            ("TextBesideIcon", i64::from(display::TEXT_BESIDE_ICON)),
+            ("TextUnderIcon", i64::from(display::TEXT_UNDER_ICON)),
         ],
     )]
 }
@@ -180,7 +194,7 @@ impl Default for AbstractButton {
                 ..Control::default()
             },
             text: Atom::EMPTY,
-            display: 2,
+            display: display::TEXT_BESIDE_ICON,
             down: false,
             pressed: false,
             checked: false,
@@ -251,6 +265,11 @@ fn state_of(engine: &Engine, obj: ObjectId) -> Option<Rc<ButtonState>> {
     engine
         .with::<AbstractButton, _>(obj, |b| b.state.clone())
         .ok()
+}
+
+/// The pointer is down on the button (and no key is what presses it).
+pub(crate) fn held_by_pointer(engine: &Engine, obj: ObjectId) -> bool {
+    state_of(engine, obj).is_some_and(|s| s.held.get())
 }
 
 fn emit(engine: &Engine, obj: ObjectId, signal: &str) {
@@ -462,8 +481,62 @@ fn follow_action(
         Action::CHECKED.index,
     )?;
     follow(follows::ENABLED, Item::ENABLED.index, Action::ENABLED.index)?;
+    // The size of the icon stays the button's own (Qt 6.11.2, by running
+    // qml6): an action says which picture, not how large.
+    for (bit, leaf) in ICON_LEAVES {
+        let (Ok(own), Ok(theirs)) = (
+            engine.property_index(obj, &format!("icon.{leaf}")),
+            engine.property_index(action, &format!("icon.{leaf}")),
+        ) else {
+            continue;
+        };
+        follow(bit, own, theirs)?;
+    }
     state.follows_action.set(mine);
     Ok(())
+}
+
+/// The leaves of `icon` a button takes from its action.
+const ICON_LEAVES: [(u8, &str); 3] = [
+    (follows::ICON_NAME, "name"),
+    (follows::ICON_SOURCE, "source"),
+    (follows::ICON_COLOR, "color"),
+];
+
+/// Who gave the button's `icon.<leaf>`: the object and the property that
+/// hold what was written, and whether anything was written at all
+/// (tracked). For a leaf the button takes from its action that is the
+/// action: a relative `icon.source` is meant from the file that wrote
+/// it, and a colour nobody gave is not the same as transparent.
+pub(crate) fn icon_giver(
+    engine: &Engine,
+    button: ObjectId,
+    leaf: &str,
+) -> Option<(ObjectId, PropIndex, bool)> {
+    let given = |o: ObjectId, p: PropIndex| {
+        !matches!(
+            engine.provenance_tracked(o, p),
+            Some(Provenance::Default | Provenance::Animated) | None
+        )
+    };
+    let own = engine
+        .property_index(button, &format!("icon.{leaf}"))
+        .ok()?;
+    let follows = ICON_LEAVES
+        .iter()
+        .find(|(_, l)| *l == leaf)
+        .zip(state_of(engine, button))
+        .is_some_and(|((bit, _), st)| st.follows_action.get() & bit != 0);
+    if follows {
+        // Tracked: a button given another action shows that one's icon.
+        let action = object(engine, button, AbstractButton::ACTION.index);
+        if let Some(action) = action.filter(|a| is_a::<Action>(engine, *a))
+            && let Ok(theirs) = engine.property_index(action, &format!("icon.{leaf}"))
+        {
+            return Some((action, theirs, given(action, theirs)));
+        }
+    }
+    Some((button, own, given(button, own)))
 }
 
 // ----------------------------------------------------------- the pointer

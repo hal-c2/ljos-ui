@@ -238,7 +238,13 @@ Item {
 /// The texts of the rows of the combo box's popup, from the top.
 fn rows(e: &Engine, combo: ObjectId) -> Vec<String> {
     let popup = e.read_by_name(combo, "popup").as_object().unwrap();
-    let content = e.read_by_name(popup, "contentItem").as_object().unwrap();
+    // The style's popup has a list that scrolls, which keeps the rows in
+    // its own content item; a popup of the application's may have any item.
+    let list = e.read_by_name(popup, "contentItem").as_object().unwrap();
+    let content = e
+        .read_by_name(list, "contentItem")
+        .as_object()
+        .unwrap_or(list);
     let mut rows: Vec<(f64, String)> = ljos_quick::child_items(e, content)
         .into_iter()
         .map(|d| (e.read_by_name(d, "y").to_number(), text(e, d, "text")))
@@ -387,4 +393,182 @@ fn a_screen_reader_opens_a_combo_box_and_picks_a_row() {
     assert!(!flag(&e, combo, "down"));
     assert_eq!(text(&e, combo, "currentText"), "Beta");
     assert_eq!(e.read_by_name(combo, "currentValue").to_number(), 20.0);
+}
+
+/// The second popup used to look for the overlay while the first was
+/// still making it, and made another that no scene showed and that took
+/// nothing from the window.
+#[test]
+fn the_popups_of_a_window_are_in_one_overlay() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"
+import QtQuick
+import QtQuick.Controls.Basic
+ApplicationWindow {
+    width: 300; height: 300; visible: true
+    palette.button: "#aa0000"
+    Popup { objectName: "first" }
+    Popup { objectName: "second"; palette.window: "#00aa00" }
+}
+"##,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let overlay_of = |name: &str| {
+        let popup = find(&e, root, name);
+        let Value::Object(content) = e.read_by_name(popup, "contentItem") else {
+            panic!("{name} has no content item");
+        };
+        let item = e.visual_parent(content).expect("a popup item");
+        e.visual_parent(item).expect("an overlay")
+    };
+    let overlay = overlay_of("first");
+    assert_eq!(overlay, overlay_of("second"));
+    assert_eq!(ljos_quick::layer_host(&e, overlay), Some(root));
+
+    e.write_by_name(root, "palette.button", Value::from("#0000ff"))
+        .unwrap();
+    for name in ["first", "second"] {
+        let popup = find(&e, root, name);
+        assert_eq!(
+            e.read_by_name(popup, "palette.button")
+                .to_js_string()
+                .as_str(),
+            "#0000ff",
+            "{name}"
+        );
+    }
+}
+
+const BAR: &str = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+ApplicationWindow {
+    width: 400; height: 400; visible: true
+    menuBar: MenuBar {
+        objectName: "bar"
+        delegate: MenuBarItem { width: 60 }
+        Menu { objectName: "file"; title: "File"; MenuItem { text: "New" } }
+        MenuBarItem {
+            objectName: "own"
+            text: "Own"
+            menu: Menu { objectName: "edit"; MenuItem { text: "Cut" } }
+        }
+        Button { objectName: "stray"; text: "Stray" }
+    }
+    header: ToolBar {}
+}
+"#;
+
+/// The oracle's driver cannot press on the menu bar of a window, so what
+/// a press does there is seen here.
+#[test]
+fn the_menu_bar_of_a_window_opens_its_menus_under_its_items() {
+    let e = engine();
+    let root = load(&e, BAR);
+    let mut s = scene(&e, root);
+    s.set_accessibility_active(&e, true);
+    settle(&mut s, &e, Time::ZERO);
+    let bar = find(&e, root, "bar");
+    let (file, edit) = (find(&e, root, "file"), find(&e, root, "edit"));
+    let own = find(&e, root, "own");
+
+    // A menu and an item of the bar's own type are items; a button is not.
+    assert_eq!(e.read_by_name(bar, "count"), Value::Int(2));
+    assert_eq!(e.read_by_name(own, "x").to_number(), 60.0);
+    assert_eq!(e.read_by_name(own, "menuBar"), Value::Object(bar));
+    let roles: Vec<_> = nodes(&s)
+        .into_iter()
+        .map(|(role, name, _)| (role, name))
+        .collect();
+    assert!(
+        roles.contains(&("menubar".to_owned(), String::new())),
+        "{roles:?}"
+    );
+    assert!(
+        roles.contains(&("menuitem".to_owned(), "File".to_owned())),
+        "{roles:?}"
+    );
+    assert!(!roles.iter().any(|(_, name)| name == "Stray"), "{roles:?}");
+
+    click(&mut s, &e, 10.0, 20.0);
+    assert!(flag(&e, file, "visible"));
+    let Value::Object(content) = e.read_by_name(file, "contentItem") else {
+        panic!("the menu has no content item");
+    };
+    let popup_item = e.visual_parent(content).expect("a popup item");
+    let at = ljos_quick::scene_transform(&e, popup_item) * kurbo::Point::ZERO;
+    assert_eq!((at.x, at.y), (0.0, 40.0));
+    assert_idle(&mut s, &e, "with a menu of the bar open");
+
+    // The pointer over another item brings the open menu there.
+    s.pointer_event(
+        &e,
+        &PointerEvent::moved(70.0, 20.0, ljos_quick::MouseButtons::empty(), Time::ZERO),
+    );
+    settle(&mut s, &e, Time::ZERO);
+    assert!(!flag(&e, file, "visible"));
+    assert!(flag(&e, edit, "visible"));
+    assert!(flag(&e, own, "highlighted"));
+
+    click(&mut s, &e, 300.0, 300.0);
+    assert!(!flag(&e, edit, "visible"));
+    assert!(!flag(&e, own, "highlighted"));
+    assert_idle(&mut s, &e, "after the menus of the bar closed");
+}
+
+/// A transition wants frames while it runs and nothing afterwards, and
+/// the keyboard is back as soon as the popup starts to go.
+#[test]
+fn a_popup_wants_frames_only_while_it_comes_and_goes() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    Item { objectName: "before"; focus: true; width: 10; height: 10 }
+    Popup {
+        objectName: "p"; width: 50; height: 50; focus: true
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 200 } }
+        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 200 } }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    let (p, before) = (find(&e, root, "p"), find(&e, root, "before"));
+    assert_idle(&mut s, &e, "before the popup is opened");
+    let at = Time::from_millis;
+    let rests = |s: &mut QuickScene, now: Time, when: &str| {
+        assert_eq!(settle(s, &e, now), None, "a wake {when}");
+        assert_eq!(ljos_quick::running_animation_count(&e), 0, "{when}");
+        assert_eq!(e.next_timer_deadline(), None, "a timer {when}");
+    };
+
+    e.invoke_by_name(p, "open", &[]).unwrap();
+    assert!(
+        settle(&mut s, &e, at(0)).is_some(),
+        "no frame while it comes"
+    );
+    assert!(!flag(&e, p, "opened"));
+    assert!(flag(&e, p, "activeFocus"));
+    rests(&mut s, at(300), "once it has come");
+    assert!(flag(&e, p, "opened"));
+
+    e.invoke_by_name(p, "close", &[]).unwrap();
+    assert!(flag(&e, p, "visible"));
+    assert!(flag(&e, before, "activeFocus"));
+    assert!(
+        settle(&mut s, &e, at(300)).is_some(),
+        "no frame while it goes"
+    );
+    rests(&mut s, at(600), "once it has gone");
+    assert!(!flag(&e, p, "visible"));
+    assert_eq!(e.read_by_name(p, "opacity").to_number(), 1.0);
+    assert_eq!(format!("{:?}", e.take_log()), "[]", "a warning");
 }

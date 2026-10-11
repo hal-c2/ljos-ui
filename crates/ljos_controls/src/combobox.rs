@@ -1,21 +1,22 @@
 //! `ComboBox` and `ItemDelegate` (QtQuick.Templates).
 //!
 //! A combo box shows one row of a model and has a popup with a delegate
-//! for every row. It is not editable yet.
+//! for every row. An `editable` one has a field to type in as its content
+//! item: what is typed is `editText`, a row that starts with it completes
+//! it, and Return accepts it.
 //!
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-combobox.html and
 //! `-itemdelegate.html`. What a click, a key and the wheel do, what a
 //! change of the model does to the current row, and how `find` reads its
 //! flags were read off a running Qt 6.11.2; `features/controls/
-//! combobox.feature` and `combobox-pointer.feature` pin them.
+//! combobox.feature`, `combobox-pointer.feature` and
+//! `combobox-editable.feature` pin them.
 //!
 //! TODO(listview): the delegates are children of the popup's content
-//! item, in the order of the rows, and all of them are made when the
-//! popup first opens. Qt's are in a `ListView` on `delegateModel`, which
-//! reads null here until there is one.
-//! TODO(scroll): a popup with more rows than fit in the window does not
-//! scroll.
-//! TODO(text-input): `editable` and what goes with it are stored.
+//! item, or of what that scrolls ([`crate::rows`]), in the order of the
+//! rows, and all of them are made when the popup first opens. Qt's are
+//! in a `ListView` on `delegateModel`, which reads null here until there
+//! is one.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -24,21 +25,27 @@ use std::rc::Rc;
 use ljos_a11y::{NodeData, Role};
 use ljos_engine::{
     Atom, ConnectionId, Cx, DelegateHost, Delegates, Engine, EngineError, ItemModel, MetaRef,
-    ModelChange, ObjectId, PropIndex, QmlObject, QmlType, RemovalOrder, Value, WriteKind, qml_impl,
+    ModelChange, NodeId, ObjectId, PropIndex, QmlObject, QmlType, RemovalOrder, Value, WriteKind,
+    qml_impl,
 };
 use ljos_quick::flickable::{WheelItem, register_wheel_item};
-use ljos_quick::focus::{FocusReason, force_active_focus};
+use ljos_quick::focus::{
+    FocusReason, focus_reason, force_active_focus, register_focus_scope, scope_focus_item,
+};
 use ljos_quick::keys::{KeyItem, key, register_key_item};
+use ljos_quick::text_input::{input_method_hint, last_edit_typed};
 use ljos_quick::{
-    AccessibleAction, AccessibleItem, Item, KeyEvent, PointerEvent, PointerItem, WheelEvent,
-    contains_point, is_item, register_accessible_item, register_pointer_item, set_parent_item,
+    AccessibleAction, AccessibleItem, Item, KeyEvent, PointerEvent, PointerItem, TextEditor,
+    TextInput, WheelEvent, contains_point, is_item, register_accessible_item,
+    register_pointer_item, set_parent_item,
 };
 use ljos_render::kurbo;
 
 use crate::button::AbstractButton;
-use crate::control::{Control, hover, is_left, takes_input};
+use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, declared_by_style, manage_part};
 use crate::popup::{self, Popup, close_policy};
+use crate::rows;
 use crate::util::{bind_default, check, flag, is_a, is_unset, num, object, set_computed, warn};
 
 /// `Qt.MatchFlag`, as `find` reads it.
@@ -70,7 +77,7 @@ impl Default for ItemDelegate {
     fn default() -> Self {
         let mut button = AbstractButton::default();
         // `Qt.NoFocus`: the keyboard stays with the view the row is in.
-        button.control.focus_policy = 0;
+        button.control.focus_policy = focus_policy::NONE;
         Self {
             button,
             highlighted: false,
@@ -98,6 +105,11 @@ pub(crate) struct ComboState {
     key_held: Cell<bool>,
     /// The popup the combo box listens to.
     wired: RefCell<Option<(ObjectId, ConnectionId)>>,
+    /// Counts the times a delegate came, went or moved: what stacks the
+    /// delegates reads it.
+    rows_epoch: Cell<Option<NodeId>>,
+    /// The field the combo box listens to, and what it hears with.
+    listening: RefCell<Option<(ObjectId, Vec<ConnectionId>)>>,
 }
 
 impl Drop for ComboState {
@@ -224,7 +236,7 @@ impl Default for ComboBox {
         // `Qt.StrongFocus`: a combo box takes the keyboard on a click and
         // on Tab.
         let mut control = Control {
-            focus_policy: 11,
+            focus_policy: focus_policy::STRONG,
             ..Control::default()
         };
         control.item.active_focus_on_tab = true;
@@ -249,7 +261,9 @@ impl Default for ComboBox {
             editable: false,
             edit_text: Atom::EMPTY,
             validator: None,
-            input_method_hints: 0,
+            // What is typed is completed from the rows, not by the
+            // keyboard.
+            input_method_hints: input_method_hint::NO_PREDICTIVE_TEXT,
             input_method_composing: false,
             acceptable_input: true,
             select_text_by_mouse: false,
@@ -272,7 +286,8 @@ impl ComboBox {
     #[qml(signal)]
     fn highlighted(index: i32);
 
-    /// TODO(text-input): Return in an editable combo box.
+    /// Return in the field of an editable combo box, when the text is
+    /// acceptable.
     #[qml(signal)]
     fn accepted();
 
@@ -311,11 +326,16 @@ impl ComboBox {
         Value::Int(index_of_value(cx.engine, cx.this, &value))
     }
 
-    /// TODO(text-input): selects the text of an editable combo box.
+    /// Selects the text of the field.
     #[qml(invokable, name = "selectAll")]
     fn select_all(cx: &Cx) -> Result<(), EngineError> {
-        let _ = cx;
-        Ok(())
+        match editor(cx.engine, cx.this) {
+            Some(field) => cx
+                .engine
+                .invoke_by_name(field, "selectAll", &[])
+                .map(|_| ()),
+            None => Ok(()),
+        }
     }
 
     #[qml(invokable, name = "textAt")]
@@ -616,12 +636,80 @@ fn model_changed(engine: &Engine, combo: ObjectId, _change: &ModelChange) {
 
 // -------------------------------------------------------- the delegates
 
-/// Where the delegates go: the content item of the popup.
+/// The content item of the popup.
 fn content_of(engine: &Engine, combo: ObjectId) -> Option<ObjectId> {
     let popup = popup_of(engine, combo)?;
     engine
         .untrack(|| object(engine, popup, Popup::CONTENT_ITEM.index))
         .filter(|c| is_item(engine, *c))
+}
+
+/// Where the delegates go: what the popup's content item scrolls, or
+/// that item itself.
+fn rows_home(engine: &Engine, combo: ObjectId) -> Option<ObjectId> {
+    content_of(engine, combo).map(|c| rows::home(engine, c))
+}
+
+fn rows_epoch(engine: &Engine, st: &ComboState) -> Option<NodeId> {
+    if st.rows_epoch.get().is_none() {
+        let g = engine.graph();
+        st.rows_epoch.set(g.property(g.root(), Value::Int(0)).ok());
+    }
+    st.rows_epoch.get()
+}
+
+/// A delegate came, went or moved: they are stacked again.
+fn delegates_changed(engine: &Engine, combo: ObjectId) {
+    let Some(st) = state_of(engine, combo) else {
+        return;
+    };
+    if let Some(node) = rows_epoch(engine, &st) {
+        let g = engine.graph();
+        let n = g.get_untracked(node).to_number() as i32;
+        g.set(node, Value::Int(n.wrapping_add(1)));
+    }
+}
+
+/// Puts the delegates below each other where the popup's content item
+/// scrolls them, and says how high they are together. A content item
+/// that does not scroll lays them out itself (a `Column`). What this
+/// reads is what stacks them again when it runs in an effect.
+fn stack(engine: &Engine, combo: ObjectId) {
+    let Some(st) = state_of(engine, combo) else {
+        return;
+    };
+    if let Some(node) = rows_epoch(engine, &st) {
+        let _ = engine.graph().get(node);
+    }
+    let content = object(engine, combo, ComboBox::POPUP.index)
+        .filter(|p| is_a::<Popup>(engine, *p))
+        .and_then(|p| object(engine, p, Popup::CONTENT_ITEM.index))
+        .filter(|c| is_item(engine, *c) && rows::scrolls(engine, *c));
+    let Some(content) = content else {
+        return;
+    };
+    let mut top = 0.0;
+    for row in st.delegates().map(|d| d.objects()).unwrap_or_default() {
+        if !is_item(engine, row) {
+            continue;
+        }
+        let height = num(engine, row, Item::HEIGHT.index);
+        let placed = set_computed(engine, row, Item::Y.index, Value::Real(top));
+        check(engine, "delegate", placed);
+        top += height;
+    }
+    rows::set_extent(engine, content, top);
+}
+
+/// The delegate of a row, when it is an item.
+fn delegate_at(engine: &Engine, combo: ObjectId, index: i32) -> Option<ObjectId> {
+    let delegates = state_of(engine, combo)?.delegates()?;
+    let row = usize::try_from(index).ok()?;
+    delegates
+        .objects()
+        .get(row)
+        .copied()
+        .filter(|d| is_item(engine, *d))
 }
 
 /// Puts `items` at the end of `parent`'s lists of children, in their
@@ -675,7 +763,7 @@ impl DelegateHost for Host {
             .of
             .borrow_mut()
             .insert(object, combo);
-        let Some(content) = content_of(e, combo) else {
+        let Some(content) = rows_home(e, combo) else {
             return;
         };
         // Before the delegate's bindings run, so that `parent` reads
@@ -709,6 +797,7 @@ impl DelegateHost for Host {
             });
             check(e, "delegate", r.map(|_| ()));
         }
+        delegates_changed(e, combo);
     }
 
     fn removed(&self, e: &Engine, _: usize, object: ObjectId) {
@@ -717,17 +806,19 @@ impl DelegateHost for Host {
         if is_item(e, object) {
             let _ = set_parent_item(e, object, None);
         }
+        delegates_changed(e, self.0);
     }
 
     fn moved(&self, e: &Engine) {
         let combo = self.0;
         let (Some(content), Some(delegates)) = (
-            content_of(e, combo),
+            rows_home(e, combo),
             state_of(e, combo).and_then(|s| s.delegates()),
         ) else {
             return;
         };
         check(e, "delegate", order(e, content, &delegates.objects()));
+        delegates_changed(e, combo);
     }
 
     fn count_changed(&self, _: &Engine, _: usize) {}
@@ -832,6 +923,11 @@ fn highlight(engine: &Engine, combo: ObjectId, index: i32, by_user: bool) {
         "highlightedIndex",
         set_computed(engine, combo, p, Value::Int(index)),
     );
+    if let (Some(content), Some(row)) =
+        (content_of(engine, combo), delegate_at(engine, combo, index))
+    {
+        rows::keep_in_view(engine, content, row);
+    }
     if by_user {
         emit(engine, combo, "highlighted", index);
     }
@@ -914,18 +1010,47 @@ fn popup_switched(engine: &Engine, combo: ObjectId, open: bool) {
     }
 }
 
+/// The popup is on the screen: its rows start at the current one, as
+/// far as they go (read off qml6), whatever was in view when it was last
+/// open.
+fn popup_shown(engine: &Engine, combo: ObjectId) {
+    if !engine.is_alive(combo) {
+        return;
+    }
+    engine.untrack(|| {
+        ensure_delegates(engine, combo);
+        stack(engine, combo);
+        let Some(content) = content_of(engine, combo) else {
+            return;
+        };
+        let current = int(engine, combo, ComboBox::CURRENT_INDEX.index);
+        match delegate_at(engine, combo, current) {
+            Some(row) => rows::start_at(engine, content, row),
+            None => rows::start(engine, content),
+        }
+    });
+}
+
 /// Listens to the popup the combo box has now.
 fn wire_popup(engine: &Engine, combo: ObjectId, st: &ComboState) {
     let popup = popup_of(engine, combo);
     if st.wired.borrow().map(|(p, _)| p) == popup {
         return;
     }
-    if let Some((_, conn)) = st.wired.take() {
+    if let Some((old, conn)) = st.wired.take() {
         engine.disconnect(conn);
+        if engine.is_alive(old) {
+            popup::when_shown(engine, old, None);
+        }
     }
     let Some(popup) = popup else {
         return;
     };
+    popup::when_shown(
+        engine,
+        popup,
+        Some(Rc::new(move |e: &Engine| popup_shown(e, combo))),
+    );
     // Before the popup is shown: it is placed with its rows in it.
     let conn = engine.connect_by_name(popup, "aboutToShow", move |e, _| {
         if e.is_alive(combo) {
@@ -939,6 +1064,218 @@ fn wire_popup(engine: &Engine, combo: ObjectId, st: &ComboState) {
     // The delegates live in the content item of the popup they were made
     // for.
     resource(engine, combo, st);
+}
+
+// ------------------------------------------------------------ the field
+
+/// The field of the combo box: its content item, when that is one to
+/// type in.
+fn editor(engine: &Engine, combo: ObjectId) -> Option<ObjectId> {
+    engine
+        .untrack(|| object(engine, combo, Control::CONTENT_ITEM.index))
+        .filter(|c| is_a::<TextInput>(engine, *c))
+}
+
+fn is_editable(engine: &Engine, combo: ObjectId) -> bool {
+    engine.untrack(|| flag(engine, combo, ComboBox::EDITABLE.index))
+}
+
+fn text_in(engine: &Engine, field: ObjectId) -> String {
+    match engine.untrack(|| engine.read(field, TextEditor::TEXT.index)) {
+        Value::String(s) => s.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The first row whose text is `wanted`, whatever the case of its
+/// letters; with `starts`, the first that starts with it.
+fn row_like(engine: &Engine, combo: ObjectId, wanted: &str, starts: bool) -> Option<usize> {
+    let wanted = wanted.to_lowercase();
+    let rows = state_of(engine, combo).map_or(0, |s| s.rows());
+    (0..rows).find(|row| {
+        let text = text_of(engine, combo, *row).as_str().to_lowercase();
+        if starts {
+            text.starts_with(&wanted)
+        } else {
+            text == wanted
+        }
+    })
+}
+
+/// Something was typed into the field: it is the edit text, and a row
+/// that starts with it completes it. The completion is selected, so the
+/// next character goes over it. A key that takes characters away
+/// completes nothing (read off qml6).
+fn edited(engine: &Engine, combo: ObjectId, field: ObjectId) {
+    if editor(engine, combo) != Some(field) || !is_editable(engine, combo) {
+        return;
+    }
+    engine.untrack(|| {
+        let typed = text_in(engine, field);
+        let at_end = int(engine, field, TextEditor::CURSOR_POSITION.index)
+            == int(engine, field, TextEditor::LENGTH.index);
+        let rest = (last_edit_typed(engine, field) && at_end && !typed.is_empty())
+            .then(|| row_like(engine, combo, &typed, true))
+            .flatten()
+            .map(|row| text_of(engine, combo, row))
+            .and_then(|full| {
+                // What was typed stays as it was typed: "t" becomes "two".
+                let rest: String = full.as_str().chars().skip(typed.chars().count()).collect();
+                (!rest.is_empty()).then_some(rest)
+            });
+        let Some(rest) = rest else {
+            put(
+                engine,
+                combo,
+                ComboBox::EDIT_TEXT.index,
+                Value::String(Atom::from(typed.as_str())),
+            );
+            return;
+        };
+        let shown = format!("{typed}{rest}");
+        let text = Value::String(Atom::from(shown.as_str()));
+        // The field first: the style's binding on the edit text then
+        // finds nothing to change and leaves the selection alone.
+        let r = engine.write_derived(field, TextEditor::TEXT.index, text.clone());
+        check(engine, "contentItem", r);
+        let units = |s: &str| Value::Int(s.encode_utf16().count() as i32);
+        let r = engine
+            .invoke_by_name(field, "select", &[units(&shown), units(&typed)])
+            .map(|_| ());
+        check(engine, "contentItem", r);
+        put(engine, combo, ComboBox::EDIT_TEXT.index, text);
+    });
+}
+
+/// Return in the field. A row with the text becomes the current one
+/// before the application is told; a text that is no row is looked for
+/// again afterwards, since the handler may have added it, and leaves no
+/// row current otherwise (read off qml6).
+fn accept(engine: &Engine, combo: ObjectId, field: ObjectId) {
+    if editor(engine, combo) != Some(field) || !is_editable(engine, combo) {
+        return;
+    }
+    let text = text_in(engine, field);
+    let found = row_like(engine, combo, &text, false);
+    if let Some(row) = found {
+        choose_typed(engine, combo, row);
+    }
+    check(
+        engine,
+        "accepted",
+        engine.emit_by_name(combo, "accepted", &[]),
+    );
+    if found.is_some() || !engine.is_alive(combo) {
+        return;
+    }
+    match row_like(engine, combo, &text, false) {
+        Some(row) => choose_typed(engine, combo, row),
+        None => {
+            set_current(engine, combo, -1);
+            // What was typed stays in the field.
+            put(
+                engine,
+                combo,
+                ComboBox::EDIT_TEXT.index,
+                Value::String(Atom::from(text.as_str())),
+            );
+        }
+    }
+}
+
+/// Makes `row` current because its text was typed: the field shows the
+/// text as the row has it.
+fn choose_typed(engine: &Engine, combo: ObjectId, row: usize) {
+    set_current(engine, combo, row as i32);
+    put(
+        engine,
+        combo,
+        ComboBox::EDIT_TEXT.index,
+        Value::String(text_of(engine, combo, row)),
+    );
+}
+
+/// Listens to the field the combo box has now.
+fn listen(engine: &Engine, combo: ObjectId) {
+    let Some(st) = state_of(engine, combo) else {
+        return;
+    };
+    let field = editor(engine, combo);
+    if st.listening.borrow().as_ref().map(|(f, _)| *f) == field {
+        return;
+    }
+    if let Some((_, heard)) = st.listening.take() {
+        for c in heard {
+            engine.disconnect(c);
+        }
+    }
+    let Some(field) = field else {
+        return;
+    };
+    let mut heard = Vec::new();
+    type Hook = fn(&Engine, ObjectId, ObjectId);
+    let hooks: [(&str, Hook); 2] = [("textEdited", edited), ("accepted", accept)];
+    for (signal, then) in hooks {
+        match engine.connect_by_name(field, signal, move |e, _| {
+            if e.is_alive(combo) {
+                then(e, combo, field);
+            }
+        }) {
+            Ok(c) => heard.push(c),
+            Err(err) => check(engine, "contentItem", Err(err)),
+        }
+    }
+    // A press on the field while the popup is open means typing.
+    let r = engine.watch(field, Item::ACTIVE_FOCUS.index, move |e, v| {
+        if v.to_boolean() && e.is_alive(combo) && editor(e, combo) == Some(field) {
+            close_popup(e, combo);
+        }
+    });
+    check(engine, "contentItem", r.map(|_| ()));
+    for p in [TextEditor::TEXT.index, TextInput::ACCEPTABLE_INPUT.index] {
+        let r = engine.watch(field, p, move |e, _| {
+            if e.is_alive(combo) && editor(e, combo) == Some(field) {
+                judge(e, combo, field);
+            }
+        });
+        check(engine, "contentItem", r.map(|_| ()));
+    }
+    judge(engine, combo, field);
+    *st.listening.borrow_mut() = Some((field, heard));
+}
+
+/// `acceptableInput` is what the validator said of the last text an
+/// editable combo box had: a combo box that stops being editable keeps
+/// the answer, and one that becomes editable has none until its text
+/// changes (measured on Qt 6.11.2).
+fn judge(engine: &Engine, combo: ObjectId, field: ObjectId) {
+    if !engine.untrack(|| is_editable(engine, combo)) {
+        return;
+    }
+    let ok = engine.untrack(|| flag(engine, field, TextInput::ACCEPTABLE_INPUT.index));
+    put(
+        engine,
+        combo,
+        ComboBox::ACCEPTABLE_INPUT.index,
+        Value::Bool(ok),
+    );
+}
+
+/// The keyboard is the combo box's own, and not its field's: a press on
+/// the indicator takes it from the field.
+fn focus_self(engine: &Engine, combo: ObjectId, reason: FocusReason) {
+    if let Some(field) = editor(engine, combo)
+        && scope_focus_item(engine, combo) == Some(field)
+    {
+        let r = engine.write(
+            field,
+            Item::FOCUS.index,
+            Value::Bool(false),
+            WriteKind::Imperative,
+        );
+        check(engine, "contentItem", r);
+    }
+    force_active_focus(engine, combo, reason);
 }
 
 // ----------------------------------------------------------------- init
@@ -1015,6 +1352,35 @@ fn init_combo(engine: &Engine, combo: ObjectId) -> Result<(), EngineError> {
         }
     })?;
 
+    engine.effect_in(combo, move |e| stack(e, combo))?;
+
+    // The field: what it is typing, whether its text is acceptable, and
+    // the Tab key, which stops in it and not at the combo box around it.
+    listen(engine, combo);
+    engine.watch(combo, Control::CONTENT_ITEM.index, move |e, _| {
+        listen(e, combo)
+    })?;
+    let field_of = move |e: &Engine| {
+        object(e, combo, Control::CONTENT_ITEM.index).filter(|c| is_a::<TextInput>(e, *c))
+    };
+    engine.bind_initial(combo, ComboBox::INPUT_METHOD_COMPOSING.index, move |e| {
+        let composing =
+            field_of(e).is_some_and(|f| flag(e, f, TextEditor::INPUT_METHOD_COMPOSING.index));
+        Value::Bool(composing)
+    })?;
+    engine.watch(combo, Item::ACTIVE_FOCUS.index, move |e, v| {
+        if !v.to_boolean() || !is_editable(e, combo) {
+            return;
+        }
+        let reason = focus_reason(e, combo);
+        if matches!(reason, FocusReason::Tab | FocusReason::Backtab)
+            && let Some(field) = editor(e, combo)
+            && !e.untrack(|| flag(e, field, Item::ACTIVE_FOCUS.index))
+        {
+            force_active_focus(e, field, reason);
+        }
+    })?;
+
     // The popup: which one it is, and whether it is open.
     let state = st.clone();
     engine.effect_in(combo, move |e| {
@@ -1074,7 +1440,7 @@ fn press(engine: &Engine, combo: ObjectId, ev: &PointerEvent, _at: kurbo::Point)
         return false;
     };
     st.held.set(true);
-    force_active_focus(engine, combo, FocusReason::Mouse);
+    focus_self(engine, combo, FocusReason::Mouse);
     set_pressed(engine, combo, true);
     true
 }
@@ -1131,7 +1497,13 @@ fn key_press(engine: &Engine, combo: ObjectId, ev: &KeyEvent) -> bool {
     let Some(st) = state_of(engine, combo) else {
         return false;
     };
+    // An editable combo box that has the keyboard itself, and not its
+    // field, takes no text; Return still picks a row of the open popup
+    // (read off qml6).
+    let editable = is_editable(engine, combo);
     match ev.key {
+        key::SPACE if editable => false,
+        key::RETURN | key::ENTER if editable && !is_open(engine, combo) => false,
         key::SPACE | key::RETURN | key::ENTER => {
             if !ev.auto_repeat {
                 st.key_held.set(true);
@@ -1169,11 +1541,11 @@ fn key_press(engine: &Engine, combo: ObjectId, ev: &KeyEvent) -> bool {
             true
         }
         _ => match typed(ev) {
-            Some(c) => {
+            Some(c) if !editable => {
                 step(engine, combo, Step::Letter(c));
                 true
             }
-            None => false,
+            _ => false,
         },
     }
 }
@@ -1242,6 +1614,8 @@ pub(crate) fn register(engine: &Engine) {
     );
     register_wheel_item(engine, meta(), WheelItem { wheel });
     register_accessible_item(engine, meta(), AccessibleItem { describe, act });
+    // The field of an editable combo box has the keyboard inside it.
+    register_focus_scope(engine, meta());
 }
 
 // --------------------------------------------------------- accessibility

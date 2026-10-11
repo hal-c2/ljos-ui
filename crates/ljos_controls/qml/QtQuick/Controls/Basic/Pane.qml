@@ -13,7 +13,9 @@ T.Pane {
 
     padding: 12
 
-    background: Rectangle {
-        color: control.palette.window
+    background: Component {
+        Rectangle {
+            color: control.palette.window
+        }
     }
 }

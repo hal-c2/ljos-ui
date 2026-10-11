@@ -1,6 +1,7 @@
 // The Basic style of Ljós, written from the Qt Quick Controls documentation
 // and from the sizes and colours a running Qt reports (CLEAN_ROOM.md).
 import QtQuick
+import QtQuick.Controls.impl
 import QtQuick.Templates as T
 
 T.ItemDelegate {
@@ -18,33 +19,29 @@ T.ItemDelegate {
     icon.width: 24
     icon.height: 24
 
-    // TODO(image): the icon goes beside the text, as `display` says.
-    contentItem: Item {
-        // What an application reads off the content item of a button.
-        property alias text: label.text
-        property alias font: label.font
-        property alias color: label.color
-
-        implicitWidth: label.implicitWidth
-        implicitHeight: label.implicitHeight
-
-        Text {
-            id: label
-            width: parent.width
-            height: parent.height
+    // A row starts at its edge: the icon, then the text. An icon alone,
+    // or one over its text, is in the middle.
+    contentItem: Component {
+        IconLabel {
+            spacing: control.spacing
+            mirrored: control.mirrored
+            display: control.display
+            alignment: control.display === IconLabel.IconOnly
+                       || control.display === IconLabel.TextUnderIcon ? Qt.AlignCenter
+                                                                      : Qt.AlignLeft
             text: control.text
             font: control.font
             color: control.highlighted ? control.palette.highlightedText : control.palette.text
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
         }
     }
 
     // A row shows only while something is going on in it.
-    background: Rectangle {
-        implicitWidth: 100
-        implicitHeight: 40
-        visible: control.down || control.highlighted || control.visualFocus
-        color: control.down ? control.palette.midlight : control.palette.light
+    background: Component {
+        Rectangle {
+            implicitWidth: 100
+            implicitHeight: 40
+            visible: control.down || control.highlighted || control.visualFocus
+            color: control.down ? control.palette.midlight : control.palette.light
+        }
     }
 }

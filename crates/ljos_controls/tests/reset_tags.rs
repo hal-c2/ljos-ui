@@ -53,22 +53,17 @@ fn qt_reset(ty: QtType, name: &str) -> Option<bool> {
 /// group. Assigning `undefined` to one is refused. Take a line out when
 /// the property gets its reset.
 const NOT_YET: &[&str] = &[
-    // What a control inherits when nobody gave it: taking one back means
-    // resolving it against the parent again, which a default cannot say.
-    "*.font",
-    "*.locale",
+    // A role is taken back; the whole group at once needs a group that
+    // can be assigned to, which the engine does not have.
     "*.palette",
-    "*.palette.*",
-    // Qt's controls take these back to what the content gives.
-    "*.baselineOffset",
-    "*.contentWidth",
-    "*.contentHeight",
+    // Quick's validators keep the name and read numbers in the C locale.
+    "DoubleValidator.locale",
+    "IntValidator.locale",
     // What a button shows follows its action again.
     "*.text",
     "*.icon.*",
     "*.down",
     "Action.enabled",
-    "LayoutMirroring (attached).enabled",
     "ComboBox.displayText",
     "ComboBox.editText",
     "DialogButtonBox.alignment",
@@ -76,9 +71,6 @@ const NOT_YET: &[&str] = &[
     "Menu.cascade",
     "Page.title",
     "ScrollBar.interactive",
-    // Back to the address of the document, which a text control does not
-    // know here.
-    "*.baseUrl",
 ];
 
 /// Properties taken back here that Qt refuses to: each has the reset of the

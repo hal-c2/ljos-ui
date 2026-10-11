@@ -11,8 +11,10 @@ T.ToolBar {
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
                              contentHeight + topPadding + bottomPadding)
 
-    background: Rectangle {
-        implicitHeight: 40
-        color: control.palette.button
+    background: Component {
+        Rectangle {
+            implicitHeight: 40
+            color: control.palette.button
+        }
     }
 }

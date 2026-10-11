@@ -13,9 +13,11 @@ T.Frame {
 
     padding: 12
 
-    background: Rectangle {
-        color: "transparent"
-        border.width: 1
-        border.color: control.palette.mid
+    background: Component {
+        Rectangle {
+            color: "transparent"
+            border.width: 1
+            border.color: control.palette.mid
+        }
     }
 }

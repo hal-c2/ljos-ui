@@ -92,6 +92,10 @@ pub(super) fn ensure(engine: &Engine, top: ObjectId) -> Result<ObjectId, EngineE
             return Ok(layer);
         }
         let o = engine.create_native(OverlayItem::default(), Some(top))?;
+        // Before anything is written: a write runs the effects of other
+        // popups, and one that looked for the overlay now would make a
+        // second, which nothing would ever show.
+        ljos_quick::set_layer(engine, top, o);
         for (prop, v) in [
             (Item::Z.index, Value::Real(OVERLAY_Z)),
             (Item::VISIBLE.index, Value::Bool(false)),
@@ -114,7 +118,6 @@ pub(super) fn ensure(engine: &Engine, top: ObjectId) -> Result<ObjectId, EngineE
             let _ = e.read(o, Item::CHILDREN.index);
             e.untrack(|| changed(e, o));
         })?;
-        ljos_quick::set_layer(engine, top, o);
         Ok(o)
     })
 }

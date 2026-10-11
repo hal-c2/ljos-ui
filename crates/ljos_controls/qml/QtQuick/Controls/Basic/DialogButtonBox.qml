@@ -20,12 +20,14 @@ T.DialogButtonBox {
 
     delegate: Button {}
 
-    background: Rectangle {
-        implicitHeight: 40
-        x: 1
-        y: 1
-        width: control.width - 2
-        height: control.height - 2
-        color: control.palette.window
+    background: Component {
+        Rectangle {
+            implicitHeight: 40
+            x: 1
+            y: 1
+            width: control.width - 2
+            height: control.height - 2
+            color: control.palette.window
+        }
     }
 }

@@ -16,62 +16,66 @@ T.CheckBox {
     spacing: 6
 
     // Beside the text, or in the middle when there is none.
-    indicator: Rectangle {
-        implicitWidth: 28
-        implicitHeight: 28
-        x: control.text.length > 0
-           ? (control.mirrored ? control.width - width - control.rightPadding : control.leftPadding)
-           : control.leftPadding + (control.availableWidth - width) / 2
-        y: control.topPadding + (control.availableHeight - height) / 2
-        color: control.down ? control.palette.light : control.palette.base
-        // Wider and in the highlight where the keyboard is, when a key
-        // brought it there.
-        border.width: control.visualFocus ? 2 : 1
-        border.color: control.visualFocus ? control.palette.highlight : control.palette.mid
-
-        // The mark is a filled square: a neutral drawing of our own.
+    indicator: Component {
         Rectangle {
-            x: (parent.width - width) / 2
-            y: (parent.height - height) / 2
-            width: 14
-            height: 14
-            radius: 2
-            color: control.palette.text
-            visible: control.checkState === Qt.Checked
-        }
+            implicitWidth: 28
+            implicitHeight: 28
+            x: control.text.length > 0
+               ? (control.mirrored ? control.width - width - control.rightPadding : control.leftPadding)
+               : control.leftPadding + (control.availableWidth - width) / 2
+            y: control.topPadding + (control.availableHeight - height) / 2
+            color: control.down ? control.palette.light : control.palette.base
+            // Wider and in the highlight where the keyboard is, when a key
+            // brought it there.
+            border.width: control.visualFocus ? 2 : 1
+            border.color: control.visualFocus ? control.palette.highlight : control.palette.mid
 
-        Rectangle {
-            x: (parent.width - width) / 2
-            y: (parent.height - height) / 2
-            width: 16
-            height: 3
-            color: control.palette.text
-            visible: control.checkState === Qt.PartiallyChecked
+            // The mark is a filled square: a neutral drawing of our own.
+            Rectangle {
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+                width: 14
+                height: 14
+                radius: 2
+                color: control.palette.text
+                visible: control.checkState === Qt.Checked
+            }
+
+            Rectangle {
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+                width: 16
+                height: 3
+                color: control.palette.text
+                visible: control.checkState === Qt.PartiallyChecked
+            }
         }
     }
 
     // The text, with room for the indicator on the side it is on.
-    contentItem: Item {
-        // What an application reads off the content item of a button.
-        property alias text: label.text
-        property alias font: label.font
-        property alias color: label.color
+    contentItem: Component {
+        Item {
+            // What an application reads off the content item of a button.
+            property alias text: label.text
+            property alias font: label.font
+            property alias color: label.color
 
-        implicitWidth: label.implicitWidth + label.gap
-        implicitHeight: label.implicitHeight
+            implicitWidth: label.implicitWidth + label.gap
+            implicitHeight: label.implicitHeight
 
-        Text {
-            id: label
-            readonly property real gap: control.indicator
-                                        ? control.indicator.width + control.spacing : 0
-            x: control.mirrored ? 0 : gap
-            width: parent.width - gap
-            height: parent.height
-            text: control.text
-            font: control.font
-            color: control.palette.windowText
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
+            Text {
+                id: label
+                readonly property real gap: control.indicator
+                                            ? control.indicator.width + control.spacing : 0
+                x: control.mirrored ? 0 : gap
+                width: parent.width - gap
+                height: parent.height
+                text: control.text
+                font: control.font
+                color: control.palette.windowText
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+            }
         }
     }
 }

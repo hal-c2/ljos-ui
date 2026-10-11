@@ -47,9 +47,12 @@ pub(crate) fn host_append(cx: &Cx, child: ObjectId, host: Host) -> Result<(), En
 }
 
 /// The item that what is declared in a host becomes a child of: its
-/// content item, or in a `ScrollView` what that content item scrolls.
+/// content item, or in a `ScrollView` and in a menu what that content
+/// item scrolls.
 fn holder(engine: &Engine, host: ObjectId, content_item: ObjectId) -> ObjectId {
-    if !crate::scroll_view::is_scroll_view(engine, host) {
+    if !crate::scroll_view::is_scroll_view(engine, host)
+        && !crate::util::is_a::<crate::menu::Menu>(engine, host)
+    {
         return content_item;
     }
     ljos_quick::flickable::content_item(engine, content_item).unwrap_or(content_item)
@@ -141,9 +144,9 @@ pub struct Pane {
     pub content_data: QmlList,
     #[qml(notify, list)]
     pub content_children: QmlList,
-    #[qml(notify)]
+    #[qml(notify, reset = CONTENT_ASKED)]
     pub content_width: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = CONTENT_ASKED)]
     pub content_height: f64,
 }
 
@@ -152,6 +155,20 @@ const PANE: Host = Host {
     content_data: Pane::CONTENT_DATA.index,
     content_children: Pane::CONTENT_CHILDREN.index,
 };
+
+/// `contentWidth = undefined`: a pane that is given no content size has
+/// what its content asks for again, and follows it
+/// (`features/bindings/property-reset-content-size.feature`).
+const CONTENT_ASKED: ljos_engine::Reset = ljos_engine::Reset::Follow(content_asked);
+
+fn content_asked(engine: &Engine, obj: ObjectId, size: PropIndex) -> Value {
+    let asked = if size == Pane::CONTENT_WIDTH.index {
+        Item::IMPLICIT_WIDTH
+    } else {
+        Item::IMPLICIT_HEIGHT
+    };
+    Value::Real(content_size(engine, obj, PANE, asked.index))
+}
 
 fn pane_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     host_append(cx, child, PANE)

@@ -14,9 +14,11 @@ T.MenuSeparator {
     padding: 2
     verticalPadding: padding + 4
 
-    contentItem: Rectangle {
-        implicitWidth: 188
-        implicitHeight: 1
-        color: control.palette.mid
+    contentItem: Component {
+        Rectangle {
+            implicitWidth: 188
+            implicitHeight: 1
+            color: control.palette.mid
+        }
     }
 }

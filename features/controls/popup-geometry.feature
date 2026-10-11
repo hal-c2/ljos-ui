@@ -235,6 +235,66 @@ Feature: Popup sizing and positioning
         | side  | leftMargin   | -1    |
         | side  | margins      | -1    |
 
+  Rule: A popup that does not fit between its margins is made smaller
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 400; height: 400
+          component Tall: Popup {
+            property real rows: 800
+            padding: 0
+            contentItem: Item { implicitWidth: 100; implicitHeight: rows }
+          }
+          Tall { objectName: "tall"; margins: 0 }
+          Tall { objectName: "free" }
+          Tall { objectName: "gap"; y: 100; topMargin: 6; bottomMargin: 6 }
+          Tall { objectName: "top"; topMargin: 0 }
+          Tall { objectName: "bottom"; bottomMargin: 0 }
+          Popup { objectName: "given"; margins: 0; height: 800 }
+          Popup {
+            objectName: "wide"; y: 100; margins: 10; padding: 0
+            contentItem: Item { implicitWidth: 800; implicitHeight: 100 }
+          }
+        }
+        """
+
+    Scenario Outline: The open popup "<popup>" is <height> tall at <y>
+      When the method "open" of "<popup>" is called
+      Then the property "height" of "<popup>" is <height>
+      And the property "y" of "<popup>" is <y>
+
+      Examples:
+        | popup  | height | y    |
+        | tall   | 400    | 0    |
+        | gap    | 388    | 6    |
+        | free   | 800    | 0    |
+        | top    | 800    | 0    |
+        | bottom | 800    | -400 |
+        | given  | 800    | 0    |
+        | wide   | 100    | 100  |
+
+    Scenario: A popup that is too wide is made narrower
+      When the method "open" of "wide" is called
+      Then the property "width" of "wide" is 380
+      And the property "x" of "wide" is 10
+
+    Scenario: The content item is as tall as the popup has room for
+      When the method "open" of "tall" is called
+      Then the property "contentItem.height" of "tall" is 400
+      And the property "implicitHeight" of "tall" is 800
+
+    Scenario: A popup that was not opened is as tall as it wants to be
+      Then the property "height" of "tall" is 800
+
+    Scenario: A popup that fits again is as tall as it wants to be
+      When the method "open" of "tall" is called
+      And the property "rows" of "tall" is set to 200
+      Then the property "height" of "tall" is 200
+
   Rule: A popup can be centred
 
     Background:

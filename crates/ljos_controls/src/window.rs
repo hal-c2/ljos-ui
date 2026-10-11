@@ -23,7 +23,7 @@ use ljos_quick::{Item, Rectangle};
 use crate::containers::{Host, bar_height, host_append, host_complete};
 use crate::inherit::{self, InheritState, Kind};
 use crate::palette::Palette;
-use crate::parts::{PartKind, destroy_replaced_style_parts, manage_part};
+use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{is_a, num};
 
 /// `Window.Windowed`: what `visibility` holds (numbers read off qml6
@@ -116,10 +116,10 @@ impl Window {
 pub struct ApplicationWindow {
     #[qml(base)]
     pub window: Window,
-    #[qml(notify)]
+    #[qml(notify, reset = inherit::FONT_RESET)]
     pub font: Font,
-    /// Accepted and stored.
-    #[qml(notify)]
+    /// What the controls in the window have until they are given one.
+    #[qml(notify, reset = inherit::LOCALE_RESET)]
     pub locale: Value,
     #[qml(notify)]
     pub background: Option<ObjectId>,
@@ -127,7 +127,7 @@ pub struct ApplicationWindow {
     pub header: Option<ObjectId>,
     #[qml(notify)]
     pub footer: Option<ObjectId>,
-    /// Stored: there is no `MenuBar` yet.
+    /// Lies across the top of the window, above the header.
     #[qml(notify)]
     pub menu_bar: Option<ObjectId>,
     #[qml(notify, list, append = window_append)]
@@ -146,10 +146,16 @@ fn window_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     host_append(cx, child, HOST)
 }
 
-/// Where the content of an application window is: all of it but the two
+/// How far down the header of an application window begins: below the
+/// menu bar (tracked).
+fn header_top(engine: &Engine, win: ObjectId) -> f64 {
+    bar_height(engine, win, ApplicationWindow::MENU_BAR.index)
+}
+
+/// Where the content of an application window is: all of it but the
 /// bars (tracked).
 fn content_rect(engine: &Engine, win: ObjectId) -> [f64; 4] {
-    let top = bar_height(engine, win, ApplicationWindow::HEADER.index);
+    let top = header_top(engine, win) + bar_height(engine, win, ApplicationWindow::HEADER.index);
     let bottom = bar_height(engine, win, ApplicationWindow::FOOTER.index);
     [
         0.0,
@@ -164,7 +170,7 @@ impl ApplicationWindow {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, obj) = (cx.engine, cx.this);
-        destroy_replaced_style_parts(e, obj);
+        settle_parts(e, obj);
         host_complete(e, obj, HOST)?;
         manage_part(
             e,
@@ -178,7 +184,19 @@ impl ApplicationWindow {
             Window::CONTENT_ITEM.index,
             PartKind::Content(content_rect),
         )?;
-        manage_part(e, obj, ApplicationWindow::HEADER.index, PartKind::Header)?;
+        // The menu bar over the header (`z` 2 and 1 on Qt 6.11.2).
+        manage_part(
+            e,
+            obj,
+            ApplicationWindow::MENU_BAR.index,
+            PartKind::Across(2.0, |_, _| 0.0),
+        )?;
+        manage_part(
+            e,
+            obj,
+            ApplicationWindow::HEADER.index,
+            PartKind::Across(1.0, header_top),
+        )?;
         manage_part(e, obj, ApplicationWindow::FOOTER.index, PartKind::Footer)?;
         inherit::attach(e, obj, Kind::ApplicationWindow, true)
     }

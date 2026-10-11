@@ -16,19 +16,23 @@
 //! doc.qt.io/qt-6/qtquickcontrols-popups.html; pinned by
 //! `features/controls/popup*.feature` and `overlay.feature`.
 //!
-//! TODO(transition): `enter` and `exit` are stored; there is no
-//! `Transition` yet, so a popup is there or gone at once.
+//! A popup with an `enter` transition is `opened` when that has run, and
+//! one with an `exit` transition stays visible until that has run and is
+//! `closed` then (measured on Qt 6.11.2, pinned by
+//! `popup-transitions.feature`). The transitions run on the popup, whose
+//! `opacity` and `scale` are its item's. With reduced motion they are
+//! over in the step they start in.
 
 mod item;
 mod overlay;
 mod position;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, Font, ObjectId, Prop, PropIndex, QmlList, QmlObject, QtObject, Value,
-    WriteKind, qml_impl,
+    Cx, Engine, EngineError, Font, Interception, Interceptor, ObjectId, Prop, PropIndex, QmlList,
+    QmlObject, QtObject, Value, WriteKind, qml_impl,
 };
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_quick::{Item, is_item, set_parent_item};
@@ -36,11 +40,11 @@ use ljos_quick::{Item, is_item, set_parent_item};
 use crate::containers::{Host, content_size, host_append, host_complete};
 use crate::control::Control;
 use crate::palette::Palette;
-use crate::parts::destroy_replaced_style_parts;
+use crate::parts::settle_parts;
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 use crate::window::Window;
 
-pub(crate) use item::{PopupItem, follow, set_role};
+pub(crate) use item::{PopupItem, follow, look_from_above, set_role, take_look_back};
 pub(crate) use overlay::last_pointer;
 pub use overlay::{Overlay, OverlayAttached};
 
@@ -106,12 +110,57 @@ pub(crate) struct PopupState {
     took_focus: Cell<bool>,
     /// `open()` and `close()` write `visible` themselves.
     switching: Cell<bool>,
+    /// Which of the popup's transitions is running.
+    phase: Cell<Phase>,
+    /// The opacity and scale the popup had when it began to go: it has
+    /// them again when it has gone, so that it can be shown again.
+    before_exit: Cell<Option<(f64, f64)>>,
     /// The position code is writing `x` and `y` back.
     pub placing: Cell<bool>,
     /// Where the author put the popup; `x` and `y` read as where it is.
     pub requested: Cell<(f64, f64)>,
     /// The press that is down began outside the popup.
     pub pressed_outside: Cell<bool>,
+    /// What the control the popup belongs to does each time the popup is
+    /// shown, once it has its size and its place.
+    when_shown: WhenShown,
+}
+
+/// Where a popup is between shown and hidden.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Phase {
+    /// Open or closed: no transition runs.
+    #[default]
+    Rest,
+    /// Its enter transition runs: visible, not yet opened.
+    Coming,
+    /// Its exit transition runs: still visible, no longer opened.
+    Going,
+}
+
+/// What `when_shown` has called.
+pub(crate) type Shown = Rc<dyn Fn(&Engine)>;
+
+#[derive(Default)]
+struct WhenShown(RefCell<Option<Shown>>);
+
+impl std::fmt::Debug for WhenShown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.borrow().is_some() {
+            "WhenShown(set)"
+        } else {
+            "WhenShown(none)"
+        })
+    }
+}
+
+/// Has `f` called each time `popup` is shown, after it was sized and
+/// placed and before it says `opened`; `None` takes that away. A combo
+/// box brings its current row into view there.
+pub(crate) fn when_shown(engine: &Engine, popup: ObjectId, f: Option<Shown>) {
+    if let Some(state) = state_of(engine, popup) {
+        *state.when_shown.0.borrow_mut() = f;
+    }
 }
 
 /// `Popup`.
@@ -231,17 +280,18 @@ pub struct Popup {
     /// Stored: a popup is always an item of its window here.
     #[qml(notify, enumeration = "PopupType")]
     pub popup_type: i32,
-    /// Stored (see the module's TODO).
+    /// The `Transition` that brings the popup in.
     #[qml(notify)]
     pub enter: Option<ObjectId>,
+    /// The `Transition` that takes the popup away.
     #[qml(notify)]
     pub exit: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, reset = item::FONT_RESET)]
     pub font: Font,
     #[qml(group)]
     pub palette: Palette,
-    /// Accepted and stored.
-    #[qml(notify)]
+    /// Its item's, which has the window's until it is given one.
+    #[qml(notify, reset = item::LOCALE_RESET)]
     pub locale: Value,
     #[qml(notify, readonly)]
     pub mirrored: bool,
@@ -487,12 +537,18 @@ fn natural_dim(e: &Engine, popup: ObjectId, _dim: ljos_engine::PropIndex) -> Val
 }
 
 fn implicit_size(e: &Engine, popup: ObjectId, size: ljos_engine::PropIndex) -> Value {
-    let implicit = if size == Popup::WIDTH.index {
+    Value::Real(natural_size(e, popup, size == Popup::WIDTH.index))
+}
+
+/// The size of a popup that was given none along one axis: its implicit
+/// size, made to fit between its margins while it is open.
+fn natural_size(e: &Engine, popup: ObjectId, horizontal: bool) -> f64 {
+    let implicit = if horizontal {
         Popup::IMPLICIT_WIDTH
     } else {
         Popup::IMPLICIT_HEIGHT
     };
-    e.read(popup, implicit.index)
+    position::fitted(e, popup, horizontal, num(e, popup, implicit.index))
 }
 
 fn natural_parent(e: &Engine, popup: ObjectId, _parent: ljos_engine::PropIndex) -> Value {
@@ -503,7 +559,7 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
     let Some(state) = state_of(e, popup) else {
         return Ok(());
     };
-    destroy_replaced_style_parts(e, popup);
+    settle_parts(e, popup);
 
     let follow = |prop: Prop<f64>, from: Prop<f64>| {
         bind_default(e, popup, prop.index, move |e| {
@@ -576,10 +632,10 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
         e.bind_initial(popup, out, move |e| e.read(item, from))?;
     }
     bind_default(e, popup, Popup::WIDTH.index, move |e| {
-        Value::Real(num(e, popup, Popup::IMPLICIT_WIDTH.index))
+        Value::Real(natural_size(e, popup, true))
     })?;
     bind_default(e, popup, Popup::HEIGHT.index, move |e| {
-        Value::Real(num(e, popup, Popup::IMPLICIT_HEIGHT.index))
+        Value::Real(natural_size(e, popup, false))
     })?;
     bind_default(e, popup, Popup::PARENT.index, move |e| {
         default_parent(e, popup).map_or(Value::Null, Value::Object)
@@ -606,6 +662,13 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
             check(e, "visible", visible_written(e, popup, v.to_boolean()));
         }
     })?;
+    guard_visible(e, popup, &state);
+    for prop in [Popup::ENTER.index, Popup::EXIT.index] {
+        let st = state.clone();
+        e.watch(popup, prop, move |e, _| {
+            guard_visible(e, popup, &st);
+        })?;
+    }
     for prop in [Popup::MODAL.index, Popup::DIM.index] {
         e.watch(popup, prop, move |e, _| {
             check(e, "popup", overlay::reshade(e, popup));
@@ -627,8 +690,7 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
         // Declared open.
         emit(e, popup, "aboutToShow");
         try_present(e, popup)?;
-        set_computed(e, popup, Popup::OPENED.index, Value::Bool(true))?;
-        emit(e, popup, "opened");
+        arrive(e, popup, &state)?;
     }
     Ok(())
 }
@@ -679,25 +741,147 @@ pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> 
     let Some(state) = state_of(engine, popup) else {
         return Ok(());
     };
-    if engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
-        return Ok(());
+    // A popup that is going is still visible, and comes back.
+    let going = state.phase.get() == Phase::Going;
+    if !going {
+        if engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
+            return Ok(());
+        }
+        if crate::tooltip::defer(engine, popup) {
+            // A tool tip that waits for its delay opens when that has
+            // passed.
+            return Ok(());
+        }
     }
-    if crate::tooltip::defer(engine, popup) {
-        // A tool tip that waits for its delay opens when that has passed.
-        return Ok(());
+    if going {
+        // From where it is: what the exit transition did so far stays.
+        stop(engine, popup, &state, Popup::EXIT.index);
+        state.before_exit.set(None);
     }
     emit(engine, popup, "aboutToShow");
     if !engine.is_alive(popup) {
         return Ok(());
     }
-    state.switching.set(true);
-    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
-    state.switching.set(false);
-    wrote?;
-    try_present(engine, popup)?;
+    if going {
+        // Qt says so again, though the popup never stopped being visible.
+        state.switching.set(true);
+        emit(engine, popup, "visibleChanged");
+        state.switching.set(false);
+        if let Some(item) = item_of(engine, popup) {
+            engine.untrack(|| take_keyboard(engine, popup, &state, item));
+        }
+    } else {
+        state.switching.set(true);
+        let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
+        state.switching.set(false);
+        wrote?;
+        try_present(engine, popup)?;
+    }
+    arrive(engine, popup, &state)
+}
+
+/// The `Transition` in `prop` of `popup`.
+fn transition(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Option<ObjectId> {
+    engine
+        .untrack(|| object(engine, popup, prop))
+        .filter(|t| is_a::<ljos_quick::Transition>(engine, *t))
+}
+
+/// Ends the transition in `prop` where it is.
+fn stop(engine: &Engine, popup: ObjectId, state: &PopupState, prop: PropIndex) {
+    state.phase.set(Phase::Rest);
+    if let Some(t) = transition(engine, popup, prop) {
+        ljos_quick::stop_transition(engine, t);
+    }
+}
+
+/// The popup was shown: it is opened when its enter transition has run,
+/// which is at once if it has none or is on no screen.
+fn arrive(engine: &Engine, popup: ObjectId, state: &Rc<PopupState>) -> Result<(), EngineError> {
+    let enter = transition(engine, popup, Popup::ENTER.index).filter(|_| state.shown.get());
+    let Some(enter) = enter else {
+        return arrived(engine, popup);
+    };
+    state.phase.set(Phase::Coming);
+    let st = state.clone();
+    ljos_quick::run_transition(engine, enter, popup, move |e| {
+        if st.phase.get() == Phase::Coming {
+            st.phase.set(Phase::Rest);
+            check(e, "opened", arrived(e, popup));
+        }
+    });
+    Ok(())
+}
+
+fn arrived(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    if !engine.is_alive(popup) {
+        return Ok(());
+    }
     set_computed(engine, popup, Popup::OPENED.index, Value::Bool(true))?;
     emit(engine, popup, "opened");
     Ok(())
+}
+
+/// The popup has gone: it is hidden and says that it is closed.
+fn gone(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), EngineError> {
+    state.phase.set(Phase::Rest);
+    if !engine.is_alive(popup) {
+        return Ok(());
+    }
+    if state.shown.get() {
+        engine.untrack(|| withdraw(engine, popup, state))?;
+    }
+    if let Some((opacity, scale)) = state.before_exit.take() {
+        put(engine, popup, Popup::OPACITY.index, Value::Real(opacity))?;
+        put(engine, popup, Popup::SCALE.index, Value::Real(scale))?;
+    }
+    state.switching.set(true);
+    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
+    state.switching.set(false);
+    wrote?;
+    emit(engine, popup, "closed");
+    Ok(())
+}
+
+/// Stands in front of `visible` while the popup has a transition: a
+/// popup that is told to be invisible stays visible until it has gone,
+/// one that is told to be visible while it goes comes back, and one that
+/// is told to be visible says that it is about to show before it is.
+fn guard_visible(engine: &Engine, popup: ObjectId, state: &Rc<PopupState>) {
+    let prop = Popup::VISIBLE.index;
+    let has = |p| transition(engine, popup, p).is_some();
+    if !has(Popup::ENTER.index) && !has(Popup::EXIT.index) {
+        engine.set_interceptor(popup, prop, None);
+        return;
+    }
+    // A tool tip that is made visible waits for its delay first, which
+    // is its own to see to.
+    let waits = is_a::<crate::tooltip::ToolTip>(engine, popup);
+    let st = state.clone();
+    let guard: Interceptor = Rc::new(move |e, v, how| {
+        let on = v.to_boolean();
+        let mine = if on {
+            st.phase.get() == Phase::Going || (!waits && !flag(e, popup, Popup::VISIBLE.index))
+        } else {
+            st.shown.get()
+                && transition(e, popup, Popup::EXIT.index).is_some()
+                && flag(e, popup, Popup::VISIBLE.index)
+        };
+        if !mine {
+            return false;
+        }
+        let act = move |e: &Engine| {
+            let r = if on { open(e, popup) } else { close(e, popup) };
+            check(e, "visible", r);
+        };
+        match how {
+            Interception::Write => act(e),
+            // Its binding is being worked out: nothing may be written yet.
+            Interception::Binding => e.after_binding(act),
+        }
+        true
+    });
+    engine.set_interceptor(popup, prop, Some(guard));
 }
 
 pub(crate) fn close(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
@@ -712,28 +896,53 @@ pub(crate) fn close(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
         state.switching.set(false);
         return wrote;
     }
-    if !engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
+    if !engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index))
+        || state.phase.get() == Phase::Going
+    {
         return Ok(());
+    }
+    if state.phase.get() == Phase::Coming {
+        // It goes from where it has come to.
+        stop(engine, popup, &state, Popup::ENTER.index);
     }
     emit(engine, popup, "aboutToHide");
     if !engine.is_alive(popup) {
         return Ok(());
     }
     set_computed(engine, popup, Popup::OPENED.index, Value::Bool(false))?;
-    if state.shown.get() {
-        engine.untrack(|| withdraw(engine, popup, &state))?;
+    let exit = transition(engine, popup, Popup::EXIT.index).filter(|_| state.shown.get());
+    let Some(exit) = exit else {
+        return gone(engine, popup, &state);
+    };
+    // The keyboard goes back as the popup starts to go: what is typed
+    // meanwhile is not for something on its way out.
+    if let Some(item) = item_of(engine, popup) {
+        engine.untrack(|| give_back_keyboard(engine, &state, item))?;
     }
-    state.switching.set(true);
-    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
-    state.switching.set(false);
-    wrote?;
-    emit(engine, popup, "closed");
+    state.phase.set(Phase::Going);
+    let (opacity, scale) = engine.untrack(|| {
+        (
+            num(engine, popup, Popup::OPACITY.index),
+            num(engine, popup, Popup::SCALE.index),
+        )
+    });
+    state.before_exit.set(Some((opacity, scale)));
+    let st = state.clone();
+    ljos_quick::run_transition(engine, exit, popup, move |e| {
+        if st.phase.get() == Phase::Going {
+            check(e, "closed", gone(e, popup, &st));
+        }
+    });
     Ok(())
 }
 
 /// Closes a popup because the user turned away from it: Escape, or a
 /// press beside it. A dialog is rejected by that.
 pub(crate) fn dismiss(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    if state_of(engine, popup).is_some_and(|s| s.phase.get() == Phase::Going) {
+        // Turned away from already.
+        return Ok(());
+    }
     if is_a::<crate::dialog::Dialog>(engine, popup) {
         crate::dialog::reject(engine, popup)
     } else {
@@ -761,9 +970,14 @@ pub(crate) fn visible_written(
     if on {
         emit(engine, popup, "aboutToShow");
         try_present(engine, popup)?;
-        set_computed(engine, popup, Popup::OPENED.index, Value::Bool(true))?;
-        emit(engine, popup, "opened");
+        arrive(engine, popup, &state)?;
     } else {
+        // Reached only by a write that `guard_visible` did not see: the
+        // popup is invisible already, so there is nothing left to go.
+        for prop in [Popup::ENTER.index, Popup::EXIT.index] {
+            stop(engine, popup, &state, prop);
+        }
+        state.before_exit.set(None);
         emit(engine, popup, "aboutToHide");
         set_computed(engine, popup, Popup::OPENED.index, Value::Bool(false))?;
         if state.shown.get() {
@@ -793,22 +1007,36 @@ fn present(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), E
         WriteKind::Imperative,
     )?;
     overlay::changed(engine, home);
-    if flag(engine, popup, Popup::FOCUS.index) {
-        let top = ljos_quick::window_item(engine, home);
-        state.saved_focus.set(active_focus_item(engine, top));
-        state.took_focus.set(true);
-        force_active_focus(engine, item, FocusReason::Popup);
+    take_keyboard(engine, popup, state, item);
+    item::set_modal(engine, popup, item)?;
+    let then = state.when_shown.0.borrow().clone();
+    if let Some(then) = then {
+        then(engine);
     }
-    item::set_modal(engine, popup, item)
+    Ok(())
 }
 
-/// Takes a shown popup off the screen. The keyboard goes back first, so
-/// that it never rests on something hidden.
-fn withdraw(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), EngineError> {
-    state.shown.set(false);
-    let Some(item) = item_of(engine, popup) else {
-        return Ok(());
+/// Gives a shown popup the keyboard, if it wants it, and remembers who
+/// had it.
+fn take_keyboard(engine: &Engine, popup: ObjectId, state: &PopupState, item: ObjectId) {
+    if state.took_focus.get() || !flag(engine, popup, Popup::FOCUS.index) {
+        return;
+    }
+    let Some(home) = engine.visual_parent(item) else {
+        return;
     };
+    let top = ljos_quick::window_item(engine, home);
+    state.saved_focus.set(active_focus_item(engine, top));
+    state.took_focus.set(true);
+    force_active_focus(engine, item, FocusReason::Popup);
+}
+
+/// Gives the keyboard back to who had it before the popup took it.
+fn give_back_keyboard(
+    engine: &Engine,
+    state: &PopupState,
+    item: ObjectId,
+) -> Result<(), EngineError> {
     if state.took_focus.replace(false) {
         let saved = state.saved_focus.take().filter(|s| engine.is_alive(*s));
         if flag(engine, item, Item::ACTIVE_FOCUS.index) {
@@ -823,6 +1051,17 @@ fn withdraw(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), 
             }
         }
     }
+    Ok(())
+}
+
+/// Takes a shown popup off the screen. The keyboard goes back first, so
+/// that it never rests on something hidden.
+fn withdraw(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), EngineError> {
+    state.shown.set(false);
+    let Some(item) = item_of(engine, popup) else {
+        return Ok(());
+    };
+    give_back_keyboard(engine, state, item)?;
     engine.write(
         item,
         Item::VISIBLE.index,

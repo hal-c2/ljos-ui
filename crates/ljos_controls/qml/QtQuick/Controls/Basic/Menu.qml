@@ -17,15 +17,23 @@ T.Menu {
     // What an `Action` or a `Menu` declared in the menu is shown as.
     delegate: MenuItem {}
 
-    // The menu lays its items out in it.
-    // TODO(listview): a list that scrolls when the menu is taller than
-    // its window.
-    contentItem: Item {}
+    // The menu lays its items out in what this scrolls, and says how high
+    // they are together. TODO(listview): a list view on `contentModel`.
+    contentItem: Component {
+        Flickable {
+            implicitHeight: contentHeight
+            clip: true
 
-    background: Rectangle {
-        implicitWidth: 200
-        implicitHeight: 40
-        color: control.palette.window
-        border.color: control.palette.dark
+            ScrollIndicator.vertical: ScrollIndicator {}
+        }
+    }
+
+    background: Component {
+        Rectangle {
+            implicitWidth: 200
+            implicitHeight: 40
+            color: control.palette.window
+            border.color: control.palette.dark
+        }
     }
 }

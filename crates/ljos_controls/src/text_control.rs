@@ -22,7 +22,7 @@ use ljos_quick::{
 use ljos_render::kurbo;
 
 use crate::inherit::{self, Kind};
-use crate::parts::{PartKind, destroy_replaced_style_parts, manage_part};
+use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::ticker;
@@ -51,6 +51,7 @@ pub(crate) struct Props {
     pub hovered: PropIndex,
     pub hover_enabled: PropIndex,
     pub focus_reason: PropIndex,
+    pub focus_policy: PropIndex,
 }
 
 fn props(engine: &Engine, obj: ObjectId) -> Option<&'static Props> {
@@ -92,7 +93,7 @@ pub(crate) fn completed(
         p.implicit_background[1],
         implicit_of(Item::IMPLICIT_HEIGHT.index),
     )?;
-    destroy_replaced_style_parts(engine, obj);
+    settle_parts(engine, obj);
     manage_part(
         engine,
         obj,
@@ -100,6 +101,7 @@ pub(crate) fn completed(
         PartKind::Background(Some(p.insets)),
     )?;
     inherit::attach(engine, obj, p.kind, false)?;
+    crate::focus::link_policy(engine, obj, p.focus_policy, true)?;
 
     // Why the keyboard came, and why it went: the scene knows both by the
     // time the flag changes.

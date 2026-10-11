@@ -23,13 +23,17 @@ mod combobox;
 mod containers;
 mod control;
 mod dialog;
+mod focus;
 mod group;
+mod icon_label;
 mod inherit;
 mod label;
 mod menu;
+mod menu_bar;
 mod palette;
 mod parts;
 mod popup;
+mod rows;
 mod scroll_bar;
 mod scroll_view;
 mod spin_box;
@@ -55,6 +59,7 @@ pub use dialog::{Dialog, DialogButtonBox, DialogButtonBoxAttached};
 pub use group::{ButtonGroup, ButtonGroupAttached};
 pub use label::Label;
 pub use menu::{Menu, MenuItem, MenuSeparator};
+pub use menu_bar::{MenuBar, MenuBarItem};
 pub use palette::Palette;
 pub use popup::{Overlay, OverlayAttached, Popup, PopupAnchors};
 pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
@@ -89,7 +94,7 @@ pub fn register(engine: &Engine) {
         Pane, Frame, GroupBox, ToolBar, Page, Label,
         Action, ButtonGroup, ApplicationWindow,
         Popup, Overlay, Dialog, DialogButtonBox,
-        Menu, MenuItem, MenuSeparator,
+        Menu, MenuItem, MenuSeparator, MenuBar, MenuBarItem,
         ToolTip,
         ComboBox, ItemDelegate,
     ]));
@@ -106,11 +111,14 @@ pub fn register(engine: &Engine) {
     // the one a button gets.
     control::register(engine);
     button::register(engine);
+    label::register(engine);
+    icon_label::register(engine);
     a11y::register(engine);
     group::register(engine);
     popup::register(engine);
     tooltip::register(engine);
     combobox::register(engine);
+    menu_bar::register(engine);
     for meta in [
         ScrollBar::static_meta(),
         ScrollIndicator::static_meta(),

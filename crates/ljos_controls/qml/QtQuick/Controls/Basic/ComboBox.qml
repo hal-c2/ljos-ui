@@ -19,91 +19,131 @@ T.ComboBox {
                              ? 0 : indicator.width + spacing)
 
     // A row of the popup: its text is the row's, and the current row is
-    // set in a heavier face.
+    // set in a heavier face (weight 600 on qml6).
     delegate: ItemDelegate {
         width: control.width
         text: control.textAt(index)
         highlighted: control.highlightedIndex === index
         hoverEnabled: control.hoverEnabled
-        font.bold: control.currentIndex === index
+        font.weight: control.currentIndex === index ? Font.DemiBold : Font.Normal
     }
 
     // Two strokes that meet below: a neutral drawing of our own.
-    indicator: Item {
-        implicitWidth: 40
-        implicitHeight: 28
-        x: control.mirrored ? control.padding : control.width - width - control.padding
-        y: control.topPadding + (control.availableHeight - height) / 2
+    indicator: Component {
+        Item {
+            implicitWidth: 40
+            implicitHeight: 28
+            x: control.mirrored ? control.padding : control.width - width - control.padding
+            y: control.topPadding + (control.availableHeight - height) / 2
 
-        Rectangle {
-            x: 12
-            y: 13
-            width: 10
-            height: 2
-            rotation: 45
-            color: control.palette.dark
-            opacity: control.enabled ? 1 : 0.3
-        }
+            Rectangle {
+                x: 12
+                y: 13
+                width: 10
+                height: 2
+                rotation: 45
+                color: control.palette.dark
+                opacity: control.enabled ? 1 : 0.3
+            }
 
-        Rectangle {
-            x: 18
-            y: 13
-            width: 10
-            height: 2
-            rotation: -45
-            color: control.palette.dark
-            opacity: control.enabled ? 1 : 0.3
+            Rectangle {
+                x: 18
+                y: 13
+                width: 10
+                height: 2
+                rotation: -45
+                color: control.palette.dark
+                opacity: control.enabled ? 1 : 0.3
+            }
         }
     }
 
-    // TODO(text-input): a field to type in when the combo box is editable.
-    contentItem: Item {
-        // What an application reads off the content item.
-        property alias text: label.text
-        property alias font: label.font
-        property alias color: label.color
+    // A field in either case, as on Qt: one that cannot be typed in shows
+    // the text of the current row and leaves a press to the combo box.
+    contentItem: Component {
+        TextField {
+            id: field
 
-        implicitHeight: label.implicitHeight + 12
+            leftPadding: control.mirrored ? 1 : 12
+            rightPadding: control.mirrored ? 12 : 1
+            topPadding: 6 - control.padding
+            bottomPadding: 6 - control.padding
 
-        Text {
-            id: label
-            x: control.mirrored ? 0 : 12
-            width: parent.width - 12
-            height: parent.height
-            text: control.displayText
+            text: control.editable ? control.editText : control.displayText
+
+            enabled: control.editable
+            autoScroll: control.editable
+            // The keys move through the rows while the popup is open.
+            readOnly: control.down
+            inputMethodHints: control.inputMethodHints
+            validator: control.validator
+            selectByMouse: control.selectTextByMouse
+
             font: control.font
-            color: control.palette.buttonText
-            elide: Text.ElideRight
+            color: control.editable ? control.palette.text : control.palette.buttonText
+            selectionColor: control.palette.highlight
+            selectedTextColor: control.palette.highlightedText
             verticalAlignment: Text.AlignVCenter
-            horizontalAlignment: control.mirrored ? Text.AlignRight : Text.AlignLeft
+
+            // The combo box speaks for its text.
+            Accessible.ignored: !control.editable
+            Accessible.name: control.Accessible.name
+
+            background: Component {
+                Rectangle {
+                    visible: control.enabled && control.editable && !control.flat
+                    border.width: field.activeFocus ? 2 : 1
+                    border.color: field.activeFocus ? control.palette.highlight
+                                                    : control.palette.button
+                    color: control.palette.base
+                }
+            }
         }
     }
 
-    background: Rectangle {
-        implicitWidth: 140
-        implicitHeight: 40
-        color: control.down ? control.palette.mid : control.palette.button
-        visible: !control.flat || control.down
+    background: Component {
+        Rectangle {
+            implicitWidth: 140
+            implicitHeight: 40
+            color: control.down ? control.palette.mid : control.palette.button
+            // Where the keyboard is, when a key brought it there.
+            border.color: control.palette.highlight
+            border.width: control.visualFocus ? 2 : 0
+            visible: !control.flat || control.down
+        }
     }
 
-    // The rows, under the combo box and as wide as it is.
-    // TODO(listview): a list that scrolls when there are more rows than
-    // fit in the window.
-    popup: T.Popup {
-        y: control.height
-        width: control.width
-        height: contentItem.implicitHeight
-        topMargin: 6
-        bottomMargin: 6
-        // Not on any press outside it: a press on the combo box is the
-        // combo box's to answer.
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+    // The rows, under the combo box and as wide as it is, and no taller
+    // than the window has room for between the margins: more rows than
+    // that scroll. TODO(listview): a list view on `delegateModel`.
+    popup: Component {
+        T.Popup {
+            y: control.height
+            width: control.width
+            implicitHeight: contentItem.implicitHeight
+            topMargin: 6
+            bottomMargin: 6
+            // Not on any press outside it: a press on the combo box is the
+            // combo box's to answer.
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
-        contentItem: Column {}
+            // The combo box puts its rows in what this scrolls, and says
+            // how high they are together.
+            contentItem: Component {
+                Flickable {
+                    implicitHeight: contentHeight
+                    clip: true
 
-        background: Rectangle {
-            color: control.palette.window
-            border.color: control.palette.mid
+                    ScrollIndicator.vertical: ScrollIndicator {}
+                }
+            }
+
+            background: Component {
+                Rectangle {
+                    color: control.palette.window
+                    border.color: control.palette.mid
+                }
+            }
         }
     }
 }

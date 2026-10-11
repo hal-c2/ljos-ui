@@ -7,15 +7,46 @@ Item {
     property int clicks: 0
     property string size: "Medium"
 
+    // A 24 by 24 plus in a ring, black on nothing: the style gives it the
+    // colour of the text beside it.
+    readonly property url plus: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAxUlEQVR42sVVwREDIQi0hCvBElKCpVgCJdiRJVwJlkIJCQ/M7DhGTXJ4zOwHF5YBRedutkNAgixgwVPB6iPl/JQ4NUk/gZW7LPQQFEhwCqLAA8er7wRe0dhpcoaAsFBQgIJ4JHIAsXzZ26XYNCEEaEeYiKTeIQ+CVwSQw22RBAN1fwg4GDyhM6szXiAQlZPRWdvjm4QIAgHqnOMVrm16Ww3s+VYxzGcuYN4i8yGbX1Pzh2a+KrYsO/N1veXD2fJlbvn0L7MXGiy0HcjQl+cAAAAASUVORK5CYII="
+
+    // The window colour of the palette, light or dark with the system.
+    Pane { anchors.fill: parent }
+
+    MenuBar {
+        id: bar
+        objectName: "bar"
+        width: parent.width
+
+        Menu {
+            title: "File"
+            MenuItem { text: "New"; icon.source: root.plus }
+            MenuItem { text: "Open a dialog"; onTriggered: dialog.open() }
+        }
+        // More lines than the window is tall: the menu ends at the window
+        // and its lines scroll.
+        Menu {
+            title: "Go"
+            Repeater {
+                model: 16
+                MenuItem { text: "Line " + (index + 1) }
+            }
+        }
+        Menu {
+            title: "Help"
+            MenuItem { text: "About"; onTriggered: notice.open() }
+        }
+    }
+
     Column {
         x: 24
-        y: 24
-        spacing: 12
+        y: 52
+        spacing: 8
 
-        Text {
+        Label {
             text: "Ljós on egui, from QML"
             font.pixelSize: 24
-            color: "#212121"
         }
 
         Row {
@@ -47,7 +78,7 @@ Item {
             Column {
                 Repeater {
                     model: 12
-                    Text { text: "Row " + (index + 1) }
+                    Label { text: "Row " + (index + 1) }
                 }
             }
         }
@@ -83,9 +114,14 @@ Item {
 
         Row {
             spacing: 8
-            Button { text: "Button" }
+            Button { text: "Button"; icon.source: root.plus }
             Button { text: "Checked"; checkable: true; checked: true }
             ToolButton { text: "Tool" }
+            ToolButton {
+                text: "Add"
+                icon.source: root.plus
+                display: AbstractButton.IconOnly
+            }
         }
 
         Row {
@@ -97,12 +133,13 @@ Item {
         }
     }
 
-    // What opens over the window: the rows of a combo box, a menu and a
-    // dialog.
+    // What opens over the window: the rows of a combo box, a menu, a dialog
+    // and a popup that fades in and out.
     Column {
         anchors.right: parent.right
-        anchors.top: parent.top
+        anchors.top: bar.bottom
         anchors.margins: 24
+        anchors.topMargin: 12
         spacing: 8
 
         ComboBox {
@@ -137,6 +174,36 @@ Item {
             text: "Dialog"
             onClicked: dialog.open()
         }
+
+        // Typing completes to a row; Return takes what is typed.
+        ComboBox {
+            objectName: "fruit"
+            editable: true
+            model: ["Apple", "Banana", "Cherry"]
+            Accessible.name: "Fruit"
+        }
+
+        Button {
+            objectName: "noticeButton"
+            text: "Notice"
+            onClicked: notice.open()
+        }
+    }
+
+    Popup {
+        id: notice
+        objectName: "notice"
+        x: 24
+        y: 266
+
+        enter: Transition {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+        }
+        exit: Transition {
+            NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 150 }
+        }
+
+        Label { text: "Comes and goes in 150 ms" }
     }
 
     Dialog {

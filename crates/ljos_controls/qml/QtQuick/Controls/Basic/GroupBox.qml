@@ -17,21 +17,25 @@ T.GroupBox {
     // The title sits above the frame and pushes the content down.
     topPadding: padding + (implicitLabelWidth > 0 ? implicitLabelHeight + spacing : 0)
 
-    label: Text {
-        x: control.leftPadding
-        width: control.availableWidth
-        text: control.title
-        font: control.font
-        color: control.palette.windowText
-        elide: Text.ElideRight
-        verticalAlignment: Text.AlignVCenter
+    label: Component {
+        Text {
+            x: control.leftPadding
+            width: control.availableWidth
+            text: control.title
+            font: control.font
+            color: control.palette.windowText
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
     }
 
-    background: Rectangle {
-        y: control.topPadding - control.bottomPadding
-        height: control.height - control.topPadding + control.bottomPadding
-        color: "transparent"
-        border.width: 1
-        border.color: control.palette.mid
+    background: Component {
+        Rectangle {
+            y: control.topPadding - control.bottomPadding
+            height: control.height - control.topPadding + control.bottomPadding
+            color: "transparent"
+            border.width: 1
+            border.color: control.palette.mid
+        }
     }
 }

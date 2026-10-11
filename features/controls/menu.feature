@@ -716,25 +716,65 @@ Feature: Menu
       And the method "look" of "root" is called
       Then the property "seen" of "root" is "true false false true,true false false true,true false true true,true true false true"
 
-  # TODO(scroll): the items of a menu are laid out in a column until there
-  # is a list view; a menu with more items than fit does not scroll.
-  @backlog
   Rule: A menu with more items than fit in the window scrolls
 
-    Scenario: The menu is no taller than the window
+    Background:
       Given the QML:
         """qml
         import QtQuick
         import QtQuick.Controls.Basic
         Item {
+          id: root; objectName: "root"
           width: 400; height: 400
+          property string chosen: ""
+          property bool dragged: m.contentItem.contentY > 0
           Menu {
-            objectName: "m"
-            Repeater { model: 20; MenuItem { text: "Item " + index } }
+            id: m; objectName: "m"
+            Repeater {
+              model: 20
+              MenuItem { text: "Item " + index; onTriggered: root.chosen = text }
+            }
           }
         }
         """
+
+    Scenario: The menu is no taller than the window
       When the method "open" of "m" is called
       Then the property "height" of "m" is 400
       And the property "y" of "m" is 0
       And the property "count" of "m" is 20
+
+    Scenario: The items are in a view that is as tall as the menu
+      When the method "open" of "m" is called
+      Then the property "contentItem.height" of "m" is 400
+      And the property "contentItem.contentHeight" of "m" is 800
+      And the property "contentItem.contentY" of "m" is 0
+      And the property "contentItem.clip" of "m" is true
+      And the property "implicitHeight" of "m" is 800
+
+    Scenario: An item that becomes current is brought into view
+      When the method "open" of "m" is called
+      And the property "currentIndex" of "m" is set to 19
+      Then the property "contentItem.contentY" of "m" is 400
+
+    Scenario: A key that goes past the last item in view moves the items up
+      When the method "open" of "m" is called
+      And the property "currentIndex" of "m" is set to 9
+      And the user presses "Down"
+      And 1 second passes
+      Then the property "currentIndex" of "m" is 10
+      And the property "contentItem.contentY" of "m" is 40
+
+    Scenario: A drag over the items moves them and chooses none
+      When the method "open" of "m" is called
+      And the user drags from 100, 300 to 100, 170
+      Then the property "dragged" of "root" is true
+      And the property "visible" of "m" is true
+      And the property "chosen" of "root" is ""
+
+    Scenario: A touch chooses the item that is seen there
+      When the method "open" of "m" is called
+      And the property "currentIndex" of "m" is set to 19
+      And the user touches 100, 20
+      Then the property "chosen" of "root" is "Item 10"
+      And the property "visible" of "m" is false

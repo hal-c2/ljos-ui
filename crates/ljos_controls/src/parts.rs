@@ -8,18 +8,22 @@
 //!
 //! Geometry is put on the part as an override layer of bindings, so the
 //! part's own values are untouched underneath and return when it leaves.
+//!
+//! A style gives each part as a `Component`, and the control makes it
+//! when it completes ([`settle_parts`]), unless the application gave its
+//! own by then: a part that is replaced is never made.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Engine, EngineError, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode, Value,
-    WriteKind,
+    Component, Engine, EngineError, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode,
+    Value, WriteKind,
 };
 use ljos_quick::{Item, follows_implicit_size, is_item, set_parent_item};
 
 use crate::style::is_style_url;
-use crate::util::{check, is_unset, num, object};
+use crate::util::{check, is_a, is_unset, num, object, warn};
 
 /// How a control places a part.
 #[derive(Clone, Copy, Debug)]
@@ -36,6 +40,10 @@ pub(crate) enum PartKind {
     Header,
     /// Across the bottom, at its own height, above the content.
     Footer,
+    /// Across the control at its own height, as far down as the function
+    /// says, with the `z` given: a bar that has another above it, or is
+    /// the one above another.
+    Across(f64, fn(&Engine, ObjectId) -> f64),
     /// A child of the control; the style places it.
     Free,
 }
@@ -148,6 +156,16 @@ fn adopt(
                 )?;
             }
         }
+        PartKind::Across(z, top) => {
+            if unset(Item::Z.index) {
+                layer(Item::Z.index, Box::new(move |_| Value::Real(z)))?;
+            }
+            layer(
+                Item::WIDTH.index,
+                Box::new(move |e| Value::Real(num(e, c, Item::WIDTH.index))),
+            )?;
+            layer(Item::Y.index, Box::new(move |e| Value::Real(top(e, c))))?;
+        }
         PartKind::Free => {}
     }
     *state.borrow_mut() = Some(Adopted { part, layers });
@@ -183,7 +201,7 @@ pub(crate) fn declared_by_style(engine: &Engine, obj: ObjectId) -> bool {
 
 /// The properties of a control that hold parts, by name: a derived type
 /// adds its own to the first two.
-const PART_PROPERTIES: [&str; 9] = [
+const PART_PROPERTIES: [&str; 11] = [
     "background",
     "contentItem",
     "indicator",
@@ -193,13 +211,56 @@ const PART_PROPERTIES: [&str; 9] = [
     "arrow",
     "up.indicator",
     "down.indicator",
+    "handle",
+    "popup",
 ];
 
-/// Destroys the parts the style declared that the application replaced
-/// in the same declaration (`Button { background: Rectangle {} }`): they
-/// were made, since a style file is instantiated whole, and never used.
-pub(crate) fn destroy_replaced_style_parts(engine: &Engine, control: ObjectId) {
+/// Makes the parts a style left to be made, and clears away the ones it
+/// made that are not used. Call it when the control completes, before
+/// anything reads a part.
+///
+/// A style gives a part as a `Component` (`background: Component {
+/// Rectangle {} }`), and the part is made here from it, unless the
+/// application gave the control one of its own in the same declaration
+/// (`Button { background: Rectangle {} }`): then the property holds the
+/// application's, and the style's is never made. Inside the component the
+/// ids of the style file are in reach, as they are for a delegate.
+///
+/// A style that gives a part as the object itself (as Qt's files are
+/// written) has it made with the file, whole; such a part that the
+/// application replaced is destroyed here.
+pub(crate) fn settle_parts(engine: &Engine, control: ObjectId) {
     engine.untrack(|| {
+        for name in PART_PROPERTIES {
+            let Ok(prop) = engine.property_index(control, name) else {
+                continue;
+            };
+            let Some(component) =
+                object(engine, control, prop).filter(|c| is_a::<Component>(engine, *c))
+            else {
+                continue;
+            };
+            let made = engine.component_create_owned(component, control, |e, root| {
+                // Its bindings may ask for its parent as they first run.
+                if is_item(e, root) && is_item(e, control) {
+                    check(e, name, set_parent_item(e, root, Some(control)));
+                }
+            });
+            let value = match made {
+                Ok(part) => Value::Object(part),
+                Err(err) => {
+                    warn(engine, format!("{name}: {err}"));
+                    Value::Null
+                }
+            };
+            check(
+                engine,
+                name,
+                engine.write_internal(control, prop, value, WriteKind::Initial),
+            );
+            // The template lives on in what was made of it.
+            engine.destroy_now(component);
+        }
         let current: Vec<ObjectId> = PART_PROPERTIES
             .iter()
             .filter_map(|name| engine.property_index(control, name).ok())

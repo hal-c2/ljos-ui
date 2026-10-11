@@ -280,12 +280,23 @@ pub struct DialogButtonBox {
     pub position: i32,
     #[qml(notify, flags = "StandardButton")]
     pub standard_buttons: i32,
-    #[qml(notify)]
+    #[qml(notify, reset = BUTTONS_ASKED)]
     pub content_width: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = BUTTONS_ASKED)]
     pub content_height: f64,
     #[qml(skip)]
     pub(crate) state: Rc<BoxState>,
+}
+
+/// `contentWidth = undefined`: the box has what its buttons ask for again.
+/// Qt's keeps the size it was given until its buttons next change; here it
+/// follows at once
+/// (`features/bindings/property-reset-content-size-at-once.feature`).
+const BUTTONS_ASKED: ljos_engine::Reset = ljos_engine::Reset::Follow(buttons_asked);
+
+fn buttons_asked(engine: &Engine, bx: ObjectId, size: ljos_engine::PropIndex) -> Value {
+    let wide = size == DialogButtonBox::CONTENT_WIDTH.index;
+    Value::Real(asked(engine, bx).map_or(0.0, |a| if wide { a.implicit.0 } else { a.implicit.1 }))
 }
 
 impl Default for DialogButtonBox {
