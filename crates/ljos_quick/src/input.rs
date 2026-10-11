@@ -381,3 +381,81 @@ impl KeyEvent {
         self
     }
 }
+
+/// Where a scroll gesture is, for a device that says so (a touchpad, a
+/// finger on a screen). A wheel that turns in notches has no phases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum ScrollPhase {
+    /// The device does not say.
+    #[default]
+    None,
+    /// The fingers came down.
+    Begin,
+    /// The fingers moved.
+    Update,
+    /// The fingers left.
+    End,
+    /// The platform keeps the content moving after the fingers left.
+    Momentum,
+}
+
+/// One scroll event in scene (logical pixel) coordinates: a wheel turned,
+/// or two fingers moved on a touchpad. Delivery lives in
+/// [`crate::QuickScene::wheel_event`].
+///
+/// Both deltas have Qt's signs (`WheelEvent.angleDelta` and `pixelDelta`):
+/// positive `y` is the wheel turned away from the user, which shows what
+/// is further up; positive `x` shows what is further left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WheelEvent {
+    pub pos: kurbo::Point,
+    /// How far the wheel turned, in eighths of a degree: one notch of a
+    /// common mouse wheel is [`WheelEvent::NOTCH`].
+    pub angle_delta: kurbo::Vec2,
+    /// How far the device asks the content to move, in logical pixels.
+    /// Zero for a device that only knows notches; when it is not zero it
+    /// is what scrolls, whatever `angle_delta` says.
+    pub pixel_delta: kurbo::Vec2,
+    pub phase: ScrollPhase,
+    pub modifiers: Modifiers,
+    pub time: Time,
+}
+
+impl WheelEvent {
+    /// One notch of a mouse wheel, in the unit of `angle_delta`.
+    pub const NOTCH: f64 = 120.0;
+
+    /// A wheel turned by `dx` and `dy` notches at a position.
+    pub fn notches(x: f64, y: f64, dx: f64, dy: f64, time: Time) -> Self {
+        Self {
+            pos: kurbo::Point::new(x, y),
+            angle_delta: kurbo::Vec2::new(dx * Self::NOTCH, dy * Self::NOTCH),
+            pixel_delta: kurbo::Vec2::ZERO,
+            phase: ScrollPhase::None,
+            modifiers: Modifiers::empty(),
+            time,
+        }
+    }
+
+    /// A device that scrolls by pixels moved by `dx` and `dy`.
+    pub fn pixels(x: f64, y: f64, dx: f64, dy: f64, time: Time) -> Self {
+        Self {
+            pos: kurbo::Point::new(x, y),
+            angle_delta: kurbo::Vec2::ZERO,
+            pixel_delta: kurbo::Vec2::new(dx, dy),
+            phase: ScrollPhase::None,
+            modifiers: Modifiers::empty(),
+            time,
+        }
+    }
+
+    pub fn with_phase(mut self, phase: ScrollPhase) -> Self {
+        self.phase = phase;
+        self
+    }
+
+    pub fn with_modifiers(mut self, m: Modifiers) -> Self {
+        self.modifiers = m;
+        self
+    }
+}

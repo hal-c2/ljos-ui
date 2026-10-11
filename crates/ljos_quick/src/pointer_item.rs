@@ -109,6 +109,57 @@ pub(crate) fn update_hover(engine: &Engine, hits: &[ObjectId], hovered: &mut Vec
     }
 }
 
+/// What an item type does with a pointer that moves over it with no
+/// button it holds: the point is in the item's own coordinates. For an
+/// item with parts that are hovered on their own (the buttons of a spin
+/// box); whether the item itself is hovered is [`PointerItem::hover`].
+pub type HoverMove = fn(&Engine, ObjectId, kurbo::Point);
+
+#[derive(Default)]
+struct HoverMoves {
+    types: RefCell<Vec<(MetaRef, HoverMove)>>,
+}
+
+/// Makes the scene tell hovered items of type `meta` (and of the types
+/// derived from it) where the pointer is, each time it moves. The item
+/// must also be a [`PointerItem`]: only those are hovered.
+pub fn register_hover_move(engine: &Engine, meta: MetaRef, moved: HoverMove) {
+    engine
+        .extension::<HoverMoves>()
+        .types
+        .borrow_mut()
+        .push((meta, moved));
+}
+
+/// Tells the hovered items that asked where the pointer is. `local` maps
+/// the pointer into an item's coordinates.
+pub(crate) fn hover_moved(
+    engine: &Engine,
+    hovered: &[ObjectId],
+    local: impl Fn(ObjectId) -> kurbo::Point,
+) {
+    let reg = engine.extension::<HoverMoves>();
+    if hovered.is_empty() || reg.types.borrow().is_empty() {
+        return;
+    }
+    for o in hovered {
+        let Some(meta) = engine.meta_of(*o) else {
+            continue;
+        };
+        // Copied out: the hook may register or destroy.
+        let hook = reg
+            .types
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(m, _)| meta.inherits(m))
+            .map(|(_, h)| *h);
+        if let Some(hook) = hook {
+            hook(engine, *o, local(*o));
+        }
+    }
+}
+
 /// Whether the point is inside the item's rectangle.
 pub fn contains_point(engine: &Engine, obj: ObjectId, local: kurbo::Point) -> bool {
     let (w, h) = engine.untrack(|| {

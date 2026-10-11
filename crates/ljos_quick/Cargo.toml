@@ -20,6 +20,9 @@ bitflags.workspace = true
 png.workspace = true
 # ObjectId is a slotmap key; an accessibility node is named by its number.
 slotmap.workspace = true
+# RegularExpressionValidator: a DFA says whether a text can still become a
+# match (Intermediate), which a backtracking matcher cannot.
+regex-automata.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 zune-jpeg.workspace = true

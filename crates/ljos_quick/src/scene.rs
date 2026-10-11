@@ -83,11 +83,15 @@ enum Kind {
     Column,
     /// A layout, `Grid` or `Flow`: polished by `crate::layouts`.
     Managed,
+    /// A `TextInput` or `TextEdit`: lays itself out, the scene paints it.
+    Editor,
 }
 
 impl Kind {
     fn of(engine: &Engine, obj: ObjectId) -> Kind {
-        if is_a::<Text>(engine, obj) {
+        if is_a::<crate::text_input::TextEditor>(engine, obj) {
+            Kind::Editor
+        } else if is_a::<Text>(engine, obj) {
             Kind::Text
         } else if is_a::<Rectangle>(engine, obj) {
             Kind::Rectangle
@@ -105,7 +109,10 @@ impl Kind {
     }
 
     fn paints(self) -> bool {
-        matches!(self, Kind::Rectangle | Kind::Text | Kind::Image)
+        matches!(
+            self,
+            Kind::Rectangle | Kind::Text | Kind::Image | Kind::Editor
+        )
     }
 
     fn polishes(self) -> bool {
@@ -152,6 +159,7 @@ enum Paint {
     Rect(RectanglePaint),
     Text(TextInputs),
     Image(crate::image::ImagePaint),
+    Editor(crate::text_input::EditorPaint),
 }
 
 /// Dirty state written by effects and drained by `frame`.
@@ -250,6 +258,8 @@ pub struct QuickScene {
     by_node: HashMap<NodeId, ObjectId>,
     paint: HashMap<ObjectId, Paint>,
     root: Option<ObjectId>,
+    /// The layer above the root item (`crate::layer`), once one was made.
+    layer: Option<ObjectId>,
     viewport: kurbo::Rect,
     scale_factor: f32,
     frame: u64,
@@ -300,6 +310,7 @@ impl QuickScene {
             by_node: HashMap::new(),
             paint: HashMap::new(),
             root: None,
+            layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
             scale_factor: 1.0,
             frame: 0,
@@ -383,13 +394,15 @@ impl QuickScene {
         let texts: Vec<ObjectId> = self
             .entries
             .iter()
-            .filter(|(_, e)| e.kind == Kind::Text)
+            .filter(|(_, e)| matches!(e.kind, Kind::Text | Kind::Editor))
             .map(|(o, _)| *o)
             .collect();
         let content: Vec<(ObjectId, NodeId)> = self
             .entries
             .iter()
-            .filter(|(_, e)| e.kind == Kind::Text && e.content_effect.is_some())
+            .filter(|(_, e)| {
+                matches!(e.kind, Kind::Text | Kind::Editor) && e.content_effect.is_some()
+            })
             .map(|(o, e)| (*o, e.node))
             .collect();
         for (_, n) in &content {
@@ -490,6 +503,7 @@ impl QuickScene {
         }
         // Focus asked for while objects were being made.
         crate::focus::tree::settle(engine);
+        self.sync_layer(engine);
         // 5. Animations, from the frame's time and nothing else.
         crate::animation::tick(engine, now);
         // 6. Polish.
@@ -555,6 +569,39 @@ impl QuickScene {
                     .flatten()
                     .min()
             },
+        }
+    }
+
+    /// Shows the layer above the root item once one was made, and keeps it
+    /// the size of the viewport. A map lookup while there is none.
+    fn sync_layer(&mut self, engine: &Engine) {
+        let want = self
+            .root
+            .and_then(|r| engine.untrack(|| crate::layer::layer_of(engine, r)));
+        if want != self.layer {
+            if let Some(old) = self.layer.take() {
+                self.unadopt(engine, old, true);
+            }
+            if let Some(layer) = want {
+                let top = self.tree.root();
+                match self.adopt(engine, layer, None, top, 1) {
+                    Ok(()) => self.layer = Some(layer),
+                    Err(e) => engine.log(
+                        LogLevel::Warning,
+                        SCENE_CATEGORY,
+                        format!("adopt failed: {e}"),
+                    ),
+                }
+            }
+            self.a11y.set_layer(self.layer);
+        }
+        if let Some(layer) = self.layer {
+            for (p, v) in [
+                (Item::WIDTH.index, self.viewport.width()),
+                (Item::HEIGHT.index, self.viewport.height()),
+            ] {
+                let _ = write_computed(engine, layer, p, Value::Real(v));
+            }
         }
     }
 
@@ -628,6 +675,8 @@ impl QuickScene {
                     Kind::Column => positioners::layout(engine, obj, Axis::Vertical),
                     Kind::Managed => crate::layouts::polish(engine, obj),
                     Kind::Text => text::polish(engine, obj, &self.text),
+                    // Only after the fonts changed (`refresh_text`).
+                    Kind::Editor => crate::text_input::refresh(engine, obj),
                     Kind::Item | Kind::Rectangle | Kind::Image => Ok(()),
                 };
                 if let Err(e) = r {
@@ -668,6 +717,9 @@ impl QuickScene {
         init_item(engine, obj)?;
         let node = self.tree.insert_child(parent_node, index);
         let kind = Kind::of(engine, obj);
+        if kind == Kind::Editor {
+            crate::text_input::init(engine, obj)?;
+        }
         let anchors = Rc::new(RefCell::new(AnchorState::default()));
         let inherit = Rc::new(RefCell::new(Inherit::default()));
         self.entries.insert(
@@ -886,6 +938,7 @@ impl QuickScene {
                 Paint::Rect(r) => r.paint(cx.size, b),
                 Paint::Text(t) => text::paint(&mut te, t, cx.size, b),
                 Paint::Image(i) => i.paint(cx.size, b),
+                Paint::Editor(p) => p.paint(cx.size, b),
             }
         });
     }
@@ -971,15 +1024,25 @@ impl QuickScene {
         }
     }
 
+    /// Offers a wheel event to the items under it, topmost first.
+    /// Returns whether one of them used it. An event nothing uses changes
+    /// nothing, so it asks for no frame.
+    pub fn wheel_event(&mut self, engine: &Engine, ev: &crate::input::WheelEvent) -> bool {
+        let hits = self.hits(engine, ev.pos);
+        crate::flickable::wheel::deliver(engine, &hits, ev)
+    }
+
     /// Items under `pos`, topmost first.
     fn hits(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
         let Some(snap) = &self.snapshot else {
             return Vec::new();
         };
-        hit_test(snap, pos)
+        let mut hits: Vec<ObjectId> = hit_test(snap, pos)
             .filter_map(|n| self.by_node.get(&n).copied())
             .filter(|o| engine.is_alive(*o))
-            .collect()
+            .collect();
+        crate::layer::trim(engine, self.layer, &mut hits);
+        hits
     }
 
     fn press(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
@@ -1007,8 +1070,13 @@ impl QuickScene {
         self.pointer.passive.clear();
         self.pointer.press_pos = ev.pos;
         self.pointer.double = false;
+        crate::flickable::drag::pressed(engine);
         let mut handled = false;
-        for obj in self.hits(engine, ev.pos) {
+        let hits = self.hits(engine, ev.pos);
+        // After the hits: a popup that closes on this press still keeps
+        // it from what it covered.
+        crate::layer::press(engine, self.layer, ev);
+        for obj in hits {
             // An item's pointer handlers see the event before the item.
             for h in resources(engine, obj) {
                 if !is_a::<TapHandler>(engine, h)
@@ -1095,6 +1163,19 @@ impl QuickScene {
                 cancel_tap(engine, h, ev.pos);
             }
         }
+        // A Flickable around whatever holds the press may take it for a
+        // drag; the holder is told its press was cancelled.
+        let holder = match self.pointer.grab {
+            Some(Grab::Mouse(o) | Grab::Item(o)) => Some(o),
+            Some(Grab::Tap(h)) => crate::input::tap_handler_target(engine, h),
+            None => None,
+        };
+        if let Some(f) = holder
+            .and_then(|o| crate::flickable::drag::steal(engine, o, self.pointer.press_pos, ev))
+        {
+            self.cancel(engine, ev);
+            self.pointer.grab = Some(Grab::Item(f));
+        }
         match self.pointer.grab {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
                 let local = local_point(engine, m, ev.pos);
@@ -1136,6 +1217,7 @@ impl QuickScene {
 
     fn release(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         let mut handled = false;
+        crate::layer::release(engine, self.layer, ev);
         match self.pointer.grab {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
                 let held = ev.buttons.bits() as i32 & accepted_buttons(engine, m);
@@ -1267,6 +1349,9 @@ impl QuickScene {
     /// even when the top one is disabled.
     fn update_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) -> bool {
         crate::pointer_item::update_hover(engine, hits, &mut self.pointer.item_hovered);
+        crate::pointer_item::hover_moved(engine, &self.pointer.item_hovered, |o| {
+            local_point(engine, o, ev.pos)
+        });
         let grabbed = match self.pointer.grab {
             Some(Grab::Mouse(m)) => Some(m),
             _ => None,
@@ -1345,7 +1430,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             // Reads the item's size too, where the layout depends on it.
             TextInputs::read(e, obj);
         }
-        Kind::Item | Kind::Rectangle | Kind::Image => return,
+        Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor => return,
     }
     mark(shared, |s| {
         s.polish.insert(obj);
@@ -1360,6 +1445,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Rectangle => Paint::Rect(RectanglePaint::read(e, obj)),
         Kind::Text => Paint::Text(TextInputs::read(e, obj)),
         Kind::Image => Paint::Image(crate::image::ImagePaint::read(e, obj)),
+        Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
         _ => return,
     };
     mark(shared, |s| {

@@ -141,6 +141,10 @@ pub(crate) fn target(
     from: Option<ObjectId>,
     forward: bool,
 ) -> Option<ObjectId> {
+    // Tab pressed in a popup stays in it.
+    let root = from
+        .and_then(|f| crate::layer::tab_scope(engine, f))
+        .unwrap_or(root);
     let order = order(engine, root);
     let ends = |order: &[ObjectId]| {
         if forward {

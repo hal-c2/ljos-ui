@@ -36,6 +36,37 @@ pub trait TextInputClient {
     fn cursor_rect(&self, engine: &Engine, item: ObjectId) -> kurbo::Rect;
     /// `inputMethodHints`, as `Qt.InputMethodHint` flags.
     fn hints(&self, engine: &Engine, item: ObjectId) -> i32;
+    /// Whether the item takes text now; a read-only editor does not, and
+    /// the platform need not offer it a keyboard.
+    fn enabled(&self, _engine: &Engine, _item: ObjectId) -> bool {
+        true
+    }
+    /// Shows `text` at the cursor as what the input method is composing,
+    /// in place of what it showed before; it is not part of the text yet.
+    /// An empty `text` ends the composition. `cursor` is the method's own
+    /// cursor in `text`. Returns whether the item took it; one that
+    /// cannot show a composition takes none.
+    fn set_preedit(
+        &self,
+        _engine: &Engine,
+        _item: ObjectId,
+        _text: &str,
+        _cursor: Option<usize>,
+    ) -> bool {
+        false
+    }
+    /// Ends the composition and types `text` over the selection. Returns
+    /// whether the item took it.
+    fn commit(&self, engine: &Engine, item: ObjectId, text: &str) -> bool {
+        let s = self.surrounding(engine, item);
+        self.replace(
+            engine,
+            item,
+            s.anchor.min(s.cursor)..s.anchor.max(s.cursor),
+            text,
+        );
+        true
+    }
 }
 
 #[derive(Default)]

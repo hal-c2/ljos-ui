@@ -134,7 +134,8 @@ fn scope_from(engine: &Engine, parent: Option<ObjectId>, item: ObjectId) -> Scop
             top = p;
             cur = engine.visual_parent(p);
         }
-        ScopeKey::Top(top)
+        // What is in the layer above a window is in that window.
+        ScopeKey::Top(crate::layer::layer_host(engine, top).unwrap_or(top))
     })
 }
 
@@ -154,7 +155,7 @@ pub(crate) fn top_of(engine: &Engine, item: ObjectId) -> ObjectId {
             None => break,
         }
     }
-    top
+    crate::layer::layer_host(engine, top).unwrap_or(top)
 }
 
 /// Whether `ancestor` is `item` or above it.
@@ -522,7 +523,7 @@ pub fn scope_focus_item(engine: &Engine, scope: ObjectId) -> Option<ObjectId> {
         .filter(|o| engine.is_alive(*o))
 }
 
-/// Why `item` last gained active focus.
+/// Why `item` last gained or lost active focus.
 pub fn focus_reason(engine: &Engine, item: ObjectId) -> FocusReason {
     engine
         .with(item, |i: &Item| FocusReason::from_qt(i.focus_reason))
@@ -702,7 +703,13 @@ pub(crate) fn apply_all(engine: &Engine) {
                 break;
             }
             match step {
-                Step::Lose(o) => write_flag(engine, o, Item::ACTIVE_FOCUS.index, false),
+                Step::Lose(o) => {
+                    // Before the flag, as for a gain: a handler of the
+                    // change reads why.
+                    let reason = t.state.borrow().reason as i32;
+                    let _ = engine.with_mut(o, |i: &mut Item| i.focus_reason = reason);
+                    write_flag(engine, o, Item::ACTIVE_FOCUS.index, false);
+                }
                 Step::Gain(o) => {
                     let reason = t.state.borrow().reason as i32;
                     let _ = engine.with_mut(o, |i: &mut Item| i.focus_reason = reason);

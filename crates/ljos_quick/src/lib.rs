@@ -11,11 +11,13 @@ mod accessible;
 mod anchors;
 mod animation;
 pub mod enums;
+pub mod flickable;
 pub mod focus;
 mod image;
 mod input;
 mod item;
 pub mod keys;
+mod layer;
 mod layouts;
 mod loader;
 mod log;
@@ -27,9 +29,11 @@ mod rectangle;
 mod repeater;
 mod scene;
 mod text;
+pub mod text_input;
 mod tree;
 
 pub use accessible::{Accessible, AccessibleAttached};
+pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
 pub use anchors::CATEGORY as ANCHORS_CATEGORY;
 pub use animation::{
     Animation, AnimationController, Behavior, BehaviorTarget, ColorAnimation, Easing, EasingGroup,
@@ -37,6 +41,7 @@ pub use animation::{
     RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, easing,
     running_animation_count, set_animation_frame_period,
 };
+pub use flickable::Flickable;
 pub use image::{
     BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint, ImageStore, LoadError,
     Request as ImageRequest, fill_mode, image_status, requested_size, tile_mode,
@@ -46,9 +51,13 @@ pub use input::{
     Modifiers, MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerId, PointerKind,
     TapHandler, tap_handler_target,
 };
+pub use input::{ScrollPhase, WheelEvent};
 pub use item::{
     AccessibleInfo, AnchorLine, AnchorProps, Anchors, Edge, Item, accessible, effective_margin,
     init_item, is_item, local_transform, scene_transform, set_accessible,
+};
+pub use layer::{
+    LayerHooks, layer_host, layer_of, set_layer, set_layer_hooks, window_item, window_of,
 };
 pub use layouts::{
     ColumnLayout, GridLayout, Layout, LayoutAttached, RowLayout, StackLayout, layout_runs,
@@ -59,7 +68,8 @@ pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use pointer_item::{
-    PointerItem, contains_point, follows_implicit_size, is_mirrored, register_pointer_item,
+    HoverMove, PointerItem, contains_point, follows_implicit_size, is_mirrored,
+    register_hover_move, register_pointer_item,
 };
 pub use positioners::{Axis, Column, Flow, Grid, Positioner, PositionerAttached, Row};
 pub use rectangle::{Rectangle, RectangleBorder, RectanglePaint, to_rgba};
@@ -71,6 +81,10 @@ pub use scene::{
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, set_text_engine, text_engine,
     text_style,
+};
+pub use text_input::{
+    AccessibleTextAction, Clipboard, DoubleValidator, ImeState, IntValidator, PlatformTextInput,
+    RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
 pub use tree::{add_data, child_items, resources, set_parent_item, sync_parent};
 
@@ -115,4 +129,6 @@ pub fn register(engine: &Engine) {
     // After the listener above: focus reads the lists it keeps.
     focus::register(engine);
     keys::register(engine);
+    flickable::register(engine);
+    text_input::register(engine);
 }

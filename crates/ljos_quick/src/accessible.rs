@@ -69,6 +69,12 @@ pub struct AccessibleAttached {
     pub focused: bool,
     #[qml(notify)]
     pub ignored: bool,
+    /// Not a Qt property and not writable from QML (the compiler knows
+    /// Qt's `Accessible` only): a control that shows something modal says
+    /// so here, and the node tells the assistive technology that what is
+    /// outside it cannot be reached.
+    #[qml(notify)]
+    pub modal: bool,
 }
 
 fn accessible_enums() -> crate::enums::EnumTable {
@@ -83,6 +89,69 @@ fn accessible_enums() -> crate::enums::EnumTable {
 
 fn attacher() -> MetaRef {
     MetaRef::Static(Accessible::static_meta())
+}
+
+/// What an assistive technology asks of a node besides a press and the
+/// focus. Named as the `Accessible` signals of Qt are.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AccessibleAction {
+    Increase,
+    Decrease,
+    /// Take this value, in the units of the node's [`ljos_a11y::Range`].
+    SetValue(f64),
+    ScrollUp {
+        page: bool,
+    },
+    ScrollDown {
+        page: bool,
+    },
+    ScrollLeft {
+        page: bool,
+    },
+    ScrollRight {
+        page: bool,
+    },
+}
+
+/// What an item type says of itself to an assistive technology beyond its
+/// role and name, and what it does when asked.
+#[derive(Clone, Copy, Debug)]
+pub struct AccessibleItem {
+    /// Adds to the node of an exposed item (its value, how far it is
+    /// scrolled). It runs inside the effect that describes the item, so
+    /// the node follows whatever it reads.
+    pub describe: fn(&Engine, ObjectId, &mut NodeData),
+    /// Returns whether the item took the action.
+    pub act: fn(&Engine, ObjectId, AccessibleAction) -> bool,
+}
+
+#[derive(Default)]
+struct AccessibleItems {
+    types: RefCell<Vec<(MetaRef, AccessibleItem)>>,
+}
+
+/// Makes the accessibility pass ask items of type `meta` (and of the
+/// types derived from it) through `hooks`. A later registration wins.
+pub fn register_accessible_item(engine: &Engine, meta: MetaRef, hooks: AccessibleItem) {
+    engine
+        .extension::<AccessibleItems>()
+        .types
+        .borrow_mut()
+        .push((meta, hooks));
+}
+
+fn accessible_item(engine: &Engine, obj: ObjectId) -> Option<AccessibleItem> {
+    let reg = engine.extension::<AccessibleItems>();
+    let types = reg.types.borrow();
+    if types.is_empty() {
+        return None;
+    }
+    let meta = engine.meta_of(obj)?;
+    types
+        .iter()
+        .rev()
+        .find(|(m, _)| meta.inherits(m))
+        .map(|(_, h)| *h)
 }
 
 /// Gives every new `Accessible` object its role-dependent `focusable`.
@@ -165,6 +234,10 @@ pub(crate) struct A11yPass {
     restructure: HashSet<ObjectId>,
     /// Items that joined the tree and are in no child list yet.
     fresh: Vec<ObjectId>,
+    /// The layer above the root item: a second child of the scene.
+    layer: Option<ObjectId>,
+    /// The scene's own child list is to be made again.
+    top_dirty: bool,
 }
 
 impl A11yPass {
@@ -177,7 +250,15 @@ impl A11yPass {
             listening: false,
             restructure: HashSet::new(),
             fresh: Vec::new(),
+            layer: None,
+            top_dirty: false,
         }
+    }
+
+    /// The scene shows `layer` above its root item (or no longer does).
+    pub(crate) fn set_layer(&mut self, layer: Option<ObjectId>) {
+        self.layer = layer;
+        self.top_dirty = true;
     }
 
     fn active(&self) -> bool {
@@ -397,10 +478,14 @@ impl A11yPass {
     /// node down to the next exposed ones, so the work is the size of
     /// what changed, not of the scene.
     fn place(&mut self, engine: &Engine, root: Option<ObjectId>) {
-        if self.restructure.is_empty() && self.fresh.is_empty() {
+        let top_dirty = std::mem::take(&mut self.top_dirty);
+        if self.restructure.is_empty() && self.fresh.is_empty() && !top_dirty {
             return;
         }
         let mut targets: HashSet<Option<ObjectId>> = HashSet::new();
+        if top_dirty {
+            targets.insert(None);
+        }
         for obj in std::mem::take(&mut self.restructure) {
             targets.insert(self.exposed_from(engine, Some(obj)));
         }
@@ -415,7 +500,7 @@ impl A11yPass {
         for t in targets {
             let start = match t {
                 Some(obj) => engine.untrack(|| shown_children(engine, obj)),
-                None => root.into_iter().collect(),
+                None => root.into_iter().chain(self.layer).collect(),
             };
             let kids = self.exposed_below(engine, start);
             self.tree
@@ -496,7 +581,7 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
         None if !name.is_empty() => AkRole::Group,
         None => return None,
     };
-    Some(NodeData {
+    let mut data = NodeData {
         qt_role,
         role,
         name,
@@ -519,7 +604,16 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
             || e.read(att, AccessibleAttached::FOCUSED.index).to_boolean(),
         disabled: !e.read(obj, Item::ENABLED.index).to_boolean(),
         press: qt_role.pressable(),
-    })
+        modal: e.read(att, AccessibleAttached::MODAL.index).to_boolean(),
+        range: None,
+        scroll: None,
+        clips_children: false,
+        text: None,
+    };
+    if let Some(hooks) = accessible_item(e, obj) {
+        (hooks.describe)(e, obj, &mut data);
+    }
+    Some(data)
 }
 
 /// The item's box in scene coordinates: the bounding box of its
@@ -616,6 +710,26 @@ impl QuickScene {
         // stay hovered.
         self.pointer_event(engine, &PointerEvent::leave(now));
         pressed || released
+    }
+
+    /// Any other action of an assistive technology (a step of a scroll
+    /// bar, a scroll of a view): the item's type does it
+    /// ([`register_accessible_item`]). Returns whether something took it;
+    /// a disabled node takes nothing.
+    pub fn accessible_action(
+        &mut self,
+        engine: &Engine,
+        key: NodeKey,
+        action: AccessibleAction,
+    ) -> bool {
+        if self.a11y.tree.get(key).is_none_or(|data| data.disabled) {
+            return false;
+        }
+        let item = item_of(key);
+        if !engine.is_alive(item) {
+            return false;
+        }
+        accessible_item(engine, item).is_some_and(|hooks| (hooks.act)(engine, item, action))
     }
 
     /// The node an assistive technology should read as having the
