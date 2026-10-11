@@ -245,6 +245,7 @@ Source: 01 §3.4.
 - **Same dependency tracking in every tier.** Each tier reads through `Graph::read`, so dependencies are captured the same way.
 - **Debug cross-check.** In debug builds, tier-1 bindings are also evaluated in tier 2 and the results compared.
 - **Coverage reporting.** `ljos check --stats` reports tier-1 coverage over the qtdoc corpus and any application corpus given to it. Optimisation work is driven by that number.
+- **As built.** The generator works from the expression's tier-2 function, so both tiers start from the same resolved names. A program is compiled whole or not at all, has no effect before its end, and makes at most one write; when the VM cannot be exact it gives up and tier 2 runs the expression as if tier 1 had not been tried. Opcodes are not specialised by type yet. `LJOS_TIER1=0` turns the tier off and `LJOS_TIER1_CHECK=1` turns the cross-check on in a release build. Measured coverage and timings are in `docs/tier1-coverage.md`.
 - **Rejected:** running everything in QuickJS, a Cranelift JIT (iOS forbids JIT), and typed-only AOT to Rust (it needs annotations and works against hot reload).
 
 ### 5.5 Native types in Rust
@@ -704,11 +705,13 @@ Sources: 02 §3.1.6; 05 §3.2.
   - Focus and key dispatch start as the `focus` and `keys` modules of `ljos_quick`, free of egui; `ljos_input` is split out when a second crate needs them (section 4, "start small").
   - A scene starts active. The host calls `set_window_active` when the window loses or gains the keyboard.
   - egui sees one focusable widget per `QmlView`. Unaccepted Tab and arrow keys go back to egui; assistive technology follows focus inside the view through AccessKit's `active_descendant`.
+- **Scrolling as built.** `Flickable` lives in `ljos_quick::flickable` and asks a `ScrollPhysics` what the content does when nothing holds it. The only physics so far is `Immediate`: content follows the finger and the wheel and stops when they stop, and `returnToBounds()` jumps. Flings, overshoot and rebound come with the platform physics in M2 (section 10.3).
 - **Key dispatch** runs `ShortcutOverride`, then `Shortcut` (context-aware, with `activatedAmbiguously`), then `Keys` (`priority`, `forwardTo`), bubbling up. `StandardKey` maps to platform-specific key sequences.
 - **Text input** goes through two traits. `TextInputClient` is implemented by TextInput and TextEdit: `surrounding`, `replace`, `set_selection`, `cursor_rect`, `hints`. `PlatformTextInput` has one implementation per platform:
   - desktop: winit IME, moving to 0.31's `ImeRequest`;
   - Android: GameTextInput (`set_text_input_state`, `set_ime_editor_info` derived from `inputMethodHints`), with a Kotlin `InputConnection` as the fallback;
   - iOS: a `UITextInput` view written with `objc2`.
+- **Text input as built (desktop).** `TextModel` in `ljos_text` holds the text, selection, undo and composition, by grapheme cluster. `TextInput` and `TextEdit` are the `text_input` module of `ljos_quick`, and both traits live there too, free of egui. `TextInputClient` also has `enabled`, `set_preedit` and `commit`. `ljos_egui` has the desktop `PlatformTextInput`, over egui's IME events and platform output. The whole text is shaped again on each keystroke, and caret places come from the cluster advances of that layout rather than from Parley's cursor types. The cursor blinks from one timer deadline, so an editor without the keyboard schedules nothing.
 - **Android IME is the largest risk across all the reports.** It gets a time-boxed spike in M0 that covers composing, autocorrect, Icelandic dead keys, CJK, gesture typing and password managers. The production bridge lands in M3.
 
 ---
@@ -766,6 +769,13 @@ Bindings and handler bodies always come from the new IR. `Component.onCompleted`
 
 subsecond (Rust hot-patching) is an optional extra for desktop development. It does not work on iOS devices, so Ljós never depends on it.
 
+**As built (M1, desktop).**
+- **Applying a patch.** The engine does not apply a patch op by op. It makes the application's roots again from the patched files and carries state across by `ObjectKey`: script-assigned values, the properties a type registers with `register_reload_state`, and whatever the type's `Migrate` carries. The old roots are destroyed only once every new one stands, so a patch applies whole or not at all.
+- **Message path.** There is no single `UiMsg` enum; `ljos_dev` owns a bounded `UiInbox<DevMsg>` of capacity 4 whose state messages coalesce. The devtools WebSocket comes with the first device target (M3).
+- **Incremental compile.** `ReloadSession` recompiles the changed files and the files that mention their types by name, which over-approximates the dependency set. salsa is not used yet.
+- **Watched files.** `.qml`, `qmldir` and `CMakeLists.txt`. `.js` and theme files are not watched yet.
+- **Where it links.** `ljos_shell` takes `ljos_dev` behind its `dev` feature, and `ljos run --watch` is the CLI entry. `ljos_shell/tests/no_parser.rs` checks that the shell without `dev` links no parser.
+
 ### 12.2 Production bundles
 
 **Contents.** A content-addressed archive holding the IR, JS source, optional bytecode and assets.
@@ -791,6 +801,7 @@ Source: 01 §2.5, §3.6; 08.
 
 - **QtQuick.Controls has two layers.** `ljos_controls` implements behaviour in Rust: the `Control`/`AbstractButton` state machines, `Popup` and the overlay stack, and `Dialog`. Each *style* is QML written clean-room on top, the way Qt layers templates and styles, with the code being ours. A style is chosen with `QT_QUICK_CONTROLS_STYLE`-compatible configuration.
 - **As built.** A style is a directory of QML files compiled to IR by the crate's `build.rs` and registered as a component library, so a shipped app still links no parser. Style parts are not deferred yet: a replaced `background` or `contentItem` is created and then destroyed. `Window` and `ApplicationWindow` are items in the one scene until the shell has more than one window (M2).
+- **Popups as built.** A scene has a second top-level item, the layer (`ljos_quick::layer`), drawn over the root item and asked first by the pointer. `ljos_controls` puts one overlay per window there and each popup's item inside it, so nothing in the content clips a popup and a root that is a positioner does not lay it out. A closed popup's item stays in the overlay, hidden. Popups have no `enter`/`exit` transitions yet, a `Menu` and a `ComboBox` popup do not scroll, and `ToolTip` has one shared instance per window.
 - **Basic style first.** It is the neutral base that other styles and custom controls build on. Real apps lean on it (HAL-C2 imports `QtQuick.Controls.Basic` 87 times and `QtQuick.Controls` twice).
 - **Material** follows for Android, after M3. Material attached properties are accepted as no-ops until then.
 - **Fusion and the native macOS style** are deferred.
