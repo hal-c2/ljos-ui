@@ -6,9 +6,13 @@
 //! `running` and emit nothing. An animation that names no target moves
 //! the object the transition is run on, and only the properties it names.
 //!
-//! A popup runs its `enter` and `exit` transitions this way. States (M2)
-//! will choose a transition by `from` and `to`, which are only stored
-//! until then.
+//! A popup runs its `enter` and `exit` transitions this way, and a view
+//! the ones for its delegates.
+//!
+//! Between two states it is different ([`crate::states`]): one of the
+//! transitions of the item is chosen by `from` and `to` ([`choose`]), and
+//! its animations move what the change of state changed, as one timeline
+//! under the transition.
 //!
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-transition.html.
 
@@ -37,13 +41,13 @@ pub struct Transition {
     /// A transition that is not enabled is over as soon as it is run.
     #[qml(notify)]
     pub enabled: bool,
-    /// Stored: the state the transition leaves.
+    /// The states it leads from: names with commas between, `*` for any.
     #[qml(notify)]
     pub from: Atom,
-    /// Stored: the state the transition goes to.
+    /// The states it leads to, written as `from` is.
     #[qml(notify)]
     pub to: Atom,
-    /// Stored.
+    /// It is also for the way back, run in the opposite order.
     #[qml(notify)]
     pub reversible: bool,
     #[qml(notify, readonly)]
@@ -69,7 +73,7 @@ impl Default for Transition {
     }
 }
 
-fn show_running(engine: &Engine, transition: ObjectId, on: bool) {
+pub(crate) fn show_running(engine: &Engine, transition: ObjectId, on: bool) {
     if engine.is_alive(transition) {
         let _ = engine.write_internal(
             transition,
@@ -80,7 +84,7 @@ fn show_running(engine: &Engine, transition: ObjectId, on: bool) {
     }
 }
 
-fn animations(engine: &Engine, transition: ObjectId) -> Vec<ObjectId> {
+pub(crate) fn animations(engine: &Engine, transition: ObjectId) -> Vec<ObjectId> {
     match engine.untrack(|| engine.read(transition, Transition::ANIMATIONS.index)) {
         Value::List(l) => l
             .iter()
@@ -158,4 +162,82 @@ pub fn stop_transition(engine: &Engine, transition: ObjectId) {
         driver::stop_driven(engine, anim);
     }
     show_running(engine, transition, false);
+}
+
+/// How well a `from` or `to` fits a state: 0 for `*`, 1 if it names the
+/// state (the base state's name is the empty string), `None` if neither.
+fn fit(pattern: &str, state: &str) -> Option<u8> {
+    if pattern == "*" {
+        Some(0)
+    } else if pattern.split(',').any(|name| name.trim() == state) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+/// The transition for a change of state from `from` to `to`, and whether
+/// it runs reversed: the enabled one that names the most of the two
+/// states, the first of those in the list; as itself before reversed.
+pub(crate) fn choose(
+    engine: &Engine,
+    transitions: &[ObjectId],
+    from: &str,
+    to: &str,
+) -> Option<(ObjectId, bool)> {
+    let mut best: Option<(u8, bool, ObjectId)> = None;
+    for t in transitions {
+        let read = |p: ljos_engine::PropIndex| engine.untrack(|| engine.read(*t, p));
+        if !engine.is_alive(*t) || !read(Transition::ENABLED.index).to_boolean() {
+            continue;
+        }
+        let pf = read(Transition::FROM.index).to_js_string();
+        let pt = read(Transition::TO.index).to_js_string();
+        let forward = fit(&pf, from).zip(fit(&pt, to)).map(|(a, b)| a + b);
+        let back = if read(Transition::REVERSIBLE.index).to_boolean() {
+            fit(&pf, to).zip(fit(&pt, from)).map(|(a, b)| a + b)
+        } else {
+            None
+        };
+        for (score, reversed) in [(forward, false), (back, true)] {
+            let Some(score) = score else {
+                continue;
+            };
+            let better = match best {
+                None => true,
+                Some((s, r, _)) => score > s || (score == s && r && !reversed),
+            };
+            if better {
+                best = Some((score, reversed, *t));
+            }
+        }
+    }
+    best.map(|(_, reversed, t)| (t, reversed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit;
+
+    #[test]
+    fn a_star_fits_every_state_and_a_name_fits_better() {
+        assert_eq!(fit("*", "a"), Some(0));
+        assert_eq!(fit("*", ""), Some(0));
+        assert_eq!(fit("a", "a"), Some(1));
+        assert_eq!(fit("a", "b"), None);
+    }
+
+    #[test]
+    fn a_list_fits_each_state_it_names() {
+        assert_eq!(fit("b,c", "c"), Some(1));
+        assert_eq!(fit("b, c", "c"), Some(1));
+        assert_eq!(fit("b,c", "d"), None);
+    }
+
+    #[test]
+    fn the_empty_name_is_the_base_state() {
+        assert_eq!(fit("", ""), Some(1));
+        assert_eq!(fit("", "a"), None);
+        assert_eq!(fit("a", ""), None);
+    }
 }

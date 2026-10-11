@@ -10,10 +10,13 @@
 //! (the engine intercepts neither initial values nor a binding's first
 //! value), so nothing animates into its initial state.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Engine, Interception, ObjectId, PropIndex, QmlObject, QtObject, TypeTag, Value,
+    Atom, Engine, Interception, ObjectId, OverrideContent, OverrideId, PropIndex, QmlObject,
+    QtObject, RestoreMode, TypeTag, Value,
 };
 use ljos_reactive::WriteKind;
 
@@ -70,6 +73,121 @@ pub struct BehaviorTarget {
     pub object: Option<ObjectId>,
 }
 
+/// The Behaviors by the property each stands in front of: a change of
+/// state has to find the one of a property it gave a value.
+#[derive(Default)]
+struct Attached {
+    by_prop: RefCell<HashMap<(ObjectId, PropIndex), Follower>>,
+}
+
+struct Follower {
+    behavior: ObjectId,
+    /// What keeps the property at the animated value, over the value a
+    /// state gave it, while the animation takes it there.
+    hold: Option<OverrideId>,
+}
+
+/// Lets the Behavior of `prop`, if it has one that animates, take the
+/// property from `before` to `after`, the value a change of state just
+/// gave it. True if it does. The property shows `before` at once.
+///
+/// A state's value never passes the Behavior on its way in (an override
+/// is not intercepted), so the change of state asks here.
+pub(crate) fn follow(
+    engine: &Engine,
+    target: ObjectId,
+    prop: PropIndex,
+    before: &Value,
+    after: &Value,
+) -> bool {
+    let attached = engine.extension::<Attached>();
+    let Some(behavior) = attached
+        .by_prop
+        .borrow()
+        .get(&(target, prop))
+        .map(|f| f.behavior)
+    else {
+        return false;
+    };
+    if !engine.is_alive(behavior) {
+        attached.by_prop.borrow_mut().remove(&(target, prop));
+        return false;
+    }
+    let (enabled, anim) = engine.untrack(|| {
+        (
+            engine.read(behavior, Behavior::ENABLED.index).to_boolean(),
+            engine.read(behavior, Behavior::ANIMATION.index).as_object(),
+        )
+    });
+    let Some(anim) = anim.filter(|a| engine.is_alive(*a)) else {
+        return false;
+    };
+    let defaults = Defaults {
+        obj: target,
+        prop,
+        to: Some(after.clone()),
+    };
+    if !enabled || !moves(engine, anim, &defaults) {
+        return false;
+    }
+    release(engine, target, prop);
+    let Ok(hold) = engine.push_override(target, prop, OverrideContent::Value(before.clone()))
+    else {
+        return false;
+    };
+    if let Some(f) = attached.by_prop.borrow_mut().get_mut(&(target, prop)) {
+        f.hold = Some(hold);
+    }
+    note_target(engine, behavior, after);
+    // At the end the value underneath shows again: the state's.
+    let done: driver::Done = Rc::new(move |e| {
+        let attached = e.extension::<Attached>();
+        let mine = attached
+            .by_prop
+            .borrow_mut()
+            .get_mut(&(target, prop))
+            .and_then(|f| {
+                if f.hold == Some(hold) {
+                    f.hold.take()
+                } else {
+                    None
+                }
+            });
+        if let Some(id) = mine {
+            let _ = e.remove_override(target, prop, id, RestoreMode::BindingOrValue);
+        }
+    });
+    driver::start_driven(engine, anim, &defaults, Some(done));
+    true
+}
+
+/// Ends what [`follow`] started for `prop`, where it is: the property has
+/// again the value underneath. For a change of state about to give the
+/// property another value.
+pub(crate) fn release(engine: &Engine, target: ObjectId, prop: PropIndex) {
+    unhold(engine, target, prop, RestoreMode::BindingOrValue, true);
+}
+
+fn unhold(engine: &Engine, target: ObjectId, prop: PropIndex, mode: RestoreMode, stop: bool) {
+    let attached = engine.extension::<Attached>();
+    let held = attached
+        .by_prop
+        .borrow_mut()
+        .get_mut(&(target, prop))
+        .and_then(|f| f.hold.take().map(|id| (id, f.behavior)));
+    let Some((id, behavior)) = held else {
+        return;
+    };
+    if stop
+        && let Some(anim) = engine
+            .untrack(|| engine.read(behavior, Behavior::ANIMATION.index))
+            .as_object()
+    {
+        driver::stop_driven(engine, anim);
+    }
+    let _ = engine.remove_override(target, prop, id, mode);
+}
+
 /// Puts `behavior` in front of `prop` of `target` (`Behavior on prop`).
 pub(crate) fn attach(engine: &Engine, behavior: ObjectId, target: ObjectId, prop: PropIndex) {
     let info = engine
@@ -78,6 +196,21 @@ pub(crate) fn attach(engine: &Engine, behavior: ObjectId, target: ObjectId, prop
     let Some((name, ty)) = info else {
         return;
     };
+    {
+        let attached = engine.extension::<Attached>();
+        let mut by_prop = attached.by_prop.borrow_mut();
+        // Now and then, so the map does not keep what is gone.
+        if by_prop.len() >= 64 && by_prop.len().is_power_of_two() {
+            by_prop.retain(|_, f| engine.is_alive(f.behavior));
+        }
+        by_prop.insert(
+            (target, prop),
+            Follower {
+                behavior,
+                hold: None,
+            },
+        );
+    }
     for (path, v) in [
         ("targetProperty.name", Value::string(name)),
         ("targetProperty.object", Value::Object(target)),
@@ -127,6 +260,9 @@ fn intercept(
     };
     if how == Interception::Write {
         let _ = e.with_mut::<Behavior, _>(behavior, |b| b.waiting = None);
+        // A value written while the Behavior is on its way to a state's:
+        // it goes on from where the property is, with nothing held.
+        unhold(e, target, prop, RestoreMode::None, false);
     }
     let Some(anim) = anim else {
         // `targetValue` is the value that came, animated or not.

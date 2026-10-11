@@ -174,13 +174,17 @@ impl Animation {
     }
 }
 
-/// Whether something else runs this animation: the group it is in, or the
-/// `Behavior` it belongs to. Such an animation never starts by itself.
+/// Whether something else runs this animation: the group or the
+/// `Transition` it is in, or the `Behavior` it belongs to. Such an
+/// animation never starts by itself.
 pub(crate) fn is_managed(engine: &Engine, anim: ObjectId) -> bool {
     let Some(owner) = engine.owner(anim) else {
         return false;
     };
-    if is_a::<SequentialAnimation>(engine, owner) || is_a::<ParallelAnimation>(engine, owner) {
+    if is_a::<SequentialAnimation>(engine, owner)
+        || is_a::<ParallelAnimation>(engine, owner)
+        || is_a::<super::transition::Transition>(engine, owner)
+    {
         return matches!(
             engine.untrack(|| engine.read_by_name(owner, "animations")),
             Value::List(l) if l.iter().any(|v| v.as_object() == Some(anim))
@@ -391,6 +395,66 @@ impl SmoothedAnimation {
     }
 }
 
+/// `SpringAnimation` (QtQuick): pulled to a value the way a spring would
+/// pull it, past it and back ([`super::spring`]).
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick", name = "SpringAnimation", extends = NumberAnimation)]
+pub struct SpringAnimation {
+    #[qml(base)]
+    pub base: NumberAnimation,
+    /// How hard it pulls; 0 for no spring, which leaves the velocity.
+    #[qml(notify)]
+    pub spring: f64,
+    #[qml(notify)]
+    pub damping: f64,
+    #[qml(notify)]
+    pub mass: f64,
+    /// Nearer to the value and slower than this, it is there.
+    #[qml(notify)]
+    pub epsilon: f64,
+    /// 0 for none.
+    #[qml(notify)]
+    pub modulus: f64,
+    /// Units per second, the most it may move at; 0 for no limit.
+    #[qml(notify)]
+    pub velocity: f64,
+    /// Where each property it moved was when it was last looked at, and
+    /// how fast. Kept after the run: the next one sets out at that speed
+    /// (a new value on the way does not stop the swing), and from that
+    /// place where the property could only show it rounded.
+    #[qml(skip)]
+    pub(crate) last: Vec<((ObjectId, PropIndex), (f64, f64))>,
+}
+
+impl Default for SpringAnimation {
+    fn default() -> Self {
+        Self {
+            base: NumberAnimation::default(),
+            spring: 0.0,
+            damping: 0.0,
+            mass: 1.0,
+            epsilon: 0.01,
+            modulus: 0.0,
+            velocity: 0.0,
+            last: Vec::new(),
+        }
+    }
+}
+
+impl SpringAnimation {
+    /// The value and the speed `of` had when this animation last moved it.
+    pub(crate) fn last(&self, of: (ObjectId, PropIndex)) -> Option<(f64, f64)> {
+        self.last.iter().find(|(k, _)| *k == of).map(|(_, v)| *v)
+    }
+
+    pub(crate) fn set_last(&mut self, of: (ObjectId, PropIndex), state: (f64, f64)) {
+        match self.last.iter_mut().find(|(k, _)| *k == of) {
+            Some((_, v)) => *v = state,
+            None => self.last.push((of, state)),
+        }
+    }
+}
+
 /// `SequentialAnimation` (QtQuick): one child after the other.
 #[derive(Debug, Default, QmlObject)]
 #[qml(
@@ -472,4 +536,59 @@ pub struct PropertyAction {
     pub properties: Atom,
     #[qml(notify)]
     pub value: Value,
+}
+
+/// `AnchorAnimation` (QtQuick): in a transition, moves the items a state
+/// anchored otherwise from where they were to where they now belong.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick", name = "AnchorAnimation", extends = Animation)]
+pub struct AnchorAnimation {
+    #[qml(base)]
+    pub animation: Animation,
+    /// The items it moves; none: every item the state anchored otherwise.
+    #[qml(list)]
+    pub targets: QmlList,
+    /// Milliseconds.
+    #[qml(notify)]
+    pub duration: i32,
+    #[qml(group)]
+    pub easing: EasingGroup,
+}
+
+impl Default for AnchorAnimation {
+    fn default() -> Self {
+        Self {
+            animation: Animation::default(),
+            targets: QmlList::new(),
+            duration: 250,
+            easing: EasingGroup::default(),
+        }
+    }
+}
+
+/// `ParentAnimation` (QtQuick): in a transition, what is inside it moves
+/// an item a state gave another parent from where it was on screen to
+/// its place there.
+///
+/// It runs its animations all at once, which is what a
+/// `ParallelAnimation` does: so it is one here.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtQuick",
+    name = "ParentAnimation",
+    extends = ParallelAnimation,
+    default = "animations"
+)]
+pub struct ParentAnimation {
+    #[qml(base)]
+    pub base: ParallelAnimation,
+    /// Stored: the item is the one the state reparents.
+    #[qml(notify)]
+    pub target: Option<ObjectId>,
+    /// Stored: the parent is the one the state gives.
+    #[qml(notify)]
+    pub new_parent: Option<ObjectId>,
+    /// Stored.
+    #[qml(notify)]
+    pub via: Option<ObjectId>,
 }

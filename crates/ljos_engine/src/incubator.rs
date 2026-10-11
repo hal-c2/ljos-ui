@@ -34,6 +34,7 @@ use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
 use crate::atom::Atom;
 use crate::engine::{Engine, Held};
 use crate::error::EngineError;
+use crate::foreign::{ForeignMember, ForeignValue};
 use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::loader::LoadedFile;
 use crate::meta::{MetaBuilder, MetaRef, PropertyFlags};
@@ -1320,7 +1321,9 @@ impl Engine {
             let t = match self.member_target(obj, path, &a.name) {
                 Ok(t) => t,
                 Err(_) => {
-                    self.no_property(inst, a.span.line, a.span.column, path, &a.name);
+                    if !self.keep_foreign_literal(inst, obj, path, a) {
+                        self.no_property(inst, a.span.line, a.span.column, path, &a.name);
+                    }
                     continue;
                 }
             };
@@ -1411,7 +1414,9 @@ impl Engine {
                 Ok(t) => t,
                 Err(_) => {
                     let b = inst.file.ir.expr(pb.expr);
-                    self.no_property(inst, b.span.line, b.span.column, path, &pb.name);
+                    if !self.keep_foreign_binding(inst, obj, path, pb) {
+                        self.no_property(inst, b.span.line, b.span.column, path, &pb.name);
+                    }
                     continue;
                 }
             };
@@ -1523,6 +1528,91 @@ impl Engine {
             )),
         }
         true
+    }
+
+    /// Hands a member `obj`'s type does not have to the type's keeper
+    /// (foreign.rs). False when the type keeps none.
+    fn keep_foreign(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        (path, name): (&[String], &str),
+        span: SourceSpan,
+        value: ForeignValue,
+    ) -> bool {
+        let Some(keep) = self.foreign_keeper(obj) else {
+            return false;
+        };
+        // `box.width`: an id of the component comes before a group of
+        // whatever the keeper aims at, as the compiler reads it.
+        let defs = &inst.file.ir.component(inst.comp).objects;
+        let named = path.first().and_then(|first| {
+            defs.iter()
+                .position(|o| o.id.as_deref() == Some(first.as_str()))
+        });
+        let (object, rest) = match named {
+            Some(i) => (inst.objects.get(i).copied(), &path[1..]),
+            None => (None, path),
+        };
+        let name = if rest.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{}.{name}", rest.join("."))
+        };
+        let at = format!("{}:{}:{}", inst.url(), span.line, span.column);
+        let member = ForeignMember {
+            object,
+            name,
+            value,
+            at,
+        };
+        keep(self, obj, member);
+        true
+    }
+
+    fn keep_foreign_literal(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        path: &[String],
+        a: &ljos_ir::Assignment,
+    ) -> bool {
+        // Asked first: a literal is not made for a type that keeps none.
+        if self.foreign_keeper(obj).is_none() {
+            return false;
+        }
+        let value = match &a.value {
+            Literal::Translatable(tr) if tr.kind != TranslationKind::NoOp => {
+                // A binding, so that it runs again when the language changes.
+                let tr = tr.clone();
+                ForeignValue::Binding(Rc::new(move |e, _| {
+                    Some(Value::String(Atom::new(&e.translate_literal(&tr))))
+                }))
+            }
+            lit => ForeignValue::Value(self.literal_value(inst, lit)),
+        };
+        self.keep_foreign(inst, obj, (path, &a.name), a.span, value)
+    }
+
+    fn keep_foreign_binding(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        path: &[String],
+        pb: &PropertyBinding,
+    ) -> bool {
+        if self.foreign_keeper(obj).is_none() {
+            return false;
+        }
+        let expr = pb.expr;
+        let span = name_place(pb, inst.file.ir.expr(expr).span);
+        let i = inst.clone();
+        let value = ForeignValue::Binding(Rc::new(move |e, hint| {
+            // A `var` holds the array the expression gives, not a copy.
+            let kept = matches!(hint, TypeTag::Var);
+            e.eval_expr_as(&i, expr, hint, &[], false, kept)
+        }));
+        self.keep_foreign(inst, obj, (path, &pb.name), span, value)
     }
 
     fn no_property(&self, inst: &Instance, line: u32, col: u32, path: &[String], name: &str) {

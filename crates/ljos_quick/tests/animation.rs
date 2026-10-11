@@ -506,3 +506,157 @@ fn a_smoothed_animation_shown_on_the_way_is_where_an_uninterrupted_run_would_be(
     assert_eq!(rig.num("unseen", "x"), seen.num("box", "x"));
     assert!(seen.num("box", "x") > 32.0, "it was still going up");
 }
+
+/// What qml6 shows for a `SpringAnimation` in a `Behavior` (see the
+/// fixture's own test in `animation/spring.rs` for how a line reads).
+const SPRING_QT: &str = include_str!("../src/animation/fixtures/spring_qt.txt");
+
+/// qml6 prints five decimals.
+const SPRING_TOLERANCE: f64 = 2e-5;
+
+#[test]
+fn a_spring_behavior_shows_what_qt_shows_tick_for_tick() {
+    let mut checked = 0;
+    for line in SPRING_QT.lines().filter(|l| !l.trim().is_empty()) {
+        let mut words = line.split_whitespace();
+        let mut head = || words.next().unwrap();
+        let (spring, damping, mass) = (head(), head(), head());
+        let (velocity, epsilon, modulus, start) = (head(), head(), head(), head());
+        let mut rig = Rig::new(&format!(
+            r#"import QtQuick
+Item {{
+  objectName: "root"
+  property real v: {start}
+  property bool going: anim.running
+  Behavior on v {{
+    SpringAnimation {{
+      id: anim
+      spring: {spring}; damping: {damping}; mass: {mass}
+      velocity: {velocity}; epsilon: {epsilon}; modulus: {modulus}
+    }}
+  }}
+}}
+"#
+        ));
+        let mut ends = true;
+        // Each tick after the last new value, and whether it was running.
+        let mut seen: Vec<(Time, bool)> = Vec::new();
+        while let Some(word) = words.next() {
+            if word == "|" {
+                let to: f64 = words.next().unwrap().parse().unwrap();
+                rig.set("root", "v", Value::Real(to));
+                rig.frames_now();
+                seen.clear();
+                continue;
+            }
+            if let Some(end) = word.strip_prefix("end:") {
+                match end.parse::<u64>() {
+                    // Qt says it is over at this tick and not before.
+                    Ok(end) => {
+                        for (at, going) in &seen {
+                            assert_eq!(*going, *at < ms(end), "{line:.40}: going at {at:?}");
+                        }
+                        rig.run_until(ms(end));
+                        assert!(!rig.flag("root", "going"), "{line:.40}: going at {end} ms");
+                    }
+                    Err(_) => ends = false,
+                }
+                continue;
+            }
+            let (at, value) = word.split_once(':').unwrap();
+            let at = ms(at.parse().unwrap());
+            let value: f64 = value.parse().unwrap();
+            if at > rig.clock.now() {
+                rig.clock.set(at);
+                rig.frame();
+            }
+            let got = rig.num("root", "v");
+            assert!(
+                (got - value).abs() <= SPRING_TOLERANCE,
+                "{line:.40}: at {at:?} Qt shows {value}, this shows {got}"
+            );
+            if seen.last().is_none_or(|(last, _)| *last < at) {
+                seen.push((at, rig.flag("root", "going")));
+            }
+            checked += 1;
+        }
+        if ends {
+            rig.run_until(ms(60_000));
+            assert!(rig.idle(), "{line:.40}: at rest, it asks for nothing");
+        }
+    }
+    assert!(checked > 1000, "only {checked} values in the fixture");
+}
+
+const SPRUNG: &str = r#"import QtQuick
+Item {
+  objectName: "root"
+  property int whole: 0
+  Behavior on whole { SpringAnimation { spring: 2; damping: 0.2 } }
+  Rectangle {
+    objectName: "box"; width: 10; height: 10
+    Behavior on x { SpringAnimation { spring: 2; damping: 0.2 } }
+    Behavior on y { SpringAnimation { } }
+  }
+  Item {
+    objectName: "page"; visible: false
+    Rectangle {
+      objectName: "unseen"; width: 10; height: 10
+      Behavior on x { SpringAnimation { spring: 2 } }
+    }
+  }
+}
+"#;
+
+#[test]
+fn a_spring_asks_for_frames_until_it_rests_and_then_for_nothing() {
+    let mut rig = Rig::new(SPRUNG);
+    rig.set("box", "x", Value::Real(100.0));
+    assert!(
+        rig.run_until(ms(1000)) >= 100,
+        "a frame each period on the way"
+    );
+    rig.run_until(ms(3000));
+    assert_eq!(rig.num("box", "x"), 100.0);
+    assert_eq!(running_animation_count(&rig.e), 0);
+    assert!(rig.idle());
+    assert_eq!(rig.run_until(ms(60_000)), 0);
+}
+
+#[test]
+fn a_spring_without_a_spring_and_a_velocity_costs_one_frame() {
+    let mut rig = Rig::new(SPRUNG);
+    rig.set("box", "y", Value::Real(100.0));
+    rig.frames_now();
+    assert_eq!(rig.num("box", "y"), 0.0);
+    assert_eq!(running_animation_count(&rig.e), 0);
+    assert!(rig.idle());
+}
+
+#[test]
+fn a_spring_that_never_rests_asks_for_nothing_while_its_item_is_hidden() {
+    let mut rig = Rig::new(SPRUNG);
+    rig.set("unseen", "x", Value::Real(100.0));
+    rig.frames_now();
+    assert_eq!(running_animation_count(&rig.e), 1);
+    assert_eq!(rig.run_until(ms(60_000)), 0, "nobody sees it swing");
+}
+
+#[test]
+fn a_spring_on_a_whole_number_goes_on_from_the_place_it_was_at() {
+    // The property can only show the place rounded; a new value on the
+    // way must not make the spring set out from the rounded place.
+    let mut rig = Rig::new(SPRUNG);
+    let mut real = Rig::new(SPRUNG);
+    rig.set("root", "whole", Value::Int(100));
+    real.set("box", "x", Value::Real(100.0));
+    rig.run_until(ms(200));
+    real.run_until(ms(200));
+    rig.set("root", "whole", Value::Int(20));
+    real.set("box", "x", Value::Real(20.0));
+    for at in [300, 450, 700] {
+        rig.run_until(ms(at));
+        real.run_until(ms(at));
+        assert_eq!(rig.num("root", "whole"), real.num("box", "x").round());
+    }
+}

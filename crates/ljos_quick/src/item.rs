@@ -110,6 +110,14 @@ pub struct Item {
     /// Whether Tab stops at the item.
     #[qml(notify)]
     pub active_focus_on_tab: bool,
+    /// The item's states, the one it is in (`""` for none of them) and the
+    /// transitions between them: see [`crate::states`].
+    #[qml(notify, list)]
+    pub states: QmlList,
+    #[qml(notify)]
+    pub state: Atom,
+    #[qml(notify, list)]
+    pub transitions: QmlList,
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]
     pub accessible: AccessibleInfo,
@@ -167,6 +175,9 @@ impl Default for Item {
             focus: false,
             active_focus: false,
             active_focus_on_tab: false,
+            states: QmlList::new(),
+            state: Atom::EMPTY,
+            transitions: QmlList::new(),
             accessible: AccessibleInfo::default(),
             synced_parent: None,
             follows_implicit: [Weak::new(), Weak::new()],

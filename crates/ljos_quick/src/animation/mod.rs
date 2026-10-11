@@ -10,19 +10,22 @@
 //!   frame is needed (none while nothing runs).
 //! - [`easing`]: the curves.
 //! - [`smooth`]: the way a `SmoothedAnimation` takes.
+//! - [`spring`]: the way a `SpringAnimation` takes.
 //!
-//! - [`transition`]: `Transition`, as far as a popup's `enter` and `exit`
-//!   need it: its animations run on an object it is given.
+//! - [`transition`]: `Transition`. Its animations run on an object it is
+//!   given (a popup's `enter` and `exit`, a view's `add` and `remove`), or
+//!   between two states, on what the change of state changed.
 //!
-//! States (M2) are not here. A Transition between states will run its
-//! animations the way a `Behavior` does: through
-//! [`driver::start_driven`] with the property and end value as defaults.
+//! States are in [`crate::states`]. A change of state hands the timeline
+//! what changed ([`timeline::Changes`]) and the driver runs the result
+//! under the transition ([`driver::start_timeline`]).
 
 pub(crate) mod behavior;
 pub(crate) mod controller;
 pub(crate) mod driver;
 pub mod easing;
 pub(crate) mod smooth;
+pub(crate) mod spring;
 pub(crate) mod timeline;
 pub(crate) mod transition;
 pub(crate) mod types;
@@ -38,9 +41,9 @@ pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
 pub use transition::{Transition, run_transition, stop_transition};
 pub use types::{
-    Animation, ColorAnimation, Easing, EasingGroup, NumberAnimation, ParallelAnimation,
-    PauseAnimation, PropertyAction, PropertyAnimation, RotationAnimation, ScriptAction,
-    SequentialAnimation, SmoothedAnimation,
+    AnchorAnimation, Animation, ColorAnimation, Easing, EasingGroup, NumberAnimation,
+    ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation,
+    RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation,
 };
 
 /// Hooks the animation types into the engine. Once per engine; more calls
@@ -56,6 +59,7 @@ pub(crate) fn register(engine: &Engine) {
         Animation, PropertyAnimation, NumberAnimation, ColorAnimation, SequentialAnimation,
         ParallelAnimation, PauseAnimation, ScriptAction, PropertyAction, Behavior,
         AnimationController, Easing, RotationAnimation, SmoothedAnimation, Transition,
+        AnchorAnimation, ParentAnimation, SpringAnimation,
     ]));
     // `script: ...` is a statement to run when its turn comes.
     engine.register_script_property(ScriptAction::static_meta(), ScriptAction::SCRIPT.index);

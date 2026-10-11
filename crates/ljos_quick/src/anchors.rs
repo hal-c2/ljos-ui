@@ -162,6 +162,27 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &RefCell<AnchorState>) 
     }
 }
 
+/// Where the anchors of `obj` put it as they are at this moment: `x`,
+/// `width`, `y` and `height`, `None` for what they leave alone. For who
+/// has to know before the item's effect has run (a transition between two
+/// sets of anchors). Follows nothing and warns of nothing.
+pub(crate) fn resolve(engine: &Engine, obj: ObjectId) -> [Option<f64>; 4] {
+    let a = AnchorProps::get();
+    engine.untrack(|| {
+        let mut cx = Ctx {
+            engine,
+            obj,
+            parent: engine.visual_parent(obj),
+            warnings: Vec::new(),
+        };
+        let fill = engine.read(obj, a.fill).as_object();
+        let center_in = engine.read(obj, a.center_in).as_object();
+        let h = horizontal(&mut cx, fill, center_in);
+        let v = vertical(&mut cx, fill, center_in);
+        [h.pos, h.len, v.pos, v.len]
+    })
+}
+
 fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId>) -> Span {
     let a = AnchorProps::get();
     let e = cx.engine;

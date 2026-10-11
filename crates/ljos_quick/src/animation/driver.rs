@@ -46,7 +46,12 @@ pub(crate) struct Driver {
     ticking: Cell<Option<Time>>,
     /// [`super::register`] ran.
     pub(crate) registered: Cell<bool>,
+    /// What [`later`] was given, until the next frame.
+    later: RefCell<Vec<Deferred>>,
 }
+
+/// Something to do in the next frame.
+type Deferred = Box<dyn FnOnce(&Engine)>;
 
 struct Run {
     anim: ObjectId,
@@ -73,6 +78,10 @@ struct Run {
     /// Something else runs it (a `Behavior`; later a `Transition`): it
     /// shows `running` and emits nothing.
     driven: bool,
+    /// A driven run of something that is no animation (the animations of a
+    /// transition between states, under the transition): it has no
+    /// `running` of its own to show.
+    silent: bool,
     done: Option<Done>,
 }
 
@@ -229,6 +238,46 @@ pub(crate) fn forget_driven(engine: &Engine, anim: ObjectId) -> bool {
     }
 }
 
+/// Runs a timeline built elsewhere under `key`, which need not be an
+/// animation: nothing is shown on it and nothing is emitted. `done` is
+/// called when the timeline ends by itself, which may be before this
+/// returns. A run under `key` that is under way is replaced; end one with
+/// [`forget_driven`].
+pub(crate) fn start_timeline(engine: &Engine, key: ObjectId, timeline: Timed, done: Option<Done>) {
+    let d = driver(engine);
+    if let Some(old) = d.find(key) {
+        d.remove(&old);
+    }
+    let run = Rc::new(Run {
+        anim: key,
+        finishes_when_stopped: false,
+        timeline: RefCell::new(Some(timeline)),
+        elapsed: Cell::new(0),
+        last: Cell::new(d.ticking.get()),
+        paused: Cell::new(false),
+        cancelled: Cell::new(false),
+        finishing: Cell::new(false),
+        want_complete: Cell::new(false),
+        rested: Cell::new(false),
+        driven: true,
+        silent: true,
+        done,
+    });
+    d.add(&run);
+    engine.batch(|| run.step(engine, 0));
+    settle(engine, &d, &run);
+    if !run.cancelled.get() {
+        engine.request_wake();
+    }
+}
+
+/// Calls `f` at the start of the next frame, and asks for that frame.
+/// For what must not happen before the code that caused it has returned.
+pub(crate) fn later(engine: &Engine, f: Box<dyn FnOnce(&Engine)>) {
+    driver(engine).later.borrow_mut().push(f);
+    engine.request_wake();
+}
+
 /// Shows `running: false` on an animation whose driven run was forgotten,
 /// unless it runs again by now.
 pub(crate) fn settle_driven(engine: &Engine, anim: ObjectId) {
@@ -268,6 +317,7 @@ fn begin(
         want_complete: Cell::new(false),
         rested: Cell::new(false),
         driven,
+        silent: false,
         done,
     });
     // Known to the driver before `running` says so: whoever follows
@@ -307,7 +357,9 @@ fn finish(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
         show(engine, anim, Animation::PAUSED.index, false);
     }
     if run.driven {
-        show(engine, anim, Animation::RUNNING.index, false);
+        if !run.silent {
+            show(engine, anim, Animation::RUNNING.index, false);
+        }
         if let Some(done) = &run.done {
             done(engine);
         }
@@ -463,6 +515,10 @@ pub(crate) fn set_frame_period(engine: &Engine, period: Duration) {
 /// Frame step 5: brings every run to `now`, the frame's time.
 pub(crate) fn tick(engine: &Engine, now: Time) {
     let d = driver(engine);
+    let later = std::mem::take(&mut *d.later.borrow_mut());
+    for f in later {
+        f(engine);
+    }
     if d.runs.borrow().is_empty() {
         d.last_frame.set(Some((now, engine.now())));
         return;
@@ -519,6 +575,10 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
 /// `now`. `None`: not before something else changes.
 pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     let d = driver(engine);
+    if !d.later.borrow().is_empty() {
+        // Asked for after this frame's tick: one more frame, now.
+        return Some(now);
+    }
     if d.runs.borrow().is_empty() && d.boundary.get().is_none() {
         return None;
     }

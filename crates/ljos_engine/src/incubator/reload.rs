@@ -728,6 +728,20 @@ impl Engine {
         {
             return None;
         }
+        // What an override holds (a state, a `Binding`) is not the
+        // property's own value: carried, it would be what the property goes
+        // back to when the new file's state lets go of it.
+        let (at, slot) = self.redirect(obj, prop);
+        let node = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(at)
+            .and_then(|h| h.node(slot));
+        if node.is_some_and(|n| self.inner.graph.override_count(n) > 0) {
+            return None;
+        }
         let value = self.untrack(|| self.read(obj, prop));
         portable(&value).then(|| Carried {
             name: info.name.clone(),

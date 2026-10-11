@@ -15,15 +15,17 @@
 use std::cell::Cell;
 
 use ljos_engine::{
-    Color, Engine, LogLevel, ObjectId, Point, PropIndex, Rect, Size, TypeTag, Value,
+    Atom, Color, Engine, LogLevel, ObjectId, Point, PropIndex, Rect, Size, TypeTag, Value,
 };
 use ljos_reactive::WriteKind;
 
 use super::easing::Curve;
 use super::smooth::{Params, Reversing, Track};
+use super::spring;
 use super::types::{
-    Animation, ColorAnimation, NumberAnimation, ParallelAnimation, PauseAnimation, PropertyAction,
-    PropertyAnimation, RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation,
+    AnchorAnimation, Animation, ColorAnimation, NumberAnimation, ParallelAnimation,
+    ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation, RotationAnimation,
+    ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation,
 };
 use crate::item::{Item, is_a, is_item};
 
@@ -48,6 +50,52 @@ pub(crate) struct Defaults {
 /// [`Defaults::prop`] of a run that has an object to move and no property
 /// of its own: the animations of a `Transition` move what they name.
 pub(crate) const NO_PROPERTY: PropIndex = PropIndex(u32::MAX);
+
+/// One property a change of state gave another value.
+#[derive(Clone, Debug)]
+pub(crate) struct Change {
+    pub obj: ObjectId,
+    pub prop: PropIndex,
+    /// The value it has once the transition is over.
+    pub to: Value,
+    pub kind: ChangeKind,
+}
+
+/// Which animations of a transition a [`Change`] is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChangeKind {
+    /// A property the state names: any animation of properties.
+    Property,
+    /// Where other anchors put an item: an `AnchorAnimation`.
+    Anchor,
+    /// Where an item is in the parent the state gave it: what is inside a
+    /// `ParentAnimation`.
+    Parent,
+}
+
+/// What a change of state did, for the transition that shows it. Its
+/// animations move what changed, to the values the state gives, unless
+/// they say otherwise.
+#[derive(Debug, Default)]
+pub(crate) struct Changes {
+    pub list: Vec<Change>,
+    /// The transition runs for the opposite change: what came last comes
+    /// first, and an animation's own `from` and `to` change places.
+    pub reversed: bool,
+    /// The named scripts of the state entered, each with the property its
+    /// statement is kept under: a `ScriptAction` runs one by `scriptName`.
+    pub scripts: Vec<(Atom, ObjectId, PropIndex)>,
+}
+
+/// What an animation is built in: the property of a `Behavior`, or the
+/// changes of a transition.
+#[derive(Clone, Copy)]
+struct Env<'a> {
+    defaults: Option<&'a Defaults>,
+    changes: Option<&'a Changes>,
+    /// Inside a `ParentAnimation`.
+    reparented: bool,
+}
 
 /// What an advancing timeline needs from its run.
 pub(crate) struct Ctx<'a> {
@@ -85,9 +133,18 @@ pub(crate) struct Timed {
 enum Node {
     Prop(PropNode),
     Smooth(SmoothNode),
+    Spring(SpringNode),
     Pause,
-    Script { action: ObjectId, fired: bool },
-    Action { node: ActionNode, fired: bool },
+    /// The statement kept under `prop` of `action`.
+    Script {
+        action: ObjectId,
+        prop: PropIndex,
+        fired: bool,
+    },
+    Action {
+        node: ActionNode,
+        fired: bool,
+    },
     Seq(Vec<Timed>),
     Par(Vec<Timed>),
 }
@@ -170,6 +227,9 @@ struct PropNode {
     slots: Vec<Slot>,
     from: Option<Value>,
     to: Option<Value>,
+    /// Per slot, the value a state gives it: where it goes without a `to`
+    /// of its own. Empty outside a transition.
+    tos: Vec<Option<Value>>,
     curve: Curve,
     /// Per slot, from the first moment of the node. `None`: not begun.
     lerps: Option<Vec<Lerp>>,
@@ -187,10 +247,26 @@ struct SmoothNode {
     begun: bool,
 }
 
+/// A `SpringAnimation`: each property on a way of its own.
+#[derive(Debug)]
+struct SpringNode {
+    anim: ObjectId,
+    slots: Vec<Slot>,
+    params: spring::Params,
+    /// Per slot; `None` where there is nothing to do. Planned when the
+    /// timeline is built, because the way gives the duration.
+    tracks: Vec<Option<spring::Track>>,
+    /// The animation says where the way begins (`from`), so it does not
+    /// begin where the property happens to be.
+    own_from: bool,
+    begun: bool,
+}
+
 #[derive(Debug)]
 struct ActionNode {
     slots: Vec<Slot>,
-    value: Value,
+    /// Per slot; `None` where there is nothing to set.
+    values: Vec<Option<Value>>,
 }
 
 /// The way from one value to another.
@@ -334,6 +410,19 @@ impl Lerp {
 }
 
 impl Slot {
+    fn of(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Slot {
+        let ty = engine
+            .meta_of(obj)
+            .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
+            .unwrap_or(TypeTag::Var);
+        Slot {
+            obj,
+            prop,
+            ty,
+            item: is_item(engine, obj),
+        }
+    }
+
     fn shown(&self, engine: &Engine) -> bool {
         !self.item
             || engine
@@ -380,33 +469,8 @@ fn duration_of(engine: &Engine, anim: ObjectId) -> i64 {
 /// The properties `target`, `targets`, `property` and `properties` name,
 /// with the defaults filling in for what is not named.
 fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bool) -> Vec<Slot> {
-    let mut targets = objects(engine, anim, "targets");
-    if let Some(t) = engine.read_by_name(anim, "target").as_object()
-        && !targets.contains(&t)
-    {
-        targets.insert(0, t);
-    }
-    let mut names: Vec<String> = Vec::new();
-    let one = engine.read_by_name(anim, "property").to_js_string();
-    let many = engine.read_by_name(anim, "properties").to_js_string();
-    for n in std::iter::once(&*one).chain(many.split(',')) {
-        let n = n.trim();
-        if !n.is_empty() && !names.iter().any(|x| x == n) {
-            names.push(n.to_owned());
-        }
-    }
-    let slot = |obj: ObjectId, prop: PropIndex| {
-        let ty = engine
-            .meta_of(obj)
-            .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
-            .unwrap_or(TypeTag::Var);
-        Slot {
-            obj,
-            prop,
-            ty,
-            item: is_item(engine, obj),
-        }
-    };
+    let (mut targets, mut names) = named(engine, anim);
+    let slot = |obj: ObjectId, prop: PropIndex| Slot::of(engine, obj, prop);
     if let Some(d) = defaults {
         if targets.is_empty() && names.is_empty() && d.prop != NO_PROPERTY {
             return vec![slot(d.obj, d.prop)];
@@ -440,6 +504,122 @@ fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bo
                     format_args!("Cannot animate non-existent property \"{n}\""),
                 ),
             }
+        }
+    }
+    out
+}
+
+/// The objects and the property names an animation names itself.
+fn named(engine: &Engine, anim: ObjectId) -> (Vec<ObjectId>, Vec<String>) {
+    let mut targets = objects(engine, anim, "targets");
+    if let Some(t) = engine.read_by_name(anim, "target").as_object()
+        && !targets.contains(&t)
+    {
+        targets.insert(0, t);
+    }
+    let mut names: Vec<String> = Vec::new();
+    let one = engine.read_by_name(anim, "property").to_js_string();
+    let many = engine.read_by_name(anim, "properties").to_js_string();
+    for n in std::iter::once(&*one).chain(many.split(',')) {
+        let n = n.trim();
+        if !n.is_empty() && !names.iter().any(|x| x == n) {
+            names.push(n.to_owned());
+        }
+    }
+    (targets, names)
+}
+
+/// What an animation of properties moves in a transition, and per slot
+/// the value the state gives it. Of what changed it takes what it names:
+/// every changed object when it names none, and without a property name
+/// every changed property of the kind it animates. A property it names
+/// outright that no state changed is its own to move, with its own `to`.
+fn of_changes(
+    engine: &Engine,
+    anim: ObjectId,
+    changes: &Changes,
+    reparented: bool,
+    kind: Kind,
+) -> (Vec<Slot>, Vec<Option<Value>>) {
+    let (targets, mut names) = named(engine, anim);
+    let outright = !names.is_empty();
+    if !outright && matches!(kind, Kind::Rotation(_)) {
+        names.extend(["rotation".to_owned(), "angle".to_owned()]);
+    }
+    let mut slots: Vec<Slot> = Vec::new();
+    let mut tos = Vec::new();
+    for c in &changes.list {
+        let mine = match c.kind {
+            ChangeKind::Property => true,
+            ChangeKind::Parent => reparented,
+            ChangeKind::Anchor => false,
+        };
+        if !mine || !(targets.is_empty() || targets.contains(&c.obj)) {
+            continue;
+        }
+        let slot = Slot::of(engine, c.obj, c.prop);
+        let wanted = if names.is_empty() {
+            match kind {
+                Kind::Number => matches!(slot.ty, TypeTag::Int | TypeTag::Real),
+                Kind::Color => matches!(slot.ty, TypeTag::Color),
+                Kind::Rotation(_) | Kind::Any => true,
+            }
+        } else {
+            names
+                .iter()
+                .any(|n| engine.property_index(c.obj, n).ok() == Some(c.prop))
+        };
+        if wanted && !slots.iter().any(|s| s.obj == c.obj && s.prop == c.prop) {
+            slots.push(slot);
+            tos.push(Some(c.to.clone()));
+        }
+    }
+    if outright {
+        for t in &targets {
+            for n in &names {
+                if let Ok(p) = engine.property_index(*t, n)
+                    && !slots.iter().any(|s| s.obj == *t && s.prop == p)
+                {
+                    slots.push(Slot::of(engine, *t, p));
+                    tos.push(None);
+                }
+            }
+        }
+    }
+    (slots, tos)
+}
+
+/// What an `AnchorAnimation` moves: the place and size of the items a
+/// state anchored otherwise, of those it names or of all of them.
+fn of_anchors(
+    engine: &Engine,
+    anim: ObjectId,
+    changes: &Changes,
+) -> (Vec<Slot>, Vec<Option<Value>>) {
+    let targets = objects(engine, anim, "targets");
+    changes
+        .list
+        .iter()
+        .filter(|c| c.kind == ChangeKind::Anchor)
+        .filter(|c| targets.is_empty() || targets.contains(&c.obj))
+        .map(|c| (Slot::of(engine, c.obj, c.prop), Some(c.to.clone())))
+        .unzip()
+}
+
+/// The names of the state scripts the `ScriptAction`s in `anims` run in
+/// their own time (`scriptName`).
+pub(crate) fn script_names(engine: &Engine, anims: &[ObjectId]) -> Vec<Atom> {
+    let mut out = Vec::new();
+    for anim in anims {
+        if is_a::<ScriptAction>(engine, *anim) {
+            let name = engine.read_by_name(*anim, "scriptName").to_js_string();
+            if !name.is_empty() {
+                out.push(Atom::from(&*name));
+            }
+        } else if is_a::<SequentialAnimation>(engine, *anim)
+            || is_a::<ParallelAnimation>(engine, *anim)
+        {
+            out.extend(script_names(engine, &objects(engine, *anim, "animations")));
         }
     }
     out
@@ -481,19 +661,62 @@ impl Timed {
     /// The timeline of `anim` and what is inside it, read from the objects
     /// as they are now.
     pub(crate) fn build(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>) -> Timed {
+        let env = Env {
+            defaults,
+            changes: None,
+            reparented: false,
+        };
+        Timed::build_in(engine, anim, env)
+    }
+
+    /// The timeline of a transition between states: its animations, all
+    /// at once, moving what `changes` says changed.
+    pub(crate) fn of_transition(engine: &Engine, anims: &[ObjectId], changes: &Changes) -> Timed {
+        let env = Env {
+            defaults: None,
+            changes: Some(changes),
+            reparented: false,
+        };
+        let list: Vec<Timed> = anims
+            .iter()
+            .filter(|a| is_a::<Animation>(engine, **a))
+            .map(|a| Timed::build_in(engine, *a, env))
+            .collect();
+        let longest = list.iter().map(Timed::total).max().unwrap_or(0);
+        Timed {
+            node: Node::Par(list),
+            start: 0,
+            pass: longest,
+            loops: 1,
+            iter: 0,
+            state: State::Idle,
+        }
+    }
+
+    fn build_in(engine: &Engine, anim: ObjectId, env: Env<'_>) -> Timed {
+        let defaults = env.defaults;
         let set = |name: &str| match engine.read_by_name(anim, name) {
             Value::Undefined => None,
             v => Some(v),
         };
-        let children = |defaults: Option<&Defaults>| -> Vec<Timed> {
+        let children = |env: Env<'_>| -> Vec<Timed> {
             objects(engine, anim, "animations")
                 .into_iter()
                 .filter(|c| is_a::<Animation>(engine, *c))
-                .map(|c| Timed::build(engine, c, defaults))
+                .map(|c| Timed::build_in(engine, c, env))
                 .collect()
         };
+        // What it moves, and where a state takes each of those.
+        let aimed = |kind: Kind| match env.changes {
+            Some(changes) => of_changes(engine, anim, changes, env.reparented, kind),
+            None => (slots(engine, anim, defaults, false), Vec::new()),
+        };
+        let reversed = env.changes.is_some_and(|c| c.reversed);
         let (node, pass) = if is_a::<SequentialAnimation>(engine, anim) {
-            let mut list = children(defaults);
+            let mut list = children(env);
+            if reversed {
+                list.reverse();
+            }
             let mut at = 0i64;
             for c in &mut list {
                 c.start = at;
@@ -501,15 +724,37 @@ impl Timed {
             }
             (Node::Seq(list), at)
         } else if is_a::<ParallelAnimation>(engine, anim) {
-            let list = children(defaults);
+            let list = children(Env {
+                reparented: env.reparented || is_a::<ParentAnimation>(engine, anim),
+                ..env
+            });
             let longest = list.iter().map(Timed::total).max().unwrap_or(0);
             (Node::Par(list), longest)
+        } else if is_a::<SpringAnimation>(engine, anim) {
+            let (slots, tos) = aimed(Kind::Number);
+            let (mut from, mut to) = (
+                set("from"),
+                set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
+            );
+            if reversed {
+                std::mem::swap(&mut from, &mut to);
+            }
+            let node = SpringNode::build(engine, anim, slots, from, to, &tos);
+            let longest = node
+                .tracks
+                .iter()
+                .flatten()
+                .map(spring::Track::micros)
+                .max();
+            (Node::Spring(node), longest.unwrap_or(0))
         } else if is_a::<SmoothedAnimation>(engine, anim) {
+            let (slots, tos) = aimed(Kind::Number);
             let node = SmoothNode::build(
                 engine,
                 anim,
-                slots(engine, anim, defaults, false),
+                slots,
                 set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
+                &tos,
             );
             let longest = node.tracks.iter().flatten().map(Track::micros).max();
             (Node::Smooth(node), longest.unwrap_or(0))
@@ -523,11 +768,36 @@ impl Timed {
             } else {
                 Kind::Any
             };
+            let (slots, tos) = aimed(kind);
+            let (mut from, mut to) = (
+                set("from"),
+                set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
+            );
+            if reversed {
+                std::mem::swap(&mut from, &mut to);
+            }
             let node = PropNode {
                 kind,
-                slots: slots(engine, anim, defaults, false),
-                from: set("from"),
-                to: set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
+                slots,
+                from,
+                to,
+                tos,
+                curve: curve_of(engine, anim),
+                lerps: None,
+            };
+            (Node::Prop(node), duration_of(engine, anim))
+        } else if is_a::<AnchorAnimation>(engine, anim) {
+            // Outside a transition there are no anchors that changed.
+            let (slots, tos) = match env.changes {
+                Some(changes) => of_anchors(engine, anim, changes),
+                None => (Vec::new(), Vec::new()),
+            };
+            let node = PropNode {
+                kind: Kind::Number,
+                slots,
+                from: None,
+                to: None,
+                tos,
                 curve: curve_of(engine, anim),
                 lerps: None,
             };
@@ -535,22 +805,38 @@ impl Timed {
         } else if is_a::<PauseAnimation>(engine, anim) {
             (Node::Pause, duration_of(engine, anim))
         } else if is_a::<ScriptAction>(engine, anim) {
+            // In a transition `scriptName` names a script of the state
+            // entered, which then runs here instead of on entry.
+            let name = engine.read_by_name(anim, "scriptName").to_js_string();
+            let named = env
+                .changes
+                .filter(|_| !name.is_empty())
+                .and_then(|c| c.scripts.iter().find(|(n, ..)| **n == *name));
+            let (action, prop) = match named {
+                Some((_, script, prop)) => (*script, *prop),
+                None => (anim, ScriptAction::SCRIPT.index),
+            };
             (
                 Node::Script {
-                    action: anim,
+                    action,
+                    prop,
                     fired: false,
                 },
                 0,
             )
         } else if is_a::<PropertyAction>(engine, anim) {
-            let node = ActionNode {
-                slots: slots(engine, anim, defaults, false),
-                // Without a value of its own it sets what the Behavior it
-                // is in was given.
-                value: set("value")
-                    .or_else(|| defaults.and_then(|d| d.to.clone()))
-                    .unwrap_or_default(),
+            let (slots, tos) = aimed(Kind::Any);
+            // Without a value of its own it sets what the Behavior it is
+            // in was given, or what the state gives the property.
+            let own = set("value").or_else(|| defaults.and_then(|d| d.to.clone()));
+            let values = match env.changes {
+                Some(_) => tos.into_iter().map(|to| own.clone().or(to)).collect(),
+                None => slots
+                    .iter()
+                    .map(|_| Some(own.clone().unwrap_or_default()))
+                    .collect(),
             };
+            let node = ActionNode { slots, values };
             (Node::Action { node, fired: false }, 0)
         } else {
             // An animation type this module does not know stands still.
@@ -559,9 +845,9 @@ impl Timed {
         let loops = engine.read(anim, Animation::LOOPS.index).to_number();
         let loops = if loops < 0.0 { FOREVER } else { loops as i64 };
         Timed {
-            // Measured on Qt: a SmoothedAnimation is over when it is
-            // there, whatever `loops` says.
-            loops: if matches!(node, Node::Smooth(_)) {
+            // Measured on Qt: a SmoothedAnimation and a SpringAnimation
+            // are over when they are there, whatever `loops` says.
+            loops: if matches!(node, Node::Smooth(_) | Node::Spring(_)) {
                 loops.min(1)
             } else {
                 loops
@@ -610,9 +896,10 @@ impl Timed {
 
     /// Whether `stop()` on the way emits `finished` as well. Measured on
     /// Qt: it does for an animation without end, and for a
-    /// SmoothedAnimation, which has no duration to tell Qt when it ends.
+    /// SmoothedAnimation and a SpringAnimation, which have no duration to
+    /// tell Qt when they end.
     pub(crate) fn finishes_when_stopped(&self) -> bool {
-        self.is_endless() || matches!(self.node, Node::Smooth(_))
+        self.is_endless() || matches!(self.node, Node::Smooth(_) | Node::Spring(_))
     }
 
     /// When the pass it is in ends. For `complete()` on an endless
@@ -632,6 +919,22 @@ impl Timed {
         } else if self.loops >= FOREVER {
             self.loops = 1;
         }
+    }
+
+    /// The properties its parts move or set, now or later.
+    pub(crate) fn moved(&self, out: &mut Vec<(ObjectId, PropIndex)>) {
+        let slots = match &self.node {
+            Node::Prop(p) => &p.slots,
+            Node::Smooth(s) => &s.slots,
+            Node::Spring(s) => &s.slots,
+            Node::Action { node, .. } => &node.slots,
+            Node::Seq(c) | Node::Par(c) => {
+                c.iter().for_each(|c| c.moved(out));
+                return;
+            }
+            Node::Pause | Node::Script { .. } => return,
+        };
+        out.extend(slots.iter().map(|s| (s.obj, s.prop)));
     }
 
     fn has_scripts(&self) -> bool {
@@ -659,7 +962,7 @@ impl Timed {
             }
             Node::Script { fired, .. } | Node::Action { fired, .. } => *fired = false,
             Node::Seq(c) | Node::Par(c) => c.iter_mut().for_each(|c| c.reset(forget)),
-            Node::Smooth(_) | Node::Pause => {}
+            Node::Smooth(_) | Node::Spring(_) | Node::Pause => {}
         }
     }
 
@@ -743,22 +1046,36 @@ impl Timed {
                     s.show(cx.engine, pass, local);
                 }
             }
+            Node::Spring(s) => {
+                // Like a SmoothedAnimation it has no duration for a
+                // controller's progress to be a part of.
+                if cx.scripts {
+                    s.show(cx.engine, pass, local);
+                }
+            }
             Node::Pause => {}
-            Node::Script { action, fired } => {
+            Node::Script {
+                action,
+                prop,
+                fired,
+            } => {
                 if !*fired {
                     *fired = true;
                     if cx.scripts {
-                        cx.engine.run_script(*action, ScriptAction::SCRIPT.index);
+                        cx.engine.run_script(*action, *prop);
                     }
                 }
             }
             Node::Action { node, fired } => {
                 if !*fired {
                     *fired = true;
-                    for slot in &node.slots {
+                    for (slot, value) in node.slots.iter().zip(&node.values) {
+                        let Some(value) = value else {
+                            continue;
+                        };
                         // Like an animated value, it leaves the property's
                         // binding in place.
-                        let v = slot.ty.coerce(&node.value).unwrap_or(node.value.clone());
+                        let v = slot.ty.coerce(value).unwrap_or(value.clone());
                         slot.write(cx.engine, v);
                     }
                 }
@@ -806,6 +1123,11 @@ impl Timed {
                 .iter()
                 .zip(&s.tracks)
                 .any(|(slot, track)| track.is_some() && slot.shown(engine)),
+            Node::Spring(s) => s
+                .slots
+                .iter()
+                .zip(&s.tracks)
+                .any(|(slot, track)| track.is_some() && slot.shown(engine)),
             Node::Seq(c) | Node::Par(c) => c.iter().any(|c| c.wants_frames(engine)),
             _ => false,
         }
@@ -826,6 +1148,7 @@ impl Timed {
         match &self.node {
             Node::Prop(p) => p.slots.iter().any(|s| s.shown(engine)),
             Node::Smooth(s) => s.slots.iter().any(|s| s.shown(engine)),
+            Node::Spring(s) => s.slots.iter().any(|s| s.shown(engine)),
             Node::Seq(c) | Node::Par(c) => c.iter().any(|c| c.any_shown(engine)),
             _ => false,
         }
@@ -874,7 +1197,8 @@ impl PropNode {
         let lerps = self
             .slots
             .iter()
-            .map(|slot| {
+            .enumerate()
+            .map(|(i, slot)| {
                 let convert = |v: &Value| match self.kind {
                     Kind::Color => TypeTag::Color.coerce(v).ok(),
                     // Kept as written: a whole-number property passes
@@ -882,7 +1206,10 @@ impl PropNode {
                     Kind::Number | Kind::Rotation(_) => Some(v.clone()),
                     Kind::Any => slot.ty.coerce(v).ok(),
                 };
-                let to = self.to.as_ref().and_then(convert);
+                let own = self.to.as_ref();
+                let to = own
+                    .or_else(|| self.tos.get(i).and_then(Option::as_ref))
+                    .and_then(convert);
                 let from = match self.from.as_ref().and_then(convert) {
                     Some(v) => v,
                     None => engine.untrack(|| engine.read(slot.obj, slot.prop)),
@@ -908,12 +1235,24 @@ impl SmoothNode {
     /// Plans each property's way from where it is now, at the speed this
     /// animation last gave it. `from` plays no part: measured on Qt, a
     /// SmoothedAnimation always sets out from the property's own value.
-    fn build(engine: &Engine, anim: ObjectId, slots: Vec<Slot>, to: Option<Value>) -> SmoothNode {
+    ///
+    /// `to` is its own end value; `tos` has, per slot, the one a state
+    /// gives (empty outside a transition).
+    fn build(
+        engine: &Engine,
+        anim: ObjectId,
+        slots: Vec<Slot>,
+        to: Option<Value>,
+        tos: &[Option<Value>],
+    ) -> SmoothNode {
         let params = Self::params(engine, anim);
-        let to = to.map(|v| v.to_number()).filter(|n| !n.is_nan());
+        let number = |v: &Value| Some(v.to_number()).filter(|n| !n.is_nan());
+        let own = to.as_ref().and_then(number);
         let tracks = slots
             .iter()
-            .map(|slot| {
+            .enumerate()
+            .map(|(i, slot)| {
+                let to = own.or_else(|| tos.get(i).and_then(Option::as_ref).and_then(number));
                 let from = engine
                     .untrack(|| engine.read(slot.obj, slot.prop))
                     .to_number();
@@ -992,5 +1331,144 @@ impl SmoothNode {
                 a.set_speed(of, speed);
             }
         });
+    }
+}
+
+impl SpringNode {
+    fn params(engine: &Engine, anim: ObjectId) -> spring::Params {
+        let num = |name: &str| engine.read_by_name(anim, name).to_number();
+        spring::Params {
+            spring: num("spring"),
+            damping: num("damping"),
+            mass: num("mass"),
+            velocity: num("velocity"),
+            epsilon: num("epsilon"),
+            modulus: num("modulus"),
+        }
+    }
+
+    /// Where `slot` is, as a spring sees it: a whole-number property shows
+    /// the place rounded, and the spring goes on from the place itself.
+    fn place(engine: &Engine, anim: ObjectId, slot: &Slot) -> (f64, f64) {
+        let shown = engine
+            .untrack(|| engine.read(slot.obj, slot.prop))
+            .to_number();
+        let last = engine
+            .with::<SpringAnimation, _>(anim, |a| a.last((slot.obj, slot.prop)))
+            .ok()
+            .flatten();
+        match last {
+            Some((value, speed))
+                if value == shown || as_shown(slot, value).to_number() == shown =>
+            {
+                (value, speed)
+            }
+            // Something else moved it since: the speed is still its own.
+            Some((_, speed)) => (shown, speed),
+            None => (shown, 0.0),
+        }
+    }
+
+    /// Plans each property's way, at the speed this animation last gave
+    /// it: from `from`, or from where the property is now.
+    ///
+    /// `to` is its own end value; `tos` has, per slot, the one a state
+    /// gives (empty outside a transition).
+    fn build(
+        engine: &Engine,
+        anim: ObjectId,
+        slots: Vec<Slot>,
+        from: Option<Value>,
+        to: Option<Value>,
+        tos: &[Option<Value>],
+    ) -> SpringNode {
+        let params = Self::params(engine, anim);
+        let number = |v: &Value| Some(v.to_number()).filter(|n| !n.is_nan());
+        let own_from = from.as_ref().and_then(number);
+        let own = to.as_ref().and_then(number);
+        let tracks = slots
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                let to = own.or_else(|| tos.get(i).and_then(Option::as_ref).and_then(number));
+                let (place, speed) = Self::place(engine, anim, slot);
+                spring::Track::plan(own_from.unwrap_or(place), to?, speed, &params)
+            })
+            .collect();
+        SpringNode {
+            anim,
+            slots,
+            params,
+            tracks,
+            own_from: own_from.is_some(),
+            begun: false,
+        }
+    }
+
+    /// Inside a group its turn may come after something else moved the
+    /// property. The way is then planned again from where the property
+    /// is; it ends, at the value, when the time the group set aside for
+    /// it when it started is over.
+    // TODO(spring-in-group): Qt gives it the time the new way asks for;
+    // that needs timelines whose durations change while they run.
+    fn begin(&mut self, engine: &Engine) {
+        if self.own_from {
+            return;
+        }
+        for (slot, track) in self.slots.iter().zip(&mut self.tracks) {
+            let Some(planned) = track else {
+                continue;
+            };
+            let (place, speed) = Self::place(engine, self.anim, slot);
+            if place != planned.from {
+                *track = spring::Track::plan(place, planned.to, speed, &self.params);
+            }
+        }
+    }
+
+    /// Puts every property where it is `local` microseconds into the
+    /// pass, and notes the places and speeds.
+    fn show(&mut self, engine: &Engine, pass: i64, local: i64) {
+        if !std::mem::replace(&mut self.begun, true) {
+            self.begin(engine);
+        }
+        let over = local >= pass;
+        let mut last = Vec::with_capacity(self.slots.len());
+        for (slot, track) in self.slots.iter().zip(&mut self.tracks) {
+            let Some(track) = track else {
+                continue;
+            };
+            let there = over || local >= track.micros();
+            let (value, speed) = if there {
+                (track.rest(), 0.0)
+            } else {
+                track.at(local)
+            };
+            last.push(((slot.obj, slot.prop), (value, speed)));
+            // Measured on Qt: at the very start the property stays as it
+            // is; the way begins with the first step.
+            if local == 0 && !there {
+                continue;
+            }
+            slot.write(engine, as_shown(slot, value));
+        }
+        let _ = engine.with_mut::<SpringAnimation, _>(self.anim, |a| {
+            for (of, state) in last {
+                a.set_last(of, state);
+            }
+        });
+    }
+}
+
+/// A number as `slot` holds it: whole for a whole-number property.
+fn as_shown(slot: &Slot, value: f64) -> Value {
+    if matches!(slot.ty, TypeTag::Int) {
+        Value::Int(
+            value
+                .round()
+                .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
+        )
+    } else {
+        Value::Real(value)
     }
 }
