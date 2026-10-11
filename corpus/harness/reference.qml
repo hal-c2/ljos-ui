@@ -24,6 +24,14 @@ Window {
     visible: true
     color: "white"
 
+    // The picture is taken of the content item, which is drawn over the
+    // window's colour and does not include it.
+    Rectangle {
+        anchors.fill: parent
+        color: host.color
+        z: -1
+    }
+
     function fail(text) {
         console.error(text)
         Qt.exit(2)
