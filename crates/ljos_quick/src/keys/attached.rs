@@ -44,7 +44,7 @@ pub struct Keys {}
 
 /// What `Keys.` attaches to an item.
 #[derive(Debug, QmlObject)]
-#[qml(name = "KeysAttached")]
+#[qml(name = "KeysAttached", enums = priority_enums)]
 pub struct KeysAttached {
     #[qml(notify)]
     pub enabled: bool,
@@ -52,7 +52,7 @@ pub struct KeysAttached {
     #[qml(notify, list)]
     pub forward_to: QmlList,
     /// [`priority`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Priority")]
     pub priority: i32,
 }
 
@@ -216,7 +216,7 @@ pub struct KeyNavigation {}
 /// What `KeyNavigation.` attaches to an item: the item each key moves
 /// focus to.
 #[derive(Debug, QmlObject)]
-#[qml(name = "KeyNavigationAttached")]
+#[qml(name = "KeyNavigationAttached", enums = priority_enums)]
 pub struct KeyNavigationAttached {
     #[qml(notify)]
     pub left: Option<ObjectId>,
@@ -231,7 +231,7 @@ pub struct KeyNavigationAttached {
     #[qml(notify)]
     pub backtab: Option<ObjectId>,
     /// [`priority`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Priority")]
     pub priority: i32,
 }
 

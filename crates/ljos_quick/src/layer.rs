@@ -122,7 +122,7 @@ pub fn window_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
 
 /// The direct child of a layer that `item` is in or is: what Tab stays
 /// inside (a popup keeps the keyboard while it has it).
-pub(crate) fn tab_scope(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+pub fn tab_scope(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     let layers = engine.extension::<Layers>();
     if layers.by_layer.borrow().is_empty() {
         return None;

@@ -141,6 +141,9 @@ fn without_an_assistive_technology_the_scene_does_nothing() {
     // Off again: the tree is gone and so is the watching.
     s.set_accessibility_active(&e, false);
     assert!(s.accessibility_tree().is_empty());
+    // One frame for what follows `screenReaderActive`, which went false.
+    frame(&mut s, &e);
+    assert!(!s.needs_frame());
     set_a11y(&e, save, "name", Value::string("Keep"));
     assert!(!s.needs_frame());
 }
@@ -817,4 +820,120 @@ fn a_new_root_replaces_the_tree() {
     sc.set_root(&e, second).unwrap();
     frame(&mut sc, &e);
     assert_eq!(outline(&sc), [(AkRole::CheckBox, s("Wrap"), s(""))]);
+}
+
+const UNHANDLED: &str = r#"
+import QtQuick
+Item {
+    id: root; objectName: "root"
+    width: 300; height: 200
+    property string log: ""
+    Rectangle {
+        objectName: "it"
+        width: 80; height: 30
+        Accessible.role: Accessible.CheckBox; Accessible.name: "It"
+        MouseArea { anchors.fill: parent; onClicked: root.log += "clicked " }
+    }
+}
+"#;
+
+#[test]
+fn a_press_nobody_handles_is_a_click() {
+    let e = engine();
+    let root = load(&e, UNHANDLED);
+    let mut sc = active(&e, root);
+    let it = sc.accessible_node(find(&e, root, "it")).unwrap();
+    assert!(sc.accessible_press(&e, it, Time::from_millis(10)));
+    assert_eq!(get(&e, root, "log"), Value::string("clicked "));
+}
+
+const ROWS: &str = r#"
+import QtQuick
+Item {
+    id: root
+    width: 300; height: 300
+    property int rows: 3
+    Column {
+        Repeater {
+            model: root.rows
+            Rectangle {
+                width: 100; height: 30
+                Accessible.role: Accessible.ListItem
+                Accessible.name: "Row " + (index + 1)
+            }
+        }
+        Repeater {
+            model: 2
+            Rectangle {
+                width: 100; height: 30
+                Accessible.role: Accessible.Button
+                Accessible.name: "Button " + (index + 1)
+            }
+        }
+    }
+}
+"#;
+
+/// `(place, of)` of the node with this name.
+fn set_of(s: &QuickScene, role: AkRole, name: &str) -> Option<(usize, usize)> {
+    let tree = s.accessibility_tree();
+    let node = tree.get(tree.find(role, name).expect(name)).unwrap();
+    node.position_in_set.zip(node.size_of_set)
+}
+
+#[test]
+fn a_row_a_repeater_makes_says_its_place() {
+    let e = engine();
+    let root = load(&e, ROWS);
+    let mut s = active(&e, root);
+    assert_eq!(names(&s).len(), 5, "{:?}", outline(&s));
+    assert_eq!(set_of(&s, AkRole::ListItem, "Row 1"), Some((1, 3)));
+    assert_eq!(set_of(&s, AkRole::ListItem, "Row 3"), Some((3, 3)));
+    // A button is not one of a set, whoever made it.
+    assert_eq!(set_of(&s, AkRole::Button, "Button 2"), None);
+
+    set(&e, root, "rows", Value::Int(4));
+    frame(&mut s, &e);
+    assert_eq!(set_of(&s, AkRole::ListItem, "Row 1"), Some((1, 4)));
+    assert_eq!(set_of(&s, AkRole::ListItem, "Row 4"), Some((4, 4)));
+}
+
+/// What an audit walks the Tab order with: it is told where Tab would go
+/// and nothing has the keyboard afterwards that did not have it before.
+#[test]
+fn asking_where_tab_goes_moves_nothing() {
+    use ljos_quick::keys::tab_target;
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item { objectName: "a"; activeFocusOnTab: true; KeyNavigation.tab: c }
+    Item { objectName: "b"; activeFocusOnTab: true }
+    Item { id: c; objectName: "c"; activeFocusOnTab: true }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let (a, b, c) = (
+        find(&e, root, "a"),
+        find(&e, root, "b"),
+        find(&e, root, "c"),
+    );
+    assert_eq!(tab_target(&e, root, None, true), Some(a));
+    // `KeyNavigation.tab` first, then the order of the document.
+    assert_eq!(tab_target(&e, root, Some(a), true), Some(c));
+    assert_eq!(tab_target(&e, root, Some(b), true), Some(c));
+    assert_eq!(tab_target(&e, root, Some(c), true), Some(a));
+    // The way back is the way there turned round, unless it is written.
+    assert_eq!(tab_target(&e, root, Some(c), false), Some(a));
+    assert_eq!(tab_target(&e, root, Some(b), false), Some(a));
+    assert_eq!(tab_target(&e, root, None, false), Some(c));
+    assert_eq!(s.active_focus_item(&e), None);
+    for item in [a, b, c] {
+        assert_eq!(get(&e, item, "activeFocus"), Value::Bool(false));
+    }
 }

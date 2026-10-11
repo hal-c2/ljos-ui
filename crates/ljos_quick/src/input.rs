@@ -184,13 +184,13 @@ pub struct MouseArea {
     pub contains_mouse: bool,
     #[qml(notify, readonly)]
     pub pressed: bool,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, flags = "Qt.MouseButtons")]
     pub pressed_buttons: i32,
     #[qml(notify, readonly)]
     pub mouse_x: f64,
     #[qml(notify, readonly)]
     pub mouse_y: f64,
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.MouseButtons")]
     pub accepted_buttons: i32,
     /// Stored; nothing in M0 steals a grab (no Flickable yet), so it has no
     /// effect beyond being readable.
@@ -253,9 +253,9 @@ pub struct TapHandler {
     #[qml(notify, readonly)]
     pub tap_count: i32,
     /// [`crate::enums::gesture_policy`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "GesturePolicy")]
     pub gesture_policy: i32,
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.MouseButtons")]
     pub accepted_buttons: i32,
     #[qml(notify, readonly)]
     pub parent: Option<ObjectId>,

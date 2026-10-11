@@ -13,7 +13,7 @@ use ljos_render::kurbo;
 use ljos_text::{TextBounds, TextStyle};
 
 use crate::enums::elide;
-use crate::text::{elide_mode, read_style, text_engine, text_style};
+use crate::text::{elide_mode, read_style, text_engine};
 
 fn rect(r: kurbo::Rect) -> Rect {
     Rect {
@@ -87,6 +87,14 @@ pub struct FontMetrics {
     pub line_width: f64,
 }
 
+/// The style a `FontMetrics` measures with when one of its methods is
+/// called: its font at the system's text size, as its properties have it.
+/// Read without following it: a call is answered once.
+fn own_style(cx: &Cx) -> TextStyle {
+    cx.engine
+        .untrack(|| read_style(cx.engine, cx.this, FontMetrics::FONT.index))
+}
+
 #[qml_impl]
 impl FontMetrics {
     #[qml(on_complete)]
@@ -128,31 +136,31 @@ impl FontMetrics {
 
     /// `advanceWidth(text)`: how far `text` moves the pen.
     #[qml(invokable, name = "advanceWidth")]
-    fn advance_width(&self, text: Value) -> f64 {
-        measure(text.to_js_string().as_str(), &text_style(&self.font)).advance
+    fn advance_width(cx: &Cx, text: Value) -> f64 {
+        measure(text.to_js_string().as_str(), &own_style(cx)).advance
     }
 
     /// `boundingRect(text)`: the room `text` takes on a line, relative to
     /// the start of its baseline.
     #[qml(invokable, name = "boundingRect")]
-    fn bounding_rect(&self, text: Value) -> Rect {
-        rect(measure(text.to_js_string().as_str(), &text_style(&self.font)).bounding)
+    fn bounding_rect(cx: &Cx, text: Value) -> Rect {
+        rect(measure(text.to_js_string().as_str(), &own_style(cx)).bounding)
     }
 
     /// `tightBoundingRect(text)`: the ink of `text`, relative to the start
     /// of its baseline.
     #[qml(invokable, name = "tightBoundingRect")]
-    fn tight_bounding_rect(&self, text: Value) -> Rect {
-        rect(measure(text.to_js_string().as_str(), &text_style(&self.font)).tight)
+    fn tight_bounding_rect(cx: &Cx, text: Value) -> Rect {
+        rect(measure(text.to_js_string().as_str(), &own_style(cx)).tight)
     }
 
     /// `elidedText(text, mode, width, flags)`: `text` cut to `width` with an
     /// ellipsis. `flags` is accepted and has no effect.
     #[qml(invokable, name = "elidedText")]
-    fn elided_text(&self, text: Value, mode: Value, width: Value, _flags: Value) -> Atom {
+    fn elided_text(cx: &Cx, text: Value, mode: Value, width: Value, _flags: Value) -> Atom {
         elided(
             &text.to_js_string(),
-            &text_style(&self.font),
+            &own_style(cx),
             mode.to_number() as i32,
             width.to_number(),
         )
@@ -172,7 +180,7 @@ pub struct TextMetrics {
     #[qml(notify)]
     pub text: Atom,
     /// [`crate::enums::elide`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.TextElideMode")]
     pub elide: i32,
     #[qml(notify)]
     pub elide_width: f64,

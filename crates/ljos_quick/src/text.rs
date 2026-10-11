@@ -79,27 +79,30 @@ pub struct Text {
     pub font: Font,
     /// [`crate::enums::align`] `LEFT`, `RIGHT`, `H_CENTER` or `JUSTIFY`.
     /// Until it is assigned it follows the direction of the text.
-    #[qml(notify)]
+    #[qml(
+        notify, enumeration = "HAlignment",
+        reset = ljos_engine::Reset::Follow(natural_alignment)
+    )]
     pub horizontal_alignment: i32,
     /// `horizontalAlignment` as it is applied.
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "HAlignment")]
     pub effective_horizontal_alignment: i32,
     /// [`crate::enums::align`] `TOP`, `BOTTOM` or `V_CENTER`.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "VAlignment")]
     pub vertical_alignment: i32,
     /// [`crate::enums::wrap_mode`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "WrapMode")]
     pub wrap_mode: i32,
     /// [`crate::enums::elide`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "TextElideMode")]
     pub elide: i32,
     /// At most this many lines are shown.
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub maximum_line_count: i32,
     #[qml(notify)]
     pub line_height: f64,
     /// [`crate::enums::line_height_mode`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "LineHeightMode")]
     pub line_height_mode: i32,
     #[qml(notify, readonly)]
     pub content_width: f64,
@@ -152,6 +155,17 @@ impl Text {
     }
 }
 
+/// The alignment of a text nobody aligned: right-to-left text is aligned
+/// right, as Qt documents.
+fn natural_alignment(engine: &Engine, obj: ObjectId, _p: ljos_engine::PropIndex) -> Value {
+    let text = engine.read(obj, Text::TEXT.index).to_js_string();
+    Value::Int(if reads_right_to_left(text.as_str()) {
+        align::RIGHT
+    } else {
+        align::LEFT
+    })
+}
+
 /// What completing a `Text` does, for one built natively without completion
 /// (the scene calls it before the first layout). Idempotent.
 pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
@@ -163,14 +177,8 @@ pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineErro
     // Right-to-left text is aligned right until an alignment is assigned;
     // assigning one replaces this binding, as Qt documents.
     if is_unset(engine, obj, Text::HORIZONTAL_ALIGNMENT.index) {
-        engine.bind(obj, Text::HORIZONTAL_ALIGNMENT.index, move |e| {
-            let text = e.read(obj, Text::TEXT.index).to_js_string();
-            Value::Int(if reads_right_to_left(text.as_str()) {
-                align::RIGHT
-            } else {
-                align::LEFT
-            })
-        })?;
+        let p = Text::HORIZONTAL_ALIGNMENT.index;
+        engine.bind(obj, p, move |e| natural_alignment(e, obj, p))?;
     }
     // Without layout mirroring the effective alignment is the alignment.
     engine.bind_initial(obj, Text::EFFECTIVE_HORIZONTAL_ALIGNMENT.index, move |e| {
@@ -212,10 +220,24 @@ pub(crate) fn read_style(
     obj: ObjectId,
     font: ljos_engine::PropIndex,
 ) -> TextStyle {
-    match engine.read(obj, font) {
-        Value::Font(f) => text_style(&f),
-        _ => text_style(&Font::default()),
+    let f = match engine.read(obj, font) {
+        Value::Font(f) => f,
+        _ => Default::default(),
+    };
+    let mut style = text_style(&f);
+    if f.scale_with_system {
+        // The system's text size: applied here, where text is laid out,
+        // so `font.pixelSize` reads as it was written and nothing but text
+        // grows (ARCHITECTURE §7.5, §14). Read tracked: the layout follows
+        // the setting.
+        let scale = crate::system_prefs::font_scale(engine) as f32;
+        if scale != 1.0 {
+            style.pixel_size *= scale;
+            style.letter_spacing *= scale;
+            style.word_spacing *= scale;
+        }
     }
+    style
 }
 
 pub(crate) fn elide_mode(v: i32) -> ElideMode {

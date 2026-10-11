@@ -100,6 +100,22 @@ pub(crate) struct State {
 }
 
 /// The base of `TextInput` and `TextEdit`. Not a QML type of its own.
+/// The alignment of a text nobody aligned: right-to-left text is aligned
+/// right.
+fn natural_alignment(engine: &Engine, obj: ObjectId, _p: ljos_engine::PropIndex) -> Value {
+    let text = engine.read(obj, TextEditor::TEXT.index).to_js_string();
+    Value::Int(if reads_right_to_left(text.as_str()) {
+        align::RIGHT
+    } else {
+        align::LEFT
+    })
+}
+
+/// What a side's padding is while it has no value of its own.
+fn all_padding(engine: &Engine, obj: ObjectId, _side: ljos_engine::PropIndex) -> Value {
+    engine.read(obj, TextEditor::PADDING.index)
+}
+
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -143,7 +159,10 @@ pub struct TextEditor {
     #[qml(notify, readonly)]
     pub cursor_rectangle: Rect,
     /// Until it is assigned it follows the direction of the text.
-    #[qml(notify, enumeration = "HAlignment")]
+    #[qml(
+        notify, enumeration = "HAlignment",
+        reset = ljos_engine::Reset::Follow(natural_alignment)
+    )]
     pub horizontal_alignment: i32,
     #[qml(notify, readonly, enumeration = "HAlignment")]
     pub effective_horizontal_alignment: i32,
@@ -169,7 +188,7 @@ pub struct TextEditor {
     #[qml(notify)]
     pub persistent_selection: bool,
     /// `Qt.InputMethodHint` flags.
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.InputMethodHints")]
     pub input_method_hints: i32,
     #[qml(notify, readonly)]
     pub input_method_composing: bool,
@@ -179,15 +198,15 @@ pub struct TextEditor {
     pub overwrite_mode: bool,
     #[qml(notify)]
     pub active_focus_on_press: bool,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub bottom_padding: f64,
     /// Kept; there is one way of drawing text.
     #[qml(notify, enumeration = "RenderType")]
@@ -473,14 +492,8 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     }
     // Right-to-left text is aligned right until an alignment is assigned.
     if is_unset(engine, obj, TextEditor::HORIZONTAL_ALIGNMENT.index) {
-        engine.bind(obj, TextEditor::HORIZONTAL_ALIGNMENT.index, move |e| {
-            let text = e.read(obj, TextEditor::TEXT.index).to_js_string();
-            Value::Int(if reads_right_to_left(text.as_str()) {
-                align::RIGHT
-            } else {
-                align::LEFT
-            })
-        })?;
+        let p = TextEditor::HORIZONTAL_ALIGNMENT.index;
+        engine.bind(obj, p, move |e| natural_alignment(e, obj, p))?;
     }
     engine.bind_initial(
         obj,

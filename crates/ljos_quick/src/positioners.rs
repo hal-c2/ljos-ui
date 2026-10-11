@@ -36,21 +36,21 @@ pub struct Row {
     pub item: Item,
     #[qml(notify)]
     pub spacing: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub bottom_padding: f64,
     /// [`crate::enums::layout_direction`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
     /// `layoutDirection`, the other way round under `LayoutMirroring`.
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Qt.LayoutDirection")]
     pub effective_layout_direction: i32,
     #[qml(skip)]
     hidden: Hidden,
@@ -70,15 +70,15 @@ pub struct Column {
     pub item: Item,
     #[qml(notify)]
     pub spacing: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub bottom_padding: f64,
     #[qml(skip)]
     hidden: Hidden,
@@ -105,38 +105,38 @@ pub struct Grid {
     #[qml(notify)]
     pub spacing: f64,
     /// Follows `spacing` until it is given a value.
-    #[qml(notify)]
+    #[qml(notify, reset = OWN_SPACING_RESET)]
     pub row_spacing: f64,
     /// Follows `spacing` until it is given a value.
-    #[qml(notify)]
+    #[qml(notify, reset = OWN_SPACING_RESET)]
     pub column_spacing: f64,
     /// [`flow`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Flow")]
     pub flow: i32,
     /// [`crate::enums::layout_direction`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Qt.LayoutDirection")]
     pub effective_layout_direction: i32,
     /// [`crate::enums::align`]: left, right or horizontal centre.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "HAlignment")]
     pub horizontal_item_alignment: i32,
     /// `horizontalItemAlignment` with left and right swapped when the grid
     /// runs right to left.
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "HAlignment")]
     pub effective_horizontal_item_alignment: i32,
     /// [`crate::enums::align`]: top, bottom or vertical centre.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "VAlignment")]
     pub vertical_item_alignment: i32,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub bottom_padding: f64,
     #[qml(skip)]
     hidden: Hidden,
@@ -179,24 +179,24 @@ pub struct Flow {
     #[qml(base)]
     pub item: Item,
     /// [`flow`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Flow")]
     pub flow: i32,
     /// [`crate::enums::layout_direction`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Qt.LayoutDirection")]
     pub effective_layout_direction: i32,
     #[qml(notify)]
     pub spacing: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
     pub bottom_padding: f64,
     #[qml(skip)]
     hidden: Hidden,
@@ -550,6 +550,23 @@ fn init(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError>
     Ok(())
 }
 
+/// `rowSpacing = undefined`: the grid uses `spacing` between its rows
+/// again. The property goes on reading the number it had, as it does in
+/// Qt 6.11.
+const OWN_SPACING_RESET: ljos_engine::Reset = ljos_engine::Reset::Custom {
+    apply: |engine, obj, own| {
+        let kept = engine.untrack(|| engine.read(obj, own));
+        engine.reset_to(obj, own, kept)
+    },
+    value: |engine, obj, _own| engine.read(obj, Grid::SPACING.index),
+};
+
+/// What a side's padding is while it has no value of its own, for the
+/// four positioners alike.
+fn all_padding(engine: &Engine, obj: ObjectId, _side: PropIndex) -> Value {
+    engine.read_by_name(obj, "padding")
+}
+
 /// A side's padding: its own value once set, else `padding` (Qt's rule).
 /// A completed positioner has the unset sides bound to `padding`
 /// ([`init`]); the check here covers one that is laid out before.
@@ -805,7 +822,8 @@ fn grid(engine: &Engine, obj: ObjectId, kids: &[Kid], spacing: f64) -> ((f64, f6
     let count = |p: PropIndex| usize::try_from(num(engine, obj, p) as i64).unwrap_or(0);
     let gap = |p: PropIndex| {
         let own = num(engine, obj, p);
-        if is_unset(engine, obj, p) {
+        // Followed: taking the gap back changes this and not the number.
+        if crate::item::is_unset_tracked(engine, obj, p) {
             spacing
         } else {
             own

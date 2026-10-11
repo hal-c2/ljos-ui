@@ -65,7 +65,7 @@ pub struct RowLayout {
     #[qml(notify)]
     pub spacing: f64,
     /// [`crate::enums::layout_direction`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
     #[qml(notify)]
     pub uniform_cell_sizes: bool,
@@ -80,7 +80,7 @@ pub struct ColumnLayout {
     #[qml(notify)]
     pub spacing: f64,
     /// [`crate::enums::layout_direction`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
     #[qml(notify)]
     pub uniform_cell_sizes: bool,
@@ -108,10 +108,10 @@ pub struct GridLayout {
     #[qml(notify)]
     pub columns: i32,
     /// [`crate::positioners::flow`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Flow")]
     pub flow: i32,
     /// [`crate::enums::layout_direction`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
     #[qml(notify)]
     pub uniform_cell_widths: bool,
@@ -193,6 +193,11 @@ fn grid_enums() -> EnumTable {
     )]
 }
 
+/// What a side margin of a cell is while it has no value of its own.
+fn all_margins(engine: &Engine, attached: ObjectId, _side: PropIndex) -> Value {
+    engine.read(attached, LayoutAttached::MARGINS.index)
+}
+
 /// What `Layout.` attaches to a child of a layout.
 ///
 /// A property counts only once it was given a value: until then the
@@ -218,7 +223,7 @@ pub struct LayoutAttached {
     #[qml(notify)]
     pub maximum_height: f64,
     /// [`crate::enums::align`] flags.
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.Alignment")]
     pub alignment: i32,
     #[qml(notify)]
     pub row: i32,
@@ -231,13 +236,13 @@ pub struct LayoutAttached {
     #[qml(notify)]
     pub margins: f64,
     /// The side margins follow `margins` until they get a value.
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub left_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub top_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub right_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub bottom_margin: f64,
     /// Below 1: the child takes extra room by its preferred size.
     #[qml(notify)]

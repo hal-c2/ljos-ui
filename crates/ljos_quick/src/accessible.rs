@@ -15,13 +15,13 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
-use ljos_a11y::accesskit::Role as AkRole;
-use ljos_a11y::{Bounds, NodeData, NodeKey, Role, Tree};
+use ljos_a11y::accesskit::{Role as AkRole, Toggled};
+use ljos_a11y::{Bounds, Handled, NodeData, NodeKey, Politeness, Range, Role, RoleFlags, Tree};
 use ljos_engine::{
-    Atom, Engine, LogLevel, MetaRef, NodeId as GraphNode, ObjectId, QmlObject, QmlType, QtObject,
-    Value,
+    Atom, Cx, Engine, LogLevel, MetaRef, NodeId as GraphNode, ObjectId, PropIndex, QmlObject,
+    QmlType, QtObject, Value, qml_impl,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
@@ -30,6 +30,7 @@ use slotmap::{Key, KeyData};
 use crate::input::PointerEvent;
 use crate::item::{Item, compose_transform, is_a, num};
 use crate::loader::shown_children;
+use crate::repeater::Repeater;
 use crate::scene::{QuickScene, SCENE_CATEGORY};
 use crate::text::Text;
 
@@ -47,10 +48,10 @@ pub struct Accessible {}
 
 /// What `Accessible.` attaches to an item.
 #[derive(Debug, Default, QmlObject)]
-#[qml(name = "AccessibleAttached")]
+#[qml(name = "AccessibleAttached", enums = accessible_enums)]
 pub struct AccessibleAttached {
     /// A `QAccessible::Role` number ([`ljos_a11y::Role`]).
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Role")]
     pub role: i32,
     #[qml(notify)]
     pub name: Atom,
@@ -75,16 +76,250 @@ pub struct AccessibleAttached {
     /// outside it cannot be reached.
     #[qml(notify)]
     pub modal: bool,
+    /// What a test (or a script of an assistive technology) finds the
+    /// item by; without it the `objectName` is that.
+    #[qml(notify)]
+    pub id: Atom,
+    /// Until it is given a value this follows the role, as `focusable`
+    /// does: true once the item has had the role of a check box, a radio
+    /// button or a switch.
+    #[qml(notify)]
+    pub checkable: bool,
+    #[qml(notify)]
+    pub checked: bool,
+    /// A tristate check box that is neither checked nor unchecked.
+    #[qml(notify)]
+    pub check_state_mixed: bool,
+    #[qml(notify)]
+    pub default_button: bool,
+    /// Follows the role until it is given a value: true once the item has
+    /// been editable text.
+    #[qml(notify)]
+    pub editable: bool,
+    #[qml(notify)]
+    pub multi_line: bool,
+    #[qml(notify)]
+    pub password_edit: bool,
+    #[qml(notify)]
+    pub pressed: bool,
+    /// Follows the role until it is given a value: true once the item has
+    /// been static text.
+    #[qml(notify)]
+    pub read_only: bool,
+    #[qml(notify)]
+    pub search_edit: bool,
+    #[qml(notify)]
+    pub selectable: bool,
+    #[qml(notify)]
+    pub selectable_text: bool,
+    #[qml(notify)]
+    pub selected: bool,
+    /// Documented for Qt 6.12: the item shows or hides something (the
+    /// list of a combo box, the children of a tree row).
+    #[qml(notify)]
+    pub expandable: bool,
+    #[qml(notify)]
+    pub expanded: bool,
+    /// The item whose text names this one. Naming it here names this
+    /// item as that item's `labelFor`, unless it says otherwise itself.
+    #[qml(notify)]
+    pub labelled_by: Option<ObjectId>,
+    /// The item this one is the label of; the other way of saying
+    /// `labelledBy`.
+    #[qml(notify)]
+    pub label_for: Option<ObjectId>,
+}
+
+#[qml_impl]
+impl AccessibleAttached {
+    // What an assistive technology asks of the item. A handler does it:
+    // the request is the item's once anything is connected (see
+    // [`QuickScene::accessible_press`], [`QuickScene::accessible_action`]).
+    #[qml(signal)]
+    fn press_action();
+    #[qml(signal)]
+    fn toggle_action();
+    #[qml(signal)]
+    fn increase_action();
+    #[qml(signal)]
+    fn decrease_action();
+    #[qml(signal)]
+    fn scroll_up_action();
+    #[qml(signal)]
+    fn scroll_down_action();
+    #[qml(signal)]
+    fn scroll_left_action();
+    #[qml(signal)]
+    fn scroll_right_action();
+    #[qml(signal)]
+    fn previous_page_action();
+    #[qml(signal)]
+    fn next_page_action();
+    /// Documented for Qt 6.12.
+    #[qml(signal)]
+    fn show_on_screen_action();
+
+    /// `Accessible.announce(message, politeness)`: an assistive technology
+    /// that listens says the message without moving. One that does not
+    /// listen hears nothing later either: an announcement is about now.
+    #[qml(invokable)]
+    fn announce(cx: &Cx, message: Value, politeness: Value) {
+        let text = message.to_js_string().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let politeness = politeness
+            .as_number()
+            .map_or(Politeness::Polite, |n| Politeness::from_qt(n as i32));
+        let Some(item) = cx.engine.owner(cx.this) else {
+            return;
+        };
+        cx.engine
+            .extension::<Announcers>()
+            .say(item, &text, politeness);
+    }
+
+    /// `Accessible.stripHtml(html)`: the text a screen reader should say
+    /// for rich text.
+    #[qml(invokable)]
+    fn strip_html(html: Value) -> Atom {
+        Atom::from(strip_html(html.to_js_string().as_str()).as_str())
+    }
+
+    /// `Accessible.setIgnored(ignored)`: the documented other way of
+    /// writing `Accessible.ignored`.
+    #[qml(invokable)]
+    fn set_ignored(cx: &Cx, ignored: Value) {
+        let r = cx.engine.write(
+            cx.this,
+            AccessibleAttached::IGNORED.index,
+            Value::Bool(ignored.to_boolean()),
+            ljos_engine::WriteKind::Imperative,
+        );
+        if let Err(err) = r {
+            warn(cx.engine, format!("Accessible.setIgnored: {err}"));
+        }
+    }
+}
+
+/// The scenes that hear `Accessible.announce`.
+#[derive(Default)]
+struct Announcers {
+    passes: RefCell<Vec<Hearer>>,
+}
+
+struct Hearer {
+    pending: Weak<RefCell<Pending>>,
+    wake: Rc<dyn Fn()>,
+}
+
+impl Announcers {
+    fn say(&self, item: ObjectId, text: &str, politeness: Politeness) {
+        let mut woken = Vec::new();
+        self.passes.borrow_mut().retain(|h| {
+            // The scene is gone.
+            let Some(pending) = h.pending.upgrade() else {
+                return false;
+            };
+            let mut p = pending.borrow_mut();
+            if p.active {
+                p.announced.push((item, text.to_string(), politeness));
+                woken.push(Rc::clone(&h.wake));
+            }
+            true
+        });
+        // Called with nothing borrowed: a host's wake may do anything.
+        for wake in woken {
+            wake();
+        }
+    }
+}
+
+/// The text of `html` without its markup: tags go, a line break and the
+/// ends of a paragraph become new lines, and the character references a
+/// label is written with are read. A `<` that never closes takes the rest
+/// with it, as it does in Qt.
+fn strip_html(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(at) = rest.find(['<', '&']) {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if tail.starts_with('<') {
+            let Some(end) = tail.find('>') else {
+                return out;
+            };
+            let tag = tail[1..end].trim().trim_end_matches('/').trim_end();
+            let name = tag
+                .trim_start_matches('/')
+                .split(|c: char| c.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(name.as_str(), "br" | "p" | "div" | "li" | "tr")
+                || (name.len() == 2 && name.starts_with('h') && name.as_bytes()[1].is_ascii_digit())
+            {
+                out.push('\n');
+            }
+            rest = &tail[end + 1..];
+        } else {
+            match character_reference(tail) {
+                Some((c, len)) => {
+                    out.push(c);
+                    rest = &tail[len..];
+                }
+                None => {
+                    out.push('&');
+                    rest = &tail[1..];
+                }
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character `&name;` or `&#number;` at the start of `s` stands for,
+/// and how many bytes the reference takes.
+fn character_reference(s: &str) -> Option<(char, usize)> {
+    let end = s.find(';').filter(|end| *end <= 10)?;
+    let body = &s[1..end];
+    let c = match body {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "nbsp" => '\u{a0}',
+        _ => {
+            let digits = body.strip_prefix('#')?;
+            let code = match digits.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => digits.parse().ok()?,
+            };
+            char::from_u32(code)?
+        }
+    };
+    Some((c, end + 1))
 }
 
 fn accessible_enums() -> crate::enums::EnumTable {
-    vec![(
-        "Role",
-        ljos_a11y::qt_role_keys()
-            .into_iter()
-            .map(|(k, v)| (k, i64::from(v)))
-            .collect(),
-    )]
+    vec![
+        (
+            "Role",
+            ljos_a11y::qt_role_keys()
+                .into_iter()
+                .map(|(k, v)| (k, i64::from(v)))
+                .collect(),
+        ),
+        (
+            "AnnouncementPoliteness",
+            vec![
+                ("Polite", i64::from(Politeness::Polite.qt_value())),
+                ("Assertive", i64::from(Politeness::Assertive.qt_value())),
+            ],
+        ),
+    ]
 }
 
 fn attacher() -> MetaRef {
@@ -111,6 +346,41 @@ pub enum AccessibleAction {
     ScrollRight {
         page: bool,
     },
+    /// Come into view (`Accessible.onShowOnScreenAction`).
+    ShowOnScreen,
+    /// Show what the item hides: the list of a combo box.
+    Expand,
+    /// Hide it again.
+    Collapse,
+}
+
+impl AccessibleAction {
+    /// The `Accessible` signal that tells an item of the request, for the
+    /// requests that have one. A page up or to the left is the previous
+    /// page, a page down or to the right the next: Qt has no signal for a
+    /// page in each direction.
+    fn signal(self) -> Option<&'static str> {
+        use AccessibleAction as A;
+        Some(match self {
+            A::Increase => "increaseAction",
+            A::Decrease => "decreaseAction",
+            A::ScrollUp { page: false } => "scrollUpAction",
+            A::ScrollDown { page: false } => "scrollDownAction",
+            A::ScrollLeft { page: false } => "scrollLeftAction",
+            A::ScrollRight { page: false } => "scrollRightAction",
+            A::ScrollUp { page: true } | A::ScrollLeft { page: true } => "previousPageAction",
+            A::ScrollDown { page: true } | A::ScrollRight { page: true } => "nextPageAction",
+            A::ShowOnScreen => "showOnScreenAction",
+            A::SetValue(_) | A::Expand | A::Collapse => return None,
+        })
+    }
+}
+
+/// Whether the item's author handles `signal` of its `Accessible` object
+/// (untracked: a connection is not something an effect can follow).
+fn handles(e: &Engine, att: ObjectId, signal: &str) -> bool {
+    e.signal_index(att, signal)
+        .is_ok_and(|s| e.signal_connected(att, s))
 }
 
 /// What an item type says of itself to an assistive technology beyond its
@@ -179,9 +449,78 @@ pub(crate) fn register(engine: &Engine) {
                     format!("Accessible.focusable has no default: {err}"),
                 );
             }
+            if let Err(err) = follow_role(e, att).and_then(|()| mirror_labels(e, att)) {
+                warn(e, format!("Accessible has no defaults: {err}"));
+            }
         }
         true
     });
+}
+
+/// A property and the roles that turn its default on.
+type RoleDefault = (fn() -> PropIndex, fn(Role) -> bool);
+
+/// The properties whose default a role turns on, with the roles that do.
+/// Found by asking Qt 6.11 for the property of an item that has the role
+/// and was told nothing else (`features/a11y/properties.feature`).
+const ROLE_DEFAULTS: [RoleDefault; 3] = [
+    (
+        || AccessibleAttached::CHECKABLE.index,
+        Role::checkable_by_default,
+    ),
+    (
+        || AccessibleAttached::EDITABLE.index,
+        Role::editable_by_default,
+    ),
+    (
+        || AccessibleAttached::READ_ONLY.index,
+        Role::read_only_by_default,
+    ),
+];
+
+/// Turns the role's defaults on when the role changes. Like `focusable`
+/// they stay on under another role. The values are derived, so the
+/// author's assignment, and a control's own binding, still replace them.
+fn follow_role(e: &Engine, att: ObjectId) -> Result<(), ljos_engine::EngineError> {
+    e.watch(att, AccessibleAttached::ROLE.index, move |e, v| {
+        let Some(role) = Role::from_qt(v.to_number() as i32) else {
+            return;
+        };
+        for (prop, on) in ROLE_DEFAULTS {
+            let prop = prop();
+            if on(role) && crate::item::is_unset(e, att, prop) {
+                let _ = e.write_derived(att, prop, Value::Bool(true));
+            }
+        }
+    })?;
+    Ok(())
+}
+
+/// Naming a label names what it labels, from either side: `labelFor` on
+/// the label reads as `labelledBy` on the other item and the reverse. An
+/// item that says something of its own keeps it.
+fn mirror_labels(e: &Engine, att: ObjectId) -> Result<(), ljos_engine::EngineError> {
+    let (by, of) = (
+        AccessibleAttached::LABELLED_BY.index,
+        AccessibleAttached::LABEL_FOR.index,
+    );
+    for (prop, back) in [(by, of), (of, by)] {
+        e.watch(att, prop, move |e, v| {
+            let Some(me) = e.owner(att) else {
+                return;
+            };
+            let Some(other) = v.as_object().filter(|o| e.is_alive(*o) && *o != me) else {
+                return;
+            };
+            let Ok(theirs) = e.attached_object(other, &attacher()) else {
+                return;
+            };
+            if e.read(theirs, back).as_object().is_none() {
+                let _ = e.write_derived(theirs, back, Value::Object(me));
+            }
+        })?;
+    }
+    Ok(())
 }
 
 /// The tree node of an item. Object ids are never 0, which is the root.
@@ -203,11 +542,16 @@ struct Pending {
     /// Items that got their `Accessible` object after their effect looked
     /// for it.
     late: Vec<ObjectId>,
+    /// What items announced since the last sync, in order.
+    announced: Vec<(ObjectId, String, Politeness)>,
 }
 
 impl Pending {
     fn is_empty(&self) -> bool {
-        self.described.is_empty() && self.bounds.is_empty() && self.late.is_empty()
+        self.described.is_empty()
+            && self.bounds.is_empty()
+            && self.late.is_empty()
+            && self.announced.is_empty()
     }
 }
 
@@ -294,6 +638,7 @@ impl A11yPass {
             p.described.clear();
             p.bounds.clear();
             p.late.clear();
+            p.announced.clear();
             drop(p);
             self.tree = Tree::new();
             self.restructure.clear();
@@ -308,6 +653,14 @@ impl A11yPass {
         if std::mem::replace(&mut self.listening, true) {
             return;
         }
+        engine
+            .extension::<Announcers>()
+            .passes
+            .borrow_mut()
+            .push(Hearer {
+                pending: Rc::downgrade(&self.pending),
+                wake: Rc::clone(&self.wake),
+            });
         let pending = Rc::downgrade(&self.pending);
         let wake = Rc::clone(&self.wake);
         engine.on_attached_created(move |e, obj, att| {
@@ -441,6 +794,14 @@ impl A11yPass {
         for (obj, b) in bounds {
             self.tree.set_bounds(key_of(obj), b);
         }
+        let announced = std::mem::take(&mut self.pending.borrow_mut().announced);
+        for (item, text, politeness) in announced {
+            // Every scene of the engine hears of it; the one that shows
+            // the item says it.
+            if self.items.contains_key(&item) {
+                self.tree.announce(&text, politeness);
+            }
+        }
     }
 
     fn apply(&mut self, engine: &Engine, obj: ObjectId, d: Option<NodeData>) {
@@ -563,11 +924,24 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
     }
     let number = e.read(att, AccessibleAttached::ROLE.index).to_number() as i32;
     let qt_role = Role::from_qt(number).unwrap_or_default();
+    let flag = |p: PropIndex| e.read(att, p).to_boolean();
     let mut name = e
         .read(att, AccessibleAttached::NAME.index)
         .to_js_string()
         .to_string();
-    let role = match qt_role.accesskit() {
+    // What a control's own state adds to its role (a checkable menu item)
+    // is the control's to say in its hook; here only what the author
+    // wrote refines the role.
+    let refined = qt_role.refined(RoleFlags {
+        default_button: flag(AccessibleAttached::DEFAULT_BUTTON.index),
+        editable: flag(AccessibleAttached::EDITABLE.index),
+        multi_line: flag(AccessibleAttached::MULTI_LINE.index),
+        password_edit: flag(AccessibleAttached::PASSWORD_EDIT.index),
+        search_edit: flag(AccessibleAttached::SEARCH_EDIT.index),
+        selectable: flag(AccessibleAttached::SELECTABLE.index),
+        ..RoleFlags::default()
+    });
+    let role = match refined {
         Some(role) => {
             if name.is_empty() && is_text {
                 // A Text that has a role says what it shows.
@@ -581,6 +955,31 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
         None if !name.is_empty() => AkRole::Group,
         None => return None,
     };
+    let id = e.read(att, AccessibleAttached::ID.index).to_js_string();
+    let author_id = if id.is_empty() {
+        e.read(obj, QtObject::OBJECT_NAME.index).to_js_string()
+    } else {
+        id
+    };
+    let checked = flag(AccessibleAttached::CHECKED.index);
+    let mixed = flag(AccessibleAttached::CHECK_STATE_MIXED.index);
+    // Saying that it is checked says that it can be.
+    let toggled =
+        (flag(AccessibleAttached::CHECKABLE.index) || checked || mixed).then_some(if mixed {
+            Toggled::Mixed
+        } else if checked {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
+    let expanded = flag(AccessibleAttached::EXPANDED.index);
+    let selected = flag(AccessibleAttached::SELECTED.index);
+    let labelled_by = e
+        .read(att, AccessibleAttached::LABELLED_BY.index)
+        .as_object()
+        .filter(|o| e.is_alive(*o))
+        .map(key_of);
+    let handles = |signal| handles(e, att, signal);
     let mut data = NodeData {
         qt_role,
         role,
@@ -589,31 +988,102 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
             .read(att, AccessibleAttached::DESCRIPTION.index)
             .to_js_string()
             .to_string(),
-        author_id: e
-            .read(obj, QtObject::OBJECT_NAME.index)
-            .to_js_string()
-            .to_string(),
+        author_id: author_id.to_string(),
         bounds: Bounds::default(),
-        focusable: e
-            .read(att, AccessibleAttached::FOCUSABLE.index)
-            .to_boolean(),
+        focusable: flag(AccessibleAttached::FOCUSABLE.index),
         // Every item on the way to the focus item reads `activeFocus`, so
         // the tree can name the nearest exposed one when the focus item
         // itself is not exposed.
         focused: e.read(obj, Item::ACTIVE_FOCUS.index).to_boolean()
-            || e.read(att, AccessibleAttached::FOCUSED.index).to_boolean(),
+            || flag(AccessibleAttached::FOCUSED.index),
         disabled: !e.read(obj, Item::ENABLED.index).to_boolean(),
-        press: qt_role.pressable(),
-        modal: e.read(att, AccessibleAttached::MODAL.index).to_boolean(),
-        range: None,
-        scroll: None,
-        clips_children: false,
-        text: None,
+        // An item whose author handles the press is pressed whatever its
+        // role is.
+        press: qt_role.pressable() || handles("pressAction") || handles("toggleAction"),
+        modal: flag(AccessibleAttached::MODAL.index),
+        toggled,
+        pressed: flag(AccessibleAttached::PRESSED.index),
+        expanded: (flag(AccessibleAttached::EXPANDABLE.index) || expanded).then_some(expanded),
+        selected: (flag(AccessibleAttached::SELECTABLE.index) || selected).then_some(selected),
+        read_only: flag(AccessibleAttached::READ_ONLY.index),
+        labelled_by: labelled_by.into_iter().collect(),
+        role_description: qt_role.role_description().unwrap_or_default().to_string(),
+        handled: Handled {
+            increase: handles("increaseAction"),
+            decrease: handles("decreaseAction"),
+            scroll_up: handles("scrollUpAction") || handles("previousPageAction"),
+            scroll_down: handles("scrollDownAction") || handles("nextPageAction"),
+            scroll_left: handles("scrollLeftAction") || handles("previousPageAction"),
+            scroll_right: handles("scrollRightAction") || handles("nextPageAction"),
+            show_on_screen: handles("showOnScreenAction"),
+        },
+        ..NodeData::new(role)
     };
     if let Some(hooks) = accessible_item(e, obj) {
         (hooks.describe)(e, obj, &mut data);
     }
+    if data.range.is_none() && ranged(qt_role) {
+        data.range = own_range(e, obj);
+    }
+    if data.position_in_set.is_none()
+        && qt_role.in_set()
+        && let Some((place, of)) = repeated_place(e, obj)
+    {
+        data.position_in_set = Some(place);
+        data.size_of_set = Some(of);
+    }
     Some(data)
+}
+
+/// The place of an item a `Repeater` made among the items it made, and
+/// how many the model has: `Accessible` has no property for it, and the
+/// model is what knows. Reads the parent's children and the Repeater's
+/// `count`, so the node follows rows that come, go and move.
+fn repeated_place(e: &Engine, obj: ObjectId) -> Option<(usize, usize)> {
+    // A Repeater owns what it makes and shows it in its own parent.
+    let repeater = e.owner(obj).filter(|o| is_a::<Repeater>(e, *o))?;
+    let parent = e.visual_parent(obj)?;
+    let place = crate::tree::child_items(e, parent)
+        .into_iter()
+        .filter(|c| e.owner(*c) == Some(repeater))
+        .position(|c| c == obj)?
+        + 1;
+    let of = e.read(repeater, Repeater::COUNT.index).to_number() as usize;
+    // While rows are being made the count may be behind the items.
+    Some((place, of.max(place)))
+}
+
+/// The roles of an item that has a value between two ends. The
+/// documentation of `Accessible.role` names the properties such an item
+/// provides for a slider, a spin box, a dial and a scroll bar; a progress
+/// bar and an indicator say where they are the same way.
+fn ranged(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Slider
+            | Role::SpinBox
+            | Role::Dial
+            | Role::ScrollBar
+            | Role::ProgressBar
+            | Role::Indicator
+    )
+}
+
+/// The range an item says in properties of its own: `value`,
+/// `minimumValue` and `maximumValue`, and `stepSize` when it can be
+/// stepped. An item without the first three has no range to tell.
+fn own_range(e: &Engine, obj: ObjectId) -> Option<Range> {
+    let number = |name: &str| {
+        let p = e.untrack(|| e.property_index(obj, name)).ok()?;
+        let n = e.read(obj, p).to_number();
+        n.is_finite().then_some(n)
+    };
+    Some(Range {
+        value: number("value")?,
+        min: number("minimumValue")?,
+        max: number("maximumValue")?,
+        step: number("stepSize").unwrap_or(0.0),
+    })
 }
 
 /// The item's box in scene coordinates: the bounding box of its
@@ -662,6 +1132,9 @@ impl QuickScene {
     /// builds the tree.
     pub fn set_accessibility_active(&mut self, engine: &Engine, active: bool) {
         self.a11y.set_active(engine, active);
+        // Whoever makes the scene keep the tree is the screen reader as far
+        // as the application can tell (`Qt.styleHints.accessibility`).
+        crate::system_prefs::update_system_prefs(engine, |p| p.screen_reader_active = active);
     }
 
     pub fn accessibility_active(&self) -> bool {
@@ -682,7 +1155,8 @@ impl QuickScene {
 
     /// The item behind a node of the tree.
     pub fn accessible_item(&self, key: NodeKey) -> Option<ObjectId> {
-        self.a11y.tree.contains(key).then(|| item_of(key))
+        // An announcement is a node of the tree with no item behind it.
+        (!key.is_announcement() && self.a11y.tree.contains(key)).then(|| item_of(key))
     }
 
     /// The node of an item, if it is exposed.
@@ -691,19 +1165,35 @@ impl QuickScene {
         self.a11y.tree.contains(key).then_some(key)
     }
 
-    /// The press action of an assistive technology: a click in the middle
-    /// of the node, so whatever a pointer click there does happens (the
-    /// item's `MouseArea` or `TapHandler`). Returns whether something
-    /// took it; a disabled node, or one whose role is not pressed, takes
-    /// nothing.
+    /// The press action of an assistive technology. An item whose author
+    /// handles it (`Accessible.onPressAction`, or `onToggleAction` on an
+    /// item that can be checked) is told, and does the rest itself. Any
+    /// other item gets a click in the middle of the node, so whatever a
+    /// pointer click there does happens (the item's `MouseArea` or
+    /// `TapHandler`). Returns whether something took it; a disabled node,
+    /// or one whose role is not pressed, takes nothing.
     pub fn accessible_press(&mut self, engine: &Engine, key: NodeKey, now: Time) -> bool {
         let Some(data) = self.a11y.tree.get(key) else {
             return false;
         };
-        if data.disabled || !data.press {
+        if data.disabled || !data.press || key.is_announcement() {
             return false;
         }
         let (x, y) = data.bounds.center();
+        let item = item_of(key);
+        if let Some(att) = engine.existing_attached_object(item, &attacher()) {
+            let checkable = engine.untrack(|| {
+                engine
+                    .read(att, AccessibleAttached::CHECKABLE.index)
+                    .to_boolean()
+            });
+            let told = [("toggleAction", checkable), ("pressAction", true)]
+                .into_iter()
+                .find(|(signal, on)| *on && handles(engine, att, signal));
+            if let Some((signal, _)) = told {
+                return engine.emit_by_name(att, signal, &[]).is_ok();
+            }
+        }
         let pressed = self.pointer_event(engine, &PointerEvent::press(x, y, now));
         let released = self.pointer_event(engine, &PointerEvent::release(x, y, now));
         // No pointer is there: without this a hover-enabled area would
@@ -713,21 +1203,28 @@ impl QuickScene {
     }
 
     /// Any other action of an assistive technology (a step of a scroll
-    /// bar, a scroll of a view): the item's type does it
-    /// ([`register_accessible_item`]). Returns whether something took it;
-    /// a disabled node takes nothing.
+    /// bar, a scroll of a view). An item whose author handles the request
+    /// (`Accessible.onIncreaseAction` and the like) is told; otherwise the
+    /// item's type does it ([`register_accessible_item`]). Returns whether
+    /// something took it; a disabled node takes nothing.
     pub fn accessible_action(
         &mut self,
         engine: &Engine,
         key: NodeKey,
         action: AccessibleAction,
     ) -> bool {
-        if self.a11y.tree.get(key).is_none_or(|data| data.disabled) {
+        if key.is_announcement() || self.a11y.tree.get(key).is_none_or(|data| data.disabled) {
             return false;
         }
         let item = item_of(key);
         if !engine.is_alive(item) {
             return false;
+        }
+        if let Some(signal) = action.signal()
+            && let Some(att) = engine.existing_attached_object(item, &attacher())
+            && handles(engine, att, signal)
+        {
+            return engine.emit_by_name(att, signal, &[]).is_ok();
         }
         accessible_item(engine, item).is_some_and(|hooks| (hooks.act)(engine, item, action))
     }
@@ -749,7 +1246,7 @@ impl QuickScene {
         let Some(data) = self.a11y.tree.get(key) else {
             return false;
         };
-        if data.disabled || !data.focusable {
+        if data.disabled || !data.focusable || key.is_announcement() {
             return false;
         }
         let item = item_of(key);

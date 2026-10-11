@@ -36,10 +36,10 @@ pub struct BorderImage {
     #[qml(group)]
     pub border: BorderImageBorder,
     /// [`tile_mode`]: how the top, middle and bottom parts fill sideways.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "TileMode")]
     pub horizontal_tile_mode: i32,
     /// [`tile_mode`]: how the left, middle and right parts fill downwards.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "TileMode")]
     pub vertical_tile_mode: i32,
 }
 

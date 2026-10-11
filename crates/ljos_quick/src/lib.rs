@@ -11,9 +11,12 @@ mod accessible;
 mod anchors;
 mod animation;
 pub mod enums;
+mod error_boundary;
 pub mod flickable;
 pub mod focus;
+mod font_enums;
 mod image;
+mod incubation;
 mod input;
 mod item;
 pub mod keys;
@@ -28,6 +31,7 @@ mod positioners;
 mod rectangle;
 mod repeater;
 mod scene;
+mod system_prefs;
 mod text;
 pub mod text_input;
 mod tree;
@@ -41,11 +45,13 @@ pub use animation::{
     RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, easing,
     running_animation_count, set_animation_frame_period,
 };
+pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use image::{
     BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint, ImageStore, LoadError,
     Request as ImageRequest, fill_mode, image_status, requested_size, tile_mode,
 };
+pub use incubation::{BASE_REFRESH_HZ, MIN_INCUBATION_BUDGET, incubation_budget};
 pub use input::{KeyEvent, KeyKind};
 pub use input::{
     Modifiers, MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerId, PointerKind,
@@ -57,7 +63,7 @@ pub use item::{
     init_item, is_item, local_transform, scene_transform, set_accessible,
 };
 pub use layer::{
-    LayerHooks, layer_host, layer_of, set_layer, set_layer_hooks, window_item, window_of,
+    LayerHooks, layer_host, layer_of, set_layer, set_layer_hooks, tab_scope, window_item, window_of,
 };
 pub use layouts::{
     ColumnLayout, GridLayout, Layout, LayoutAttached, RowLayout, StackLayout, layout_runs,
@@ -77,6 +83,10 @@ pub use repeater::Repeater;
 pub use scene::{
     DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, FrameOutput, INCUBATION_BUDGET, MAX_POLISH_PASSES,
     POLISH_CATEGORY, QuickScene, SCENE_CATEGORY, TimerHook,
+};
+pub use system_prefs::{
+    AccessibilityHints, StyleHints, color_scheme, contrast, font_scale, reduced_motion,
+    screen_reader_active, set_system_prefs, system_prefs, update_system_prefs,
 };
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, set_text_engine, text_engine,
@@ -115,7 +125,9 @@ pub fn register(engine: &Engine) {
     positioners::register(engine);
     layouts::register(engine);
     accessible::register(engine);
+    system_prefs::register(engine);
     animation::register(engine);
+    font_enums::register(engine);
     // Idempotent, so registering twice does no harm.
     engine.on_visual_parent_changed(|e, obj, parent| {
         if let Err(err) = tree::sync_parent(e, obj, parent) {
@@ -131,4 +143,7 @@ pub fn register(engine: &Engine) {
     keys::register(engine);
     flickable::register(engine);
     text_input::register(engine);
+    // Module `Ljos`, and Loader and ErrorBoundary as UI boundaries.
+    error_boundary::register(engine);
+    loader::register(engine);
 }

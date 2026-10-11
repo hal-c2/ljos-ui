@@ -48,7 +48,7 @@ pub struct Shortcut {
     #[qml(notify)]
     pub auto_repeat: bool,
     /// [`shortcut_context`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.ShortcutContext")]
     pub context: i32,
     #[qml(notify, readonly)]
     pub native_text: String,

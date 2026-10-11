@@ -130,7 +130,7 @@ pub struct ImageBase {
     #[qml(notify)]
     pub source: Url,
     /// [`image_status`].
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Status")]
     pub status: i32,
     /// 0 until the picture is there, then 1: a local file has no
     /// in-between.
@@ -142,7 +142,7 @@ pub struct ImageBase {
     pub cache: bool,
     /// What the author asked for, or the size of the loaded picture when
     /// nothing was asked.
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub source_size: Size,
     #[qml(notify)]
     pub mirror: bool,
@@ -255,11 +255,11 @@ pub struct Image {
     #[qml(base)]
     pub base: ImageBase,
     /// [`fill_mode`].
-    #[qml(notify)]
+    #[qml(notify, enumeration = "FillMode")]
     pub fill_mode: i32,
-    #[qml(notify)]
+    #[qml(notify, enumeration = "HAlignment")]
     pub horizontal_alignment: i32,
-    #[qml(notify)]
+    #[qml(notify, enumeration = "VAlignment")]
     pub vertical_alignment: i32,
     #[qml(notify)]
     pub mirror_vertically: bool,
@@ -270,7 +270,7 @@ pub struct Image {
     #[qml(notify, readonly)]
     pub painted_height: f64,
     /// The part of the (scaled) picture to keep; empty for all of it.
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub source_clip_rect: Rect,
 }
 

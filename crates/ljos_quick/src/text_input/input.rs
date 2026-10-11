@@ -28,7 +28,7 @@ pub struct TextInput {
     #[qml(notify)]
     pub password_character: Atom,
     /// Kept; a typed character is masked at once.
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub password_mask_delay: i32,
     /// In UTF-16 units. A longer text is cut.
     #[qml(notify)]

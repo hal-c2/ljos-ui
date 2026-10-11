@@ -37,7 +37,9 @@ pub fn scroll_by_action(engine: &Engine, flickable: ObjectId, action: Accessible
         A::ScrollDown { page } => (Y, true, page),
         A::ScrollLeft { page } => (X, false, page),
         A::ScrollRight { page } => (X, true, page),
-        A::Increase | A::Decrease | A::SetValue(_) => return false,
+        A::Increase | A::Decrease | A::SetValue(_) | A::ShowOnScreen | A::Expand | A::Collapse => {
+            return false;
+        }
     };
     if !is_flickable(engine, flickable) {
         return false;

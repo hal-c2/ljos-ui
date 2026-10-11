@@ -387,6 +387,43 @@ pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
     false
 }
 
+/// Where Tab (`forward`) or Shift+Tab would take focus from `from`,
+/// without pressing it: the `KeyNavigation` of the item and its parents,
+/// then the Tab order. With no `from`, where the first Tab goes. `None`
+/// when Tab stops nowhere.
+///
+/// `Keys` handlers and a control's own key handling are not asked, since
+/// asking is running them: this is where focus goes when nothing keeps
+/// the key. For what looks without touching, like an audit.
+pub fn tab_target(
+    engine: &Engine,
+    root: ObjectId,
+    from: Option<ObjectId>,
+    forward: bool,
+) -> Option<ObjectId> {
+    let ev = KeyEvent::press(if forward { key::TAB } else { key::BACKTAB });
+    let mut cur = from;
+    for _ in 0..DEPTH {
+        let Some(item) = cur.filter(|o| engine.is_alive(*o)) else {
+            break;
+        };
+        if let Some(att) = navigation_of(engine, item)
+            && let Some(target) = navigation_target(engine, att, &ev)
+        {
+            return Some(target);
+        }
+        if engine
+            .read(item, Item::ACTIVE_FOCUS_ON_TAB.index)
+            .to_boolean()
+            && let Some(target) = tab::target(engine, root, Some(item), forward)
+        {
+            return Some(target);
+        }
+        cur = engine.visual_parent(item);
+    }
+    tab::target(engine, root, None, forward)
+}
+
 impl QuickScene {
     /// Delivers a key event (ARCHITECTURE §11): shortcuts first, then the
     /// item with active focus and its parents. Returns whether anything

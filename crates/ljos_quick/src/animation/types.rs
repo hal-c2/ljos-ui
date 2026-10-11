@@ -209,10 +209,10 @@ pub struct Easing {
 
 /// The `easing` group of a [`PropertyAnimation`].
 #[derive(Debug, QmlObject)]
-#[qml(name = "EasingCurve", uncreatable)]
+#[qml(name = "EasingCurve", uncreatable, enums = easing_enums)]
 pub struct EasingGroup {
     /// `Easing.Type`.
-    #[qml(notify, rename = "type")]
+    #[qml(notify, rename = "type", enumeration = "Type")]
     pub ty: i32,
     #[qml(notify)]
     pub amplitude: f64,
@@ -321,7 +321,7 @@ pub struct RotationAnimation {
     #[qml(base)]
     pub base: PropertyAnimation,
     /// `RotationAnimation.RotationDirection`.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "RotationDirection")]
     pub direction: i32,
 }
 
@@ -348,7 +348,7 @@ pub struct SmoothedAnimation {
     #[qml(notify)]
     pub velocity: f64,
     /// `SmoothedAnimation.ReversingMode`.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "ReversingMode")]
     pub reversing_mode: i32,
     /// Milliseconds; -1 for none.
     #[qml(notify)]

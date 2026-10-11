@@ -153,7 +153,7 @@ pub struct Flickable {
     #[qml(notify, enumeration = "FlickableDirection")]
     pub flickable_direction: i32,
     /// One of [`bounds_behavior`].
-    #[qml(notify, enumeration = "BoundsBehavior")]
+    #[qml(notify, flags = "BoundsBehavior")]
     pub bounds_behavior: i32,
     /// One of [`bounds_movement`].
     #[qml(notify, enumeration = "BoundsMovement")]

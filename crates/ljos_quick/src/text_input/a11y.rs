@@ -87,8 +87,11 @@ fn describe(e: &Engine, obj: ObjectId, data: &mut NodeData) {
     data.role = match (&mask, multi) {
         (Some(_), _) => AkRole::PasswordInput,
         (None, true) => AkRole::MultilineTextInput,
+        // What the author said of a field that shows its text stands.
+        (None, false) if data.role == AkRole::SearchInput => AkRole::SearchInput,
         (None, false) => AkRole::TextInput,
     };
+    data.read_only |= read_only;
     data.text = Some(match mask {
         // One mark for every unit of the text, as on the screen.
         Some(mark) => {

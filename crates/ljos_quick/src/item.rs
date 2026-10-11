@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use ljos_engine::{
     Atom, Cx, Engine, EngineError, EnumValue, LogLevel, ObjectId, Point, PropIndex, QmlList,
-    QmlObject, QmlType, QtObject, Rect, Value, WriteKind, qml_impl,
+    QmlObject, QmlType, QtObject, Rect, Reset, Value, WriteKind, qml_impl,
 };
 use ljos_render::kurbo::{self, Affine};
 
@@ -36,9 +36,9 @@ pub struct Item {
     pub y: f64,
     #[qml(notify)]
     pub z: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = SIZE_RESET)]
     pub width: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = SIZE_RESET)]
     pub height: f64,
     #[qml(notify)]
     pub implicit_width: f64,
@@ -79,7 +79,7 @@ pub struct Item {
     pub baseline_offset: f64,
     /// Off for a plain item; `Text` turns it on and a `Rectangle` follows
     /// its `radius`, as Qt documents.
-    #[qml(notify)]
+    #[qml(notify, reset = Reset::Follow(natural_antialiasing))]
     pub antialiasing: bool,
     #[qml(group)]
     pub anchors: Anchors,
@@ -190,34 +190,34 @@ pub struct AccessibleInfo {
 #[derive(Debug, QmlObject)]
 #[qml(name = "Anchors", uncreatable)]
 pub struct Anchors {
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub left: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub right: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub top: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub bottom: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub horizontal_center: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub vertical_center: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub baseline: Value,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub fill: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub center_in: Option<ObjectId>,
     #[qml(notify)]
     pub margins: f64,
     /// The four side margins follow `margins` until they are set.
-    #[qml(notify)]
+    #[qml(notify, reset = Reset::Follow(all_margins))]
     pub left_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = Reset::Follow(all_margins))]
     pub right_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = Reset::Follow(all_margins))]
     pub top_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = Reset::Follow(all_margins))]
     pub bottom_margin: f64,
     #[qml(notify)]
     pub horizontal_center_offset: f64,
@@ -348,6 +348,60 @@ pub(crate) fn size_follows_implicit(engine: &Engine, obj: ObjectId, horizontal: 
     !(set(a.fill) || (set(near) && set(far)))
 }
 
+/// `width = undefined` and `height = undefined`: the size follows the
+/// implicit size again, as Qt documents.
+const SIZE_RESET: Reset = Reset::Custom {
+    apply: follow_implicit_size,
+    value: implicit_size,
+};
+
+fn implicit_of(size: PropIndex) -> (usize, PropIndex) {
+    if size == Item::WIDTH.index {
+        (0, Item::IMPLICIT_WIDTH.index)
+    } else {
+        (1, Item::IMPLICIT_HEIGHT.index)
+    }
+}
+
+fn implicit_size(engine: &Engine, obj: ObjectId, size: PropIndex) -> Value {
+    engine.read(obj, implicit_of(size).1)
+}
+
+/// Makes `width` or `height` read the implicit size until it is given a
+/// value. Not a value the author wrote: a Behavior on the size does not
+/// animate it, as it does not in Qt.
+fn follow_implicit_size(
+    engine: &Engine,
+    obj: ObjectId,
+    size: PropIndex,
+) -> Result<(), EngineError> {
+    let (axis, implicit) = implicit_of(size);
+    let token = Rc::new(());
+    engine.with_mut(obj, |i: &mut Item| {
+        i.follows_implicit[axis] = Rc::downgrade(&token);
+    })?;
+    engine.bind_computed(obj, size, move |e| {
+        // Held, not used: see `Item::follows_implicit`.
+        let _alive = &token;
+        e.read(obj, implicit)
+    })
+}
+
+/// What a side margin is while it has no value of its own.
+fn all_margins(engine: &Engine, obj: ObjectId, _side: PropIndex) -> Value {
+    engine.read(obj, AnchorProps::get().margins)
+}
+
+/// What `antialiasing` is until it is given: on for a rounded rectangle,
+/// otherwise what the type starts with (on for text), as Qt documents.
+fn natural_antialiasing(engine: &Engine, obj: ObjectId, p: PropIndex) -> Value {
+    use crate::rectangle::Rectangle;
+    if is_a::<Rectangle>(engine, obj) {
+        return Value::Bool(engine.read(obj, Rectangle::RADIUS.index).to_number() > 0.0);
+    }
+    engine.default_value(obj, p)
+}
+
 /// Whether nothing has given the property a value yet.
 pub(crate) fn is_unset(engine: &Engine, obj: ObjectId, p: PropIndex) -> bool {
     matches!(
@@ -452,6 +506,13 @@ impl AnchorLine {
                 item: *item,
                 edge: Edge::from_code(e.value)?,
             }),
+            // A line a script handed on (`cond ? undefined : parent.right`)
+            // comes back with the edge as the plain number a script sees.
+            [Value::Object(item), edge @ (Value::Int(_) | Value::Real(_))] => {
+                let code = edge.to_number();
+                let edge = Edge::from_code(code as i32).filter(|e| f64::from(e.code()) == code)?;
+                Some(AnchorLine { item: *item, edge })
+            }
             _ => None,
         }
     }
@@ -540,24 +601,11 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
         } else {
             follow_margins(engine, obj)?;
         }
-        for (axis, size, implicit) in [
-            (0, Item::WIDTH.index, Item::IMPLICIT_WIDTH.index),
-            (1, Item::HEIGHT.index, Item::IMPLICIT_HEIGHT.index),
-        ] {
+        for size in [Item::WIDTH.index, Item::HEIGHT.index] {
             if !unset(size) {
                 continue;
             }
-            let token = Rc::new(());
-            engine.with_mut(obj, |i: &mut Item| {
-                i.follows_implicit[axis] = Rc::downgrade(&token);
-            })?;
-            // Not a value the author wrote: a Behavior on the size does
-            // not animate it, as it does not in Qt.
-            engine.bind_computed(obj, size, move |e| {
-                // Held, not used: see `Item::follows_implicit`.
-                let _alive = &token;
-                e.read(obj, implicit)
-            })?;
+            follow_implicit_size(engine, obj, size)?;
         }
         // Lazy: costs nothing until something reads `childrenRect`.
         engine.bind_initial(obj, Item::CHILDREN_RECT.index, move |e| {

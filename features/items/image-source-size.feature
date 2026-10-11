@@ -104,9 +104,6 @@ Feature: Image source size
     And the property "implicitWidth" of "picture" is 30
     And the property "implicitHeight" of "picture" is 20
 
-  # Waits for property reset in the engine: assigning undefined to a
-  # property with a reset (here sourceSize) is refused as a wrong type.
-  @blocked
   Scenario: Taking the source size back gives the whole picture
     Given the QML:
       """qml

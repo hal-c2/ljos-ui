@@ -64,6 +64,10 @@ struct Run {
     finishing: Cell<bool>,
     /// `complete()` came from one of its own scripts.
     want_complete: Cell<bool>,
+    /// Reduced motion took it to the end of its pass, where it stays for
+    /// as long as motion is reduced. Only a run without end rests: one
+    /// with an end is over instead.
+    rested: Cell<bool>,
     /// `stop()` on the way emits `finished` too.
     finishes_when_stopped: bool,
     /// Something else runs it (a `Behavior`; later a `Transition`): it
@@ -136,6 +140,21 @@ impl Run {
 
     fn is_done(&self) -> bool {
         self.timeline.borrow().as_ref().is_some_and(Timed::is_done)
+    }
+
+    /// Where reduced motion takes the run in this frame: to its end, or,
+    /// without one, to the end of the pass it is in, once. `None`: it
+    /// rests there already.
+    fn calm_end(&self) -> Option<i64> {
+        let timeline = self.timeline.borrow();
+        let timeline = timeline.as_ref()?;
+        if !timeline.is_endless() {
+            return Some(timeline.total());
+        }
+        if self.rested.replace(true) {
+            return None;
+        }
+        Some(timeline.end_of_pass(self.elapsed.get()))
     }
 }
 
@@ -247,6 +266,7 @@ fn begin(
         cancelled: Cell::new(false),
         finishing: Cell::new(false),
         want_complete: Cell::new(false),
+        rested: Cell::new(false),
         driven,
         done,
     });
@@ -308,7 +328,7 @@ fn finish(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
 /// two frames. Without this a run that needs no frames would be stopped
 /// or paused where the last frame left it, however long ago that was.
 fn catch_up(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
-    if run.paused.get() || run.cancelled.get() {
+    if run.paused.get() || run.cancelled.get() || run.rested.get() {
         return;
     }
     let (Some(now), Some(last)) = (d.now(engine), run.last.get()) else {
@@ -449,6 +469,7 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
     }
     d.ticking.set(Some(now));
     let runs: Vec<Rc<Run>> = d.runs.borrow().clone();
+    let calm = crate::system_prefs::reduced_motion_now(engine);
     // One batch: what follows several animated values (a layout, a
     // binding on two of them) is worked out once per frame.
     engine.batch(|| {
@@ -460,7 +481,23 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
                 d.remove(run);
                 continue;
             }
-            let t = match run.last.replace(Some(now)) {
+            if calm {
+                run.last.set(Some(now));
+                if let Some(end) = run.calm_end() {
+                    run.elapsed.set(end);
+                    run.step(engine, end);
+                }
+                continue;
+            }
+            // At rest no time passed for it: it goes on from where it
+            // rests, not from where it would be by now.
+            let last = run.last.replace(Some(now));
+            let last = if run.rested.replace(false) {
+                None
+            } else {
+                last
+            };
+            let t = match last {
                 Some(last) => run
                     .elapsed
                     .get()
@@ -492,6 +529,7 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     }
     let mut animating = false;
     let mut soonest: Option<Time> = None;
+    let calm = crate::system_prefs::reduced_motion_now(engine);
     for run in d.runs.borrow().iter() {
         if run.paused.get() {
             continue;
@@ -499,6 +537,17 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
         // Started in this frame after its tick: it began with this frame.
         let last = run.last.get().unwrap_or(now);
         run.last.set(Some(last));
+        if calm {
+            // One more frame takes it to its end, seen or not; at rest it
+            // asks for nothing.
+            animating |= !run.rested.get();
+            continue;
+        }
+        if run.rested.get() {
+            // Motion is no longer reduced: the next frame moves it again.
+            animating = true;
+            continue;
+        }
         let timeline = run.timeline.borrow();
         let Some(timeline) = timeline.as_ref() else {
             continue;

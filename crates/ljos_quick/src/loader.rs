@@ -13,12 +13,22 @@
 //!
 //! An unloaded item is taken off the Loader at once and destroyed at the
 //! next frame, since the handler that unloads it is often the item's own.
+//!
+//! A Loader is a UI boundary (ARCHITECTURE §3.4, §9.4): a fault below its
+//! item (a panic in a native type, a JS run cut short) unloads the item
+//! and leaves the Loader at `Loader.Error`, and the rest of the
+//! application runs on. Loading again makes a new item from the source.
+//! An exception in a handler is not such a fault: Qt logs it and keeps
+//! the item, and so does this. The work of making the item is charged to
+//! the Loader as its owner.
+
+use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, CreationHandle, CreationJob, Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex,
-    QmlObject, Url, Value, WriteKind, qml_impl,
+    Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
+    FaultReport, LogLevel, ObjectId, PropIndex, QmlObject, Url, Value, WriteKind, qml_impl,
 };
-use ljos_runtime::{Lane, ProcId};
+use ljos_runtime::{Fault, Intensity, Lane, Restart};
 
 use crate::enums::loader_status;
 use crate::item::{Item, is_a, is_item, size_follows_implicit, write_computed};
@@ -37,7 +47,7 @@ pub struct Loader {
     pub item_base: Item,
     #[qml(notify)]
     pub source: Url,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub source_component: Option<ObjectId>,
     #[qml(notify)]
     pub active: bool,
@@ -46,7 +56,7 @@ pub struct Loader {
     #[qml(notify, readonly)]
     pub item: Option<ObjectId>,
     /// [`crate::enums::loader_status`].
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Status")]
     pub status: i32,
     /// 0 while there is nothing to load or the item is being made, 1 once
     /// it is made or has failed.
@@ -188,7 +198,8 @@ fn set(e: &Engine, me: ObjectId, p: PropIndex, v: Value) {
 }
 
 /// The visual children the scene shows: all of them, except a Loader's
-/// item while it is still being made.
+/// item, or one `Component.incubateObject` makes, while it is still being
+/// made.
 pub(crate) fn shown_children(e: &Engine, obj: ObjectId) -> Vec<ObjectId> {
     let mut kids = tree::child_items(e, obj);
     if is_a::<Loader>(e, obj)
@@ -196,7 +207,57 @@ pub(crate) fn shown_children(e: &Engine, obj: ObjectId) -> Vec<ObjectId> {
     {
         kids.retain(|c| *c != hidden);
     }
+    if e.has_half_made() {
+        kids.retain(|c| !e.is_half_made(*c));
+    }
     kids
+}
+
+/// Makes every Loader a boundary.
+pub(crate) fn register(engine: &Engine) {
+    engine.register_boundary::<Loader>(Rc::new(LoaderBoundary));
+}
+
+struct LoaderBoundary;
+
+impl Boundary for LoaderBoundary {
+    fn config(&self, _: &Engine, _: ObjectId) -> BoundaryConfig {
+        BoundaryConfig {
+            // The item stays unloaded until the application loads again.
+            restart: Restart::Temporary,
+            // Nothing is restarted, so nothing is counted.
+            intensity: Intensity::new(0, std::time::Duration::ZERO),
+            // As in Qt, an exception is logged and the item stays.
+            catch_exceptions: false,
+        }
+    }
+
+    fn stop(&self, e: &Engine, me: ObjectId, _: &FaultReport) {
+        let begun = with_run(e, me, |r| {
+            // What a running job makes is not wanted any more.
+            r.generation += 1;
+            (r.job.take(), r.incubating.take())
+        });
+        let Some((job, half_made)) = begun else {
+            return;
+        };
+        if let Some(job) = job {
+            job.cancel();
+        }
+        if let Some(half) = half_made {
+            discard(e, half);
+        }
+        let old = e.read(me, Loader::ITEM.index).as_object();
+        set(e, me, Loader::ITEM.index, Value::Null);
+        drop_old(e, me, old);
+        set(e, me, Loader::STATUS.index, loader_status::ERROR.into());
+        set(e, me, Loader::PROGRESS.index, 1.0.into());
+    }
+
+    fn start(&self, _: &Engine, _: ObjectId) -> Result<(), Fault> {
+        // Never asked of a temporary child.
+        Ok(())
+    }
 }
 
 /// Called when `child` is appended to `parent`'s `data`: a Loader with a
@@ -303,9 +364,8 @@ fn start_job(
     origin: &Origin,
     props: Vec<(String, Value)>,
 ) {
-    // The scene runs incubation in its own scheduler; there is no process
-    // to charge the work to.
-    let owner = ProcId::new(0, 0);
+    // The Loader is the boundary of what it makes, and so its owner.
+    let owner = e.boundary_proc(me);
     let (job, handle) = match origin {
         Origin::Url(url) => {
             let url = e.resolve_url(me, url);

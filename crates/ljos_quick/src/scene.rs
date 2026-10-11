@@ -273,6 +273,12 @@ pub struct QuickScene {
     pointer: PointerState,
     /// Creation jobs of asynchronous Loaders, run a slice per frame.
     incubator: Scheduler<()>,
+    /// What the creation jobs of the last frame that ran any cost, until a
+    /// development tool takes it (`take_incubation_report`).
+    incubation: Option<ljos_runtime::FrameReport>,
+    /// What a frame gives the creation jobs: [`INCUBATION_BUDGET`], less
+    /// on a display faster than 60 Hz (`set_refresh_rate`).
+    incubation_budget: Duration,
     /// The accessibility tree; idle unless an assistive technology listens.
     pub(crate) a11y: A11yPass,
     /// The engine's picture store, known from the first frame on, so that
@@ -321,6 +327,8 @@ impl QuickScene {
             next_timer: None,
             pointer: PointerState::default(),
             incubator: Scheduler::new(),
+            incubation: None,
+            incubation_budget: INCUBATION_BUDGET,
             a11y,
             images: None,
         }
@@ -359,6 +367,43 @@ impl QuickScene {
 
     pub fn root(&self) -> Option<ObjectId> {
         self.root
+    }
+
+    /// What the scene shows, in logical pixels.
+    pub fn viewport(&self) -> kurbo::Rect {
+        self.viewport
+    }
+
+    /// Device pixels per logical pixel.
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
+    }
+
+    /// Asks for a frame although nothing changed. A development tool that
+    /// ran a frame of its own (the inspector, to read the accessibility
+    /// tree) calls this so that the host runs the next one and learns from
+    /// it when the scene next wants to be woken.
+    pub fn request_frame(&self) {
+        mark(&self.shared, |_| {});
+    }
+
+    /// What the creation jobs (asynchronous Loaders, delegates) of the
+    /// last frame that ran any cost, once. For the `top` overlay and the
+    /// inspector's measurements; a host that shows neither never calls it.
+    pub fn take_incubation_report(&mut self) -> Option<ljos_runtime::FrameReport> {
+        self.incubation.take()
+    }
+
+    /// The display's refresh rate, which scales the time a frame gives to
+    /// creation jobs ([`crate::incubation_budget`]). A host that never
+    /// says is taken to show 60 frames a second.
+    pub fn set_refresh_rate(&mut self, hz: f64) {
+        self.incubation_budget = crate::incubation::incubation_budget(hz);
+    }
+
+    /// What a frame gives the creation jobs.
+    pub fn incubation_budget(&self) -> Duration {
+        self.incubation_budget
     }
 
     pub fn set_viewport(&mut self, viewport: kurbo::Rect) {
@@ -495,6 +540,10 @@ impl QuickScene {
         if let Some(hook) = &mut self.timers {
             self.next_timer = hook(engine, now);
         }
+        // Faults of the turns since the last frame go to their boundaries
+        // here, between turns: what a boundary discards is deleted next
+        // and what it makes is laid out in this frame.
+        engine.deliver_faults();
         // 4. Deferred deletes.
         let deleted = engine.process_deferred_deletes();
         let dead = std::mem::take(&mut self.shared.borrow_mut().dead);
@@ -554,6 +603,7 @@ impl QuickScene {
             next_wake: if pending
                 || incubating
                 || engine.has_pending_calls()
+                || engine.has_pending_faults()
                 || crate::focus::tree::pending(engine)
             {
                 Some(now)
@@ -605,7 +655,7 @@ impl QuickScene {
         }
     }
 
-    /// Step 7: runs queued creation jobs for [`INCUBATION_BUDGET`] on the
+    /// Step 7: runs queued creation jobs for the incubation budget on the
     /// engine's clock. Returns whether any are left for the next frame.
     fn incubate(&mut self, engine: &Engine) -> bool {
         for job in engine.take_incubations() {
@@ -615,16 +665,16 @@ impl QuickScene {
             return false;
         }
         let clock = engine.clock();
-        let budget = FrameBudget::new(clock.now(), INCUBATION_BUDGET);
+        let budget = FrameBudget::new(clock.now(), self.incubation_budget);
         let report = self.incubator.run_frame(&mut (), budget, &*clock);
-        for (_, fault) in &report.faults {
-            engine.log(
-                LogLevel::Warning,
-                SCENE_CATEGORY,
-                format!("a creation job failed: {fault:?}"),
-            );
+        for (owner, fault) in &report.faults {
+            // A fault of the boundary the job was making something in.
+            engine.report_fault(engine.proc_owner(*owner), fault.clone());
         }
-        if report.jobs_done > 0 {
+        let made = report.jobs_done > 0;
+        // Moved, not copied: keeping it costs a host that never asks nothing.
+        self.incubation = Some(report);
+        if made {
             // What was made can be shown and measured now.
             self.reconcile(engine);
             self.polish(engine);
@@ -1403,6 +1453,9 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         let _ = e.read(obj, Loader::ITEM.index);
         let _ = e.read(obj, Loader::STATUS.index);
     }
+    // A child that is being made in slices is left out until it is whole
+    // (`shown_children`); nothing of the item changes when it is.
+    e.watch_incubations();
     mark(shared, |s| {
         s.structure.insert(obj);
     });
