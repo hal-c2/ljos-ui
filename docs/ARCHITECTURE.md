@@ -206,6 +206,8 @@ ljos-ui/
 
 **Sharing with qml-solid.** ljos-ui is the home repo for `qml_syntax`, `qml_front`, `qt_types`, `qmltypes` and `qml_compare`. qml-solid depends on them by git `rev` and keeps only its Solid/web lowering. There is never a second copy of the oxc fork. The fork is rebased every 4–8 oxc releases, and `mise run oxc:check` shows drift (06 §3.4). This is decision D7.
 
+**As built: the table of types (decision D1).** The front end reads QML against one table, `qt_types`, which has two descriptions in one format. Qt's of its own types (`crates/qt_types/src/types.txt`) is generated from a local Qt by `mise run types` and git-ignored. Ljós's of the types it implements (`crates/qt_types/src/ljos.txt`) is committed: a test writes it from the registry of a running engine and from the compiled Basic style (`LJOS_OWN_TYPES=write cargo test -p ljos_cli --test own_types`), and fails with that command when the file is stale. Nothing in it comes from Qt. It is the type dump of section 5.5 as built, for Ljós's own crates; an application's native types do not reach the compiler yet. Where Qt's table exists it is the whole truth of every module it describes, and Ljós's gives only the modules Qt's lacks (`Ljos`, `QtTest`): the choice is by module and never by type, so that no inheritance chain is half one description and half the other, and a build with Qt's table reads a file as it always did. Without it (`LJOS_QT_TYPES=none`, or a checkout where `mise run types` never ran) Ljós's table is everything and the workspace builds and tests with no Qt installed; a name no type has is then reported with a note that a table of Qt's types could tell whether Qt has it. Tests that compare the two tables hold Ljós's types to Qt's where both exist and say `SKIPPED` with the reason where not. CI's `check` job builds without Qt; a nightly job builds with Qt's table.
+
 ---
 
 ## 5. Front end: from `.qml` to IR
@@ -356,6 +358,12 @@ pub trait Reactive {
 
 **Override stack.** `Binding {}` and `State`/`PropertyChanges` push onto a per-property override stack above the base binding or value. `restoreMode` pops it. Assigning a value imperatively breaks the binding, and `Qt.binding()` reinstalls one. Report 09 confirmed both against Qt 6.11.2.
 
+**As built: states and the override layer (M2).** A state never saves a value and writes it back. Entering it puts each change on the override layer of its property (`Engine::push_override`) and leaving takes the layers off in the opposite order, so the value or the binding underneath, which went on changing, is what shows again. `Binding` is one such layer that lasts while `when` is true. `PropertyChanges`, `AnchorChanges`, `ParentChange`, `StateChangeScript` and `StateGroup` are built, with `when`, `extend` and `restoreEntryValues`.
+- **Members of another object.** `PropertyChanges { width: 10 }` and `box.width: 10` write members the type itself does not have. A crate says which of its types keep such members (`Engine::register_foreign_members`) and is handed them instead of the "non-existent property" error; the engine only keeps the expression runnable.
+- **Transitions.** One of the item's transitions is chosen by `from`, `to` and `reversible`. The properties are in the new state at once as far as bindings and layers go; each property the transition names is held at the value it had by one more layer, the animations run as one timeline, and the holds come off at the end. A property the transition does not name has its new value at once.
+- **Animations a transition uses:** `AnchorAnimation`, `ParentAnimation`, `PropertyAction` and `ScriptAction`, beside the property animations, `SmoothedAnimation` and `SpringAnimation`. `SpringAnimation` is compared with values measured on Qt 6.11.2 (`animation/fixtures/spring_qt.txt`).
+- **Not built:** object values and signal handlers in `PropertyChanges`; `ParentAnimation`'s `target`, `newParent` and `via` are stored only; the state an object is in is not carried across a hot reload; a change to `states` after creation is not followed.
+
 **Provenance.** Each property has a provenance bit, *assigned* or *bound*. Hot reload uses it (section 12).
 
 **Translations.** Every `qsTr` reads `I18n::revision`. Changing the language bumps one node, and only the translated bindings re-evaluate, visible ones first (section 15).
@@ -387,6 +395,8 @@ Creation is a resumable state machine, the `Incubator`. Its phases:
 
 This keeps models and singletons shared without proxies (01 §4.8, 03 §3.1, 07 P1-27).
 
+**As built (M2).** A `Window` says what it wants (title, size, visibility, modality, flags, transient parent) and a host that owns platform windows reads that as a `WindowSpec` and tells the window what the platform made of it (`ljos_controls::window::system`). Without a host a window is an item of the scene it was put in and showing, sizing and activating happen there, so a test without a display behaves the same. `Application`, `Qt.application` and `Screen` report what the host says; without one there is a single 800 by 800 screen and the application is active. Not built: window-scoped singletons, attached `Screen.*` per window, and a `closing` handler refusing `Qt.quit()`.
+
 ---
 
 ## 7. Rendering, layout and text
@@ -412,6 +422,23 @@ Source: 02 §3; text from 05 §3.3.
 | **B0 epaint** | M0 onward | Cached `Arc<Mesh>` per node. Gradients use vertex colours. Shadows use a blur or a nine-patch. Axis-aligned clips use `with_clip_rect`. Rotated clips and `layer.*` are approximated, with a debug warning. Paths are tessellated with lyon, or rasterised to cached textures with vello_cpu; this is decided at M2. |
 | **R vello_cpu** | M0 onward | Deterministic reference renderer: fixed SIMD level, one thread, bundled fonts. Used for the Qt comparison and as a fallback without a GPU. |
 | **B1 wgpu** | M4, or earlier if B0 profiles badly | Plugs in through `egui_wgpu::Callback` segments. Instanced SDF quads for rects, borders, gradients and shadows. Textured quads for glyphs and images. Retained instance buffers per batch root, so scrolling updates one uniform. Offscreen targets for layers, effects and rotated clips. vello_gpu renders paths into cached atlas textures. |
+
+**As built: paths (decided at M2 by measuring).** `DrawOp::Shape` carries an `Arc<BezPath>`, a `ShapeStyle` (a fill rule, or a whole `kurbo::Stroke` with joins, caps, miter limit and dashes) and a `Brush` (a colour, or a linear, radial or conical gradient with a spread); `DrawOp::Path` means what it did. R fills and strokes it with vello_cpu, curves flattened to 0.02 device px. B0 is a mix by brush and by complexity:
+- **Triangles by default.** lyon (`lyon_tessellation`) fills the outline (a stroke is outlined by kurbo first), and a feather one device pixel wide along the boundary anti-aliases it. Tolerance is 0.1 device px. The mesh is built once per outline and power-of-two scale bucket and is mapped, not rebuilt, when the node moves or scales.
+- **A vello_cpu picture in a texture** for radial and conical gradients (vertex colours cannot carry them), for a repeated or reflected linear gradient with more than 16 periods across the shape, and for a stroke of more than 1 500 flattened segments. It is filled again when the scale or the sub-pixel offset changes. A picture over 8192 px a side or 16 MPx, or one that would take the frame's shape textures past 64 MB (section 8.5), is drawn as triangles instead, with a warning.
+- Geometry is kept for as long as the same `Arc` comes with the same style and brush, so an unchanged shape costs a lookup. `trim(Moderate)` makes a shape that was not drawn in the last frame give up its triangles and pixels; `trim(Critical)` drops all of them. Nothing outside `ljos_render` calls `trim` yet.
+- Measured (release build, one thread, scale 1 / 1.5 / 2; "error" is the mean difference from an 8×8 supersampled picture over edge pixels, in 1/255; the icon and the arc at the tolerance that was built, the other rows at 0.25 device px; GPU fill time was not measured):
+
+| Case | Triangles | Texture |
+|---|---|---|
+| 24 px icon (even-odd cog) | 6.8 / 6.8 / 7.9 µs to build, 7 KB held, error 10.5 / 8.0 / 6.6 | 3.6 / 5.2 / 6.2 µs, 2.3 / 4.6 / 7.7 KB, error 5.1 / 7.0 / 7.5 |
+| Chart line, 5 000 points, 1280×720, smooth | 14.5 / 15.5 / 14.0 ms, 3.3 MB held, 1.7 MB uploaded per painted frame, error 14.9 / 12.3 / 10.4 | 1.2 / 1.4 / 1.8 ms, 2.3 / 5.1 / 9.0 MB held and uploaded per change, error 21.2 / 15.7 / 12.1 |
+| The same, noisy | 41 / 41 / 42 ms, error 19.9 / 16.4 / 15.5 | 2.4 / 3.2 / 4.3 ms, 2.5 / 5.7 / 10.1 MB, error 41 / 34 / 28 |
+| Chart line, 500 points | 0.28 / 0.35 / 0.40 ms, 0.2 MB, error 5.3 / 5.6 / 5.7 | 0.21 / 0.37 / 0.66 ms, 2.3 / 5.1 / 9.0 MB, error 1.0 / 1.0 / 0.8 |
+| Area fill, 500 points | 59 µs, 76 KB, error 4.7 / 4.6 / 4.6 | 0.20 / 0.39 / 0.77 ms, 3.0 / 6.7 / 11.9 MB, error 0.2 to 0.3 |
+| Animated arc, 200 px, each frame a change | 12 to 15 µs and 4 to 6 KB uploaded per frame, error 9.6 / 9.2 / 8.9 | 16 to 38 µs and 124 to 484 KB per frame, error 22.4 / 23.2 / 22.6 |
+
+  A mesh without the feather is off by 47 to 68, and a texture drawn half a device pixel off its grid without being filled again by 19 to 44. Triangles cost the same at every scale, hold 10 to 150 times less for a large shape and need no texture; the texture is exact for polygons and ten times faster for a dense stroke. The feather is linear, so it is at its worst at sharp tips and at features thinner than a pixel.
 
 **Images.** A draw op names pixels by `ImageHandle`; the pixels live in `ljos_quick`'s per-engine `ImageStore`, an LRU cache keyed by URL and requested size with a byte budget (section 8.5). Blit geometry (source and destination rectangles, tiling, mirroring) and nine-patch slicing are computed in `ljos_render`, once for both backends. `ljos_render` depends on `ljos_runtime` for `MemoryPressure`, which is defined once. Decoding runs on the `ComputePool`, at most 8 at a time, and wakes the UI once per result.
 
@@ -463,6 +490,12 @@ This is the canonical order, merging 01 §3.5, 02 §3.2 and 03 §3.3. It runs on
 - **`QmlView`** stays an `egui::Widget`, so QML can be embedded in any egui app. Embedded, it falls back to emitting a11y nodes through `ctx.accesskit_node_builder`.
 - **Native egui widgets inside QML.** An `EguiItem` gets a child `Ui` at its world bounding box, which allows translation and uniform scale only. QML items painted above it register occluders.
 
+**As built (M2).** `ljos_shell::run` is Ljós's own loop (`desktop.rs`) on `ljos_host`, egui-winit and egui-wgpu; `eframe` is an optional feature and a test proves the default build does not link it. There is one platform window for the root and one for every other QML `Window` that is shown, each with its own egui context, scene view, painter and, while open, surface; the graphics device is shared. All bookkeeping happens when the host is about to wait: what the application's windows want is compared with what the platform has, due passes are asked for, and the host is told the earliest time any window wants to be drawn. A window nobody asked about is not drawn. Measured idle CPU over 10 s: 0 ticks for the QML demo and for `ljos run --watch`, 1 tick with `--watch --mcp --top`.
+- winit cannot express modality or a transient parent, so both are emulated in the shell; most window flags are ignored, and Wayland does not allow a window to place or activate itself.
+- A secondary window that is hidden runs no frames.
+- AccessKit's consumer (0.35 to 0.38) panics when focus moves to a node of a tree it has not seen; the graft releases focus first (`release_graft_focus`) and a `should_panic` test records the upstream fault.
+- Nothing calls `RenderBackend::trim` yet (section 8.5).
+
 ### 7.4 Layout
 
 Layout is Ljós's own implementation of QML semantics.
@@ -510,6 +543,14 @@ Raw HTML never passes through, because rich text often comes from untrusted sour
 - the clipboard.
 
 Caret and selection geometry come from Parley's `Cursor`/`Selection`. Parley's `PlainEditor` is a reference, not the owner of the model.
+
+**As built: rich text (M2).** `Text.textFormat` chooses one of four front ends (`ljos_text::rich`), all filling the same flat `RichDoc`: plain, `StyledText`, `RichText` and Markdown (CommonMark with tables, strike-through and task lists). Nesting is flattened into each block's indent and margins. `AutoText` decides as Qt does.
+- **Untrusted input.** Nothing in a document is run, fetched or included. Raw HTML in Markdown is shown as the text it is; `script`, `style` elements and unknown tags of `RichText` are dropped; of a `style` attribute only `color`, `background-color`, `text-decoration` and `text-decoration-color` are read. Each front end is fuzzed (`tests/rich_fuzz.rs`).
+- **Streaming.** Appending to a text lays out only the blocks from the last unfinished one (`tests/rich_stream.rs`).
+- **Links.** A link reports its address (`linkActivated`, `linkHovered`, `linkAt`) and the toolkit opens nothing. A `Text` takes the pointer only for a press that lands on a link. Links are reached with Tab and are nodes of the accessibility tree. A `RichText` or Markdown link is `#0000ff` whatever `linkColor` says, as Qt documents; `linkColor` applies to `StyledText`.
+- **`SelectionScope`** (module `Ljos`) gives the `Text` items below it one selection in one space of UTF-16 offsets, a line break between members. Delegates a view has not made are not members.
+- **Highlighting.** `TextEdit.textDocument` takes spans or a function that makes them (`highlight`, `clearHighlights`, ours); a span changes colours and underline only, never the text, the line breaks or the undo log.
+- **Not built:** editing rich text in `TextEdit` and `TextArea` (`getFormattedText` answers plain text); inline images are decoded synchronously; block and table-cell backgrounds; links in a `Label` are not activated by the pointer.
 
 ---
 
@@ -567,6 +608,12 @@ Freezing stops *work*, not *meaning* (04 §3.5).
 - **Variable heights** are remembered by model key. Scroll anchors are a *model key plus offset*, so prepending rows (loading chat history) does not move the view (07 R5). This needs `rowsAboutToBeInserted`.
 - **While an assistive technology is attached,** `cacheBuffer` grows to ±20 rows on desktop and ±10 on mobile (section 14).
 - **`Repeater` is not virtualised**, which is Qt semantics. A lint warns above 50 items.
+
+**As built (M2).** `ListView` and `GridView` are a `Flickable` whose content is the rows of a model (`ljos_quick::views`). The engine's `ViewDelegates` keeps one delegate for each row the view asks for and keeps it in step with the model; the view decides which rows those are.
+- **The pass** starts from the anchor (the first row in sight after the last pass, and where it was), lays rows out in both directions until the window around what is shown is full, and gives back every delegate outside it. `cacheBuffer` defaults to 320 px, as on Qt. Rows never measured count as long as the average of those that were, so `contentHeight` of a long list is an estimate that improves as the view moves, as it is on Qt.
+- **Changes.** Rows that arrive before the anchor push its number up and leave its place alone: the content grows upwards (the origin moves) and nothing in sight jumps. The anchor is a row and an offset, not yet a model key.
+- **Also built:** sections, header and footer, `currentIndex` with keys and the highlight, `positionViewAtIndex` and its siblings, `indexAt` and `itemAt`, snap modes, `reuseItems` with `pooled` and `reused`, `ObjectModel` and `DelegateModel`. `Menu`, `ComboBox` and the other controls with rows use a real `ListView`.
+- **Not built:** `move` and `displaced` transitions (stored only; `populate`, `add` and `remove` run one item at a time and there is no `ViewTransition` attached data); `highlightRangeMode` and `preferredHighlightBegin`/`End`; `section.labelPositioning`; `DelegateModel` groups, `parts` and `rootIndex`; the larger cache while an assistive technology is attached; the `Ljos.ListView.incubationBudgetMs` setting.
 
 ### 8.5 Memory budgets
 
@@ -664,6 +711,8 @@ Source: 04 §3.1–3.2, §3.8–3.10.
   - `Touch`/`Pointer`/`Key`, `OpenUrl`, `SaveState`.
 
 AccessKit on Android requires GameActivity. With native-activity it fails to compile (09 §2.3).
+
+**As built (M2, desktop).** `ljos_host` has `PlatformHost`, the events and `WinitHost` on winit 0.30.13. The application behind a host is a `HostApp`: it is handed every event with a `HostControl`, through which it opens and changes windows, asks to be woken at a time and ends the loop. The loop wakes by itself never or at one time; a `Waker` wakes it from another thread. The crate knows nothing of what draws into a window. `AndroidHost` is M3.
 
 ### 10.2 App core versus UI host
 
@@ -813,9 +862,9 @@ subsecond (Rust hot-patching) is an optional extra for desktop development. It d
 Source: 01 §2.5, §3.6; 08.
 
 - **QtQuick.Controls has two layers.** `ljos_controls` implements behaviour in Rust: the `Control`/`AbstractButton` state machines, `Popup` and the overlay stack, and `Dialog`. Each *style* is QML written clean-room on top, the way Qt layers templates and styles, with the code being ours. A style is chosen with `QT_QUICK_CONTROLS_STYLE`-compatible configuration.
-- **As built.** A style is a directory of QML files compiled to IR by the crate's `build.rs` and registered as a component library, so a shipped app still links no parser. Style parts are deferred: a style gives each part (`background`, `contentItem`, `indicator`, `handle`, `popup`) as a `Component` and the control makes it when it completes, unless the application gave its own by then, so a replaced part is never made (a test counts creations). `Window` and `ApplicationWindow` are items in the one scene until the shell has more than one window (M2).
+- **As built.** A style is a directory of QML files compiled to IR by the crate's `build.rs` and registered as a component library, so a shipped app still links no parser. Style parts are deferred: a style gives each part (`background`, `contentItem`, `indicator`, `handle`, `popup`) as a `Component` and the control makes it when it completes, unless the application gave its own by then, so a replaced part is never made (a test counts creations). `Window` and `ApplicationWindow` are platform windows under the shell and items of the scene without one (section 6.4).
 - **Popups as built.** A scene has a second top-level item, the layer (`ljos_quick::layer`), drawn over the root item and asked first by the pointer. `ljos_controls` puts one overlay per window there and each popup's item inside it, so nothing in the content clips a popup and a root that is a positioner does not lay it out. A closed popup's item stays in the overlay, hidden. Popups have no `enter`/`exit` transitions yet, a `Menu` and a `ComboBox` popup do not scroll, and `ToolTip` has one shared instance per window.
-- **Polish as built (M1).** `focusPolicy` and `activeFocusOnTab` say one thing between them (the Tab bit), and the Basic style draws `visualFocus` on every control that takes the keyboard. Buttons and menu items have `icon.*` and `display`; an icon is tinted with the text colour unless `icon.color` is given, and `icon.name` shows nothing because there is no icon theme. `palette.*` is inherited down the item tree and into popups, the style reads the palette instead of literal colours, and a dark palette follows `Qt.styleHints.colorScheme`. The accessibility audit runs over the style in light and dark (`crates/ljos_controls/tests/audit.rs`); the Basic placeholder colour is Qt's value and stays below 4.5:1 for parity (3.04:1 light, 3.95:1 dark), so an application that needs AA sets `palette.placeholderText`. `ComboBox` is editable, `MenuBar` with `MenuBarItem` exists (not yet a full `Container`), and `ApplicationWindow.menuBar` sits above the header. A menu or combo popup with more rows than fit scrolls in a `Flickable` standing in for the `ListView` Qt uses (M2). A popup runs its `enter` and `exit` transitions through a minimal `Transition` (its `from`, `to` and `reversible` wait for States, M2), with `aboutToShow`, `opened`, `aboutToHide` and `closed` at the moments Qt 6.11 shows; reduced motion finishes them at once.
+- **Polish as built (M1).** `focusPolicy` and `activeFocusOnTab` say one thing between them (the Tab bit), and the Basic style draws `visualFocus` on every control that takes the keyboard. Buttons and menu items have `icon.*` and `display`; an icon is tinted with the text colour unless `icon.color` is given, and `icon.name` shows nothing because there is no icon theme. `palette.*` is inherited down the item tree and into popups, the style reads the palette instead of literal colours, and a dark palette follows `Qt.styleHints.colorScheme`. The accessibility audit runs over the style in light and dark (`crates/ljos_controls/tests/audit.rs`); the Basic placeholder colour is Qt's value and stays below 4.5:1 for parity (3.04:1 light, 3.95:1 dark), so an application that needs AA sets `palette.placeholderText`. `ComboBox` is editable, `MenuBar` with `MenuBarItem` exists (not yet a full `Container`), and `ApplicationWindow.menuBar` sits above the header. A menu or combo popup shows its rows in a `ListView`, as Qt's does. A popup runs its `enter` and `exit` transitions through `Transition` (section 6.2), with `aboutToShow`, `opened`, `aboutToHide` and `closed` at the moments Qt 6.11 shows; reduced motion finishes them at once.
 - **Basic style first.** It is the neutral base that other styles and custom controls build on. Real apps lean on it (HAL-C2 imports `QtQuick.Controls.Basic` 87 times and `QtQuick.Controls` twice).
 - **Material** follows for Android, after M3. Material attached properties are accepted as no-ops until then.
 - **Fusion and the native macOS style** are deferred.
@@ -1074,7 +1123,7 @@ An app that migrates to Ljós can bring its own Gherkin suite as acceptance evid
 
 **PR gate:** no scenario in `features/RATCHET` may regress.
 
-**As built: the gallery.** `mise run gallery` renders the qtdoc examples listed in `corpus/examples.json` with `ljos render` (R backend, headless, virtual clock), scores each against the picture `mise run gallery:reference` made with the local qml6, writes an HTML report and holds the floors in `corpus/expected.json`. An example that does not load scores 0 with its first error. The Qt pictures are not committed, so a checkout without them has nothing to hold and the task fails until `gallery:reference` has run. `mise run qttest` and `qttest:parity` run the QtTest suites.
+**As built: the gallery.** `mise run gallery` renders the qtdoc examples listed in `corpus/examples.json` with `ljos render` (R backend, headless, virtual clock), scores each against the picture `mise run gallery:reference` made with the local qml6, writes an HTML report and holds the floors in `corpus/expected.json`. An example that does not load scores 0 with its first error. The Qt pictures are not committed, so a checkout without them has nothing to hold and the task fails until `gallery:reference` has run. `mise run qttest` and `qttest:parity` run the QtTest suites. The reference harness draws the window's colour under an example whose root is not a window, because a picture of the content item does not include it; before that was done the references were mostly black and the scores were low for that reason alone.
 
 ---
 
@@ -1224,8 +1273,12 @@ Actions never quietly fall back to coordinates.
 - **Idle.** No timers and no polling. A request sets the wake flag. Subscriptions push only from events that already happen. **An idle app stays at 0 % CPU,** and with no client attached there is no MCP work at all.
 - **Accessibility tree on demand.** The a11y pass normally runs only for an active assistive technology. While a request is being served the inspector counts as one, and is released afterwards.
 - **Determinism.** With `--test-clock`, `app_advance` drives the virtual `Clock`. A BDD scenario and an agent session on the in-process transport have the same semantics.
-- **As built (M1, read-only).** `ljos run --mcp` serves `app_status`, `app_snapshot`, `app_find`, `app_inspect`, `app_screenshot`, `app_logs` and `app_metrics` and the resources `ljos://app/tree`, `ljos://app/logs` and `ljos://app/metrics`. Input, mutate and eval tools are not registered and the capability check refuses them. The server has a thread of its own that sleeps until a client writes; it reaches the Engine through an inbox of 16 that is its own, not a `UiMsg` variant, and wakes the UI thread once per call. Capture is one step; only rendering the outline yields. Screenshots are drawn by the R backend on the UI thread. The transport is HTTP on a loopback port of the system's choosing; the token is in `target/ljos/mcp-<pid>.json` below the directory `ljos run` started in, and a process killed by a signal leaves the file until the next start there. `--mcp-bind`, `--mcp-insecure-lan` and a Unix-socket option are not in the CLI yet. The `mcp` feature is off by default, and a test proves the default shell links no `rmcp`.
+- **As built (M1, read-only).** `ljos run --mcp` serves `app_status`, `app_snapshot`, `app_find`, `app_inspect`, `app_screenshot`, `app_logs` and `app_metrics` and the resources `ljos://app/tree`, `ljos://app/logs` and `ljos://app/metrics`. Input, mutate and eval tools are not registered and the capability check refuses them. The server has a thread of its own that sleeps until a client writes; it reaches the Engine through an inbox of 16 that is its own, not a `UiMsg` variant, and wakes the UI thread once per call. Capture is one step; only rendering the outline yields. Screenshots are drawn by the R backend on the UI thread. The transport is HTTP on a loopback port of the system's choosing; the token is in `target/ljos/mcp-<pid>.json` below the directory `ljos run` started in, and a process killed by a signal leaves the file until the next start there. The `mcp` feature is off by default, and a test proves the default shell links no `rmcp`.
 - **As built: `top`.** `ljos run --top` shows the last frame's time per lane and its owners. The host hands the overlay the report of each frame the scene ran anyway, so it asks for no frame and holds no timer; hidden, it records nothing. Lanes cover scheduled jobs (creation, inbox, inspector), not the synchronous binding, layout and paint stages, which show in the frame time only.
+- **As built (M2): input, mutate and eval.** `--mcp=inspect,input,mutate,eval` grants capabilities at launch and the server refuses what was not granted. `app_click`, `app_type`, `app_press`, `app_scroll` and `app_touch` are made into the events a device sends and given to the scene's router; `app_set_property` and `app_invoke` go through the engine as a script's write and call do; `app_eval` runs in the JS host with a time limit. Each act answers once the frame has settled, with the difference between the outline before and after. `app_batch` runs steps until the first error, `app_inspect` reports what a property depends on, and `app_reload` flushes the file watcher and answers `failed` with the compiler's message when the files do not compile. A client waiting for a reload sleeps on the reload feed and wakes nothing. `--mcp-bind`, `--mcp-insecure-lan` and a 0600 Unix socket are in the CLI; a socket path past the platform's limit is refused before a window opens.
+  - `app_eval` is refused under `--mcp-redact` and for targets with a hidden echo mode, but a value derived from a redacted one can still be read by script.
+  - `app_resize` changes the scene's size, not the platform window's. `app_advance` needs the virtual clock.
+  - Only the primary window is inspected; `app_status` says so and gives the number of windows.
 
 ### 19.6 Budgets
 
