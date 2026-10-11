@@ -33,6 +33,14 @@ jobs:
       # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
       # Font discovery links fontconfig on Linux (the test fonts themselves are in the repository).
       - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev pkg-config
+      # The front end reads QML against a table of Qt's types that is generated from an installed
+      # Qt's qmldir and .qmltypes files and never committed (ARCHITECTURE.md D1). Without it no
+      # QtQuick type resolves, so the job installs the Qt the table is written for and generates it.
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.11.2"
+          cache: true
+      - run: mise run types -- --qt "$QT_ROOT_DIR/qml"
       - run: mise run check
       - run: mise run test
       - run: df -h /
