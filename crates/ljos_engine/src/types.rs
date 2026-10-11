@@ -21,12 +21,13 @@
 //! | `vector2d` | the same, `"x,y"`, a `point`, a longer vector (cut short) | |
 //! | `vector3d`/`vector4d`/`quaternion` | the same, numbers in a string | |
 //! | `font` | fonts | |
-//! | object types | objects, `null`, `undefined` (as `null`) | the engine checks the class |
+//! | object types | objects, `null` | the engine checks the class |
 //! | `list<T>` | lists, a single object (a list of one), `null` (empty) | |
 //! | enums | numbers (a real is rounded), bools, the name of a key | the engine looks the key up in the property's type ([`crate::MetaObject::coerce_enum`]); the value is the number |
 //!
-//! `undefined` is rejected everywhere but `var` and object types, matching
-//! Qt's "Unable to assign [undefined] to …". The `null`-to-`string` and
+//! `undefined` is rejected everywhere but `var`, matching Qt's "Unable to
+//! assign [undefined] to …"; a property that can be taken back never gets
+//! here with it (`crate::reset`). The `null`-to-`string` and
 //! `null`-to-number cases are recorded as to be verified against Qt.
 
 use std::sync::Arc;
@@ -64,6 +65,10 @@ pub enum TypeTag {
     /// holds one of the enum's numbers, and reads as a number; the enum is
     /// looked up in the type of the object that has the property.
     Enum(Atom),
+    /// Flags, by the name of their enum: `ClosePolicy`. As [`TypeTag::Enum`],
+    /// but the number is any combination of the keys' numbers, and a string
+    /// may name several (`"CloseOnEscape|CloseOnPressOutside"`).
+    Flags(Atom),
     /// A grouped property (`border` in `border.width`); the group's type.
     Group(Atom),
     /// No value (method returns).
@@ -90,7 +95,9 @@ impl TypeTag {
             TypeTag::Quaternion => "quaternion".into(),
             TypeTag::Url => "url".into(),
             TypeTag::Object(None) => "QtObject".into(),
-            TypeTag::Object(Some(n)) | TypeTag::Enum(n) | TypeTag::Group(n) => n.to_string(),
+            TypeTag::Object(Some(n)) | TypeTag::Enum(n) | TypeTag::Flags(n) | TypeTag::Group(n) => {
+                n.to_string()
+            }
             TypeTag::List(None) => "list".into(),
             TypeTag::List(Some(n)) => format!("list<{n}>"),
             TypeTag::Void => "void".into(),
@@ -151,7 +158,7 @@ impl TypeTag {
             TypeTag::Url => Value::Url(Atom::EMPTY),
             TypeTag::Object(_) => Value::Null,
             TypeTag::List(_) => Value::List(Arc::default()),
-            TypeTag::Enum(_) => Value::Enum(EnumValue::default()),
+            TypeTag::Enum(_) | TypeTag::Flags(_) => Value::Enum(EnumValue::default()),
         }
     }
 
@@ -164,7 +171,7 @@ impl TypeTag {
                 to: self.name(),
             })
         };
-        if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var | TypeTag::Object(_)) {
+        if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var) {
             return fail();
         }
         let numeric = |v: &Value| match v {
@@ -283,7 +290,6 @@ impl TypeTag {
             },
             TypeTag::Object(_) => match v {
                 Value::Object(_) | Value::Null => v.clone(),
-                Value::Undefined => Value::Null,
                 _ => return fail(),
             },
             TypeTag::List(_) => match v {
@@ -292,7 +298,7 @@ impl TypeTag {
                 Value::Null => Value::List(Arc::default()),
                 _ => return fail(),
             },
-            TypeTag::Enum(_) => match v {
+            TypeTag::Enum(_) | TypeTag::Flags(_) => match v {
                 Value::Enum(_) => v.clone(),
                 Value::Int(_) | Value::Real(_) => Value::Enum(EnumValue {
                     ty: 0,
@@ -419,6 +425,11 @@ impl QmlValue for Option<ObjectId> {
         self.map_or(Value::Null, Value::Object)
     }
     fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        // A property refuses `undefined`; an argument or a value read out
+        // of a `var` that holds none is no object.
+        if matches!(v, Value::Undefined) {
+            return Ok(None);
+        }
         Ok(Self::type_tag().coerce(v)?.as_object())
     }
 }

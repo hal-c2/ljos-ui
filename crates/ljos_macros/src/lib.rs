@@ -27,8 +27,14 @@
 //! through), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
 //! field: the property holds a key of that enum of the type, one of those
 //! `enums` lists or an inherited one; QML may then give the key by name, and
-//! what is neither a key's name nor a number is refused). Field names are
-//! exposed in camelCase unless renamed.
+//! what is neither a key's name nor a number is refused; `"Qt.Name"` is an
+//! enum of the `Qt` namespace, which no type lists), `flags = "Name"` (as
+//! `enumeration`, for a property that holds several keys at once: QML may
+//! give them in one string, `"A|B"`), `reset` (assigning `undefined` takes
+//! the property back to the value a new object has, and it counts as never
+//! set) and `reset = expr` (it takes the property back as that
+//! `ljos_engine::Reset` says: `reset = Reset::Follow(margins)`). Field names
+//! are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -46,6 +52,13 @@
 //! Exposed methods take `&self`, `&mut self`, or a `cx: &Cx` first
 //! parameter, never both a receiver and a `Cx` (see `ljos_engine::Cx`).
 //! All take `name = "..."` to override the camelCase name.
+//!
+//! # `#[qml_singleton]`
+//!
+//! On a struct that derives `QmlObject`: the type is a singleton, one
+//! object per engine, made when a script first reads its name. It is
+//! registered with `Engine::register_singleton`. `scope = "engine"` says
+//! the same; `scope = "window"` is not built.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -63,6 +76,74 @@ pub fn derive_qml_object(input: TokenStream) -> TokenStream {
     derive(&input)
         .unwrap_or_else(Error::into_compile_error)
         .into()
+}
+
+#[proc_macro_attribute]
+pub fn qml_singleton(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item2: TokenStream2 = item.clone().into();
+    let input = parse_macro_input!(item as DeriveInput);
+    singleton(attr.into(), &input)
+        .map(|imp| quote!(#item2 #imp))
+        .unwrap_or_else(|e| {
+            // The struct stays, so one mistake is one error.
+            let e = e.into_compile_error();
+            quote!(#item2 #e)
+        })
+        .into()
+}
+
+fn singleton(attr: TokenStream2, input: &DeriveInput) -> Result<TokenStream2> {
+    struct Scope(Option<LitStr>);
+    impl Parse for Scope {
+        fn parse(input: ParseStream) -> Result<Self> {
+            if input.is_empty() {
+                return Ok(Scope(None));
+            }
+            let key: Ident = input.parse()?;
+            if key != "scope" {
+                return Err(Error::new(
+                    key.span(),
+                    "#[qml_singleton] takes only `scope = \"engine\"`",
+                ));
+            }
+            input.parse::<syn::Token![=]>()?;
+            let value: LitStr = input.parse()?;
+            if !input.is_empty() {
+                return Err(input.error("unexpected tokens after the scope"));
+            }
+            Ok(Scope(Some(value)))
+        }
+    }
+    if !matches!(input.data, Data::Struct(_)) {
+        return Err(Error::new(
+            input.ident.span(),
+            "#[qml_singleton] goes on a struct that derives QmlObject",
+        ));
+    }
+    let Scope(scope) = syn::parse2(attr)?;
+    match scope.as_ref().map(LitStr::value).as_deref() {
+        None | Some("engine") => {}
+        Some("window") => {
+            return Err(Error::new(
+                scope.span(),
+                "a singleton per window is not built yet: only `scope = \"engine\"` \
+                 (the default) is supported",
+            ));
+        }
+        Some(other) => {
+            return Err(Error::new(
+                scope.span(),
+                format!("unknown singleton scope \"{other}\": expected \"engine\""),
+            ));
+        }
+    }
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics ::ljos_engine::QmlSingleton for #name #ty_generics #where_clause {
+            const SCOPE: ::ljos_engine::SingletonScope = ::ljos_engine::SingletonScope::Engine;
+        }
+    })
 }
 
 #[proc_macro_attribute]
@@ -126,6 +207,10 @@ struct FieldAttrs {
     skip: bool,
     rename: Option<String>,
     enumeration: Option<String>,
+    /// With `enumeration`: it was written `flags = "Name"`.
+    flags: bool,
+    /// `reset` or `reset = expr`: what `undefined` does to the property.
+    reset: Option<Option<syn::Expr>>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -182,11 +267,21 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.skip = true;
             } else if p.is_ident("rename") {
                 f.rename = Some(m.value()?.parse::<LitStr>()?.value());
-            } else if p.is_ident("enumeration") {
+            } else if p.is_ident("enumeration") || p.is_ident("flags") {
+                if f.enumeration.is_some() {
+                    return Err(m.error("a property holds one enum: `enumeration` or `flags`"));
+                }
+                f.flags = p.is_ident("flags");
                 f.enumeration = Some(m.value()?.parse::<LitStr>()?.value());
+            } else if p.is_ident("reset") {
+                f.reset = Some(if m.input.peek(syn::Token![=]) {
+                    Some(m.value()?.parse::<syn::Expr>()?)
+                } else {
+                    None
+                });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration",
+                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset",
                 ));
             }
             Ok(())
@@ -300,6 +395,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                     "a group has no change signal; put `notify` on the group type's fields",
                 ));
             }
+            if a.reset.is_some() {
+                return Err(Error::new(
+                    ident.span(),
+                    "a group is not taken back whole; put `reset` on the group type's fields",
+                ));
+            }
             let get = format_ident!("__qml_group_{}", ident);
             let get_mut = format_ident!("__qml_group_mut_{}", ident);
             accessors.push(quote! {
@@ -342,7 +443,11 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                 }
                 // The field keeps the number: the engine has turned a key's
                 // name into it before the setter runs.
-                quote!(#e::TypeTag::Enum(#e::Atom::intern(#enumeration)))
+                if a.flags {
+                    quote!(#e::TypeTag::Flags(#e::Atom::intern(#enumeration)))
+                } else {
+                    quote!(#e::TypeTag::Enum(#e::Atom::intern(#enumeration)))
+                }
             }
             None => quote!(<#fty as #e::QmlValue>::type_tag()),
         };
@@ -351,6 +456,11 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         });
         if let Some(append) = &a.append {
             builder.push(quote!(.list_append(#append)));
+        }
+        match &a.reset {
+            Some(Some(reset)) => builder.push(quote!(.reset(#reset))),
+            Some(None) => builder.push(quote!(.reset(#e::Reset::Default))),
+            None => {}
         }
         if a.list {
             // The engine appends to the field where it is, so that adding

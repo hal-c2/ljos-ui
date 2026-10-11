@@ -196,6 +196,10 @@ pub struct Font {
     pub strikeout: bool,
     pub letter_spacing: f64,
     pub word_spacing: f64,
+    /// Ours, not Qt's: whether the text grows with the system's text size
+    /// (`Qt.styleHints.accessibility.fontScale`). The sizes above stay as
+    /// written either way; the scale is applied where text is laid out.
+    pub scale_with_system: bool,
 }
 
 impl Default for Font {
@@ -210,6 +214,7 @@ impl Default for Font {
             strikeout: false,
             letter_spacing: 0.0,
             word_spacing: 0.0,
+            scale_with_system: true,
         }
     }
 }
@@ -309,6 +314,7 @@ impl Value {
                     "strikeout" => f.strikeout = v.to_boolean(),
                     "letterSpacing" => f.letter_spacing = n,
                     "wordSpacing" => f.word_spacing = n,
+                    "scaleWithSystem" => f.scale_with_system = v.to_boolean(),
                     _ => return None,
                 }
                 Some(Value::Font(Arc::new(f)))

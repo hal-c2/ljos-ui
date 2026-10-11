@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_ir::{CompIdx, CompiledFile, ComponentKind, FnIndex, ImportSource};
-use ljos_js::{Bytecode, FnId};
+use ljos_js::{Bytecode, FnId, JsValue};
 
 use crate::atom::Atom;
 use crate::engine::Engine;
@@ -213,6 +213,10 @@ pub(crate) struct LoadedFile {
     /// host cannot unload a module or load one name twice, so the script
     /// of a reloaded file goes by a name with this in it.
     pub(crate) epoch: Cell<u64>,
+    /// Which text a script handed over this is (`Qt.createQmlObject`); 0
+    /// for a file. Two texts may be given one address, and a module name
+    /// is used once.
+    pub(crate) text: Cell<u64>,
 }
 
 impl LoadedFile {
@@ -234,6 +238,7 @@ impl LoadedFile {
             tier0,
             tier1,
             epoch: Cell::new(0),
+            text: Cell::new(0),
         }
     }
 
@@ -270,9 +275,10 @@ impl LoadedFile {
     fn load_module(&self, engine: &Engine) -> Result<Vec<Option<FnId>>, EngineError> {
         let js = engine.js()?;
         // Module names must be unique per host; the key is.
-        let name = match self.epoch.get() {
-            0 => format!("{}.qml.js", self.key),
-            n => format!("{}.qml.js?generation={n}", self.key),
+        let name = match (self.text.get(), self.epoch.get()) {
+            (0, 0) => format!("{}.qml.js", self.key),
+            (0, n) => format!("{}.qml.js?generation={n}", self.key),
+            (t, _) => format!("{}.qml.js?text={t}", self.key),
         };
         let handle = match &self.bytecode {
             Some(b) => js.host.load_module_bytecode(b),
@@ -285,6 +291,16 @@ impl LoadedFile {
         js.lines
             .borrow_mut()
             .add(&handle.name, &self.url, &self.ir.js.source);
+        // A module that names `Qt` has its own, which reads a relative
+        // address from this file (incubator/dynamic.rs).
+        if let Some(at) = handle.function(crate::incubator::dynamic::AT_EXPORT) {
+            js.host
+                .call(at, &[JsValue::String(self.url.to_string())])
+                .map_err(|e| {
+                    engine.report_js_fault(&e);
+                    EngineError::Js(e.to_string())
+                })?;
+        }
         Ok(self
             .ir
             .js
@@ -326,6 +342,12 @@ fn tier0_table(ir: &CompiledFile) -> Vec<Option<Tier0>> {
         let params: Vec<&str> = params.split(',').map(str::trim).collect();
         let mut segs = expr.split('.');
         let Some(first) = segs.next() else { continue };
+        // The name of a singleton, as the compiler writes it: the path
+        // starts at its object.
+        let first = first
+            .strip_prefix("__ljos_single(")
+            .and_then(|f| f.strip_suffix(')'))
+            .unwrap_or(first);
         let Some(param) = params.iter().position(|p| *p == first) else {
             continue;
         };
@@ -360,6 +382,8 @@ impl Engine {
         let mut l = self.inner.loader.borrow_mut();
         l.source = Some(Rc::new(source));
         l.files.clear();
+        drop(l);
+        self.singletons_sources_changed();
     }
 
     /// `url` as a key of the component source.
@@ -422,6 +446,7 @@ impl Engine {
         let url = source.url(key);
         for import in &ir.imports {
             if let ImportSource::Module(uri) = &import.source
+                && !import.in_project
                 && !self.has_module(uri)
             {
                 return Err(EngineError::Load(format!(

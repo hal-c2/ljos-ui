@@ -179,6 +179,13 @@ impl ObjectHeader {
         self.assigned[word] |= 1 << bit;
     }
 
+    pub(crate) fn clear_assigned(&mut self, prop: PropIndex) {
+        let (word, bit) = (prop.0 as usize / 64, prop.0 % 64);
+        if let Some(w) = self.assigned.get_mut(word) {
+            *w &= !(1 << bit);
+        }
+    }
+
     pub(crate) fn is_assigned(&self, prop: PropIndex) -> bool {
         let (word, bit) = (prop.0 as usize / 64, prop.0 % 64);
         self.assigned.get(word).is_some_and(|w| w & (1 << bit) != 0)

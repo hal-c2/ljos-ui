@@ -14,9 +14,9 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentTargetPropertyIdentifier, CallExpression, ChainExpression, Expression,
     IdentifierReference, NewExpression, ObjectProperty, Program, SimpleAssignmentTarget, Statement,
-    StaticMemberExpression, TSAsExpression, TSNonNullExpression, TSSatisfiesExpression,
-    TSTypeAnnotation, TSTypeAssertion, TSTypeParameterDeclaration, TSTypeParameterInstantiation,
-    TaggedTemplateExpression,
+    StaticMemberExpression, StringLiteral, TSAsExpression, TSNonNullExpression,
+    TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion, TSTypeParameterDeclaration,
+    TSTypeParameterInstantiation, TaggedTemplateExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
@@ -163,7 +163,9 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
     };
     let wrapped = format!("{prefix}{text}{suffix}");
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, &wrapped, SourceType::ts()).parse();
+    // The script is a piece of a QML document, where a string literal may
+    // go on over the end of a line.
+    let parsed = Parser::new(&allocator, &wrapped, SourceType::ts()).parse_qml_script();
     if let Some(error) = parsed.diagnostics.first() {
         return Err(error.message.to_string());
     }
@@ -173,6 +175,7 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
     let wrapper = wrapper_scope(program, form);
     let mut reader = Reader {
         scoping,
+        source: &wrapped,
         offset: prefix.len() as u32,
         wrapper,
         args,
@@ -266,6 +269,8 @@ fn arg_value(expression: &Expression<'_>) -> ArgValue {
 
 struct Reader<'s, 'r> {
     scoping: &'s Scoping,
+    /// The wrapped program's text.
+    source: &'s str,
     /// Where the script's text starts in the wrapped program.
     offset: u32,
     wrapper: Option<ScopeId>,
@@ -436,6 +441,49 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
         self.record(it, false);
     }
 
+    // A string that goes on over the end of a line is QML's, not
+    // JavaScript's: the module the engine runs needs the break written as an
+    // escape. It is one line feed whatever the file ends its lines with. The
+    // escape is followed by a line continuation, so that what comes after
+    // the string stays on the line it has in the document.
+    fn visit_string_literal(&mut self, it: &StringLiteral<'a>) {
+        if it.span.start < self.offset {
+            return;
+        }
+        let raw = &self.source[it.span.start as usize..it.span.end as usize];
+        if !raw.contains(['\n', '\r']) {
+            return;
+        }
+        let bytes = raw.as_bytes();
+        let mut at = 0;
+        while at < bytes.len() {
+            let len = match bytes[at] {
+                // An escape keeps what follows it: `\` and a break join
+                // the two lines.
+                b'\\' => {
+                    at += 2;
+                    if bytes.get(at - 1) == Some(&b'\r') && bytes.get(at) == Some(&b'\n') {
+                        at += 1;
+                    }
+                    continue;
+                }
+                b'\r' if bytes.get(at + 1) == Some(&b'\n') => 2,
+                b'\r' | b'\n' => 1,
+                _ => {
+                    at += 1;
+                    continue;
+                }
+            };
+            let start = it.span.start + at as u32;
+            let span = self.local(Span::new(start, start + len));
+            self.analysis.edits.push(Edit {
+                span,
+                text: "\\n\\\n".to_owned(),
+            });
+            at += len as usize;
+        }
+    }
+
     fn visit_object_property(&mut self, it: &ObjectProperty<'a>) {
         if it.shorthand
             && let Expression::Identifier(id) = &it.value
@@ -587,6 +635,25 @@ mod tests {
             .into_iter()
             .map(|free| format!("{}{:?}", free.name, free.chain))
             .collect()
+    }
+
+    #[test]
+    fn a_line_break_in_a_string_is_written_as_an_escape() {
+        let edited = |text: &str| {
+            let analysis = analyze(text, Form::Expression, &[]).unwrap();
+            apply(text, &analysis.edits)
+        };
+        assert_eq!(edited("\"a\nb\" + 'c\r\nd'"), "\"a\\n\\\nb\" + 'c\\n\\\nd'");
+        assert_eq!(edited("\"a\rb\""), "\"a\\n\\\nb\"");
+        // A line continuation and a template are JavaScript already.
+        assert_eq!(edited("\"a\\\nb\""), "\"a\\\nb\"");
+        assert_eq!(edited("\"a\\\r\nb\""), "\"a\\\r\nb\"");
+        assert_eq!(edited("`a\nb`"), "`a\nb`");
+        // An escaped backslash does not escape the break after it.
+        assert_eq!(edited("\"a\\\\\nb\""), "\"a\\\\\\n\\\nb\"");
+        // The lines after the string keep their numbers.
+        let text = "\"a\nb\" +\nwidth";
+        assert_eq!(edited(text).lines().count(), text.lines().count());
     }
 
     #[test]

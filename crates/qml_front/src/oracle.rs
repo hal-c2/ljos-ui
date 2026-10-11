@@ -55,6 +55,13 @@ pub trait TypeOracle {
     /// Whether `Type.name` is an enum of the type, of `Type.name.Key`.
     fn has_enum(&self, ty: Self::Type, name: &str) -> bool;
 
+    /// Whether a property that holds the enum `name` of the type holds
+    /// several keys at once (`Qt.Alignment`), so that a string written for
+    /// it may name more than one. An oracle that cannot tell says it may.
+    fn enum_is_flags(&self, _ty: Self::Type, _name: &str) -> bool {
+        true
+    }
+
     /// The properties whoever makes an object of the type has to set.
     fn required(&self, ty: Self::Type) -> Vec<String>;
 
@@ -249,6 +256,10 @@ impl TypeOracle for QtTypeOracle {
             ty = found.prototype();
         }
         false
+    }
+
+    fn enum_is_flags(&self, ty: QtType, name: &str) -> bool {
+        ty.0.enum_is_flags(name).unwrap_or(false)
     }
 
     fn required(&self, ty: QtType) -> Vec<String> {

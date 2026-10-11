@@ -947,6 +947,38 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(())
     }
 
+    /// Takes a property back to a value nothing gave it (`x = undefined` on
+    /// a property with a reset): as an imperative write, the binding on the
+    /// top layer goes and observers are told if the value changed, but the
+    /// provenance is [`Provenance::Default`] again, so what follows the
+    /// property only while it is unset ([`Graph::provenance_tracked`])
+    /// follows it again.
+    pub fn reset(&self, n: NodeId, v: V) -> Result<(), ReactiveError> {
+        let dropped = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            if !i.nodes.contains_key(n) {
+                return Err(ReactiveError::DeadNode(n));
+            }
+            let was_unset = i.unset(n);
+            let Kind::Property(p) = &mut i.nodes[n].kind else {
+                return Err(ReactiveError::NotAProperty(n));
+            };
+            let top = p.top_mut();
+            let dropped = std::mem::replace(&mut top.content, Content::Value(None));
+            top.provenance = Provenance::Default;
+            p.animated = false;
+            i.make_plain(n);
+            i.set_value(n, v);
+            i.tell_if_set(n, was_unset);
+            dropped
+        };
+        // Outside the borrow: dropping a binding may run the embedder's code.
+        drop(dropped);
+        self.flush_if_idle();
+        Ok(())
+    }
+
     /// Changes the value of a plain property where it sits, and notifies as
     /// a write does. What it is for: a value that is costly to copy (a long
     /// list) and changes a little (one more item); [`Graph::write`] needs

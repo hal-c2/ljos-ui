@@ -1,0 +1,33 @@
+module Ljos
+	ErrorBoundary LjosErrorBoundary
+	type LjosErrorBoundary ErrorBoundary
+		prototype QQuickItem
+		default content
+		prop content QQmlComponent pointer
+		prop fallback QQmlComponent pointer
+		prop item QObject readonly pointer
+		prop failed bool readonly
+		prop fault LjosFault readonly pointer
+		prop catchExceptions bool
+		prop maxRestarts int
+		prop within int
+		prop restarts int readonly
+		signal contentChanged
+		signal fallbackChanged
+		signal itemChanged
+		signal failedChanged
+		signal catchExceptionsChanged
+		signal maxRestartsChanged
+		signal withinChanged
+		signal restartsChanged
+		method retry
+	type LjosFault
+		prototype QObject
+		prop kind QString readonly
+		prop message QString readonly
+		prop file QUrl readonly
+		prop line int readonly
+		signal kindChanged
+		signal messageChanged
+		signal fileChanged
+		signal lineChanged

@@ -8,7 +8,7 @@
 //! of an error the caller has to route: a binding that throws keeps its
 //! value, a handler that throws is skipped, as in Qt.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use ljos_js::rquickjs;
 use ljos_js::{
     HostError, HostFn, HostObjects, HostTypeId, JsConfig, JsFault, JsHost, JsRef, JsValue,
-    MethodDef, PropDef, Scope, SignalDef, TypeDef,
+    MethodDef, PropDef, Scope, SignalDef, Slice, TypeDef,
 };
 use slotmap::{Key, KeyData};
 
@@ -86,7 +86,14 @@ impl LineTable {
                     .get(i + 2)
                     .is_some_and(|b| b.trim_start().starts_with("return ("))
                     && all.get(i + 3).is_some_and(|c| c.trim() == "}");
-                let first = if wrapped { i + 3 } else { i + 2 };
+                // A method (`// File.qml:L:C Type.name()`) is always
+                // wrapped as `return (function name(…) {`, on however
+                // many lines: its first line is the `return` line.
+                let method = rest.ends_with("()")
+                    && all
+                        .get(i + 2)
+                        .is_some_and(|b| b.trim_start().starts_with("return (function "));
+                let first = if wrapped || method { i + 3 } else { i + 2 };
                 lines.push((first as u32, line));
             }
         }
@@ -94,7 +101,7 @@ impl LineTable {
             .insert(module.to_owned(), (url.to_owned(), lines));
     }
 
-    fn map(&self, module: &str, js_line: u32) -> Option<(String, u32)> {
+    pub(crate) fn map(&self, module: &str, js_line: u32) -> Option<(String, u32)> {
         let (url, lines) = self.modules.get(module)?;
         let i = lines.partition_point(|(js, _)| *js <= js_line);
         let (js, qml) = lines.get(i.checked_sub(1)?)?;
@@ -111,9 +118,20 @@ pub(crate) struct JsState {
     types: RefCell<HashMap<usize, (MetaRef, HostTypeId)>>,
     conns: RefCell<Vec<JsConn>>,
     pub(crate) lines: Rc<RefCell<LineTable>>,
+    /// The budget of one dispatch when the host asked for another than the
+    /// configured one ([`Engine::set_js_dispatch_budget`]).
+    budget: Cell<Option<Slice>>,
+    /// The component instance whose script is running, for what a script
+    /// makes in the place it runs in (incubator/dynamic.rs).
+    pub(crate) calling: Cell<Option<crate::incubator::dynamic::Calling>>,
 }
 
 impl JsState {
+    /// The budget of one dispatch into JS.
+    fn slice(&self) -> Slice {
+        self.budget.get().unwrap_or(self.host.config().slice)
+    }
+
     /// Forgets destroyed objects: their wrappers and JS connections.
     pub(crate) fn forget(&self, objects: &[ObjectId]) {
         for o in objects {
@@ -225,6 +243,27 @@ impl EngineHost {
     }
 }
 
+/// The name of a value type in the error a script catches when an
+/// assignment is refused: Qt's engine names the class that holds the
+/// value, not the QML type. None for a type it names as this engine does.
+fn class_name(ty: &TypeTag) -> Option<&'static str> {
+    Some(match ty {
+        TypeTag::Real => "double",
+        TypeTag::String => "QString",
+        TypeTag::Color => "QColor",
+        TypeTag::Url => "QUrl",
+        TypeTag::Font => "QFont",
+        TypeTag::Point => "QPointF",
+        TypeTag::Size => "QSizeF",
+        TypeTag::Rect => "QRectF",
+        TypeTag::Vector2d => "QVector2D",
+        TypeTag::Vector3d => "QVector3D",
+        TypeTag::Vector4d => "QVector4D",
+        TypeTag::Quaternion => "QQuaternion",
+        _ => return None,
+    })
+}
+
 fn host_err(e: EngineError) -> HostError {
     HostError::msg(e.to_string())
 }
@@ -308,7 +347,18 @@ impl HostObjects for EngineHost {
         engine.tier1_spy(id, p, &v);
         engine
             .write(id, p, v, crate::WriteKind::Imperative)
-            .map_err(host_err)?;
+            .map_err(|e| match e {
+                // What a script catches, as Qt's engine throws it.
+                EngineError::ReadOnly(name) => {
+                    HostError::type_error(format!("Cannot assign to read-only property \"{name}\""))
+                }
+                EngineError::Convert(c) => HostError::msg(format!(
+                    "Cannot assign {} to {}",
+                    c.from,
+                    class_name(&ty).unwrap_or(&c.to)
+                )),
+                e => host_err(e),
+            })?;
         if engine.inner.reload.tracking.get() {
             engine.reload_note_assigned(id, p);
         }
@@ -338,10 +388,18 @@ impl HostObjects for EngineHost {
             .iter()
             .map(|a| engine.js_to_value(scope, a.clone(), &TypeTag::Var))
             .collect();
-        let out = engine
-            .invoke(id, MethodIndex(method), &vals)
-            .map_err(host_err)?;
-        Ok(engine.to_js(&out))
+        // An exception in a QML function called from JS is the caller's to
+        // catch: it is left pending instead of being logged where it left
+        // the function (see `Engine::eval_expr`).
+        let faults = &engine.inner.faults;
+        faults.thrown.set(false);
+        faults.propagate.set(true);
+        let out = engine.invoke(id, MethodIndex(method), &vals);
+        faults.propagate.set(false);
+        if faults.thrown.take() {
+            return Err(HostError::Js(rquickjs::Error::Exception));
+        }
+        Ok(engine.to_js(&out.map_err(host_err)?))
     }
 
     fn emit<'js>(
@@ -379,6 +437,8 @@ impl HostObjects for EngineHost {
         let f = func.clone();
         let handler = move |e: &Engine, args: &[Value]| {
             let args: Vec<JsValue> = args.iter().map(|a| e.to_js(a)).collect();
+            // A fault in it is one of the object it was connected for.
+            let _origin = e.origin(receiver.or(Some(sender)));
             e.run_js("signal handler", |s| s.call_ref(&f, &this, &args));
         };
         let id = match receiver {
@@ -491,10 +551,26 @@ impl Engine {
             types: RefCell::new(HashMap::new()),
             conns: RefCell::new(Vec::new()),
             lines,
+            budget: Cell::new(None),
+            calling: Cell::new(None),
         });
         *self.inner.js.borrow_mut() = Some(state.clone());
         self.install_globals(&state)?;
+        self.run_js_started();
         Ok(state)
+    }
+
+    /// The time one dispatch into JS may take from now on: over `soft` it
+    /// is logged, over `hard` the script is interrupted. A frame-driven
+    /// host keeps the default; a test runner whose test functions wait for
+    /// timers and animations inside one dispatch asks for more.
+    pub fn set_js_dispatch_budget(
+        &self,
+        soft: std::time::Duration,
+        hard: std::time::Duration,
+    ) -> Result<(), EngineError> {
+        self.js()?.budget.set(Some(Slice { soft, hard }));
+        Ok(())
     }
 
     /// Whether the JS host has been started.
@@ -515,7 +591,7 @@ impl Engine {
                 return None;
             }
         };
-        let slice = js.host.config().slice;
+        let slice = js.slice();
         match js.host.enter(label, slice, f) {
             Ok(v) => Some(v),
             Err(fault) => {
@@ -525,25 +601,11 @@ impl Engine {
         }
     }
 
-    pub(crate) fn report_js_fault(&self, fault: &JsFault) {
-        let msg = match fault {
-            JsFault::JsException {
-                message,
-                file: Some(file),
-                line: Some(line),
-                ..
-            } => format!("{file}:{line}: {message}"),
-            JsFault::JsException { message, .. } => message.clone(),
-            other => other.to_string(),
-        };
-        self.warn(msg);
-    }
-
     /// Evaluates a classic script in the global scope, for hosts and tests.
     /// Returns its completion value.
     pub fn eval_js(&self, source: &str) -> Result<Value, EngineError> {
         let js = self.js()?;
-        let slice = js.host.config().slice;
+        let slice = js.slice();
         js.host
             .enter("eval", slice, |s| {
                 let v: rquickjs::Value = s.ctx().eval(source)?;
@@ -750,9 +812,24 @@ impl Engine {
                 .attached_by_name(u64_to_obj(*o), module, name)
                 .map_or(JsValue::Undefined, |a| engine.to_js(&Value::Object(a))))
         });
+        let w = Rc::downgrade(&self.inner);
+        // The object the name of a singleton is, made on the first call:
+        // the script is given a number that stands for the type.
+        let single: HostFn = Rc::new(move |_scope, args| {
+            Ok(match (w.upgrade(), args.first()) {
+                (Some(inner), Some(JsValue::Number(n))) => {
+                    Engine::from_inner(inner).singleton_js(*n as usize)
+                }
+                (_, Some(other)) => other.clone(),
+                _ => JsValue::Undefined,
+            })
+        });
         let err = |e: JsFault| EngineError::Js(e.to_string());
         js.host
             .set_global_function("__ljos_attached", attached)
+            .map_err(err)?;
+        js.host
+            .set_global_function("__ljos_single", single)
             .map_err(err)?;
         js.host
             .set_global_function("__ljos_color", color)
@@ -778,8 +855,15 @@ impl Engine {
         // `qsTr` and its family, `String.prototype.arg`, `Qt.uiLanguage`,
         // `Qt.locale()`: see i18n.rs.
         self.install_i18n_globals(js)?;
-        let keys: Vec<String> = QT_ENUM_KEYS
+        // `Qt.createComponent`, `Qt.createQmlObject`, `Qt.resolvedUrl`:
+        // see incubator/dynamic.rs.
+        self.install_dynamic_globals(js)?;
+        // The enums by name first: a key the older tables also have is
+        // written again with the same number.
+        let keys: Vec<String> = crate::qt_enums::QT_ENUMS
             .iter()
+            .flat_map(|e| e.keys.iter())
+            .chain(QT_ENUM_KEYS)
             .chain(crate::qt_keys::QT_KEY_ENUMS)
             .map(|(k, v)| format!("{k}:{v}"))
             .collect();
@@ -832,6 +916,9 @@ pub(crate) const QT_ENUM_KEYS: &[(&str, i64)] = &[
     ("Unchecked", 0),
     ("PartiallyChecked", 1),
     ("Checked", 2),
+    // The modes of `Component.incubateObject`.
+    ("Asynchronous", 0),
+    ("Synchronous", 1),
     // Qt::MatchFlag, for `ComboBox.find`.
     ("MatchExactly", 0),
     ("MatchContains", 1),
@@ -866,7 +953,8 @@ pub(crate) const QT_ENUM_KEYS: &[(&str, i64)] = &[
     ("ImhEmailCharactersOnly", 0x20_0000),
     ("ImhUrlCharactersOnly", 0x40_0000),
     ("ImhLatinOnly", 0x80_0000),
-    ("ImhExclusiveInputMask", 0xffff_0000),
+    // Read as a 32-bit int in QML, so negative.
+    ("ImhExclusiveInputMask", -0x1_0000),
 ];
 
 /// The value of `Qt.<key>`, when it is an enum key.
@@ -876,6 +964,7 @@ pub(crate) fn qt_enum_key(key: &str) -> Option<i64> {
         .chain(crate::qt_keys::QT_KEY_ENUMS)
         .find(|(k, _)| *k == key)
         .map(|(_, v)| *v)
+        .or_else(|| crate::qt_enums::key(key))
 }
 
 /// The globals every QML file sees, written in JS because they are mostly

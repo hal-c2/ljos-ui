@@ -13,10 +13,10 @@ use std::rc::{Rc, Weak};
 use ljos_ir::{Arg, Binding, ExprId, Op, Tier1};
 use smallvec::SmallVec;
 
-use super::{Program, builtins, has_js, normal, ops};
+use super::{MethodFn, Program, builtins, has_js, normal, ops};
 use crate::engine::Engine;
 use crate::error::EngineError;
-use crate::ids::{ObjectId, PropIndex};
+use crate::ids::{MethodIndex, ObjectId, PropIndex};
 use crate::incubator::Instance;
 use crate::meta::PropertyFlags;
 use crate::value::{Color, Value};
@@ -213,6 +213,20 @@ impl Run<'_> {
                     }
                     write = Some((o, p, v));
                 }
+                Op::Invoke {
+                    dst,
+                    obj,
+                    name,
+                    base,
+                    count,
+                } => {
+                    let Value::Object(o) = r[usize::from(obj)] else {
+                        return None;
+                    };
+                    let from = usize::from(base);
+                    let v = self.invoke(o, self.name(name), &r[from..from + usize::from(count)])?;
+                    r[usize::from(dst)] = v;
+                }
                 Op::Return { src } => {
                     let value = std::mem::take(&mut r[usize::from(src)]);
                     // A JS value keeps its identity through the JS call
@@ -269,7 +283,9 @@ impl Run<'_> {
                 .e
                 .context_name(inst.context, name)
                 .map(|v| normal(self.e, v)),
-            Arg::Type(_) | Arg::Singleton(_) | Arg::Namespace { .. } | Arg::Holder { .. } => None,
+            // Made here if this is the first read.
+            Arg::Singleton(ty) => self.e.singleton_object(ty).map(Value::Object),
+            Arg::Type(_) | Arg::Namespace { .. } | Arg::Holder { .. } => None,
         }
     }
 
@@ -387,28 +403,77 @@ impl Run<'_> {
         (!meta.property(p)?.flags.contains(PropertyFlags::GROUP)).then_some(p)
     }
 
+    /// The function of a script `o` has by `name`, as it is installed.
+    fn script_method(&self, o: ObjectId, name: &str) -> Option<(MethodIndex, Rc<MethodFn>)> {
+        let store = self.e.inner.store.borrow();
+        let h = store.objects.get(o)?;
+        if h.meta.property_index(name).is_some() {
+            return None;
+        }
+        let m = h.meta.method_index(name)?;
+        if h.meta.method(m)?.thunk.is_some() {
+            return None;
+        }
+        let f = h
+            .ext
+            .as_ref()?
+            .methods
+            .iter()
+            .find(|(i, _)| *i == m)
+            .map(|(_, f)| f.clone())?;
+        Some((m, f))
+    }
+
+    /// `o.name(args)` where that is a function with a program of its own
+    /// that writes nothing: the program's result. It reads what the JS
+    /// function would read, in its order, so stopping in it is stopping
+    /// here.
+    fn invoke(&self, o: ObjectId, name: &str, args: &[Value]) -> Option<Value> {
+        /// A function that calls itself goes on until JavaScript says so.
+        const MAX_DEPTH: u8 = 8;
+        if args.iter().any(has_js) {
+            return None;
+        }
+        let (m, f) = self.script_method(o, name)?;
+        let (inst, expr) = {
+            let methods = self.e.inner.tier1.methods.borrow();
+            let rec = methods.get(&(o, m))?;
+            if !std::ptr::addr_eq(Weak::as_ptr(&rec.f), Rc::as_ptr(&f)) {
+                return None;
+            }
+            (rec.weak.upgrade()?, rec.expr)
+        };
+        let file = &inst.file;
+        let p = file.tier1.by_expr.get(expr.index())?.as_ref()?;
+        if !p.pure || p.gave_up() {
+            return None;
+        }
+        let b = file.ir.expr(expr);
+        let t = b.tier1.as_ref()?;
+        let depth = &self.e.inner.tier1.invoking;
+        if depth.get() >= MAX_DEPTH {
+            return None;
+        }
+        depth.set(depth.get() + 1);
+        let done = Run {
+            e: self.e,
+            inst: &inst,
+            b,
+            t,
+            p,
+            args,
+        }
+        .run();
+        depth.set(depth.get() - 1);
+        let done = done?;
+        // A program that writes is not run: `pure` says it has no write.
+        done.write.is_none().then_some(done.value)
+    }
+
     /// Whether the function `o` has by `name` is `expr` of this file, the
     /// one whose body the program has in place of the call.
     fn guard(&self, o: ObjectId, name: &str, expr: ExprId) -> Option<()> {
-        let (m, f) = {
-            let store = self.e.inner.store.borrow();
-            let h = store.objects.get(o)?;
-            if h.meta.property_index(name).is_some() {
-                return None;
-            }
-            let m = h.meta.method_index(name)?;
-            if h.meta.method(m)?.thunk.is_some() {
-                return None;
-            }
-            let f = h
-                .ext
-                .as_ref()?
-                .methods
-                .iter()
-                .find(|(i, _)| *i == m)
-                .map(|(_, f)| f.clone())?;
-            (m, f)
-        };
+        let (m, f) = self.script_method(o, name)?;
         let methods = self.e.inner.tier1.methods.borrow();
         let rec = methods.get(&(o, m))?;
         let file = &self.inst.file;
@@ -519,6 +584,7 @@ fn field(v: &Value, name: &str) -> Option<Value> {
             "pixelSize" => Some(Value::Real(f64::from(f.pixel_size))),
             "letterSpacing" => d(f.letter_spacing),
             "wordSpacing" => d(f.word_spacing),
+            "scaleWithSystem" => Some(Value::Bool(f.scale_with_system)),
             _ => None,
         },
         Value::Color(c) => color_field(*c, name),

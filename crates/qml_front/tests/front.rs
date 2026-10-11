@@ -922,3 +922,44 @@ fn a_pragma_is_kept_in_the_summary() {
     assert!(project.summary("Bound").unwrap().is_bound);
     assert!(!project.summary("Unbound").unwrap().is_bound);
 }
+
+#[test]
+fn a_type_of_a_module_of_the_project_is_found_through_its_namespace() {
+    let mut project = project(&[
+        (
+            "Main",
+            "import QtQuick\nimport Kit as K\nItem { K.Badge {} }",
+        ),
+        ("kit/Badge", "import QtQuick\nItem {}"),
+    ]);
+    project.add_type("Kit", "Badge", "kit/Badge");
+    assert!(project.has_module("Kit"));
+    assert!(!project.has_module("QtQuick"));
+    let runtime = Runtime::new();
+    let types = Types::new(&project, &runtime, "Main");
+    let found = types.find(&["K", "Badge"]).expect("K.Badge");
+    assert_eq!(found.origin, Origin::Namespace);
+    assert!(
+        matches!(&found.kind, Kind::Component(key) if key.file == "kit/Badge"),
+        "{:?}",
+        found.kind
+    );
+    // The module was imported under a name only.
+    assert!(types.find(&["Badge"]).is_none());
+    assert!(types.find(&["K", "Nothing"]).is_none());
+}
+
+#[test]
+fn a_file_that_is_removed_is_forgotten_with_what_was_wrong_with_it() {
+    let mut project = Project::new();
+    project
+        .add("Good", "import QtQuick\nItem {}")
+        .expect("it parses");
+    assert!(project.add("Bad", "import QtQuick\nItem { ").is_err());
+    assert!(!project.diagnostics("Bad").is_empty());
+    project.remove("Bad");
+    project.remove("Good");
+    assert!(project.diagnostics("Bad").is_empty());
+    assert!(!project.has("Good"));
+    assert!(!project.has("Bad"));
+}

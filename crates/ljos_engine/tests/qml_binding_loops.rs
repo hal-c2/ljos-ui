@@ -612,16 +612,25 @@ Item {
         ljos_runtime::ProcId::new(0, 0),
     );
     let mut steps = 0;
+    let mut log = Vec::new();
     while matches!(job.step(&|| true), ljos_runtime::JobPoll::Yield) {
         steps += 1;
         assert!(steps < 100);
-        assert!(h.log().is_empty(), "nothing runs before it is whole");
+        let said = h.log();
+        // Loading, allocating and the four objects are a step each; the
+        // bindings are steps of their own after that.
+        assert!(
+            said.is_empty() || steps > 4,
+            "nothing runs before every object is applied: {said:?} in step {steps}"
+        );
+        log.extend(said);
     }
     assert!(steps > 1, "it was made in slices");
     let made = handle.result().unwrap().unwrap();
+    log.extend(h.log());
     // qml6 for the same component made with createObject().
     assert_eq!(
-        h.log(),
+        log,
         [
             "first",
             "width",

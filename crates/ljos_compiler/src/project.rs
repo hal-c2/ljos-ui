@@ -2,9 +2,10 @@
 //! them, and the runtime's types.
 
 use std::{
-    cell::OnceCell,
-    collections::{BTreeMap, HashSet},
+    cell::{Cell, OnceCell, RefCell},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use qml_front::{
@@ -32,6 +33,11 @@ pub struct Project<O> {
     /// Names only the context an instance is made in has at run time. Known
     /// once every file is in.
     dynamic: OnceCell<HashSet<String>>,
+    /// Per file, the functions of its root object another file may call
+    /// in place. Worked out when first asked for.
+    callable: RefCell<HashMap<String, Arc<Vec<String>>>>,
+    /// One of those is being worked out: it is not to ask for another.
+    summarising: Cell<bool>,
 }
 
 impl<O: TypeOracle> Project<O> {
@@ -41,7 +47,52 @@ impl<O: TypeOracle> Project<O> {
             sources: BTreeMap::new(),
             oracle,
             dynamic: OnceCell::new(),
+            callable: RefCell::new(HashMap::new()),
+            summarising: Cell::new(false),
         }
+    }
+
+    /// The functions of the root object of the file `key` that have a
+    /// tier-1 program which writes nothing: what a program of another file
+    /// may call in place, when the file is a singleton.
+    ///
+    /// A function that itself calls one of another file is left out, so
+    /// that what this says of a file depends on that file alone and not on
+    /// which file was compiled first.
+    pub(crate) fn pure_functions(&self, key: &str) -> Arc<Vec<String>> {
+        if self.summarising.get() {
+            return Arc::default();
+        }
+        if let Some(known) = self.callable.borrow().get(key) {
+            return known.clone();
+        }
+        self.summarising.set(true);
+        let compiled = crate::compile::compile_file(self, key);
+        self.summarising.set(false);
+        let mut pure: BTreeMap<&str, bool> = BTreeMap::new();
+        if let Ok(compiled) = &compiled
+            && let Some(root) = compiled
+                .file
+                .components
+                .first()
+                .and_then(|component| component.objects.first())
+        {
+            // In order: the last of a name is the one the object has.
+            for function in &root.functions {
+                let program = compiled.file.expr(function.expr).tier1.as_ref();
+                pure.insert(&function.name, program.is_some_and(|p| !p.writes()));
+            }
+        }
+        let names: Vec<String> = pure
+            .into_iter()
+            .filter(|(_, pure)| *pure)
+            .map(|(name, _)| name.to_string())
+            .collect();
+        let names = Arc::new(names);
+        self.callable
+            .borrow_mut()
+            .insert(key.to_string(), names.clone());
+        names
     }
 
     /// Adds the file `key` (its path from the root without `.qml`). A file
@@ -54,11 +105,41 @@ impl<O: TypeOracle> Project<O> {
         let _ = self.front.add(key, &source);
         self.sources.insert(key.to_string(), source);
         self.dynamic = OnceCell::new();
+        self.callable.get_mut().clear();
+    }
+
+    /// Forgets the file `key`. What a module was said to have stays said.
+    pub fn remove(&mut self, key: &str) {
+        self.front.remove(key);
+        self.sources.remove(key);
+        self.dynamic = OnceCell::new();
+        self.callable.get_mut().clear();
     }
 
     /// Says the module `uri` has the type `name`, which is the file `file`.
     pub fn add_type(&mut self, uri: &str, name: &str, file: &str) {
+        self.callable.get_mut().clear();
         self.front.add_type(uri, name, file);
+    }
+
+    /// What the `qmldir` file of the directory `dir` (a key, empty for the
+    /// root) says: the types of the module it names. One that names no
+    /// module says nothing a file needs to be told, as the files of a
+    /// directory are its types already. Add the files it names first.
+    pub fn add_qmldir(&mut self, dir: &str, text: &str) {
+        if let Some(module) = discover::qmldir(text) {
+            self.add_module(dir, &module);
+        }
+    }
+
+    fn add_module(&mut self, dir: &str, module: &Module) {
+        for ty in &module.types {
+            let file = join(dir, &ty.path);
+            let file = file.strip_suffix(".qml").unwrap_or(&file);
+            if self.front.has(file) {
+                self.add_type(&module.uri, &ty.name, file);
+            }
+        }
     }
 
     /// Every `.qml` file under `root`, and the modules its `qmldir` and
@@ -94,14 +175,8 @@ impl<O: TypeOracle> Project<O> {
             let Some(dir_key) = key(root, dir) else {
                 continue;
             };
-            for module in modules {
-                for ty in &module.types {
-                    let file = join(&dir_key, &ty.path);
-                    let file = file.strip_suffix(".qml").unwrap_or(&file);
-                    if project.front.has(file) {
-                        project.add_type(&module.uri, &ty.name, file);
-                    }
-                }
+            for module in &modules {
+                project.add_module(&dir_key, module);
             }
         }
         Ok(project)

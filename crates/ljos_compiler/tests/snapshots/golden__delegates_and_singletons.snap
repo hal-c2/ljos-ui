@@ -25,7 +25,7 @@ component c1 Rectangle (template of c0, delegate) id=Main.delegate signature=75c
     text := e3
 
 exprs
-  e0 property f0 scope=c1o0 at 10:16 params[S=ns S=Module("Styles")] args[] refs[S:singleton Styles/Theme]
+  e0 property f0 scope=c1o0 at 10:16 params[$s_S_Theme=singleton Styles/Theme] args[] refs[S:singleton Styles/Theme]
   e1 property f1 scope=c1o0 at 11:16 params[view=context c1.view else c0o0] args[] refs[view:context c1 else outer id c0o0]
   e2 property f2 scope=c1o0 at 12:17 params[modelData=context c1.modelData, $scope=c1o0] args[] refs[modelData:context c1, index:scope]
   e3 property f3 scope=c1o1 at 13:22 params[name=context c1.name] args[] refs[name:context c1]
@@ -35,8 +35,8 @@ module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
 
 // Main.qml:10:16 Rectangle.color
-export function f0(S) {
-  return (S.Theme.accent);
+export function f0($s_S_Theme) {
+  return (__ljos_single($s_S_Theme).accent);
 }
 
 // Main.qml:11:16 Rectangle.width

@@ -62,6 +62,8 @@ pub struct Property {
     pub is_readonly: bool,
     pub is_pointer: bool,
     pub is_required: bool,
+    /// Qt names a reset function: assigning `undefined` takes it back.
+    pub has_reset: bool,
 }
 
 #[derive(Debug, Default, Clone)]

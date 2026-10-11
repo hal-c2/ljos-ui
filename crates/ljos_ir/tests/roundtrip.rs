@@ -312,6 +312,13 @@ fn sample() -> CompiledFile {
                     val: 1,
                     group: Some((2, 0)),
                 },
+                Op::Invoke {
+                    dst: 1,
+                    obj: 0,
+                    name: 1,
+                    base: 1,
+                    count: 1,
+                },
                 Op::Return { src: 1 },
             ],
         }),
@@ -325,6 +332,7 @@ fn sample() -> CompiledFile {
             source: ImportSource::Module("QtQuick".into()),
             version: Some("2.15".into()),
             alias: None,
+            in_project: false,
         }],
         pragmas: vec![Pragma {
             name: "ComponentBehavior".into(),
@@ -364,6 +372,13 @@ fn sample() -> CompiledFile {
                 },
             ],
         },
+        invocable: vec![Invocable {
+            ty: TypeRef::Component {
+                file: "Theme".into(),
+                inline: None,
+            },
+            functions: vec!["scaled".into()],
+        }],
     }
 }
 

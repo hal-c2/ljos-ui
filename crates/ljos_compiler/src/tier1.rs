@@ -1594,6 +1594,9 @@ impl<'p, 'a> Gen<'p, 'a> {
                 if !matches!(self.lookup(name)?, Name::Global) {
                     return Err(Reason::with("function call", "of a value"));
                 }
+                if name == "__ljos_single" {
+                    return self.singleton(it, dst);
+                }
                 let f = match name {
                     "qsTr" => {
                         // Without the module's own there is no context to
@@ -1625,6 +1628,11 @@ impl<'p, 'a> Gen<'p, 'a> {
                     return Err(Reason::with("function call", "optional"));
                 }
                 let method = member.property.name.as_str();
+                if let Expression::CallExpression(inner) = member.object.without_parentheses()
+                    && let Some(param) = self.singleton_param(inner)?
+                {
+                    return self.invoke(param, method, it, dst);
+                }
                 let mut known_object = false;
                 if let Expression::Identifier(id) = &member.object {
                     match self.lookup(&id.name)? {
@@ -1675,6 +1683,108 @@ impl<'p, 'a> Gen<'p, 'a> {
             }
             _ => Err(Reason::with("function call", "of a value")),
         }
+    }
+
+    /// `__ljos_single($s_Theme)`, what the compiler makes of the name of a
+    /// singleton: its object. Asked for here and not where the function is
+    /// entered, so that a branch not taken leaves the object unmade.
+    fn singleton(&mut self, it: &'p CallExpression<'a>, dst: Reg) -> Result<(), Reason> {
+        let Some(param) = self.singleton_of(it)? else {
+            return Err(odd_shape("a singleton that is not a type"));
+        };
+        self.emit(Op::Param { dst, param })?;
+        Ok(())
+    }
+
+    /// The parameter `__ljos_single(name)` names, when `it` is that call.
+    fn singleton_param(&self, it: &'p CallExpression<'a>) -> Result<Option<u16>, Reason> {
+        match &it.callee {
+            Expression::Identifier(id)
+                if id.name == "__ljos_single" && matches!(self.lookup(&id.name)?, Name::Global) =>
+            {
+                self.singleton_of(it)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn singleton_of(&self, it: &'p CallExpression<'a>) -> Result<Option<u16>, Reason> {
+        let argument = match it.arguments.as_slice() {
+            [argument] => argument.as_expression(),
+            _ => None,
+        };
+        let Some(Expression::Identifier(id)) = argument else {
+            return Err(odd_shape("a singleton that is not a name"));
+        };
+        Ok(match self.lookup(&id.name)? {
+            Name::Type {
+                param,
+                singleton: true,
+            } => Some(param),
+            _ => None,
+        })
+    }
+
+    /// What the parameter `param` is given.
+    fn param_arg(&self, param: u16) -> Option<&Arg> {
+        let param = usize::from(param);
+        match param.checked_sub(self.top_params) {
+            Some(inlined) => self.args.get(inlined).map(|arg| &arg.arg),
+            None => {
+                let top = self.file.expr(*self.inlining.first()?);
+                top.params.get(param).map(|p| &p.arg)
+            }
+        }
+    }
+
+    /// `Theme.method(...)`, a call of a function of the singleton another
+    /// file is. Only one the compiler found to have a program of its own
+    /// that writes nothing: the engine runs that program in place, and one
+    /// it could not run would send this whole expression to tier 2 every
+    /// time.
+    fn invoke(
+        &mut self,
+        param: u16,
+        method: &str,
+        call: &'p CallExpression<'a>,
+        dst: Reg,
+    ) -> Result<(), Reason> {
+        let known = match self.param_arg(param) {
+            Some(Arg::Singleton(ty)) => self
+                .file
+                .invocable
+                .iter()
+                .any(|i| i.ty == *ty && i.functions.iter().any(|f| f == method)),
+            _ => false,
+        };
+        if !known {
+            return Err(Reason::with(
+                "method call of a singleton",
+                format!(".{method}()"),
+            ));
+        }
+        let count = u8::try_from(call.arguments.len()).map_err(|_| Reason::new("too large"))?;
+        let obj = self.alloc()?;
+        self.emit(Op::Param { dst: obj, param })?;
+        let base = self.alloc_n(call.arguments.len())?;
+        for (index, argument) in call.arguments.iter().enumerate() {
+            let argument = argument.as_expression().ok_or(Reason::new("spread"))?;
+            let reg = base + index as Reg;
+            self.expr(argument, Some(reg))?;
+            // The call goes through the engine: so does the argument.
+            self.emit(Op::Pass { reg })?;
+        }
+        let name = self.name(method)?;
+        self.emit(Op::Invoke {
+            dst,
+            obj,
+            name,
+            base,
+            count,
+        })?;
+        // And so does what it gives back.
+        self.emit(Op::Pass { reg: dst })?;
+        Ok(())
     }
 
     /// A call of a builtin: what leads, then the arguments, in registers in
@@ -1850,6 +1960,7 @@ fn is_known_global(name: &str) -> bool {
             | "__ljos_vt"
             | "__ljos_vl"
             | "__ljos_att"
+            | "__ljos_single"
     )
 }
 

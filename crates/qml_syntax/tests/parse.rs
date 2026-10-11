@@ -334,6 +334,29 @@ fn strings_may_span_lines() {
     assert_eq!(value(1), "a\tb\nc");
 }
 
+// What Qt's engine gives for a file saved with other line ends: one line
+// feed for each break, as in a template literal.
+#[test]
+fn a_break_in_a_string_is_one_line_feed() {
+    let allocator = Allocator::default();
+    let source = "Item { a: \"one\r\ntwo\"; b: 'a\\tb\r\nc\rd'; c: \"x\ry\"; d: \"p\\\r\nq\" }";
+    let document = parse(&allocator, source);
+    let value = |index: usize| {
+        let QmlMember::Binding(binding) = &document.root.members[index] else {
+            panic!()
+        };
+        let QmlBindingValue::Expression(Expression::StringLiteral(string)) = &binding.value else {
+            panic!()
+        };
+        string.value.as_str()
+    };
+    assert_eq!(value(0), "one\ntwo");
+    assert_eq!(value(1), "a\tb\nc\nd");
+    assert_eq!(value(2), "x\ny");
+    // A backslash before the break joins the lines, as in JavaScript.
+    assert_eq!(value(3), "pq");
+}
+
 #[test]
 fn diagnostics_point_into_the_source() {
     let source = "Item {\n    width: \n}";

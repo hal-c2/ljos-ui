@@ -315,6 +315,11 @@ impl TypeOracle for Runtime {
         self.enum_value(ty, scope, key).is_some()
     }
 
+    fn enum_is_flags(&self, _ty: usize, name: &str) -> bool {
+        // The one enum of this runtime that holds several keys.
+        name == "MouseButtons"
+    }
+
     fn has_enum(&self, ty: usize, name: &str) -> bool {
         self.chain(ty)
             .any(|ty| ty.enums.iter().any(|(known, _)| *known == name))

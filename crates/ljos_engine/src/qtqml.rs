@@ -27,12 +27,19 @@ use crate::signal::Handler;
 use crate::value::Value;
 use crate::{QmlObject, WriteKind, qml_impl};
 
-/// `Component.status` values.
+/// `Component.status` values, and how `Qt.createComponent` is asked to
+/// load.
 fn component_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
-    vec![(
-        "Status",
-        vec![("Null", 0), ("Ready", 1), ("Loading", 2), ("Error", 3)],
-    )]
+    vec![
+        (
+            "Status",
+            vec![("Null", 0), ("Ready", 1), ("Loading", 2), ("Error", 3)],
+        ),
+        (
+            "CompilationMode",
+            vec![("PreferSynchronous", 0), ("Asynchronous", 1)],
+        ),
+    ]
 }
 
 /// `Component`: a template objects are made from (`Component { … }`, an
@@ -48,12 +55,15 @@ fn component_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 pub struct Component {
     #[qml(base)]
     pub object: QtObject,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Status")]
     pub status: i32,
     #[qml(readonly)]
     pub url: Atom,
     #[qml(skip)]
     pub(crate) template: Option<Rc<Template>>,
+    /// Why there is no template: what `errorString()` says.
+    #[qml(skip)]
+    pub(crate) error: Atom,
 }
 
 impl std::fmt::Debug for Component {
@@ -72,9 +82,22 @@ impl Component {
     #[qml(invokable, name = "createObject")]
     fn create_object(cx: &Cx, parent: Value, props: Value) -> Value {
         let parent = parent.as_object();
+        let Ok(template) = cx.engine.component_template(cx.this) else {
+            cx.engine
+                .warn("QQmlComponent: Component is not ready".to_owned());
+            return Value::Null;
+        };
         let props = cx.engine.js_object_entries(&props);
-        match cx.engine.component_create(cx.this, parent, props) {
+        match cx
+            .engine
+            .create_from_template_for_script(&template, parent, props)
+        {
             Ok(o) => Value::Object(o),
+            // Qt's words, which say where; the message is whole already.
+            Err(EngineError::RequiredNotSet(e)) => {
+                cx.engine.warn(e);
+                Value::Null
+            }
             Err(e) => {
                 cx.engine.warn(format!("Component.createObject: {e}"));
                 Value::Null
@@ -82,9 +105,16 @@ impl Component {
         }
     }
 
+    /// `incubateObject(parent, properties, mode)`: the incubator of an
+    /// object made in slices (incubate.rs).
+    #[qml(invokable, name = "incubateObject")]
+    fn incubate_object(cx: &Cx, parent: Value, props: Value, mode: Value) -> Value {
+        crate::incubate::incubate_object(cx, parent, props, mode)
+    }
+
     #[qml(invokable, name = "errorString")]
     fn error_string(&self) -> Atom {
-        Atom::default()
+        self.error.clone()
     }
 }
 

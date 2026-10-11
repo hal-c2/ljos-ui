@@ -787,6 +787,9 @@ impl Engine {
             base,
             files,
         });
+        drop(l);
+        // A singleton is no root: it is remade when its file is another.
+        self.singletons_sources_changed();
         Ok(saved)
     }
 
@@ -798,6 +801,8 @@ impl Engine {
             *file.metas.borrow_mut() = metas;
         }
         *self.inner.reload.overlay.borrow_mut() = saved.overlay;
+        drop(l);
+        self.singletons_sources_changed();
     }
 
     /// `e` as a place and a message. The engine's errors about a file
@@ -1161,5 +1166,48 @@ impl Engine {
             }
         }
         kept
+    }
+}
+
+/// The migrators as a boundary restart uses them (boundary.rs): the same
+/// [`Migrate`] implementations, without a reload.
+impl Engine {
+    pub(crate) fn has_migrators(&self) -> bool {
+        !self.inner.reload.migrators.borrow().is_empty()
+    }
+
+    /// What `obj`'s migrators keep, each with the migrator's index.
+    pub(crate) fn migrate_snapshot(&self, obj: ObjectId) -> Vec<(usize, Box<dyn Any>)> {
+        let migrators = self.inner.reload.migrators.borrow().clone();
+        let Some(meta) = self.meta_of(obj) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (i, m) in migrators.iter().enumerate() {
+            if meta.inherits(m.meta)
+                && let Some(state) = (m.snapshot)(self, obj)
+            {
+                out.push((i, state));
+            }
+        }
+        out
+    }
+
+    /// Gives `obj` a state [`Engine::migrate_snapshot`] took from an
+    /// object of the same type.
+    pub(crate) fn migrate_restore(
+        &self,
+        obj: ObjectId,
+        migrator: usize,
+        state: Box<dyn Any>,
+    ) -> Result<(), String> {
+        let m = self.inner.reload.migrators.borrow().get(migrator).cloned();
+        let Some(m) = m else {
+            return Err("no such migrator".to_owned());
+        };
+        if !self.meta_of(obj).is_some_and(|meta| meta.inherits(m.meta)) {
+            return Err("the object is of another type".to_owned());
+        }
+        (m.migrate)(self, obj, state)
     }
 }

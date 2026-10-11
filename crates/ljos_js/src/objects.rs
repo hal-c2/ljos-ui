@@ -53,6 +53,9 @@ pub enum HostError {
     /// Becomes a JS `Error` with this message thrown at the access site.
     #[error("{0}")]
     Message(String),
+    /// Becomes a JS `TypeError` with this message.
+    #[error("{0}")]
+    Type(String),
     /// A JS-side failure (typically `scope.call(..)?`) passed through. The
     /// pending JS exception is kept intact, so the original error and stack
     /// reach the outer `enter`.
@@ -65,9 +68,14 @@ impl HostError {
         Self::Message(m.into())
     }
 
+    pub fn type_error(m: impl Into<String>) -> Self {
+        Self::Type(m.into())
+    }
+
     pub(crate) fn into_js(self, ctx: &Ctx<'_>) -> rquickjs::Error {
         match self {
             Self::Message(m) => Exception::throw_message(ctx, &m),
+            Self::Type(m) => Exception::throw_type(ctx, &m),
             Self::Js(e) => e,
         }
     }

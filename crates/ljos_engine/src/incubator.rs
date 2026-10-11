@@ -43,7 +43,10 @@ use crate::types::TypeTag;
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
 
+pub(crate) mod dynamic;
 pub(crate) mod reload;
+pub(crate) mod singletons;
+mod sliced;
 pub(crate) mod tier1;
 
 /// Deepest nesting of file components; deeper is a component using
@@ -97,6 +100,10 @@ pub(crate) struct Template {
     pub(crate) file: Rc<LoadedFile>,
     pub(crate) comp: CompIdx,
     pub(crate) outer: Option<Rc<Instance>>,
+    /// The context the instances are made in when it is not the one of
+    /// `outer`: QML made from text sees the names of the script that
+    /// made it.
+    pub(crate) context: Option<ContextId>,
 }
 
 /// One object to apply: object `obj` of `inst`.
@@ -282,6 +289,7 @@ impl Engine {
             file,
             comp,
             outer: None,
+            context: None,
         })
     }
 
@@ -291,8 +299,45 @@ impl Engine {
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
+        self.create_from_template_noting(template, parent, props, |_| {})
+    }
+
+    /// [`Engine::create_from_template`] for a script (`createObject`):
+    /// an initial property that cannot be set is a warning and the object
+    /// is made all the same, and `Qt.binding(f)` is a binding. As Qt 6.11.2
+    /// does, by running qml6.
+    pub(crate) fn create_from_template_for_script(
+        &self,
+        template: &Template,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+    ) -> Result<ObjectId, EngineError> {
+        self.create_from_template_with(template, parent, props, true, |_| {})
+    }
+
+    /// [`Engine::create_from_template`], telling `allocated` the root once
+    /// it exists and before any of its bindings has run.
+    fn create_from_template_noting(
+        &self,
+        template: &Template,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        allocated: impl FnOnce(ObjectId),
+    ) -> Result<ObjectId, EngineError> {
+        self.create_from_template_with(template, parent, props, false, allocated)
+    }
+
+    fn create_from_template_with(
+        &self,
+        template: &Template,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        lenient: bool,
+        allocated: impl FnOnce(ObjectId),
+    ) -> Result<ObjectId, EngineError> {
         let mut cr = Creation::default();
         let root = self.allocate_template(&mut cr, template, parent)?;
+        allocated(root);
         self.reload_assign(&cr, root);
         let r = self.batch(|| -> Result<(), EngineError> {
             let (r, held) = self.hold_eager(|| {
@@ -300,7 +345,12 @@ impl Engine {
                 for i in 0..cr.units.len() {
                     self.apply_unit(&cr, i);
                 }
-                self.finish_props(root, &props)
+                if lenient {
+                    self.initial_props(&template.file.url, root, &props);
+                    Ok(())
+                } else {
+                    self.finish_props(root, &props)
+                }
             });
             cr.held = held;
             self.run_held(&cr);
@@ -334,10 +384,12 @@ impl Engine {
         if parent.is_some_and(|p| !self.is_alive(p)) {
             return Err(EngineError::DeadObject(parent.expect("checked")));
         }
-        let ctx_parent = template
-            .outer
-            .as_ref()
-            .map_or_else(|| self.root_context(), |o| o.context);
+        let ctx_parent = template.context.unwrap_or_else(|| {
+            template
+                .outer
+                .as_ref()
+                .map_or_else(|| self.root_context(), |o| o.context)
+        });
         let inst = self.allocate(
             cr,
             template.file.clone(),
@@ -433,7 +485,10 @@ impl Engine {
         root: ObjectId,
         applied: Result<(), EngineError>,
     ) -> Result<ObjectId, EngineError> {
-        if let Err(e) = applied.and_then(|()| self.check_required(&cr)) {
+        if let Err(e) = applied
+            .and_then(|()| self.check_required(&cr))
+            .and_then(|()| self.check_assignable())
+        {
             self.reload_discard(root);
             return Err(e);
         }
@@ -1001,6 +1056,7 @@ impl Engine {
                         file: inst.file.clone(),
                         comp: *c,
                         outer: Some(inst.clone()),
+                        context: None,
                     };
                     if self
                         .meta_of(id)
@@ -1023,7 +1079,7 @@ impl Engine {
             let _ = self.set_script_method(
                 id,
                 m,
-                Rc::new(move |e, _obj, args| Ok(e.call_expr(&inst, expr, args))),
+                Rc::new(move |e, _obj, args| Ok(e.call_function(&inst, expr, args))),
             );
             self.tier1_note_method(id, m, noted);
         }
@@ -1051,7 +1107,7 @@ impl Engine {
                     ));
                 }
             }
-            Err(_) => self.warn(format!(
+            Err(_) => self.not_assignable(format!(
                 "{at}Cannot assign to non-existent property \"{}\"",
                 on.join(".")
             )),
@@ -1146,6 +1202,16 @@ impl Engine {
                     continue;
                 }
             };
+            if matches!(a.value, Literal::Undefined) {
+                // Qt runs `undefined` as a binding, and so reports what
+                // refuses it where it is written.
+                let r = self.write_internal(t.obj, t.prop, Value::Undefined, WriteKind::Initial);
+                if let Err(e) = r {
+                    let (line, col) = (a.span.line, a.span.column);
+                    self.warn(format!("{}:{line}:{col}: {e}", inst.url()));
+                }
+                continue;
+            }
             self.apply_literal(inst, &t, &a.value);
         }
         for oa in &m.objects {
@@ -1153,7 +1219,7 @@ impl Engine {
                 Ok(t) => t,
                 Err(_) => {
                     let at = self.location_of(obj);
-                    self.warn(format!(
+                    self.not_assignable(format!(
                         "{}Cannot assign to non-existent property \"{}\"",
                         at.unwrap_or_default(),
                         oa.name
@@ -1176,6 +1242,7 @@ impl Engine {
                                 file: inst.file.clone(),
                                 comp: *c,
                                 outer: Some(inst.clone()),
+                                context: None,
                             },
                         )
                         .ok(),
@@ -1277,7 +1344,7 @@ impl Engine {
             }
         }
         for oa in &m.objects {
-            self.warn(format!(
+            self.not_assignable(format!(
                 "{}Cannot assign to non-existent property \"{name}.{}\"",
                 self.location_of(obj).unwrap_or_default(),
                 oa.name
@@ -1333,7 +1400,7 @@ impl Engine {
         } else {
             format!("{}.{name}", path.join("."))
         };
-        self.warn(format!(
+        self.not_assignable(format!(
             "{}:{line}:{col}: Cannot assign to non-existent property \"{full}\"",
             inst.url()
         ));
@@ -1531,6 +1598,15 @@ impl Engine {
             .unwrap_or(Value::Undefined)
     }
 
+    /// Runs a function declared in QML. Called from JS, what it throws is
+    /// the caller's to catch: the exception stays pending in the JS
+    /// context and `faults.thrown` says so (see `EngineHost::call`).
+    pub(crate) fn call_function(&self, inst: &Instance, expr: ExprId, args: &[Value]) -> Value {
+        let propagate = self.inner.faults.propagate.take();
+        self.eval_expr_as(inst, expr, &TypeTag::Var, args, propagate)
+            .unwrap_or(Value::Undefined)
+    }
+
     /// Runs `expr`: in Rust when it is a property path, else its JS
     /// function. `None` when it threw (the warning is logged).
     fn eval_expr(
@@ -1540,8 +1616,21 @@ impl Engine {
         hint: &TypeTag,
         args: &[Value],
     ) -> Option<Value> {
+        self.eval_expr_as(inst, expr, hint, args, false)
+    }
+
+    fn eval_expr_as(
+        &self,
+        inst: &Instance,
+        expr: ExprId,
+        hint: &TypeTag,
+        args: &[Value],
+        propagate: bool,
+    ) -> Option<Value> {
         let file = &inst.file;
         let b = file.ir.expr(expr);
+        // A fault in it is one of the object it belongs to (fault.rs).
+        let _origin = self.origin(inst.resolve(b.scope));
         if args.is_empty()
             && let Some(Some(t0)) = file.tier0.get(b.js_fn.index())
             && let Some(v) = self.tier0_eval(inst, b, t0)
@@ -1561,15 +1650,24 @@ impl Engine {
         let this = inst
             .resolve(b.scope)
             .map_or(JsValue::Undefined, |o| self.to_js(&Value::Object(o)));
+        let _calling = self.calling(inst);
         self.run_js("binding", |s| {
             let mut a: Vec<JsValue> = Vec::with_capacity(b.params.len() + args.len());
             for p in &b.params {
                 a.push(self.arg_js(s, inst, &p.arg));
             }
             a.extend(args.iter().map(|v| self.to_js(v)));
-            let out = s.call_with_this(f, &this, &a)?;
-            Ok(self.js_to_value(s, out, hint))
+            let out = match s.call_with_this(f, &this, &a) {
+                Ok(out) => out,
+                Err(ljos_js::rquickjs::Error::Exception) if propagate => {
+                    self.inner.faults.thrown.set(true);
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
+            Ok(Some(self.js_to_value(s, out, hint)))
         })
+        .flatten()
     }
 
     /// A property path read in Rust. `None`: not expressible here, use JS.
@@ -1672,6 +1770,9 @@ impl Engine {
                 let attached = self.attached_object(o, &meta).ok()?;
                 Some(Value::Object(attached))
             }
+            // Made here if this is the first read; a type with no object
+            // is JavaScript's to answer for.
+            Arg::Singleton(ty) => self.singleton_object(ty).map(Value::Object),
             _ => None,
         }
     }
@@ -1682,33 +1783,37 @@ impl Engine {
             Arg::Object(_) | Arg::Property { .. } | Arg::Attached { .. } => self
                 .arg_value(inst, arg)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
-            // A singleton type has no instance yet, but its name still
-            // reaches its enums (`Easing[name]`).
-            Arg::Type(t) | Arg::Singleton(t) => match self.type_meta(&inst.file, t) {
-                Ok(m) => JsValue::Map(
-                    m.enums
-                        .iter()
-                        .flat_map(|e| e.keys.iter())
-                        .map(|(k, v)| (k.to_string(), JsValue::Number(*v as f64)))
-                        .collect(),
-                ),
+            Arg::Type(t) => match self.type_meta(&inst.file, t) {
+                Ok(m) => singletons::enum_keys(&m),
                 Err(_) => JsValue::Undefined,
             },
-            Arg::Namespace { .. } => JsValue::Undefined,
+            // What stands for the object: the script asks for it where the
+            // name is written (`__ljos_single`), and it is made then.
+            Arg::Singleton(t) => JsValue::Number(self.singleton_handle(t) as f64),
+            // A type read through it has a parameter of its own, so what
+            // a script reads off the namespace itself is a name the module
+            // does not have: nothing, as any member of an object that is
+            // not there.
+            Arg::Namespace { .. } => JsValue::Map(Vec::new()),
             Arg::Context {
                 component,
                 name,
                 fallback,
             } => match self.context_arg(inst, *component, name) {
                 Some(v) => self.to_js(&v),
-                None => match fallback {
+                None => match fallback.as_deref() {
+                    // The script has the name as it is: nothing asks.
+                    Some(Arg::Singleton(t)) => self.singleton_value_js(t),
                     Some(f) => self.arg_js(s, inst, f),
                     None => global(s, name),
                 },
             },
             Arg::Dynamic(name) => match self.context_name(inst.context, name) {
                 Some(v) => self.to_js(&v),
-                None => global(s, name),
+                None => match self.singleton_named(name) {
+                    Some(o) => self.to_js(&Value::Object(o)),
+                    None => global(s, name),
+                },
             },
             Arg::Holder {
                 component,
@@ -1807,6 +1912,8 @@ enum Phase {
     Load,
     Allocate(Rc<Template>),
     Apply(Creation, ObjectId, usize),
+    /// Every object is applied: bindings, hooks and handlers are left.
+    Finish(sliced::Finish),
     Done,
 }
 
@@ -1816,6 +1923,8 @@ struct HandleState {
     cancelled: Cell<bool>,
     /// Applied objects over all objects.
     progress: Cell<f64>,
+    /// The root, from the moment it is allocated.
+    root: Cell<Option<ObjectId>>,
 }
 
 /// The result of a [`CreationJob`], readable once it is done, and the way
@@ -1846,6 +1955,12 @@ impl CreationHandle {
         self.0.progress.get()
     }
 
+    /// The root while it is being made: allocated, not yet complete. It
+    /// is already where it belongs in the tree and must not be shown.
+    pub fn half_made(&self) -> Option<ObjectId> {
+        self.0.root.get().filter(|_| !self.is_done())
+    }
+
     /// Calls the job off: at its next step it destroys what it made and
     /// ends with an error, without running its completion callback. Does
     /// nothing to a job that is done.
@@ -1868,6 +1983,39 @@ type DelegateSetup = Box<dyn FnOnce(&Engine, ObjectId, ContextId)>;
 enum JobSource {
     Url(String),
     Component(ObjectId),
+    /// The job's steps are another job's, which whoever holds its
+    /// [`SharedCreation`] may also finish early.
+    Shared(Rc<RefCell<CreationJob>>),
+}
+
+/// A [`CreationJob`] that can be finished before its turn
+/// (`forceCompletion()`); see [`CreationJob::shared`].
+#[derive(Clone)]
+pub struct SharedCreation(Rc<RefCell<CreationJob>>);
+
+impl std::fmt::Debug for SharedCreation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SharedCreation")
+    }
+}
+
+impl SharedCreation {
+    /// Runs what is left of the job now. False when the job is running
+    /// further up the stack (what it is making asked): it carries on in
+    /// its slices.
+    pub fn force(&self) -> bool {
+        let Ok(mut job) = self.0.try_borrow_mut() else {
+            return false;
+        };
+        // One step without a budget runs to the end; the bound is for a
+        // job that would not.
+        for _ in 0..64 {
+            if matches!(job.step(&|| false), JobPoll::Done) {
+                break;
+            }
+        }
+        true
+    }
 }
 
 /// [`Engine::create_from_url`] as a resumable [`Job`]: loads, allocates,
@@ -1896,6 +2044,7 @@ impl std::fmt::Debug for CreationJob {
         match &self.source {
             JobSource::Url(url) => d.field("url", url),
             JobSource::Component(c) => d.field("component", c),
+            JobSource::Shared(_) => d.field("shared", &true),
         };
         d.field("parent", &self.parent)
             .field("lane", &self.lane)
@@ -1989,6 +2138,28 @@ impl CreationJob {
         (job, handle)
     }
 
+    /// Splits the job in two: the job to queue, and the means to finish
+    /// it before its turn. Whichever gets to a step first runs it.
+    pub fn shared(self) -> (Self, SharedCreation) {
+        let (lane, owner, engine) = (self.lane, self.owner, self.engine.clone());
+        let inner = Rc::new(RefCell::new(self));
+        (
+            Self {
+                engine,
+                source: JobSource::Shared(inner.clone()),
+                parent: None,
+                props: Vec::new(),
+                phase: Phase::Load,
+                lane,
+                owner,
+                handle: CreationHandle::default(),
+                done: None,
+                setup: None,
+            },
+            SharedCreation(inner),
+        )
+    }
+
     /// Calls `f` with the result when the job ends, unless it was
     /// cancelled. Whoever waits for the object needs no polling.
     #[must_use]
@@ -2017,6 +2188,9 @@ impl CreationJob {
         if let (Some(e), Phase::Apply(_, root, _)) = (engine, &self.phase) {
             e.destroy_now(*root);
         }
+        if let (Some(e), Phase::Finish(f)) = (engine, &self.phase) {
+            e.destroy_now(f.root());
+        }
         // Not `finish`: the callback belongs to whoever called it off.
         self.done = None;
         self.finish(None, Err(why))
@@ -2026,6 +2200,17 @@ impl CreationJob {
     pub fn step(&mut self, check: &dyn Fn() -> bool) -> JobPoll {
         if matches!(self.phase, Phase::Done) {
             return JobPoll::Done;
+        }
+        if let JobSource::Shared(inner) = &self.source {
+            // Borrowed: it is being finished early further up the stack.
+            let poll = match inner.try_borrow_mut() {
+                Ok(mut job) => job.step(check),
+                Err(_) => JobPoll::Yield,
+            };
+            if matches!(poll, JobPoll::Done) {
+                self.phase = Phase::Done;
+            }
+            return poll;
         }
         let Some(e) = self.engine.upgrade().map(Engine::from_inner) else {
             return self.abandon(None, EngineError::Load("the engine is gone".into()));
@@ -2042,6 +2227,8 @@ impl CreationJob {
                     let template = match &self.source {
                         JobSource::Url(url) => e.file_template(url).map(Rc::new),
                         JobSource::Component(c) => e.component_template(*c),
+                        // Stepped above, never here.
+                        JobSource::Shared(_) => Err(EngineError::Load("a shared job".into())),
                     };
                     match template {
                         Ok(t) => self.phase = Phase::Allocate(t),
@@ -2056,6 +2243,7 @@ impl CreationJob {
                             if let (Some(setup), Some(top)) = (setup, &cr.top) {
                                 setup(&e, root, top.context);
                             }
+                            self.handle.0.root.set(Some(root));
                             e.reload_assign(&cr, root);
                             e.apply_aliases(&cr);
                             self.phase = Phase::Apply(cr, root, 0);
@@ -2088,16 +2276,19 @@ impl CreationJob {
                         return JobPoll::Yield;
                     }
                     let props = std::mem::take(&mut self.props);
-                    let r = e.batch(|| {
-                        let r = e.finish_props(root, &props);
-                        e.run_held(&cr);
-                        r
-                    });
-                    if r.is_ok() {
-                        e.release_held(&cr);
+                    self.phase = Phase::Finish(sliced::Finish::new(cr, root, props));
+                }
+                Phase::Finish(mut f) => {
+                    if !e.is_alive(f.root()) {
+                        return self.finish(Some(&e), Err(EngineError::DeadObject(f.root())));
                     }
-                    let r = e.finalize(cr, root, r);
-                    return self.finish(Some(&e), r);
+                    match f.step(&e, check) {
+                        Some(r) => return self.finish(Some(&e), r),
+                        None => {
+                            self.phase = Phase::Finish(f);
+                            return JobPoll::Yield;
+                        }
+                    }
                 }
                 Phase::Done => return JobPoll::Done,
             }

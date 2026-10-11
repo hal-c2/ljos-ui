@@ -281,6 +281,25 @@ fn the_qt_singleton_has_the_qt_namespace() {
     assert!(qt.has_method("rgba") && qt.has_method("openUrlExternally"));
 }
 
+/// A property declared `Qt::Alignment` holds several keys; one declared
+/// with the enum the flags are made of, or with a plain enum, holds one.
+#[test]
+fn flags_are_told_from_the_enum_of_one_key() {
+    require_table!();
+    let qt = ty("QtQuick", "Qt");
+    assert_eq!(qt.enum_is_flags("Alignment"), Some(true));
+    assert_eq!(qt.enum_is_flags("AlignmentFlag"), Some(false));
+    assert_eq!(qt.enum_is_flags("MouseButtons"), Some(true));
+    assert_eq!(qt.enum_is_flags("Orientation"), Some(false));
+    assert_eq!(qt.enum_is_flags("Nowhere"), None);
+    let text = ty("QtQuick", "Text");
+    assert_eq!(text.enum_is_flags("HAlignment"), Some(false));
+    // Inherited from Item.
+    assert_eq!(text.enum_is_flags("TransformOrigin"), Some(false));
+    let popup = ty("QtQuick.Controls", "Popup");
+    assert_eq!(popup.enum_is_flags("ClosePolicy"), Some(true));
+}
+
 #[test]
 fn an_attached_type_has_its_own_members() {
     require_table!();
@@ -435,4 +454,28 @@ fn modules_lists_every_module_in_order() {
     );
     assert!(all.contains(&"QtQuick"));
     assert!(all.iter().all(|uri| module(uri).is_some()));
+}
+
+/// Ljós's own module is read next to Qt's: its types inherit Qt's and have
+/// the members written for them.
+#[test]
+fn the_ljos_module_is_in_the_table() {
+    require_table!("QtQuick");
+    let boundary = ty("Ljos", "ErrorBoundary");
+    assert!(boundary.is_creatable);
+    assert_eq!(boundary.default_property(), Some("content"));
+    assert!(boundary.property("content").unwrap().is_component);
+    assert!(boundary.property("fallback").unwrap().is_component);
+    assert!(boundary.property("width").is_some(), "an Item");
+    assert!(boundary.has_method("retry"));
+    let fault = boundary.property("fault").unwrap();
+    assert!(fault.is_readonly);
+    let fault = fault.value_type().expect("the fault's members");
+    assert!(fault.property("kind").is_some() && fault.property("line").is_some());
+    assert!(
+        module("QtQuick")
+            .unwrap()
+            .type_named("ErrorBoundary")
+            .is_none()
+    );
 }

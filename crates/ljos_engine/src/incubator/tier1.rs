@@ -135,6 +135,8 @@ pub(crate) struct State {
     /// While the cross-check runs tier 2: the writes its JS made.
     spy: RefCell<Option<Vec<Written>>>,
     spying: Cell<bool>,
+    /// How many programs are running inside one another ([`Op::Invoke`]).
+    invoking: Cell<u8>,
 }
 
 impl Default for State {
@@ -149,6 +151,7 @@ impl Default for State {
             sweep_at: Cell::new(64),
             spy: RefCell::new(None),
             spying: Cell::new(false),
+            invoking: Cell::new(0),
         }
     }
 }
@@ -186,23 +189,36 @@ struct MethodRecord {
     inst: *const Instance,
     file: *const LoadedFile,
     expr: ExprId,
+    /// The same instance, for a program of another file that runs the
+    /// function's own ([`Op::Invoke`]).
+    weak: Weak<Instance>,
 }
 
-/// A function about to be installed that some program has inlined.
+/// A function about to be installed that some program has inlined, or
+/// that a program of another file may run.
 pub(crate) struct Noted {
     inst: *const Instance,
     file: *const LoadedFile,
     expr: ExprId,
+    weak: Weak<Instance>,
 }
 
 impl Noted {
-    /// `Some` when a program of the file guards `expr`: only those are
-    /// worth a record.
+    /// `Some` when a program of the file guards `expr`, or `expr` has a
+    /// program another may run in place: only those are worth a record.
     pub(crate) fn of(inst: &Rc<Instance>, expr: ExprId) -> Option<Noted> {
-        inst.file.tier1.guarded.contains(&expr).then(|| Noted {
+        let programs = &inst.file.tier1;
+        let worth = programs.guarded.contains(&expr)
+            || programs
+                .by_expr
+                .get(expr.index())
+                .and_then(Option::as_ref)
+                .is_some_and(|p| p.pure);
+        worth.then(|| Noted {
             inst: Rc::as_ptr(inst),
             file: Rc::as_ptr(&inst.file),
             expr,
+            weak: Rc::downgrade(inst),
         })
     }
 }
@@ -251,6 +267,8 @@ pub(crate) struct Program {
     /// The value of each `Qt.<key>` the program reads, by the index of the
     /// name. `None`: not a key this knows, which may be anything in JS.
     qt: Vec<(u16, Option<f64>)>,
+    /// It writes nothing: a program may run it in the middle of its own.
+    pure: bool,
     oks: Cell<u32>,
     bails: Cell<u32>,
 }
@@ -338,6 +356,13 @@ impl Program {
                     reg(obj) && name(n) && reg(val) && group_ok
                 }
                 Op::Return { src } => reg(src),
+                Op::Invoke {
+                    dst,
+                    obj,
+                    name: n,
+                    base,
+                    count,
+                } => reg(dst) && reg(obj) && name(n) && span(base, usize::from(count)),
             };
             if !sound {
                 return None;
@@ -364,6 +389,7 @@ impl Program {
             pairs,
             sets,
             qt,
+            pure: !t.writes(),
             oks: Cell::new(0),
             bails: Cell::new(0),
         })
@@ -567,6 +593,7 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
                 && x.strikeout == y.strikeout
                 && d(x.letter_spacing, y.letter_spacing)
                 && d(x.word_spacing, y.word_spacing)
+                && x.scale_with_system == y.scale_with_system
         }
         (Value::Vector2d(x), Value::Vector2d(y)) => s(x.x, y.x) && s(x.y, y.y),
         (Value::Vector3d(x), Value::Vector3d(y)) => s(x.x, y.x) && s(x.y, y.y) && s(x.z, y.z),
@@ -813,6 +840,7 @@ impl Engine {
                 inst: noted.inst,
                 file: noted.file,
                 expr: noted.expr,
+                weak: noted.weak,
             },
         );
         if methods.len() >= st.sweep_at.get() {

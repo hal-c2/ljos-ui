@@ -185,9 +185,22 @@ macro_rules! handle_string_literal_escape {
                         }
                     }
                     // QML: a string goes on over the end of a line.
-                    b'\r' | b'\n' if $lexer.qml => {
+                    b'\n' if $lexer.qml => {
                         // SAFETY: A byte is available, as we just peeked it, and it's ASCII.
                         $lexer.source.next_byte_unchecked();
+                    }
+                    // QML: the break is one line feed in the string, whatever the file has.
+                    b'\r' if $lexer.qml => {
+                        let chunk = $lexer.source.str_from_pos_to_current(chunk_start);
+                        str.push_str(chunk);
+                        str.push('\n');
+                        // SAFETY: A byte is available, as we just peeked it, and it's ASCII.
+                        $lexer.source.next_byte_unchecked();
+                        if $lexer.peek_byte() == Some(b'\n') {
+                            // SAFETY: A byte is available, as we just peeked it, and it's ASCII.
+                            $lexer.source.next_byte_unchecked();
+                        }
+                        chunk_start = $lexer.source.position();
                     }
                     _ => {
                         // Line break. This is impossible in valid JS, so cold path.
@@ -272,6 +285,13 @@ impl<'a, C: Config> Lexer<'a, C> {
                         let range = Span::new(escape_start_offset, self.offset());
                         self.error(diagnostics::invalid_escape_sequence(range));
                     }
+                }
+                // The break is one line feed in the string, whatever the file has.
+                '\r' => {
+                    if self.peek_byte() == Some(b'\n') {
+                        self.consume_char();
+                    }
+                    str.push('\n');
                 }
                 c => str.push(c),
             }

@@ -650,3 +650,64 @@ fn asking_whether_a_property_is_set_is_a_tracked_read() {
     );
     g.check_invariants().unwrap();
 }
+
+#[test]
+fn a_reset_property_is_unset_again() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let source = g.property(r, 1).unwrap();
+    let p = g.property(r, 0).unwrap();
+    let told = Rc::new(RefCell::new(Vec::new()));
+    let t = told.clone();
+    g.effect(r, move |g| {
+        t.borrow_mut().push((g.get(p), g.provenance_tracked(p)));
+    })
+    .unwrap();
+
+    // A given value goes, and with it that the value was given.
+    g.set(p, 5);
+    g.reset(p, 0).unwrap();
+    assert_eq!(g.provenance(p), Some(Provenance::Default));
+    assert_eq!(
+        *told.borrow(),
+        [
+            (0, Some(Provenance::Default)),
+            (5, Some(Provenance::Assigned)),
+            (0, Some(Provenance::Default)),
+        ]
+    );
+
+    // A binding goes too: its source no longer moves the property.
+    g.bind(p, move |g| g.get(source) * 10).unwrap();
+    assert_eq!(g.get(p), 10);
+    g.reset(p, 0).unwrap();
+    assert!(!g.is_bound(p));
+    g.set(source, 2);
+    assert_eq!(g.get(p), 0);
+    assert!(g.sources(p).is_empty());
+
+    // The value it had, given back by a reset: observers hear that it is
+    // unset though the value is the same.
+    told.borrow_mut().clear();
+    g.set(p, 0);
+    g.reset(p, 0).unwrap();
+    assert_eq!(
+        *told.borrow(),
+        [
+            (0, Some(Provenance::Assigned)),
+            (0, Some(Provenance::Default))
+        ]
+    );
+
+    // Under an override the reset is of the override, as a write is.
+    let id = g.push_override(p, OverrideValue::Value(9)).unwrap();
+    g.reset(p, 4).unwrap();
+    assert_eq!(g.get(p), 4);
+    g.remove_override(p, id, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(p), 0);
+
+    let e = g.effect(r, |_| {}).unwrap();
+    assert_eq!(g.reset(e, 0), Err(ReactiveError::NotAProperty(e)));
+    g.check_invariants().unwrap();
+}

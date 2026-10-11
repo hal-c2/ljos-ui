@@ -360,6 +360,7 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
                 && x.strikeout == y.strikeout
                 && d(x.letter_spacing, y.letter_spacing)
                 && d(x.word_spacing, y.word_spacing)
+                && x.scale_with_system == y.scale_with_system
         }
         _ => false,
     }

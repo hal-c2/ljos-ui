@@ -13,7 +13,7 @@ fn shape_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 }
 
 fn tile_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
-    vec![("Mode", vec![("Plain", 0), ("Striped", 4)])]
+    vec![("Mode", vec![("Plain", 0), ("Dotted", 1), ("Striped", 4)])]
 }
 
 #[derive(Debug, Default, QmlObject)]
@@ -34,6 +34,14 @@ pub struct Tile {
     pub fold: i32,
     #[qml(notify, enumeration = "Mode")]
     pub mode: i32,
+    /// Several keys at once.
+    #[qml(notify, flags = "Mode")]
+    pub modes: i32,
+    /// Enums of the `Qt` namespace, which no type lists.
+    #[qml(notify, flags = "Qt.Alignment")]
+    pub alignment: i32,
+    #[qml(notify, enumeration = "Qt.Orientation")]
+    pub orientation: i32,
 }
 
 fn engine() -> Engine {
@@ -199,4 +207,92 @@ fn the_meta_object_converts_for_its_enums() {
         "inherited"
     );
     assert!(Shape::static_meta().enumeration("Mode").is_none());
+}
+
+#[test]
+fn flags_take_several_keys_and_an_enum_takes_one() {
+    let m = Tile::static_meta();
+    let ty = |name: &str| {
+        let index = m.property_index(name).unwrap();
+        m.property(index).unwrap().ty.clone()
+    };
+    assert_eq!(ty("modes"), TypeTag::Flags("Mode".into()));
+    assert_eq!(ty("modes").name(), ty("mode").name());
+    let e = engine();
+    let t = tile(&e);
+    for (given, want) in [
+        (text("Striped"), 4),
+        (text("Striped|Dotted"), 5),
+        // Qt allows space around the bar.
+        (text("Dotted | Striped"), 5),
+        (text("Plain"), 0),
+        (text("Dotted|Dotted"), 1),
+        // A number is any combination, a key's or not.
+        (Value::Int(7), 7),
+        (Value::Int(-1), -1),
+        (Value::Real(2.7), 3),
+        (Value::Bool(false), 0),
+    ] {
+        e.write_by_name(t, "modes", given.clone()).unwrap();
+        assert_eq!(e.get(t, Tile::MODES), Ok(want), "{given:?}");
+    }
+    e.write_by_name(t, "modes", text("Dotted")).unwrap();
+    for (given, kind) in [
+        (text("Nowhere"), "QString"),
+        (text("Striped|Nowhere"), "QString"),
+        (text("Striped|"), "QString"),
+        (text("Striped,Dotted"), "QString"),
+        (text("striped"), "QString"),
+        (text(""), "QString"),
+        (text("5"), "QString"),
+        (Value::Null, "null"),
+        (Value::Undefined, "[undefined]"),
+    ] {
+        assert_eq!(
+            refusal(&e, t, "modes", given),
+            format!("Unable to assign {kind} to Tile::Mode")
+        );
+    }
+    assert_eq!(
+        e.get(t, Tile::MODES),
+        Ok(1),
+        "what is refused changes nothing"
+    );
+    // The same keys, where one is held.
+    assert_eq!(
+        refusal(&e, t, "mode", text("Striped|Dotted")),
+        "Unable to assign QString to Tile::Mode"
+    );
+}
+
+#[test]
+fn an_enum_of_the_qt_namespace_is_named_with_qt_in_front() {
+    let e = engine();
+    let t = tile(&e);
+    e.write_by_name(t, "alignment", text("AlignLeft|AlignVCenter"))
+        .unwrap();
+    assert_eq!(e.get(t, Tile::ALIGNMENT), Ok(129));
+    e.write_by_name(t, "orientation", text("Vertical")).unwrap();
+    assert_eq!(e.get(t, Tile::ORIENTATION), Ok(2));
+    assert_eq!(
+        refusal(&e, t, "alignment", text("AlignLeft|Vertical")),
+        "Unable to assign QString to Qt::Alignment"
+    );
+    assert_eq!(
+        refusal(&e, t, "orientation", text("Horizontal|Vertical")),
+        "Unable to assign QString to Qt::Orientation"
+    );
+    // A key of the type itself is no key of a Qt enum.
+    assert_eq!(
+        refusal(&e, t, "orientation", text("Striped")),
+        "Unable to assign QString to Qt::Orientation"
+    );
+    let m = Tile::static_meta();
+    assert!(m.has_enumeration("Qt.Alignment") && m.has_enumeration("Qt.Orientation"));
+    assert!(m.has_enumeration("Mode") && m.has_enumeration("Corner"));
+    assert!(!m.has_enumeration("Qt.Mode") && !m.has_enumeration("Alignment"));
+    assert_eq!(
+        m.coerce_flags("Qt.MouseButtons", &text("LeftButton|MiddleButton")),
+        Ok(Value::Int(5))
+    );
 }

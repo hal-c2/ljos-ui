@@ -17,14 +17,14 @@ QML mode is a recursive-descent parser for QML's declarative shell (imports, pra
 
 ## What the fork changes
 
-`mise run oxc:diff` prints the full diff against the registry tarball. Everything outside `src/qml/` is about 65 lines in four files, and the error recovery below touches none of them:
+`mise run oxc:diff` prints the full diff against the registry tarball. Everything outside `src/qml/` is about 100 lines in four files, and the error recovery below touches none of them:
 
 | File | Change |
 |---|---|
-| `src/lib.rs` | `pub mod qml;`, and `Parser::parse_qml(self) -> qml::QmlParserReturn<'a>`, which builds a `ParserImpl` the way `Parser::parse` does and calls its `parse_qml`. |
+| `src/lib.rs` | `pub mod qml;`, and `Parser::parse_qml(self) -> qml::QmlParserReturn<'a>`, which builds a `ParserImpl` the way `Parser::parse` does and calls its `parse_qml`. `Parser::parse_qml_script(self) -> ParserReturn<'a>` parses a script taken out of a QML document: plain JavaScript with the lexer's `qml` flag set, so a string may go on over the end of a line there too (`ljos_compiler` reads every binding and handler that way). |
 | `src/diagnostics.rs` | One constructor, `qml(message: &'static str, span: Span)`, for QML-mode errors. |
 | `src/lexer/mod.rs` | A `pub(crate) qml: bool` field on `Lexer`, initialised to `false`. QML mode sets it. |
-| `src/lexer/string.rs` | When `qml` is set, a string literal may contain line breaks: two match arms keyed on `$lexer.qml` and a cold-path method `read_string_literal_over_lines`. Plain JavaScript lexing is unchanged. |
+| `src/lexer/string.rs` | When `qml` is set, a string literal may contain line breaks: three match arms keyed on `$lexer.qml` and a cold-path method `read_string_literal_over_lines`. The break is one line feed in the value whatever the file ends its lines with, as Qt's engine has it. Plain JavaScript lexing is unchanged. |
 | `src/qml/ast.rs` (new, 172 lines) | The QML tree: `QmlDocument`, `QmlPragma`, `QmlImport`/`QmlImportSource`, `QmlQualifiedName`, `QmlObject`, `QmlMember`, `QmlBinding`/`QmlBindingValue`, `QmlPropertyDeclaration`, `QmlTypeName`, `QmlSignalDeclaration`/`QmlSignalParameter`, `QmlInlineComponent`, `QmlEnumDeclaration`/`QmlEnumMember`. All nodes are arena-allocated, and leaves are ordinary Oxc `Expression`, `Statement` and `Function` nodes. |
 | `src/qml/mod.rs` (new, 530 lines) | The parser: `parse_qml_document` reads pragmas and imports, then exactly one root object. Contextual keywords (`property`, `signal`, `required`, `readonly`, `default`, `component`, `enum`) are found by lookahead. `{ ... }` after a binding is an object literal or a block, decided by checkpoint and rewind. Calls `qml_recover` for every import, pragma and object member. |
 | `src/qml/recovery.rs` (new, 212 lines) | Member-level error recovery, see below. |

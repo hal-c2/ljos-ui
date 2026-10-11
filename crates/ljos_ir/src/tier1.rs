@@ -50,6 +50,11 @@ impl Tier1 {
     pub fn writes(&self) -> bool {
         self.code.iter().any(|op| matches!(op, Op::Set { .. }))
     }
+
+    /// Whether the program calls a function of another file.
+    pub fn has_invoked_calls(&self) -> bool {
+        self.code.iter().any(|op| matches!(op, Op::Invoke { .. }))
+    }
 }
 
 /// A parameter of an inlined function: what the function's own JS form would
@@ -231,6 +236,17 @@ pub enum Op {
     },
     Return {
         src: Reg,
+    },
+    /// `dst = obj.name(...)` with the registers `base..base + count`, where
+    /// the function `obj` has by that name is one of another file (a
+    /// singleton's, [`crate::Invocable`]). It runs as the program it has of
+    /// its own, when that writes nothing; else the run ends here.
+    Invoke {
+        dst: Reg,
+        obj: Reg,
+        name: u16,
+        base: Reg,
+        count: u8,
     },
 }
 

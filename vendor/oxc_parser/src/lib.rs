@@ -415,6 +415,21 @@ mod parser_parse {
             .parse_qml()
         }
 
+        /// Parse a script taken out of a QML document: JavaScript, except that a
+        /// string literal may go on over the end of a line, as it may in the document.
+        pub fn parse_qml_script(self) -> ParserReturn<'a> {
+            let mut parser = ParserImpl::<C>::new(
+                self.allocator,
+                self.source_text,
+                self.source_type,
+                self.options,
+                self.config,
+                UniquePromise::new(),
+            );
+            parser.lexer.qml = true;
+            parser.parse()
+        }
+
         /// Parse a single [`Expression`].
         ///
         /// # Example

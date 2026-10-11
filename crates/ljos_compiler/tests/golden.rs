@@ -465,6 +465,13 @@ fn a_plain_value_that_is_no_key_is_an_error() {
         ("Item { transformOrigin: \"AlignRight\" }", 29),
         ("Item { transformOrigin: \"\" }", 29),
         ("Item { transformOrigin: \"TopLeft|Nowhere\" }", 29),
+        // One key is what the property holds; only flags take several.
+        ("Item { transformOrigin: \"TopLeft|Center\" }", 29),
+        ("Text { horizontalAlignment: \"AlignRight|AlignLeft\" }", 33),
+        (
+            "Text { horizontalAlignment: \"AlignRight | AlignLeft\" }",
+            33,
+        ),
         ("Item { transformOrigin: 4 }", 29),
         ("Item { transformOrigin: -1 }", 29),
         ("Item { transformOrigin: 2.5 }", 29),

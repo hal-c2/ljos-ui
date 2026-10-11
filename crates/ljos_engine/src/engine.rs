@@ -111,6 +111,9 @@ pub(crate) struct Inner {
     /// Tier 1 (bindings as bytecode): its switches, and what its
     /// cross-check keeps while it runs.
     pub(crate) tier1: crate::incubator::tier1::State,
+    /// Faults on their way to a boundary, and the boundaries (fault.rs,
+    /// boundary.rs).
+    pub(crate) faults: crate::fault::FaultState,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -249,6 +252,7 @@ impl Engine {
             hooks: crate::hooks::Hooks::default(),
             reload: Default::default(),
             tier1: Default::default(),
+            faults: Default::default(),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {
@@ -1181,6 +1185,13 @@ impl Engine {
         internal: bool,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        // `x = undefined` takes a property with a reset back.
+        if matches!(v, Value::Undefined)
+            && matches!(how, WriteKind::Imperative | WriteKind::Initial)
+            && self.reset_of(obj, prop).is_some()
+        {
+            return self.reset_impl(obj, prop, internal);
+        }
         let (v, node, hook) = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
@@ -1484,6 +1495,7 @@ impl Engine {
         mut free: Free,
     ) -> impl FnMut(&Graph<Value>) -> Value + 'static {
         let weak = Rc::downgrade(&self.inner);
+        let reset = self.reset_of(obj, prop);
         move |_g| {
             let Some(inner) = weak.upgrade() else {
                 return last.clone();
@@ -1499,6 +1511,15 @@ impl Engine {
             };
             let Some(v) = v else {
                 return last.clone();
+            };
+            // A binding that yields `undefined` takes the property back
+            // and stays: its next value is given as any other.
+            let v = match reset {
+                Some(reset) if matches!(v, Value::Undefined) => {
+                    let _t = Tracking::enter(&engine.inner.tracking);
+                    engine.reset_value(obj, prop, reset)
+                }
+                _ => v,
             };
             let coerced = {
                 let store = engine.inner.store.borrow();
@@ -1799,7 +1820,11 @@ impl Engine {
             // A function declared in QML.
             Err(f) => return f(self, obj, args),
         };
-        thunk(&Cx::new(self, obj), args)
+        // An exception in what a native method calls is not its JS
+        // caller's to catch, and a panic in it ends only this call
+        // (fault.rs).
+        self.inner.faults.propagate.set(false);
+        self.guarded_result(obj, || thunk(&Cx::new(self, obj), args))
     }
 
     /// Gives the QML-declared method `method` of `obj` its body.
@@ -1850,7 +1875,7 @@ impl Engine {
         };
         let cx = Cx::new(self, obj);
         for f in hooks {
-            f(&cx)?;
+            self.guarded_result(obj, || f(&cx))?;
         }
         Ok(())
     }
@@ -2182,6 +2207,11 @@ pub(crate) fn coerce_for(
     {
         return Ok(h.meta.coerce_enum(name, v)?);
     }
+    if let TypeTag::Flags(name) = ty
+        && let Some(h) = owner.and_then(|o| store.objects.get(o))
+    {
+        return Ok(h.meta.coerce_flags(name, v)?);
+    }
     let c = ty.coerce(v)?;
     if let (TypeTag::Object(Some(name)), Value::Object(id)) = (ty, &c) {
         match store.objects.get(*id) {
@@ -2199,7 +2229,11 @@ pub(crate) fn coerce_for(
     Ok(c)
 }
 
-fn read_access(native: &dyn QmlObject, dynamic: &[Value], access: &PropertyAccess) -> Value {
+pub(crate) fn read_access(
+    native: &dyn QmlObject,
+    dynamic: &[Value],
+    access: &PropertyAccess,
+) -> Value {
     match *access {
         PropertyAccess::Field { owner, get, .. } => {
             find_native(native, owner).map_or(Value::Undefined, get)
@@ -2255,7 +2289,11 @@ fn write_access(
     }
 }
 
-fn store_in(h: &mut ObjectHeader, prop: PropIndex, v: &Value) -> Result<(), ConvertError> {
+pub(crate) fn store_in(
+    h: &mut ObjectHeader,
+    prop: PropIndex,
+    v: &Value,
+) -> Result<(), ConvertError> {
     let Some(access) = h.meta.property(prop).map(|p| p.access) else {
         return Ok(());
     };

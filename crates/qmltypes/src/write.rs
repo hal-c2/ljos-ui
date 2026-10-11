@@ -10,7 +10,7 @@
 //!         default data
 //!         enum TransformOrigin TopLeft Top ...
 //!         prop width double
-//!         prop anchors QQuickAnchors readonly pointer
+//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`
 //!         signal childrenRectChanged _
 //!         method forceActiveFocus
 //! ```
@@ -127,6 +127,7 @@ fn class(out: &mut String, class: &Class, name: &str) {
                 flag(property.is_readonly, "readonly"),
                 flag(property.is_pointer, "pointer"),
                 flag(property.is_required, "required"),
+                flag(property.has_reset, "reset"),
             ],
         );
     }

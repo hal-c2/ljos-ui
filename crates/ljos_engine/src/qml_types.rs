@@ -117,6 +117,7 @@ impl Engine {
         }
         for import in &ir.imports {
             if let ImportSource::Module(uri) = &import.source
+                && !import.in_project
                 && !self.has_module(uri)
             {
                 return Err(EngineError::Load(format!(

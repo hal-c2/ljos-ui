@@ -109,6 +109,25 @@ pub struct FileResult {
     pub result: Result<Compiled, Vec<Diagnostic>>,
 }
 
+/// Compiles `text` as the file `key` of the project would be compiled: it
+/// sees the types a file of that key sees. For QML a running program holds
+/// as text (`Qt.createQmlObject`), which only a development host can make
+/// an object of. The project is left as it was.
+pub fn compile_text<O: TypeOracle>(
+    project: &mut Project<O>,
+    key: &str,
+    text: &str,
+) -> Result<Compiled, Vec<Diagnostic>> {
+    let before = project.source(key).map(str::to_owned);
+    project.add(key, text);
+    let compiled = compile_file(project, key);
+    match before {
+        Some(source) => project.add(key, source),
+        None => project.remove(key),
+    }
+    compiled
+}
+
 /// Compiles every QML file under `dir` against Qt's types.
 pub fn compile_project(dir: &Path) -> Result<Vec<FileResult>, Error> {
     compile_project_with(dir, QtTypeOracle)

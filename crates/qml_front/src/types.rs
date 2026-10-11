@@ -138,12 +138,13 @@ impl<'p, O: TypeOracle> Types<'p, O> {
             }
             match &import.source {
                 Source::Module(uri) => {
-                    // A module of the project's own. Its types are files, and
-                    // a file has one name: `M.Type` is not reached yet.
-                    if qualifier.is_none()
-                        && let Some(file) = self.project.module_type(uri, name)
-                    {
-                        return Some(file_found(file));
+                    // A module of the project's own: its types are files.
+                    if let Some(file) = self.project.module_type(uri, name) {
+                        let mut found = file_found(file);
+                        if qualifier.is_some() {
+                            found.origin = Origin::Namespace;
+                        }
+                        return Some(found);
                     }
                     if let Some(ty) = self.oracle.module_type(uri, name) {
                         let origin = match qualifier {

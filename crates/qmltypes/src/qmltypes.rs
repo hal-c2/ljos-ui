@@ -142,6 +142,9 @@ fn property(object: &QmlObject<'_>) -> Property {
             "isReadonly" => property.is_readonly = flag(value),
             "isPointer" => property.is_pointer = flag(value),
             "isRequired" => property.is_required = flag(value),
+            // The function's name is Qt's own business; that there is one
+            // is what QML shows (`width = undefined`).
+            "reset" => property.has_reset = true,
             _ => {}
         }
     }

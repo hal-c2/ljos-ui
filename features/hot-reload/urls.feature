@@ -31,9 +31,6 @@ Feature: Reloaded files and scripts are found again
       Then the property "width" of "loader/panel" is 30
       And the log has no warnings
 
-    # Waits for Qt.createComponent in scripts: an application can be given
-    # the Component of a file, but a script cannot ask for one yet.
-    @blocked
     Scenario: Qt.createComponent finds a file whose address carries a generation
       Given the QML:
         """qml

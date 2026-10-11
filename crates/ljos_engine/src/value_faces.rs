@@ -91,6 +91,7 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
                 JsValue::Bool(font.strikeout),
                 JsValue::Number(font.letter_spacing),
                 JsValue::Number(font.word_spacing),
+                JsValue::Bool(font.scale_with_system),
             ],
         ),
         _ => return None,
@@ -140,6 +141,7 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
             strikeout: b(6),
             letter_spacing: n(7),
             word_spacing: n(8),
+            scale_with_system: b(9),
         })),
         _ => Value::Undefined,
     }
@@ -338,12 +340,13 @@ const FACES: &str = r##"
 
   // A font crosses as these, in this order (see `to_js` beside this text).
   const fontFields = ["family", "pointSize", "pixelSize", "weight", "italic", "underline",
-    "strikeout", "letterSpacing", "wordSpacing"];
+    "strikeout", "letterSpacing", "wordSpacing", "scaleWithSystem"];
   const whole = (v) => { v = Math.trunc(Number(v)); return v !== v ? 0 : v + 0; };
   const flag = (v) => !!v;
   const font = kind(fontFields,
-    [String, double, whole, whole, flag, flag, flag, double, double],
-    (o, [family, pointSize, pixelSize, weight, italic, underline, strikeout, letterSpacing, wordSpacing]) => {
+    [String, double, whole, whole, flag, flag, flag, double, double, flag],
+    (o, [family, pointSize, pixelSize, weight, italic, underline, strikeout, letterSpacing, wordSpacing,
+      scaleWithSystem]) => {
       o.family = family;
       o.bold = weight > 500;
       o.weight = weight;
@@ -354,6 +357,9 @@ const FACES: &str = r##"
       o.pixelSize = pixelSize;
       o.letterSpacing = letterSpacing;
       o.wordSpacing = wordSpacing;
+      // Ours, so not one of the keys a script finds when it lists a font's:
+      // those stay Qt's.
+      hide(o, "scaleWithSystem", scaleWithSystem);
     },
     // Every setting a font has in Qt; the ones a QML font here cannot
     // change are written as Qt has them by default.
@@ -369,7 +375,7 @@ const FACES: &str = r##"
   }
   // What `Qt.font` knows by name. A font here keeps the first ten.
   const fontKeys = ["family", "bold", "weight", "italic", "underline", "strikeout", "pointSize",
-    "pixelSize", "letterSpacing", "wordSpacing", "styleName", "overline", "capitalization",
+    "pixelSize", "letterSpacing", "wordSpacing", "scaleWithSystem", "styleName", "overline", "capitalization",
     "hintingPreference", "kerning", "preferShaping", "features", "variableAxes",
     "contextFontMerging", "preferTypoLineMetrics"];
   // `font.base`, the font a `Qt.font` call starts from, is set by the engine.

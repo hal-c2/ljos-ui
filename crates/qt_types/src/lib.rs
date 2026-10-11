@@ -27,7 +27,7 @@
 //!         default data                  the property that takes its children
 //!         is singleton uncreatable value namespace parser
 //!         enum TransformOrigin TopLeft Top ...        `flags` when the keys combine
-//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`
+//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`
 //!         signal clicked mouse          the arguments by name, `_` for one without
 //!         method forceActiveFocus
 //! ```
@@ -260,6 +260,22 @@ impl Type {
         })
     }
 
+    /// Whether a property declared with the enum `name` of the type holds
+    /// several of its keys at once: `Alignment`, not `AlignmentFlag` or
+    /// `Orientation`. None when the type has no enum of that name.
+    pub fn enum_is_flags(&'static self, name: &str) -> Option<bool> {
+        self.find(true, &|ty| {
+            let own = |enumeration: &&Enum| enumeration.name == name;
+            // The name of one key's enum is what the flags are made of.
+            let of_flags = |enumeration: &&Enum| enumeration.alias == Some(name);
+            ty.enums
+                .iter()
+                .find(own)
+                .map(|enumeration| enumeration.is_flag)
+                .or_else(|| ty.enums.iter().find(of_flags).map(|_| false))
+        })
+    }
+
     /// The first thing `get` finds in the type, its extension or what it
     /// inherits, in the order QML looks.
     fn find<T>(&'static self, enums: bool, get: &impl Fn(&'static Type) -> Option<T>) -> Option<T> {
@@ -290,6 +306,10 @@ pub struct Property {
     pub is_pointer: bool,
     /// A `required property`: whoever makes the object has to set it.
     pub is_required: bool,
+    /// Assigning `undefined` takes the property back to the state it had
+    /// before anything gave it a value. False in a table written before
+    /// this was recorded.
+    pub has_reset: bool,
     /// The value is a `Component`: what is written there is a template that
     /// is instantiated later (a `delegate`), not an object that exists.
     pub is_component: bool,
@@ -362,10 +382,23 @@ struct Table {
 
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
-    TABLE.get_or_init(|| read(TEXT))
+    // Ljós's own types inherit Qt's (`QQuickItem`), so without Qt's table
+    // they are left out too: nothing is known, as `is_available` says.
+    TABLE.get_or_init(|| {
+        read(if is_available() {
+            &[TEXT, OWN]
+        } else {
+            &[TEXT]
+        })
+    })
 }
 
-fn read(text: &'static str) -> Table {
+/// The modules that are Ljós's own and not Qt's (`import Ljos`), in the
+/// table's format. Written by hand and committed: nothing in it comes from
+/// Qt.
+const OWN: &str = include_str!("ljos.txt");
+
+fn read(texts: &[&'static str]) -> Table {
     let mut table = Table::default();
     // Classes are named before they are described, so what refers to one is
     // looked up once all are read.
@@ -373,7 +406,7 @@ fn read(text: &'static str) -> Table {
     let mut links = Vec::new();
     let mut module = "";
 
-    for line in text.lines() {
+    for line in texts.iter().flat_map(|text| text.lines()) {
         let depth = line.len() - line.trim_start_matches('\t').len();
         let mut words = line.split_ascii_whitespace();
         let mut word = || words.next().unwrap_or("");
@@ -479,6 +512,7 @@ fn read(text: &'static str) -> Table {
                             is_readonly: flags.contains(&"readonly"),
                             is_pointer: flags.contains(&"pointer"),
                             is_required: flags.contains(&"required"),
+                            has_reset: flags.contains(&"reset"),
                             is_component: type_name == "QQmlComponent",
                         });
                     }

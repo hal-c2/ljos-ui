@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the serialised shape changes, so a cache written by an
 /// older compiler is rebuilt instead of misread.
-pub const IR_VERSION: u32 = 5;
+pub const IR_VERSION: u32 = 6;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -76,6 +76,18 @@ pub struct CompiledFile {
     /// (ARCHITECTURE.md §15), whether or not it is a static value.
     pub translations: Vec<Translatable>,
     pub js: JsModule,
+    /// What the file's programs take of other files to be so.
+    pub invocable: Vec<Invocable>,
+}
+
+/// The functions of a singleton another file is, each with a tier-1 program
+/// of its own that writes nothing when this file was compiled: what a
+/// program of this file may call in place ([`Op::Invoke`]). The engine looks
+/// again when it runs one, as the other file may have changed since.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invocable {
+    pub ty: TypeRef,
+    pub functions: Vec<String>,
 }
 
 impl CompiledFile {
@@ -142,6 +154,9 @@ pub struct Import {
     pub source: ImportSource,
     pub version: Option<String>,
     pub alias: Option<String>,
+    /// The module is the project's own: its types are files compiled with
+    /// this one, and the runtime has no module of the name to look for.
+    pub in_project: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

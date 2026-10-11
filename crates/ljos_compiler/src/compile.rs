@@ -283,6 +283,20 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .filter(|p| p.component == at.component)
             .map(|p| p.object);
         let span = self.span(object.span);
+        // The one object a singleton file is cannot be made again. A type
+        // the runtime provides is left to it: the type table says what Qt
+        // calls a singleton, not what this runtime can make.
+        if let Some(kind @ Kind::Component(_)) = &self.tree.objects[index].kind
+            && self.types.is_singleton(kind)
+        {
+            self.diagnostics.push(Diagnostic::error(
+                format!(
+                    "Composite Singleton Type {} is not creatable.",
+                    type_name(&ty)
+                ),
+                span,
+            ));
+        }
         let id = self.tree.objects[index].id.map(str::to_string);
         let def = self.def_mut(at);
         def.ty = ty;
@@ -852,10 +866,12 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         match expression {
             Expression::StringLiteral(string) => {
                 let written = string.value.as_str();
-                // Flags take several keys, "LeftButton | RightButton". The
-                // oracle does not say which enums are flags, so a plain
-                // enum is let off with the same, where Qt refuses it.
+                // Flags take several keys, "LeftButton | RightButton"; an
+                // enum that holds one key takes one.
                 let keys: Vec<&str> = if written.contains('|') {
+                    if !oracle.enum_is_flags(*ty, name) {
+                        return Err(());
+                    }
                     written.split('|').map(str::trim).collect()
                 } else {
                     vec![written]
@@ -1349,9 +1365,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     None => Some(free.span.end),
                 };
                 if let Some(end) = end {
+                    // `{ Theme }` is `{ Theme: Theme }`.
+                    let text = if free.shorthand {
+                        format!("{}: {text}", free.name)
+                    } else {
+                        text.clone()
+                    };
                     edits.push(js::Edit {
                         span: Span::new(free.span.start, end),
-                        text: text.clone(),
+                        text,
                     });
                 }
             }
@@ -1724,12 +1746,21 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     ) -> Plan {
         let ty = self.type_ref(found, qualifier);
         let kind = &found.kind;
+        // Through a namespace the name the script has is the namespace's,
+        // and every type of it is read by that one name: each gets a
+        // parameter of its own, written where `Alias.Type` was.
+        let through = |prefix: &str| match qualifier {
+            Some(qualifier) => format!("${prefix}_{qualifier}_{}", type_name(&ty)),
+            None => format!("${prefix}_{name}"),
+        };
+        let qualified = qualifier.map(|_| through("t"));
         let param = |arg: Arg| {
             Some(Param {
-                name: name.to_string(),
+                name: qualified.clone().unwrap_or_else(|| name.to_string()),
                 arg,
             })
         };
+        let replace = || qualified.clone().map(|through| (through, 1));
         let enumeration = |scope: Option<&str>, key: &str| Plan {
             resolved: Resolved::Enum(EnumRef {
                 ty: ty.clone(),
@@ -1739,7 +1770,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }),
             param: param(Arg::Type(ty.clone())),
             rewrite: None,
-            replace: None,
+            replace: replace(),
         };
         if let Some(first) = chain.first() {
             match self.types.declared_enum(kind, first) {
@@ -1755,11 +1786,22 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
         }
         if self.types.is_singleton(kind) {
+            // The object is made when the script first comes to the name,
+            // not when the function is called: a branch not taken leaves it
+            // unmade. So the function is given what stands for it, and asks
+            // for the object where the name was.
+            let through = through("s");
             return Plan {
                 resolved: Resolved::Singleton(ty.clone()),
-                param: param(Arg::Singleton(ty)),
+                param: Some(Param {
+                    name: through.clone(),
+                    arg: Arg::Singleton(ty),
+                }),
                 rewrite: None,
-                replace: None,
+                replace: Some((
+                    format!("{SINGLETON}({through})"),
+                    usize::from(qualifier.is_some()),
+                )),
             };
         }
         let attaches = self
@@ -1772,10 +1814,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 // Its own parameter: the type's name may also be read for an
                 // enum in the same script (`Accessible.Button`), and that is
                 // the type, not what it attached.
-                let through = match qualifier {
-                    Some(qualifier) => format!("$a_{qualifier}_{}", type_name(&ty)),
-                    None => format!("$a_{name}"),
-                };
+                let through = through("a");
                 Plan {
                     resolved: Resolved::Attached {
                         ty: ty.clone(),
@@ -1796,7 +1835,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 resolved: Resolved::Type(ty.clone()),
                 param: param(Arg::Type(ty)),
                 rewrite: None,
-                replace: None,
+                replace: replace(),
             },
         }
     }
@@ -1856,6 +1895,33 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             source.push_str(&code);
             functions.push(function);
         }
+        if MAKERS.iter().any(|maker| source.contains(maker)) {
+            // What a script makes by address is addressed from its own
+            // file, which only the running program can place: the module
+            // has a `Qt` of its own, and the runtime says where the file
+            // is before it runs anything. At the end, so no line moves.
+            source.push_str(&format!(
+                "\nlet Qt = globalThis.Qt;\nexport function {AT}(url) {{\n  Qt = globalThis.{QT_AT}(url);\n}}\n"
+            ));
+        }
+        // What the singletons the file names can be asked without a script.
+        let mut invocable = Vec::new();
+        let mut asked: HashSet<&str> = HashSet::new();
+        for param in self.exprs.iter().flat_map(|binding| &binding.params) {
+            if let Arg::Singleton(ty) = &param.arg
+                && let TypeRef::Component { file, inline: None } = ty
+                && file != self.key
+                && asked.insert(file)
+            {
+                let functions = self.project.pure_functions(file);
+                if !functions.is_empty() {
+                    invocable.push(Invocable {
+                        ty: ty.clone(),
+                        functions: functions.to_vec(),
+                    });
+                }
+            }
+        }
         let mut file = CompiledFile {
             version: IR_VERSION,
             file: self.key.to_string(),
@@ -1870,6 +1936,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     },
                     version: import.version.map(str::to_string),
                     alias: import.alias.as_ref().map(|alias| alias.name.to_string()),
+                    in_project: matches!(
+                        &import.source,
+                        QmlImportSource::Module(name) if self.project.front.has_module(&name.to_string())
+                    ),
                 })
                 .collect(),
             pragmas: document
@@ -1884,6 +1954,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             exprs: self.exprs,
             translations,
             js: JsModule { source, functions },
+            invocable,
         };
         // A template is known by where it is written, which is only known
         // once every key is: templates come after what they are written in.
@@ -1981,6 +2052,20 @@ fn value_in(name: &str) -> String {
 /// The global that gives what a type attached to an object. The engine
 /// defines it.
 const ATTACHED: &str = "__ljos_att";
+
+/// `__ljos_single($s_Theme)`: the one object a singleton type is, made on
+/// the first call. What the function is given for the type only stands for
+/// it.
+const SINGLETON: &str = "__ljos_single";
+
+/// The members of `Qt` that read an address from the file that asks.
+const MAKERS: [&str; 3] = ["createComponent", "createQmlObject", "resolvedUrl"];
+
+/// The export the runtime calls with the address of the module's file.
+const AT: &str = "__ljos_at";
+
+/// The runtime's maker of a module's `Qt`: `(url) => Qt`.
+const QT_AT: &str = "__ljos_qt";
 
 /// The runtime's maker of a file's `qsTr`: `(context) => qsTr`.
 const TR_IN: &str = "__ljos_qsTr";

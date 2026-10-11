@@ -125,6 +125,35 @@ pub type ListAppend = fn(&Cx<'_>, crate::ids::ObjectId) -> Result<(), EngineErro
 /// where it is: an append then costs the same however long the list is.
 pub type ListField = fn(&mut dyn QmlObject) -> &mut crate::list::QmlList;
 
+/// What a property holds while nothing has given it a value: `engine`, the
+/// object and the property in, the value out. It runs as part of a binding,
+/// so what it reads is followed.
+pub type ResetValue = fn(&crate::Engine, crate::ids::ObjectId, PropIndex) -> Value;
+/// Takes a property back to the state it had before anything gave it a
+/// value.
+pub type ResetApply =
+    fn(&crate::Engine, crate::ids::ObjectId, PropIndex) -> Result<(), EngineError>;
+
+/// How a property is taken back, which is what assigning `undefined` to it
+/// does (`width = undefined`), also when a binding on it yields
+/// `undefined`. Qt calls it the property's reset; a property without one
+/// refuses `undefined`.
+#[derive(Clone, Copy, Debug)]
+pub enum Reset {
+    /// The value the type gives a new object, and the property counts as
+    /// never set ([`Provenance::Default`](crate::Provenance::Default)).
+    Default,
+    /// The property follows the value this gives until something else is
+    /// assigned: a side margin follows the margins.
+    Follow(ResetValue),
+    /// The type does it itself. `value` is what the property holds then,
+    /// for a binding that yields `undefined` and stays in place.
+    Custom {
+        apply: ResetApply,
+        value: ResetValue,
+    },
+}
+
 /// Where a property's value is stored.
 #[derive(Clone, Copy)]
 pub enum PropertyAccess {
@@ -174,6 +203,8 @@ pub struct PropertyInfo {
     pub list_append: Option<ListAppend>,
     /// For a native list property, the field itself.
     pub list_field: Option<ListField>,
+    /// How `undefined` takes the property back, if it can be.
+    pub reset: Option<Reset>,
 }
 
 impl PropertyInfo {
@@ -379,17 +410,38 @@ impl MetaObject {
     /// A number that is no key is taken as it is, as Qt takes it. What Qt
     /// then keeps of it differs from one property to the next (some store
     /// a few bits), which is not copied here.
+    ///
+    /// `name` with `Qt.` in front is an enum of the `Qt` namespace, which
+    /// no type declares: `Qt.LayoutDirection`.
     pub fn coerce_enum(&self, name: &str, v: &Value) -> Result<Value, ConvertError> {
+        self.coerce_keys(name, v, false)
+    }
+
+    /// As [`coerce_enum`](Self::coerce_enum) for a property that holds
+    /// flags (see [`TypeTag::Flags`]): a string may name several keys with
+    /// `|` between them, and is then their numbers combined. Spaces around
+    /// a key are not part of it.
+    pub fn coerce_flags(&self, name: &str, v: &Value) -> Result<Value, ConvertError> {
+        self.coerce_keys(name, v, true)
+    }
+
+    fn coerce_keys(&self, name: &str, v: &Value, flags: bool) -> Result<Value, ConvertError> {
         let whole = match v {
             Value::Int(i) => Some(*i),
             Value::Enum(e) => Some(e.value),
             Value::Bool(b) => Some(i32::from(*b)),
             // Half away from zero; past the range it wraps, as `int` does.
             Value::Real(r) if !r.is_nan() => Some(r.round() as i64 as i32),
-            Value::String(key) => self
-                .enumeration(name)
-                .and_then(|e| e.keys.iter().find(|(k, _)| k == key))
-                .and_then(|(_, n)| i32::try_from(*n).ok()),
+            Value::String(text) => {
+                let number = if flags {
+                    text.split('|')
+                        .map(|key| self.key_of(name, key.trim()))
+                        .try_fold(0, |all, one| Some(all | one?))
+                } else {
+                    self.key_of(name, text)
+                };
+                number.and_then(|n| i32::try_from(n).ok())
+            }
             _ => None,
         };
         whole.map(Value::Int).ok_or_else(|| ConvertError {
@@ -398,14 +450,59 @@ impl MetaObject {
         })
     }
 
+    /// The number of `key` in the enum `name`.
+    fn key_of(&self, name: &str, key: &str) -> Option<i64> {
+        let keys = match name.strip_prefix("Qt.") {
+            Some(of_qt) => {
+                let found = crate::qt_enums::qt_enum(of_qt)?;
+                return found.keys.iter().find(|(k, _)| *k == key).map(|(_, n)| *n);
+            }
+            None => &self.held_enumeration(name)?.keys,
+        };
+        keys.iter().find(|(k, _)| k == key).map(|(_, n)| *n)
+    }
+
+    /// The enum a property of this type is declared with: one of the
+    /// type's, or for the member of a group (`easing.type`) one of the
+    /// group's type, whose members are this type's properties but whose
+    /// enums are not this type's (`Easing.InQuad`, not
+    /// `NumberAnimation.InQuad`). The type's own wins.
+    fn held_enumeration(&self, name: &str) -> Option<&EnumInfo> {
+        self.enumeration(name).or_else(|| {
+            self.properties.iter().find_map(|p| match p.access {
+                PropertyAccess::Group { meta, .. } => meta.enumeration(name),
+                _ => None,
+            })
+        })
+    }
+
+    /// Whether the enum a property is declared with exists: one of this
+    /// type's, or with `Qt.` in front one of the `Qt` namespace's.
+    pub fn has_enumeration(&self, name: &str) -> bool {
+        match name.strip_prefix("Qt.") {
+            Some(of_qt) => crate::qt_enums::qt_enum(of_qt).is_some(),
+            None => self.held_enumeration(name).is_some(),
+        }
+    }
+
     /// An enum as messages name it: `Item::TransformOrigin`, with the type
     /// that declares it.
     fn enum_name(&self, name: &str) -> String {
+        if let Some(of_qt) = name.strip_prefix("Qt.") {
+            return format!("Qt::{of_qt}");
+        }
         let has = |m: &MetaObject| m.enums.iter().any(|e| e.name == name);
         // Enums are inherited, so the last type of the chain to have it is
         // where it was declared.
-        match self.chain().filter(|m| has(m)).last() {
-            Some(owner) => format!("{}::{name}", owner.name),
+        if let Some(owner) = self.chain().filter(|m| has(m)).last() {
+            return format!("{}::{name}", owner.name);
+        }
+        let of_group = self.properties.iter().find_map(|p| match p.access {
+            PropertyAccess::Group { meta, .. } if has(meta) => Some(meta),
+            _ => None,
+        });
+        match of_group {
+            Some(group) => format!("{}::{name}", group.name),
             None => name.to_owned(),
         }
     }
@@ -601,6 +698,7 @@ impl MetaBuilder {
             access,
             list_append: None,
             list_field: None,
+            reset: None,
         });
     }
 
@@ -664,6 +762,11 @@ impl MetaBuilder {
                     leaf: PropIndex(i as u32),
                 },
             );
+            // The leaf's reset is the member's: it is given the object that
+            // holds the group and the member's index there.
+            if let Some(p) = self.meta.properties.last_mut() {
+                p.reset = leaf.reset;
+            }
         }
         self
     }
@@ -711,6 +814,14 @@ impl MetaBuilder {
     pub fn list_append(mut self, f: ListAppend) -> Self {
         if let Some(p) = self.meta.properties.last_mut() {
             p.list_append = Some(f);
+        }
+        self
+    }
+
+    /// Says how assigning `undefined` takes the property just added back.
+    pub fn reset(mut self, reset: Reset) -> Self {
+        if let Some(p) = self.meta.properties.last_mut() {
+            p.reset = Some(reset);
         }
         self
     }

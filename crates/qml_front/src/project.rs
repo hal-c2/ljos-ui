@@ -176,6 +176,12 @@ impl Project {
         self.files.insert(name.to_string(), summary);
     }
 
+    /// Forgets the file `name` and what was wrong with it.
+    pub fn remove(&mut self, name: &str) {
+        self.files.remove(name);
+        self.diagnostics.remove(name);
+    }
+
     /// What was wrong with the file when it was last added, also when it was
     /// left out. Empty for a file that parsed whole, and for one that was
     /// not added.
@@ -258,6 +264,11 @@ impl Project {
     /// the files next to it.
     pub fn modules_of(&self, file: &str) -> &[String] {
         self.memberships.get(file).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether `uri` is a module of the project's own.
+    pub fn has_module(&self, uri: &str) -> bool {
+        self.modules.contains_key(uri)
     }
 
     /// The file the type `name` of the project's module `uri` is.

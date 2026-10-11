@@ -41,6 +41,7 @@
 extern crate self as ljos_engine;
 
 mod atom;
+mod boundary;
 mod builtins;
 mod color_names;
 mod context;
@@ -48,11 +49,14 @@ mod cx;
 mod delegates;
 mod engine;
 mod error;
+mod fault;
 mod hooks;
 mod i18n;
 mod ids;
+mod incubate;
 mod incubator;
 mod instantiator;
+mod introspect;
 mod js;
 mod list;
 mod listmodel;
@@ -63,9 +67,11 @@ mod model;
 mod number;
 mod object;
 mod qml_types;
+mod qt_enums;
 mod qt_keys;
 mod qtqml;
 mod registry;
+mod reset;
 mod signal;
 mod types;
 mod value;
@@ -73,18 +79,24 @@ mod value_faces;
 mod value_types;
 
 pub use atom::Atom;
+pub use boundary::{APPLICATION_PROC, Boundary, BoundaryConfig, SubtreeSnapshot};
 pub use builtins::QtObject;
 pub use context::Context;
 pub use cx::Cx;
 pub use delegates::{DelegateHost, Delegates, RemovalOrder};
 pub use engine::{Engine, OverrideContent, ParentListener};
 pub use error::EngineError;
+pub use fault::{FaultReport, StackFrame, fault_kind};
 pub use hooks::{Interception, Interceptor};
 pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey, SignalIndex};
+pub use incubate::Incubator;
+pub use incubator::dynamic::{QmlText, QmlTextCompiler, QmlTextError};
 pub use incubator::reload::{Migrate, ReloadError, ReloadFault, ReloadOutcome};
+pub use incubator::singletons::{QmlSingleton, SingletonScope};
 pub use incubator::tier1::Tier1Stats;
-pub use incubator::{CreationHandle, CreationJob};
+pub use incubator::{CreationHandle, CreationJob, SharedCreation};
 pub use instantiator::Instantiator;
+pub use introspect::{BindingTier, ObjectReport, PropertyReport, SourcePlace};
 pub use list::QmlList;
 pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
 pub use loader::{ComponentSource, MapSource};
@@ -92,7 +104,8 @@ pub use log::{LogEntry, LogLevel};
 pub use meta::{
     AttachedTypeId, CompleteThunk, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo, ListAppend,
     ListField, MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk, Prop,
-    PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Setter, SignalDecl, SignalInfo,
+    PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Reset, ResetApply, ResetValue,
+    Setter, SignalDecl, SignalInfo,
 };
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};
 pub use number::{number_to_string, string_to_number, to_int32};
@@ -110,7 +123,7 @@ pub use types::{ConvertError, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Value};
 pub use value_types::{Quaternion, Vector2d, Vector3d, Vector4d, general as number_to_general};
 
-pub use ljos_macros::{QmlObject, qml_impl};
+pub use ljos_macros::{QmlObject, qml_impl, qml_singleton};
 pub use ljos_reactive::{NodeId, OverrideId, Provenance, RestoreMode, ScopeId, WriteKind};
 
 /// Paths for generated code. Not a public API.

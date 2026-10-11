@@ -167,7 +167,8 @@ impl Engine {
                     if let Some(inner) = weak.upgrade() {
                         let engine = Engine::from_inner(inner);
                         let _t = Tracking::pause(&engine.inner.tracking);
-                        h(&engine, &[]);
+                        // A panic ends this handler only (fault.rs).
+                        engine.guarded(receiver.unwrap_or(obj), || h(&engine, &[]));
                     }
                 })?)
             }
@@ -256,9 +257,12 @@ impl Engine {
                 .borrow()
                 .conns
                 .get(id)
-                .map(|c| c.handler.clone());
-            if let Some(h) = handler {
-                self.untrack(|| h(self, &args));
+                .map(|c| (c.handler.clone(), c.receiver));
+            if let Some((h, receiver)) = handler {
+                // A panic ends this handler only (fault.rs).
+                self.guarded(receiver.unwrap_or(obj), || {
+                    self.untrack(|| h(self, &args));
+                });
             }
         }
         Ok(())

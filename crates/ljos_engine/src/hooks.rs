@@ -51,6 +51,9 @@ type ValueSourceListener = Rc<dyn Fn(&Engine, ObjectId, ObjectId, PropIndex) -> 
 /// A script property's statement.
 pub(crate) type Script = Rc<dyn Fn(&Engine)>;
 
+/// What [`Engine::on_js_started`] keeps.
+type JsStartedListener = Rc<dyn Fn(&Engine)>;
+
 #[derive(Default)]
 pub(crate) struct Hooks {
     extensions: RefCell<HashMap<TypeId, Rc<dyn Any>>>,
@@ -59,6 +62,8 @@ pub(crate) struct Hooks {
     value_sources: RefCell<Vec<ValueSourceListener>>,
     script_props: RefCell<Vec<(&'static MetaObject, PropIndex)>>,
     scripts: RefCell<HashMap<ObjectId, Vec<(PropIndex, Script)>>>,
+    /// Called when the JS host has started.
+    js_started: RefCell<Vec<JsStartedListener>>,
 }
 
 impl Hooks {
@@ -98,6 +103,27 @@ impl Engine {
         };
         any.downcast::<T>()
             .unwrap_or_else(|_| unreachable!("extensions are keyed by their type"))
+    }
+
+    /// Calls `f` once the JS host has started, or now when it already has.
+    /// A crate built on the engine puts its part of the `Qt` global there
+    /// (`Qt.styleHints`) without making the host start for it: the host
+    /// starts with the first script, and an application that runs none
+    /// never pays for one.
+    pub fn on_js_started(&self, f: impl Fn(&Engine) + 'static) {
+        if self.js_started() {
+            f(self);
+        }
+        self.inner.hooks.js_started.borrow_mut().push(Rc::new(f));
+    }
+
+    /// Tells [`Engine::on_js_started`]'s listeners. Called unborrowed: a
+    /// listener runs scripts.
+    pub(crate) fn run_js_started(&self) {
+        let listeners = self.inner.hooks.js_started.borrow().clone();
+        for l in listeners {
+            l(self);
+        }
     }
 
     /// Puts `f` in front of `prop` of `obj`: it sees every value QML or JS
