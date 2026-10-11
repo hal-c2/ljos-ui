@@ -766,6 +766,36 @@ impl Engine {
         })
         .unwrap_or_default()
     }
+
+    /// One member of a JS object (`source` of a regular expression);
+    /// `None` for a value that is not a JS object and for a member it
+    /// does not have.
+    pub fn js_member(&self, v: &Value, key: &str) -> Option<Value> {
+        let Value::Js(h) = v else {
+            return None;
+        };
+        let r = h.0.clone();
+        let out = self.run_js("member", |s| {
+            let field = s.get_field(&r, key)?;
+            Ok(self.js_to_value(s, field, &crate::TypeTag::Var))
+        })?;
+        (!matches!(out, Value::Undefined)).then_some(out)
+    }
+
+    /// Calls a JS function a property holds (`SpinBox.textFromValue`).
+    /// `None` when `f` is not a function or it threw; the exception is
+    /// logged as Qt logs it.
+    pub fn call_js(&self, f: &Value, args: &[Value]) -> Option<Value> {
+        let Value::Js(h) = f else {
+            return None;
+        };
+        let r = h.0.clone();
+        let args: Vec<JsValue> = args.iter().map(|a| self.to_js(a)).collect();
+        self.run_js("call", |s| {
+            let out = s.call_ref(&r, &JsValue::Undefined, &args)?;
+            Ok(self.js_to_value(s, out, &crate::TypeTag::Var))
+        })
+    }
 }
 
 /// `foo` → `onFoo`.

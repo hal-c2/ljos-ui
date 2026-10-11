@@ -305,9 +305,14 @@ impl HostObjects for EngineHost {
                 .map_err(host_err);
         }
         let v = engine.js_to_value(scope, value, &ty);
+        engine.tier1_spy(id, p, &v);
         engine
             .write(id, p, v, crate::WriteKind::Imperative)
-            .map_err(host_err)
+            .map_err(host_err)?;
+        if engine.inner.reload.tracking.get() {
+            engine.reload_note_assigned(id, p);
+        }
+        Ok(())
     }
 
     fn call<'js>(
@@ -827,6 +832,41 @@ pub(crate) const QT_ENUM_KEYS: &[(&str, i64)] = &[
     ("Unchecked", 0),
     ("PartiallyChecked", 1),
     ("Checked", 2),
+    // Qt::MatchFlag, for `ComboBox.find`.
+    ("MatchExactly", 0),
+    ("MatchContains", 1),
+    ("MatchStartsWith", 2),
+    ("MatchEndsWith", 3),
+    ("MatchRegularExpression", 4),
+    ("MatchWildcard", 5),
+    ("MatchFixedString", 8),
+    ("MatchCaseSensitive", 16),
+    ("MatchWrap", 32),
+    ("MatchRecursive", 64),
+    // Qt::InputMethodHint, for `inputMethodHints`.
+    ("ImhNone", 0),
+    ("ImhHiddenText", 0x1),
+    ("ImhSensitiveData", 0x2),
+    ("ImhNoAutoUppercase", 0x4),
+    ("ImhPreferNumbers", 0x8),
+    ("ImhPreferUppercase", 0x10),
+    ("ImhPreferLowercase", 0x20),
+    ("ImhNoPredictiveText", 0x40),
+    ("ImhDate", 0x80),
+    ("ImhTime", 0x100),
+    ("ImhPreferLatin", 0x200),
+    ("ImhMultiLine", 0x400),
+    ("ImhNoEditMenu", 0x800),
+    ("ImhNoTextHandles", 0x1000),
+    ("ImhDigitsOnly", 0x1_0000),
+    ("ImhFormattedNumbersOnly", 0x2_0000),
+    ("ImhUppercaseOnly", 0x4_0000),
+    ("ImhLowercaseOnly", 0x8_0000),
+    ("ImhDialableCharactersOnly", 0x10_0000),
+    ("ImhEmailCharactersOnly", 0x20_0000),
+    ("ImhUrlCharactersOnly", 0x40_0000),
+    ("ImhLatinOnly", 0x80_0000),
+    ("ImhExclusiveInputMask", 0xffff_0000),
 ];
 
 /// The value of `Qt.<key>`, when it is an enum key.

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped whenever the serialised shape changes, so a cache written by an
 /// older compiler is rebuilt instead of misread.
-pub const IR_VERSION: u32 = 4;
+pub const IR_VERSION: u32 = 5;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -568,7 +568,8 @@ pub struct Binding {
     /// Of the expression's text: two expressions with the same hash and the
     /// same refs are the same.
     pub hash: u64,
-    /// The register bytecode of tier 1, when there is one. Not written yet.
+    /// The register bytecode of tier 1, when the whole expression is in
+    /// the subset tier 1 runs; the JS function means the same.
     pub tier1: Option<Tier1>,
 }
 
@@ -582,12 +583,8 @@ pub enum BindingKind {
     Function,
 }
 
-/// Tier-1 bytecode (ARCHITECTURE.md §5.4). A placeholder: tier 1 is not
-/// compiled yet, and every expression runs as tier 2.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Tier1 {
-    pub code: Vec<u8>,
-}
+mod tier1;
+pub use tier1::{BinaryOp, Builtin, Const, InlineArg, Op, Reg, Tier1, UnaryOp};
 
 /// A parameter of an expression's function, and what the engine passes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -702,3 +699,6 @@ impl Resolved {
         !matches!(self, Resolved::Unknown)
     }
 }
+
+mod reload;
+pub use reload::{FilePatch, ReloadOp, ReloadPatch};

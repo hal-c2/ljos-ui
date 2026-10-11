@@ -814,3 +814,91 @@ impl Engine {
         ListState::of(self, obj).map(|s| s as Rc<dyn ItemModel>)
     }
 }
+
+/// A role's value as a dev reload carries it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CarriedCell {
+    Plain(Value),
+    /// A nested model, by its rows.
+    Nested(CarriedRows),
+}
+
+/// A model's rows as a dev reload carries them: by role name, as the
+/// model made from the new file starts with no roles.
+pub type CarriedRows = Vec<Vec<(String, CarriedCell)>>;
+
+fn carried_rows(engine: &Engine, state: &ListState) -> CarriedRows {
+    let names = state.names();
+    (0..state.len())
+        .map(|row| {
+            let mut cells = Vec::with_capacity(names.len());
+            for (role, name) in names.iter().enumerate() {
+                let cell = match state.value(row, role) {
+                    Value::Undefined | Value::Null => continue,
+                    Value::Object(o) => match ListState::of(engine, o) {
+                        Some(nested) if is_list_model(engine, o) => {
+                            CarriedCell::Nested(carried_rows(engine, &nested))
+                        }
+                        // An object of the old tree means nothing in the
+                        // new one.
+                        _ => continue,
+                    },
+                    v => CarriedCell::Plain(v),
+                };
+                cells.push((name.to_string(), cell));
+            }
+            cells
+        })
+        .collect()
+}
+
+fn restored_rows(engine: &Engine, model: ObjectId, rows: CarriedRows) -> Vec<Vec<(String, Value)>> {
+    rows.into_iter()
+        .map(|cells| {
+            cells
+                .into_iter()
+                .map(|(name, cell)| {
+                    let v = match cell {
+                        CarriedCell::Plain(v) => v,
+                        CarriedCell::Nested(rows) => {
+                            let rows = restored_rows(engine, model, rows);
+                            nested_model(engine, model, rows)
+                        }
+                    };
+                    (name, v)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The rows a script appended, removed or changed go on across a dev
+/// reload. (When the file's `ListElement`s were edited, the engine does
+/// not ask: the file wins.)
+impl crate::Migrate for ListModel {
+    const VERSION: u32 = 1;
+    type State = CarriedRows;
+
+    fn snapshot(engine: &Engine, obj: ObjectId) -> Option<CarriedRows> {
+        let state = ListState::of(engine, obj)?;
+        Some(carried_rows(engine, &state))
+    }
+
+    fn migrate(
+        engine: &Engine,
+        obj: ObjectId,
+        _from: u32,
+        rows: CarriedRows,
+    ) -> Result<(), String> {
+        let state = ListState::of(engine, obj).ok_or("not a ListModel")?;
+        // The usual case, and views are not told of rows going and
+        // coming.
+        if carried_rows(engine, &state) == rows {
+            return Ok(());
+        }
+        state.clear(engine);
+        let rows = restored_rows(engine, obj, rows);
+        state.insert(engine, 0, rows);
+        Ok(())
+    }
+}

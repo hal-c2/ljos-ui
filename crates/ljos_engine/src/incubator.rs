@@ -43,6 +43,9 @@ use crate::types::TypeTag;
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
 
+pub(crate) mod reload;
+pub(crate) mod tier1;
+
 /// Deepest nesting of file components; deeper is a component using
 /// itself.
 const MAX_DEPTH: u32 = 64;
@@ -106,6 +109,9 @@ struct Unit {
 #[derive(Default)]
 struct CompletionNode {
     handlers: Vec<(Rc<Instance>, ExprId)>,
+    /// `Component.onReloaded`: run instead of `handlers` for an object
+    /// that a dev reload kept.
+    reloaded: Vec<(Rc<Instance>, ExprId)>,
     children: Vec<ObjectId>,
 }
 
@@ -248,7 +254,12 @@ impl Engine {
         initial_props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
         let template = self.file_template(url)?;
-        self.create_from_template(&template, parent, initial_props)
+        if !self.inner.reload.tracking.get() {
+            return self.create_from_template(&template, parent, initial_props);
+        }
+        let root = self.create_from_template(&template, parent, initial_props.clone())?;
+        self.reload_note_origin(root, url, parent, &initial_props);
+        Ok(root)
     }
 
     /// A `Component` object for the file at `url` (`Qt.createComponent`).
@@ -282,6 +293,7 @@ impl Engine {
     ) -> Result<ObjectId, EngineError> {
         let mut cr = Creation::default();
         let root = self.allocate_template(&mut cr, template, parent)?;
+        self.reload_assign(&cr, root);
         let r = self.batch(|| -> Result<(), EngineError> {
             let (r, held) = self.hold_eager(|| {
                 self.apply_aliases(&cr);
@@ -364,6 +376,8 @@ impl Engine {
         if let Some(top) = &cr.top {
             setup(self, root, top.context);
         }
+        // After `setup`: a delegate's path has its row in it.
+        self.reload_assign(&cr, root);
         self.batch(|| {
             let ((), held) = self.hold_eager(|| {
                 self.apply_aliases(&cr);
@@ -420,9 +434,13 @@ impl Engine {
         applied: Result<(), EngineError>,
     ) -> Result<ObjectId, EngineError> {
         if let Err(e) = applied.and_then(|()| self.check_required(&cr)) {
-            self.destroy_now(root);
+            self.reload_discard(root);
             return Err(e);
         }
+        // Dev reload: the objects that go on for old ones take what
+        // those held before anything completes, and are not completed
+        // in the file's sense a second time.
+        let kept = self.reload_adopt(&cr);
         // Native hooks: the last made first, so children are complete
         // before the objects that lay them out.
         for &o in cr.all.iter().rev() {
@@ -437,12 +455,30 @@ impl Engine {
             let Some(node) = cr.nodes.get(&o) else {
                 continue;
             };
-            for (inst, expr) in &node.handlers {
-                if self.is_alive(o) {
-                    self.call_expr(inst, *expr, &[]);
+            if !kept.contains(&o) {
+                for (inst, expr) in &node.handlers {
+                    if self.is_alive(o) {
+                        self.call_expr(inst, *expr, &[]);
+                    }
                 }
             }
             stack.extend(node.children.iter().copied());
+        }
+        if !kept.is_empty() {
+            let mut stack = vec![root];
+            while let Some(o) = stack.pop() {
+                let Some(node) = cr.nodes.get(&o) else {
+                    continue;
+                };
+                if kept.contains(&o) {
+                    for (inst, expr) in &node.reloaded {
+                        if self.is_alive(o) {
+                            self.call_expr(inst, *expr, &[]);
+                        }
+                    }
+                }
+                stack.extend(node.children.iter().copied());
+            }
         }
         Ok(root)
     }
@@ -707,6 +743,8 @@ impl Engine {
                     for h in &at.members.handlers {
                         if h.signal == "completed" {
                             node.handlers.push((inst.clone(), h.expr));
+                        } else if h.signal == "reloaded" {
+                            node.reloaded.push((inst.clone(), h.expr));
                         }
                     }
                 }
@@ -869,7 +907,8 @@ impl Engine {
         name: &str,
     ) -> Option<ObjectId> {
         let meta = self.native_meta(module, name).ok()?;
-        meta.attached?;
+        // A type written in QML attaches what the type it is made from does.
+        meta.chain().find_map(|m| m.attached)?;
         self.attached_object(obj, &meta).ok()
     }
 
@@ -978,6 +1017,7 @@ impl Engine {
             let Ok(m) = self.method_index(id, &f.name) else {
                 continue;
             };
+            let noted = tier1::Noted::of(inst, f.expr);
             let inst = inst.clone();
             let expr = f.expr;
             let _ = self.set_script_method(
@@ -985,6 +1025,7 @@ impl Engine {
                 m,
                 Rc::new(move |e, _obj, args| Ok(e.call_expr(&inst, expr, args))),
             );
+            self.tier1_note_method(id, m, noted);
         }
         for at in &od.attached {
             self.apply_attached(inst, id, at);
@@ -1307,8 +1348,16 @@ impl Engine {
         name: &str,
     ) -> Result<Target, EngineError> {
         if path.is_empty() {
-            let prop = self.property_index(obj, name)?;
-            return Ok(Target { obj, prop });
+            return match (self.property_index(obj, name), name.rsplit_once('.')) {
+                (Ok(prop), _) => Ok(Target { obj, prop }),
+                // What is attached is written with its whole path, which
+                // may lead through an object: `ScrollBar.vertical.policy`.
+                (Err(_), Some((through, leaf))) => {
+                    let through: Vec<String> = through.split('.').map(str::to_owned).collect();
+                    self.member_target(obj, &through, leaf)
+                }
+                (Err(e), None) => Err(e),
+            };
         }
         let dotted = format!("{}.{name}", path.join("."));
         if let Ok(prop) = self.property_index(obj, &dotted) {
@@ -1404,6 +1453,11 @@ impl Engine {
     ) {
         let i = inst.clone();
         let handler: crate::Handler = Rc::new(move |e: &Engine, args: &[Value]| {
+            // Dev reload: the tree being replaced, or the one being
+            // made, is not to act on what the other does.
+            if e.reload_muted(scope) {
+                return;
+            }
             e.call_expr(&i, expr, args);
         });
         match self.signal_index(obj, signal) {
@@ -1492,6 +1546,9 @@ impl Engine {
             && let Some(Some(t0)) = file.tier0.get(b.js_fn.index())
             && let Some(v) = self.tier0_eval(inst, b, t0)
         {
+            return v;
+        }
+        if let Some(v) = self.tier1_eval(inst, expr, hint, args) {
             return v;
         }
         let f = match file.function(self, b.js_fn) {
@@ -1999,6 +2056,7 @@ impl CreationJob {
                             if let (Some(setup), Some(top)) = (setup, &cr.top) {
                                 setup(&e, root, top.context);
                             }
+                            e.reload_assign(&cr, root);
                             e.apply_aliases(&cr);
                             self.phase = Phase::Apply(cr, root, 0);
                         }

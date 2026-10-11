@@ -195,7 +195,7 @@ impl Engine {
 
     /// `String.prototype.arg` for a number: `%1` takes it plain, `%L1` in
     /// the locale's digits and grouping.
-    fn arg_number(&self, template: &str, value: f64) -> Option<String> {
+    pub(crate) fn arg_number(&self, template: &str, value: f64) -> Option<String> {
         let state = self.i18n();
         if template.contains("%L") {
             self.i18n_track(&state.locale);

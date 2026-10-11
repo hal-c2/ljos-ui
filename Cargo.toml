@@ -49,11 +49,21 @@ zune-jpeg = "0.5.15"
 # Test fixtures only: nothing shipped encodes JPEG.
 jpeg-encoder = "0.7.1"
 
+# Text editing
+# Grapheme clusters for cursor movement.
+unicode-segmentation = "1.13"
+# Validators need a partial match (Intermediate), which a backtracking matcher cannot give.
+regex-automata = "0.4.18"
+
 # Localisation
 icu_plurals = "2.3"
 icu_locale = "2.3"
 icu_decimal = "2.3"
 quick-xml = "0.42"
+
+# Development tools
+# File events from the kernel (inotify, FSEvents, ReadDirectoryChangesW): nothing polls.
+notify = "8.2"
 
 # Async, services and MCP
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std"] }

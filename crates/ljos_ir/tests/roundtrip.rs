@@ -264,7 +264,57 @@ fn sample() -> CompiledFile {
         params: vec![],
         args: vec!["event".into()],
         refs: vec![],
-        tier1: Some(Tier1 { code: vec![1, 2] }),
+        tier1: Some(Tier1 {
+            registers: 3,
+            consts: vec![
+                Const::Undefined,
+                Const::Null,
+                Const::Bool(true),
+                Const::number(-0.0),
+                Const::number(f64::NAN),
+                Const::String("px".into()),
+            ],
+            names: vec!["border".into(), "width".into()],
+            args: vec![InlineArg {
+                component: CompIdx(0),
+                arg: Arg::Dynamic("index".into()),
+            }],
+            code: vec![
+                Op::Param { dst: 0, param: 0 },
+                Op::Get {
+                    dst: 1,
+                    obj: 0,
+                    path: 0,
+                    len: 2,
+                },
+                Op::Const { dst: 2, k: 5 },
+                Op::Binary {
+                    op: BinaryOp::Add,
+                    dst: 1,
+                    a: 1,
+                    b: 2,
+                },
+                Op::JumpIfNot { cond: 1, to: 7 },
+                Op::Guard {
+                    obj: 0,
+                    name: 1,
+                    expr: ExprId(0),
+                },
+                Op::Call {
+                    dst: 1,
+                    f: Builtin::MathRound,
+                    base: 1,
+                    count: 1,
+                },
+                Op::Set {
+                    obj: 0,
+                    name: 1,
+                    val: 1,
+                    group: Some((2, 0)),
+                },
+                Op::Return { src: 1 },
+            ],
+        }),
         ..binding.clone()
     };
     CompiledFile {

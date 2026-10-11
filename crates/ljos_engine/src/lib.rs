@@ -81,10 +81,12 @@ pub use engine::{Engine, OverrideContent, ParentListener};
 pub use error::EngineError;
 pub use hooks::{Interception, Interceptor};
 pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey, SignalIndex};
+pub use incubator::reload::{Migrate, ReloadError, ReloadFault, ReloadOutcome};
+pub use incubator::tier1::Tier1Stats;
 pub use incubator::{CreationHandle, CreationJob};
 pub use instantiator::Instantiator;
 pub use list::QmlList;
-pub use listmodel::{ListElement, ListModel};
+pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
 pub use loader::{ComponentSource, MapSource};
 pub use log::{LogEntry, LogLevel};
 pub use meta::{

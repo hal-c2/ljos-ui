@@ -21,10 +21,14 @@ pub mod i18n;
 mod js;
 mod oracle;
 mod project;
+pub mod reload;
+pub mod reload_lint;
+pub mod tier1;
 
 pub use compile::compile_file;
 pub use dump::dump;
 pub use project::Project;
+pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 
 /// A file's compiled form, with what was wrong with it. A file with errors
 /// still compiles as far as it can.

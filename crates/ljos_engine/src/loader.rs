@@ -3,7 +3,7 @@
 //! when the source has it), the type made for each declaring object, and
 //! the bindings simple enough to run without JS.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -39,8 +39,19 @@ pub trait ComponentSource {
     }
 }
 
+/// `url` without its query and fragment. A file is the same file whatever
+/// is asked of it: `Panel.qml?generation=3` is how a tool makes a URL
+/// that differs after a reload (ARCHITECTURE.md §12.1).
+pub(crate) fn strip_query(url: &str) -> &str {
+    match url.find(['?', '#']) {
+        Some(i) => &url[..i],
+        None => url,
+    }
+}
+
 /// `file:///Main.qml` and `Main.qml` are `Main`.
 fn plain_key(url: &str) -> String {
+    let url = strip_query(url);
     let s = url
         .strip_prefix("file:///")
         .or_else(|| url.strip_prefix("file://"))
@@ -196,6 +207,12 @@ pub(crate) struct LoadedFile {
     pub(crate) metas: RefCell<HashMap<(u32, u32), MetaRef>>,
     /// Tier-0 form of each function, by `FnIndex`.
     pub(crate) tier0: Vec<Option<Tier0>>,
+    /// The tier-1 programs of the file's expressions.
+    pub(crate) tier1: crate::incubator::tier1::Programs,
+    /// The dev reload the file was loaded after; 0 without one. A JS
+    /// host cannot unload a module or load one name twice, so the script
+    /// of a reloaded file goes by a name with this in it.
+    pub(crate) epoch: Cell<u64>,
 }
 
 impl LoadedFile {
@@ -206,6 +223,7 @@ impl LoadedFile {
         bytecode: Option<Bytecode>,
     ) -> Self {
         let tier0 = tier0_table(&ir);
+        let tier1 = crate::incubator::tier1::Programs::new(&ir);
         Self {
             key: key.to_owned(),
             url: Atom::new(&url),
@@ -214,6 +232,8 @@ impl LoadedFile {
             fns: RefCell::new(None),
             metas: RefCell::new(HashMap::new()),
             tier0,
+            tier1,
+            epoch: Cell::new(0),
         }
     }
 
@@ -250,7 +270,10 @@ impl LoadedFile {
     fn load_module(&self, engine: &Engine) -> Result<Vec<Option<FnId>>, EngineError> {
         let js = engine.js()?;
         // Module names must be unique per host; the key is.
-        let name = format!("{}.qml.js", self.key);
+        let name = match self.epoch.get() {
+            0 => format!("{}.qml.js", self.key),
+            n => format!("{}.qml.js?generation={n}", self.key),
+        };
         let handle = match &self.bytecode {
             Some(b) => js.host.load_module_bytecode(b),
             None => js.host.load_module(&name, &self.ir.js.source),
@@ -341,6 +364,7 @@ impl Engine {
 
     /// `url` as a key of the component source.
     pub(crate) fn url_key(&self, url: &str) -> String {
+        let url = strip_query(url);
         let source = self.inner.loader.borrow().source.clone();
         match source {
             Some(s) => s.key(url),
@@ -406,6 +430,7 @@ impl Engine {
             }
         }
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
+        file.epoch.set(self.inner.reload.epoch.get());
         self.inner
             .loader
             .borrow_mut()
@@ -473,5 +498,24 @@ mod tests {
         assert_eq!(based.url("sub/Leaf"), "qrc:/app/sub/Leaf.qml");
         assert_eq!(based.key("qrc:/app/sub/Leaf.qml"), "sub/Leaf");
         assert_eq!(based.key("sub/Leaf.qml"), "sub/Leaf");
+    }
+
+    #[test]
+    fn a_query_and_a_fragment_do_not_name_another_file() {
+        for (url, want) in [
+            ("Panel.qml?generation=3", "Panel"),
+            ("file:///sub/Panel.qml?theme=dark&x=1#top", "sub/Panel"),
+            ("Panel.qml#top", "Panel"),
+            ("Panel.qml", "Panel"),
+        ] {
+            assert_eq!(plain_key(url), want, "{url}");
+        }
+        let engine = Engine::new();
+        assert_eq!(engine.url_key("Panel.qml?generation=3"), "Panel");
+        engine.set_component_source(MapSource::new().with_base_url("qrc:/app"));
+        assert_eq!(
+            engine.url_key("qrc:/app/sub/Leaf.qml?generation=9"),
+            "sub/Leaf"
+        );
     }
 }

@@ -106,6 +106,11 @@ pub(crate) struct Inner {
     context_serial: Cell<u64>,
     /// Interceptors, value sources and per-engine extensions.
     pub(crate) hooks: crate::hooks::Hooks,
+    /// Dev hot reload: empty and untouched unless tracking is turned on.
+    pub(crate) reload: crate::incubator::reload::ReloadState,
+    /// Tier 1 (bindings as bytecode): its switches, and what its
+    /// cross-check keeps while it runs.
+    pub(crate) tier1: crate::incubator::tier1::State,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -242,6 +247,8 @@ impl Engine {
             destruction_handlers: Cell::new(false),
             context_serial: Cell::new(0),
             hooks: crate::hooks::Hooks::default(),
+            reload: Default::default(),
+            tier1: Default::default(),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {
@@ -604,6 +611,9 @@ impl Engine {
         }
         crate::qtqml::forget_timers(self, &order);
         self.inner.hooks.forget(&order);
+        if self.inner.reload.tracking.get() {
+            self.reload_forget(&order);
+        }
         let js = self.inner.js.borrow().clone();
         if let Some(js) = js {
             js.forget(&order);
@@ -1091,7 +1101,13 @@ impl Engine {
 
     pub fn write_by_name(&self, obj: ObjectId, name: &str, v: Value) -> Result<(), EngineError> {
         let p = self.property_index(obj, name)?;
-        self.write(obj, p, v, WriteKind::Imperative)
+        self.write(obj, p, v, WriteKind::Imperative)?;
+        if self.inner.reload.tracking.get() {
+            // An assignment from outside the file is the user's, which a
+            // dev reload carries across.
+            self.reload_note_assigned(obj, p);
+        }
+        Ok(())
     }
 
     /// Writes from native code or the object creator: read-only and
@@ -1846,10 +1862,8 @@ impl Engine {
         obj: ObjectId,
         attacher: &MetaRef,
     ) -> Result<ObjectId, EngineError> {
-        let make = attacher
-            .attached
+        let (key, make) = attaching(attacher)
             .ok_or_else(|| EngineError::NoAttachedType(attacher.name.to_string()))?;
-        let key = attacher.type_id();
         {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
@@ -1883,7 +1897,7 @@ impl Engine {
     /// that only looks (an accessibility pass over every item) does not
     /// give every object an attached object.
     pub fn existing_attached_object(&self, obj: ObjectId, attacher: &MetaRef) -> Option<ObjectId> {
-        let key = attacher.type_id();
+        let (key, _) = attaching(attacher)?;
         let store = self.inner.store.borrow();
         let h = store.objects.get(obj)?;
         h.attached.iter().find(|(k, _)| *k == key).map(|(_, a)| *a)
@@ -2246,4 +2260,16 @@ fn store_in(h: &mut ObjectHeader, prop: PropIndex, v: &Value) -> Result<(), Conv
         return Ok(());
     };
     write_access(&mut *h.native, &mut h.dynamic, &access, v)
+}
+
+/// The type among `attacher` and its bases that says what is attached, as
+/// the key of what it attaches. A type declared in QML attaches what the
+/// type it is made from does, and the same object: `ScrollBar.vertical`
+/// names one object whether `ScrollBar` is the template or a style's
+/// `ScrollBar.qml`.
+fn attaching(attacher: &MetaRef) -> Option<(crate::meta::AttachedTypeId, fn() -> MetaRef)> {
+    attacher.chain().find_map(|m| {
+        let key = crate::meta::AttachedTypeId(std::ptr::from_ref(m) as usize);
+        m.attached.map(|make| (key, make))
+    })
 }

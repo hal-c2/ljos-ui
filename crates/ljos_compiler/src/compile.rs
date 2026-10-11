@@ -1907,6 +1907,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             *count += 1;
             file.components[index].id = id;
         }
+        crate::tier1::compile(&mut file);
         Compiled {
             file,
             diagnostics: self.diagnostics,
