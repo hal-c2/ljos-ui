@@ -9,6 +9,11 @@
 //! run::<()>(ShellConfig::new("Hello"), |setup| Ok(build(setup.engine()))).unwrap();
 //! ```
 
+#[cfg(feature = "dev")]
+mod dev;
+#[cfg(feature = "dev")]
+pub use ljos_dev::{Overlay, ReloadStats, Report};
+
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -99,6 +104,8 @@ pub struct Setup<'a, M> {
     clock: Arc<dyn Clock>,
     on_message: Option<MessageHandler<M>>,
     timer_hook: Option<TimerHook>,
+    #[cfg(feature = "dev")]
+    dev: dev::DevSetup,
 }
 
 impl<M> Setup<'_, M> {
@@ -145,6 +152,9 @@ pub struct ShellApp<M> {
     budget: DrainBudget,
     background: egui::Color32,
     last_drain: DrainReport,
+    /// The watched application of a development build.
+    #[cfg(feature = "dev")]
+    dev: Option<dev::Dev>,
 }
 
 impl<M> std::fmt::Debug for ShellApp<M> {
@@ -180,11 +190,15 @@ impl<M: Send + 'static> ShellApp<M> {
             clock: Arc::clone(&clock),
             on_message: None,
             timer_hook: None,
+            #[cfg(feature = "dev")]
+            dev: dev::DevSetup::new(ctx),
         };
         let root = setup(&mut s).map_err(ShellError::Setup)?;
         let Setup {
             on_message,
             timer_hook,
+            #[cfg(feature = "dev")]
+            dev,
             ..
         } = s;
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
@@ -200,6 +214,8 @@ impl<M: Send + 'static> ShellApp<M> {
             budget: config.drain_budget,
             background: egui::Color32::from_rgba_unmultiplied(r, g, b, a),
             last_drain: DrainReport::default(),
+            #[cfg(feature = "dev")]
+            dev: dev.finish(),
         })
     }
 
@@ -251,12 +267,16 @@ impl<M: Send + 'static> ShellApp<M> {
 impl<M: Send + 'static> eframe::App for ShellApp<M> {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_inbox();
+        #[cfg(feature = "dev")]
+        self.pump_dev();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, self.background);
         self.view.show(ui);
+        #[cfg(feature = "dev")]
+        self.show_dev(ui);
     }
 }
 

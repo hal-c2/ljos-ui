@@ -365,3 +365,44 @@ fn nothing_is_built_while_nothing_listens() {
     assert!(view.scene().accessibility_tree().is_empty());
     assert_eq!(view.stats().accessible_nodes, 0);
 }
+
+/// A list at (10,10), 150 by 100, that scrolls 400 of content.
+fn scrolling() -> (Scene, ObjectId) {
+    let s = scene();
+    let e = &s.engine;
+    geom(e, s.bar, 10.0, 130.0, 180.0, 40.0);
+    let list = make::<ljos_quick::Flickable>(e, Some(s.root));
+    geom(e, list, 10.0, 10.0, 150.0, 100.0);
+    set(e, list, "contentWidth", Value::Real(150.0));
+    set(e, list, "contentHeight", Value::Real(400.0));
+    expose(e, list, QtRole::List, "Rows");
+    (s, list)
+}
+
+#[test]
+fn a_scroll_asked_of_a_node_scrolls_the_item() {
+    let (s, list) = scrolling();
+    let mut h = harness(&s);
+    let rows = h.get_by_role_and_label(Role::List, "Rows");
+    let node = rows.accesskit_node();
+    assert_eq!(node.scroll_y(), Some(0.0));
+    assert_eq!(node.scroll_y_max(), Some(300.0));
+    rows.scroll_down();
+    h.run();
+    let y = s.engine.read_by_name(list, "contentY").to_number();
+    assert_eq!(y, 72.0);
+    assert_eq!(h.state().view.stats().accessible_actions, 1);
+    // What the screen reader is told has moved with it.
+    let rows = h.get_by_role_and_label(Role::List, "Rows");
+    assert_eq!(rows.accesskit_node().scroll_y(), Some(72.0));
+}
+
+#[test]
+fn a_scroll_with_nowhere_to_go_is_not_counted() {
+    let (s, list) = scrolling();
+    let mut h = harness(&s);
+    h.get_by_role_and_label(Role::List, "Rows").scroll_up();
+    h.run();
+    assert_eq!(s.engine.read_by_name(list, "contentY").to_number(), 0.0);
+    assert_eq!(h.state().view.stats().accessible_actions, 0);
+}

@@ -9,10 +9,71 @@ use std::collections::HashMap;
 
 use egui::accesskit::{self, Role};
 use egui::{Id, Pos2, Rect, Ui, UiBuilder};
-use ljos_a11y::{NodeKey, Tree};
+use ljos_a11y::{NodeKey, TextValue, Tree};
+use ljos_quick::{AccessibleAction, AccessibleTextAction};
 
 /// AccessKit ids of the nodes of the last pass, for routing actions back.
 pub(crate) type Emitted = HashMap<accesskit::NodeId, NodeKey>;
+
+/// What a request of an assistive technology asks of an item's type, for
+/// the requests that are neither a press nor the focus. A scroll with no
+/// unit named goes one step, not a page.
+pub(crate) fn item_action(req: &accesskit::ActionRequest) -> Option<AccessibleAction> {
+    use accesskit::{Action, ActionData, ScrollUnit};
+    let page = matches!(req.data, Some(ActionData::ScrollUnit(ScrollUnit::Page)));
+    match req.action {
+        Action::Increment => Some(AccessibleAction::Increase),
+        Action::Decrement => Some(AccessibleAction::Decrease),
+        Action::SetValue => match &req.data {
+            Some(ActionData::NumericValue(to)) => Some(AccessibleAction::SetValue(*to)),
+            _ => None,
+        },
+        Action::ScrollUp => Some(AccessibleAction::ScrollUp { page }),
+        Action::ScrollDown => Some(AccessibleAction::ScrollDown { page }),
+        Action::ScrollLeft => Some(AccessibleAction::ScrollLeft { page }),
+        Action::ScrollRight => Some(AccessibleAction::ScrollRight { page }),
+        _ => None,
+    }
+}
+
+/// AccessKit ids of the text runs below the editors' nodes of the last
+/// pass: an assistive technology names a place in a text by a run and a
+/// character in it.
+pub(crate) type TextRuns = HashMap<accesskit::NodeId, (NodeKey, usize)>;
+
+/// What a request of an assistive technology asks of the text of the
+/// node `key`: a selection, or other text in place of the selection or of
+/// all of it.
+pub(crate) fn text_action(
+    req: &accesskit::ActionRequest,
+    key: NodeKey,
+    tree: &Tree,
+    runs: &TextRuns,
+) -> Option<AccessibleTextAction> {
+    use accesskit::{Action, ActionData};
+    let text = tree.get(key)?.text.as_ref()?;
+    match (&req.action, &req.data) {
+        (Action::SetTextSelection, Some(ActionData::SetTextSelection(selection))) => {
+            let cut = text.runs();
+            // A run of another node names no place in this one.
+            let run_of = |id| runs.get(&id).filter(|(k, _)| *k == key).map(|(_, i)| *i);
+            let (anchor, cursor) = TextValue::bytes_of(&cut, selection, run_of)?;
+            Some(AccessibleTextAction::Select { anchor, cursor })
+        }
+        (Action::ReplaceSelectedText, Some(ActionData::Value(to))) => {
+            Some(AccessibleTextAction::ReplaceSelection(to.to_string()))
+        }
+        (Action::SetValue, Some(ActionData::Value(to))) => {
+            Some(AccessibleTextAction::SetValue(to.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// The egui id of run `index` of the text of a node.
+fn run_id(view: Id, key: NodeKey, index: usize) -> Id {
+    Id::new((view, key.0, "run", index))
+}
 
 /// Whether egui is building an AccessKit tree this pass.
 pub(crate) fn listening(ui: &Ui) -> bool {
@@ -40,8 +101,10 @@ pub(crate) fn emit(
     rect: Rect,
     tree: &Tree,
     emitted: &mut Emitted,
+    runs: &mut TextRuns,
 ) {
     emitted.clear();
+    runs.clear();
     let ctx = ui.ctx().clone();
     // egui learns a node's parent from the `Ui` that carries its id, so
     // every node gets one. They paint nothing and take no space.
@@ -81,6 +144,25 @@ pub(crate) fn emit(
             });
         });
         emitted.insert(id.accesskit_id(), key);
+        // AccessKit reads a text that can be edited from runs below its
+        // node, and the selection names places in them.
+        let Some(text) = &data.text else {
+            return;
+        };
+        let cut = text.runs();
+        for (index, run) in cut.iter().enumerate() {
+            let rid = run_id(view, key, index);
+            let _run_ui = host.new_child(
+                UiBuilder::new()
+                    .id(rid)
+                    .max_rect(Rect::from_min_max(min, max))
+                    .accessibility_parent(id),
+            );
+            ctx.accesskit_node_builder(rid, |node| run.apply(&text.value, node));
+            runs.insert(rid.accesskit_id(), (key, index));
+        }
+        let selection = text.selection(&cut, |index| run_id(view, key, index).accesskit_id());
+        ctx.accesskit_node_builder(id, |node| node.set_text_selection(selection));
     });
     // egui's focus stays on the holder whichever item has the scene's; an
     // assistive technology follows the holder's active descendant to it.

@@ -3,8 +3,8 @@
 //! egui reports a key twice: `Event::Key` says which key, and for a key
 //! that types something an `Event::Text` follows with what it typed. A
 //! `Qt.Key` event carries both, so the two are paired here. Text that
-//! comes with no key (an input method's commit) is left in egui's input
-//! for a text item to read.
+//! comes with no key (a key egui has no name for) is not a key here: the
+//! `text` module hands it to the scene.
 
 use egui::os::OperatingSystem;
 use egui::{Event, FocusDirection, Key};
@@ -180,6 +180,9 @@ impl KeyTrack {
                 } => {
                     let (text, text_at) = match events.get(i + 1) {
                         Some(Event::Text(t)) => (t.as_str(), Some(i + 1)),
+                        // egui keeps the tab character to itself; a Qt
+                        // key event carries it, and a `TextEdit` types it.
+                        _ if *k == Key::Tab && !modifiers.any() => ("\t", None),
                         _ => ("", None),
                     };
                     // The character says more than egui's key does: it

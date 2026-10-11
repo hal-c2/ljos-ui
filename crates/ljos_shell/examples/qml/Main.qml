@@ -5,6 +5,7 @@ Item {
     id: root
 
     property int clicks: 0
+    property string size: "Medium"
 
     Column {
         x: 24
@@ -34,6 +35,20 @@ Item {
             smooth: false
             source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIUlEQVR42mN4n8OAFf3/8RArYhjVQBMNuCRwGTSqgSYaAMXJGZ+uT/rTAAAAAElFTkSuQmCC"
         }
+
+        // More rows than fit: the wheel and the bar move them.
+        ScrollView {
+            objectName: "rows"
+            width: 180
+            height: 60
+
+            Column {
+                Repeater {
+                    model: 12
+                    Text { text: "Row " + (index + 1) }
+                }
+            }
+        }
     }
 
     Rectangle {
@@ -60,6 +75,12 @@ Item {
 
         Row {
             spacing: 8
+            TextField { objectName: "name"; width: 160; placeholderText: "Type here" }
+            SpinBox { value: 3; to: 10 }
+        }
+
+        Row {
+            spacing: 8
             Button { text: "Button" }
             Button { text: "Checked"; checkable: true; checked: true }
             ToolButton { text: "Tool" }
@@ -72,6 +93,59 @@ Item {
             RadioButton { text: "Two" }
             Switch { text: "Switch"; checked: true }
         }
+    }
+
+    // What opens over the window: the rows of a combo box, a menu and a
+    // dialog.
+    Column {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: 24
+        spacing: 8
+
+        ComboBox {
+            objectName: "size"
+            model: ["Small", "Medium", "Large"]
+            currentIndex: 1
+            onActivated: root.size = currentText
+        }
+
+        Button {
+            objectName: "menuButton"
+            text: "Menu"
+            onClicked: menu.open()
+
+            Menu {
+                id: menu
+                objectName: "menu"
+                y: parent.height
+
+                MenuItem { text: "Open a dialog"; onTriggered: dialog.open() }
+                MenuItem { text: "Remember"; checkable: true; checked: true }
+                MenuSeparator {}
+                Menu {
+                    title: "More"
+                    MenuItem { text: "Nothing here" }
+                }
+            }
+        }
+
+        Button {
+            objectName: "dialogButton"
+            text: "Dialog"
+            onClicked: dialog.open()
+        }
+    }
+
+    Dialog {
+        id: dialog
+        objectName: "dialog"
+        anchors.centerIn: parent
+        title: "A dialog"
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        Label { text: "Size: " + root.size }
     }
 
     // A button whose parts the application draws itself.

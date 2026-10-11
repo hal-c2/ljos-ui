@@ -10,14 +10,18 @@ use egui::{
     TouchPhase, Ui, Vec2,
 };
 use ljos_engine::{Engine, EngineError, ObjectId};
-use ljos_quick::{Item, MouseButtons, PointerEvent, PointerId, PointerKind, QuickScene, TimerHook};
+use ljos_quick::{
+    Clipboard, Item, MouseButtons, PointerEvent, PointerId, PointerKind, QuickScene, TimerHook,
+    WheelEvent,
+};
 use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::{FrameView, RenderBackend, kurbo};
 use ljos_runtime::{Clock, SystemClock, Time};
 
 use crate::a11y;
-use crate::input::{map_button, map_modifiers};
+use crate::input::{WheelTrack, map_button, map_modifiers, map_wheel};
 use crate::keys::{Fallback, KeyTrack};
+use crate::text::{self, TextBridge};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
@@ -69,10 +73,23 @@ pub struct ViewStats {
     pub accessible_presses: u64,
     /// Focus actions of an assistive technology that an item took.
     pub accessible_focuses: u64,
+    /// Other actions of an assistive technology (a step of a scroll bar,
+    /// a scroll of a view) that an item took.
+    pub accessible_actions: u64,
     /// Key events handed to the scene.
     pub key_events: u64,
     /// Key events the scene accepted, and so took out of egui's input.
     pub keys_accepted: u64,
+    /// Text that came with no key press (what an input method composes
+    /// and commits, a key egui has no name for) handed to the scene.
+    pub text_events: u64,
+    /// Text events an item took, and so taken out of egui's input.
+    pub texts_accepted: u64,
+    /// Wheel and touchpad scroll events handed to the scene.
+    pub wheel_events: u64,
+    /// Scroll events that moved something in the scene, and so are kept
+    /// from the egui scroll areas around the view.
+    pub wheels_accepted: u64,
 }
 
 /// Bridges the scene's waker (an `Rc` closure on the UI thread) to egui.
@@ -136,6 +153,11 @@ pub struct QmlView {
     resize: ResizeMode,
     gate: Rc<WakeGate>,
     pointer: PointerTrack,
+    wheel: WheelTrack,
+    /// The scene used the last scroll event, so what egui still spreads
+    /// of it over the coming passes is not for a scroll area around the
+    /// view.
+    wheel_kept: bool,
     keys: KeyTrack,
     keyboard: KeyboardPolicy,
     /// The keyboard was the view's when the last pass ended.
@@ -145,6 +167,9 @@ pub struct QmlView {
     ppp: Option<f32>,
     painted_frame: Option<u64>,
     emitted: a11y::Emitted,
+    /// The text runs below the editors' nodes of the last pass.
+    emitted_runs: a11y::TextRuns,
+    text: TextBridge,
     stats: ViewStats,
 }
 
@@ -177,6 +202,8 @@ impl QmlView {
             resize: ResizeMode::default(),
             gate,
             pointer: PointerTrack::default(),
+            wheel: WheelTrack::default(),
+            wheel_kept: false,
             keys: KeyTrack::default(),
             keyboard: KeyboardPolicy::default(),
             had_keyboard: false,
@@ -185,6 +212,8 @@ impl QmlView {
             ppp: None,
             painted_frame: None,
             emitted: a11y::Emitted::new(),
+            emitted_runs: a11y::TextRuns::new(),
+            text: TextBridge::default(),
             stats: ViewStats::default(),
         })
     }
@@ -221,6 +250,12 @@ impl QmlView {
     /// Gives the view egui's focus, and with it the keyboard.
     pub fn request_keyboard(&self, ctx: &Context) {
         ctx.memory_mut(|m| m.request_focus(self.focus_id()));
+    }
+
+    /// Whether the platform's input method was last told that an editor
+    /// has focus.
+    pub fn text_input_active(&self) -> bool {
+        self.text.enabled()
     }
 
     /// Whether keys went to the scene when the last pass ended.
@@ -350,7 +385,8 @@ impl QmlView {
         });
         let events = ui.input(|i| i.events.clone());
         let keys = self.keys.translate(&events, ctx.os());
-        if keys.is_empty() {
+        let texts = text::collect(&events, &keys);
+        if keys.is_empty() && texts.is_empty() {
             return;
         }
 
@@ -359,7 +395,18 @@ impl QmlView {
         let mut taken: Vec<usize> = Vec::new();
         let mut released: Vec<Key> = Vec::new();
         let mut left = None;
+        // Keys and text reach the scene in the order they were typed.
+        let mut texts = texts.into_iter().peekable();
         for k in &keys {
+            let at = k.sources[0].unwrap_or(usize::MAX);
+            while let Some((i, t)) = texts.next_if(|(i, _)| *i < at) {
+                self.deliver_text(i, &t, &mut taken);
+            }
+            // The platform read its clipboard for the paste: an editor
+            // that takes the chord pastes that.
+            if let Some(Event::Paste(pasted)) = events.get(at) {
+                Clipboard::of(&self.engine).set_text(&self.engine, pasted);
+            }
             self.stats.key_events += 1;
             if self.scene.key_event(&self.engine, &k.event) {
                 self.stats.keys_accepted += 1;
@@ -368,6 +415,9 @@ impl QmlView {
             } else if k.fallback.is_some() {
                 left = k.fallback;
             }
+        }
+        for (i, t) in texts {
+            self.deliver_text(i, &t, &mut taken);
         }
         self.gate.held.set(held);
 
@@ -389,6 +439,16 @@ impl QmlView {
                 ctx.memory_mut(|m| m.surrender_focus(id));
             }
             _ => {}
+        }
+    }
+
+    /// Hands text that is not a key press to the scene; `at` is its place
+    /// in the pass's events, noted in `taken` when an item took it.
+    fn deliver_text(&mut self, at: usize, what: &text::PlatformText, taken: &mut Vec<usize>) {
+        self.stats.text_events += 1;
+        if text::deliver(&mut self.scene, &self.engine, what) {
+            self.stats.texts_accepted += 1;
+            taken.push(at);
         }
     }
 
@@ -493,6 +553,14 @@ impl QmlView {
         }
         self.gate.held.set(false);
 
+        // The input method follows the editor with focus; the frame has
+        // just said where its cursor is.
+        self.text.sync(&self.scene, &self.engine, ui, rect);
+        // What an editor copied goes to the platform's clipboard.
+        if let Some(copied) = Clipboard::of(&self.engine).take_outgoing() {
+            ctx.copy_text(copied);
+        }
+
         // Paint. egui keeps no retained shapes, so every pass re-emits the
         // snapshot; B0 caches meshes per node, so this is mostly Arc clones.
         if let Some(snap) = self.scene.snapshot().cloned() {
@@ -511,9 +579,11 @@ impl QmlView {
         if listening {
             let tree = self.scene.accessibility_tree();
             let holder = self.focus_id();
-            a11y::emit(ui, self.id, holder, rect, tree, &mut self.emitted);
+            let runs = &mut self.emitted_runs;
+            a11y::emit(ui, self.id, holder, rect, tree, &mut self.emitted, runs);
         } else {
             self.emitted.clear();
+            self.emitted_runs.clear();
         }
         self.stats.accessible_nodes = self.emitted.len();
 
@@ -541,6 +611,7 @@ impl QmlView {
         let ctx = ui.ctx();
         let (events, modifiers) = ui.input(|i| (i.events.clone(), i.modifiers));
         if events.is_empty() {
+            self.keep_wheel(ui);
             return;
         }
         let os = ctx.os();
@@ -570,6 +641,8 @@ impl QmlView {
         let mut out: Vec<PointerEvent> = Vec::new();
         let mut presses = Vec::new();
         let mut focuses = Vec::new();
+        let mut actions = Vec::new();
+        let mut text_actions = Vec::new();
         for e in &events {
             match e {
                 Event::AccessKitActionRequest(req) => {
@@ -584,6 +657,23 @@ impl QmlView {
                         && let Some(key) = self.emitted.get(&req.target_node)
                     {
                         focuses.push(*key);
+                    }
+                    if req.target_tree == TreeId::ROOT
+                        && let Some(action) = crate::a11y::item_action(req)
+                        && let Some(key) = self.emitted.get(&req.target_node)
+                    {
+                        actions.push((*key, action));
+                    }
+                    if req.target_tree == TreeId::ROOT
+                        && let Some(key) = self.emitted.get(&req.target_node)
+                        && let Some(action) = crate::a11y::text_action(
+                            req,
+                            *key,
+                            self.scene.accessibility_tree(),
+                            &self.emitted_runs,
+                        )
+                    {
+                        text_actions.push((*key, action));
                     }
                 }
                 Event::Touch { id, phase, pos, .. } => {
@@ -618,6 +708,37 @@ impl QmlView {
                             out.push(ev(PointerKind::Cancel, MouseButtons::empty()));
                         }
                         _ => {}
+                    }
+                }
+                Event::MouseWheel {
+                    unit,
+                    delta,
+                    phase,
+                    modifiers,
+                } => {
+                    let scroll = map_wheel(&mut self.wheel, *unit, *delta, *phase, rect.size());
+                    // The event has no position of its own: it is for
+                    // what the pointer is over.
+                    let Some(p) = ui.input(|i| i.pointer.latest_pos()).filter(|p| over(*p)) else {
+                        continue;
+                    };
+                    // What came before it has to have happened first.
+                    for ev in out.drain(..) {
+                        self.scene.pointer_event(&self.engine, &ev);
+                        self.stats.pointer_events += 1;
+                    }
+                    let ev = WheelEvent {
+                        pos: local(p),
+                        angle_delta: scroll.angle_delta,
+                        pixel_delta: scroll.pixel_delta,
+                        phase: scroll.phase,
+                        modifiers: map_modifiers(*modifiers, os),
+                        time: now,
+                    };
+                    self.stats.wheel_events += 1;
+                    self.wheel_kept = self.scene.wheel_event(&self.engine, &ev);
+                    if self.wheel_kept {
+                        self.stats.wheels_accepted += 1;
                     }
                 }
                 _ if touch_pass || self.pointer.touch.is_some() => {}
@@ -683,12 +804,23 @@ impl QmlView {
             self.scene.pointer_event(&self.engine, ev);
         }
         self.stats.pointer_events += out.len() as u64;
+        self.keep_wheel(ui);
         for key in focuses {
             if self.scene.accessible_focus(&self.engine, key) {
                 self.stats.accessible_focuses += 1;
                 // Active focus needs an active window, and the window is
                 // active while the view has egui's focus.
                 ctx.memory_mut(|m| m.request_focus(self.focus_id()));
+            }
+        }
+        for (key, action) in actions {
+            if self.scene.accessible_action(&self.engine, key, action) {
+                self.stats.accessible_actions += 1;
+            }
+        }
+        for (key, action) in text_actions {
+            if self.scene.accessible_text_action(&self.engine, key, action) {
+                self.stats.accessible_actions += 1;
             }
         }
         // The press is a click of its own on the scene's one pointer; in the
@@ -699,6 +831,23 @@ impl QmlView {
                     self.stats.accessible_presses += 1;
                 }
             }
+        }
+    }
+}
+
+impl QmlView {
+    /// Keeps a scroll the scene used from also scrolling an egui scroll
+    /// area around the view. egui spreads one turn of the wheel over
+    /// several passes and a scroll area reads it when its content has been
+    /// shown, so the view takes it away in each of those passes.
+    fn keep_wheel(&mut self, ui: &Ui) {
+        if !self.wheel_kept {
+            return;
+        }
+        if ui.input(|i| i.is_scrolling() || i.smooth_scroll_delta != Vec2::ZERO) {
+            ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
+        } else {
+            self.wheel_kept = false;
         }
     }
 }

@@ -17,6 +17,15 @@ ljos_runtime = { path = "../ljos_runtime" }
 eframe.workspace = true
 egui.workspace = true
 thiserror.workspace = true
+# Only with `dev`: the watcher and the reload driver, which link the
+# compiler and so the parser. A shipped application leaves the feature off
+# (CLAUDE.md rule 5; tests/no_parser.rs keeps it so).
+ljos_dev = { path = "../ljos_dev", optional = true }
+
+[features]
+# Dev hot reload: `Setup::watch` compiles a directory of QML, watches it
+# and applies every save to the running application.
+dev = ["dep:ljos_dev"]
 
 [dev-dependencies]
 # Only the demo_qml example compiles QML; the shell itself never links the
@@ -25,6 +34,8 @@ ljos_compiler = { path = "../ljos_compiler" }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 anyhow.workspace = true
 png.workspace = true
+# tests/dev.rs edits a project on disk under the watcher.
+tempfile.workspace = true
 
 [lints]
 workspace = true

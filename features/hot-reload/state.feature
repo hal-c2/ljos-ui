@@ -1,0 +1,311 @@
+# Sources:
+#   docs/ARCHITECTURE.md (section 12.1)
+#   docs/research/03-runtime-concurrency-hot-reload.md
+# Hot reload is a Ljós extension: Qt has nothing to compare it with.
+
+@ljos-only
+Feature: What survives a reload
+  An object that is the same object after a reload keeps what the running
+  application gave it: values it assigned, the rows of a model, what a Loader
+  shows, a running timer, the focus, a checked control. What the file declares
+  comes from the new file.
+
+  Rule: A value the application assigned survives
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int n: 1
+          property int count: 0
+          width: n * 10
+          function more() { count += 1 }
+        }
+        """
+
+    Scenario: A value a function assigned is kept
+      When the method "more" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int n: 1
+          property int count: 0
+          width: n * 10
+          height: 5
+          function more() { count += 1 }
+        }
+        """
+      And a reload happens
+      Then the property "count" of "root" is 1
+      And the property "height" of "root" is 5
+
+    Scenario: A binding the application replaced by a value stays replaced
+      When the property "width" of "root" is set to 99
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int n: 1
+          property int count: 0
+          width: n * 10
+          height: 5
+          function more() { count += 1 }
+        }
+        """
+      And a reload happens
+      And the property "n" of "root" is set to 3
+      Then the property "width" of "root" is 99
+
+    Scenario: A declaration that was edited wins over an assigned value
+      When the property "count" of "root" is set to 7
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int n: 1
+          property int count: 40
+          width: n * 10
+          function more() { count += 1 }
+        }
+        """
+      And a reload happens
+      Then the property "count" of "root" is 40
+
+    Scenario: A value the file declares and nobody assigned follows the file
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int n: 4
+          property int count: 0
+          width: n * 10
+          function more() { count += 1 }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "root" is 40
+
+  Rule: The rows of a ListModel survive
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int rows: names.count
+          property string last: ""
+          ListModel {
+            id: names
+            ListElement { name: "Anna" }
+          }
+          function add(n) { names.append({ name: n }) }
+          function look() { last = names.get(names.count - 1).name }
+        }
+        """
+      When the method "add" of "root" is called with "Bjarni"
+
+    Scenario: Rows the application appended are still there
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+          property int rows: names.count
+          property string last: ""
+          ListModel {
+            id: names
+            ListElement { name: "Anna" }
+          }
+          function add(n) { names.append({ name: n }) }
+          function look() { last = names.get(names.count - 1).name }
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "rows" of "root" is 2
+      And the property "last" of "root" is "Bjarni"
+
+    Scenario: Rows the file declares come from the file when it changes them
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int rows: names.count
+          property string last: ""
+          ListModel {
+            id: names
+            ListElement { name: "Anna" }
+            ListElement { name: "Einar" }
+            ListElement { name: "Dagur" }
+          }
+          function add(n) { names.append({ name: n }) }
+          function look() { last = names.get(names.count - 1).name }
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "rows" of "root" is 3
+      And the property "last" of "root" is "Dagur"
+
+  Rule: A Loader keeps showing what the application told it to show
+
+    Background:
+      Given the file "First.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "first" }
+        """
+      And the file "Second.qml":
+        """qml
+        import QtQuick
+        Rectangle { objectName: "second"; width: 10 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Loader { id: loader; objectName: "loader"; source: "First.qml" }
+          function show(url) { loader.setSource(url) }
+        }
+        """
+      When the method "show" of "root" is called with "Second.qml"
+
+    Scenario: The Loader's source survives a change to the file that holds the Loader
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+          Loader { id: loader; objectName: "loader"; source: "First.qml" }
+          function show(url) { loader.setSource(url) }
+        }
+        """
+      And a reload happens
+      Then the object "loader/second" exists
+      And the object "loader/first" does not exist
+
+    Scenario: The Loader shows the new version of the file it loaded
+      When the file "Second.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "second"; width: 20 }
+        """
+      And a reload happens
+      Then the property "width" of "loader/second" is 20
+
+  Rule: A running Timer keeps running
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int ticks: 0
+          Timer { id: timer; interval: 100; repeat: true; onTriggered: root.ticks += 1 }
+          function go() { timer.start() }
+          function halt() { timer.stop() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 250 milliseconds pass
+
+    Scenario: A started timer still triggers, with its new handler
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int ticks: 0
+          Timer { id: timer; interval: 100; repeat: true; onTriggered: root.ticks += 10 }
+          function go() { timer.start() }
+          function halt() { timer.stop() }
+        }
+        """
+      And a reload happens
+      And 100 milliseconds pass
+      Then the property "ticks" of "root" is 12
+
+    Scenario: A stopped timer stays stopped
+      When the method "halt" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int ticks: 0
+          Timer { id: timer; interval: 50; repeat: true; onTriggered: root.ticks += 10 }
+          function go() { timer.start() }
+          function halt() { timer.stop() }
+        }
+        """
+      And a reload happens
+      And 200 milliseconds pass
+      Then the property "ticks" of "root" is 2
+
+  Rule: The item with the keyboard keeps it
+
+    Scenario: Active focus stays on the same item
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Item { id: one; objectName: "one"; focus: true }
+          Item { id: two; objectName: "two" }
+        }
+        """
+      When the method "forceActiveFocus" of "two" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+          Item { id: one; objectName: "one"; focus: true }
+          Item { id: two; objectName: "two" }
+        }
+        """
+      And a reload happens
+      Then the property "activeFocus" of "two" is true
+      And the property "activeFocus" of "one" is false
+
+  Rule: A checked control stays checked
+
+    Scenario: A check box the user checked stays checked when its text changes
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          width: 200; height: 100
+          CheckBox { id: option; objectName: "option"; text: "Option" }
+        }
+        """
+      When the user clicks the "checkbox" "Option"
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          width: 200; height: 100
+          CheckBox { id: option; objectName: "option"; text: "Choice" }
+        }
+        """
+      And a reload happens
+      Then the property "checked" of "option" is true
+      And the property "text" of "option" is "Choice"

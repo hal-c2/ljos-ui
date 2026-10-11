@@ -1,0 +1,31 @@
+[package]
+name = "ljos_dev"
+description = "Dev tools for Ljós: the file watcher, the hot reload driver and the error overlay's model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# A dev tool: it compiles QML, so it links the parser. A shipped program
+# never depends on this crate (ARCHITECTURE.md principle 5); ljos_shell
+# takes it only behind its `dev` feature.
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_engine = { path = "../ljos_engine" }
+ljos_ir = { path = "../ljos_ir" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_runtime = { path = "../ljos_runtime" }
+qml_front = { path = "../qml_front" }
+blake3.workspace = true
+thiserror.workspace = true
+notify.workspace = true
+
+[dev-dependencies]
+# The end-to-end test makes a scene of the right size.
+ljos_render = { path = "../ljos_render", default-features = false }
+tempfile.workspace = true
+
+[lints]
+workspace = true

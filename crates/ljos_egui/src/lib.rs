@@ -11,8 +11,9 @@
 mod a11y;
 mod input;
 mod keys;
+mod text;
 mod view;
 
-pub use input::{map_button, map_modifiers};
+pub use input::{Scroll, WheelTrack, map_button, map_modifiers, map_wheel};
 pub use keys::map_key;
 pub use view::{KeyboardPolicy, QmlView, ResizeMode, ViewError, ViewStats};

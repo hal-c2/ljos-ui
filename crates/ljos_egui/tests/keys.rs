@@ -375,12 +375,26 @@ fn the_clipboard_events_are_chords_a_shortcut_can_take() {
 }
 
 #[test]
-fn text_with_no_key_is_left_for_a_text_item() {
+fn text_with_no_key_is_a_key_egui_has_no_name_for() {
     let s = scene();
     let mut h = alone(&s);
     pass(&mut h, [Event::Text("né".into())]);
-    assert!(log().is_empty());
+    // The item is told what was typed, and that the key is gone again:
+    // no release will come for it.
+    assert_eq!(
+        log(),
+        [
+            "one press 0x1ffffff \"né\" 0",
+            "one release 0x1ffffff \"né\" 0"
+        ]
+    );
+    // Nobody took it: it stays for whoever reads text.
     assert_eq!(h.state().left, [Event::Text("né".into())]);
+    // One character names its key, as with a key egui does name.
+    take(&[0xc9]);
+    pass(&mut h, [Event::Text("é".into())]);
+    assert_eq!(log()[2], "one press 0xc9 \"é\" 0");
+    assert_eq!(h.state().left.len(), 1);
 }
 
 #[test]

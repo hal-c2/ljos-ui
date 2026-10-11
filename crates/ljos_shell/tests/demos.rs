@@ -2,7 +2,9 @@
 //! wgpu, so they can be looked at without a window manager in the way.
 //!
 //! Set `LJOS_SHOTS_DIR` to a directory to also write `demo.png`,
-//! `demo_clicked.png`, `demo_qml.png` and `demo_qml_clicked.png` there.
+//! `demo_clicked.png`, `demo_qml.png`, `demo_qml_clicked.png` and the
+//! `demo_qml_combo.png`, `demo_qml_menu.png` and `demo_qml_dialog.png` of
+//! the open popups there.
 //! Without wgpu the tests skip the pixels and say so.
 
 use std::cell::Cell;
@@ -166,4 +168,81 @@ fn demo_qml_renders_and_its_button_clicks() {
     if let Some(px) = px {
         assert!(is_red(px), "button after the click: {px:?}");
     }
+}
+
+/// The object named `name` below `root`.
+fn named(e: &ljos_engine::Engine, root: ObjectId, name: &str) -> ObjectId {
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        if e.read_by_name(o, "objectName").to_js_string().as_str() == name {
+            return o;
+        }
+        stack.extend(e.children(o));
+    }
+    panic!("no object named {name}")
+}
+
+/// The middle of an item, in the window.
+fn centre(e: &ljos_engine::Engine, item: ObjectId) -> Pos2 {
+    let (mut x, mut y) = (0.0, 0.0);
+    let mut at = Some(item);
+    while let Some(i) = at {
+        x += e.get(i, Item::X).unwrap();
+        y += e.get(i, Item::Y).unwrap();
+        at = e.visual_parent(i);
+    }
+    let (w, h) = (
+        e.get(item, Item::WIDTH).unwrap(),
+        e.get(item, Item::HEIGHT).unwrap(),
+    );
+    Pos2::new((x + w / 2.0) as f32, (y + h / 2.0) as f32)
+}
+
+#[test]
+fn demo_qml_opens_its_popups() {
+    let source = demo_qml::compile(&demo_qml::default_dir()).unwrap();
+    let mut h = harness(move |s| {
+        let e = s.engine();
+        e.set_component_source(source);
+        Ok(e.create_from_url("Main", None, Vec::new())
+            .map_err(|e| e.to_string())?)
+    });
+    let root = h.state().view().scene().root().unwrap();
+    let flag = |h: &Harness<'_, ShellApp<String>>, o: ObjectId, name: &str| {
+        h.state().engine().read_by_name(o, name).to_boolean()
+    };
+    let at = |h: &Harness<'_, ShellApp<String>>, name: &str| {
+        let e = h.state().engine();
+        let o = named(e, root, name);
+        (o, centre(e, o))
+    };
+
+    // The rows of the combo box, and a click on the last of them.
+    let (combo, on_combo) = at(&h, "size");
+    click(&mut h, on_combo);
+    assert!(flag(&h, combo, "down"), "the combo box did not open");
+    shoot(&mut h, "demo_qml_combo.png", on_combo);
+    click(&mut h, on_combo + Vec2::new(0.0, 120.0));
+    let e = h.state().engine();
+    assert_eq!(e.read_by_name(combo, "currentText"), Value::string("Large"));
+    assert_eq!(e.read_by_name(root, "size"), Value::string("Large"));
+    assert!(!flag(&h, combo, "down"));
+
+    // The menu under its button, and the dialog its first item opens.
+    let (_, on_menu_button) = at(&h, "menuButton");
+    // A popup is no item, and has no place among them to ask for.
+    let menu = named(h.state().engine(), root, "menu");
+    click(&mut h, on_menu_button);
+    assert!(flag(&h, menu, "visible"), "the menu did not open");
+    shoot(&mut h, "demo_qml_menu.png", on_menu_button);
+    click(&mut h, on_menu_button + Vec2::new(0.0, 40.0));
+    let dialog = named(h.state().engine(), root, "dialog");
+    assert!(!flag(&h, menu, "visible"));
+    assert!(flag(&h, dialog, "visible"), "the dialog did not open");
+    shoot(&mut h, "demo_qml_dialog.png", on_menu_button);
+
+    // The dialog is modal: the button under its shade is out of reach.
+    click(&mut h, BUTTON_CENTRE);
+    let e = h.state().engine();
+    assert_eq!(e.read_by_name(root, "clicks"), Value::Int(0));
 }
