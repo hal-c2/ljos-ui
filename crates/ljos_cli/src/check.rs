@@ -2,6 +2,9 @@
 //! `--stats` adds the tier-1 coverage of their expressions: how many run in
 //! the binding VM rather than in JavaScript, per file and in total, and why
 //! the rest do not (ARCHITECTURE.md §5.4).
+//!
+//! Each project is linted as well (`lint`, ARCHITECTURE.md §14) unless
+//! `--no-lint` says not to: a finding is a warning, never an error.
 
 use std::{
     fmt::Write as _,
@@ -14,6 +17,8 @@ use ljos_compiler::{
     Severity, baseline, compile_project,
     tier1::{Counts, Coverage, Fell, Tally},
 };
+
+mod lint;
 
 #[derive(Args)]
 pub struct Check {
@@ -38,6 +43,10 @@ pub struct Check {
     /// Do not print the compiler's warnings.
     #[arg(long)]
     quiet: bool,
+    /// Leave the static lints out: what has no name for an assistive
+    /// technology, and `qsTr` of what is not written out.
+    #[arg(long)]
+    no_lint: bool,
 }
 
 /// What a run found.
@@ -49,11 +58,18 @@ pub struct Checked {
     /// One line per diagnostic.
     pub diagnostics: Vec<String>,
     pub coverage: Coverage,
+    /// Whether the static lints are applied to each project as well.
+    pub lint: bool,
+    /// The lints were asked for and could not be applied.
+    pub lint_skipped: bool,
 }
 
 impl Check {
     pub fn run(self) -> anyhow::Result<()> {
-        let mut checked = Checked::default();
+        let mut checked = Checked {
+            lint: !self.no_lint,
+            ..Checked::default()
+        };
         for dir in &self.dirs {
             if !dir.is_dir() {
                 bail!("{} is not a directory", dir.display());
@@ -71,6 +87,12 @@ impl Check {
             if !self.quiet || line.contains(": error: ") {
                 eprintln!("{line}");
             }
+        }
+        if checked.lint_skipped && !self.quiet {
+            eprintln!(
+                "the static lints were skipped: there is no table of types to tell a button \
+                 from an item with (`mise run types`)"
+            );
         }
         if self.stats {
             print!("{}", checked.stats(self.top, !self.summary));
@@ -91,8 +113,10 @@ impl Checked {
     /// Compiles the project in `dir` and adds it in. Its files are named
     /// under `label`.
     pub fn project(&mut self, dir: &Path, label: &str) -> anyhow::Result<()> {
+        let mut keys = Vec::new();
         for file in compile_project(dir)? {
             self.files += 1;
+            keys.push(file.key.clone());
             let name = if label.is_empty() {
                 file.key.clone()
             } else {
@@ -118,6 +142,14 @@ impl Checked {
                 }
                 self.diagnostics.push(format!("{name}.qml:{diagnostic}"));
             }
+        }
+        if self.lint {
+            // After the compiler's own: a lint is never an error, and a
+            // file that does not parse has none.
+            let linted = lint::project(dir, label, &keys)?;
+            self.warnings += linted.lines.len();
+            self.diagnostics.extend(linted.lines);
+            self.lint_skipped |= linted.skipped;
         }
         Ok(())
     }

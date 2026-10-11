@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="Run the QtTest suites of crates/ljos_test/tests/qml on ljos test and on Qt's qmltestrunner (offscreen, under timeout) and compare the result lines"
+set -euo pipefail
+# qmltestrunner is a black box here: it is only run, and what it prints is
+# compared. Where the two outputs go: QTTEST_DIR, default target/qttest.
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+work="${QTTEST_DIR:-$target/qttest}"
+qml="$root/crates/ljos_test/tests/qml"
+# A plain `qmltestrunner` on the path may be Qt 5's, so Qt 6's own
+# directories are tried first (the same order the feature runner uses).
+runner="${QMLTESTRUNNER:-}"
+for candidate in /usr/lib/qt6/bin/qmltestrunner /usr/lib64/qt6/bin/qmltestrunner \
+    /usr/lib/x86_64-linux-gnu/qt6/bin/qmltestrunner "$(command -v qmltestrunner6 || true)"; do
+  [ -n "$runner" ] && break
+  [ -x "$candidate" ] && runner="$candidate"
+done
+[ -n "$runner" ] && [ -x "$runner" ] || { echo "Qt 6's qmltestrunner not found; install Qt 6 or set QMLTESTRUNNER" >&2; exit 1; }
+cargo build --quiet -p ljos_cli --manifest-path "$root/Cargo.toml"
+mkdir -p "$work"
+# `grabImage(...).save(name)` writes into the current directory.
+cd "$work"
+
+# What a run says about each test, without the two things that differ by
+# design: Qt's program name in front of each test, and how long it took.
+lines() {
+  sed -E -e 's/qmltestrunner:://' -e 's/, [0-9]+ms$//' "$1" |
+    grep -E -v '^(\*{9} |Config: )' || true
+}
+
+status=0
+for suite in suite failing; do
+  "$target/debug/ljos" test "$qml/$suite" -import "$qml/imports" >"$suite.ljos.out" 2>"$suite.ljos.err" && ours=0 || ours=$?
+  QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software timeout -k 5 60 \
+    "$runner" -input "$qml/$suite" -import "$qml/imports" >"$suite.qt.out" 2>&1 && theirs=0 || theirs=$?
+  lines "$suite.ljos.out" >"$suite.ljos.lines"
+  lines "$suite.qt.out" >"$suite.qt.lines"
+  if [ "$ours" -eq "$theirs" ] && diff -u "$suite.qt.lines" "$suite.ljos.lines" >"$suite.diff"; then
+    echo "$suite: the same on both (exit $ours; $(grep '^Totals' "$suite.ljos.lines"))"
+  else
+    echo "$suite: DIFFERS (ljos test exit $ours, qmltestrunner exit $theirs); see $work/$suite.diff" >&2
+    head -40 "$suite.diff" >&2 || true
+    status=1
+  fi
+done
+exit "$status"

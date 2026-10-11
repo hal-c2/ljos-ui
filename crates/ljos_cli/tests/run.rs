@@ -20,6 +20,30 @@ fn run_offers_to_watch() {
 }
 
 #[test]
+fn run_offers_the_inspector_and_says_that_it_only_looks() {
+    let out = ljos(&["run", "--help"]);
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("--mcp[=<CAPS>]"), "{help}");
+    assert!(help.contains("Read-only"), "{help}");
+    assert!(help.contains("loopback"), "{help}");
+    assert!(help.contains("--mcp-redact"), "{help}");
+    assert!(help.contains("--top"), "{help}");
+}
+
+#[test]
+fn a_capability_the_inspector_does_not_have_is_refused_before_a_window_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(&main, "import QtQuick\nItem {}\n").unwrap();
+    let out = ljos(&["run", main.to_str().unwrap(), "--mcp=inspect,input"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("read-only"), "{err}");
+    assert!(err.contains("input"), "{err}");
+}
+
+#[test]
 fn a_file_that_is_not_qml_is_refused_before_a_window_opens() {
     let dir = tempfile::tempdir().unwrap();
     let notes = dir.path().join("notes.txt");

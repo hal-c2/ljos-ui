@@ -10,3 +10,4 @@
 //! the parser (CLAUDE.md rule 5): `ljos test` compiles the test files.
 
 pub mod a11y;
+pub mod qttest;

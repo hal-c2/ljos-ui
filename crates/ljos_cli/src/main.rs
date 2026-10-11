@@ -10,7 +10,9 @@ use ljos_mcp_core::CapSet;
 
 mod check;
 mod i18n;
+mod render;
 mod run;
+mod test;
 
 #[derive(Parser)]
 #[command(name = "ljos", version, about = "Ljós UI toolkit")]
@@ -42,6 +44,13 @@ enum Command {
     /// Open a window on a QML file; with `--watch`, apply every save to
     /// the running application.
     Run(run::Run),
+    /// Draw a project to a PNG without a window, after letting a stated
+    /// time pass; what `mise run gallery` renders with.
+    Render(render::Render),
+    /// Run the `TestCase`s of `tst_*.qml` files on a virtual clock and
+    /// print the results as Qt's runner for QML tests does; the exit
+    /// status is the number of failed tests.
+    Test(test::Test),
 }
 
 fn main() -> ExitCode {
@@ -56,7 +65,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(test::arguments(std::env::args_os()));
     // Same reason: logs must never touch stdout.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -82,5 +91,20 @@ fn run() -> anyhow::Result<()> {
         Command::I18n { command } => i18n::run(command),
         Command::Check(check) => check.run(),
         Command::Run(run) => run.run(),
+        // The status says whether a picture was written; why not is in the
+        // notes it printed.
+        Command::Render(render) => {
+            if render.run() {
+                Ok(())
+            } else {
+                std::process::exit(1)
+            }
+        }
+        // The status is how many tests failed, which is what Qt's runner
+        // gives a script that runs a suite on both.
+        Command::Test(test) => match test.run()? {
+            0 => Ok(()),
+            failed => std::process::exit(i32::from(failed)),
+        },
     }
 }

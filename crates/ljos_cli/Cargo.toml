@@ -19,18 +19,29 @@ ljos_mcp_author = { path = "../ljos_mcp_author" }
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_i18n = { path = "../ljos_i18n" }
 # `ljos run`: the desktop shell, with the dev loop (the watcher and the
-# reload driver). A development tool may link them; a shipped application
-# takes the shell without `dev`.
+# reload driver) and, for `--mcp`, the read-only inspector. A development
+# tool may link them; a shipped application takes the shell without `dev`
+# and without `mcp`.
 ljos_engine = { path = "../ljos_engine" }
-ljos_shell = { path = "../ljos_shell", features = ["dev"] }
+ljos_shell = { path = "../ljos_shell", features = ["dev", "mcp"] }
+# `ljos render`: a picture of a project without a window, on the R backend.
+ljos_controls = { path = "../ljos_controls" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_runtime = { path = "../ljos_runtime" }
+# `ljos test`: the QtTest runner, the IR it is given, and the type oracle
+# that tells the compiler what `TestCase` is.
+ljos_test = { path = "../ljos_test" }
+ljos_ir = { path = "../ljos_ir" }
+qml_front = { path = "../qml_front" }
 anyhow.workspace = true
 clap.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

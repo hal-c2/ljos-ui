@@ -12,8 +12,20 @@ publish.workspace = true
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
+# The audit reads the last frame for the colours text is shown in. No egui.
+ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
+# The QtTest runner's machine-readable report.
+serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# Tests compile QML strings; the crate itself never links the compiler or
+# the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+# The audit is run over the Basic style.
+ljos_controls = { path = "../ljos_controls" }
 
 [lints]
 workspace = true
