@@ -45,6 +45,10 @@ pub(crate) struct Defaults {
     pub to: Option<Value>,
 }
 
+/// [`Defaults::prop`] of a run that has an object to move and no property
+/// of its own: the animations of a `Transition` move what they name.
+pub(crate) const NO_PROPERTY: PropIndex = PropIndex(u32::MAX);
+
 /// What an advancing timeline needs from its run.
 pub(crate) struct Ctx<'a> {
     pub engine: &'a Engine,
@@ -404,7 +408,7 @@ fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bo
         }
     };
     if let Some(d) = defaults {
-        if targets.is_empty() && names.is_empty() {
+        if targets.is_empty() && names.is_empty() && d.prop != NO_PROPERTY {
             return vec![slot(d.obj, d.prop)];
         }
         if targets.is_empty() {

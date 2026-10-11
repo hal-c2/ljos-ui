@@ -16,7 +16,9 @@
 
 use std::cell::Cell;
 
-use ljos_engine::{Engine, LogLevel, MetaRef, NodeId, ObjectId, QmlObject, QmlType, Value};
+use ljos_engine::{
+    Engine, LogLevel, MetaRef, NodeId, ObjectId, PropIndex, QmlObject, QmlType, Reset, Value,
+};
 
 use crate::item::{is_a, is_unset_tracked};
 use crate::scene::SCENE_CATEGORY;
@@ -35,7 +37,7 @@ pub struct LayoutMirroring {}
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "LayoutMirroringAttached")]
 pub struct LayoutMirroringAttached {
-    #[qml(notify)]
+    #[qml(notify, reset = Reset::Follow(passed_on))]
     pub enabled: bool,
     #[qml(notify)]
     pub children_inherit: bool,
@@ -73,6 +75,28 @@ pub(crate) fn register(engine: &Engine) {
     });
 }
 
+/// What `LayoutMirroring.enabled` is once its own value is taken back
+/// (`enabled = undefined`): what the item's ancestors pass on. The property
+/// follows it, so a script reads the mirroring the item has, and
+/// [`mirrored`] needs no state of its own for an item that was reset.
+///
+/// Qt leaves an item that does not pass mirroring on as it was until an
+/// ancestor next passes something on; here it follows at once
+/// (`features/bindings/property-reset-mirroring-at-once.feature`).
+fn passed_on(engine: &Engine, att: ObjectId, _enabled: PropIndex) -> Value {
+    // An ancestor that gets its first `LayoutMirroring` object later is
+    // not seen by the walk; the epoch tells of it.
+    if let Some(node) = epoch(engine) {
+        engine.graph().get(node);
+    }
+    // What an item is attached to owns it.
+    let mirrored = engine
+        .owner(att)
+        .and_then(|item| engine.visual_parent(item))
+        .is_some_and(|parent| walk(engine, parent, false));
+    Value::Bool(mirrored)
+}
+
 /// Whether left and right are swapped for `obj`. A tracked read: an effect
 /// or binding that asks runs again when the answer may have changed.
 pub(crate) fn mirrored(engine: &Engine, obj: ObjectId) -> bool {
@@ -82,9 +106,15 @@ pub(crate) fn mirrored(engine: &Engine, obj: ObjectId) -> bool {
     if engine.graph().get(node).to_number() == 0.0 {
         return false;
     }
+    walk(engine, obj, true)
+}
+
+/// Whether `from` is mirrored (`own`), or what it and its ancestors pass
+/// on to a child of `from` (not `own`). Tracked like [`mirrored`].
+fn walk(engine: &Engine, from: ObjectId, own: bool) -> bool {
     let att = attacher();
-    let mut cur = obj;
-    let mut own = true;
+    let mut cur = from;
+    let mut own = own;
     // A tree deeper than this is a cycle someone built by hand.
     for _ in 0..4096 {
         if let Some(a) = engine.existing_attached_object(cur, &att) {

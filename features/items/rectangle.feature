@@ -37,7 +37,6 @@ Feature: Rectangle
     When the property "radius" of "box" is set to 100
     Then the property "radius" of "box" is 100
 
-  @backlog
   Scenario: A gradient replaces the colour
     Given the QML:
       """qml

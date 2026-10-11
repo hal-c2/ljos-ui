@@ -2,7 +2,8 @@
 //! one.
 //!
 //! The scene offers the event to the items under the pointer, topmost
-//! first, until one says it used it. A Flickable uses it only when its
+//! first, until one says it used it ([`crate::wheel`], which asks the
+//! WheelHandlers and MouseAreas as well). A Flickable uses it only when its
 //! content moved, so a list that is at its end lets the page around it
 //! scroll, as Qt does. An event nothing uses changes nothing and costs no
 //! frame.
@@ -54,19 +55,18 @@ fn wheel_item(engine: &Engine, obj: ObjectId) -> Option<WheelItem> {
         .map(|(_, h)| *h)
 }
 
-/// Offers `ev` to `hits`, the items under the pointer, topmost first.
-/// Whether one of them used it.
-pub(crate) fn deliver(engine: &Engine, hits: &[ObjectId], ev: &WheelEvent) -> bool {
-    hits.iter().any(|obj| {
-        let Some(h) = wheel_item(engine, *obj) else {
-            return false;
-        };
-        let at = engine
-            .untrack(|| crate::item::scene_transform(engine, *obj))
-            .inverse()
-            * ev.pos;
-        (h.wheel)(engine, *obj, ev, at)
-    })
+/// Offers `ev` to one item under the pointer, if its type takes the
+/// wheel. Whether the item used it. Who is asked, and in which order, is
+/// [`crate::wheel::deliver`]'s to say.
+pub(crate) fn offer(engine: &Engine, obj: ObjectId, ev: &WheelEvent) -> bool {
+    let Some(h) = wheel_item(engine, obj) else {
+        return false;
+    };
+    let at = engine
+        .untrack(|| crate::item::scene_transform(engine, obj))
+        .inverse()
+        * ev.pos;
+    (h.wheel)(engine, obj, ev, at)
 }
 
 /// How far the event asks the content to go, towards the end, in each
@@ -78,6 +78,16 @@ pub fn wheel_distance(ev: &WheelEvent) -> [f64; 2] {
     }
     let per = WHEEL_NOTCH_PIXELS / WheelEvent::NOTCH;
     [-ev.angle_delta.x * per, -ev.angle_delta.y * per]
+}
+
+/// How far the wheel turned, in eighths of a degree, sideways and
+/// lengthways. A device that scrolls by the pixel and tells no angle is
+/// taken for the wheel that would scroll as far.
+pub fn wheel_angle(ev: &WheelEvent) -> kurbo::Vec2 {
+    if ev.angle_delta != kurbo::Vec2::ZERO {
+        return ev.angle_delta;
+    }
+    ev.pixel_delta * (WheelEvent::NOTCH / WHEEL_NOTCH_PIXELS)
 }
 
 fn wheel(e: &Engine, f: ObjectId, ev: &WheelEvent, _at: kurbo::Point) -> bool {

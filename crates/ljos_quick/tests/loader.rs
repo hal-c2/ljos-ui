@@ -557,10 +557,15 @@ fn switching_off_while_loading_leaves_nothing_behind() {
     let root = load(&e, &async_source(40));
     let loader = find(&e, root, "loader");
     let mut s = scene(&e, root, 200.0, 200.0);
-    frame(&mut s, &e);
-    frame(&mut s, &e);
+    // Until the job has allocated its objects and given the root its
+    // name, with the rest still to do.
+    for _ in 0..200 {
+        if exists(&e, root, "kid") {
+            break;
+        }
+        frame(&mut s, &e);
+    }
     assert_eq!(num(&e, loader, "status"), 2.0);
-    // The job has allocated its root by now.
     assert!(exists(&e, root, "kid"));
 
     set(&e, loader, "active", Value::Bool(false));
@@ -583,6 +588,47 @@ fn switching_off_while_loading_leaves_nothing_behind() {
     }
     assert_eq!(num(&e, loader, "status"), 1.0);
     assert!(s.node_of(find(&e, root, "kid")).is_some());
+    assert!(e.take_warnings().is_empty());
+}
+
+/// How many objects `root` owns, itself included.
+fn owned(e: &Engine, root: ObjectId) -> usize {
+    let mut n = 0;
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        n += 1;
+        stack.extend(e.children(o));
+    }
+    n
+}
+
+#[test]
+fn switching_off_while_the_objects_are_allocated_leaves_nothing_behind() {
+    let e = busy_engine();
+    let root = load(
+        &e,
+        &async_source(40).replace("asynchronous: true;", "asynchronous: true; active: false;"),
+    );
+    let loader = find(&e, root, "loader");
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    let before = owned(&e, root);
+
+    set(&e, loader, "active", Value::Bool(true));
+    frame(&mut s, &e);
+    assert_eq!(num(&e, loader, "status"), 2.0);
+    // Some of the objects are made, and none has been given a value.
+    let half = owned(&e, root);
+    assert!(half > before, "{half} objects, {before} before");
+    assert!(half < before + 81, "{half} objects, {before} before");
+    assert!(!exists(&e, root, "kid"));
+
+    set(&e, loader, "active", Value::Bool(false));
+    assert_eq!(num(&e, loader, "status"), 0.0);
+    let out = frame(&mut s, &e);
+    assert_eq!(owned(&e, root), before);
+    assert_eq!(out.next_wake, None);
+    assert!(!s.needs_frame());
     assert!(e.take_warnings().is_empty());
 }
 

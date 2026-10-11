@@ -109,6 +109,19 @@ impl Paint {
         }
     }
 
+    /// True when the paint hides what is under it wherever it is painted.
+    pub fn is_opaque(&self) -> bool {
+        // What rounds to 255 of 255 is opaque in an 8-bit picture.
+        let opaque = |c: &Rgba| c.a >= 254.5 / 255.0;
+        match self {
+            Self::Solid(c) => opaque(c),
+            Self::LinearGradient(g) => {
+                !g.stops.is_empty() && g.stops.iter().all(|s| opaque(&s.color))
+            }
+            Self::Image(_) => false,
+        }
+    }
+
     /// True when the paint cannot produce visible pixels.
     pub fn is_invisible(&self) -> bool {
         match self {
@@ -273,7 +286,11 @@ pub enum DrawOp {
         radii: [f32; 4],
         /// Fill.
         fill: Paint,
-        /// Optional inside border, painted over the fill.
+        /// Optional inside border. The fill and the border are painted side
+        /// by side, as Qt paints them: a border that lets light through
+        /// shows what is behind the rectangle, not the fill (see
+        /// [`fill_area`]). A gradient fill still runs over the whole
+        /// `rect`.
         border: Option<Border>,
         /// Anti-aliasing (Qt's `antialiasing`).
         aa: bool,
@@ -369,6 +386,34 @@ pub enum DrawOp {
         /// Placement rectangle.
         rect: Rect,
     },
+}
+
+/// Where the fill of a [`DrawOp::Rect`] is painted, as a rectangle and its
+/// radii: inside the border. `None` when the border leaves no room.
+///
+/// Under a border that hides it the fill is painted all the same, over the
+/// whole rectangle: nobody can see it, and two anti-aliased edges that meet
+/// would let the backdrop through where one shape painted over the other
+/// does not. `opacity` is what the node is faded by; a backend that fades
+/// after it has built its shapes passes 1.
+pub fn fill_area(
+    rect: Rect,
+    radii: [f32; 4],
+    border: Option<&Border>,
+    opacity: f32,
+) -> Option<(Rect, [f32; 4])> {
+    let drawn = border.filter(|b| {
+        b.width > 0.0 && !b.paint.is_invisible() && !matches!(b.paint, Paint::Image(_))
+    });
+    let Some(b) = drawn else {
+        return Some((rect, radii));
+    };
+    if b.paint.is_opaque() && opacity >= 1.0 {
+        return Some((rect, radii));
+    }
+    let inner = rect.inset(-f64::from(b.width));
+    (inner.width() > 0.0 && inner.height() > 0.0)
+        .then(|| (inner, radii.map(|r| (r - b.width).max(0.0))))
 }
 
 impl DrawOp {

@@ -15,10 +15,12 @@
 mod border;
 mod decode;
 mod store;
+mod tint;
 
 pub use border::{BorderImage, BorderImageBorder};
 pub use decode::{LoadError, Request, requested_size};
 pub use store::{ImageKey, ImageStore};
+pub use tint::{ImageTint, register_image_tint};
 
 use ljos_engine::{
     Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject, Rect, Size, Url, Value,
@@ -744,7 +746,7 @@ impl ImagePaint {
     /// Reads the paint properties and the pixels (tracked).
     pub fn read(e: &Engine, obj: ObjectId) -> Self {
         let flag = |p: PropIndex| e.read(obj, p).to_boolean();
-        let image = pixels(e, obj);
+        let image = pixels(e, obj).map(|image| tint::tinted(e, obj, image));
         let smooth = flag(ImageBase::SMOOTH.index);
         let mirror = flag(ImageBase::MIRROR.index);
         let shape = if is_a::<BorderImage>(e, obj) {

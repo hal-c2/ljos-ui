@@ -62,11 +62,40 @@ pub(crate) fn pointer_item(engine: &Engine, obj: ObjectId) -> Option<PointerItem
         return None;
     }
     let meta = engine.meta_of(obj)?;
-    types
+    let hooks = types
         .iter()
         .rev()
         .find(|(m, _)| meta.inherits(m))
-        .map(|(_, h)| *h)
+        .map(|(_, h)| *h)?;
+    drop(types);
+    let conditions = engine.extension::<Conditions>();
+    let unmet = conditions
+        .types
+        .borrow()
+        .iter()
+        .any(|(m, met)| meta.inherits(m) && !met(engine, obj));
+    (!unmet).then_some(hooks)
+}
+
+/// Whether an item of a registered type takes the pointer just now.
+pub type PointerCondition = fn(&Engine, ObjectId) -> bool;
+
+#[derive(Default)]
+struct Conditions {
+    types: RefCell<Vec<(MetaRef, PointerCondition)>>,
+}
+
+/// Makes items of type `meta` (and of the types derived from it) take the
+/// pointer only while `met` says so: the rest of the time the scene treats
+/// them as items that were never registered, for presses and for hover. For
+/// a type that takes the pointer in one state only (a `Label` whose focus
+/// policy has `Qt.ClickFocus`).
+pub fn register_pointer_condition(engine: &Engine, meta: MetaRef, met: PointerCondition) {
+    engine
+        .extension::<Conditions>()
+        .types
+        .borrow_mut()
+        .push((meta, met));
 }
 
 /// Brings the hovered registered items in step with the items under the

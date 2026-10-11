@@ -11,7 +11,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_engine::{
-    Atom, Color, Cx, Engine, EngineError, Font, ObjectId, QmlObject, Value, qml_impl,
+    Atom, Color, Cx, Engine, EngineError, Font, ObjectId, PropIndex, QmlObject, Reset, Url, Value,
+    qml_impl,
 };
 use ljos_render::{DisplayListBuilder, kurbo};
 use ljos_text::{
@@ -112,6 +113,9 @@ pub struct Text {
     pub line_count: i32,
     #[qml(notify, readonly)]
     pub truncated: bool,
+    /// Kept; nothing is loaded relative to it.
+    #[qml(notify, reset = BASE_URL_RESET)]
+    pub base_url: Url,
     /// [`init_text`] ran.
     #[qml(skip)]
     initialised: bool,
@@ -142,6 +146,7 @@ impl Default for Text {
             // Empty text is still one line.
             line_count: 1,
             truncated: false,
+            base_url: Url::default(),
             initialised: false,
         }
     }
@@ -164,6 +169,23 @@ fn natural_alignment(engine: &Engine, obj: ObjectId, _p: ljos_engine::PropIndex)
     } else {
         align::LEFT
     })
+}
+
+/// `baseUrl` of `Text` and `TextEdit`: until it is given one it is the
+/// address of the file the item is declared in, and an empty address counts
+/// as none given (Qt 6.11.2, by running qml6; the documentation only says
+/// that the default is the URL of the QML file).
+pub(crate) const BASE_URL_RESET: Reset = Reset::Absent {
+    absent: no_address,
+    value: document_address,
+};
+
+fn no_address(v: &Value) -> bool {
+    matches!(v, Value::Url(s) | Value::String(s) if s.is_empty())
+}
+
+fn document_address(engine: &Engine, obj: ObjectId, _base_url: PropIndex) -> Value {
+    Value::Url(engine.document_url(obj).unwrap_or(Atom::EMPTY))
 }
 
 /// What completing a `Text` does, for one built natively without completion
@@ -240,6 +262,19 @@ pub(crate) fn read_style(
     style
 }
 
+/// The text of `obj` in the letters its font's `capitalization` asks for
+/// (tracked): what is laid out, while the property keeps what was written.
+pub(crate) fn drawn_text(engine: &Engine, obj: ObjectId, font: PropIndex, text: PropIndex) -> Atom {
+    let written = engine.read(obj, text).to_js_string();
+    let Value::Font(f) = engine.read(obj, font) else {
+        return written;
+    };
+    match f.drawn(written.as_str()) {
+        std::borrow::Cow::Borrowed(_) => written,
+        std::borrow::Cow::Owned(drawn) => Atom::from(drawn.as_str()),
+    }
+}
+
 pub(crate) fn elide_mode(v: i32) -> ElideMode {
     match v {
         elide::LEFT => ElideMode::Left,
@@ -305,7 +340,7 @@ impl TextInputs {
         };
         let top = v_align & (align::BOTTOM | align::V_CENTER) == 0;
         TextInputs {
-            text: engine.read(obj, Text::TEXT.index).to_js_string(),
+            text: drawn_text(engine, obj, Text::FONT.index, Text::TEXT.index),
             color: match engine.read(obj, Text::COLOR.index) {
                 Value::Color(c) => c,
                 _ => Color::BLACK,

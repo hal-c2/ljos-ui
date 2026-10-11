@@ -46,6 +46,7 @@ pub use edit::TextEdit;
 pub use ime::{ImeState, PlatformTextInput};
 pub use input::TextInput;
 pub use ops::accept_text;
+pub use ops::last_edit_typed;
 pub use paint::EditorPaint;
 pub use validator::{
     DoubleValidator, IntValidator, RegularExpressionValidator, Validation, validate,

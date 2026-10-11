@@ -11,7 +11,10 @@
 //! - [`easing`]: the curves.
 //! - [`smooth`]: the way a `SmoothedAnimation` takes.
 //!
-//! States and Transitions (M2) are not here. A Transition will run its
+//! - [`transition`]: `Transition`, as far as a popup's `enter` and `exit`
+//!   need it: its animations run on an object it is given.
+//!
+//! States (M2) are not here. A Transition between states will run its
 //! animations the way a `Behavior` does: through
 //! [`driver::start_driven`] with the property and end value as defaults.
 
@@ -21,6 +24,7 @@ pub(crate) mod driver;
 pub mod easing;
 pub(crate) mod smooth;
 pub(crate) mod timeline;
+pub(crate) mod transition;
 pub(crate) mod types;
 
 use std::time::Duration;
@@ -32,6 +36,7 @@ use crate::item::is_a;
 
 pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
+pub use transition::{Transition, run_transition, stop_transition};
 pub use types::{
     Animation, ColorAnimation, Easing, EasingGroup, NumberAnimation, ParallelAnimation,
     PauseAnimation, PropertyAction, PropertyAnimation, RotationAnimation, ScriptAction,
@@ -50,7 +55,7 @@ pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
         Animation, PropertyAnimation, NumberAnimation, ColorAnimation, SequentialAnimation,
         ParallelAnimation, PauseAnimation, ScriptAction, PropertyAction, Behavior,
-        AnimationController, Easing, RotationAnimation, SmoothedAnimation,
+        AnimationController, Easing, RotationAnimation, SmoothedAnimation, Transition,
     ]));
     // `script: ...` is a statement to run when its turn comes.
     engine.register_script_property(ScriptAction::static_meta(), ScriptAction::SCRIPT.index);

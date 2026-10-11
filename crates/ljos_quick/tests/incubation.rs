@@ -4,13 +4,14 @@
 //! Time here is the engine's clock, and that clock is one on which every
 //! look costs a fixed amount: a job that checks its slice once per step
 //! spends that much per step, so the tests count steps and never measure
-//! the machine. A step is one object applied, one binding run, one native
+//! the machine. A step is one object allocated, one object noted for
+//! the later passes, one object applied, one binding run, one native
 //! completion hook or one object's `Component.onCompleted`.
 //!
-//! What the clock cannot show: the objects of a component are allocated
-//! in one step however many they are (`CreationJob`, phase `Allocate`),
-//! and a step is never interrupted, so one long binding or handler is as
-//! long as it is.
+//! What the clock cannot show: a step is never interrupted, so one long
+//! binding or handler is as long as it is, and what ends an allocation
+//! (the aliases, and putting the root in its parent) is one step however
+//! many objects there are.
 
 mod common;
 
@@ -171,8 +172,9 @@ fn one_step_at(look: Duration) -> Duration {
             break;
         }
     }
-    // Nine objects: each applied and completed, eight bindings run.
-    assert!(steps >= 9 + 8 + 9, "{steps} steps");
+    // Nine objects: each allocated, noted, applied and completed, and
+    // eight bindings run.
+    assert!(steps >= 9 + 9 + 9 + 8 + 9, "{steps} steps");
     assert!(handle.result().unwrap().is_ok());
     longest + look * 2
 }
@@ -218,13 +220,13 @@ fn no_slice_of_a_large_component_runs_longer_than_its_budget() {
     assert!(s.needs_frame(), "queueing a job asks for a frame");
     let reports = run(&mut s, &e);
     assert_within(&reports, INCUBATION_BUDGET, step, LOOK);
-    // Applying the objects, running their bindings and completing them
-    // are all cut into steps: a frame has no room for more than
-    // `per_frame` of them, so the three passes over the items need at
-    // least this many frames.
-    let per_frame = ((INCUBATION_BUDGET + step).as_micros() / LOOK.as_micros()) as usize;
+    // Allocating the objects, noting them, applying them, running their
+    // bindings and completing them are all cut into steps: a frame has
+    // no room for more than `per_frame` of them, so the five passes over
+    // the items need at least this many frames.
+    let per_frame = steps_a_frame(step);
     assert!(
-        reports.len() * per_frame >= 3 * LARGE,
+        reports.len() * per_frame >= 5 * LARGE,
         "{} frames of {per_frame} steps",
         reports.len()
     );
@@ -255,6 +257,63 @@ fn no_slice_of_a_large_component_runs_longer_than_its_budget() {
     assert!(!out.changed);
     assert!(s.take_incubation_report().is_none());
     assert!(e.next_timer_deadline().is_none());
+    assert!(e.take_warnings().is_empty());
+}
+
+/// How many steps a frame of the full budget has room for on a clock a
+/// look at which costs [`LOOK`].
+fn steps_a_frame(step: Duration) -> usize {
+    ((INCUBATION_BUDGET + step).as_micros() / LOOK.as_micros()) as usize
+}
+
+#[test]
+fn the_objects_of_a_large_component_are_allocated_in_slices() {
+    let step = one_step();
+    let e = busy_engine();
+    let root = load(&e, &source(LARGE));
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frame(&mut s, &e);
+    let before = e.children(root);
+    start(&e, root, root);
+    let inc = get(&e, root, "inc").as_object().expect("an incubator");
+    let per_frame = steps_a_frame(step);
+    // How many of the items exist after each frame, while some are
+    // still to be made.
+    let mut counts = Vec::new();
+    loop {
+        frame(&mut s, &e);
+        let report = s.take_incubation_report().expect("the job is not done");
+        assert_eq!(report.jobs_done, 0);
+        let big = e.children(root).into_iter().find(|c| !before.contains(c));
+        let n = big.map_or(0, |b| e.children(b).len());
+        if n == LARGE {
+            break;
+        }
+        // Half allocated it is owned, and that is all: nothing of it is
+        // shown, and the incubator has no object to give.
+        assert!(big.is_none_or(|b| s.node_of(b).is_none()));
+        assert_eq!(num(&e, inc, "status"), 2.0);
+        assert!(get(&e, inc, "object").as_object().is_none());
+        counts.push(n);
+        assert!(counts.len() < 10_000, "the allocation never ends");
+    }
+    // No frame made more objects than it had room for steps, so the
+    // items took at least this many frames.
+    let mut last = 0;
+    for (i, n) in counts.iter().enumerate() {
+        assert!(n - last <= per_frame, "frame {i} made {} objects", n - last);
+        last = *n;
+    }
+    assert!(
+        (counts.len() + 1) * per_frame >= LARGE,
+        "{} frames of {per_frame} steps",
+        counts.len()
+    );
+    assert!(counts.len() >= 3, "{counts:?}");
+    assert!(counts[0] > 0, "the first frame makes objects: {counts:?}");
+    // And the rest is as ever.
+    run(&mut s, &e);
+    assert_eq!(e.children(made(&e, root)).len(), LARGE);
     assert!(e.take_warnings().is_empty());
 }
 

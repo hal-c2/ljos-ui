@@ -25,7 +25,7 @@ use crate::backend::{
     EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage,
 };
 use crate::compose::{ClipId, FrameSnapshot};
-use crate::display_list::{Decorations, DrawOp, GlyphRun, Paint, PathStyle};
+use crate::display_list::{Decorations, DrawOp, GlyphRun, Paint, PathStyle, fill_area};
 use crate::glyph::{OutlineCache, baseline_snap, snap_bar};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::rgba::Rgba;
@@ -445,11 +445,13 @@ impl VelloCpuReference {
                 ctx.set_aliasing_threshold(if *aa { None } else { Some(128) });
                 let outer = rounded_rect(*rect, *radii);
                 if !fill.is_invisible()
+                    && let Some((area, area_radii)) =
+                        fill_area(*rect, *radii, border.as_ref(), opacity)
                     && let Some(p) = to_paint(&fill.with_opacity(opacity))
                 {
                     ctx.set_paint(p);
                     ctx.set_fill_rule(Fill::NonZero);
-                    ctx.fill_path(&outer.to_path(0.1));
+                    ctx.fill_path(&rounded_rect(area, area_radii).to_path(0.1));
                 }
                 if let Some(b) = border
                     && b.width > 0.0

@@ -5,12 +5,15 @@
 //! shell translates its input into [`PointerEvent`]s. Delivery lives in
 //! [`crate::QuickScene::pointer_event`].
 
-use ljos_engine::{Cx, EngineError, ObjectId, Point, QmlObject, QtObject, Value, qml_impl};
+use ljos_engine::{
+    Cx, Engine, EngineError, ObjectId, Point, PropIndex, QmlObject, QmlType, QmlValue, QtObject,
+    Value, WriteKind, qml_impl,
+};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::enums::{gesture_policy, mouse_button};
-use crate::item::Item;
+use crate::item::{Item, scene_transform};
 
 bitflags::bitflags! {
     /// Mouse buttons, with Qt's `Qt.MouseButton` values.
@@ -232,6 +235,95 @@ impl MouseArea {
     fn exited();
     #[qml(signal)]
     fn canceled();
+    /// The wheel turned over the area. Only an area with a handler for it
+    /// takes the wheel ([`crate::wheel`]).
+    #[qml(signal)]
+    fn wheel(wheel: Option<ObjectId>);
+}
+
+/// The `wheel` parameter of `MouseArea.wheel` and `WheelHandler.wheel`
+/// (`WheelEvent` in Qt). The position is in the space of the area, or of
+/// the handler's item.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick", name = "WheelEvent", extends = QtObject, uncreatable)]
+pub struct WheelEventObject {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(readonly)]
+    pub x: f64,
+    #[qml(readonly)]
+    pub y: f64,
+    /// In eighths of a degree. A device that only scrolls by the pixel
+    /// tells none; Ljós then says what a wheel would have turned to
+    /// scroll as far, so that a handler that reads only this still works.
+    #[qml(readonly)]
+    pub angle_delta: Point,
+    #[qml(readonly)]
+    pub pixel_delta: Point,
+    #[qml(readonly, flags = "Qt.MouseButtons")]
+    pub buttons: i32,
+    #[qml(readonly, flags = "Qt.KeyboardModifiers")]
+    pub modifiers: i32,
+    /// Always false: no host of Ljós tells that the system turns the
+    /// deltas around.
+    #[qml(readonly)]
+    pub inverted: bool,
+    /// A `Qt.ScrollPhase`.
+    #[qml(readonly, enumeration = "Qt.ScrollPhase")]
+    pub phase: i32,
+    pub accepted: bool,
+}
+
+impl Default for WheelEventObject {
+    fn default() -> Self {
+        Self {
+            object: QtObject::default(),
+            x: 0.0,
+            y: 0.0,
+            angle_delta: Point::default(),
+            pixel_delta: Point::default(),
+            buttons: mouse_button::NO_BUTTON,
+            modifiers: 0,
+            inverted: false,
+            phase: 0,
+            accepted: true,
+        }
+    }
+}
+
+/// The `point` group of a pointer handler (`handlerPoint` in Qt): where
+/// the pointer that presses it is. Empty, with `id` -1, while nothing
+/// presses the handler.
+#[derive(Debug, QmlObject)]
+#[qml(name = "HandlerPoint", uncreatable)]
+pub struct HandlerPoint {
+    /// In the handler's item.
+    #[qml(notify, readonly)]
+    pub position: Point,
+    #[qml(notify, readonly)]
+    pub scene_position: Point,
+    /// Where the pointer went down, in the handler's item.
+    #[qml(notify, readonly)]
+    pub press_position: Point,
+    #[qml(notify, readonly)]
+    pub scene_press_position: Point,
+    #[qml(notify, readonly, flags = "Qt.MouseButtons")]
+    pub pressed_buttons: i32,
+    #[qml(notify, readonly)]
+    pub id: i32,
+}
+
+impl Default for HandlerPoint {
+    fn default() -> Self {
+        Self {
+            position: Point::default(),
+            scene_position: Point::default(),
+            press_position: Point::default(),
+            scene_press_position: Point::default(),
+            pressed_buttons: mouse_button::NO_BUTTON,
+            id: -1,
+        }
+    }
 }
 
 /// `TapHandler` (QtQuick). Its parent item is the object that owns it,
@@ -259,6 +351,10 @@ pub struct TapHandler {
     pub accepted_buttons: i32,
     #[qml(notify, readonly)]
     pub parent: Option<ObjectId>,
+    /// The pointer that presses the handler. Qt has more in it than the
+    /// six values here (`velocity`, `pressure`, `sceneGrabPosition` …).
+    #[qml(group)]
+    pub point: HandlerPoint,
 }
 
 impl Default for TapHandler {
@@ -271,12 +367,18 @@ impl Default for TapHandler {
             gesture_policy: gesture_policy::DRAG_THRESHOLD,
             accepted_buttons: mouse_button::LEFT,
             parent: None,
+            point: HandlerPoint::default(),
         }
     }
 }
 
 #[qml_impl]
 impl TapHandler {
+    /// Something in `point` changed. The values of the group signal on
+    /// their own as well, which Qt's do not.
+    #[qml(signal, name = "pointChanged")]
+    fn point_changed();
+
     /// `tapped(eventPoint, button)`. Deviation: `eventPoint` is the
     /// scene position as a `point`, not Qt's `eventPoint` value type.
     #[qml(signal)]
@@ -299,12 +401,125 @@ impl TapHandler {
 }
 
 /// The item a TapHandler acts on: its `parent`, else its owner.
-pub fn tap_handler_target(engine: &ljos_engine::Engine, h: ObjectId) -> Option<ObjectId> {
+pub fn tap_handler_target(engine: &Engine, h: ObjectId) -> Option<ObjectId> {
     match engine.read(h, TapHandler::PARENT.index) {
         Value::Object(o) => Some(o),
         _ => engine.owner(h),
     }
     .filter(|o| crate::item::is_item(engine, *o))
+}
+
+/// The properties of a TapHandler's `point` group.
+struct PointProps {
+    position: PropIndex,
+    scene_position: PropIndex,
+    press_position: PropIndex,
+    scene_press_position: PropIndex,
+    pressed_buttons: PropIndex,
+    id: PropIndex,
+}
+
+fn point_props() -> Option<PointProps> {
+    let meta = TapHandler::static_meta();
+    let p = |name| meta.property_index(name);
+    Some(PointProps {
+        position: p("point.position")?,
+        scene_position: p("point.scenePosition")?,
+        press_position: p("point.pressPosition")?,
+        scene_press_position: p("point.scenePressPosition")?,
+        pressed_buttons: p("point.pressedButtons")?,
+        id: p("point.id")?,
+    })
+}
+
+fn point_value(p: kurbo::Point) -> Value {
+    Point { x: p.x, y: p.y }.to_value()
+}
+
+/// Where a scene position is in the handler's item.
+fn in_tap_item(engine: &Engine, h: ObjectId, scene: kurbo::Point) -> kurbo::Point {
+    match tap_handler_target(engine, h) {
+        Some(item) => engine.untrack(|| scene_transform(engine, item)).inverse() * scene,
+        None => scene,
+    }
+}
+
+/// Writes values of the `point` group together, so that whatever reads
+/// two of them never sees half a point. Whether one changed.
+fn put_point(engine: &Engine, h: ObjectId, values: &[(PropIndex, Value)]) -> bool {
+    engine.batch(|| {
+        let mut changed = false;
+        for (p, v) in values {
+            if engine.untrack(|| engine.read(h, *p)).change_equals(v) {
+                continue;
+            }
+            changed |= engine
+                .write_internal(h, *p, v.clone(), WriteKind::Imperative)
+                .is_ok();
+        }
+        changed
+    })
+}
+
+/// A press reached the handler: its `point` is filled in. The caller says
+/// so with [`tap_point_changed`], once the handler reads as pressed.
+pub(crate) fn tap_point_pressed(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
+    let Some(p) = point_props() else { return };
+    let local = point_value(in_tap_item(engine, h, ev.pos));
+    let scene = point_value(ev.pos);
+    put_point(
+        engine,
+        h,
+        &[
+            (p.position, local.clone()),
+            (p.scene_position, scene.clone()),
+            (p.press_position, local),
+            (p.scene_press_position, scene),
+            (p.pressed_buttons, Value::Int(ev.buttons.bits() as i32)),
+            (p.id, Value::Int(ev.id.0 as i32)),
+        ],
+    );
+}
+
+/// The pointer that presses the handler moved, or let go: `point` follows
+/// it and says so, except at the release, where Qt keeps the change for
+/// the moment the point is emptied.
+pub(crate) fn tap_point_moved(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
+    let Some(p) = point_props() else { return };
+    let changed = put_point(
+        engine,
+        h,
+        &[
+            (p.position, point_value(in_tap_item(engine, h, ev.pos))),
+            (p.scene_position, point_value(ev.pos)),
+            (p.pressed_buttons, Value::Int(ev.buttons.bits() as i32)),
+        ],
+    );
+    if changed && ev.kind != PointerKind::Release {
+        tap_point_changed(engine, h);
+    }
+}
+
+/// Empties `point`. Whether it held anything.
+pub(crate) fn tap_point_clear(engine: &Engine, h: ObjectId) -> bool {
+    let Some(p) = point_props() else { return false };
+    let none = point_value(kurbo::Point::ZERO);
+    put_point(
+        engine,
+        h,
+        &[
+            (p.position, none.clone()),
+            (p.scene_position, none.clone()),
+            (p.press_position, none.clone()),
+            (p.scene_press_position, none),
+            (p.pressed_buttons, Value::Int(mouse_button::NO_BUTTON)),
+            (p.id, Value::Int(-1)),
+        ],
+    )
+}
+
+pub(crate) fn tap_point_changed(engine: &Engine, h: ObjectId) {
+    let _ = engine.emit_by_name(h, "pointChanged", &[]);
 }
 
 /// Whether a key went down or came up.

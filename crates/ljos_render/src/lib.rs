@@ -28,7 +28,7 @@ pub use compose::{
 pub use display_list::{
     Border, Decorations, DisplayList, DisplayListBuilder, DisplayListId, DrawOp, EmbedId, GlyphRun,
     GradientStop, Insets, LinearGradient, Paint, PaintContent, PaintCx, PathStyle, PositionedGlyph,
-    TextAlign, TileMode,
+    TextAlign, TileMode, fill_area,
 };
 pub use glyph::{FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds};
 pub use image::{

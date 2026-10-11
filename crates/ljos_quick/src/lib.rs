@@ -15,6 +15,7 @@ mod error_boundary;
 pub mod flickable;
 pub mod focus;
 mod font_enums;
+mod gradient;
 mod image;
 mod incubation;
 mod input;
@@ -35,6 +36,8 @@ mod system_prefs;
 mod text;
 pub mod text_input;
 mod tree;
+mod wheel;
+mod wheel_handler;
 
 pub use accessible::{Accessible, AccessibleAttached};
 pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
@@ -45,13 +48,17 @@ pub use animation::{
     RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, easing,
     running_animation_count, set_animation_frame_period,
 };
+pub use animation::{Transition, run_transition, stop_transition};
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
+pub use gradient::{Gradient, GradientPaint, GradientStop};
 pub use image::{
     BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint, ImageStore, LoadError,
     Request as ImageRequest, fill_mode, image_status, requested_size, tile_mode,
 };
+pub use image::{ImageTint, register_image_tint};
 pub use incubation::{BASE_REFRESH_HZ, MIN_INCUBATION_BUDGET, incubation_budget};
+pub use input::{HandlerPoint, WheelEventObject};
 pub use input::{KeyEvent, KeyKind};
 pub use input::{
     Modifiers, MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerId, PointerKind,
@@ -77,6 +84,7 @@ pub use pointer_item::{
     HoverMove, PointerItem, contains_point, follows_implicit_size, is_mirrored,
     register_hover_move, register_pointer_item,
 };
+pub use pointer_item::{PointerCondition, register_pointer_condition};
 pub use positioners::{Axis, Column, Flow, Grid, Positioner, PositionerAttached, Row};
 pub use rectangle::{Rectangle, RectangleBorder, RectanglePaint, to_rgba};
 pub use repeater::Repeater;
@@ -97,6 +105,7 @@ pub use text_input::{
     RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
 pub use tree::{add_data, child_items, resources, set_parent_item, sync_parent};
+pub use wheel_handler::WheelHandler;
 
 /// The text engine's types, for hosts that configure fonts.
 pub use ljos_text::{TextEngine, TextStyle};
@@ -114,9 +123,11 @@ pub fn register(engine: &Engine) {
         FontMetrics, TextMetrics,
         Grid, Flow, Positioner, LayoutMirroring,
         Image, BorderImage,
+        Gradient, GradientStop,
         focus::FocusScope, focus::Window,
         keys::Keys, keys::KeyNavigation, keys::KeyEventObject, keys::Shortcut,
         keys::StandardKey,
+        WheelEventObject, WheelHandler,
     ]));
     engine.register_module(ljos_engine::module!("QtQuick.Layouts" 1.15 => [
         Layout, RowLayout, ColumnLayout, GridLayout, StackLayout,

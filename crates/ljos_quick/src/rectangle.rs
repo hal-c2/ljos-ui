@@ -1,16 +1,14 @@
 //! `Rectangle`.
 
-use ljos_engine::{Color, Cx, Engine, EngineError, ObjectId, QmlObject, Value, qml_impl};
+use ljos_engine::{
+    Color, Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, Value, WriteKind, qml_impl,
+};
 use ljos_render::{Border as RenderBorder, DisplayListBuilder, DrawOp, Paint, Rgba, kurbo};
 
+use crate::gradient::{GradientPaint, as_gradient};
 use crate::item::{Item, is_unset};
 
 /// `Rectangle` (QtQuick): a filled, optionally rounded and bordered box.
-///
-/// TODO(gradient): `gradient` is not implemented; see the `@backlog`
-/// scenario in `features/items/rectangle.feature`. `DrawOp::Rect` already
-/// takes a `Paint::LinearGradient`, so only the `Gradient`/`GradientStop`
-/// types are missing.
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick", name = "Rectangle", extends = Item)]
 pub struct Rectangle {
@@ -22,6 +20,12 @@ pub struct Rectangle {
     pub radius: f64,
     #[qml(group)]
     pub border: RectangleBorder,
+    /// A `Gradient` to fill the rectangle with instead of `color`, or
+    /// nothing. Qt has it as a script value without a change signal: it
+    /// reads `undefined` until it is assigned, and `null` after `null`.
+    /// Qt's presets (`Gradient.NightFade`, `"NightFade"`) are not built.
+    #[qml(reset)]
+    pub gradient: Value,
 }
 
 impl Default for Rectangle {
@@ -31,6 +35,7 @@ impl Default for Rectangle {
             color: Color::WHITE,
             radius: 0.0,
             border: RectangleBorder::default(),
+            gradient: Value::Undefined,
         }
     }
 }
@@ -47,8 +52,48 @@ impl Rectangle {
                 Value::Bool(e.read(obj, Rectangle::RADIUS.index).to_number() > 0.0)
             })?;
         }
+        // What is not a gradient is refused when it is assigned, as Qt
+        // does, and not each time the rectangle is painted.
+        let given = cx
+            .engine
+            .untrack(|| cx.engine.read(obj, Rectangle::GRADIENT.index));
+        refuse_what_is_no_gradient(cx.engine, obj, &given);
+        cx.engine
+            .watch(obj, Rectangle::GRADIENT.index, move |e, v| {
+                refuse_what_is_no_gradient(e, obj, v);
+            })?;
         Ok(())
     }
+}
+
+/// Qt takes a `Gradient`, the number or the name of a preset, or nothing;
+/// anything else it warns about and then reads as `undefined`. Ljós has no
+/// presets, so no number and no name is one.
+fn refuse_what_is_no_gradient(engine: &Engine, rect: ObjectId, v: &Value) {
+    let why = match v {
+        Value::Undefined | Value::Null => return,
+        Value::Object(o) if !engine.is_alive(*o) || as_gradient(engine, v).is_some() => return,
+        Value::Object(o) => {
+            let ty = engine.meta_of(*o).map(|m| m.name.to_string());
+            format!(
+                "Can't assign {} to gradient property",
+                ty.as_deref().unwrap_or("object")
+            )
+        }
+        Value::Int(n) => format!("No such gradient preset '{n}'"),
+        // Qt reads a number as a whole one.
+        Value::Real(n) => format!("No such gradient preset '{}'", n.trunc()),
+        Value::String(name) => format!("No such gradient preset '{name}'"),
+        _ => "Unknown gradient type. Expected int, string, or Gradient".to_owned(),
+    };
+    engine.log(LogLevel::Warning, "qml", format!("QML Rectangle: {why}"));
+    // Not an assignment: a binding that gave the value stays, as in Qt.
+    let _ = engine.write_internal(
+        rect,
+        Rectangle::GRADIENT.index,
+        Value::Undefined,
+        WriteKind::Animation,
+    );
 }
 
 /// The `border` group of [`Rectangle`].
@@ -79,6 +124,9 @@ pub struct RectanglePaint {
     pub border_width: f64,
     pub border_color: Color,
     pub antialiasing: bool,
+    /// The gradient that is painted instead of `color`, when there is one
+    /// and it has stops.
+    pub gradient: Option<GradientPaint>,
 }
 
 impl RectanglePaint {
@@ -115,6 +163,8 @@ impl RectanglePaint {
             border_width: if has_border { num("border.width") } else { 0.0 },
             border_color: color("border.color"),
             antialiasing,
+            gradient: as_gradient(engine, &engine.read(obj, Rectangle::GRADIENT.index))
+                .and_then(|g| GradientPaint::of(engine, g)),
         }
     }
 
@@ -126,8 +176,12 @@ impl RectanglePaint {
             width: self.border_width as f32,
             paint: Paint::Solid(to_rgba(self.border_color)),
         });
-        let fill = Paint::Solid(to_rgba(self.color));
-        if border.is_none() && self.color.a == 0 {
+        let fill = match &self.gradient {
+            // Over the whole rectangle, border included (checked on qml6).
+            Some(g) => g.paint(rect),
+            None => Paint::Solid(to_rgba(self.color)),
+        };
+        if border.is_none() && fill.is_invisible() {
             return;
         }
         out.push(DrawOp::Rect {

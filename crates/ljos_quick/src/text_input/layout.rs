@@ -3,8 +3,9 @@
 //! layout sits in the item.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
-use ljos_engine::{Engine, EngineError, ObjectId, Rect, Value};
+use ljos_engine::{Engine, EngineError, Font, ObjectId, Rect, Value};
 use ljos_render::kurbo;
 use ljos_text::{
     EditLayout, EditParams, TextModel, TextStyle, WrapMode, byte_to_utf16, utf16_len, utf16_to_byte,
@@ -165,6 +166,8 @@ pub(crate) struct LayoutInputs {
     echo: i32,
     mask: char,
     active: bool,
+    /// The font, for the letters it draws the text in.
+    font: Arc<Font>,
 }
 
 fn wrap(v: i32) -> WrapMode {
@@ -231,6 +234,10 @@ impl LayoutInputs {
             mask,
             // Only an echo mode that depends on it reads the focus.
             active: echo == echo_mode::PASSWORD_ECHO_ON_EDIT && flag(Item::ACTIVE_FOCUS.index),
+            font: match engine.read(obj, TextEditor::FONT.index) {
+                Value::Font(f) => f,
+                _ => Arc::default(),
+            },
         }
     }
 
@@ -274,13 +281,15 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     let params = inputs.params();
     let mut s = st.borrow_mut();
     let s = &mut *s;
-    let shown = Shown::build(
-        &s.model,
-        &s.preedit,
-        s.preedit_cursor,
-        inputs.echo(s.editing),
-        s.multi,
-    );
+    let echo = inputs.echo(s.editing);
+    let mut shown = Shown::build(&s.model, &s.preedit, s.preedit_cursor, echo, s.multi);
+    // Positions are counted in the shown string, and every letter stays
+    // one of the same length in them. A mask is not a letter of the text.
+    if echo == Echo::Plain
+        && let std::borrow::Cow::Owned(drawn) = inputs.font.drawn(&shown.text)
+    {
+        shown.text = drawn;
+    }
     let fresh = s.layout.is_some()
         && s.shown.text == shown.text
         && s.laid.as_ref() == Some(&(inputs.style.clone(), params));

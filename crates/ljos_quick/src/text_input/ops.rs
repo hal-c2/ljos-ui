@@ -206,6 +206,17 @@ pub fn accept_text(engine: &Engine, item: ObjectId, text: &str) -> bool {
     type_text(engine, item, text)
 }
 
+/// Whether the last thing that changed the text of an editor was typing,
+/// and not a key that takes characters away, a paste or a program: what
+/// a control asks that completes a text while it is typed.
+pub fn last_edit_typed(engine: &Engine, item: ObjectId) -> bool {
+    state_of(engine, item).is_some_and(|st| {
+        st.borrow()
+            .run
+            .is_some_and(|run| matches!(run.kind, EditKind::Typed))
+    })
+}
+
 /// `insert(position, text)` from a program. It works on a read-only
 /// editor too.
 pub(crate) fn program_insert(engine: &Engine, obj: ObjectId, pos: i32, text: &str) {

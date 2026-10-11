@@ -246,6 +246,8 @@ struct PointerState {
     hovered: Vec<ObjectId>,
     /// The hovered items of [`crate::register_pointer_item`] types.
     item_hovered: Vec<ObjectId>,
+    /// The buttons held after the last pointer event.
+    held: MouseButtons,
 }
 
 /// An item tree, its render tree, and the frame pipeline between them.
@@ -1062,6 +1064,11 @@ impl QuickScene {
     /// Delivers a pointer event (pipeline steps 1-2). Returns whether an
     /// item or handler took it.
     pub fn pointer_event(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+        // A wheel event tells the buttons that are held (`wheel.buttons`).
+        self.pointer.held = match ev.kind {
+            PointerKind::Press | PointerKind::Move | PointerKind::Release => ev.buttons,
+            PointerKind::Cancel | PointerKind::Leave => MouseButtons::empty(),
+        };
         match ev.kind {
             PointerKind::Press => self.press(engine, ev),
             PointerKind::Move => self.moved(engine, ev),
@@ -1078,8 +1085,19 @@ impl QuickScene {
     /// Returns whether one of them used it. An event nothing uses changes
     /// nothing, so it asks for no frame.
     pub fn wheel_event(&mut self, engine: &Engine, ev: &crate::input::WheelEvent) -> bool {
+        self.wheel_event_held(engine, ev, self.pointer.held)
+    }
+
+    /// [`QuickScene::wheel_event`] for a host that knows which buttons are
+    /// held without having sent the presses (a test that names them).
+    pub fn wheel_event_held(
+        &mut self,
+        engine: &Engine,
+        ev: &crate::input::WheelEvent,
+        buttons: MouseButtons,
+    ) -> bool {
         let hits = self.hits(engine, ev.pos);
-        crate::flickable::wheel::deliver(engine, &hits, ev)
+        crate::wheel::deliver(engine, &hits, ev, buttons)
     }
 
     /// Items under `pos`, topmost first.
@@ -1137,7 +1155,11 @@ impl QuickScene {
                 {
                     continue;
                 }
+                // As in Qt the point is there when `pressed` changes, and
+                // says so after it.
+                crate::input::tap_point_pressed(engine, h, ev);
                 set(engine, h, TapHandler::PRESSED.index, Value::Bool(true));
+                crate::input::tap_point_changed(engine, h);
                 let policy = num(engine, h, TapHandler::GESTURE_POLICY.index) as i32;
                 if policy == gesture_policy::DRAG_THRESHOLD {
                     self.pointer.passive.push(h);
@@ -1213,6 +1235,11 @@ impl QuickScene {
                 cancel_tap(engine, h, ev.pos);
             }
         }
+        for h in &self.pointer.passive {
+            if engine.is_alive(*h) {
+                crate::input::tap_point_moved(engine, *h, ev);
+            }
+        }
         // A Flickable around whatever holds the press may take it for a
         // drag; the holder is told its press was cancelled.
         let holder = match self.pointer.grab {
@@ -1229,12 +1256,15 @@ impl QuickScene {
         match self.pointer.grab {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
                 let local = local_point(engine, m, ev.pos);
-                set_mouse_pos(engine, m, local);
                 let inside = contains_local(engine, m, local);
+                // As in Qt, crossing the edge is told before the position
+                // changes: `entered` and `exited` read the last one.
                 if set_contains(engine, m, inside) {
                     emit(engine, m, if inside { "entered" } else { "exited" }, &[]);
                 }
+                set_mouse_pos(engine, m, local);
                 emit_mouse(engine, m, "positionChanged", ev, local, false);
+                // Nothing else hovers while a MouseArea holds the press.
                 return true;
             }
             Some(Grab::Tap(h)) if engine.is_alive(h) => {
@@ -1249,6 +1279,8 @@ impl QuickScene {
                 {
                     self.pointer.grab = None;
                     cancel_tap(engine, h, ev.pos);
+                } else {
+                    crate::input::tap_point_moved(engine, h, ev);
                 }
                 handled = true;
             }
@@ -1330,8 +1362,10 @@ impl QuickScene {
             }
         }
         self.pointer.double = false;
+        // A MouseArea's hover follows at the next move, as in Qt; the
+        // other items' hover follows now.
         let hits = self.hits(engine, ev.pos);
-        self.update_hover(engine, ev, &hits);
+        self.update_item_hover(engine, ev, &hits);
         handled
     }
 
@@ -1381,7 +1415,10 @@ impl QuickScene {
         self.pointer
             .taps
             .insert(h, (ev.time, ev.pos, button, count));
-        set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
+        // As in Qt the tap is told while the handler still reads as
+        // pressed, with the point where the button came up and no button
+        // in it; then the handler is not pressed, then the point is empty.
+        crate::input::tap_point_moved(engine, h, ev);
         set(engine, h, TapHandler::TAP_COUNT.index, Value::Int(count));
         let args = [point_value(ev.pos), Value::Int(button.bits() as i32)];
         emit(engine, h, "tapped", &args);
@@ -1390,18 +1427,30 @@ impl QuickScene {
             2 => emit(engine, h, "doubleTapped", &args),
             _ => {}
         }
+        if !engine.is_alive(h) {
+            return;
+        }
+        set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
+        if crate::input::tap_point_clear(engine, h) {
+            crate::input::tap_point_changed(engine, h);
+        }
     }
 
-    /// Hover for `hoverEnabled` MouseAreas, as Qt 6.11 delivers it
-    /// (observed with `qmltestrunner`; see `tests/pointer.rs`): the topmost
-    /// hover-enabled area under the pointer takes the hover, together with
-    /// the hover-enabled areas it is inside. Areas beneath it get nothing,
-    /// even when the top one is disabled.
-    fn update_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) -> bool {
+    /// Hover of the items that are not MouseAreas (`pointer_item.rs`).
+    fn update_item_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) {
         crate::pointer_item::update_hover(engine, hits, &mut self.pointer.item_hovered);
         crate::pointer_item::hover_moved(engine, &self.pointer.item_hovered, |o| {
             local_point(engine, o, ev.pos)
         });
+    }
+
+    /// Hover for `hoverEnabled` MouseAreas, as Qt 6.11 delivers it
+    /// (observed on qml6; `features/input/mouse-area-hover*.feature`): the
+    /// topmost hover-enabled area under the pointer takes the hover,
+    /// together with the hover-enabled areas it is inside. Areas beneath it
+    /// get nothing, even when the top one is disabled.
+    fn update_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) -> bool {
+        self.update_item_hover(engine, ev, hits);
         let grabbed = match self.pointer.grab {
             Some(Grab::Mouse(m)) => Some(m),
             _ => None,
@@ -1410,31 +1459,53 @@ impl QuickScene {
             .into_iter()
             .filter(|o| Some(*o) != grabbed)
             .collect();
-        let old = std::mem::take(&mut self.pointer.hovered);
-        // Leaving runs from the innermost area out, entering from the
-        // outermost in, and every exit comes before the first enter.
-        for o in old.iter().rev() {
-            if !now.contains(o)
-                && Some(*o) != grabbed
-                && engine.is_alive(*o)
-                && set_contains(engine, *o, false)
-            {
-                emit(engine, *o, "exited", &[]);
-            }
-        }
+        // Hover carries no button, whatever is held.
+        let hover = PointerEvent {
+            button: None,
+            buttons: MouseButtons::empty(),
+            ..*ev
+        };
+        // The innermost area first, each with its own position change
+        // before the next one hears anything.
         for m in &now {
             let local = local_point(engine, *m, ev.pos);
-            set_mouse_pos(engine, *m, local);
-            if set_contains(engine, *m, true) {
+            let entering = !engine
+                .read(*m, MouseArea::CONTAINS_MOUSE.index)
+                .to_boolean();
+            if entering {
+                // `containsMouse` and the position change together, so
+                // that a handler of either reads the other as it is now.
+                engine.batch(|| {
+                    set_contains(engine, *m, true);
+                    set_mouse_pos(engine, *m, local);
+                });
                 emit(engine, *m, "entered", &[]);
-            } else if ev.kind == PointerKind::Move {
-                // The move that enters an area is not also a position
-                // change for it.
-                emit_mouse(engine, *m, "positionChanged", ev, local, false);
+            } else {
+                set_mouse_pos(engine, *m, local);
+            }
+            if ev.kind == PointerKind::Move && engine.is_alive(*m) {
+                emit_mouse(engine, *m, "positionChanged", &hover, local, false);
+            }
+        }
+        // The areas that were left exit last, in the order they were
+        // entered, and keep the last position they had.
+        let mut hovered = std::mem::take(&mut self.pointer.hovered);
+        hovered.retain(|o| {
+            if now.contains(o) {
+                return true;
+            }
+            if Some(*o) != grabbed && engine.is_alive(*o) && set_contains(engine, *o, false) {
+                emit(engine, *o, "exited", &[]);
+            }
+            false
+        });
+        for m in &now {
+            if !hovered.contains(m) {
+                hovered.push(*m);
             }
         }
         let any = !now.is_empty();
-        self.pointer.hovered = now;
+        self.pointer.hovered = hovered;
         any
     }
 }
@@ -1613,7 +1684,7 @@ fn emit(engine: &Engine, obj: ObjectId, name: &str, args: &[Value]) {
 /// Whether `obj` leaves the items inside it enabled. A MouseArea's own
 /// `enabled` does not count (Qt documents that it does not cascade), so
 /// the answer comes from the nearest ancestor that is not one.
-fn item_enabled(e: &Engine, obj: ObjectId) -> bool {
+pub(crate) fn item_enabled(e: &Engine, obj: ObjectId) -> bool {
     let mut cur = Some(obj);
     // Bounded so a corrupt parent cycle cannot hang.
     for _ in 0..4096 {
@@ -1630,12 +1701,12 @@ fn item_enabled(e: &Engine, obj: ObjectId) -> bool {
 
 /// Whether a MouseArea takes pointer events: its own `enabled`, inside
 /// enabled items.
-fn mouse_area_enabled(e: &Engine, m: ObjectId) -> bool {
+pub(crate) fn mouse_area_enabled(e: &Engine, m: ObjectId) -> bool {
     e.read(m, Item::ENABLED.index).to_boolean()
         && e.visual_parent(m).is_none_or(|p| item_enabled(e, p))
 }
 
-/// The MouseAreas the pointer hovers, outermost first, given the items
+/// The MouseAreas the pointer hovers, innermost first, given the items
 /// under it (topmost first).
 fn hover_chain(e: &Engine, hits: &[ObjectId]) -> Vec<ObjectId> {
     let takes_hover = |o: ObjectId| is_a::<MouseArea>(e, o) && hover_enabled(e, o);
@@ -1658,7 +1729,6 @@ fn hover_chain(e: &Engine, hits: &[ObjectId]) -> Vec<ObjectId> {
         }
         cur = e.visual_parent(o);
     }
-    chain.reverse();
     chain
 }
 
@@ -1680,10 +1750,26 @@ fn set_contains(engine: &Engine, m: ObjectId, v: bool) -> bool {
     true
 }
 
+/// Sets `mouseX` and `mouseY`. As in Qt both tell of a change at every
+/// new position, also the one that kept its value.
 fn set_mouse_pos(engine: &Engine, m: ObjectId, local: kurbo::Point) {
+    let x = MouseArea::MOUSE_X.index;
+    let y = MouseArea::MOUSE_Y.index;
+    let old = kurbo::Point::new(num(engine, m, x), num(engine, m, y));
+    if old == local {
+        return;
+    }
     engine.batch(|| {
-        set(engine, m, MouseArea::MOUSE_X.index, Value::Real(local.x));
-        set(engine, m, MouseArea::MOUSE_Y.index, Value::Real(local.y));
+        for (p, v, same) in [
+            (x, local.x, old.x == local.x),
+            (y, local.y, old.y == local.y),
+        ] {
+            if same {
+                let _ = engine.notify(m, p);
+            } else {
+                set(engine, m, p, Value::Real(v));
+            }
+        }
     });
 }
 
@@ -1706,7 +1792,18 @@ fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point) {
         return;
     }
     set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
+    // As in Qt a handler that held the press alone has an empty point when
+    // it says `canceled`; one that only watched still has the point.
+    let alone =
+        num(engine, h, TapHandler::GESTURE_POLICY.index) as i32 != gesture_policy::DRAG_THRESHOLD;
+    let mut changed = alone && crate::input::tap_point_clear(engine, h);
     emit(engine, h, "canceled", &[point_value(pos)]);
+    if engine.is_alive(h) {
+        changed |= crate::input::tap_point_clear(engine, h);
+        if changed {
+            crate::input::tap_point_changed(engine, h);
+        }
+    }
 }
 
 /// Emits a MouseArea signal with a fresh `mouse` object and returns its

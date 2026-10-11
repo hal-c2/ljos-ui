@@ -47,7 +47,7 @@ use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 use crate::backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RgbaImage};
 use crate::display_list::{
     Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
-    TextAlign,
+    TextAlign, fill_area,
 };
 use crate::glyph::{baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, GlyphAtlas, GlyphKey, Slot};
@@ -776,11 +776,16 @@ impl EpaintBackend {
                 } => {
                     let tess = if *aa { &mut self.aa } else { &mut self.no_aa };
                     let (r, cr) = (erect(*rect), corner_radius(*radii));
-                    match fill {
-                        Paint::Solid(c) if !c.is_transparent() => {
+                    // The mesh is built before the node's opacity is
+                    // known, so a border that hides the fill only while
+                    // the node is not faded still has it underneath.
+                    let area = fill_area(*rect, *radii, border.as_ref(), 1.0)
+                        .map(|(rect, radii)| (erect(rect), corner_radius(radii)));
+                    match (fill, area) {
+                        (Paint::Solid(c), Some((r, cr))) if !c.is_transparent() => {
                             tess.tessellate_rect(&RectShape::filled(r, cr, color32(*c)), &mut cur);
                         }
-                        Paint::LinearGradient(g) if !fill.is_invisible() => {
+                        (Paint::LinearGradient(g), Some((r, cr))) if !fill.is_invisible() => {
                             let mut tmp = Mesh::default();
                             tess.tessellate_rect(
                                 &RectShape::filled(r, cr, Color32::WHITE),
@@ -788,7 +793,7 @@ impl EpaintBackend {
                             );
                             apply_gradient(&tmp, g, &mut cur);
                         }
-                        Paint::Image(_) => warn("image fills are not drawn"),
+                        (Paint::Image(_), _) => warn("image fills are not drawn"),
                         _ => {}
                     }
                     if let Some(b) = border

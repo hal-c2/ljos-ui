@@ -2,7 +2,7 @@
 //! `qml-qtquick-textedit.html`). The text is plain: `textFormat` is kept
 //! and rich text is not implemented.
 
-use ljos_engine::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, Value, qml_impl};
+use ljos_engine::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl};
 
 use super::base::{EditKind, SharedState, TextEditor};
 use super::ops::{self, How};
@@ -36,8 +36,8 @@ pub struct TextEdit {
     #[qml(notify, readonly)]
     pub hovered_link: Atom,
     /// Kept; nothing is loaded relative to it.
-    #[qml(notify)]
-    pub base_url: Atom,
+    #[qml(notify, reset = crate::text::BASE_URL_RESET)]
+    pub base_url: Url,
 }
 
 impl Default for TextEdit {
@@ -50,7 +50,7 @@ impl Default for TextEdit {
             text_margin: 0.0,
             select_by_keyboard: true,
             hovered_link: Atom::EMPTY,
-            base_url: Atom::EMPTY,
+            base_url: Url::default(),
         }
     }
 }
