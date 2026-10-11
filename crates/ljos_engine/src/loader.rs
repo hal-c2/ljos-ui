@@ -87,6 +87,9 @@ pub(crate) fn join_url(base: &str, rel: &str) -> String {
     };
     // Below a scheme or a host there is nothing but absolute paths.
     let absolute = joined.starts_with('/') || !root.is_empty();
+    // An address naming a directory keeps saying so (RFC 3986, 5.2.4):
+    // `sub/`, `sub/.` and `sub/..` all end in a slash.
+    let directory = matches!(joined.rsplit('/').next(), Some("" | "." | ".."));
     let mut out: Vec<&str> = Vec::new();
     for seg in joined.split('/') {
         match seg {
@@ -97,7 +100,16 @@ pub(crate) fn join_url(base: &str, rel: &str) -> String {
             s => out.push(s),
         }
     }
-    format!("{root}{}{}", if absolute { "/" } else { "" }, out.join("/"))
+    let tail = if directory && !out.is_empty() {
+        "/"
+    } else {
+        ""
+    };
+    format!(
+        "{root}{}{}{tail}",
+        if absolute { "/" } else { "" },
+        out.join("/")
+    )
 }
 
 fn has_scheme(url: &str) -> bool {
@@ -517,6 +529,23 @@ mod tests {
             ),
             ("https://host", "Leaf.qml", "https://host/Leaf.qml"),
             ("sub/Panel.qml", "Leaf.qml", "sub/Leaf.qml"),
+        ] {
+            assert_eq!(join_url(base, rel), want, "{rel} at {base}");
+        }
+    }
+
+    #[test]
+    fn an_address_naming_a_directory_keeps_its_slash() {
+        for (base, rel, want) in [
+            ("file:///a/Main.qml", "sub/", "file:///a/sub/"),
+            ("file:///a/Main.qml", ".", "file:///a/"),
+            ("file:///a/Main.qml", "sub/..", "file:///a/"),
+            ("file:///a/Main.qml", "sub/.", "file:///a/sub/"),
+            ("file:///a/Main.qml", "../..", "file:///"),
+            ("https://host", ".", "https://host/"),
+            ("qrc:/app/Main.qml", "sub/", "qrc:/app/sub/"),
+            ("app/Main.qml", "sub/", "app/sub/"),
+            ("Main.qml", ".", ""),
         ] {
             assert_eq!(join_url(base, rel), want, "{rel} at {base}");
         }
