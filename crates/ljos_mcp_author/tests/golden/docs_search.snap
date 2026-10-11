@@ -1,0 +1,133 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Search the project's docs/, features/README.md and the reasons in the API ledger. Answers the sections that say the most, best first: title, line, a snippet, the `ljos://` resource to read in full and the Qt documentation pages the section cites.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "`next_cursor` of the previous answer.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "limit": {
+        "description": "Results in one answer: 8 unless given, 20 at most.",
+        "format": "uint",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "query": {
+        "description": "Words to look for: `binding tiers`, `hot reload`, `Accessible.name`.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "title": "SearchArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "docs_search",
+  "outputSchema": {
+    "$defs": {
+      "Hit": {
+        "properties": {
+          "line": {
+            "description": "The 1-based line of the section's heading. Null for a ledger row.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "qt_docs": {
+            "description": "Pages of Qt's documentation the section cites.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "score": {
+            "description": "Higher says more about the query. Only comparable within an answer.",
+            "format": "double",
+            "type": "number"
+          },
+          "section": {
+            "description": "The same resource narrowed to this section (`...#L120`): read this\nwhen the document is long. Null for a ledger row.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snippet": {
+            "description": "The lines of the section that say the most about the query.",
+            "type": "string"
+          },
+          "title": {
+            "description": "The headings that lead to the section, outermost first; for a\nledger row `Module.Type (status)`.",
+            "type": "string"
+          },
+          "uri": {
+            "description": "The document: a resource that can be read in full.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "title",
+          "score",
+          "snippet",
+          "qt_docs"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "query": {
+        "type": "string"
+      },
+      "results": {
+        "description": "Best first.",
+        "items": {
+          "$ref": "#/$defs/Hit"
+        },
+        "type": "array"
+      },
+      "total": {
+        "description": "Sections that match at all, over every page of the answer.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "query",
+      "results",
+      "total"
+    ],
+    "title": "SearchOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

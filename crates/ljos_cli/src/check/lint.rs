@@ -16,19 +16,13 @@
 
 use std::{collections::HashMap, path::Path};
 
-use ljos_mcp_author::{FrontEnd, QmlFrontEnd};
+use ljos_mcp_author::{FrontEnd, LINTS, QmlFrontEnd, TYPES_UNAVAILABLE};
 
-/// The rules `ljos check` reports.
-pub const CODES: [&str; 4] = [
-    "a11y-unnamed-interactive",
-    "a11y-unnamed-icon-button",
-    "a11y-unnamed-image",
-    "i18n-qstr-non-literal",
-];
-
-/// What the front end says when it has no type table to tell a `Button`
-/// from an `Item` with.
-const NO_TYPES: &str = "types-unavailable";
+/// Whether `ljos check` reports the rule with this code. The table is the
+/// authoring server's, where `qml_lint` and `ljos://lints` read it too.
+fn reported(code: &str) -> bool {
+    LINTS.iter().any(|lint| lint.in_check && lint.code == code)
+}
 
 /// What the lints found in one project.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -62,10 +56,10 @@ pub fn project(dir: &Path, label: &str, keys: &[String]) -> anyhow::Result<Linte
         .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
     let mut linted = Linted::default();
     for d in found {
-        if d.code == NO_TYPES {
+        if d.code == TYPES_UNAVAILABLE {
             linted.skipped = true;
         }
-        if !CODES.contains(&d.code.as_str()) {
+        if !reported(&d.code) {
             continue;
         }
         let name = names.get(&d.file).map_or(d.file.as_str(), String::as_str);

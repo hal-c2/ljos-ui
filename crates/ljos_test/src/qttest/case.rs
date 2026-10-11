@@ -618,7 +618,7 @@ impl TestCase {
         y: Value,
         x_delta: Value,
         y_delta: Value,
-        _buttons: Value,
+        buttons: Value,
         modifiers: Value,
         delay: Value,
     ) -> Result<(), EngineError> {
@@ -631,7 +631,15 @@ impl TestCase {
             number(&x_delta).unwrap_or(0.0),
             number(&y_delta).unwrap_or(0.0),
         );
-        input::wheel_at(engine, &host, at, delta, input::modifiers_of(&modifiers))
+        let buttons = input::buttons_of(&buttons).unwrap_or_default();
+        input::wheel_at(
+            engine,
+            &host,
+            at,
+            delta,
+            buttons,
+            input::modifiers_of(&modifiers),
+        )
     }
 
     // -------------------------------------------------------------- keys

@@ -32,6 +32,9 @@ pub struct TestRun {
     pub import_paths: Vec<String>,
     /// `Case::function` or `Case::function:tag`; all tests when empty.
     pub filters: Vec<String>,
+    /// Nothing is run: the files are one project that `ljos check` reads,
+    /// and the report is everything it says. Qt has no program of the kind.
+    pub check: bool,
 }
 
 /// What a runner said.
@@ -146,7 +149,7 @@ fn workspace_root() -> PathBuf {
 
 /// The `ljos` program: `LJOS_BIN`, or the one this workspace builds, built
 /// once for the whole run so that a scenario tests the program as it is.
-fn ljos_bin() -> Result<PathBuf> {
+pub(crate) fn ljos_bin() -> Result<PathBuf> {
     static BIN: OnceLock<std::result::Result<PathBuf, String>> = OnceLock::new();
     BIN.get_or_init(|| {
         if let Some(bin) = std::env::var_os("LJOS_BIN") {
@@ -197,6 +200,9 @@ fn qt_runner() -> String {
 /// The program cannot be built or started. A failing test is not an error:
 /// it is in the report.
 pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
+    if run.check {
+        return check_ljos(files);
+    }
     let staged = Staged::new(files)?;
     let json = staged.root.join("report.json");
     let mut command = Command::new(ljos_bin()?);
@@ -228,11 +234,39 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     })
 }
 
+/// Reads the files as one project with `ljos check` and gives all it says:
+/// what it finds, then its count, then its verdict when there are errors,
+/// in the order a terminal shows them.
+fn check_ljos(files: &[QmlFile]) -> Result<TestReport> {
+    let staged = Staged::new(files)?;
+    // What is found goes to the error stream and the count to the output:
+    // one pipe for both keeps them in the order they were written.
+    let out = Command::new("sh")
+        .args(["-c", r#"exec "$0" check "$1" 2>&1"#])
+        .arg(ljos_bin()?)
+        .arg(&staged.suite)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| failed(format!("cannot start `ljos check`: {e}")))?;
+    let status = out
+        .status
+        .code()
+        .ok_or_else(|| failed("`ljos check` was killed"))?;
+    Ok(TestReport {
+        lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
+        status,
+        json: None,
+    })
+}
+
 /// Runs the files with Qt's `qmltestrunner`, without a window.
 ///
 /// # Errors
 /// The runner cannot be started, or does not finish in a minute.
 pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
+    if run.check {
+        return Err(BackendError::NotImplemented("checking a project"));
+    }
     let staged = Staged::new(files)?;
     let runner = qt_runner();
     // A test case that never starts keeps Qt's runner waiting for ever.

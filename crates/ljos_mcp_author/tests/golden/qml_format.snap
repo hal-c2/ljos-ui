@@ -1,0 +1,202 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": false
+  },
+  "description": "Lay out QML files, directories or `source` text the one way `ljos fmt` does. Answers a unified diff per file; `write: true` rewrites the files and needs the `fs` capability. A file that does not parse is refused with its diagnostics and left alone.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "`next_cursor` of the previous answer: formats the files it left.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "paths": {
+        "default": [],
+        "description": "`.qml` files or directories, relative to the project root.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "source": {
+        "description": "QML text to format instead of files. The result is in `formatted`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "write": {
+        "default": false,
+        "description": "Rewrite the files instead of only showing the diff. Needs the `fs`\ncapability.",
+        "type": "boolean"
+      }
+    },
+    "title": "FormatArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "qml_format",
+  "outputSchema": {
+    "$defs": {
+      "FileOut": {
+        "properties": {
+          "diagnostics": {
+            "description": "Why a refused file was refused.",
+            "items": {
+              "$ref": "#/$defs/Problem"
+            },
+            "type": "array"
+          },
+          "diff": {
+            "description": "Unified diff from the file to its layout, when the two differ.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "diff_truncated": {
+            "description": "The diff was longer than 6 KB and was cut at a line.",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "Project-relative path; `<source>` for text given as `source`.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/Status"
+          }
+        },
+        "required": [
+          "file",
+          "status",
+          "diff_truncated",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "properties": {
+          "column": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/$defs/Severity"
+          }
+        },
+        "required": [
+          "line",
+          "column",
+          "severity",
+          "message"
+        ],
+        "type": "object"
+      },
+      "Severity": {
+        "enum": [
+          "error",
+          "warning",
+          "hint"
+        ],
+        "type": "string"
+      },
+      "Status": {
+        "oneOf": [
+          {
+            "const": "unchanged",
+            "description": "Already laid out.",
+            "type": "string"
+          },
+          {
+            "const": "changed",
+            "description": "Not laid out; `diff` shows what would change. Nothing was written.",
+            "type": "string"
+          },
+          {
+            "const": "written",
+            "description": "Was not laid out and has been rewritten; `diff` shows what changed.",
+            "type": "string"
+          },
+          {
+            "const": "refused",
+            "description": "Does not parse (see `diagnostics`), or could not be read or\nwritten. Left as it was.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "properties": {
+      "changed": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "files": {
+        "description": "One entry per file handled by this call, in path order.",
+        "items": {
+          "$ref": "#/$defs/FileOut"
+        },
+        "type": "array"
+      },
+      "formatted": {
+        "description": "The laid-out text, when `source` was given and parses.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "next_cursor": {
+        "description": "Set when files are left: they were neither checked nor written.\nCall again with this as `cursor`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "refused": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "unchanged": {
+        "description": "Counts over `files`.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "written": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "files",
+      "unchanged",
+      "changed",
+      "written",
+      "refused"
+    ],
+    "title": "FormatOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

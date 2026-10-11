@@ -19,6 +19,9 @@ pub struct LjosWorld {
     /// What each backend's test runner said, for the scenarios that run
     /// `tst_*.qml` files.
     test_reports: Vec<(&'static str, TestReport)>,
+    /// The authoring tools and the command line, for the scenarios that
+    /// ask them and no running application.
+    author: crate::author::Slot,
 }
 
 impl LjosWorld {
@@ -28,7 +31,14 @@ impl LjosWorld {
             backends: Vec::new(),
             files: BTreeMap::new(),
             test_reports: Vec::new(),
+            author: crate::author::Slot::default(),
         }
+    }
+
+    /// The authoring side of the scenario, with the files staged so far:
+    /// it writes them into its project before it is asked anything.
+    pub fn author(&mut self) -> (&mut crate::author::Slot, &BTreeMap<String, String>) {
+        (&mut self.author, &self.files)
     }
 
     /// Called from the `before` hook: picks the backends this scenario runs on.

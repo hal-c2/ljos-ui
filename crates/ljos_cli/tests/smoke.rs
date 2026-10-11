@@ -67,7 +67,14 @@ fn mcp_server_answers_over_stdio() {
             "qml_lint",
             "type_lookup",
             "api_status",
-            "project_info"
+            "project_info",
+            "qml_format",
+            "binding_tier_explain",
+            "docs_search",
+            "features_list",
+            // `features_run` is offered only with `--caps run`.
+            "run_status",
+            "run_cancel"
         ]
     );
 

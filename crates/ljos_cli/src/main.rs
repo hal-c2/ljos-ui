@@ -9,6 +9,7 @@ use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
 mod check;
+mod fmt;
 mod i18n;
 mod render;
 mod run;
@@ -32,6 +33,12 @@ enum Command {
         /// inspect, input, mutate, eval, fs, run. Authoring is read-only by default.
         #[arg(long, value_parser = CapSet::parse_list, default_value = "")]
         caps: CapSet,
+        /// The program `features_run` starts to run scenarios, for a project
+        /// whose runner is not found by itself. It is given
+        /// `[--input <glob>] [-t <tags>] [-n <name>] [--backlog]` and
+        /// `LJOS_BDD_BACKEND`, in the project's directory.
+        #[arg(long, value_name = "PROGRAM")]
+        features_runner: Option<PathBuf>,
     },
     /// Translation catalogues.
     I18n {
@@ -51,6 +58,9 @@ enum Command {
     /// print the results as Qt's runner for QML tests does; the exit
     /// status is the number of failed tests.
     Test(test::Test),
+    /// Lay QML files out the one way the formatter knows: `--check` says
+    /// which files are not laid out, `--diff` shows what would change.
+    Fmt(fmt::Fmt),
 }
 
 fn main() -> ExitCode {
@@ -77,10 +87,18 @@ fn run() -> anyhow::Result<()> {
         )
         .init();
     match cli.command {
-        Command::Mcp { project, caps } => {
+        Command::Mcp {
+            project,
+            caps,
+            features_runner,
+        } => {
             let project = Project::open(&project)?;
             let front = QmlFrontEnd::new(project.root());
             let server = AuthorServer::new(project, Arc::new(front));
+            let server = match features_runner {
+                Some(program) => server.with_runner(program),
+                None => server,
+            };
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -105,6 +123,12 @@ fn run() -> anyhow::Result<()> {
         Command::Test(test) => match test.run()? {
             0 => Ok(()),
             failed => std::process::exit(i32::from(failed)),
+        },
+        // 1 is `--check` finding a file to lay out, 2 a file that does not
+        // parse; both are for a script to tell apart.
+        Command::Fmt(fmt) => match fmt.run() {
+            0 => Ok(()),
+            status => std::process::exit(status),
         },
     }
 }

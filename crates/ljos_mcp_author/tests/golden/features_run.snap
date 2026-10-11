@@ -1,0 +1,149 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": false,
+    "open_world": false,
+    "read_only": false
+  },
+  "description": "Start a run of scenarios chosen as in `features_list`, on the Ljós backend unless `backend` says `qt` or `both`. Answers a `run_id` at once: ask `run_status` how it went. One run at a time. Needs the `run` capability.",
+  "inputSchema": {
+    "$defs": {
+      "Backend": {
+        "oneOf": [
+          {
+            "const": "ljos",
+            "description": "The Ljós runtime, headless.",
+            "type": "string"
+          },
+          {
+            "const": "qt",
+            "description": "Qt itself (`qml6`), for scenarios tagged `@qt-parity`. Slow.",
+            "type": "string"
+          },
+          {
+            "const": "both",
+            "description": "Both, one after the other.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "backend": {
+        "$ref": "#/$defs/Backend",
+        "default": "ljos",
+        "description": "What runs the scenarios: `ljos` unless given."
+      },
+      "backlog": {
+        "default": false,
+        "description": "Run the `@backlog` scenarios instead of the others.",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "Regular expression the scenario's name must match.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "paths": {
+        "default": [],
+        "description": "`.feature` files or directories under `features/`, with or without\nthat prefix. Everything if absent, which takes minutes.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "tags": {
+        "description": "Tag expression: `@qt-parity`, `@a and not @b`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "RunArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "features_run",
+  "outputSchema": {
+    "$defs": {
+      "Backend": {
+        "oneOf": [
+          {
+            "const": "ljos",
+            "description": "The Ljós runtime, headless.",
+            "type": "string"
+          },
+          {
+            "const": "qt",
+            "description": "Qt itself (`qml6`), for scenarios tagged `@qt-parity`. Slow.",
+            "type": "string"
+          },
+          {
+            "const": "both",
+            "description": "Both, one after the other.",
+            "type": "string"
+          }
+        ]
+      },
+      "State": {
+        "oneOf": [
+          {
+            "enum": [
+              "running"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "passed",
+            "description": "Ended with exit status 0: every scenario that ran passed.",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "description": "Ended with another status: see `failures` and `output`.",
+            "type": "string"
+          },
+          {
+            "const": "cancelled",
+            "description": "Stopped by `run_cancel`.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "properties": {
+      "backend": {
+        "$ref": "#/$defs/Backend"
+      },
+      "command": {
+        "description": "The command line that was started, in the project's root.",
+        "type": "string"
+      },
+      "run_id": {
+        "description": "What `run_status` and `run_cancel` are asked about.",
+        "type": "string"
+      },
+      "state": {
+        "$ref": "#/$defs/State",
+        "description": "Always `running`: ask `run_status` how it ended."
+      }
+    },
+    "required": [
+      "run_id",
+      "state",
+      "backend",
+      "command"
+    ],
+    "title": "Started",
+    "type": "object"
+  },
+  "required_cap": "run"
+}

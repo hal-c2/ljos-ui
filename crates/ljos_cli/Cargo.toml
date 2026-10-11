@@ -34,6 +34,8 @@ ljos_runtime = { path = "../ljos_runtime" }
 ljos_test = { path = "../ljos_test" }
 ljos_ir = { path = "../ljos_ir" }
 qml_front = { path = "../qml_front" }
+# `ljos fmt`: the layout the authoring server's `qml_format` gives too.
+qml_fmt = { path = "../qml_fmt" }
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true

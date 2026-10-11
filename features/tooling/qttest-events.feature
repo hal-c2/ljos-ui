@@ -273,9 +273,6 @@ Feature: Input, time and objects in a TestCase
         PASS   : Scroll::test_scroll()
         """
 
-    # Waits for the `wheel` signal of MouseArea, which the Quick items do
-    # not have yet: the wheel reaches a Flickable only.
-    @backlog
     Scenario: The wheel turns over the item
       Given the file "tst_wheel.qml":
         """qml

@@ -40,17 +40,40 @@ impl Project {
         self.root.join("docs")
     }
 
+    pub fn features_dir(&self) -> PathBuf {
+        self.root.join("features")
+    }
+
     pub fn features_readme(&self) -> PathBuf {
-        self.root.join("features").join("README.md")
+        self.features_dir().join("README.md")
     }
 
     /// Resolves `requested` (relative to the project, or absolute) to a
     /// canonical path that must lie inside `base`. Canonicalising first means
     /// `..` and symlinks cannot escape; a missing path is `not_found`.
     pub fn confine_within(&self, base: &Path, requested: &str) -> Result<PathBuf, SurfaceError> {
+        let outside = || {
+            SurfaceError::new(
+                ErrorCode::PathDenied,
+                format!("`{requested}` is outside the project"),
+            )
+        };
         let joined = if Path::new(requested).is_absolute() {
             PathBuf::from(requested)
         } else {
+            // A path that climbs out is refused for what it says, before
+            // the disk is asked: otherwise `not_found` and `path_denied`
+            // would tell an agent which files exist outside the project.
+            let mut depth = 0usize;
+            for part in Path::new(requested).components() {
+                match part {
+                    std::path::Component::ParentDir => {
+                        depth = depth.checked_sub(1).ok_or_else(outside)?;
+                    }
+                    std::path::Component::Normal(_) => depth += 1,
+                    _ => {}
+                }
+            }
             base.join(requested)
         };
         let canonical = joined.canonicalize().map_err(|e| {
@@ -66,10 +89,7 @@ impl Project {
         if canonical.starts_with(&base) {
             Ok(canonical)
         } else {
-            Err(SurfaceError::new(
-                ErrorCode::PathDenied,
-                format!("`{requested}` is outside the project"),
-            ))
+            Err(outside())
         }
     }
 
@@ -104,11 +124,14 @@ mod tests {
             p.confine("sub/../sub/a.qml").unwrap(),
             p.confine("sub/a.qml").unwrap()
         );
-        let err = p.confine("../x.qml").unwrap_err();
-        assert!(matches!(
-            err.code,
-            ErrorCode::NotFound | ErrorCode::PathDenied
-        ));
+        // Refused whether or not there is such a file out there.
+        for climbing in ["../x.qml", "../../etc/passwd", "sub/../../x.qml"] {
+            assert_eq!(
+                p.confine(climbing).unwrap_err().code,
+                ErrorCode::PathDenied,
+                "{climbing}"
+            );
+        }
         let abs = outside.path().join("x.qml");
         assert_eq!(
             p.confine(abs.to_str().unwrap()).unwrap_err().code,

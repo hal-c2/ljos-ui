@@ -5,6 +5,10 @@
 //!
 //! Each project is linted as well (`lint`, ARCHITECTURE.md §14) unless
 //! `--no-lint` says not to: a finding is a warning, never an error.
+//!
+//! A property or a signal handler of a name its type does not have is
+//! reported too (`members`), as a warning: the compiler leaves it to the
+//! run. The types are Qt's and Ljós's own (`Ljos`, `QtTest`) alike.
 
 use std::{
     fmt::Write as _,
@@ -19,6 +23,7 @@ use ljos_compiler::{
 };
 
 mod lint;
+mod members;
 
 #[derive(Args)]
 pub struct Check {
@@ -143,6 +148,11 @@ impl Checked {
                 self.diagnostics.push(format!("{name}.qml:{diagnostic}"));
             }
         }
+        // What the compiler does not say and the run would: a name that is
+        // no member of the type it is written on.
+        let unknown = members::project(dir, label, &keys)?;
+        self.warnings += unknown.len();
+        self.diagnostics.extend(unknown);
         if self.lint {
             // After the compiler's own: a lint is never an error, and a
             // file that does not parse has none.

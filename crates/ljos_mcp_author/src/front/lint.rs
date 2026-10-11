@@ -2,7 +2,8 @@
 //! a pattern that is wrong in practice and cannot be mistaken for something
 //! else in one file. `i18n-qstr-non-literal` is found while the scripts are
 //! read, in `check.rs`, and is documented with the others in the parent
-//! module.
+//! module. The codes and how serious each is are in `crate::lints`, where
+//! `ljos check` reads them too.
 
 use std::path::Path;
 
@@ -18,7 +19,7 @@ use super::{
     diagnostic,
     facts::{child_objects, has_binding, is_accessibly_described, string_literal},
 };
-use crate::{Diagnostic, Severity};
+use crate::{Diagnostic, lints};
 
 pub(super) struct Cx<'c, 'a> {
     pub tree: &'c Tree<'a, QtType>,
@@ -119,8 +120,8 @@ fn accessibility<'a>(
             cx.path,
             cx.source,
             at,
-            Severity::Warning,
-            "a11y-unnamed-interactive",
+            lints::UNNAMED_INTERACTIVE.severity,
+            lints::UNNAMED_INTERACTIVE.code,
             format!(
                 "`{name}` reacts to clicks but neither it nor its parent has `Accessible.name`, \
                  so assistive technology cannot tell what it does; set `Accessible.role` and \
@@ -139,8 +140,8 @@ fn accessibility<'a>(
             cx.path,
             cx.source,
             at,
-            Severity::Warning,
-            "a11y-unnamed-interactive",
+            lints::UNNAMED_INTERACTIVE.severity,
+            lints::UNNAMED_INTERACTIVE.code,
             format!(
                 "`{name}` reacts to taps but the item it is in has no `Accessible.name`, so \
                  assistive technology cannot tell what it does; set `Accessible.role` and \
@@ -160,8 +161,8 @@ fn accessibility<'a>(
             cx.path,
             cx.source,
             at,
-            Severity::Warning,
-            "a11y-unnamed-icon-button",
+            lints::UNNAMED_ICON_BUTTON.severity,
+            lints::UNNAMED_ICON_BUTTON.code,
             format!(
                 "`{name}` shows only an icon and has no `text`, `action` or `Accessible.name`, \
                  so assistive technology has nothing to say for it; set `Accessible.name` \
@@ -179,8 +180,8 @@ fn accessibility<'a>(
             cx.path,
             cx.source,
             at,
-            Severity::Warning,
-            "a11y-unnamed-image",
+            lints::UNNAMED_IMAGE.severity,
+            lints::UNNAMED_IMAGE.code,
             format!(
                 "`{name}` has neither `Accessible.name` nor `Accessible.ignored`; describe it, \
                  or set `Accessible.ignored: true` if it is only decoration"
@@ -232,8 +233,8 @@ fn strings<'a>(cx: &Cx<'_, 'a>, object: &QmlObject<'a>, index: usize, out: &mut 
                 cx.path,
                 cx.source,
                 name.span.start,
-                Severity::Hint,
-                "i18n-untranslated-string",
+                lints::UNTRANSLATED_STRING.severity,
+                lints::UNTRANSLATED_STRING.code,
                 format!(
                     "the text \"{}\" is shown to the user but is not wrapped in `qsTr`, so it \
                      cannot be translated",

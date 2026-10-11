@@ -164,6 +164,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When the tests are run` | run every `tst_*.qml` file given with `Given the file` with the test runner (`ljos test`; `qmltestrunner` on Qt); nothing is loaded as an application |
 | `When the tests are run with the import path "dir"` | the same, with a directory of test-only modules given to the runner (`-import`) |
 | `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
+| `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
 
 ### Then
 
@@ -178,6 +179,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the object "o" exists` / `does not exist` | lookup by `objectName` |
 | `Then the log has a warning matching "regex"` | some warning matches |
 | `Then the log has no warning matching "regex"` / `Then the log has no warnings` | none do |
+| `Then the pixel at X, Y of the window is "#rrggbb"` / `is within T of "#rrggbb"` | one pixel of the window's picture, laid over black; `T` is how far each of red, green and blue may be off (a blend is rounded differently by each painter) |
 | `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |
 | `Then the accessibility tree has no "role" named "name"` | |
 | `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
@@ -205,6 +207,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the test report has the lines:` + doc string | those lines are in the report, one after the other |
 | `Then the test run exits with status N` | the runner's exit status: the number of failed tests |
 | `Then the test results' "/pointer" is V` | a value of the machine-readable report, by JSON pointer (`@ljos-only`) |
+| `Then the check reports:` + doc string | everything `ljos check` said, in order: one line for each thing it found (`file:line:column: error: ...` or `warning: ...`), its count of files, errors and warnings, and `ljos: N errors` when there are errors (`@ljos-only`) |
 
 ### The inspector (`tooling/mcp/`; all `@ljos-only`)
 
@@ -259,6 +262,34 @@ into the answer's structured content.
 | `Then the token file can be read by its owner alone` / `Then the token file names an address on this machine` | |
 | `Then the application is left idle` | no request waits, no frame is asked for and nothing woke the application since it last ran |
 | `Then the accessibility tree is not being kept` | the tree the inspector read is no longer followed |
+
+### The authoring tools (`tooling/mcp/author-*.feature`, `tooling/fmt.feature`; all `@ljos-only`)
+
+An agent asks `ljos mcp` (ARCHITECTURE.md 19.3) through a real MCP client, or an author runs `ljos`
+in a terminal. There is no application: the files the scenario gives (`Given the file "X":`, with
+any name, written without the indent of its doc string; one whose name ends in `.sh` may be run) are
+a project in a directory of its own. Once the tools are connected, the agent's steps of the
+inspector above (`When the agent calls the tool …`, `When the agent reads the resource …`,
+`Then the answer's "/pointer" …`, `Then the agent is refused with …`, `Then the refusal mentions …`,
+`Then the agent is offered the tools …`, `Then the resource contains …`) speak to them.
+
+| Step | Meaning |
+|---|---|
+| `Given the authoring tools are connected` | `ljos mcp` is started on the scenario's files with no capability; give the files first |
+| `Given the authoring tools are connected with the capabilities "fs, run"` | the same, started with `--caps` |
+| `Given the authoring tools are connected with the capabilities "run" and the features runner "runner.sh"` | the same, started with `--features-runner` naming a file of the scenario |
+| `Given the agent has called the tool "name" with:` + doc string | a call whose answer a later step builds on |
+| `When the agent asks for the prompt "name"` / `When the agent asks for the prompt "name" with:` + doc string | an MCP prompt, with the arguments in the doc string (labelled `json`) |
+| `When the author runs "ljos fmt --check ."` / `Given the author has run "…"` | the command line, run in the project's directory; it starts with `ljos` |
+| `Then the answer's "/pointer" is:` + doc string | a text of the last answer, whole (a diff, a formatted file) |
+| `Then the prompt contains "text"` | part of the prompt's text |
+| `Then the prompt names the tools "a, b, c"` | the tools the prompt names in backticks, in the order it first names them; each must be a tool the agent is offered |
+| `Then the agent is offered the prompts "a, b, c"` | the prompt list, in order |
+| `Then the authoring tools' instructions match "regex"` | what the server tells an agent when it connects |
+| `Then the file "X" is:` + doc string | the whole text of a file of the project, as it is now |
+| `Then the command prints:` + doc string | everything the command wrote to its output |
+| `Then the command exits with status N` | |
+| `Then the command's output mentions "text"` / `does not mention "text"` | in what it wrote to its output or as errors |
 
 ### The `top` overlay (`tooling/top.feature`; all `@ljos-only`)
 

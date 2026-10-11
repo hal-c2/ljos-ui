@@ -1,0 +1,185 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "List the scenarios under features/: file, line, feature, rule, name, tags and status (active, backlog or skipped). Narrow by `paths`, a tag expression (`@a and not @b`) or a `name` regex. Paginated.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "`next_cursor` of the previous answer.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "name": {
+        "description": "Regular expression the scenario's name must match.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "paths": {
+        "default": [],
+        "description": "`.feature` files or directories under `features/`, with or without\nthat prefix: `items`, `features/tooling/mcp`. All of them if absent.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "tags": {
+        "description": "Tag expression: `@qt-parity`, `@a and not @b`, `(@a or @b) and @c`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "title": "ListArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "features_list",
+  "outputSchema": {
+    "$defs": {
+      "ScenarioOut": {
+        "properties": {
+          "examples": {
+            "description": "Rows of examples a scenario outline runs for; 0 for a scenario.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "feature": {
+            "type": "string"
+          },
+          "file": {
+            "description": "Project-relative path of the `.feature` file.",
+            "type": "string"
+          },
+          "line": {
+            "description": "1-based line of the scenario.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rule": {
+            "description": "The `Rule:` the scenario is under, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/Status"
+          },
+          "tags": {
+            "description": "The feature's, the rule's and the scenario's own tags.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "feature",
+          "name",
+          "tags",
+          "status",
+          "examples"
+        ],
+        "type": "object"
+      },
+      "Status": {
+        "oneOf": [
+          {
+            "const": "active",
+            "description": "Runs in a plain `features_run`.",
+            "type": "string"
+          },
+          {
+            "const": "backlog",
+            "description": "Tagged `@backlog`: behaviour that is specified and not built yet.\nRuns only with `backlog: true`.",
+            "type": "string"
+          },
+          {
+            "const": "skipped",
+            "description": "Never runs headless: `@dropped`, `@blocked`, or for another surface.",
+            "type": "string"
+          }
+        ]
+      },
+      "Unreadable": {
+        "properties": {
+          "error": {
+            "description": "What the Gherkin parser said, with the line where it gave up.",
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "error"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "files": {
+        "description": "Feature files those scenarios are in.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "scenarios": {
+        "items": {
+          "$ref": "#/$defs/ScenarioOut"
+        },
+        "type": "array"
+      },
+      "total": {
+        "description": "Scenarios chosen, over every page of the answer.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "unreadable": {
+        "description": "Feature files that are not valid Gherkin. The runner refuses them.",
+        "items": {
+          "$ref": "#/$defs/Unreadable"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "scenarios",
+      "total",
+      "files",
+      "unreadable"
+    ],
+    "title": "ListOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

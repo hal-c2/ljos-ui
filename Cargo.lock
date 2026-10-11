@@ -2853,6 +2853,7 @@ dependencies = [
  "ljos_runtime",
  "ljos_shell",
  "ljos_test",
+ "qml_fmt",
  "qml_front",
  "serde_json",
  "tempfile",
@@ -2895,6 +2896,7 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
+ "ljos_test",
  "qml_front",
  "qt_types",
  "thiserror 2.0.21",
@@ -3007,13 +3009,22 @@ dependencies = [
 name = "ljos_mcp_author"
 version = "0.0.0"
 dependencies = [
+ "gherkin",
  "insta",
+ "ljos_bdd",
+ "ljos_compiler",
+ "ljos_ir",
  "ljos_mcp_core",
+ "oxc_allocator",
+ "oxc_ast",
  "oxc_ast_visit",
+ "oxc_span",
  "oxc_syntax",
+ "qml_fmt",
  "qml_front",
  "qml_syntax",
  "qt_types",
+ "regex",
  "rmcp",
  "schemars",
  "serde",
@@ -4496,6 +4507,17 @@ dependencies = [
  "png",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "qml_fmt"
+version = "0.0.0"
+dependencies = [
+ "oxc_ast_visit",
+ "oxc_span",
+ "oxc_syntax",
+ "qml_syntax",
  "thiserror 2.0.21",
 ]
 

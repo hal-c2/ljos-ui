@@ -13,7 +13,21 @@ ljos_mcp_core = { path = "../ljos_mcp_core" }
 qml_front = { path = "../qml_front" }
 qml_syntax = { path = "../qml_syntax" }
 qt_types = { path = "../qt_types" }
+# `binding_tier_explain`: the compiler's own classification of an expression,
+# and the IR it is read from.
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_ir = { path = "../ljos_ir" }
+# `qml_format`: the layout `ljos fmt` gives too.
+qml_fmt = { path = "../qml_fmt" }
+# `ljos://features/steps`: the step catalogue, from the steps themselves.
+ljos_bdd = { path = "../ljos_bdd" }
+# `features_list`: scenarios as the runner reads them.
+gherkin.workspace = true
+regex.workspace = true
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
 oxc_ast_visit.workspace = true
+oxc_span.workspace = true
 oxc_syntax.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 schemars.workspace = true

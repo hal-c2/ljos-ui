@@ -1,12 +1,19 @@
 use std::sync::Arc;
 
-use ljos_mcp_core::{CallCtx, NoArgs, SurfaceError, ToolDef, ToolRegistry, paginate, typed};
+use ljos_mcp_core::{
+    CallCtx, Cap, NoArgs, SurfaceError, ToolAnnotations, ToolDef, ToolRegistry, typed,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo};
+use crate::{
+    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, docs, features, format, runs, tiers,
+};
 
 const PAGE: usize = 100;
+/// What the items of one page may add up to as JSON: under half the
+/// default response cap, which is what one copy of an answer may be.
+pub(crate) const BUDGET: usize = 16 * 1024;
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -77,9 +84,18 @@ fn load_ledger(project: &Project) -> Result<Ledger, SurfaceError> {
     })
 }
 
-/// Expands directories to the `.qml` files below them, sorted so diagnostics
-/// are reproducible.
-fn expand_qml(
+/// Directories a walk does not go into: build output and what tools keep
+/// for themselves. A path that is named is taken whatever it is called.
+pub(crate) fn skipped_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(name, "target" | "node_modules" | "build")
+        || name.starts_with("build-")
+        || name.starts_with("cmake-build")
+}
+
+/// Expands directories to the `.qml` files below them, sorted so answers
+/// are reproducible and a cursor means the same file on the next call.
+pub(crate) fn expand_qml(
     project: &Project,
     paths: &[String],
 ) -> Result<Vec<std::path::PathBuf>, SurfaceError> {
@@ -87,9 +103,13 @@ fn expand_qml(
     for p in paths {
         let path = project.confine(p)?;
         if path.is_dir() {
-            collect_qml(&path, &mut out);
-        } else {
+            collect(&path, "qml", &mut out);
+        } else if path.extension().is_some_and(|e| e == "qml") {
             out.push(path);
+        } else {
+            return Err(SurfaceError::invalid_argument(format!(
+                "`{p}` is not a `.qml` file or a directory"
+            )));
         }
     }
     out.sort();
@@ -97,7 +117,8 @@ fn expand_qml(
     Ok(out)
 }
 
-fn collect_qml(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+/// The files with `extension` below `dir`.
+pub(crate) fn collect(dir: &std::path::Path, extension: &str, out: &mut Vec<std::path::PathBuf>) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
@@ -105,11 +126,58 @@ fn collect_qml(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let path = entry.path();
         // `file_type` does not follow symlinks, so a link cannot lead the walk out of the project.
         match entry.file_type() {
-            Ok(t) if t.is_dir() => collect_qml(&path, out),
-            Ok(t) if t.is_file() && path.extension().is_some_and(|e| e == "qml") => out.push(path),
+            Ok(t) if t.is_dir() => {
+                if !entry.file_name().to_str().is_some_and(skipped_dir) {
+                    collect(&path, extension, out);
+                }
+            }
+            Ok(t) if t.is_file() && path.extension().is_some_and(|e| e == extension) => {
+                out.push(path);
+            }
             _ => {}
         }
     }
+}
+
+/// Where a `cursor` says to go on from.
+pub(crate) fn cursor(cursor: Option<&str>) -> Result<usize, SurfaceError> {
+    match cursor {
+        None => Ok(0),
+        Some(c) => c.parse().map_err(|_| {
+            SurfaceError::invalid_argument(format!(
+                "bad cursor `{c}`: pass the `next_cursor` of the previous answer unchanged"
+            ))
+        }),
+    }
+}
+
+/// The items from `cursor` on that fit in `budget` bytes of JSON, at most
+/// `limit` of them and at least one, and the cursor of the rest.
+///
+/// The response cap of the core (§19.6) halves the longest list of an
+/// answer that is too large, and cannot move a tool's own cursor back to
+/// match: what it cut would be skipped by the next call. So a tool that
+/// pages keeps its pages under the cap itself.
+pub(crate) fn page<T: Serialize>(
+    items: Vec<T>,
+    cursor_text: Option<&str>,
+    limit: usize,
+    budget: usize,
+) -> Result<(Vec<T>, Option<String>), SurfaceError> {
+    let start = cursor(cursor_text)?;
+    let total = items.len();
+    let mut out = Vec::new();
+    let mut spent = 0;
+    for item in items.into_iter().skip(start) {
+        let size = serde_json::to_vec(&item).map_or(0, |bytes| bytes.len() + 1);
+        if !out.is_empty() && (out.len() == limit.max(1) || spent + size > budget) {
+            break;
+        }
+        spent += size;
+        out.push(item);
+    }
+    let next = start.min(total) + out.len();
+    Ok((out, (next < total).then(|| next.to_string())))
 }
 
 type Check = fn(&dyn FrontEnd, &[std::path::PathBuf]) -> Result<Vec<Diagnostic>, SurfaceError>;
@@ -127,7 +195,7 @@ fn diagnostics_tool(
             // Front ends report canonical paths; agents think project-relative.
             d.file = project.display(std::path::Path::new(&d.file));
         }
-        let (diagnostics, next_cursor) = paginate(diagnostics, args.cursor.as_deref(), PAGE)?;
+        let (diagnostics, next_cursor) = page(diagnostics, args.cursor.as_deref(), PAGE, BUDGET)?;
         Ok(DiagnosticsOut {
             diagnostics,
             next_cursor,
@@ -135,7 +203,11 @@ fn diagnostics_tool(
     })
 }
 
-pub(crate) fn registry(project: Arc<Project>, front: Arc<dyn FrontEnd>) -> ToolRegistry {
+pub(crate) fn registry(
+    project: Arc<Project>,
+    front: Arc<dyn FrontEnd>,
+    runs: &Arc<runs::Runs>,
+) -> ToolRegistry {
     // Fixed order: prompt caches key on the tool list (§19.6).
     ToolRegistry::new()
         .with(
@@ -149,7 +221,7 @@ pub(crate) fn registry(project: Arc<Project>, front: Arc<dyn FrontEnd>) -> ToolR
         .with(
             ToolDef::new::<FilesArgs>(
                 "qml_lint",
-                "Lint QML files or directories, including the accessibility audit; returns diagnostics, paginated.",
+                "Lint QML files or directories: what `qml_check` reports and the accessibility and translation lints of `ljos check`, under the same codes (`ljos://lints` says what each wants); returns diagnostics, paginated.",
             )
             .output::<DiagnosticsOut>(),
             diagnostics_tool(&project, &front, |f, files| f.lint(files)),
@@ -184,7 +256,7 @@ pub(crate) fn registry(project: Arc<Project>, front: Arc<dyn FrontEnd>) -> ToolR
                         ))
                         .with_details(serde_json::json!({ "modules": ledger.modules() })));
                     }
-                    let (rows, next_cursor) = paginate(rows, a.cursor.as_deref(), PAGE)?;
+                    let (rows, next_cursor) = page(rows, a.cursor.as_deref(), PAGE, BUDGET)?;
                     Ok(ApiOut { query: a.query, rows, next_cursor })
                 })
             },
@@ -197,6 +269,7 @@ pub(crate) fn registry(project: Arc<Project>, front: Arc<dyn FrontEnd>) -> ToolR
             .output::<ProjectInfo>(),
             {
                 let wired = front.wired();
+                let project = project.clone();
                 typed(move |ctx: &CallCtx, _: NoArgs| {
                     let ledger = match Ledger::load(&project.ledger_path()) {
                         Ok(l) => LedgerSummary {
@@ -223,5 +296,52 @@ pub(crate) fn registry(project: Arc<Project>, front: Arc<dyn FrontEnd>) -> ToolR
                     })
                 })
             },
+        )
+        .with(
+            ToolDef::new::<format::FormatArgs>("qml_format", format::DESCRIPTION)
+                .output::<format::FormatOut>()
+                // Writes only when asked to and allowed to; the annotation
+                // says what it can do, not what it does by default.
+                .annotated(ToolAnnotations::WRITE),
+            format::handler(&project),
+        )
+        .with(
+            ToolDef::new::<tiers::TierArgs>("binding_tier_explain", tiers::DESCRIPTION)
+                .output::<tiers::TierOut>(),
+            tiers::handler(&project),
+        )
+        .with(
+            ToolDef::new::<docs::SearchArgs>("docs_search", docs::DESCRIPTION)
+                .output::<docs::SearchOut>(),
+            docs::handler(&project),
+        )
+        .with(
+            ToolDef::new::<features::ListArgs>("features_list", features::LIST)
+                .output::<features::ListOut>(),
+            features::handler(&project),
+        )
+        .with(
+            ToolDef::new::<runs::RunArgs>("features_run", runs::RUN)
+                .output::<runs::Started>()
+                .requires(Cap::Run)
+                // Starts a process; asked twice, it starts two.
+                .annotated(ToolAnnotations {
+                    read_only: false,
+                    destructive: false,
+                    idempotent: false,
+                    open_world: false,
+                }),
+            runs::handler(runs),
+        )
+        // The two below wait on a run, so the server answers them itself
+        // (`AuthorServer::call_tool`); here they are listed and checked.
+        .declare(
+            ToolDef::new::<runs::StatusArgs>("run_status", runs::STATUS)
+                .output::<runs::StatusOut>(),
+        )
+        .declare(
+            ToolDef::new::<runs::CancelArgs>("run_cancel", runs::CANCEL)
+                .output::<runs::StatusOut>()
+                .annotated(ToolAnnotations::WRITE),
         )
 }

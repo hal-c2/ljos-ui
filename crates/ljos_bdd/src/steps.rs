@@ -512,6 +512,61 @@ fn log_clean(w: &mut LjosWorld) -> StepResult {
     log_matches(w, ".*", LogLevel::Warning, false)
 }
 
+// ------------------------------------------------------------- pixels
+
+#[then(regex = r#"^the pixel at (\d+), (\d+) of the window is "(#\w{6})"$"#)]
+fn window_pixel(w: &mut LjosWorld, x: u32, y: u32, colour: String) -> StepResult {
+    window_pixel_near(w, x, y, 0, &colour)
+}
+
+#[then(regex = r#"^the pixel at (\d+), (\d+) of the window is within (\d+) of "(#\w{6})"$"#)]
+fn window_pixel_within(
+    w: &mut LjosWorld,
+    x: u32,
+    y: u32,
+    tolerance: u8,
+    colour: String,
+) -> StepResult {
+    window_pixel_near(w, x, y, tolerance, &colour)
+}
+
+/// One pixel of the window's picture, each channel give or take `tolerance`.
+///
+/// The picture is laid over black first: where nothing is painted Qt's
+/// picture is black and Ljós's is transparent, and a half transparent pixel
+/// must read the same on both.
+fn window_pixel_near(w: &mut LjosWorld, x: u32, y: u32, tolerance: u8, colour: &str) -> StepResult {
+    let wanted = u32::from_str_radix(&colour[1..], 16)
+        .map_err(|e| format!("{colour} is not a colour as #rrggbb: {e}"))?;
+    let wanted = [(wanted >> 16) as u8, (wanted >> 8) as u8, wanted as u8];
+    w.each(|b| {
+        let png = b.grab()?;
+        let picture = ljos_render::RgbaImage::from_png(&png)
+            .map_err(|e| BackendError::Failed(format!("the picture of the window: {e}")))?;
+        if x >= picture.width || y >= picture.height {
+            return Err(BackendError::Failed(format!(
+                "{x}, {y} is outside the window's picture, which is {} by {}",
+                picture.width, picture.height
+            )));
+        }
+        let [r, g, b, a] = picture.pixel(x, y);
+        let over_black = |c: u8| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
+        let seen = [over_black(r), over_black(g), over_black(b)];
+        if seen
+            .iter()
+            .zip(wanted)
+            .all(|(s, w)| s.abs_diff(w) <= tolerance)
+        {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the pixel at {x}, {y} is #{:02x}{:02x}{:02x}, not {colour}",
+                seen[0], seen[1], seen[2]
+            )))
+        }
+    })
+}
+
 // ------------------------------------------------------------- faults
 //
 // Faults and the boundaries that contain them are Ljós's own; the oracle
@@ -971,6 +1026,28 @@ fn tests_run_matching(w: &mut LjosWorld, filter: String) -> StepResult {
     })
 }
 
+// `ljos check` reads the staged files as one project; what it says is kept
+// as a report, like a test runner's.
+#[when("the files are checked")]
+fn files_checked(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        ..TestRun::default()
+    })
+}
+
+#[then("the check reports:")]
+fn check_reports(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = expected_lines(&docstring(step)?);
+    w.each_test_report(|report| {
+        if report.lines == want {
+            Ok(())
+        } else {
+            Err(format!("the check reports\n{}", report.text()))
+        }
+    })
+}
+
 #[then("the test report is:")]
 fn test_report_is(w: &mut LjosWorld, step: &Step) -> StepResult {
     let want = expected_lines(&docstring(step)?);
@@ -1053,6 +1130,12 @@ fn render(n: &A11yNode, depth: usize) -> String {
 use crate::backend::inspector::{self, Ask, Seen, Token};
 
 fn inspector_ask(w: &mut LjosWorld, ask: Ask) -> StepResult {
+    // An agent of the authoring tools has no application: it asks the
+    // tools, and the same steps read what they answer.
+    let (author, files) = w.author();
+    if author.connected() {
+        return author.ask(files, &ask);
+    }
     w.each(|b| b.inspector(&ask))
 }
 
@@ -1067,6 +1150,10 @@ fn inspector_call(w: &mut LjosWorld, tool: &str, args: Value) -> StepResult {
 }
 
 fn inspector_seen(w: &mut LjosWorld, check: impl Fn(&Seen) -> Result<(), String>) -> StepResult {
+    let (author, _) = w.author();
+    if author.connected() {
+        return check(author.seen()?);
+    }
     w.each(|b| check(&b.inspector_seen()?).map_err(BackendError::Failed))
 }
 
@@ -1185,6 +1272,7 @@ fn agent_calls(w: &mut LjosWorld, tool: String) -> StepResult {
     inspector_call(w, &tool, serde_json::json!({}))
 }
 
+#[given(regex = r#"^the agent has called the tool "([^"]+)" with:$"#)]
 #[when(regex = r#"^the agent calls the tool "([^"]+)" with:$"#)]
 fn agent_calls_with(w: &mut LjosWorld, tool: String, step: &Step) -> StepResult {
     let args = inspector_doc(step)?;
@@ -1572,6 +1660,127 @@ fn top_keeps_no_frame_coming(w: &mut LjosWorld) -> StepResult {
             Some(why) => Err(format!("a frame is wanted: {why}")),
         }
     })
+}
+
+// ------------------------------------------------------------ Authoring
+//
+// The agent's side of ARCHITECTURE.md §19.3 and the author's command line
+// (features/tooling). There is no application: the files of the scenario
+// are a project in a directory of its own, `ljos mcp` is started on it and
+// `ljos` is run in it. The agent steps above speak to it once it is
+// connected. The attributes stay on one line each.
+
+/// A doc string as the text it stands for: no label, no indent.
+fn author_doc(step: &Step) -> Result<String, String> {
+    Ok(crate::author::text_of(&docstring(step)?))
+}
+
+#[given("the authoring tools are connected")]
+fn author_connected(w: &mut LjosWorld) -> StepResult {
+    let (author, files) = w.author();
+    author.connect(files, "", None)
+}
+
+#[given(regex = r#"^the authoring tools are connected with the capabilities "([^"]+)"$"#)]
+fn author_connected_with(w: &mut LjosWorld, caps: String) -> StepResult {
+    let (author, files) = w.author();
+    author.connect(files, &caps, None)
+}
+
+#[rustfmt::skip]
+#[given(regex = r#"^the authoring tools are connected with the capabilities "([^"]+)" and the features runner "([^"]+)"$"#)]
+fn author_connected_with_runner(w: &mut LjosWorld, caps: String, runner: String) -> StepResult {
+    let (author, files) = w.author();
+    author.connect(files, &caps, Some(&runner))
+}
+
+#[when(regex = r#"^the agent asks for the prompt "([^"]+)"$"#)]
+fn agent_asks_prompt(w: &mut LjosWorld, name: String) -> StepResult {
+    let (author, files) = w.author();
+    author.prompt(files, &name, &serde_json::json!({}))
+}
+
+#[when(regex = r#"^the agent asks for the prompt "([^"]+)" with:$"#)]
+fn agent_asks_prompt_with(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let args = serde_json::from_str(&author_doc(step)?)
+        .map_err(|e| format!("the arguments are not JSON: {e}"))?;
+    let (author, files) = w.author();
+    author.prompt(files, &name, &args)
+}
+
+#[given(regex = r#"^the author has run "([^"]+)"$"#)]
+#[when(regex = r#"^the author runs "([^"]+)"$"#)]
+fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {
+    let (author, files) = w.author();
+    author.run(files, &line)
+}
+
+#[then(regex = r#"^the prompt contains "(.*)"$"#)]
+fn prompt_contains(w: &mut LjosWorld, text: String) -> StepResult {
+    let text = unquoted(&text);
+    let prompt = &w.author().0.seen()?.answered()?.text;
+    if prompt.contains(&text) {
+        Ok(())
+    } else {
+        Err(format!("{text:?} is not in the prompt:\n{prompt}"))
+    }
+}
+
+#[then(regex = r#"^the prompt names the tools "([^"]+)"$"#)]
+fn prompt_names(w: &mut LjosWorld, names: String) -> StepResult {
+    let names: Vec<&str> = names.split(',').map(str::trim).collect();
+    w.author().0.prompt_names(&names)
+}
+
+#[then(regex = r#"^the agent is offered the prompts "([^"]+)"$"#)]
+fn agent_offered_prompts(w: &mut LjosWorld, names: String) -> StepResult {
+    let names: Vec<&str> = names.split(',').map(str::trim).collect();
+    let (author, files) = w.author();
+    let offered = author.prompts(files)?;
+    if offered == names {
+        Ok(())
+    } else {
+        Err(format!("the agent is offered the prompts {offered:?}"))
+    }
+}
+
+#[then(regex = r#"^the authoring tools' instructions match "(.*)"$"#)]
+fn author_instructions_match(w: &mut LjosWorld, re: String) -> StepResult {
+    w.author().0.seen()?.instructions_match(&unquoted(&re))
+}
+
+#[then(regex = r#"^the answer's "(/[^"]*)" is:$"#)]
+fn answer_text_is(w: &mut LjosWorld, pointer: String, step: &Step) -> StepResult {
+    let want = author_doc(step)?;
+    w.author().0.answer_text_is(&pointer, &want)
+}
+
+#[then(regex = r#"^the file "([^"]+)" is:$"#)]
+fn file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let want = author_doc(step)?;
+    let (author, files) = w.author();
+    author.file_is(files, &name, &want)
+}
+
+#[then("the command prints:")]
+fn command_prints(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = author_doc(step)?;
+    w.author().0.ran()?.printed(&want)
+}
+
+#[then(regex = r"^the command exits with status (\d+)$")]
+fn command_exits(w: &mut LjosWorld, status: i32) -> StepResult {
+    w.author().0.ran()?.exited(status)
+}
+
+#[then(regex = r#"^the command's output mentions "(.*)"$"#)]
+fn command_mentions(w: &mut LjosWorld, text: String) -> StepResult {
+    w.author().0.ran()?.mentions(&unquoted(&text), true)
+}
+
+#[then(regex = r#"^the command's output does not mention "(.*)"$"#)]
+fn command_mentions_not(w: &mut LjosWorld, text: String) -> StepResult {
+    w.author().0.ran()?.mentions(&unquoted(&text), false)
 }
 
 #[cfg(test)]

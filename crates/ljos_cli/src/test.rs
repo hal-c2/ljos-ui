@@ -27,10 +27,9 @@ use ljos_compiler::{Compiled, Diagnostic, Project, Severity, compile_file, compi
 use ljos_engine::{ComponentSource, Engine, QmlText, QmlTextCompiler, QmlTextError};
 use ljos_ir::{CompiledFile, ImportSource};
 use ljos_test::qttest::{Filter, Options, Session};
-
-mod oracle;
-
-use oracle::TestOracle;
+// `TestCase` and `SignalSpy` are in the table of types every file is read
+// against (`qt_types`), as Qt's own are.
+use qml_front::QtTypeOracle;
 
 /// What a test file's name starts with.
 const TEST_PREFIX: &str = "tst_";
@@ -108,10 +107,9 @@ impl Test {
             Box::new(|line| println!("{line}")),
             Box::new(|line| eprintln!("{line}")),
         );
-        let oracle = TestOracle::new();
         let mut found = 0;
         for suite in &suites {
-            found += suite.run(&mut session, &imports, &oracle)?;
+            found += suite.run(&mut session, &imports)?;
         }
         if found == 0 {
             anyhow::bail!("no {TEST_PREFIX}*.qml file to run");
@@ -170,14 +168,9 @@ impl Test {
 impl Suite {
     /// Compiles the directory and runs its test files. Says how many
     /// there were.
-    fn run(
-        &self,
-        session: &mut Session,
-        imports: &[PathBuf],
-        oracle: &TestOracle,
-    ) -> anyhow::Result<usize> {
+    fn run(&self, session: &mut Session, imports: &[PathBuf]) -> anyhow::Result<usize> {
         let root = &self.root;
-        let project = project(root, imports, oracle)?;
+        let project = project(root, imports)?;
         let tests: Vec<String> = match &self.named {
             Some(keys) => keys.clone(),
             None => project
@@ -296,7 +289,7 @@ fn compiled(result: Result<Compiled, Vec<Diagnostic>>) -> Result<CompiledFile, D
 
 /// Compiles the text of `Qt.createQmlObject` and `createTemporaryQmlObject`
 /// against the files of the tests.
-fn text_compiler(project: Rc<RefCell<Project<TestOracle>>>) -> QmlTextCompiler {
+fn text_compiler(project: Rc<RefCell<Project<QtTypeOracle>>>) -> QmlTextCompiler {
     Rc::new(move |text: QmlText<'_>| {
         let errors = |diagnostics: &[Diagnostic]| -> Vec<QmlTextError> {
             diagnostics
@@ -323,17 +316,12 @@ fn text_compiler(project: Rc<RefCell<Project<TestOracle>>>) -> QmlTextCompiler {
 /// (`<dir>/Some/Module/qmldir` is `Some.Module`), as Qt finds modules: a
 /// `qmldir` that merely lies among the tests names none. So a test that
 /// forgets its import path fails here as it fails on Qt.
-fn project(
-    root: &Path,
-    imports: &[PathBuf],
-    oracle: &TestOracle,
-) -> anyhow::Result<Project<TestOracle>> {
+fn project(root: &Path, imports: &[PathBuf]) -> anyhow::Result<Project<QtTypeOracle>> {
     // The loader knows which directories are not sources (build output,
     // hidden ones); it also takes every `qmldir` for a module, which is
     // why its files are put in a project of our own.
-    let found =
-        Project::load(root, oracle.clone()).with_context(|| format!("{}", root.display()))?;
-    let mut project = Project::new(oracle.clone());
+    let found = Project::load(root, QtTypeOracle).with_context(|| format!("{}", root.display()))?;
+    let mut project = Project::new(QtTypeOracle);
     for key in found.files() {
         project.add(key, found.source(key).unwrap_or_default());
     }
@@ -346,7 +334,7 @@ fn project(
 /// Adds the modules of an import directory, and its files where they are
 /// not below the tests. The key of such a file leads out of the root
 /// (`../imports/Things/Thing`), which is where it is.
-fn add_import(project: &mut Project<TestOracle>, root: &Path, import: &Path) {
+fn add_import(project: &mut Project<QtTypeOracle>, root: &Path, import: &Path) {
     let mut qmldirs = Vec::new();
     let mut stack = vec![import.to_owned()];
     let mut seen = 0;

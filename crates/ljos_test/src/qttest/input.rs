@@ -176,6 +176,7 @@ pub(crate) fn wheel_at(
     host: &Host,
     at: Point,
     delta: (f64, f64),
+    buttons: MouseButtons,
     modifiers: Modifiers,
 ) -> Result<(), EngineError> {
     let ev = host.with_rig(|rig| {
@@ -188,7 +189,11 @@ pub(crate) fn wheel_at(
         )
         .with_modifiers(modifiers)
     })?;
-    host.with_rig(|rig| rig.scene.wheel_event(engine, &ev))?;
+    // The buttons a test names are held for this event without a press.
+    host.with_rig(|rig| {
+        let held = buttons | rig.held;
+        rig.scene.wheel_event_held(engine, &ev, held)
+    })?;
     host.settle(engine)
 }
 

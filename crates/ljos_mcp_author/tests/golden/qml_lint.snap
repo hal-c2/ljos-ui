@@ -9,7 +9,7 @@ expression: value
     "open_world": false,
     "read_only": true
   },
-  "description": "Lint QML files or directories, including the accessibility audit; returns diagnostics, paginated.",
+  "description": "Lint QML files or directories: what `qml_check` reports and the accessibility and translation lints of `ljos check`, under the same codes (`ljos://lints` says what each wants); returns diagnostics, paginated.",
   "inputSchema": {
     "additionalProperties": false,
     "properties": {

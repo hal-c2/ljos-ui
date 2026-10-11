@@ -1,0 +1,149 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "State of a run started by `features_run`: running, passed, failed or cancelled, with the exit code, the runner's summary, the failed steps and the end of its output. `wait_ms` waits that long for the run to end.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "description": "From `features_run`. The latest run if absent.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "wait_ms": {
+        "description": "Wait up to this many milliseconds for the run to end before\nanswering; 30000 at most. Answers at once if absent.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      }
+    },
+    "title": "StatusArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "run_status",
+  "outputSchema": {
+    "$defs": {
+      "Failure": {
+        "properties": {
+          "detail": {
+            "description": "What the runner printed under the step, cut to 600 bytes.",
+            "type": "string"
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "step": {
+            "description": "The step that failed, with its keyword.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario",
+          "step",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "oneOf": [
+          {
+            "enum": [
+              "running"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "passed",
+            "description": "Ended with exit status 0: every scenario that ran passed.",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "description": "Ended with another status: see `failures` and `output`.",
+            "type": "string"
+          },
+          {
+            "const": "cancelled",
+            "description": "Stopped by `run_cancel`.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "properties": {
+      "elapsed_ms": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "exit_code": {
+        "description": "Null while running, and when a signal ended the run.",
+        "format": "int32",
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "failures": {
+        "description": "Failed steps seen so far, at most 12.",
+        "items": {
+          "$ref": "#/$defs/Failure"
+        },
+        "type": "array"
+      },
+      "failures_omitted": {
+        "description": "Failed steps beyond those in `failures`.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "output": {
+        "description": "The end of what the run printed, at most 6 KB.",
+        "type": "string"
+      },
+      "output_truncated": {
+        "description": "Earlier output was dropped.",
+        "type": "boolean"
+      },
+      "run_id": {
+        "type": "string"
+      },
+      "state": {
+        "$ref": "#/$defs/State"
+      },
+      "summary": {
+        "description": "The runner's own counts, once it has printed them:\n`10 scenarios (9 passed, 1 failed); 42 steps (41 passed, 1 failed)`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "run_id",
+      "state",
+      "elapsed_ms",
+      "failures",
+      "failures_omitted",
+      "output",
+      "output_truncated"
+    ],
+    "title": "StatusOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

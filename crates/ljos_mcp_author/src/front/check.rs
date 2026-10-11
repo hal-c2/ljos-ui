@@ -26,7 +26,7 @@ use super::{
     lint,
     load::Loader,
 };
-use crate::{Diagnostic, Severity};
+use crate::{Diagnostic, Severity, lints};
 
 type Oracle = QtTypeOracle;
 
@@ -162,7 +162,7 @@ pub(super) fn run(root: &Path, files: &[PathBuf], lint: bool) -> Vec<Diagnostic>
                     "",
                     0,
                     Severity::Hint,
-                    "types-unavailable",
+                    lints::TYPES_UNAVAILABLE,
                     "type checks were skipped: no Qt type table was generated, so only syntax was \
                      checked. Run `mise run types` and restart the server.",
                 ),
@@ -502,8 +502,8 @@ impl<'a> Walker<'_, 'a> {
             for at in &script.dynamic_tr {
                 self.report(
                     *at,
-                    Severity::Warning,
-                    "i18n-qstr-non-literal",
+                    lints::QSTR_NON_LITERAL.severity,
+                    lints::QSTR_NON_LITERAL.code,
                     "`qsTr` needs a string literal: the translation tools extract the text from the \
                      source, and a variable or a concatenation cannot be extracted"
                         .to_owned(),

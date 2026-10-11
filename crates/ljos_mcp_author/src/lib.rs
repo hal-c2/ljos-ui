@@ -6,17 +6,25 @@
 //! and [`StubFrontEnd`] stands in where no parser or Qt type table is wanted;
 //! its tools answer with an `unavailable` tool error.
 
+mod docs;
+mod features;
+mod format;
 mod front;
 mod frontend;
 mod ledger;
+mod lints;
 mod project;
 mod prompts;
 mod resources;
+mod rewrite;
+mod runs;
 mod server;
+mod tiers;
 mod tools;
 
 pub use front::QmlFrontEnd;
 pub use frontend::{Diagnostic, FrontEnd, ModuleInfo, Severity, StubFrontEnd, TypeInfo};
 pub use ledger::{ApiStatus, Ledger, LedgerError, LedgerRow, MemberKind};
+pub use lints::{LINTS, Lint, TYPES_UNAVAILABLE};
 pub use project::{Project, ProjectError};
 pub use server::{AuthorServer, serve_stdio};

@@ -1,0 +1,314 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": true,
+    "open_world": false,
+    "read_only": true
+  },
+  "description": "Say which tier each binding, handler and function of a QML file runs in (0: property path, 1: binding VM, js: JavaScript), why, and a cheaper form that means the same when one exists. Narrow with `line` (and `column`) or `property` (`width`, `label.width`, `onClicked`).",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "column": {
+        "description": "1-based column on `line`: only the expression there, or the nearest\none on the line.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "cursor": {
+        "description": "`next_cursor` of the previous answer.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "file": {
+        "description": "A `.qml` file, relative to the project root.",
+        "type": "string"
+      },
+      "line": {
+        "description": "1-based line: only what is written on that line.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "property": {
+        "description": "Only this property, handler or function: `width`, `anchors.fill`,\n`onClicked`. Put the object's id or type in front when several\nobjects have it: `label.width`, `Text.width`.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "file"
+    ],
+    "title": "TierArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "binding_tier_explain",
+  "outputSchema": {
+    "$defs": {
+      "ExprOut": {
+        "properties": {
+          "advice": {
+            "description": "For tier `js` with no rewrite: what an author can do about it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "column": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "That object's `id`, if it has one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/Kind"
+          },
+          "line": {
+            "description": "Where the value starts (1-based; the column counts characters).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "object": {
+            "description": "The type of the object it is written in, as written.",
+            "type": "string"
+          },
+          "property": {
+            "description": "The property, handler (`onClicked`) or function it is the value of.",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ReasonOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For tier `js`: what the compiler found outside the subset."
+          },
+          "rewrite": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RewriteOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For tier `js`: a form that means the same and runs in a lower tier,\nwhen one is known. Checked against the compiler before it is offered."
+          },
+          "source": {
+            "description": "The value as written, cut after 600 bytes (then it ends in `…`).",
+            "type": "string"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Tier"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null for an assigned value, which has no tier."
+          },
+          "why": {
+            "description": "The tier in a sentence.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "column",
+          "object",
+          "property",
+          "kind",
+          "source",
+          "why"
+        ],
+        "type": "object"
+      },
+      "Kind": {
+        "oneOf": [
+          {
+            "const": "assigned",
+            "description": "A value that is written out (`width: 200`): nothing is evaluated.",
+            "type": "string"
+          },
+          {
+            "const": "binding",
+            "description": "A property bound to an expression.",
+            "type": "string"
+          },
+          {
+            "const": "handler",
+            "description": "`onClicked: ...`: run when the signal is emitted.",
+            "type": "string"
+          },
+          {
+            "const": "function",
+            "description": "`function name() { ... }`.",
+            "type": "string"
+          }
+        ]
+      },
+      "ReasonOut": {
+        "properties": {
+          "detail": {
+            "description": "Which one: the statement, the function called. May be empty.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "The construct that is outside the binding VM's subset, as `ljos\ncheck --stats` groups by it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "RewriteOut": {
+        "properties": {
+          "note": {
+            "description": "Why the two mean the same.",
+            "type": "string"
+          },
+          "source": {
+            "description": "What to write instead. It means the same.",
+            "type": "string"
+          },
+          "tier": {
+            "$ref": "#/$defs/Tier",
+            "description": "The tier the compiler gives the file with `source` in place."
+          }
+        },
+        "required": [
+          "source",
+          "tier",
+          "note"
+        ],
+        "type": "object"
+      },
+      "Summary": {
+        "description": "Counts over the whole file, whatever the answer was narrowed to.",
+        "properties": {
+          "assigned": {
+            "description": "Values that are written out and so have no tier.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expressions": {
+            "description": "Bindings, handlers and functions: `tier0 + tier1 + js`.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "js": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tier0": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tier1": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expressions",
+          "tier0",
+          "tier1",
+          "js",
+          "assigned"
+        ],
+        "type": "object"
+      },
+      "Tier": {
+        "oneOf": [
+          {
+            "const": "0",
+            "description": "A bare property path (`parent.width`): followed without running code.",
+            "type": "string"
+          },
+          {
+            "const": "1",
+            "description": "Run by the binding VM: no JavaScript.",
+            "type": "string"
+          },
+          {
+            "const": "js",
+            "description": "Left to the JavaScript engine.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "properties": {
+      "expressions": {
+        "description": "In the order they are written in the file.",
+        "items": {
+          "$ref": "#/$defs/ExprOut"
+        },
+        "type": "array"
+      },
+      "file": {
+        "type": "string"
+      },
+      "next_cursor": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "note": {
+        "description": "Set when the file compiled with errors: what did compile is explained.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "summary": {
+        "$ref": "#/$defs/Summary"
+      }
+    },
+    "required": [
+      "file",
+      "summary",
+      "expressions"
+    ],
+    "title": "TierOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

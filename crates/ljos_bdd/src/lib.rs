@@ -4,7 +4,9 @@
 //! A scenario tagged `@qt-parity` can run on real Qt (`qml6`) and on Ljós.
 
 pub mod acceptance;
+pub mod author;
 pub mod backend;
+pub mod catalogue;
 pub mod filter;
 pub mod fixture;
 pub mod lint;
