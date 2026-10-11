@@ -1,9 +1,9 @@
 //! `ljos check`: the static lints (ARCHITECTURE.md §14). What has no name
 //! for an assistive technology, and what a translator will never be given.
 //!
-//! The rules need Qt's table of types to tell a `Button` from an `Item`
-//! with. A checkout without one (`mise run types`) is told so by `ljos
-//! check`, and these tests then hold it to that and to nothing more.
+//! The rules tell a `Button` from an `Item` by the table of types the build
+//! has, which is Qt's where one was generated and Ljós's own where not:
+//! these hold of both.
 
 use std::{path::Path, process::Command};
 
@@ -21,8 +21,8 @@ fn write(dir: &Path, name: &str, source: &str) {
 }
 
 /// What `ljos check` says of a project of one file: the lines of its
-/// warnings and its count, or `None` where there is no table of types.
-fn check(source: &str, more: &[&str]) -> Option<(Vec<String>, String)> {
+/// warnings and its count.
+fn check(source: &str, more: &[&str]) -> (Vec<String>, String) {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), "Main.qml", source);
     let mut args = vec!["check"];
@@ -31,13 +31,9 @@ fn check(source: &str, more: &[&str]) -> Option<(Vec<String>, String)> {
     let out = ljos(&args);
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(out.status.success(), "a lint is not an error: {err}");
-    if err.contains("the static lints were skipped") {
-        eprintln!("skipped: no Qt type table (run `mise run types`)");
-        return None;
-    }
     let lines = err.lines().map(str::to_string).collect();
     let count = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Some((lines, count))
+    (lines, count)
 }
 
 const UNNAMED: &str = r#"import QtQuick
@@ -55,9 +51,7 @@ Item {
 
 #[test]
 fn what_has_no_name_and_what_cannot_be_translated_is_a_warning() {
-    let Some((lines, count)) = check(UNNAMED, &[]) else {
-        return;
-    };
+    let (lines, count) = check(UNNAMED, &[]);
     let at = |code: &str| -> Vec<&str> {
         lines
             .iter()
@@ -102,9 +96,7 @@ Item {
 
 #[test]
 fn what_is_named_or_left_out_on_purpose_is_not() {
-    let Some((lines, count)) = check(NAMED, &[]) else {
-        return;
-    };
+    let (lines, count) = check(NAMED, &[]);
     assert_eq!(lines, Vec::<String>::new());
     assert_eq!(count, "1 files, 0 errors, 0 warnings");
 }
@@ -113,9 +105,7 @@ fn what_is_named_or_left_out_on_purpose_is_not() {
 fn a_text_that_is_not_translated_is_left_to_the_author() {
     // The authoring server hints at it; a build is not the place.
     let source = "import QtQuick\nText { text: \"Hello\" }\n";
-    let Some((lines, count)) = check(source, &[]) else {
-        return;
-    };
+    let (lines, count) = check(source, &[]);
     assert_eq!(lines, Vec::<String>::new());
     assert_eq!(count, "1 files, 0 errors, 0 warnings");
 }
@@ -128,7 +118,6 @@ fn no_lint_leaves_them_out() {
     assert!(out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("a11y-"), "{err}");
-    assert!(!err.contains("lints were skipped"), "{err}");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
         "1 files, 0 errors, 0 warnings"
@@ -137,9 +126,7 @@ fn no_lint_leaves_them_out() {
 
 #[test]
 fn quiet_keeps_the_count_and_not_the_lines() {
-    let Some((lines, count)) = check(UNNAMED, &["--quiet"]) else {
-        return;
-    };
+    let (lines, count) = check(UNNAMED, &["--quiet"]);
     assert_eq!(lines, Vec::<String>::new());
     assert_eq!(count, "1 files, 0 errors, 4 warnings");
 }
@@ -151,10 +138,6 @@ fn a_file_of_a_tree_of_projects_is_named_under_its_project() {
     let out = ljos(&["check", "--tree", dir.path().to_str().unwrap()]);
     assert!(out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    if err.contains("the static lints were skipped") {
-        eprintln!("skipped: no Qt type table (run `mise run types`)");
-        return;
-    }
     assert!(
         err.lines()
             .any(|line| line.starts_with("demos/one/Main.qml:9:5: warning: ")

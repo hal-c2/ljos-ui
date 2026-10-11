@@ -36,8 +36,13 @@
 //! give them in one string, `"A|B"`), `reset` (assigning `undefined` takes
 //! the property back to the value a new object has, and it counts as never
 //! set) and `reset = expr` (it takes the property back as that
-//! `ljos_engine::Reset` says: `reset = Reset::Follow(margins)`). Field names
-//! are exposed in camelCase unless renamed.
+//! `ljos_engine::Reset` says: `reset = Reset::Follow(margins)`) and
+//! `object = "Name"` (on a field that refers to one object: the QML type of
+//! that object, which the Rust type of the field cannot say; no other object
+//! is taken there, and whoever reads QML before the engine does knows from
+//! it what may be written in the property, so that what is written in one of
+//! `object = "Component"` is a template made later). Field names are
+//! exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -216,6 +221,8 @@ struct FieldAttrs {
     flags: bool,
     /// `reset` or `reset = expr`: what `undefined` does to the property.
     reset: Option<Option<syn::Expr>>,
+    /// `object = "Name"`: the QML type of the object the field refers to.
+    object: Option<String>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -285,6 +292,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 }
                 f.flags = p.is_ident("flags");
                 f.enumeration = Some(m.value()?.parse::<LitStr>()?.value());
+            } else if p.is_ident("object") {
+                f.object = Some(m.value()?.parse::<LitStr>()?.value());
             } else if p.is_ident("reset") {
                 f.reset = Some(if m.input.peek(syn::Token![=]) {
                     Some(m.value()?.parse::<syn::Expr>()?)
@@ -293,7 +302,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset",
+                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset, object",
                 ));
             }
             Ok(())
@@ -461,7 +470,22 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                     quote!(#e::TypeTag::Enum(#e::Atom::intern(#enumeration)))
                 }
             }
-            None => quote!(<#fty as #e::QmlValue>::type_tag()),
+            // A field that refers to an object has no Rust type for what
+            // the object is, so the attribute says it: the engine then takes
+            // no other object there, and a table of types knows what is
+            // under the property (and that a `Component` is a template).
+            None => match &a.object {
+                Some(_) if a.list => {
+                    return Err(Error::new(
+                        ident.span(),
+                        "`object` is for a field that refers to one object, not a list",
+                    ));
+                }
+                Some(object) => {
+                    quote!(#e::TypeTag::Object(#p::Option::Some(#e::Atom::intern(#object))))
+                }
+                None => quote!(<#fty as #e::QmlValue>::type_tag()),
+            },
         };
         builder.push(quote! {
             .field(#name, #tag, #flags, #notify, #get, #set)

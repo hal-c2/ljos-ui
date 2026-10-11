@@ -18,8 +18,11 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `views/` | `ListView`, `GridView`, `Repeater`, models, delegates |
 | `models/` | `ListModel`, what can be a model, what a delegate sees of its row, `Repeater`, `Instantiator` |
 | `controls/` | one file per Qt Quick Controls type |
+| `window/` | `Window` as a window: showing and hiding, `visibility`, size limits, `close()` and `closing`, which window is active, `transientParent`, `screen`, `Application`, `Qt.quit()` |
 | `input/`, `focus/` | pointer, touch, keyboard, focus scopes, IME |
 | `text/`, `animation/`, `i18n/`, `rendering/` | text, animation and timers, localisation, pixels |
+| `states/` | `State` and what it changes (`PropertyChanges`, `AnchorChanges`, `ParentChange`, `StateChangeScript`), `StateGroup`, the `Binding` element; a `Transition` between states is under `animation/` |
+| `shapes/` | `QtQuick.Shapes`: `Shape`, `ShapePath` (strokes, joins, caps, dashes, fill rules), the linear, radial and conical fill gradients, `Shape.FillContains`; `Path` and its elements, `PathSvg` data and its errors |
 | `text-input/` | `TextInput` and `TextEdit`: typing, keys, selection, the clipboard, undo, validators, echo modes, composing with an input method |
 | `a11y/` | accessibility tree, names, roles, actions |
 | `offscreen/` | resource policy: delegates near the viewport, freezing, memory |
@@ -62,6 +65,7 @@ Tags on a `Feature`, `Rule` or `Examples` table apply to everything below them.
 | Status | none = passes everywhere it applies · `@backlog` (passes nowhere yet) · `@backlog-<surface>` (does not pass on that surface yet) · `@dropped` (decided against; a comment gives the reason) · `@blocked` (a comment names what it waits for) · `@priority-high` / `@priority-low` |
 | Oracle | `@qt-parity` · `@qt-diverges` · `@ljos-only` · `@qt-pixels` |
 | Ledger | `@api-<Module>.<Type>.<member>` · `@a11y` |
+| Build | `@no-qt-table`: what only a build says that reads QML against Ljós's own description of its types alone (`LJOS_QT_TYPES=none`, or a checkout where `mise run types` never ran). A build with a table of Qt's types does not run it. |
 
 **Status, as the runner applies it.** A normal run drops `@backlog`, `@backlog-<own surface>`,
 `@dropped` and `@blocked`. `--backlog` runs only the backlog (`@backlog*` that is neither `@dropped`
@@ -201,6 +205,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then there is no reload error` | no reload has failed, or one succeeded since (`@ljos-only`) |
 | `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
 | `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
+| `Then the application was asked to quit` / `Then the application was not asked to quit` | whether `Qt.quit()` was called, which a host answers by ending (`@ljos-only`: the oracle is itself the application that would end) |
 | `Then the application has no fault` | no fault got past every boundary, or the one that did was cleared (`@ljos-only`) |
 | `Then the application fault is a "kind" matching "regex"` | the fault no boundary contained, which the host shows: its kind (`"JsException"`, `"JsInterrupted"`, `"JsOutOfMemory"`, `"Panic"`, `"Startup"`) and its message (`@ljos-only`) |
 | `Then the test report is:` + doc string | everything the test runner printed, without its banner lines, the directory of the files, the runner's own name in front of a test, and the time after `skipped` |
@@ -220,6 +225,12 @@ into the answer's structured content.
 |---|---|
 | `Given the inspector is connected` | an agent with the `inspect` capability is connected; before or after the QML |
 | `Given the inspector is connected and masks every editable value` | the same, started so that the value of every editable field is masked, not only passwords |
+| `Given the inspector is connected with the capabilities "inspect, input"` | the agent was granted those capabilities (`--mcp=` names them: `inspect`, `input`, `mutate`, `eval`); `… and masks every editable value` as above |
+| `Given the files are watched` | the host watches the files, so that `app_reload` can be answered and reloads are told; the scenario also notes what a reload needs from the first load on |
+| `Given the host says the application has N windows` | what the host tells the inspector about its windows (`Inspector::set_windows`); `app_status` gives the count and says only the primary is inspected |
+| `Given the inspector is served on a socket` / `When the inspector is stopped` | the same on a Unix socket in a directory of the scenario; stopped as with the application |
+| `When the inspector is asked to listen on "addr" with the word for a network` / `without …` | `--mcp-bind` with or without `--mcp-insecure-lan`. An address of this machine is served; one beyond it is only checked |
+| `When the inspector is asked to listen on a socket whose path is N characters long` / `… as long as the system allows` | `--mcp-socket` with a path of that length, made in a short directory of its own (never under `TMPDIR`). Too long is refused with the path, its length and the limit; the longest allowed is served |
 | `Given the inspector is served on the loopback address` | the inspector also listens on `127.0.0.1` with a token file, as `ljos run --mcp` serves it |
 | `When the agent requests a snapshot` / `Given the agent has requested a snapshot` | `app_snapshot` |
 | `When the agent requests a snapshot of at most N nodes` / `Given the agent has requested a snapshot of at most N nodes` | `app_snapshot` with `max_nodes` |
@@ -233,8 +244,11 @@ into the answer's structured content.
 | `When the agent inspects the reference of the "role" named "name"` | `app_inspect` with the reference a snapshot or a search gave for that item |
 | `When the agent calls the tool "name"` / `Given the agent has called the tool "name"` | any tool, without arguments |
 | `When the agent calls the tool "name" with:` + doc string | any tool, with the arguments in the doc string (labelled `json`) |
+| `When the agent calls the tool "name" on the reference of the "role" named "name"` (also `… with:` + doc string) | any tool with `target` set to the reference a snapshot or a search gave for that item; the doc string holds the other arguments |
+| `When the agent calls the tool "app_batch" with N steps of "tool"` | a batch of N steps that press a key, for the limit on steps |
 | `When the agent asks for the log since its last request` | `app_logs` from where the last `app_logs` answer ended |
 | `When the agent reads the resource "ljos://…"` | an MCP resource |
+| `When a client asks on the socket for a snapshot with the right token` | as below, on the Unix socket; also `no token`, `a wrong token` |
 | `When a client asks for a snapshot with the right token` | a plain HTTP client of the served inspector calls `app_snapshot`. Also `no token`, `a wrong token`, `the token of an older start`; and `… from the origin "https://…"` or `… for the host "name"` after the token |
 | `When the method "m" of "o" is called N times` | the method, N times over |
 | `Then the snapshot is:` + doc string | the whole outline (labelled `text`), or the whole list of changes |
@@ -245,8 +259,11 @@ into the answer's structured content.
 | `Then the snapshot is complete` / `Then the snapshot is cut short` | whether there is a next part |
 | `Then the search finds N nodes` / `Then the search finds a "role" named "name"` | |
 | `Then the answer's "/pointer" is V` / `matches "regex"` / `is at least N` | a value of the last answer |
+| `Then the answer's "/pointer" has N entries` / `is absent` | a list or an object of N entries; nothing at all |
+| `Then the answer is at most N bytes` | each copy of the answer, the data and the text, is that small |
 | `Then the answer does not contain "text"` | neither its text nor its structured content |
 | `Then the inspected property "p" is "provenance"` | `"assigned"`, `"bound"`, `"animated"` or `"default"` |
+| `Then the inspected property "p" is assigned by "devtools"` / `is not assigned by "devtools"` | who assigned a property that was assigned: the agent, through `app_set_property` |
 | `Then the inspected property "p" has the value "text"` / `was written at line N` / `is bound at tier T` | the tier is `0`, `1` or `js` |
 | `Then the answer has no inspected property "p"` | |
 | `Then the agent is refused with "code"` | the error code of 19.4: `"not_found"`, `"ambiguous"`, `"stale_ref"`, `"invalid_argument"`, `"capability_denied"`, … |
@@ -260,6 +277,8 @@ into the answer's structured content.
 | `Then the client is answered` / `Then the client is refused with status N` | the HTTP client's answer |
 | `Then the client's answer contains "text"` / `does not contain "text"` | |
 | `Then the token file can be read by its owner alone` / `Then the token file names an address on this machine` | |
+| `Then the socket can be used by its owner alone` / `Then the socket is gone` / `Then the token file is gone` | the Unix socket's mode; what the stopped inspector left in the file system |
+| `Then the inspector is refused with "text"` / `Then the inspector is served` / `Then the inspector is allowed to listen there` / `Then the warning mentions "text"` | what asking for an address came to |
 | `Then the application is left idle` | no request waits, no frame is asked for and nothing woke the application since it last ran |
 | `Then the accessibility tree is not being kept` | the tree the inspector read is no longer followed |
 

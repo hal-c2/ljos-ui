@@ -66,7 +66,7 @@ pub(super) fn shape(types: &Types<'_, Oracle>, kind: Option<&Kind<QtType>>) -> S
         }
         // `ListElement` is read by its `ListModel`'s parser, so the table
         // marks the model and not the element.
-        opaque |= t.has_custom_parser || t.class == "QQmlListElement";
+        opaque |= t.has_custom_parser || qt_types::class::LIST_ELEMENT.contains(&t.class);
         ty = t.prototype();
     }
     if opaque {
@@ -151,24 +151,6 @@ pub(super) fn run(root: &Path, files: &[PathBuf], lint: bool) -> Vec<Diagnostic>
         }
         // Others that build on this file still know what of it parsed.
         loader.insert_partial(&key, &text);
-    }
-
-    if !qt_types::is_available() {
-        if let (Some(first), Some(path)) = (per_file.first_mut(), files.first()) {
-            first.insert(
-                0,
-                diagnostic(
-                    path,
-                    "",
-                    0,
-                    Severity::Hint,
-                    lints::TYPES_UNAVAILABLE,
-                    "type checks were skipped: no Qt type table was generated, so only syntax was \
-                     checked. Run `mise run types` and restart the server.",
-                ),
-            );
-        }
-        return per_file.into_iter().flatten().collect();
     }
 
     for (index, _, _) in &parsed_ok {
@@ -380,6 +362,11 @@ fn semantic_error(
         text.push_str(&format!("; did you mean `{near}`?"));
     } else if !name.contains('.') {
         text.push_str("; is the module imported?");
+    }
+    // A name no module of Ljós's own table has may still be a type of Qt's
+    // that Ljós lacks, which only Qt's table can tell from a slip.
+    if !qt_types::has_qt_table() && !qt_types::is_type_name(last) {
+        text.push_str(&format!(" ({})", qt_types::WITHOUT_QT_TABLE));
     }
     Some(diagnostic(
         path,
@@ -750,10 +737,6 @@ mod tests {
     /// from its errors; a reworded message changes nothing here.
     #[test]
     fn front_end_errors_carry_their_codes() {
-        if !qt_types::is_available() {
-            eprintln!("no Qt type table: skipped");
-            return;
-        }
         let source = "import QtQuick\nItem { id: a; Rectangle { id: a } Nope {} property alias x: missing }\n";
         let mut project = Project::new();
         project.add("T", source).unwrap();

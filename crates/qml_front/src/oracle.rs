@@ -2,9 +2,10 @@
 //!
 //! `Item`, `Timer` and `ListView` are not QML files: they are whatever the
 //! runtime provides. Which members they have is the runtime's to say, so the
-//! front end asks a [`TypeOracle`]. Ljós answers from its own registry of
-//! native types; [`QtTypeOracle`] answers from Qt's description of its own
-//! types ([`qt_types`]), which is what a file written for Qt expects.
+//! front end asks a [`TypeOracle`]. [`QtTypeOracle`] answers from the table
+//! [`qt_types`] was built with: Qt's description of its own types where the
+//! build has one, which is what a file written for Qt expects, and Ljós's
+//! description of the types it implements where it has not.
 
 use std::fmt;
 
@@ -97,6 +98,23 @@ pub trait TypeOracle {
     fn members_known(&self, _ty: Self::Type) -> bool {
         true
     }
+
+    /// What a message about `name`, a type that no import of the file has,
+    /// should add: set when the oracle cannot tell a type nobody has from
+    /// one it was not told about.
+    fn unknown_type_note(&self, _name: &str) -> Option<&'static str> {
+        None
+    }
+}
+
+/// The message for `name`, which is written as a type and is none of
+/// anything the file imports.
+pub fn unknown_type<O: TypeOracle>(oracle: &O, name: &str) -> String {
+    let last = name.rsplit('.').next().unwrap_or(name);
+    match oracle.unknown_type_note(last) {
+        Some(note) => format!("`{name}` is not a type of anything the file imports ({note})"),
+        None => format!("`{name}` is not a type of anything the file imports"),
+    }
 }
 
 /// Types whose objects change how the objects around them are read.
@@ -146,13 +164,16 @@ impl<T> Property<T> {
     }
 }
 
-/// The types Qt describes for itself, from the table [`qt_types`] was built
-/// with. Without a table it knows no module.
+/// The types of the table [`qt_types`] was built with: Qt's own description
+/// of its types, and Ljós's of the modules Qt's does not describe. In a
+/// build without Qt's table that is every module Ljós implements, and
+/// nothing else: a type Qt has and Ljós has not is then unknown
+/// ([`TypeOracle::unknown_type_note`]).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QtTypeOracle;
 
-/// One of Qt's types. Two are equal when they are the same entry of the
-/// table.
+/// One type of the table. Two are equal when they are the same entry of
+/// it.
 #[derive(Clone, Copy)]
 pub struct QtType(pub &'static qt_types::Type);
 
@@ -192,15 +213,20 @@ impl TypeOracle for QtTypeOracle {
     fn special(&self, ty: QtType) -> Option<Special> {
         // A style's QML file is its own class: what it is underneath is
         // what it inherits.
+        // The class is Qt's in Qt's table and Ljós's in its own.
+        use qt_types::class;
+        let kinds = [
+            (class::COMPONENT, Special::Component),
+            (class::PROPERTY_CHANGES, Special::PropertyChanges),
+            (class::ANCHOR_CHANGES, Special::AnchorChanges),
+            (class::CONNECTIONS, Special::Connections),
+        ];
         let mut ty = Some(ty.0);
         while let Some(found) = ty {
-            match found.class {
-                "QQmlComponent" => return Some(Special::Component),
-                "QQuickPropertyChanges" => return Some(Special::PropertyChanges),
-                "QQuickAnchorChanges" => return Some(Special::AnchorChanges),
-                "QQmlConnections" => return Some(Special::Connections),
-                _ => ty = found.prototype(),
+            if let Some((_, special)) = kinds.iter().find(|(of, _)| of.contains(&found.class)) {
+                return Some(*special);
             }
+            ty = found.prototype();
         }
         None
     }
@@ -285,8 +311,17 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn property_type(&self, ty: QtType, name: &str) -> Option<String> {
-        ty.0.property(name)
-            .map(|property| property.type_name.to_string())
+        let property = ty.0.property(name)?;
+        // A value type of Ljós's own description is named as QML names it
+        // (`color`), which is what the runtime calls it too.
+        let value = property
+            .value_type()
+            .filter(|value| value.is_own && value.is_value);
+        Some(
+            value
+                .map_or(property.type_name, |value| value.name)
+                .to_string(),
+        )
     }
 
     fn enum_value(&self, ty: QtType, scope: Option<&str>, key: &str) -> Option<i64> {
@@ -309,7 +344,7 @@ impl TypeOracle for QtTypeOracle {
         while let Some(found) = ty {
             if (found.qml_file.is_some() && found.prototype().is_none())
                 || found.has_custom_parser
-                || found.class == "QQmlListElement"
+                || qt_types::class::LIST_ELEMENT.contains(&found.class)
             {
                 return false;
             }
@@ -317,14 +352,22 @@ impl TypeOracle for QtTypeOracle {
         }
         true
     }
+
+    fn unknown_type_note(&self, name: &str) -> Option<&'static str> {
+        // A name another module of the table has is known for what it is:
+        // the file lacks an import, and Qt's table would say no more.
+        (!qt_types::has_qt_table() && !qt_types::is_type_name(name))
+            .then_some(qt_types::WITHOUT_QT_TABLE)
+    }
 }
 
 fn qt_property(property: &'static qt_types::Property) -> Property<QtType> {
+    use qt_types::class;
     Property {
         is_component: property.is_component,
-        is_url: property.type_name == "QUrl" && !property.is_list,
-        is_text: property.type_name == "QString" && !property.is_list,
-        is_script: property.type_name == "QQmlScriptString" && property.name == "script",
+        is_url: class::URL.contains(&property.type_name) && !property.is_list,
+        is_text: class::STRING.contains(&property.type_name) && !property.is_list,
+        is_script: property.is_script,
         is_list: property.is_list,
         is_readonly: property.is_readonly,
         value: property.value_type().map(QtType),

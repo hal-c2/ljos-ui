@@ -16,7 +16,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use ljos_mcp_author::{FrontEnd, LINTS, QmlFrontEnd, TYPES_UNAVAILABLE};
+use ljos_mcp_author::{FrontEnd, LINTS, QmlFrontEnd};
 
 /// Whether `ljos check` reports the rule with this code. The table is the
 /// authoring server's, where `qml_lint` and `ljos://lints` read it too.
@@ -29,8 +29,6 @@ fn reported(code: &str) -> bool {
 pub struct Linted {
     /// One line per finding, in the form the compiler's warnings have.
     pub lines: Vec<String>,
-    /// The rules could not be applied: there is no table of types.
-    pub skipped: bool,
 }
 
 /// Lints the files of the project in `dir`. `keys` are its files as the
@@ -56,9 +54,6 @@ pub fn project(dir: &Path, label: &str, keys: &[String]) -> anyhow::Result<Linte
         .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
     let mut linted = Linted::default();
     for d in found {
-        if d.code == TYPES_UNAVAILABLE {
-            linted.skipped = true;
-        }
         if !reported(&d.code) {
             continue;
         }

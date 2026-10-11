@@ -21,7 +21,7 @@ pub struct Instantiator {
     pub base: QtObject,
     #[qml(notify)]
     pub model: Value,
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
     #[qml(notify)]
     pub active: bool,

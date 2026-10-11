@@ -1,25 +1,35 @@
-# The modules that are Ljós's own (`import Ljos`, `import QtTest`), as their
-# native types declare them, in the format of `qt_types`. Do not edit:
-# `crates/ljos_cli/tests/own_types.rs` writes this file, and fails when it
-# is not what the types declare now.
+# Every module Ljós implements, as its native types and the QML files of its
+# style declare them, in the format of `qt_types` (see that crate's
+# documentation). Nothing in it comes from Qt's description of its types.
+#
+# Do not edit: `crates/ljos_cli/tests/own_types.rs` writes this file from a
+# running engine, and fails when it is not what the types declare now.
 #
 #     LJOS_OWN_TYPES=write cargo test -p ljos_cli --test own_types
+#
+# The order things are built in, which is not a circle because this text is
+# committed: `qt_types` compiles this file in; `ljos_controls`' build script
+# compiles the style's QML against it; the command above links the runtime
+# and writes this file. After a native member is added that a style file
+# uses, a build without Qt's table needs the command twice: once to write
+# the native types (the style does not compile yet and is left out), once
+# more for the style's own. The command says when that is so.
 
 module Ljos
-	uses QtQuick
 	ErrorBoundary Ljos.ErrorBoundary
+	SelectionScope Ljos.SelectionScope
 	type Ljos.ErrorBoundary ErrorBoundary
-		prototype Item named
+		prototype QtQuick.Item named
 		default content
-		prop content Component named pointer
-		prop fallback Component named pointer
-		prop item QtObject named pointer readonly
-		prop failed bool named readonly
+		prop content QtQml.Component named pointer
+		prop fallback QtQml.Component named pointer
+		prop item QtQml.QtObject named pointer readonly
+		prop failed QtQml.bool named readonly
 		prop fault Ljos.ErrorBoundaryFault pointer readonly
-		prop catchExceptions bool named
-		prop maxRestarts int named
-		prop within int named
-		prop restarts int named readonly
+		prop catchExceptions QtQml.bool named
+		prop maxRestarts QtQml.int named
+		prop within QtQml.int named
+		prop restarts QtQml.int named readonly
 		signal contentChanged
 		signal fallbackChanged
 		signal itemChanged
@@ -29,30 +39,3451 @@ module Ljos
 		signal withinChanged
 		signal restartsChanged
 		method retry
+	type Ljos.SelectionScope SelectionScope
+		prototype QtQuick.Item named
+		prop selectedText QtQml.string named readonly
+		prop selectionStart QtQml.int named readonly
+		prop selectionEnd QtQml.int named readonly
+		prop selectionColor QtQuick.color named
+		prop selectByMouse QtQml.bool named
+		signal selectedTextChanged
+		signal selectionStartChanged
+		signal selectionEndChanged
+		signal selectionColorChanged
+		signal selectByMouseChanged
+		method select
+		method selectAll
+		method deselect
+		method copy
+		method positionAt
+		method linkAt
 	type Ljos.ErrorBoundaryFault ErrorBoundaryFault
 		is uncreatable
-		prop kind string named readonly
-		prop message string named readonly
-		prop file url named readonly
-		prop line int named readonly
+		prop kind QtQml.string named readonly
+		prop message QtQml.string named readonly
+		prop file QtQml.url named readonly
+		prop line QtQml.int named readonly
 		signal kindChanged
 		signal messageChanged
 		signal fileChanged
 		signal lineChanged
 
+module QtQml
+	import QtQml.Models
+	Binding QtQml.Binding
+	Component QtQml.Component
+	Connections QtQml.Connections
+	Instantiator QtQml.Instantiator
+	Qt QtQml.Qt
+	QtObject QtQml.QtObject
+	Timer QtQml.Timer
+	bool QtQml.bool
+	int QtQml.int
+	point QtQml.point
+	real QtQml.real
+	rect QtQml.rect
+	size QtQml.size
+	string QtQml.string
+	url QtQml.url
+	var QtQml.var
+	type QtQml.var var
+		is value
+	type QtQml.bool bool
+		is value
+	type QtQml.int int
+		is value
+	type QtQml.real real
+		is value
+	type QtQml.string string
+		is value
+	type QtQml.url url
+		is value
+	type QtQml.point point
+		is value
+		prop x QtQml.real named
+		prop y QtQml.real named
+	type QtQml.size size
+		is value
+		prop width QtQml.real named
+		prop height QtQml.real named
+	type QtQml.rect rect
+		is value
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop width QtQml.real named
+		prop height QtQml.real named
+	type QtQml.Qt Qt
+		is singleton
+		enum GlobalColor color0=0 color1=1 black=2 white=3 darkGray=4 gray=5 lightGray=6 red=7 green=8 blue=9 cyan=10 magenta=11 yellow=12 darkRed=13 darkGreen=14 darkBlue=15 darkCyan=16 darkMagenta=17 darkYellow=18 transparent=19
+		enum ColorScheme Unknown=0 Light=1 Dark=2
+		enum ContrastPreference NoPreference=0 HighContrast=1
+		flags MouseButtons=MouseButton NoButton=0 LeftButton=1 RightButton=2 MiddleButton=4 BackButton=8 XButton1=8 ExtraButton1=8 ForwardButton=16 XButton2=16 ExtraButton2=16 TaskButton=32 ExtraButton3=32 ExtraButton4=64 ExtraButton5=128 ExtraButton6=256 ExtraButton7=512 ExtraButton8=1024 ExtraButton9=2048 ExtraButton10=4096 ExtraButton11=8192 ExtraButton12=16384 ExtraButton13=32768 ExtraButton14=65536 ExtraButton15=131072 ExtraButton16=262144 ExtraButton17=524288 ExtraButton18=1048576 ExtraButton19=2097152 ExtraButton20=4194304 ExtraButton21=8388608 ExtraButton22=16777216 ExtraButton23=33554432 ExtraButton24=67108864 AllButtons=134217727 MaxMouseButton=67108864 MouseButtonMask=-1
+		flags Orientations=Orientation Horizontal=1 Vertical=2
+		enum FocusPolicy NoFocus=0 TabFocus=1 ClickFocus=2 StrongFocus=11 WheelFocus=15
+		enum TabFocusBehavior NoTabFocus=0 TabFocusTextControls=1 TabFocusListControls=2 TabFocusAllControls=255
+		enum SortOrder AscendingOrder=0 DescendingOrder=1
+		flags SplitBehavior=SplitBehaviorFlags KeepEmptyParts=0 SkipEmptyParts=1
+		flags Alignment=AlignmentFlag AlignLeft=1 AlignLeading=1 AlignRight=2 AlignTrailing=2 AlignHCenter=4 AlignJustify=8 AlignAbsolute=16 AlignHorizontal_Mask=31 AlignTop=32 AlignBottom=64 AlignVCenter=128 AlignBaseline=256 AlignVertical_Mask=480 AlignCenter=132
+		enum TextFlag TextSingleLine=256 TextDontClip=512 TextExpandTabs=1024 TextShowMnemonic=2048 TextWordWrap=4096 TextWrapAnywhere=8192 TextDontPrint=16384 TextIncludeTrailingSpaces=134217728 TextHideMnemonic=32768 TextJustificationForced=65536 TextForceLeftToRight=131072 TextForceRightToLeft=262144 TextLongestVariant=524288
+		enum TextElideMode ElideLeft=0 ElideRight=1 ElideMiddle=2 ElideNone=3
+		flags WindowFlags=WindowType Widget=0 Window=1 Dialog=3 Sheet=5 Drawer=7 Popup=9 Tool=11 ToolTip=13 SplashScreen=15 Desktop=17 SubWindow=18 ForeignWindow=33 CoverWindow=65 WindowType_Mask=255 MSWindowsFixedSizeDialogHint=256 MSWindowsOwnDC=512 BypassWindowManagerHint=1024 X11BypassWindowManagerHint=1024 FramelessWindowHint=2048 WindowTitleHint=4096 WindowSystemMenuHint=8192 WindowMinimizeButtonHint=16384 WindowMaximizeButtonHint=32768 WindowMinMaxButtonsHint=49152 WindowContextHelpButtonHint=65536 WindowShadeButtonHint=131072 WindowStaysOnTopHint=262144 WindowTransparentForInput=524288 WindowOverridesSystemGestures=1048576 WindowDoesNotAcceptFocus=2097152 MaximizeUsingFullscreenGeometryHint=4194304 ExpandedClientAreaHint=4194304 NoTitleBarBackgroundHint=8388608 CustomizeWindowHint=33554432 WindowStaysOnBottomHint=67108864 WindowCloseButtonHint=134217728 MacWindowToolBarButtonHint=268435456 BypassGraphicsProxyWidget=536870912 NoDropShadowWindowHint=1073741824 WindowFullscreenButtonHint=-2147483648
+		flags WindowStates=WindowState WindowNoState=0 WindowMinimized=1 WindowMaximized=2 WindowFullScreen=4 WindowActive=8
+		enum ApplicationState ApplicationSuspended=0 ApplicationHidden=1 ApplicationInactive=2 ApplicationActive=4
+		flags ScreenOrientations=ScreenOrientation PrimaryOrientation=0 PortraitOrientation=1 LandscapeOrientation=2 InvertedPortraitOrientation=4 InvertedLandscapeOrientation=8
+		flags ImageConversionFlags=ImageConversionFlag ColorMode_Mask=3 AutoColor=0 ColorOnly=3 MonoOnly=2 AlphaDither_Mask=12 ThresholdAlphaDither=0 OrderedAlphaDither=4 DiffuseAlphaDither=8 NoAlpha=12 Dither_Mask=48 DiffuseDither=0 OrderedDither=16 ThresholdDither=32 DitherMode_Mask=192 AutoDither=0 PreferDither=64 AvoidDither=128 NoOpaqueDetection=256 NoFormatConversion=512
+		enum BGMode TransparentMode=0 OpaqueMode=1
+		flags KeyboardModifiers=KeyboardModifier NoModifier=0 ShiftModifier=33554432 ControlModifier=67108864 AltModifier=134217728 MetaModifier=268435456 KeypadModifier=536870912 GroupSwitchModifier=1073741824 KeyboardModifierMask=-33554432
+		flags Modifiers=Modifier META=268435456 SHIFT=33554432 CTRL=67108864 ALT=134217728 MODIFIER_MASK=-33554432
+		enum ArrowType NoArrow=0 UpArrow=1 DownArrow=2 LeftArrow=3 RightArrow=4
+		enum PenStyle NoPen=0 SolidLine=1 DashLine=2 DotLine=3 DashDotLine=4 DashDotDotLine=5 CustomDashLine=6
+		enum PenCapStyle FlatCap=0 SquareCap=16 RoundCap=32 MPenCapStyle=48
+		enum PenJoinStyle MiterJoin=0 BevelJoin=64 RoundJoin=128 SvgMiterJoin=256 MPenJoinStyle=448
+		enum BrushStyle NoBrush=0 SolidPattern=1 Dense1Pattern=2 Dense2Pattern=3 Dense3Pattern=4 Dense4Pattern=5 Dense5Pattern=6 Dense6Pattern=7 Dense7Pattern=8 HorPattern=9 VerPattern=10 CrossPattern=11 BDiagPattern=12 FDiagPattern=13 DiagCrossPattern=14 LinearGradientPattern=15 RadialGradientPattern=16 ConicalGradientPattern=17 TexturePattern=24
+		enum SizeMode AbsoluteSize=0 RelativeSize=1
+		enum CursorShape ArrowCursor=0 UpArrowCursor=1 CrossCursor=2 WaitCursor=3 IBeamCursor=4 SizeVerCursor=5 SizeHorCursor=6 SizeBDiagCursor=7 SizeFDiagCursor=8 SizeAllCursor=9 BlankCursor=10 SplitVCursor=11 SplitHCursor=12 PointingHandCursor=13 ForbiddenCursor=14 WhatsThisCursor=15 BusyCursor=16 OpenHandCursor=17 ClosedHandCursor=18 DragCopyCursor=19 DragMoveCursor=20 DragLinkCursor=21 LastCursor=21 BitmapCursor=24 CustomCursor=25
+		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3
+		enum AspectRatioMode IgnoreAspectRatio=0 KeepAspectRatio=1 KeepAspectRatioByExpanding=2
+		flags DockWidgetAreas=DockWidgetArea LeftDockWidgetArea=1 RightDockWidgetArea=2 TopDockWidgetArea=4 BottomDockWidgetArea=8 DockWidgetArea_Mask=15 AllDockWidgetAreas=15 NoDockWidgetArea=0
+		flags ToolBarAreas=ToolBarArea LeftToolBarArea=1 RightToolBarArea=2 TopToolBarArea=4 BottomToolBarArea=8 ToolBarArea_Mask=15 AllToolBarAreas=15 NoToolBarArea=0
+		enum DateFormat TextDate=0 ISODate=1 RFC2822Date=8 ISODateWithMs=9
+		enum TimeSpec LocalTime=0 UTC=1 OffsetFromUTC=2 TimeZone=3
+		enum DayOfWeek Monday=1 Tuesday=2 Wednesday=3 Thursday=4 Friday=5 Saturday=6 Sunday=7
+		enum ScrollBarPolicy ScrollBarAsNeeded=0 ScrollBarAlwaysOff=1 ScrollBarAlwaysOn=2
+		enum CaseSensitivity CaseInsensitive=0 CaseSensitive=1
+		enum Corner TopLeftCorner=0 TopRightCorner=1 BottomLeftCorner=2 BottomRightCorner=3
+		flags Edges=Edge TopEdge=1 LeftEdge=2 RightEdge=4 BottomEdge=8
+		enum ConnectionType AutoConnection=0 DirectConnection=1 QueuedConnection=2 BlockingQueuedConnection=3 UniqueConnection=128 SingleShotConnection=256
+		enum ShortcutContext WidgetShortcut=0 WindowShortcut=1 ApplicationShortcut=2 WidgetWithChildrenShortcut=3
+		enum FillRule OddEvenFill=0 WindingFill=1
+		enum MaskMode MaskInColor=0 MaskOutColor=1
+		enum ClipOperation NoClip=0 ReplaceClip=1 IntersectClip=2
+		enum ItemSelectionMode ContainsItemShape=0 IntersectsItemShape=1 ContainsItemBoundingRect=2 IntersectsItemBoundingRect=3
+		enum ItemSelectionOperation ReplaceSelection=0 AddToSelection=1
+		enum TransformationMode FastTransformation=0 SmoothTransformation=1
+		enum Axis XAxis=0 YAxis=1 ZAxis=2
+		enum FocusReason MouseFocusReason=0 TabFocusReason=1 BacktabFocusReason=2 ActiveWindowFocusReason=3 PopupFocusReason=4 ShortcutFocusReason=5 MenuBarFocusReason=6 OtherFocusReason=7 NoFocusReason=8
+		enum ContextMenuPolicy NoContextMenu=0 DefaultContextMenu=1 ActionsContextMenu=2 CustomContextMenu=3 PreventContextMenu=4
+		enum ContextMenuTrigger Press=0 Release=1
+		flags InputMethodQueries=InputMethodQuery ImEnabled=1 ImCursorRectangle=2 ImFont=4 ImCursorPosition=8 ImSurroundingText=16 ImCurrentSelection=32 ImMaximumTextLength=64 ImAnchorPosition=128 ImHints=256 ImPreferredLanguage=512 ImAbsolutePosition=1024 ImTextBeforeCursor=2048 ImTextAfterCursor=4096 ImEnterKeyType=8192 ImAnchorRectangle=16384 ImInputItemClipRectangle=32768 ImReadOnly=65536 ImPlatformData=-2147483648 ImQueryInput=16570 ImQueryAll=-1
+		flags InputMethodHints=InputMethodHint ImhNone=0 ImhHiddenText=1 ImhSensitiveData=2 ImhNoAutoUppercase=4 ImhPreferNumbers=8 ImhPreferUppercase=16 ImhPreferLowercase=32 ImhNoPredictiveText=64 ImhDate=128 ImhTime=256 ImhPreferLatin=512 ImhMultiLine=1024 ImhNoEditMenu=2048 ImhNoTextHandles=4096 ImhDigitsOnly=65536 ImhFormattedNumbersOnly=131072 ImhUppercaseOnly=262144 ImhLowercaseOnly=524288 ImhDialableCharactersOnly=1048576 ImhEmailCharactersOnly=2097152 ImhUrlCharactersOnly=4194304 ImhLatinOnly=8388608 ImhExclusiveInputMask=-65536
+		enum EnterKeyType EnterKeyDefault=0 EnterKeyReturn=1 EnterKeyDone=2 EnterKeyGo=3 EnterKeySend=4 EnterKeySearch=5 EnterKeyNext=6 EnterKeyPrevious=7
+		enum ToolButtonStyle ToolButtonIconOnly=0 ToolButtonTextOnly=1 ToolButtonTextBesideIcon=2 ToolButtonTextUnderIcon=3 ToolButtonFollowStyle=4
+		enum LayoutDirection LeftToRight=0 RightToLeft=1 LayoutDirectionAuto=2
+		flags DropActions=DropAction CopyAction=1 MoveAction=2 LinkAction=4 ActionMask=255 TargetMoveAction=32770 IgnoreAction=0
+		enum CheckState Unchecked=0 PartiallyChecked=1 Checked=2
+		enum ItemDataRole DisplayRole=0 DecorationRole=1 EditRole=2 ToolTipRole=3 StatusTipRole=4 WhatsThisRole=5 FontRole=6 TextAlignmentRole=7 BackgroundRole=8 ForegroundRole=9 CheckStateRole=10 AccessibleTextRole=11 AccessibleDescriptionRole=12 SizeHintRole=13 InitialSortOrderRole=14 DisplayPropertyRole=27 DecorationPropertyRole=28 ToolTipPropertyRole=29 StatusTipPropertyRole=30 WhatsThisPropertyRole=31 RangeModelDataRole=40 RangeModelAdapterRole=41 UserRole=256 StandardItemFlagsRole=255 FileInfoRole=252 RemoteObjectsCacheRole=255
+		flags ItemFlags=ItemFlag NoItemFlags=0 ItemIsSelectable=1 ItemIsEditable=2 ItemIsDragEnabled=4 ItemIsDropEnabled=8 ItemIsUserCheckable=16 ItemIsEnabled=32 ItemIsAutoTristate=64 ItemNeverHasChildren=128 ItemIsUserTristate=256
+		flags MatchFlags=MatchFlag MatchExactly=0 MatchContains=1 MatchStartsWith=2 MatchEndsWith=3 MatchRegularExpression=4 MatchWildcard=5 MatchFixedString=8 MatchTypeMask=15 MatchCaseSensitive=16 MatchWrap=32 MatchRecursive=64
+		enum WindowModality NonModal=0 WindowModal=1 ApplicationModal=2
+		flags TextInteractionFlags=TextInteractionFlag NoTextInteraction=0 TextSelectableByMouse=1 TextSelectableByKeyboard=2 LinksAccessibleByMouse=4 LinksAccessibleByKeyboard=8 TextEditable=16 TextEditorInteraction=19 TextBrowserInteraction=13
+		enum SizeHint MinimumSize=0 PreferredSize=1 MaximumSize=2 MinimumDescent=3 NSizeHints=4
+		flags TouchPointStates=TouchPointState TouchPointUnknownState=0 TouchPointPressed=1 TouchPointMoved=2 TouchPointStationary=4 TouchPointReleased=8
+		enum GestureState NoGesture=0 GestureStarted=1 GestureUpdated=2 GestureFinished=3 GestureCanceled=4
+		enum GestureType TapGesture=1 TapAndHoldGesture=2 PanGesture=3 PinchGesture=4 SwipeGesture=5 CustomGesture=256 LastGestureType=-1
+		enum NativeGestureType BeginNativeGesture=0 EndNativeGesture=1 PanNativeGesture=2 ZoomNativeGesture=3 SmartZoomNativeGesture=4 RotateNativeGesture=5 SwipeNativeGesture=6
+		enum CursorMoveStyle LogicalMoveStyle=0 VisualMoveStyle=1
+		enum TimerType PreciseTimer=0 CoarseTimer=1 VeryCoarseTimer=2
+		enum TimerId Invalid=0
+		enum ScrollPhase NoScrollPhase=0 ScrollBegin=1 ScrollUpdate=2 ScrollEnd=3 ScrollMomentum=4
+		enum MouseEventSource MouseEventNotSynthesized=0 MouseEventSynthesizedBySystem=1 MouseEventSynthesizedByQt=2 MouseEventSynthesizedByApplication=3
+		flags MouseEventFlags=MouseEventFlag NoMouseEventFlag=0 MouseEventCreatedDoubleClick=1 MouseEventFlagMask=255
+		enum ChecksumType ChecksumIso3309=0 ChecksumItuV41=1
+		enum HighDpiScaleFactorRoundingPolicy Unset=0 Round=1 Ceil=2 Floor=3 RoundPreferFloor=4 PassThrough=5
+		enum PermissionStatus Undetermined=0 Granted=1 Denied=2
+		enum _ Asynchronous=0 Synchronous=1 Key_Escape=16777216 Key_Tab=16777217 Key_Backtab=16777218 Key_Backspace=16777219 Key_Return=16777220 Key_Enter=16777221 Key_Insert=16777222 Key_Delete=16777223 Key_Pause=16777224 Key_Print=16777225 Key_SysReq=16777226 Key_Clear=16777227 Key_Home=16777232 Key_End=16777233 Key_Left=16777234 Key_Up=16777235 Key_Right=16777236 Key_Down=16777237 Key_PageUp=16777238 Key_PageDown=16777239 Key_Shift=16777248 Key_Control=16777249 Key_Meta=16777250 Key_Alt=16777251 Key_AltGr=16781571 Key_CapsLock=16777252 Key_NumLock=16777253 Key_ScrollLock=16777254 Key_F1=16777264 Key_F2=16777265 Key_F3=16777266 Key_F4=16777267 Key_F5=16777268 Key_F6=16777269 Key_F7=16777270 Key_F8=16777271 Key_F9=16777272 Key_F10=16777273 Key_F11=16777274 Key_F12=16777275 Key_F13=16777276 Key_F14=16777277 Key_F15=16777278 Key_F16=16777279 Key_F17=16777280 Key_F18=16777281 Key_F19=16777282 Key_F20=16777283 Key_F21=16777284 Key_F22=16777285 Key_F23=16777286 Key_F24=16777287 Key_F25=16777288 Key_F26=16777289 Key_F27=16777290 Key_F28=16777291 Key_F29=16777292 Key_F30=16777293 Key_F31=16777294 Key_F32=16777295 Key_F33=16777296 Key_F34=16777297 Key_F35=16777298 Key_Super_L=16777299 Key_Super_R=16777300 Key_Menu=16777301 Key_Hyper_L=16777302 Key_Hyper_R=16777303 Key_Help=16777304 Key_Direction_L=16777305 Key_Direction_R=16777312 Key_Space=32 Key_Any=32 Key_Exclam=33 Key_QuoteDbl=34 Key_NumberSign=35 Key_Dollar=36 Key_Percent=37 Key_Ampersand=38 Key_Apostrophe=39 Key_ParenLeft=40 Key_ParenRight=41 Key_Asterisk=42 Key_Plus=43 Key_Comma=44 Key_Minus=45 Key_Period=46 Key_Slash=47 Key_0=48 Key_1=49 Key_2=50 Key_3=51 Key_4=52 Key_5=53 Key_6=54 Key_7=55 Key_8=56 Key_9=57 Key_Colon=58 Key_Semicolon=59 Key_Less=60 Key_Equal=61 Key_Greater=62 Key_Question=63 Key_At=64 Key_A=65 Key_B=66 Key_C=67 Key_D=68 Key_E=69 Key_F=70 Key_G=71 Key_H=72 Key_I=73 Key_J=74 Key_K=75 Key_L=76 Key_M=77 Key_N=78 Key_O=79 Key_P=80 Key_Q=81 Key_R=82 Key_S=83 Key_T=84 Key_U=85 Key_V=86 Key_W=87 Key_X=88 Key_Y=89 Key_Z=90 Key_BracketLeft=91 Key_Backslash=92 Key_BracketRight=93 Key_AsciiCircum=94 Key_Underscore=95 Key_QuoteLeft=96 Key_BraceLeft=123 Key_Bar=124 Key_BraceRight=125 Key_AsciiTilde=126 Key_nobreakspace=160 Key_exclamdown=161 Key_cent=162 Key_sterling=163 Key_currency=164 Key_yen=165 Key_brokenbar=166 Key_section=167 Key_diaeresis=168 Key_copyright=169 Key_ordfeminine=170 Key_guillemotleft=171 Key_notsign=172 Key_hyphen=173 Key_registered=174 Key_macron=175 Key_degree=176 Key_plusminus=177 Key_twosuperior=178 Key_threesuperior=179 Key_acute=180 Key_mu=181 Key_micro=181 Key_paragraph=182 Key_periodcentered=183 Key_cedilla=184 Key_onesuperior=185 Key_masculine=186 Key_guillemotright=187 Key_onequarter=188 Key_onehalf=189 Key_threequarters=190 Key_questiondown=191 Key_Agrave=192 Key_Aacute=193 Key_Acircumflex=194 Key_Atilde=195 Key_Adiaeresis=196 Key_Aring=197 Key_AE=198 Key_Ccedilla=199 Key_Egrave=200 Key_Eacute=201 Key_Ecircumflex=202 Key_Ediaeresis=203 Key_Igrave=204 Key_Iacute=205 Key_Icircumflex=206 Key_Idiaeresis=207 Key_ETH=208 Key_Ntilde=209 Key_Ograve=210 Key_Oacute=211 Key_Ocircumflex=212 Key_Otilde=213 Key_Odiaeresis=214 Key_multiply=215 Key_Ooblique=216 Key_Ugrave=217 Key_Uacute=218 Key_Ucircumflex=219 Key_Udiaeresis=220 Key_Yacute=221 Key_THORN=222 Key_ssharp=223 Key_division=247 Key_ydiaeresis=255 Key_Multi_key=16781600 Key_Codeinput=16781623 Key_SingleCandidate=16781628 Key_MultipleCandidate=16781629 Key_PreviousCandidate=16781630 Key_Mode_switch=16781694 Key_Kanji=16781601 Key_Muhenkan=16781602 Key_Henkan=16781603 Key_Romaji=16781604 Key_Hiragana=16781605 Key_Katakana=16781606 Key_Hiragana_Katakana=16781607 Key_Zenkaku=16781608 Key_Hankaku=16781609 Key_Zenkaku_Hankaku=16781610 Key_Touroku=16781611 Key_Massyo=16781612 Key_Kana_Lock=16781613 Key_Kana_Shift=16781614 Key_Eisu_Shift=16781615 Key_Eisu_toggle=16781616 Key_Hangul=16781617 Key_Hangul_Start=16781618 Key_Hangul_End=16781619 Key_Hangul_Hanja=16781620 Key_Hangul_Jamo=16781621 Key_Hangul_Romaja=16781622 Key_Hangul_Jeonja=16781624 Key_Hangul_Banja=16781625 Key_Hangul_PreHanja=16781626 Key_Hangul_PostHanja=16781627 Key_Hangul_Special=16781631 Key_Dead_Grave=16781904 Key_Dead_Acute=16781905 Key_Dead_Circumflex=16781906 Key_Dead_Tilde=16781907 Key_Dead_Macron=16781908 Key_Dead_Breve=16781909 Key_Dead_Abovedot=16781910 Key_Dead_Diaeresis=16781911 Key_Dead_Abovering=16781912 Key_Dead_Doubleacute=16781913 Key_Dead_Caron=16781914 Key_Dead_Cedilla=16781915 Key_Dead_Ogonek=16781916 Key_Dead_Iota=16781917 Key_Dead_Voiced_Sound=16781918 Key_Dead_Semivoiced_Sound=16781919 Key_Dead_Belowdot=16781920 Key_Dead_Hook=16781921 Key_Dead_Horn=16781922 Key_Back=16777313 Key_Forward=16777314 Key_Stop=16777315 Key_Refresh=16777316 Key_VolumeDown=16777328 Key_VolumeMute=16777329 Key_VolumeUp=16777330 Key_BassBoost=16777331 Key_BassUp=16777332 Key_BassDown=16777333 Key_TrebleUp=16777334 Key_TrebleDown=16777335 Key_MediaPlay=16777344 Key_MediaStop=16777345 Key_MediaPrevious=16777346 Key_MediaNext=16777347 Key_MediaRecord=16777348 Key_MediaPause=16777349 Key_MediaTogglePlayPause=16777350 Key_HomePage=16777360 Key_Favorites=16777361 Key_Search=16777362 Key_Standby=16777363 Key_OpenUrl=16777364 Key_LaunchMail=16777376 Key_LaunchMedia=16777377 Key_Launch0=16777378 Key_Launch1=16777379 Key_Launch2=16777380 Key_Launch3=16777381 Key_Launch4=16777382 Key_Launch5=16777383 Key_Launch6=16777384 Key_Launch7=16777385 Key_Launch8=16777386 Key_Launch9=16777387 Key_LaunchA=16777388 Key_LaunchB=16777389 Key_LaunchC=16777390 Key_LaunchD=16777391 Key_LaunchE=16777392 Key_LaunchF=16777393 Key_LaunchG=16777486 Key_LaunchH=16777487 Key_MonBrightnessUp=16777394 Key_MonBrightnessDown=16777395 Key_KeyboardLightOnOff=16777396 Key_KeyboardBrightnessUp=16777397 Key_KeyboardBrightnessDown=16777398 Key_PowerOff=16777399 Key_WakeUp=16777400 Key_Eject=16777401 Key_ScreenSaver=16777402 Key_WWW=16777403 Key_Memo=16777404 Key_LightBulb=16777405 Key_Shop=16777406 Key_History=16777407 Key_AddFavorite=16777408 Key_HotLinks=16777409 Key_BrightnessAdjust=16777410 Key_Finance=16777411 Key_Community=16777412 Key_AudioRewind=16777413 Key_BackForward=16777414 Key_ApplicationLeft=16777415 Key_ApplicationRight=16777416 Key_Book=16777417 Key_CD=16777418 Key_Calculator=16777419 Key_ToDoList=16777420 Key_ClearGrab=16777421 Key_Close=16777422 Key_Copy=16777423 Key_Cut=16777424 Key_Display=16777425 Key_DOS=16777426 Key_Documents=16777427 Key_Excel=16777428 Key_Explorer=16777429 Key_Game=16777430 Key_Go=16777431 Key_iTouch=16777432 Key_LogOff=16777433 Key_Market=16777434 Key_Meeting=16777435 Key_MenuKB=16777436 Key_MenuPB=16777437 Key_MySites=16777438 Key_News=16777439 Key_OfficeHome=16777440 Key_Option=16777441 Key_Paste=16777442 Key_Phone=16777443 Key_Calendar=16777444 Key_Reply=16777445 Key_Reload=16777446 Key_RotateWindows=16777447 Key_RotationPB=16777448 Key_RotationKB=16777449 Key_Save=16777450 Key_Send=16777451 Key_Spell=16777452 Key_SplitScreen=16777453 Key_Support=16777454 Key_TaskPane=16777455 Key_Terminal=16777456 Key_Tools=16777457 Key_Travel=16777458 Key_Video=16777459 Key_Word=16777460 Key_Xfer=16777461 Key_ZoomIn=16777462 Key_ZoomOut=16777463 Key_Away=16777464 Key_Messenger=16777465 Key_WebCam=16777466 Key_MailForward=16777467 Key_Pictures=16777468 Key_Music=16777469 Key_Battery=16777470 Key_Bluetooth=16777471 Key_WLAN=16777472 Key_UWB=16777473 Key_AudioForward=16777474 Key_AudioRepeat=16777475 Key_AudioRandomPlay=16777476 Key_Subtitle=16777477 Key_AudioCycleTrack=16777478 Key_Time=16777479 Key_Hibernate=16777480 Key_View=16777481 Key_TopMenu=16777482 Key_PowerDown=16777483 Key_Suspend=16777484 Key_ContrastAdjust=16777485 Key_TouchpadToggle=16777488 Key_TouchpadOn=16777489 Key_TouchpadOff=16777490 Key_MicMute=16777491 Key_Red=16777492 Key_Green=16777493 Key_Yellow=16777494 Key_Blue=16777495 Key_ChannelUp=16777496 Key_ChannelDown=16777497 Key_Guide=16777498 Key_Info=16777499 Key_Settings=16777500 Key_MicVolumeUp=16777501 Key_MicVolumeDown=16777502 Key_New=16777504 Key_Open=16777505 Key_Find=16777506 Key_Undo=16777507 Key_Redo=16777508 Key_MediaLast=16842751 Key_unknown=33554431 Key_Call=17825796 Key_Camera=17825824 Key_CameraFocus=17825825 Key_Context1=17825792 Key_Context2=17825793 Key_Context3=17825794 Key_Context4=17825795 Key_Flip=17825798 Key_Hangup=17825797 Key_No=16842754 Key_Select=16842752 Key_Yes=16842753 Key_ToggleCallHangup=17825799 Key_VoiceDial=17825800 Key_LastNumberRedial=17825801 Key_Execute=16908291 Key_Printer=16908290 Key_Play=16908293 Key_Sleep=16908292 Key_Zoom=16908294 Key_Exit=16908298 Key_Cancel=16908289
+	type QtQml.Binding Binding
+		prototype QtQml.QtObject named
+		enum RestoreMode RestoreNone=0 RestoreBinding=1 RestoreValue=2 RestoreBindingOrValue=3
+		prop target QtQml.QtObject named pointer
+		prop property QtQml.string named
+		prop value QtQml.var named
+		prop when QtQml.bool named
+		prop restoreMode RestoreMode
+		prop delayed QtQml.bool named
+		signal targetChanged
+		signal propertyChanged
+		signal valueChanged
+		signal whenChanged
+		signal restoreModeChanged
+		signal delayedChanged
+	type QtQml.Component Component
+		prototype QtQml.QtObject named
+		attached QtQml.ComponentAttached
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		enum CompilationMode PreferSynchronous=0 Asynchronous=1
+		prop status Status readonly
+		prop url QtQml.string named readonly
+		signal statusChanged
+		method createObject
+		method incubateObject
+		method errorString
+	type QtQml.Connections Connections
+		prototype QtQml.QtObject named
+		is parser
+		prop target QtQml.QtObject named pointer
+		prop enabled QtQml.bool named
+		prop ignoreUnknownSignals QtQml.bool named
+		signal targetChanged
+		signal enabledChanged
+		signal ignoreUnknownSignalsChanged
+	type QtQml.Instantiator Instantiator
+		prototype QtQml.QtObject named
+		default delegate
+		prop model QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop active QtQml.bool named
+		prop asynchronous QtQml.bool named
+		prop count QtQml.int named readonly
+		prop object QtQml.QtObject named pointer readonly
+		signal modelChanged
+		signal delegateChanged
+		signal activeChanged
+		signal asynchronousChanged
+		signal countChanged
+		signal objectChanged
+		signal objectAdded index object
+		signal objectRemoved index object
+		method objectAt
+	type QtQml.QtObject QtObject
+		prop objectName QtQml.string named
+		signal objectNameChanged
+	type QtQml.Timer Timer
+		prototype QtQml.QtObject named
+		prop interval QtQml.int named
+		prop running QtQml.bool named
+		prop repeat QtQml.bool named
+		prop triggeredOnStart QtQml.bool named
+		prop parent QtQml.QtObject named pointer readonly
+		signal intervalChanged
+		signal runningChanged
+		signal repeatChanged
+		signal triggeredOnStartChanged
+		signal parentChanged
+		signal triggered
+		method start
+		method stop
+		method restart
+	type QtQml.ComponentAttached ComponentAttached
+		is uncreatable
+		signal completed
+		signal destruction
+
+module QtQml.Models
+	DelegateModel QtQml.Models.DelegateModel
+	ListElement QtQml.Models.ListElement
+	ListModel QtQml.Models.ListModel
+	ObjectModel QtQml.Models.ObjectModel
+	type QtQml.Models.DelegateModel DelegateModel
+		prototype QtQml.QtObject named
+		default delegate
+		prop model QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop count QtQml.int named readonly
+		signal modelChanged
+		signal delegateChanged
+		signal countChanged
+	type QtQml.Models.ListElement ListElement
+		prototype QtQml.QtObject named
+		is parser
+	type QtQml.Models.ListModel ListModel
+		prototype QtQml.QtObject named
+		prop count QtQml.int named readonly
+		prop dynamicRoles QtQml.bool named
+		signal countChanged
+		signal dynamicRolesChanged
+		method get
+		method append
+		method insert
+		method remove
+		method move
+		method set
+		method setProperty
+		method clear
+	type QtQml.Models.ObjectModel ObjectModel
+		prototype QtQml.QtObject named
+		default children
+		prop count QtQml.int named readonly
+		prop children QtQml.var named list
+		signal countChanged
+		method get
+		method append
+		method insert
+		method move
+		method remove
+		method clear
+
+module QtQuick
+	import QtQml
+	Accessible QtQuick.Accessible
+	AnchorAnimation QtQuick.AnchorAnimation
+	AnchorChanges QtQuick.AnchorChanges
+	Animation QtQuick.Animation
+	AnimationController QtQuick.AnimationController
+	Application QtQuick.Application
+	Behavior QtQuick.Behavior
+	BorderImage QtQuick.BorderImage
+	CloseEvent QtQuick.CloseEvent
+	ColorAnimation QtQuick.ColorAnimation
+	Column QtQuick.Column
+	DoubleValidator QtQuick.DoubleValidator
+	Easing QtQuick.Easing
+	Flickable QtQuick.Flickable
+	Flow QtQuick.Flow
+	FocusScope QtQuick.FocusScope
+	Font QtQuick.Font
+	FontMetrics QtQuick.FontMetrics
+	Gradient QtQuick.Gradient
+	GradientStop QtQuick.GradientStop
+	Grid QtQuick.Grid
+	GridView QtQuick.GridView
+	Image QtQuick.Image
+	IntValidator QtQuick.IntValidator
+	Item QtQuick.Item
+	KeyEvent QtQuick.KeyEvent
+	KeyNavigation QtQuick.KeyNavigation
+	Keys QtQuick.Keys
+	LayoutMirroring QtQuick.LayoutMirroring
+	ListView QtQuick.ListView
+	Loader QtQuick.Loader
+	MouseArea QtQuick.MouseArea
+	MouseEvent QtQuick.MouseEvent
+	NumberAnimation QtQuick.NumberAnimation
+	ParallelAnimation QtQuick.ParallelAnimation
+	ParentAnimation QtQuick.ParentAnimation
+	ParentChange QtQuick.ParentChange
+	Path QtQuick.Path
+	PathAngleArc QtQuick.PathAngleArc
+	PathArc QtQuick.PathArc
+	PathCubic QtQuick.PathCubic
+	PathCurve QtQuick.PathCurve
+	PathLine QtQuick.PathLine
+	PathMove QtQuick.PathMove
+	PathMultiline QtQuick.PathMultiline
+	PathPolyline QtQuick.PathPolyline
+	PathQuad QtQuick.PathQuad
+	PathRectangle QtQuick.PathRectangle
+	PathSvg QtQuick.PathSvg
+	PauseAnimation QtQuick.PauseAnimation
+	Positioner QtQuick.Positioner
+	PropertyAction QtQuick.PropertyAction
+	PropertyAnimation QtQuick.PropertyAnimation
+	PropertyChanges QtQuick.PropertyChanges
+	Rectangle QtQuick.Rectangle
+	RegularExpressionValidator QtQuick.RegularExpressionValidator
+	Repeater QtQuick.Repeater
+	RotationAnimation QtQuick.RotationAnimation
+	Row QtQuick.Row
+	ScreenInfo QtQuick.ScreenInfo
+	ScriptAction QtQuick.ScriptAction
+	SequentialAnimation QtQuick.SequentialAnimation
+	Shortcut QtQuick.Shortcut
+	SmoothedAnimation QtQuick.SmoothedAnimation
+	SpringAnimation QtQuick.SpringAnimation
+	StandardKey QtQuick.StandardKey
+	State QtQuick.State
+	StateChangeScript QtQuick.StateChangeScript
+	StateGroup QtQuick.StateGroup
+	TapHandler QtQuick.TapHandler
+	Text QtQuick.Text
+	TextDocument QtQuick.TextDocument
+	TextEdit QtQuick.TextEdit
+	TextInput QtQuick.TextInput
+	TextMetrics QtQuick.TextMetrics
+	Transition QtQuick.Transition
+	ViewSection QtQuick.ViewSection
+	WheelEvent QtQuick.WheelEvent
+	WheelHandler QtQuick.WheelHandler
+	Window QtQuick.Window
+	color QtQuick.color
+	font QtQuick.font
+	quaternion QtQuick.quaternion
+	vector2d QtQuick.vector2d
+	vector3d QtQuick.vector3d
+	vector4d QtQuick.vector4d
+	type QtQuick.color color
+		is value
+	type QtQuick.font font
+		is value
+		prop family QtQml.string named
+		prop pointSize QtQml.real named
+		prop pixelSize QtQml.int named
+		prop weight QtQml.int named
+		prop bold QtQml.bool named
+		prop italic QtQml.bool named
+		prop underline QtQml.bool named
+		prop strikeout QtQml.bool named
+		prop letterSpacing QtQml.real named
+		prop wordSpacing QtQml.real named
+		prop capitalization QtQml.int named
+		prop hintingPreference QtQml.int named
+		prop scaleWithSystem QtQml.bool named
+	type QtQuick.vector2d vector2d
+		is value
+		prop x QtQml.real named
+		prop y QtQml.real named
+	type QtQuick.vector3d vector3d
+		is value
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop z QtQml.real named
+	type QtQuick.vector4d vector4d
+		is value
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop z QtQml.real named
+		prop w QtQml.real named
+	type QtQuick.quaternion quaternion
+		is value
+		prop scalar QtQml.real named
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop z QtQml.real named
+	type QtQuick.Accessible Accessible
+		attached QtQuick.AccessibleAttached
+		is uncreatable
+		enum Role NoRole=0 TitleBar=1 MenuBar=2 ScrollBar=3 Grip=4 Sound=5 Cursor=6 Caret=7 AlertMessage=8 Window=9 Client=10 PopupMenu=11 MenuItem=12 ToolTip=13 Application=14 Document=15 Pane=16 Chart=17 Dialog=18 Border=19 Grouping=20 Separator=21 ToolBar=22 StatusBar=23 Table=24 ColumnHeader=25 RowHeader=26 Column=27 Row=28 Cell=29 Link=30 HelpBalloon=31 Assistant=32 List=33 ListItem=34 Tree=35 TreeItem=36 PageTab=37 PropertyPage=38 Indicator=39 Graphic=40 StaticText=41 EditableText=42 Button=43 CheckBox=44 RadioButton=45 ComboBox=46 ProgressBar=48 Dial=49 HotkeyField=50 Slider=51 SpinBox=52 Canvas=53 Animation=54 Equation=55 ButtonDropDown=56 ButtonMenu=57 ButtonDropGrid=58 Whitespace=59 PageTabList=60 Clock=61 Splitter=62 LayeredPane=128 Terminal=129 Desktop=130 Paragraph=131 WebDocument=132 Section=133 Notification=134 Switch=135 ColorChooser=1028 Footer=1038 Form=1040 Heading=1044 Note=1051 ComplementaryContent=1068 BlockQuote=1073 UserRole=65535 PushButton=43
+		enum AnnouncementPoliteness Polite=0 Assertive=1
+	type QtQuick.AnchorAnimation AnchorAnimation
+		prototype QtQuick.Animation named
+		prop targets QtQml.var named list
+		prop duration QtQml.int named
+		prop easing QtQuick.EasingCurve pointer readonly
+		signal durationChanged
+	type QtQuick.AnchorChanges AnchorChanges
+		prototype QtQml.QtObject named
+		prop target QtQml.QtObject named pointer
+		prop anchors QtQuick.AnchorChangesAnchors pointer readonly
+		signal targetChanged
+	type QtQuick.Animation Animation
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum Loops Infinite=-2
+		prop running QtQml.bool named
+		prop paused QtQml.bool named
+		prop loops QtQml.int named
+		prop alwaysRunToEnd QtQml.bool named
+		signal runningChanged
+		signal pausedChanged
+		signal loopsChanged
+		signal alwaysRunToEndChanged
+		signal started
+		signal stopped
+		signal finished
+		method start
+		method stop
+		method pause
+		method resume
+		method restart
+		method complete
+	type QtQuick.AnimationController AnimationController
+		prototype QtQml.QtObject named
+		default animation
+		prop animation QtQml.QtObject named pointer
+		prop progress QtQml.real named
+		signal animationChanged
+		signal progressChanged
+		method reload
+	type QtQuick.Application Application
+		is singleton
+		prop state Qt::ApplicationState readonly
+		prop active QtQml.bool named readonly
+		prop name QtQml.string named
+		prop displayName QtQml.string named
+		prop version QtQml.string named
+		prop organization QtQml.string named
+		prop domain QtQml.string named
+		prop layoutDirection Qt::LayoutDirection readonly
+		prop screens QtQml.var named list
+		prop arguments QtQml.var named list
+		signal stateChanged
+		signal activeChanged
+		signal nameChanged
+		signal displayNameChanged
+		signal versionChanged
+		signal organizationChanged
+		signal domainChanged
+		signal layoutDirectionChanged
+		signal screensChanged
+		signal argumentsChanged
+	type QtQuick.Behavior Behavior
+		prototype QtQml.QtObject named
+		default animation
+		prop enabled QtQml.bool named
+		prop animation QtQml.QtObject named pointer
+		prop targetValue QtQml.var named readonly
+		prop targetProperty QtQuick.BehaviorTarget pointer readonly
+		signal enabledChanged
+		signal animationChanged
+		signal targetValueChanged
+	type QtQuick.BorderImage BorderImage
+		prototype QtQuick.ImageBase
+		enum TileMode Stretch=0 Repeat=1 Round=2
+		prop border QtQuick.BorderImageBorder pointer readonly
+		prop horizontalTileMode TileMode
+		prop verticalTileMode TileMode
+		signal horizontalTileModeChanged
+		signal verticalTileModeChanged
+	type QtQuick.CloseEvent CloseEvent
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop accepted QtQml.bool named
+	type QtQuick.ColorAnimation ColorAnimation
+		prototype QtQuick.PropertyAnimation named
+	type QtQuick.Column Column
+		prototype QtQuick.Item named
+		prop spacing QtQml.real named
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		signal spacingChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal topPaddingChanged
+		signal bottomPaddingChanged
+	type QtQuick.DoubleValidator DoubleValidator
+		prototype QtQml.QtObject named
+		enum Notation StandardNotation=0 ScientificNotation=1
+		prop bottom QtQml.real named
+		prop top QtQml.real named
+		prop decimals QtQml.int named
+		prop notation Notation
+		prop locale QtQml.string named
+		signal bottomChanged
+		signal topChanged
+		signal decimalsChanged
+		signal notationChanged
+		signal localeChanged
+	type QtQuick.Easing Easing
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum Type Linear=0 InQuad=1 OutQuad=2 InOutQuad=3 OutInQuad=4 InCubic=5 OutCubic=6 InOutCubic=7 OutInCubic=8 InQuart=9 OutQuart=10 InOutQuart=11 OutInQuart=12 InQuint=13 OutQuint=14 InOutQuint=15 OutInQuint=16 InSine=17 OutSine=18 InOutSine=19 OutInSine=20 InExpo=21 OutExpo=22 InOutExpo=23 OutInExpo=24 InCirc=25 OutCirc=26 InOutCirc=27 OutInCirc=28 InElastic=29 OutElastic=30 InOutElastic=31 OutInElastic=32 InBack=33 OutBack=34 InOutBack=35 OutInBack=36 InBounce=37 OutBounce=38 InOutBounce=39 OutInBounce=40 InCurve=41 OutCurve=42 SineCurve=43 CosineCurve=44 BezierSpline=45
+	type QtQuick.Flickable Flickable
+		prototype QtQuick.Item named
+		default flickableData
+		enum FlickableDirection AutoFlickDirection=0 HorizontalFlick=1 VerticalFlick=2 HorizontalAndVerticalFlick=3 AutoFlickIfNeeded=12
+		flags BoundsBehavior StopAtBounds=0 DragOverBounds=1 OvershootBounds=2 DragAndOvershootBounds=3
+		enum BoundsMovement FollowBoundsBehavior=1
+		prop contentX QtQml.real named
+		prop contentY QtQml.real named
+		prop contentWidth QtQml.real named
+		prop contentHeight QtQml.real named
+		prop contentItem QtQml.QtObject named pointer readonly
+		prop flickableData QtQml.var named list
+		prop flickableChildren QtQml.var named list
+		prop originX QtQml.real named readonly
+		prop originY QtQml.real named readonly
+		prop topMargin QtQml.real named
+		prop bottomMargin QtQml.real named
+		prop leftMargin QtQml.real named
+		prop rightMargin QtQml.real named
+		prop interactive QtQml.bool named
+		prop flickableDirection FlickableDirection
+		prop boundsBehavior BoundsBehavior
+		prop boundsMovement BoundsMovement
+		prop atXBeginning QtQml.bool named readonly
+		prop atXEnd QtQml.bool named readonly
+		prop atYBeginning QtQml.bool named readonly
+		prop atYEnd QtQml.bool named readonly
+		prop moving QtQml.bool named readonly
+		prop movingHorizontally QtQml.bool named readonly
+		prop movingVertically QtQml.bool named readonly
+		prop dragging QtQml.bool named readonly
+		prop draggingHorizontally QtQml.bool named readonly
+		prop draggingVertically QtQml.bool named readonly
+		prop flicking QtQml.bool named readonly
+		prop flickingHorizontally QtQml.bool named readonly
+		prop flickingVertically QtQml.bool named readonly
+		prop horizontalVelocity QtQml.real named readonly
+		prop verticalVelocity QtQml.real named readonly
+		prop horizontalOvershoot QtQml.real named readonly
+		prop verticalOvershoot QtQml.real named readonly
+		prop pressDelay QtQml.int named
+		prop flickDeceleration QtQml.real named
+		prop maximumFlickVelocity QtQml.real named
+		prop pixelAligned QtQml.bool named
+		prop synchronousDrag QtQml.bool named
+		prop rebound QtQml.QtObject named pointer
+		prop visibleArea QtQuick.FlickableVisibleArea pointer readonly
+		signal contentXChanged
+		signal contentYChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		signal contentItemChanged
+		signal flickableDataChanged
+		signal flickableChildrenChanged
+		signal originXChanged
+		signal originYChanged
+		signal topMarginChanged
+		signal bottomMarginChanged
+		signal leftMarginChanged
+		signal rightMarginChanged
+		signal interactiveChanged
+		signal flickableDirectionChanged
+		signal boundsBehaviorChanged
+		signal boundsMovementChanged
+		signal atXBeginningChanged
+		signal atXEndChanged
+		signal atYBeginningChanged
+		signal atYEndChanged
+		signal movingChanged
+		signal movingHorizontallyChanged
+		signal movingVerticallyChanged
+		signal draggingChanged
+		signal draggingHorizontallyChanged
+		signal draggingVerticallyChanged
+		signal flickingChanged
+		signal flickingHorizontallyChanged
+		signal flickingVerticallyChanged
+		signal horizontalVelocityChanged
+		signal verticalVelocityChanged
+		signal horizontalOvershootChanged
+		signal verticalOvershootChanged
+		signal pressDelayChanged
+		signal flickDecelerationChanged
+		signal maximumFlickVelocityChanged
+		signal pixelAlignedChanged
+		signal synchronousDragChanged
+		signal reboundChanged
+		signal movementStarted
+		signal movementEnded
+		signal flickStarted
+		signal flickEnded
+		signal dragStarted
+		signal dragEnded
+		method returnToBounds
+		method resizeContent
+		method flick
+		method cancelFlick
+	type QtQuick.Flow Flow
+		prototype QtQuick.Item named
+		enum Flow LeftToRight=0 TopToBottom=1
+		prop flow Flow
+		prop layoutDirection Qt::LayoutDirection
+		prop effectiveLayoutDirection Qt::LayoutDirection readonly
+		prop spacing QtQml.real named
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		signal flowChanged
+		signal layoutDirectionChanged
+		signal effectiveLayoutDirectionChanged
+		signal spacingChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal topPaddingChanged
+		signal bottomPaddingChanged
+	type QtQuick.FocusScope FocusScope
+		prototype QtQuick.Item named
+	type QtQuick.Font Font
+		is uncreatable
+		enum FontWeight Thin=100 ExtraLight=200 Light=300 Normal=400 Medium=500 DemiBold=600 Bold=700 ExtraBold=800 Black=900
+		enum Capitalization MixedCase=0 AllUppercase=1 AllLowercase=2 SmallCaps=3 Capitalize=4
+		enum HintingPreference PreferDefaultHinting=0 PreferNoHinting=1 PreferVerticalHinting=2 PreferFullHinting=3
+		enum Style StyleNormal=0 StyleItalic=1 StyleOblique=2
+	type QtQuick.FontMetrics FontMetrics
+		prototype QtQml.QtObject named
+		prop font QtQuick.font named
+		prop ascent QtQml.real named readonly
+		prop descent QtQml.real named readonly
+		prop height QtQml.real named readonly
+		prop leading QtQml.real named readonly
+		prop lineSpacing QtQml.real named readonly
+		prop minimumLeftBearing QtQml.real named readonly
+		prop minimumRightBearing QtQml.real named readonly
+		prop maximumCharacterWidth QtQml.real named readonly
+		prop xHeight QtQml.real named readonly
+		prop averageCharacterWidth QtQml.real named readonly
+		prop underlinePosition QtQml.real named readonly
+		prop overlinePosition QtQml.real named readonly
+		prop strikeOutPosition QtQml.real named readonly
+		prop lineWidth QtQml.real named readonly
+		signal fontChanged
+		signal ascentChanged
+		signal descentChanged
+		signal heightChanged
+		signal leadingChanged
+		signal lineSpacingChanged
+		signal minimumLeftBearingChanged
+		signal minimumRightBearingChanged
+		signal maximumCharacterWidthChanged
+		signal xHeightChanged
+		signal averageCharacterWidthChanged
+		signal underlinePositionChanged
+		signal overlinePositionChanged
+		signal strikeOutPositionChanged
+		signal lineWidthChanged
+		method advanceWidth
+		method boundingRect
+		method tightBoundingRect
+		method elidedText
+	type QtQuick.Gradient Gradient
+		prototype QtQml.QtObject named
+		default stops
+		enum Orientation Vertical=2 Horizontal=1
+		prop stops QtQml.var named list
+		prop orientation Orientation
+		signal orientationChanged
+		signal updated
+	type QtQuick.GradientStop GradientStop
+		prototype QtQml.QtObject named
+		prop position QtQml.real named
+		prop color QtQuick.color named
+	type QtQuick.Grid Grid
+		prototype QtQuick.Item named
+		enum Flow LeftToRight=0 TopToBottom=1
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4
+		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
+		prop rows QtQml.int named
+		prop columns QtQml.int named
+		prop spacing QtQml.real named
+		prop rowSpacing QtQml.real named reset
+		prop columnSpacing QtQml.real named reset
+		prop flow Flow
+		prop layoutDirection Qt::LayoutDirection
+		prop effectiveLayoutDirection Qt::LayoutDirection readonly
+		prop horizontalItemAlignment HAlignment
+		prop effectiveHorizontalItemAlignment HAlignment readonly
+		prop verticalItemAlignment VAlignment
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		signal rowsChanged
+		signal columnsChanged
+		signal spacingChanged
+		signal rowSpacingChanged
+		signal columnSpacingChanged
+		signal flowChanged
+		signal layoutDirectionChanged
+		signal effectiveLayoutDirectionChanged
+		signal horizontalItemAlignmentChanged
+		signal effectiveHorizontalItemAlignmentChanged
+		signal verticalItemAlignmentChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal topPaddingChanged
+		signal bottomPaddingChanged
+	type QtQuick.GridView GridView
+		prototype QtQuick.ItemView
+		attached QtQuick.ItemViewAttached
+		enum Flow FlowLeftToRight=0 FlowTopToBottom=1
+		enum SnapMode NoSnap=0 SnapToRow=1 SnapOneRow=2
+		prop flow Flow
+		prop cellWidth QtQml.real named
+		prop cellHeight QtQml.real named
+		prop snapMode SnapMode
+		signal flowChanged
+		signal cellWidthChanged
+		signal cellHeightChanged
+		signal snapModeChanged
+		method moveCurrentIndexUp
+		method moveCurrentIndexDown
+		method moveCurrentIndexLeft
+		method moveCurrentIndexRight
+	type QtQuick.Image Image
+		prototype QtQuick.ImageBase
+		enum FillMode Stretch=0 PreserveAspectFit=1 PreserveAspectCrop=2 Tile=3 TileVertically=4 TileHorizontally=5 Pad=6
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4
+		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
+		prop fillMode FillMode
+		prop horizontalAlignment HAlignment
+		prop verticalAlignment VAlignment
+		prop mirrorVertically QtQml.bool named
+		prop mipmap QtQml.bool named
+		prop paintedWidth QtQml.real named readonly
+		prop paintedHeight QtQml.real named readonly
+		prop sourceClipRect QtQml.rect named reset
+		signal fillModeChanged
+		signal horizontalAlignmentChanged
+		signal verticalAlignmentChanged
+		signal mirrorVerticallyChanged
+		signal mipmapChanged
+		signal paintedWidthChanged
+		signal paintedHeightChanged
+		signal sourceClipRectChanged
+	type QtQuick.IntValidator IntValidator
+		prototype QtQml.QtObject named
+		prop bottom QtQml.int named
+		prop top QtQml.int named
+		prop locale QtQml.string named
+		signal bottomChanged
+		signal topChanged
+		signal localeChanged
+	type QtQuick.Item Item
+		prototype QtQml.QtObject named
+		default data
+		enum TransformOrigin TopLeft=0 Top=1 TopRight=2 Left=3 Center=4 Right=5 BottomLeft=6 Bottom=7 BottomRight=8
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop z QtQml.real named
+		prop width QtQml.real named reset
+		prop height QtQml.real named reset
+		prop implicitWidth QtQml.real named
+		prop implicitHeight QtQml.real named
+		prop visible QtQml.bool named
+		prop opacity QtQml.real named
+		prop clip QtQml.bool named
+		prop enabled QtQml.bool named
+		prop rotation QtQml.real named
+		prop scale QtQml.real named
+		prop transformOrigin TransformOrigin
+		prop parent QtQml.QtObject named pointer
+		prop data QtQml.var named list
+		prop children QtQml.var named list
+		prop resources QtQml.var named list
+		prop childrenRect QtQml.rect named readonly
+		prop baselineOffset QtQml.real named
+		prop antialiasing QtQml.bool named reset
+		prop anchors QtQuick.Anchors pointer readonly
+		prop left QtQml.var named readonly
+		prop right QtQml.var named readonly
+		prop top QtQml.var named readonly
+		prop bottom QtQml.var named readonly
+		prop horizontalCenter QtQml.var named readonly
+		prop verticalCenter QtQml.var named readonly
+		prop baseline QtQml.var named readonly
+		prop focus QtQml.bool named
+		prop activeFocus QtQml.bool named readonly
+		prop activeFocusOnTab QtQml.bool named
+		prop states QtQml.var named list
+		prop state QtQml.string named
+		prop transitions QtQml.var named list
+		signal xChanged
+		signal yChanged
+		signal zChanged
+		signal widthChanged
+		signal heightChanged
+		signal implicitWidthChanged
+		signal implicitHeightChanged
+		signal visibleChanged
+		signal opacityChanged
+		signal clipChanged
+		signal enabledChanged
+		signal rotationChanged
+		signal scaleChanged
+		signal transformOriginChanged
+		signal parentChanged
+		signal dataChanged
+		signal childrenChanged
+		signal resourcesChanged
+		signal childrenRectChanged
+		signal baselineOffsetChanged
+		signal antialiasingChanged
+		signal leftChanged
+		signal rightChanged
+		signal topChanged
+		signal bottomChanged
+		signal horizontalCenterChanged
+		signal verticalCenterChanged
+		signal baselineChanged
+		signal focusChanged
+		signal activeFocusChanged
+		signal activeFocusOnTabChanged
+		signal statesChanged
+		signal stateChanged
+		signal transitionsChanged
+		method mapToItem
+		method mapFromItem
+		method contains
+		method forceActiveFocus
+		method nextItemInFocusChain
+	type QtQuick.KeyEvent KeyEvent
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop key QtQml.int named readonly
+		prop text QtQml.string named readonly
+		prop modifiers QtQml.int named readonly
+		prop isAutoRepeat QtQml.bool named readonly
+		prop count QtQml.int named readonly
+		prop nativeScanCode QtQml.int named readonly
+		prop accepted QtQml.bool named
+		method matches
+	type QtQuick.KeyNavigation KeyNavigation
+		attached QtQuick.KeyNavigationAttached
+		is uncreatable
+		enum Priority BeforeItem=0 AfterItem=1
+	type QtQuick.Keys Keys
+		attached QtQuick.KeysAttached
+		is uncreatable
+		enum Priority BeforeItem=0 AfterItem=1
+	type QtQuick.LayoutMirroring LayoutMirroring
+		attached QtQuick.LayoutMirroringAttached
+		is uncreatable
+	type QtQuick.ListView ListView
+		prototype QtQuick.ItemView
+		attached QtQuick.ItemViewAttached
+		enum Orientation Horizontal=1 Vertical=2
+		enum SnapMode NoSnap=0 SnapToItem=1 SnapOneItem=2
+		enum HeaderPositioning InlineHeader=0 OverlayHeader=1 PullBackHeader=2
+		enum FooterPositioning InlineFooter=0 OverlayFooter=1 PullBackFooter=2
+		prop orientation Orientation
+		prop spacing QtQml.real named
+		prop section QtQuick.ViewSection pointer readonly
+		prop currentSection QtQml.string named readonly
+		prop highlightMoveVelocity QtQml.real named
+		prop highlightResizeVelocity QtQml.real named
+		prop highlightResizeDuration QtQml.int named
+		prop snapMode SnapMode
+		prop headerPositioning HeaderPositioning
+		prop footerPositioning FooterPositioning
+		signal orientationChanged
+		signal spacingChanged
+		signal currentSectionChanged
+		signal highlightMoveVelocityChanged
+		signal highlightResizeVelocityChanged
+		signal highlightResizeDurationChanged
+		signal snapModeChanged
+		signal headerPositioningChanged
+		signal footerPositioningChanged
+		method incrementCurrentIndex
+		method decrementCurrentIndex
+	type QtQuick.Loader Loader
+		prototype QtQuick.Item named
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		prop source QtQml.url named
+		prop sourceComponent QtQml.Component named pointer reset
+		prop active QtQml.bool named
+		prop asynchronous QtQml.bool named
+		prop item QtQml.QtObject named pointer readonly
+		prop status Status readonly
+		prop progress QtQml.real named readonly
+		signal sourceChanged
+		signal sourceComponentChanged
+		signal activeChanged
+		signal asynchronousChanged
+		signal itemChanged
+		signal statusChanged
+		signal progressChanged
+		signal loaded
+		method setSource
+	type QtQuick.MouseArea MouseArea
+		prototype QtQuick.Item named
+		prop hoverEnabled QtQml.bool named
+		prop containsMouse QtQml.bool named readonly
+		prop pressed QtQml.bool named readonly
+		prop pressedButtons Qt::MouseButtons readonly
+		prop mouseX QtQml.real named readonly
+		prop mouseY QtQml.real named readonly
+		prop acceptedButtons Qt::MouseButtons
+		prop preventStealing QtQml.bool named
+		signal hoverEnabledChanged
+		signal containsMouseChanged
+		signal pressedChanged
+		signal pressedButtonsChanged
+		signal mouseXChanged
+		signal mouseYChanged
+		signal acceptedButtonsChanged
+		signal preventStealingChanged
+		signal pressed mouse
+		signal released mouse
+		signal clicked mouse
+		signal doubleClicked mouse
+		signal positionChanged mouse
+		signal entered
+		signal exited
+		signal canceled
+		signal wheel wheel
+	type QtQuick.MouseEvent MouseEvent
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop button QtQml.int named readonly
+		prop buttons QtQml.int named readonly
+		prop modifiers QtQml.int named readonly
+		prop wasHeld QtQml.bool named readonly
+		prop isClick QtQml.bool named readonly
+		prop accepted QtQml.bool named
+	type QtQuick.NumberAnimation NumberAnimation
+		prototype QtQuick.PropertyAnimation named
+	type QtQuick.ParallelAnimation ParallelAnimation
+		prototype QtQuick.Animation named
+		default animations
+		prop animations QtQml.var named list
+	type QtQuick.ParentAnimation ParentAnimation
+		prototype QtQuick.ParallelAnimation named
+		default animations
+		prop target QtQml.QtObject named pointer
+		prop newParent QtQml.QtObject named pointer
+		prop via QtQml.QtObject named pointer
+		signal targetChanged
+		signal newParentChanged
+		signal viaChanged
+	type QtQuick.ParentChange ParentChange
+		prototype QtQml.QtObject named
+		prop target QtQml.QtObject named pointer
+		prop parent QtQml.QtObject named pointer
+		prop x QtQml.var named
+		prop y QtQml.var named
+		prop width QtQml.var named
+		prop height QtQml.var named
+		prop scale QtQml.var named
+		prop rotation QtQml.var named
+		signal targetChanged
+		signal parentChanged
+		signal xChanged
+		signal yChanged
+		signal widthChanged
+		signal heightChanged
+		signal scaleChanged
+		signal rotationChanged
+	type QtQuick.Path Path
+		prototype QtQml.QtObject named
+		default pathElements
+		prop pathElements QtQml.var named list
+		prop startX QtQml.real named
+		prop startY QtQml.real named
+		prop closed QtQml.bool named readonly
+		prop simplify QtQml.bool named
+		prop scale QtQml.size named
+		prop asynchronous QtQml.bool named
+		signal startXChanged
+		signal startYChanged
+		signal closedChanged
+		signal simplifyChanged
+		signal scaleChanged
+		signal asynchronousChanged
+		signal changed
+		method pointAtPercent
+	type QtQuick.PathAngleArc PathAngleArc
+		prototype QtQuick.PathCurveElement
+		prop centerX QtQml.real named
+		prop centerY QtQml.real named
+		prop radiusX QtQml.real named
+		prop radiusY QtQml.real named
+		prop startAngle QtQml.real named
+		prop sweepAngle QtQml.real named
+		prop moveToStart QtQml.bool named
+		signal centerXChanged
+		signal centerYChanged
+		signal radiusXChanged
+		signal radiusYChanged
+		signal startAngleChanged
+		signal sweepAngleChanged
+		signal moveToStartChanged
+	type QtQuick.PathArc PathArc
+		prototype QtQuick.PathCurveElement
+		enum ArcDirection Clockwise=0 Counterclockwise=1
+		prop radiusX QtQml.real named
+		prop radiusY QtQml.real named
+		prop useLargeArc QtQml.bool named
+		prop direction ArcDirection
+		prop xAxisRotation QtQml.real named
+		signal radiusXChanged
+		signal radiusYChanged
+		signal useLargeArcChanged
+		signal directionChanged
+		signal xAxisRotationChanged
+	type QtQuick.PathCubic PathCubic
+		prototype QtQuick.PathCurveElement
+		prop control1X QtQml.real named
+		prop control1Y QtQml.real named
+		prop control2X QtQml.real named
+		prop control2Y QtQml.real named
+		prop relativeControl1X QtQml.real named
+		prop relativeControl1Y QtQml.real named
+		prop relativeControl2X QtQml.real named
+		prop relativeControl2Y QtQml.real named
+		signal control1XChanged
+		signal control1YChanged
+		signal control2XChanged
+		signal control2YChanged
+		signal relativeControl1XChanged
+		signal relativeControl1YChanged
+		signal relativeControl2XChanged
+		signal relativeControl2YChanged
+	type QtQuick.PathCurve PathCurve
+		prototype QtQuick.PathCurveElement
+	type QtQuick.PathLine PathLine
+		prototype QtQuick.PathCurveElement
+	type QtQuick.PathMove PathMove
+		prototype QtQuick.PathCurveElement
+	type QtQuick.PathMultiline PathMultiline
+		prototype QtQuick.PathCurveElement
+		prop start QtQml.point named readonly
+		prop paths QtQml.var named
+		signal startChanged
+		signal pathsChanged
+	type QtQuick.PathPolyline PathPolyline
+		prototype QtQuick.PathCurveElement
+		prop start QtQml.point named readonly
+		prop path QtQml.var named
+		signal startChanged
+		signal pathChanged
+	type QtQuick.PathQuad PathQuad
+		prototype QtQuick.PathCurveElement
+		prop controlX QtQml.real named
+		prop controlY QtQml.real named
+		prop relativeControlX QtQml.real named
+		prop relativeControlY QtQml.real named
+		signal controlXChanged
+		signal controlYChanged
+		signal relativeControlXChanged
+		signal relativeControlYChanged
+	type QtQuick.PathRectangle PathRectangle
+		prototype QtQuick.PathCurveElement
+		prop width QtQml.real named
+		prop height QtQml.real named
+		prop strokeAdjustment QtQml.real named
+		prop radius QtQml.real named
+		prop topLeftRadius QtQml.real named reset
+		prop topRightRadius QtQml.real named reset
+		prop bottomLeftRadius QtQml.real named reset
+		prop bottomRightRadius QtQml.real named reset
+		prop bevel QtQml.bool named
+		prop topLeftBevel QtQml.bool named reset
+		prop topRightBevel QtQml.bool named reset
+		prop bottomLeftBevel QtQml.bool named reset
+		prop bottomRightBevel QtQml.bool named reset
+		signal widthChanged
+		signal heightChanged
+		signal strokeAdjustmentChanged
+		signal radiusChanged
+		signal topLeftRadiusChanged
+		signal topRightRadiusChanged
+		signal bottomLeftRadiusChanged
+		signal bottomRightRadiusChanged
+		signal bevelChanged
+		signal topLeftBevelChanged
+		signal topRightBevelChanged
+		signal bottomLeftBevelChanged
+		signal bottomRightBevelChanged
+	type QtQuick.PathSvg PathSvg
+		prototype QtQuick.PathCurveElement
+		prop path QtQml.string named
+		signal pathChanged
+	type QtQuick.PauseAnimation PauseAnimation
+		prototype QtQuick.Animation named
+		prop duration QtQml.int named
+		signal durationChanged
+	type QtQuick.Positioner Positioner
+		attached QtQuick.PositionerAttached
+		is uncreatable
+	type QtQuick.PropertyAction PropertyAction
+		prototype QtQuick.Animation named
+		prop target QtQml.QtObject named pointer
+		prop targets QtQml.var named list
+		prop property QtQml.string named
+		prop properties QtQml.string named
+		prop value QtQml.var named
+		signal targetChanged
+		signal propertyChanged
+		signal propertiesChanged
+		signal valueChanged
+	type QtQuick.PropertyAnimation PropertyAnimation
+		prototype QtQuick.Animation named
+		prop target QtQml.QtObject named pointer
+		prop targets QtQml.var named list
+		prop property QtQml.string named
+		prop properties QtQml.string named
+		prop from QtQml.var named
+		prop to QtQml.var named
+		prop duration QtQml.int named
+		prop easing QtQuick.EasingCurve pointer readonly
+		signal targetChanged
+		signal propertyChanged
+		signal propertiesChanged
+		signal fromChanged
+		signal toChanged
+		signal durationChanged
+	type QtQuick.PropertyChanges PropertyChanges
+		prototype QtQml.QtObject named
+		prop target QtQml.QtObject named pointer
+		prop explicit QtQml.bool named
+		prop restoreEntryValues QtQml.bool named
+		signal targetChanged
+		signal explicitChanged
+		signal restoreEntryValuesChanged
+	type QtQuick.Rectangle Rectangle
+		prototype QtQuick.Item named
+		prop color QtQuick.color named
+		prop radius QtQml.real named
+		prop border QtQuick.RectangleBorder pointer readonly
+		prop gradient QtQml.var named reset
+		signal colorChanged
+		signal radiusChanged
+	type QtQuick.RegularExpressionValidator RegularExpressionValidator
+		prototype QtQml.QtObject named
+		prop regularExpression QtQml.var named
+		signal regularExpressionChanged
+	type QtQuick.Repeater Repeater
+		prototype QtQuick.Item named
+		default delegate
+		prop model QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop count QtQml.int named readonly
+		signal modelChanged
+		signal delegateChanged
+		signal countChanged
+		signal itemAdded index item
+		signal itemRemoved index item
+		method itemAt
+	type QtQuick.RotationAnimation RotationAnimation
+		prototype QtQuick.PropertyAnimation named
+		enum RotationDirection Numerical=0 Shortest=1 Clockwise=2 Counterclockwise=3
+		prop direction RotationDirection
+		signal directionChanged
+	type QtQuick.Row Row
+		prototype QtQuick.Item named
+		prop spacing QtQml.real named
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop layoutDirection Qt::LayoutDirection
+		prop effectiveLayoutDirection Qt::LayoutDirection readonly
+		signal spacingChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal topPaddingChanged
+		signal bottomPaddingChanged
+		signal layoutDirectionChanged
+		signal effectiveLayoutDirectionChanged
+	type QtQuick.ScreenInfo ScreenInfo
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop name QtQml.string named readonly
+		prop width QtQml.int named readonly
+		prop height QtQml.int named readonly
+		prop desktopAvailableWidth QtQml.int named readonly
+		prop desktopAvailableHeight QtQml.int named readonly
+		prop virtualX QtQml.int named readonly
+		prop virtualY QtQml.int named readonly
+		prop devicePixelRatio QtQml.real named readonly
+		prop pixelDensity QtQml.real named readonly
+		prop orientation Qt::ScreenOrientation readonly
+		prop primaryOrientation Qt::ScreenOrientation readonly
+		prop manufacturer QtQml.string named readonly
+		prop model QtQml.string named readonly
+		prop serialNumber QtQml.string named readonly
+		signal nameChanged
+		signal widthChanged
+		signal heightChanged
+		signal desktopAvailableWidthChanged
+		signal desktopAvailableHeightChanged
+		signal virtualXChanged
+		signal virtualYChanged
+		signal devicePixelRatioChanged
+		signal pixelDensityChanged
+		signal orientationChanged
+		signal primaryOrientationChanged
+		signal manufacturerChanged
+		signal modelChanged
+		signal serialNumberChanged
+	type QtQuick.ScriptAction ScriptAction
+		prototype QtQuick.Animation named
+		prop script QtQml.var named script
+		prop scriptName QtQml.string named
+		signal scriptChanged
+		signal scriptNameChanged
+	type QtQuick.SequentialAnimation SequentialAnimation
+		prototype QtQuick.Animation named
+		default animations
+		prop animations QtQml.var named list
+	type QtQuick.Shortcut Shortcut
+		prototype QtQml.QtObject named
+		prop sequence QtQml.var named
+		prop sequences QtQml.var named
+		prop enabled QtQml.bool named
+		prop autoRepeat QtQml.bool named
+		prop context Qt::ShortcutContext
+		prop nativeText QtQml.string named readonly
+		prop portableText QtQml.string named readonly
+		signal sequenceChanged
+		signal sequencesChanged
+		signal enabledChanged
+		signal autoRepeatChanged
+		signal contextChanged
+		signal nativeTextChanged
+		signal portableTextChanged
+		signal activated
+		signal activatedAmbiguously
+	type QtQuick.SmoothedAnimation SmoothedAnimation
+		prototype QtQuick.NumberAnimation named
+		enum ReversingMode Eased=0 Immediate=1 Sync=2
+		prop velocity QtQml.real named
+		prop reversingMode ReversingMode
+		prop maximumEasingTime QtQml.real named
+		signal velocityChanged
+		signal reversingModeChanged
+		signal maximumEasingTimeChanged
+	type QtQuick.SpringAnimation SpringAnimation
+		prototype QtQuick.NumberAnimation named
+		prop spring QtQml.real named
+		prop damping QtQml.real named
+		prop mass QtQml.real named
+		prop epsilon QtQml.real named
+		prop modulus QtQml.real named
+		prop velocity QtQml.real named
+		signal springChanged
+		signal dampingChanged
+		signal massChanged
+		signal epsilonChanged
+		signal modulusChanged
+		signal velocityChanged
+	type QtQuick.StandardKey StandardKey
+		is uncreatable
+		enum StandardKey UnknownKey=0 HelpContents=1 WhatsThis=2 Open=3 Close=4 Save=5 New=6 Delete=7 Cut=8 Copy=9 Paste=10 Undo=11 Redo=12 Back=13 Forward=14 Refresh=15 ZoomIn=16 ZoomOut=17 Print=18 AddTab=19 NextChild=20 PreviousChild=21 Find=22 FindNext=23 FindPrevious=24 Replace=25 SelectAll=26 Bold=27 Italic=28 Underline=29 MoveToNextChar=30 MoveToPreviousChar=31 MoveToNextWord=32 MoveToPreviousWord=33 MoveToNextLine=34 MoveToPreviousLine=35 MoveToNextPage=36 MoveToPreviousPage=37 MoveToStartOfLine=38 MoveToEndOfLine=39 MoveToStartOfBlock=40 MoveToEndOfBlock=41 MoveToStartOfDocument=42 MoveToEndOfDocument=43 SelectNextChar=44 SelectPreviousChar=45 SelectNextWord=46 SelectPreviousWord=47 SelectNextLine=48 SelectPreviousLine=49 SelectNextPage=50 SelectPreviousPage=51 SelectStartOfLine=52 SelectEndOfLine=53 SelectStartOfBlock=54 SelectEndOfBlock=55 SelectStartOfDocument=56 SelectEndOfDocument=57 DeleteStartOfWord=58 DeleteEndOfWord=59 DeleteEndOfLine=60 InsertParagraphSeparator=61 InsertLineSeparator=62 SaveAs=63 Preferences=64 Quit=65 FullScreen=66 Deselect=67 DeleteCompleteLine=68 Backspace=69 Cancel=70
+	type QtQuick.State State
+		prototype QtQml.QtObject named
+		default changes
+		prop name QtQml.string named
+		prop when QtQml.bool named
+		prop extend QtQml.string named
+		prop changes QtQml.var named list
+		signal nameChanged
+		signal whenChanged
+		signal extendChanged
+	type QtQuick.StateChangeScript StateChangeScript
+		prototype QtQml.QtObject named
+		prop name QtQml.string named
+		prop script QtQml.var named script
+		signal nameChanged
+		signal scriptChanged
+	type QtQuick.StateGroup StateGroup
+		prototype QtQml.QtObject named
+		prop state QtQml.string named
+		prop states QtQml.var named list
+		prop transitions QtQml.var named list
+		signal stateChanged
+		signal statesChanged
+		signal transitionsChanged
+	type QtQuick.TapHandler TapHandler
+		prototype QtQml.QtObject named
+		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
+		prop enabled QtQml.bool named
+		prop pressed QtQml.bool named readonly
+		prop tapCount QtQml.int named readonly
+		prop gesturePolicy GesturePolicy
+		prop acceptedButtons Qt::MouseButtons
+		prop parent QtQml.QtObject named pointer readonly
+		prop point QtQuick.HandlerPoint pointer readonly
+		signal enabledChanged
+		signal pressedChanged
+		signal tapCountChanged
+		signal gesturePolicyChanged
+		signal acceptedButtonsChanged
+		signal parentChanged
+		signal pointChanged
+		signal tapped eventPoint button
+		signal singleTapped eventPoint button
+		signal doubleTapped eventPoint button
+		signal canceled eventPoint
+	type QtQuick.Text Text
+		prototype QtQuick.Item named
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
+		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
+		enum TextElideMode ElideLeft=0 ElideRight=1 ElideMiddle=2 ElideNone=3
+		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
+		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
+		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3 StyledText=4
+		prop text QtQml.string named
+		prop color QtQuick.color named
+		prop font QtQuick.font named
+		prop horizontalAlignment HAlignment reset
+		prop effectiveHorizontalAlignment HAlignment readonly
+		prop verticalAlignment VAlignment
+		prop wrapMode WrapMode
+		prop elide TextElideMode
+		prop maximumLineCount QtQml.int named reset
+		prop lineHeight QtQml.real named
+		prop lineHeightMode LineHeightMode
+		prop contentWidth QtQml.real named readonly
+		prop contentHeight QtQml.real named readonly
+		prop lineCount QtQml.int named readonly
+		prop truncated QtQml.bool named readonly
+		prop baseUrl QtQml.url named reset
+		prop textFormat TextFormat
+		prop linkColor QtQuick.color named
+		prop hoveredLink QtQml.string named readonly
+		signal textChanged
+		signal colorChanged
+		signal fontChanged
+		signal horizontalAlignmentChanged
+		signal effectiveHorizontalAlignmentChanged
+		signal verticalAlignmentChanged
+		signal wrapModeChanged
+		signal elideChanged
+		signal maximumLineCountChanged
+		signal lineHeightChanged
+		signal lineHeightModeChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		signal lineCountChanged
+		signal truncatedChanged
+		signal baseUrlChanged
+		signal textFormatChanged
+		signal linkColorChanged
+		signal hoveredLinkChanged
+		signal linkActivated link
+		signal linkHovered link
+		method linkAt
+	type QtQuick.TextDocument TextDocument
+		is uncreatable
+		prop modified QtQml.bool named
+		signal modifiedChanged
+		method highlight
+		method clearHighlights
+	type QtQuick.TextEdit TextEdit
+		prototype QtQuick.TextEditorBase
+		prop lineCount QtQml.int named readonly
+		prop textFormat TextFormat
+		prop tabStopDistance QtQml.real named
+		prop textMargin QtQml.real named
+		prop selectByKeyboard QtQml.bool named
+		prop hoveredLink QtQml.string named readonly
+		prop baseUrl QtQml.url named reset
+		prop textDocument QtQml.QtObject named pointer readonly
+		signal lineCountChanged
+		signal textFormatChanged
+		signal tabStopDistanceChanged
+		signal textMarginChanged
+		signal selectByKeyboardChanged
+		signal hoveredLinkChanged
+		signal baseUrlChanged
+		signal textDocumentChanged
+		signal linkActivated link
+		signal linkHovered link
+		method append
+		method remove
+		method getFormattedText
+	type QtQuick.TextInput TextInput
+		prototype QtQuick.TextEditorBase
+		prop displayText QtQml.string named readonly
+		prop echoMode EchoMode
+		prop passwordCharacter QtQml.string named
+		prop passwordMaskDelay QtQml.int named reset
+		prop maximumLength QtQml.int named
+		prop validator QtQml.QtObject named pointer
+		prop acceptableInput QtQml.bool named readonly
+		prop autoScroll QtQml.bool named
+		prop inputMask QtQml.string named
+		signal displayTextChanged
+		signal echoModeChanged
+		signal passwordCharacterChanged
+		signal passwordMaskDelayChanged
+		signal maximumLengthChanged
+		signal validatorChanged
+		signal acceptableInputChanged
+		signal autoScrollChanged
+		signal inputMaskChanged
+		signal accepted
+		signal textEdited
+		method remove
+		method ensureVisible
+	type QtQuick.TextMetrics TextMetrics
+		prototype QtQml.QtObject named
+		prop font QtQuick.font named
+		prop text QtQml.string named
+		prop elide Qt::TextElideMode
+		prop elideWidth QtQml.real named
+		prop advanceWidth QtQml.real named readonly
+		prop boundingRect QtQml.rect named readonly
+		prop tightBoundingRect QtQml.rect named readonly
+		prop width QtQml.real named readonly
+		prop height QtQml.real named readonly
+		prop elidedText QtQml.string named readonly
+		signal fontChanged
+		signal textChanged
+		signal elideChanged
+		signal elideWidthChanged
+		signal advanceWidthChanged
+		signal boundingRectChanged
+		signal tightBoundingRectChanged
+		signal widthChanged
+		signal heightChanged
+		signal elidedTextChanged
+	type QtQuick.Transition Transition
+		prototype QtQml.QtObject named
+		default animations
+		prop animations QtQml.var named list
+		prop enabled QtQml.bool named
+		prop from QtQml.string named
+		prop to QtQml.string named
+		prop reversible QtQml.bool named
+		prop running QtQml.bool named readonly
+		signal enabledChanged
+		signal fromChanged
+		signal toChanged
+		signal reversibleChanged
+		signal runningChanged
+	type QtQuick.ViewSection ViewSection
+		is uncreatable
+		enum SectionCriteria FullString=0 FirstCharacter=1
+		enum LabelPositioning InlineLabels=1 CurrentLabelAtStart=2 NextLabelAtEnd=4
+		prop property QtQml.string named
+		prop criteria SectionCriteria
+		prop delegate QtQml.Component named pointer
+		prop labelPositioning QtQml.int named
+		signal propertyChanged
+		signal criteriaChanged
+		signal delegateChanged
+		signal labelPositioningChanged
+	type QtQuick.WheelEvent WheelEvent
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop angleDelta QtQml.point named readonly
+		prop pixelDelta QtQml.point named readonly
+		prop buttons Qt::MouseButtons readonly
+		prop modifiers Qt::KeyboardModifiers readonly
+		prop inverted QtQml.bool named readonly
+		prop phase Qt::ScrollPhase readonly
+		prop accepted QtQml.bool named
+	type QtQuick.WheelHandler WheelHandler
+		prototype QtQml.QtObject named
+		prop enabled QtQml.bool named
+		prop parent QtQml.QtObject named pointer readonly
+		prop target QtQml.QtObject named pointer
+		prop property QtQml.string named
+		prop rotation QtQml.real named
+		prop rotationScale QtQml.real named
+		prop orientation Qt::Orientation
+		prop acceptedModifiers Qt::KeyboardModifiers
+		prop invertible QtQml.bool named
+		prop targetScaleMultiplier QtQml.real named
+		prop targetTransformAroundCursor QtQml.bool named
+		prop active QtQml.bool named readonly
+		prop activeTimeout QtQml.real named
+		prop blocking QtQml.bool named
+		prop margin QtQml.real named
+		signal enabledChanged
+		signal parentChanged
+		signal targetChanged
+		signal propertyChanged
+		signal rotationChanged
+		signal rotationScaleChanged
+		signal orientationChanged
+		signal acceptedModifiersChanged
+		signal invertibleChanged
+		signal targetScaleMultiplierChanged
+		signal targetTransformAroundCursorChanged
+		signal activeChanged
+		signal activeTimeoutChanged
+		signal blockingChanged
+		signal marginChanged
+		signal wheel event
+	type QtQuick.Window Window
+		prototype QtQuick.Rectangle named
+		attached QtQuick.WindowAttached
+		enum Visibility Hidden=0 AutomaticVisibility=1 Windowed=2 Minimized=3 Maximized=4 FullScreen=5
+		prop title QtQml.string named
+		prop visible QtQml.bool named
+		prop x QtQml.int named
+		prop y QtQml.int named
+		prop minimumWidth QtQml.int named
+		prop minimumHeight QtQml.int named
+		prop maximumWidth QtQml.int named
+		prop maximumHeight QtQml.int named
+		prop flags Qt::WindowFlags
+		prop modality Qt::WindowModality
+		prop visibility Visibility
+		prop active QtQml.bool named readonly
+		prop transientParent QtQml.QtObject named pointer
+		prop screen QtQml.QtObject named pointer readonly
+		prop activeFocusItem QtQml.QtObject named pointer readonly
+		prop contentItem QtQml.QtObject named pointer readonly
+		prop palette QtQuick.Palette pointer readonly
+		signal titleChanged
+		signal visibleChanged
+		signal xChanged
+		signal yChanged
+		signal minimumWidthChanged
+		signal minimumHeightChanged
+		signal maximumWidthChanged
+		signal maximumHeightChanged
+		signal flagsChanged
+		signal modalityChanged
+		signal visibilityChanged
+		signal activeChanged
+		signal transientParentChanged
+		signal screenChanged
+		signal activeFocusItemChanged
+		signal contentItemChanged
+		signal closing close
+		method show
+		method hide
+		method showNormal
+		method showMinimized
+		method showMaximized
+		method showFullScreen
+		method close
+		method raise
+		method lower
+		method requestActivate
+		method alert
+	type QtQuick.AccessibleAttached AccessibleAttached
+		is uncreatable
+		enum Role NoRole=0 TitleBar=1 MenuBar=2 ScrollBar=3 Grip=4 Sound=5 Cursor=6 Caret=7 AlertMessage=8 Window=9 Client=10 PopupMenu=11 MenuItem=12 ToolTip=13 Application=14 Document=15 Pane=16 Chart=17 Dialog=18 Border=19 Grouping=20 Separator=21 ToolBar=22 StatusBar=23 Table=24 ColumnHeader=25 RowHeader=26 Column=27 Row=28 Cell=29 Link=30 HelpBalloon=31 Assistant=32 List=33 ListItem=34 Tree=35 TreeItem=36 PageTab=37 PropertyPage=38 Indicator=39 Graphic=40 StaticText=41 EditableText=42 Button=43 CheckBox=44 RadioButton=45 ComboBox=46 ProgressBar=48 Dial=49 HotkeyField=50 Slider=51 SpinBox=52 Canvas=53 Animation=54 Equation=55 ButtonDropDown=56 ButtonMenu=57 ButtonDropGrid=58 Whitespace=59 PageTabList=60 Clock=61 Splitter=62 LayeredPane=128 Terminal=129 Desktop=130 Paragraph=131 WebDocument=132 Section=133 Notification=134 Switch=135 ColorChooser=1028 Footer=1038 Form=1040 Heading=1044 Note=1051 ComplementaryContent=1068 BlockQuote=1073 UserRole=65535 PushButton=43
+		enum AnnouncementPoliteness Polite=0 Assertive=1
+		prop role Role
+		prop name QtQml.string named
+		prop description QtQml.string named
+		prop focusable QtQml.bool named
+		prop focused QtQml.bool named
+		prop ignored QtQml.bool named
+		prop modal QtQml.bool named
+		prop id QtQml.string named
+		prop checkable QtQml.bool named
+		prop checked QtQml.bool named
+		prop checkStateMixed QtQml.bool named
+		prop defaultButton QtQml.bool named
+		prop editable QtQml.bool named
+		prop multiLine QtQml.bool named
+		prop passwordEdit QtQml.bool named
+		prop pressed QtQml.bool named
+		prop readOnly QtQml.bool named
+		prop searchEdit QtQml.bool named
+		prop selectable QtQml.bool named
+		prop selectableText QtQml.bool named
+		prop selected QtQml.bool named
+		prop expandable QtQml.bool named
+		prop expanded QtQml.bool named
+		prop labelledBy QtQml.QtObject named pointer
+		prop labelFor QtQml.QtObject named pointer
+		signal roleChanged
+		signal nameChanged
+		signal descriptionChanged
+		signal focusableChanged
+		signal focusedChanged
+		signal ignoredChanged
+		signal modalChanged
+		signal idChanged
+		signal checkableChanged
+		signal checkedChanged
+		signal checkStateMixedChanged
+		signal defaultButtonChanged
+		signal editableChanged
+		signal multiLineChanged
+		signal passwordEditChanged
+		signal pressedChanged
+		signal readOnlyChanged
+		signal searchEditChanged
+		signal selectableChanged
+		signal selectableTextChanged
+		signal selectedChanged
+		signal expandableChanged
+		signal expandedChanged
+		signal labelledByChanged
+		signal labelForChanged
+		signal pressAction
+		signal toggleAction
+		signal increaseAction
+		signal decreaseAction
+		signal scrollUpAction
+		signal scrollDownAction
+		signal scrollLeftAction
+		signal scrollRightAction
+		signal previousPageAction
+		signal nextPageAction
+		signal showOnScreenAction
+		method announce
+		method stripHtml
+		method setIgnored
+	type QtQuick.EasingCurve EasingCurve
+		is uncreatable
+		enum Type Linear=0 InQuad=1 OutQuad=2 InOutQuad=3 OutInQuad=4 InCubic=5 OutCubic=6 InOutCubic=7 OutInCubic=8 InQuart=9 OutQuart=10 InOutQuart=11 OutInQuart=12 InQuint=13 OutQuint=14 InOutQuint=15 OutInQuint=16 InSine=17 OutSine=18 InOutSine=19 OutInSine=20 InExpo=21 OutExpo=22 InOutExpo=23 OutInExpo=24 InCirc=25 OutCirc=26 InOutCirc=27 OutInCirc=28 InElastic=29 OutElastic=30 InOutElastic=31 OutInElastic=32 InBack=33 OutBack=34 InOutBack=35 OutInBack=36 InBounce=37 OutBounce=38 InOutBounce=39 OutInBounce=40 InCurve=41 OutCurve=42 SineCurve=43 CosineCurve=44 BezierSpline=45
+		prop type Type
+		prop amplitude QtQml.real named
+		prop overshoot QtQml.real named
+		prop period QtQml.real named
+		prop bezierCurve QtQml.var named list
+		signal typeChanged
+		signal amplitudeChanged
+		signal overshootChanged
+		signal periodChanged
+		signal bezierCurveChanged
+	type QtQuick.AnchorChangesAnchors AnchorChangesAnchors
+		is uncreatable
+		prop left QtQml.var named reset
+		prop right QtQml.var named reset
+		prop top QtQml.var named reset
+		prop bottom QtQml.var named reset
+		prop horizontalCenter QtQml.var named reset
+		prop verticalCenter QtQml.var named reset
+		prop baseline QtQml.var named reset
+		signal leftChanged
+		signal rightChanged
+		signal topChanged
+		signal bottomChanged
+		signal horizontalCenterChanged
+		signal verticalCenterChanged
+		signal baselineChanged
+	type QtQuick.BehaviorTarget BehaviorTarget
+		is uncreatable
+		prop name QtQml.string named readonly
+		prop object QtQml.QtObject named pointer readonly
+		signal nameChanged
+		signal objectChanged
+	type QtQuick.ImageBase ImageBase
+		prototype QtQuick.Item named
+		is uncreatable
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		prop source QtQml.url named
+		prop status Status readonly
+		prop progress QtQml.real named readonly
+		prop asynchronous QtQml.bool named
+		prop cache QtQml.bool named
+		prop sourceSize QtQml.size named reset
+		prop mirror QtQml.bool named
+		prop smooth QtQml.bool named
+		signal sourceChanged
+		signal statusChanged
+		signal progressChanged
+		signal asynchronousChanged
+		signal cacheChanged
+		signal sourceSizeChanged
+		signal mirrorChanged
+		signal smoothChanged
+	type QtQuick.BorderImageBorder BorderImageBorder
+		is uncreatable
+		prop left QtQml.int named
+		prop top QtQml.int named
+		prop right QtQml.int named
+		prop bottom QtQml.int named
+		signal leftChanged
+		signal topChanged
+		signal rightChanged
+		signal bottomChanged
+	type QtQuick.FlickableVisibleArea FlickableVisibleArea
+		is uncreatable
+		prop xPosition QtQml.real named readonly
+		prop yPosition QtQml.real named readonly
+		prop widthRatio QtQml.real named readonly
+		prop heightRatio QtQml.real named readonly
+		signal xPositionChanged
+		signal yPositionChanged
+		signal widthRatioChanged
+		signal heightRatioChanged
+	type QtQuick.ItemView ItemView
+		prototype QtQuick.Flickable named
+		is uncreatable
+		enum PositionMode Beginning=0 Center=1 End=2 Visible=3 Contain=4 SnapPosition=5
+		enum VerticalLayoutDirection TopToBottom=2 BottomToTop=3
+		enum HighlightRangeMode NoHighlightRange=0 ApplyRange=1 StrictlyEnforceRange=2
+		prop model QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop count QtQml.int named readonly
+		prop currentIndex QtQml.int named
+		prop currentItem QtQml.QtObject named pointer readonly
+		prop keyNavigationWraps QtQml.bool named
+		prop keyNavigationEnabled QtQml.bool named
+		prop cacheBuffer QtQml.int named
+		prop displayMarginBeginning QtQml.int named
+		prop displayMarginEnd QtQml.int named
+		prop layoutDirection Qt::LayoutDirection
+		prop effectiveLayoutDirection Qt::LayoutDirection readonly
+		prop verticalLayoutDirection VerticalLayoutDirection
+		prop header QtQml.Component named pointer
+		prop headerItem QtQml.QtObject named pointer readonly
+		prop footer QtQml.Component named pointer
+		prop footerItem QtQml.QtObject named pointer readonly
+		prop populate QtQml.QtObject named pointer
+		prop add QtQml.QtObject named pointer
+		prop addDisplaced QtQml.QtObject named pointer
+		prop move QtQml.QtObject named pointer
+		prop moveDisplaced QtQml.QtObject named pointer
+		prop remove QtQml.QtObject named pointer
+		prop removeDisplaced QtQml.QtObject named pointer
+		prop displaced QtQml.QtObject named pointer
+		prop highlight QtQml.Component named pointer
+		prop highlightItem QtQml.QtObject named pointer readonly
+		prop highlightFollowsCurrentItem QtQml.bool named
+		prop highlightRangeMode HighlightRangeMode
+		prop preferredHighlightBegin QtQml.real named reset
+		prop preferredHighlightEnd QtQml.real named reset
+		prop highlightMoveDuration QtQml.int named
+		prop reuseItems QtQml.bool named
+		signal modelChanged
+		signal delegateChanged
+		signal countChanged
+		signal currentIndexChanged
+		signal currentItemChanged
+		signal keyNavigationWrapsChanged
+		signal keyNavigationEnabledChanged
+		signal cacheBufferChanged
+		signal displayMarginBeginningChanged
+		signal displayMarginEndChanged
+		signal layoutDirectionChanged
+		signal effectiveLayoutDirectionChanged
+		signal verticalLayoutDirectionChanged
+		signal headerChanged
+		signal headerItemChanged
+		signal footerChanged
+		signal footerItemChanged
+		signal populateChanged
+		signal addChanged
+		signal addDisplacedChanged
+		signal moveChanged
+		signal moveDisplacedChanged
+		signal removeChanged
+		signal removeDisplacedChanged
+		signal displacedChanged
+		signal highlightChanged
+		signal highlightItemChanged
+		signal highlightFollowsCurrentItemChanged
+		signal highlightRangeModeChanged
+		signal preferredHighlightBeginChanged
+		signal preferredHighlightEndChanged
+		signal highlightMoveDurationChanged
+		signal reuseItemsChanged
+		method positionViewAtIndex
+		method positionViewAtBeginning
+		method positionViewAtEnd
+		method indexAt
+		method itemAt
+		method itemAtIndex
+		method forceLayout
+	type QtQuick.ItemViewAttached ItemViewAttached
+		is uncreatable
+		prop view QtQml.QtObject named pointer readonly
+		prop isCurrentItem QtQml.bool named readonly
+		prop section QtQml.string named readonly
+		prop previousSection QtQml.string named readonly
+		prop nextSection QtQml.string named readonly
+		prop delayRemove QtQml.bool named
+		signal viewChanged
+		signal isCurrentItemChanged
+		signal sectionChanged
+		signal previousSectionChanged
+		signal nextSectionChanged
+		signal delayRemoveChanged
+		signal add
+		signal remove
+		signal pooled
+		signal reused
+	type QtQuick.Anchors Anchors
+		is uncreatable
+		prop left QtQml.var named reset
+		prop right QtQml.var named reset
+		prop top QtQml.var named reset
+		prop bottom QtQml.var named reset
+		prop horizontalCenter QtQml.var named reset
+		prop verticalCenter QtQml.var named reset
+		prop baseline QtQml.var named reset
+		prop fill QtQml.QtObject named pointer reset
+		prop centerIn QtQml.QtObject named pointer reset
+		prop margins QtQml.real named
+		prop leftMargin QtQml.real named reset
+		prop rightMargin QtQml.real named reset
+		prop topMargin QtQml.real named reset
+		prop bottomMargin QtQml.real named reset
+		prop horizontalCenterOffset QtQml.real named
+		prop verticalCenterOffset QtQml.real named
+		prop baselineOffset QtQml.real named
+		prop alignWhenCentered QtQml.bool named
+		signal leftChanged
+		signal rightChanged
+		signal topChanged
+		signal bottomChanged
+		signal horizontalCenterChanged
+		signal verticalCenterChanged
+		signal baselineChanged
+		signal fillChanged
+		signal centerInChanged
+		signal marginsChanged
+		signal leftMarginChanged
+		signal rightMarginChanged
+		signal topMarginChanged
+		signal bottomMarginChanged
+		signal horizontalCenterOffsetChanged
+		signal verticalCenterOffsetChanged
+		signal baselineOffsetChanged
+		signal alignWhenCenteredChanged
+	type QtQuick.KeyNavigationAttached KeyNavigationAttached
+		is uncreatable
+		enum Priority BeforeItem=0 AfterItem=1
+		prop left QtQml.QtObject named pointer
+		prop right QtQml.QtObject named pointer
+		prop up QtQml.QtObject named pointer
+		prop down QtQml.QtObject named pointer
+		prop tab QtQml.QtObject named pointer
+		prop backtab QtQml.QtObject named pointer
+		prop priority Priority
+		signal leftChanged
+		signal rightChanged
+		signal upChanged
+		signal downChanged
+		signal tabChanged
+		signal backtabChanged
+		signal priorityChanged
+	type QtQuick.KeysAttached KeysAttached
+		is uncreatable
+		enum Priority BeforeItem=0 AfterItem=1
+		prop enabled QtQml.bool named
+		prop forwardTo QtQml.var named list
+		prop priority Priority
+		signal enabledChanged
+		signal forwardToChanged
+		signal priorityChanged
+		signal pressed event
+		signal released event
+		signal shortcutOverride event
+		signal asteriskPressed event
+		signal backPressed event
+		signal backtabPressed event
+		signal callPressed event
+		signal cancelPressed event
+		signal context1Pressed event
+		signal context2Pressed event
+		signal context3Pressed event
+		signal context4Pressed event
+		signal deletePressed event
+		signal digit0Pressed event
+		signal digit1Pressed event
+		signal digit2Pressed event
+		signal digit3Pressed event
+		signal digit4Pressed event
+		signal digit5Pressed event
+		signal digit6Pressed event
+		signal digit7Pressed event
+		signal digit8Pressed event
+		signal digit9Pressed event
+		signal downPressed event
+		signal enterPressed event
+		signal escapePressed event
+		signal flipPressed event
+		signal hangupPressed event
+		signal leftPressed event
+		signal menuPressed event
+		signal noPressed event
+		signal returnPressed event
+		signal rightPressed event
+		signal selectPressed event
+		signal spacePressed event
+		signal tabPressed event
+		signal upPressed event
+		signal volumeDownPressed event
+		signal volumeUpPressed event
+		signal yesPressed event
+	type QtQuick.LayoutMirroringAttached LayoutMirroringAttached
+		is uncreatable
+		prop enabled QtQml.bool named reset
+		prop childrenInherit QtQml.bool named
+		signal enabledChanged
+		signal childrenInheritChanged
+	type QtQuick.PathCurveElement PathCurveElement
+		prototype QtQuick.PathElement
+		is uncreatable
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop relativeX QtQml.real named
+		prop relativeY QtQml.real named
+		signal xChanged
+		signal yChanged
+		signal relativeXChanged
+		signal relativeYChanged
+	type QtQuick.PositionerAttached PositionerAttached
+		is uncreatable
+		prop index QtQml.int named readonly
+		prop isFirstItem QtQml.bool named readonly
+		prop isLastItem QtQml.bool named readonly
+		signal indexChanged
+		signal isFirstItemChanged
+		signal isLastItemChanged
+	type QtQuick.RectangleBorder RectangleBorder
+		is uncreatable
+		prop width QtQml.real named
+		prop color QtQuick.color named
+		signal widthChanged
+		signal colorChanged
+	type QtQuick.HandlerPoint HandlerPoint
+		is uncreatable
+		prop position QtQml.point named readonly
+		prop scenePosition QtQml.point named readonly
+		prop pressPosition QtQml.point named readonly
+		prop scenePressPosition QtQml.point named readonly
+		prop pressedButtons Qt::MouseButtons readonly
+		prop id QtQml.int named readonly
+		signal positionChanged
+		signal scenePositionChanged
+		signal pressPositionChanged
+		signal scenePressPositionChanged
+		signal pressedButtonsChanged
+		signal idChanged
+	type QtQuick.TextEditorBase TextEditorBase
+		prototype QtQuick.Item named
+		is uncreatable
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
+		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
+		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 WrapAtWordBoundaryOrAnywhere=4 Wrap=4
+		enum EchoMode Normal=0 NoEcho=1 Password=2 PasswordEchoOnEdit=3
+		enum SelectionMode SelectCharacters=0 SelectWords=1
+		enum CursorPosition CursorBetweenCharacters=0 CursorOnCharacter=1
+		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3
+		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
+		prop text QtQml.string named
+		prop color QtQuick.color named
+		prop font QtQuick.font named
+		prop selectionColor QtQuick.color named
+		prop selectedTextColor QtQuick.color named
+		prop cursorPosition QtQml.int named
+		prop selectionStart QtQml.int named readonly
+		prop selectionEnd QtQml.int named readonly
+		prop selectedText QtQml.string named readonly
+		prop length QtQml.int named readonly
+		prop readOnly QtQml.bool named
+		prop cursorVisible QtQml.bool named
+		prop cursorDelegate QtQml.Component named pointer
+		prop cursorRectangle QtQml.rect named readonly
+		prop horizontalAlignment HAlignment reset
+		prop effectiveHorizontalAlignment HAlignment readonly
+		prop verticalAlignment VAlignment
+		prop wrapMode WrapMode
+		prop contentWidth QtQml.real named readonly
+		prop contentHeight QtQml.real named readonly
+		prop canUndo QtQml.bool named readonly
+		prop canRedo QtQml.bool named readonly
+		prop canPaste QtQml.bool named readonly
+		prop selectByMouse QtQml.bool named
+		prop mouseSelectionMode SelectionMode
+		prop persistentSelection QtQml.bool named
+		prop inputMethodHints Qt::InputMethodHints
+		prop inputMethodComposing QtQml.bool named readonly
+		prop preeditText QtQml.string named readonly
+		prop overwriteMode QtQml.bool named
+		prop activeFocusOnPress QtQml.bool named
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop renderType RenderType
+		signal textChanged
+		signal colorChanged
+		signal fontChanged
+		signal selectionColorChanged
+		signal selectedTextColorChanged
+		signal cursorPositionChanged
+		signal selectionStartChanged
+		signal selectionEndChanged
+		signal selectedTextChanged
+		signal lengthChanged
+		signal readOnlyChanged
+		signal cursorVisibleChanged
+		signal cursorDelegateChanged
+		signal cursorRectangleChanged
+		signal horizontalAlignmentChanged
+		signal effectiveHorizontalAlignmentChanged
+		signal verticalAlignmentChanged
+		signal wrapModeChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		signal canUndoChanged
+		signal canRedoChanged
+		signal canPasteChanged
+		signal selectByMouseChanged
+		signal mouseSelectionModeChanged
+		signal persistentSelectionChanged
+		signal inputMethodHintsChanged
+		signal inputMethodComposingChanged
+		signal preeditTextChanged
+		signal overwriteModeChanged
+		signal activeFocusOnPressChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal topPaddingChanged
+		signal rightPaddingChanged
+		signal bottomPaddingChanged
+		signal renderTypeChanged
+		signal editingFinished
+		method select
+		method selectAll
+		method selectWord
+		method deselect
+		method insert
+		method cut
+		method copy
+		method paste
+		method undo
+		method redo
+		method clear
+		method getText
+		method moveCursorSelection
+		method positionAt
+		method positionToRectangle
+		method isRightToLeft
+	type QtQuick.WindowAttached WindowAttached
+		is uncreatable
+		prop activeFocusItem QtQml.QtObject named pointer readonly
+		prop active QtQml.bool named readonly
+		signal activeFocusItemChanged
+		signal activeChanged
+	type QtQuick.Palette Palette
+		is uncreatable
+		prop accent QtQuick.color named reset
+		prop alternateBase QtQuick.color named reset
+		prop base QtQuick.color named reset
+		prop brightText QtQuick.color named reset
+		prop button QtQuick.color named reset
+		prop buttonText QtQuick.color named reset
+		prop dark QtQuick.color named reset
+		prop highlight QtQuick.color named reset
+		prop highlightedText QtQuick.color named reset
+		prop light QtQuick.color named reset
+		prop link QtQuick.color named reset
+		prop linkVisited QtQuick.color named reset
+		prop mid QtQuick.color named reset
+		prop midlight QtQuick.color named reset
+		prop placeholderText QtQuick.color named reset
+		prop shadow QtQuick.color named reset
+		prop text QtQuick.color named reset
+		prop toolTipBase QtQuick.color named reset
+		prop toolTipText QtQuick.color named reset
+		prop window QtQuick.color named reset
+		prop windowText QtQuick.color named reset
+		signal accentChanged
+		signal alternateBaseChanged
+		signal baseChanged
+		signal brightTextChanged
+		signal buttonChanged
+		signal buttonTextChanged
+		signal darkChanged
+		signal highlightChanged
+		signal highlightedTextChanged
+		signal lightChanged
+		signal linkChanged
+		signal linkVisitedChanged
+		signal midChanged
+		signal midlightChanged
+		signal placeholderTextChanged
+		signal shadowChanged
+		signal textChanged
+		signal toolTipBaseChanged
+		signal toolTipTextChanged
+		signal windowChanged
+		signal windowTextChanged
+	type QtQuick.PathElement PathElement
+		prototype QtQml.QtObject named
+		is uncreatable
+
+module QtQuick.Controls
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	Button QtQuick/Controls/Basic/Button.qml
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	CheckBox QtQuick/Controls/Basic/CheckBox.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Control QtQuick/Controls/Basic/Control.qml
+	Dialog QtQuick/Controls/Basic/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label QtQuick/Controls/Basic/Label.qml
+	Menu QtQuick/Controls/Basic/Menu.qml
+	MenuBar QtQuick/Controls/Basic/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Basic/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick/Controls/Basic/Page.qml
+	Pane QtQuick/Controls/Basic/Pane.qml
+	Popup QtQuick/Controls/Basic/Popup.qml
+	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	Switch QtQuick/Controls/Basic/Switch.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Basic/TextField.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+
+module QtQuick.Controls.Basic
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	Button QtQuick/Controls/Basic/Button.qml
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	CheckBox QtQuick/Controls/Basic/CheckBox.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Control QtQuick/Controls/Basic/Control.qml
+	Dialog QtQuick/Controls/Basic/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label QtQuick/Controls/Basic/Label.qml
+	Menu QtQuick/Controls/Basic/Menu.qml
+	MenuBar QtQuick/Controls/Basic/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Basic/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick/Controls/Basic/Page.qml
+	Pane QtQuick/Controls/Basic/Pane.qml
+	Popup QtQuick/Controls/Basic/Popup.qml
+	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	Switch QtQuick/Controls/Basic/Switch.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Basic/TextField.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	type QtQuick/Controls/Basic/ApplicationWindow.qml ApplicationWindow
+		prototype QtQuick.Templates.ApplicationWindow named
+	type QtQuick/Controls/Basic/Button.qml Button
+		prototype QtQuick.Templates.Button named
+	type QtQuick/Controls/Basic/CheckBox.qml CheckBox
+		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Basic/ComboBox.qml ComboBox
+		prototype QtQuick.Templates.ComboBox named
+	type QtQuick/Controls/Basic/Control.qml Control
+		prototype QtQuick.Templates.Control named
+	type QtQuick/Controls/Basic/Dialog.qml Dialog
+		prototype QtQuick.Templates.Dialog named
+	type QtQuick/Controls/Basic/DialogButtonBox.qml DialogButtonBox
+		prototype QtQuick.Templates.DialogButtonBox named
+	type QtQuick/Controls/Basic/Frame.qml Frame
+		prototype QtQuick.Templates.Frame named
+	type QtQuick/Controls/Basic/GroupBox.qml GroupBox
+		prototype QtQuick.Templates.GroupBox named
+	type QtQuick/Controls/Basic/ItemDelegate.qml ItemDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+	type QtQuick/Controls/Basic/Label.qml Label
+		prototype QtQuick.Templates.Label named
+	type QtQuick/Controls/Basic/Menu.qml Menu
+		prototype QtQuick.Templates.Menu named
+	type QtQuick/Controls/Basic/MenuBar.qml MenuBar
+		prototype QtQuick.Templates.MenuBar named
+	type QtQuick/Controls/Basic/MenuBarItem.qml MenuBarItem
+		prototype QtQuick.Templates.MenuBarItem named
+	type QtQuick/Controls/Basic/MenuItem.qml MenuItem
+		prototype QtQuick.Templates.MenuItem named
+	type QtQuick/Controls/Basic/MenuSeparator.qml MenuSeparator
+		prototype QtQuick.Templates.MenuSeparator named
+	type QtQuick/Controls/Basic/Page.qml Page
+		prototype QtQuick.Templates.Page named
+	type QtQuick/Controls/Basic/Pane.qml Pane
+		prototype QtQuick.Templates.Pane named
+	type QtQuick/Controls/Basic/Popup.qml Popup
+		prototype QtQuick.Templates.Popup named
+	type QtQuick/Controls/Basic/RadioButton.qml RadioButton
+		prototype QtQuick.Templates.RadioButton named
+	type QtQuick/Controls/Basic/ScrollBar.qml ScrollBar
+		prototype QtQuick.Templates.ScrollBar named
+	type QtQuick/Controls/Basic/ScrollIndicator.qml ScrollIndicator
+		prototype QtQuick.Templates.ScrollIndicator named
+	type QtQuick/Controls/Basic/ScrollView.qml ScrollView
+		prototype QtQuick.Templates.ScrollView named
+	type QtQuick/Controls/Basic/SpinBox.qml SpinBox
+		prototype QtQuick.Templates.SpinBox named
+	type QtQuick/Controls/Basic/Switch.qml Switch
+		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Basic/TextArea.qml TextArea
+		prototype QtQuick.Templates.TextArea named
+	type QtQuick/Controls/Basic/TextField.qml TextField
+		prototype QtQuick.Templates.TextField named
+	type QtQuick/Controls/Basic/ToolBar.qml ToolBar
+		prototype QtQuick.Templates.ToolBar named
+	type QtQuick/Controls/Basic/ToolButton.qml ToolButton
+		prototype QtQuick.Templates.ToolButton named
+	type QtQuick/Controls/Basic/ToolTip.qml ToolTip
+		prototype QtQuick.Templates.ToolTip named
+
+module QtQuick.Controls.impl
+	IconImage QtQuick.Controls.impl.IconImage
+	IconLabel QtQuick.Controls.impl.IconLabel
+	type QtQuick.Controls.impl.IconImage IconImage
+		prototype QtQuick.Image named
+		prop name QtQml.string named
+		prop color QtQuick.color named
+		signal nameChanged
+		signal colorChanged
+	type QtQuick.Controls.impl.IconLabel IconLabel
+		prototype QtQuick.Item named
+		enum Display IconOnly=0 TextOnly=1 TextBesideIcon=2 TextUnderIcon=3
+		prop icon QtQuick.Controls.impl.ButtonIcon pointer readonly
+		prop text QtQml.string named
+		prop font QtQuick.font named
+		prop color QtQuick.color named
+		prop display Display
+		prop spacing QtQml.real named
+		prop mirrored QtQml.bool named
+		prop alignment Qt::Alignment
+		prop topPadding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop defaultIconColor QtQuick.color named
+		signal textChanged
+		signal fontChanged
+		signal colorChanged
+		signal displayChanged
+		signal spacingChanged
+		signal mirroredChanged
+		signal alignmentChanged
+		signal topPaddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal bottomPaddingChanged
+		signal defaultIconColorChanged
+	type QtQuick.Controls.impl.ButtonIcon ButtonIcon
+		is uncreatable
+		prop name QtQml.string named
+		prop source QtQml.url named
+		prop width QtQml.int named
+		prop height QtQml.int named
+		prop color QtQuick.color named
+		prop cache QtQml.bool named
+		signal nameChanged
+		signal sourceChanged
+		signal widthChanged
+		signal heightChanged
+		signal colorChanged
+		signal cacheChanged
+
+module QtQuick.Layouts
+	ColumnLayout QtQuick.Layouts.ColumnLayout
+	GridLayout QtQuick.Layouts.GridLayout
+	Layout QtQuick.Layouts.Layout
+	RowLayout QtQuick.Layouts.RowLayout
+	StackLayout QtQuick.Layouts.StackLayout
+	type QtQuick.Layouts.ColumnLayout ColumnLayout
+		prototype QtQuick.Layouts.Layout named
+		prop spacing QtQml.real named
+		prop layoutDirection Qt::LayoutDirection
+		prop uniformCellSizes QtQml.bool named
+		signal spacingChanged
+		signal layoutDirectionChanged
+		signal uniformCellSizesChanged
+	type QtQuick.Layouts.GridLayout GridLayout
+		prototype QtQuick.Layouts.Layout named
+		enum Flow LeftToRight=0 TopToBottom=1
+		prop rowSpacing QtQml.real named
+		prop columnSpacing QtQml.real named
+		prop rows QtQml.int named
+		prop columns QtQml.int named
+		prop flow Flow
+		prop layoutDirection Qt::LayoutDirection
+		prop uniformCellWidths QtQml.bool named
+		prop uniformCellHeights QtQml.bool named
+		signal rowSpacingChanged
+		signal columnSpacingChanged
+		signal rowsChanged
+		signal columnsChanged
+		signal flowChanged
+		signal layoutDirectionChanged
+		signal uniformCellWidthsChanged
+		signal uniformCellHeightsChanged
+	type QtQuick.Layouts.Layout Layout
+		prototype QtQuick.Item named
+		attached QtQuick.Layouts.LayoutAttached
+		is uncreatable
+	type QtQuick.Layouts.RowLayout RowLayout
+		prototype QtQuick.Layouts.Layout named
+		prop spacing QtQml.real named
+		prop layoutDirection Qt::LayoutDirection
+		prop uniformCellSizes QtQml.bool named
+		signal spacingChanged
+		signal layoutDirectionChanged
+		signal uniformCellSizesChanged
+	type QtQuick.Layouts.StackLayout StackLayout
+		prototype QtQuick.Layouts.Layout named
+		prop currentIndex QtQml.int named
+		prop count QtQml.int named readonly
+		signal currentIndexChanged
+		signal countChanged
+	type QtQuick.Layouts.LayoutAttached LayoutAttached
+		is uncreatable
+		prop fillWidth QtQml.bool named
+		prop fillHeight QtQml.bool named
+		prop preferredWidth QtQml.real named
+		prop preferredHeight QtQml.real named
+		prop minimumWidth QtQml.real named
+		prop minimumHeight QtQml.real named
+		prop maximumWidth QtQml.real named
+		prop maximumHeight QtQml.real named
+		prop alignment Qt::Alignment
+		prop row QtQml.int named
+		prop column QtQml.int named
+		prop rowSpan QtQml.int named
+		prop columnSpan QtQml.int named
+		prop margins QtQml.real named
+		prop leftMargin QtQml.real named reset
+		prop topMargin QtQml.real named reset
+		prop rightMargin QtQml.real named reset
+		prop bottomMargin QtQml.real named reset
+		prop horizontalStretchFactor QtQml.int named
+		prop verticalStretchFactor QtQml.int named
+		signal fillWidthChanged
+		signal fillHeightChanged
+		signal preferredWidthChanged
+		signal preferredHeightChanged
+		signal minimumWidthChanged
+		signal minimumHeightChanged
+		signal maximumWidthChanged
+		signal maximumHeightChanged
+		signal alignmentChanged
+		signal rowChanged
+		signal columnChanged
+		signal rowSpanChanged
+		signal columnSpanChanged
+		signal marginsChanged
+		signal leftMarginChanged
+		signal topMarginChanged
+		signal rightMarginChanged
+		signal bottomMarginChanged
+		signal horizontalStretchFactorChanged
+		signal verticalStretchFactorChanged
+
+module QtQuick.Shapes
+	ConicalGradient QtQuick.Shapes.ConicalGradient
+	LinearGradient QtQuick.Shapes.LinearGradient
+	RadialGradient QtQuick.Shapes.RadialGradient
+	Shape QtQuick.Shapes.Shape
+	ShapeGradient QtQuick.Shapes.ShapeGradient
+	ShapePath QtQuick.Shapes.ShapePath
+	type QtQuick.Shapes.ConicalGradient ConicalGradient
+		prototype QtQuick.Shapes.ShapeGradient named
+		prop centerX QtQml.real named
+		prop centerY QtQml.real named
+		prop angle QtQml.real named
+		signal centerXChanged
+		signal centerYChanged
+		signal angleChanged
+	type QtQuick.Shapes.LinearGradient LinearGradient
+		prototype QtQuick.Shapes.ShapeGradient named
+		prop x1 QtQml.real named
+		prop y1 QtQml.real named
+		prop x2 QtQml.real named
+		prop y2 QtQml.real named
+		signal x1Changed
+		signal y1Changed
+		signal x2Changed
+		signal y2Changed
+	type QtQuick.Shapes.RadialGradient RadialGradient
+		prototype QtQuick.Shapes.ShapeGradient named
+		prop centerX QtQml.real named
+		prop centerY QtQml.real named
+		prop centerRadius QtQml.real named
+		prop focalX QtQml.real named
+		prop focalY QtQml.real named
+		prop focalRadius QtQml.real named
+		signal centerXChanged
+		signal centerYChanged
+		signal centerRadiusChanged
+		signal focalXChanged
+		signal focalYChanged
+		signal focalRadiusChanged
+	type QtQuick.Shapes.Shape Shape
+		prototype QtQuick.Item named
+		enum RendererType UnknownRenderer=0 GeometryRenderer=1 NvprRenderer=2 SoftwareRenderer=3 CurveRenderer=4
+		enum Status Null=0 Ready=1 Processing=2
+		enum ContainsMode BoundingRectContains=0 FillContains=1
+		prop rendererType RendererType readonly
+		prop asynchronous QtQml.bool named
+		prop vendorExtensionsEnabled QtQml.bool named
+		prop preferredRendererType RendererType
+		prop status Status readonly
+		prop containsMode ContainsMode
+		prop boundingRect QtQml.rect named readonly
+		signal rendererTypeChanged
+		signal asynchronousChanged
+		signal vendorExtensionsEnabledChanged
+		signal preferredRendererTypeChanged
+		signal statusChanged
+		signal containsModeChanged
+		signal boundingRectChanged
+		method contains
+	type QtQuick.Shapes.ShapeGradient ShapeGradient
+		prototype QtQuick.Gradient named
+		is uncreatable
+		enum SpreadMode PadSpread=0 ReflectSpread=1 RepeatSpread=2
+		prop spread SpreadMode
+		signal spreadChanged
+	type QtQuick.Shapes.ShapePath ShapePath
+		prototype QtQuick.Path named
+		enum FillRule OddEvenFill=0 WindingFill=1
+		enum JoinStyle MiterJoin=0 BevelJoin=64 RoundJoin=128
+		enum CapStyle FlatCap=0 SquareCap=16 RoundCap=32
+		enum StrokeStyle SolidLine=1 DashLine=2
+		prop strokeColor QtQuick.color named
+		prop strokeWidth QtQml.real named
+		prop fillColor QtQuick.color named
+		prop fillRule FillRule
+		prop joinStyle JoinStyle
+		prop miterLimit QtQml.int named
+		prop capStyle CapStyle
+		prop strokeStyle StrokeStyle
+		prop dashOffset QtQml.real named
+		prop dashPattern QtQml.var named list
+		prop fillGradient QtQml.QtObject named pointer reset
+		signal strokeColorChanged
+		signal strokeWidthChanged
+		signal fillColorChanged
+		signal fillRuleChanged
+		signal joinStyleChanged
+		signal miterLimitChanged
+		signal capStyleChanged
+		signal strokeStyleChanged
+		signal dashOffsetChanged
+		signal dashPatternChanged
+		signal fillGradientChanged
+
+module QtQuick.Templates
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ApplicationWindow QtQuick.Templates.ApplicationWindow
+	Button QtQuick.Templates.Button
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	CheckBox QtQuick.Templates.CheckBox
+	ComboBox QtQuick.Templates.ComboBox
+	Control QtQuick.Templates.Control
+	Dialog QtQuick.Templates.Dialog
+	DialogButtonBox QtQuick.Templates.DialogButtonBox
+	Frame QtQuick.Templates.Frame
+	GroupBox QtQuick.Templates.GroupBox
+	ItemDelegate QtQuick.Templates.ItemDelegate
+	Label QtQuick.Templates.Label
+	Menu QtQuick.Templates.Menu
+	MenuBar QtQuick.Templates.MenuBar
+	MenuBarItem QtQuick.Templates.MenuBarItem
+	MenuItem QtQuick.Templates.MenuItem
+	MenuSeparator QtQuick.Templates.MenuSeparator
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick.Templates.Page
+	Pane QtQuick.Templates.Pane
+	Popup QtQuick.Templates.Popup
+	RadioButton QtQuick.Templates.RadioButton
+	ScrollBar QtQuick.Templates.ScrollBar
+	ScrollIndicator QtQuick.Templates.ScrollIndicator
+	ScrollView QtQuick.Templates.ScrollView
+	SpinBox QtQuick.Templates.SpinBox
+	Switch QtQuick.Templates.Switch
+	TextArea QtQuick.Templates.TextArea
+	TextField QtQuick.Templates.TextField
+	ToolBar QtQuick.Templates.ToolBar
+	ToolButton QtQuick.Templates.ToolButton
+	ToolTip QtQuick.Templates.ToolTip
+	type QtQuick.Templates.AbstractButton AbstractButton
+		prototype QtQuick.Templates.Control named
+		enum Display IconOnly=0 TextOnly=1 TextBesideIcon=2 TextUnderIcon=3
+		prop text QtQml.string named
+		prop display Display
+		prop down QtQml.bool named
+		prop pressed QtQml.bool named readonly
+		prop checked QtQml.bool named
+		prop checkable QtQml.bool named
+		prop autoExclusive QtQml.bool named
+		prop autoRepeat QtQml.bool named
+		prop autoRepeatDelay QtQml.int named
+		prop autoRepeatInterval QtQml.int named
+		prop indicator QtQml.QtObject named pointer
+		prop icon QtQuick.Templates.ButtonIcon pointer readonly
+		prop action QtQml.QtObject named pointer
+		prop pressX QtQml.real named readonly
+		prop pressY QtQml.real named readonly
+		prop implicitIndicatorWidth QtQml.real named readonly
+		prop implicitIndicatorHeight QtQml.real named readonly
+		signal textChanged
+		signal displayChanged
+		signal downChanged
+		signal pressedChanged
+		signal checkedChanged
+		signal checkableChanged
+		signal autoExclusiveChanged
+		signal autoRepeatChanged
+		signal autoRepeatDelayChanged
+		signal autoRepeatIntervalChanged
+		signal indicatorChanged
+		signal actionChanged
+		signal pressXChanged
+		signal pressYChanged
+		signal implicitIndicatorWidthChanged
+		signal implicitIndicatorHeightChanged
+		signal pressed
+		signal released
+		signal canceled
+		signal clicked
+		signal toggled
+		signal doubleClicked
+		signal pressAndHold
+		method toggle
+		method click
+	type QtQuick.Templates.Action Action
+		prototype QtQml.QtObject named
+		prop text QtQml.string named
+		prop icon QtQuick.Templates.ButtonIcon pointer readonly
+		prop checkable QtQml.bool named
+		prop checked QtQml.bool named
+		prop enabled QtQml.bool named
+		prop shortcut QtQml.var named
+		signal textChanged
+		signal checkableChanged
+		signal checkedChanged
+		signal enabledChanged
+		signal shortcutChanged
+		signal triggered source
+		signal toggled source
+		method trigger
+		method toggle
+	type QtQuick.Templates.ApplicationWindow ApplicationWindow
+		prototype QtQuick.Window named
+		default contentData
+		prop font QtQuick.font named reset
+		prop locale QtQml.var named reset
+		prop background QtQml.QtObject named pointer
+		prop header QtQml.QtObject named pointer
+		prop footer QtQml.QtObject named pointer
+		prop menuBar QtQml.QtObject named pointer
+		prop contentData QtQml.var named list
+		prop contentChildren QtQml.var named list
+		signal fontChanged
+		signal localeChanged
+		signal backgroundChanged
+		signal headerChanged
+		signal footerChanged
+		signal menuBarChanged
+		signal contentDataChanged
+		signal contentChildrenChanged
+	type QtQuick.Templates.Button Button
+		prototype QtQuick.Templates.AbstractButton named
+		prop highlighted QtQml.bool named
+		prop flat QtQml.bool named
+		signal highlightedChanged
+		signal flatChanged
+	type QtQuick.Templates.ButtonGroup ButtonGroup
+		prototype QtQml.QtObject named
+		attached QtQuick.Templates.ButtonGroupAttached
+		prop buttons QtQml.var named list
+		prop checkedButton QtQml.QtObject named pointer
+		prop exclusive QtQml.bool named
+		prop checkState Qt::CheckState
+		signal buttonsChanged
+		signal checkedButtonChanged
+		signal exclusiveChanged
+		signal checkStateChanged
+		signal clicked button
+		method addButton
+		method removeButton
+	type QtQuick.Templates.CheckBox CheckBox
+		prototype QtQuick.Templates.AbstractButton named
+		prop tristate QtQml.bool named
+		prop checkState Qt::CheckState
+		prop nextCheckState QtQml.var named
+		signal tristateChanged
+		signal checkStateChanged
+		signal nextCheckStateChanged
+	type QtQuick.Templates.ComboBox ComboBox
+		prototype QtQuick.Templates.Control named
+		enum ImplicitContentWidthPolicy ContentItemImplicitWidth=0 WidestText=1 WidestTextWhenCompleted=2
+		prop count QtQml.int named readonly
+		prop model QtQml.var named
+		prop delegateModel QtQml.var named readonly
+		prop pressed QtQml.bool named readonly
+		prop highlightedIndex QtQml.int named readonly
+		prop currentIndex QtQml.int named
+		prop currentText QtQml.string named readonly
+		prop displayText QtQml.string named
+		prop textRole QtQml.string named
+		prop valueRole QtQml.string named
+		prop currentValue QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop indicator QtQml.QtObject named pointer
+		prop popup QtQml.QtObject named pointer
+		prop flat QtQml.bool named
+		prop down QtQml.bool named
+		prop editable QtQml.bool named
+		prop editText QtQml.string named
+		prop validator QtQml.QtObject named pointer
+		prop inputMethodHints Qt::InputMethodHints
+		prop inputMethodComposing QtQml.bool named readonly
+		prop acceptableInput QtQml.bool named readonly
+		prop selectTextByMouse QtQml.bool named
+		prop implicitIndicatorWidth QtQml.real named readonly
+		prop implicitIndicatorHeight QtQml.real named readonly
+		prop implicitContentWidthPolicy ImplicitContentWidthPolicy
+		signal countChanged
+		signal modelChanged
+		signal delegateModelChanged
+		signal pressedChanged
+		signal highlightedIndexChanged
+		signal currentIndexChanged
+		signal currentTextChanged
+		signal displayTextChanged
+		signal textRoleChanged
+		signal valueRoleChanged
+		signal currentValueChanged
+		signal delegateChanged
+		signal indicatorChanged
+		signal popupChanged
+		signal flatChanged
+		signal downChanged
+		signal editableChanged
+		signal editTextChanged
+		signal validatorChanged
+		signal inputMethodHintsChanged
+		signal inputMethodComposingChanged
+		signal acceptableInputChanged
+		signal selectTextByMouseChanged
+		signal implicitIndicatorWidthChanged
+		signal implicitIndicatorHeightChanged
+		signal implicitContentWidthPolicyChanged
+		signal activated index
+		signal highlighted index
+		signal accepted
+		method incrementCurrentIndex
+		method decrementCurrentIndex
+		method find
+		method indexOfValue
+		method selectAll
+		method textAt
+		method valueAt
+	type QtQuick.Templates.Control Control
+		prototype QtQuick.Item named
+		prop padding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop horizontalPadding QtQml.real named reset
+		prop verticalPadding QtQml.real named reset
+		prop topInset QtQml.real named reset
+		prop leftInset QtQml.real named reset
+		prop rightInset QtQml.real named reset
+		prop bottomInset QtQml.real named reset
+		prop spacing QtQml.real named reset
+		prop availableWidth QtQml.real named readonly
+		prop availableHeight QtQml.real named readonly
+		prop implicitBackgroundWidth QtQml.real named readonly
+		prop implicitBackgroundHeight QtQml.real named readonly
+		prop implicitContentWidth QtQml.real named readonly
+		prop implicitContentHeight QtQml.real named readonly
+		prop background QtQml.QtObject named pointer
+		prop contentItem QtQml.QtObject named pointer
+		prop hovered QtQml.bool named readonly
+		prop hoverEnabled QtQml.bool named reset
+		prop wheelEnabled QtQml.bool named
+		prop mirrored QtQml.bool named readonly
+		prop font QtQuick.font named reset
+		prop palette QtQuick.Templates.Palette pointer readonly
+		prop locale QtQml.var named reset
+		prop focusPolicy Qt::FocusPolicy
+		prop focusReason Qt::FocusReason readonly
+		prop visualFocus QtQml.bool named readonly
+		signal paddingChanged
+		signal topPaddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal bottomPaddingChanged
+		signal horizontalPaddingChanged
+		signal verticalPaddingChanged
+		signal topInsetChanged
+		signal leftInsetChanged
+		signal rightInsetChanged
+		signal bottomInsetChanged
+		signal spacingChanged
+		signal availableWidthChanged
+		signal availableHeightChanged
+		signal implicitBackgroundWidthChanged
+		signal implicitBackgroundHeightChanged
+		signal implicitContentWidthChanged
+		signal implicitContentHeightChanged
+		signal backgroundChanged
+		signal contentItemChanged
+		signal hoveredChanged
+		signal hoverEnabledChanged
+		signal wheelEnabledChanged
+		signal mirroredChanged
+		signal fontChanged
+		signal localeChanged
+		signal focusPolicyChanged
+		signal focusReasonChanged
+		signal visualFocusChanged
+	type QtQuick.Templates.Dialog Dialog
+		prototype QtQuick.Templates.Popup named
+		enum StandardCode Rejected=0 Accepted=1
+		flags StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728
+		prop title QtQml.string named
+		prop header QtQml.QtObject named pointer
+		prop footer QtQml.QtObject named pointer
+		prop standardButtons StandardButton
+		prop result QtQml.int named
+		prop implicitHeaderWidth QtQml.real named readonly
+		prop implicitHeaderHeight QtQml.real named readonly
+		prop implicitFooterWidth QtQml.real named readonly
+		prop implicitFooterHeight QtQml.real named readonly
+		signal titleChanged
+		signal headerChanged
+		signal footerChanged
+		signal standardButtonsChanged
+		signal resultChanged
+		signal implicitHeaderWidthChanged
+		signal implicitHeaderHeightChanged
+		signal implicitFooterWidthChanged
+		signal implicitFooterHeightChanged
+		signal accepted
+		signal rejected
+		signal applied
+		signal discarded
+		signal helpRequested
+		signal reset
+		method accept
+		method reject
+		method done
+		method standardButton
+	type QtQuick.Templates.DialogButtonBox DialogButtonBox
+		prototype QtQuick.Templates.Control named
+		attached QtQuick.Templates.DialogButtonBoxAttached
+		default contentData
+		enum Position Header=0 Footer=1
+		enum ButtonLayout WinLayout=0 MacLayout=1 KdeLayout=2 GnomeLayout=3 AndroidLayout=4
+		enum ButtonRole InvalidRole=-1 AcceptRole=0 RejectRole=1 DestructiveRole=2 ActionRole=3 HelpRole=4 YesRole=5 NoRole=6 ResetRole=7 ApplyRole=8
+		flags StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728
+		prop contentData QtQml.var named list
+		prop contentChildren QtQml.var named list
+		prop count QtQml.int named readonly
+		prop alignment Qt::Alignment
+		prop buttonLayout ButtonLayout
+		prop delegate QtQml.Component named pointer
+		prop position Position
+		prop standardButtons StandardButton
+		prop contentWidth QtQml.real named reset
+		prop contentHeight QtQml.real named reset
+		signal contentDataChanged
+		signal contentChildrenChanged
+		signal countChanged
+		signal alignmentChanged
+		signal buttonLayoutChanged
+		signal delegateChanged
+		signal positionChanged
+		signal standardButtonsChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		signal clicked button
+		signal accepted
+		signal rejected
+		signal applied
+		signal discarded
+		signal helpRequested
+		signal reset
+		method itemAt
+		method addItem
+		method insertItem
+		method removeItem
+		method takeItem
+		method standardButton
+	type QtQuick.Templates.Frame Frame
+		prototype QtQuick.Templates.Pane named
+	type QtQuick.Templates.GroupBox GroupBox
+		prototype QtQuick.Templates.Frame named
+		prop title QtQml.string named
+		prop label QtQml.QtObject named pointer
+		prop implicitLabelWidth QtQml.real named readonly
+		prop implicitLabelHeight QtQml.real named readonly
+		signal titleChanged
+		signal labelChanged
+		signal implicitLabelWidthChanged
+		signal implicitLabelHeightChanged
+	type QtQuick.Templates.ItemDelegate ItemDelegate
+		prototype QtQuick.Templates.AbstractButton named
+		prop highlighted QtQml.bool named
+		signal highlightedChanged
+	type QtQuick.Templates.Label Label
+		prototype QtQuick.Text named
+		prop background QtQml.QtObject named pointer
+		prop topInset QtQml.real named reset
+		prop leftInset QtQml.real named reset
+		prop rightInset QtQml.real named reset
+		prop bottomInset QtQml.real named reset
+		prop implicitBackgroundWidth QtQml.real named readonly
+		prop implicitBackgroundHeight QtQml.real named readonly
+		prop focusPolicy Qt::FocusPolicy
+		prop palette QtQuick.Templates.Palette pointer readonly
+		signal backgroundChanged
+		signal topInsetChanged
+		signal leftInsetChanged
+		signal rightInsetChanged
+		signal bottomInsetChanged
+		signal implicitBackgroundWidthChanged
+		signal implicitBackgroundHeightChanged
+		signal focusPolicyChanged
+	type QtQuick.Templates.Menu Menu
+		prototype QtQuick.Templates.Popup named
+		prop title QtQml.string named
+		prop count QtQml.int named readonly
+		prop cascade QtQml.bool named
+		prop overlap QtQml.real named
+		prop delegate QtQml.Component named pointer
+		prop currentIndex QtQml.int named
+		prop icon QtQuick.Templates.ButtonIcon pointer readonly
+		prop contentModel QtQml.var named readonly
+		signal titleChanged
+		signal countChanged
+		signal cascadeChanged
+		signal overlapChanged
+		signal delegateChanged
+		signal currentIndexChanged
+		signal contentModelChanged
+		method itemAt
+		method addItem
+		method insertItem
+		method moveItem
+		method removeItem
+		method takeItem
+		method menuAt
+		method addMenu
+		method insertMenu
+		method removeMenu
+		method takeMenu
+		method actionAt
+		method addAction
+		method insertAction
+		method removeAction
+		method takeAction
+		method popup
+		method dismiss
+	type QtQuick.Templates.MenuBar MenuBar
+		prototype QtQuick.Templates.Control named
+		default contentData
+		prop contentData QtQml.var named list
+		prop contentChildren QtQml.var named list
+		prop count QtQml.int named readonly
+		prop delegate QtQml.Component named pointer
+		prop menus QtQml.var named list
+		prop contentWidth QtQml.real named reset
+		prop contentHeight QtQml.real named reset
+		signal contentDataChanged
+		signal contentChildrenChanged
+		signal countChanged
+		signal delegateChanged
+		signal menusChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		method itemAt
+		method addItem
+		method insertItem
+		method removeItem
+		method takeItem
+		method menuAt
+		method addMenu
+		method insertMenu
+		method removeMenu
+		method takeMenu
+	type QtQuick.Templates.MenuBarItem MenuBarItem
+		prototype QtQuick.Templates.AbstractButton named
+		prop menuBar QtQml.QtObject named pointer readonly
+		prop menu QtQml.QtObject named pointer
+		prop highlighted QtQml.bool named
+		signal menuBarChanged
+		signal menuChanged
+		signal highlightedChanged
+		signal triggered
+	type QtQuick.Templates.MenuItem MenuItem
+		prototype QtQuick.Templates.AbstractButton named
+		prop highlighted QtQml.bool named
+		prop arrow QtQml.QtObject named pointer
+		prop menu QtQml.QtObject named pointer readonly
+		prop subMenu QtQml.QtObject named pointer readonly
+		prop textPadding QtQml.real named
+		prop implicitTextPadding QtQml.real named readonly
+		signal highlightedChanged
+		signal arrowChanged
+		signal menuChanged
+		signal subMenuChanged
+		signal textPaddingChanged
+		signal implicitTextPaddingChanged
+		signal triggered
+	type QtQuick.Templates.MenuSeparator MenuSeparator
+		prototype QtQuick.Templates.Control named
+	type QtQuick.Templates.Overlay Overlay
+		attached QtQuick.Templates.OverlayAttached
+		is uncreatable
+	type QtQuick.Templates.Page Page
+		prototype QtQuick.Templates.Pane named
+		prop title QtQml.string named
+		prop header QtQml.QtObject named pointer
+		prop footer QtQml.QtObject named pointer
+		prop implicitHeaderWidth QtQml.real named readonly
+		prop implicitHeaderHeight QtQml.real named readonly
+		prop implicitFooterWidth QtQml.real named readonly
+		prop implicitFooterHeight QtQml.real named readonly
+		signal titleChanged
+		signal headerChanged
+		signal footerChanged
+		signal implicitHeaderWidthChanged
+		signal implicitHeaderHeightChanged
+		signal implicitFooterWidthChanged
+		signal implicitFooterHeightChanged
+	type QtQuick.Templates.Pane Pane
+		prototype QtQuick.Templates.Control named
+		default contentData
+		prop contentData QtQml.var named list
+		prop contentChildren QtQml.var named list
+		prop contentWidth QtQml.real named reset
+		prop contentHeight QtQml.real named reset
+		signal contentDataChanged
+		signal contentChildrenChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+	type QtQuick.Templates.Popup Popup
+		prototype QtQml.QtObject named
+		default contentData
+		flags ClosePolicy NoAutoClose=0 CloseOnPressOutside=1 CloseOnPressOutsideParent=2 CloseOnReleaseOutside=4 CloseOnReleaseOutsideParent=8 CloseOnEscape=16
+		enum PopupType Item=0 Window=1 Native=2
+		enum TransformOrigin TopLeft=0 Top=1 TopRight=2 Left=3 Center=4 Right=5 BottomLeft=6 Bottom=7 BottomRight=8
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop z QtQml.real named reset
+		prop width QtQml.real named reset
+		prop height QtQml.real named reset
+		prop implicitWidth QtQml.real named
+		prop implicitHeight QtQml.real named
+		prop contentWidth QtQml.real named
+		prop contentHeight QtQml.real named
+		prop availableWidth QtQml.real named readonly
+		prop availableHeight QtQml.real named readonly
+		prop margins QtQml.real named reset
+		prop topMargin QtQml.real named reset
+		prop leftMargin QtQml.real named reset
+		prop rightMargin QtQml.real named reset
+		prop bottomMargin QtQml.real named reset
+		prop padding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop horizontalPadding QtQml.real named reset
+		prop verticalPadding QtQml.real named reset
+		prop topInset QtQml.real named reset
+		prop leftInset QtQml.real named reset
+		prop rightInset QtQml.real named reset
+		prop bottomInset QtQml.real named reset
+		prop spacing QtQml.real named reset
+		prop implicitBackgroundWidth QtQml.real named readonly
+		prop implicitBackgroundHeight QtQml.real named readonly
+		prop implicitContentWidth QtQml.real named readonly
+		prop implicitContentHeight QtQml.real named readonly
+		prop background QtQml.QtObject named pointer
+		prop contentItem QtQml.QtObject named pointer
+		prop contentData QtQml.var named list
+		prop contentChildren QtQml.var named list
+		prop parent QtQml.QtObject named pointer reset
+		prop visible QtQml.bool named
+		prop opened QtQml.bool named readonly
+		prop modal QtQml.bool named
+		prop dim QtQml.bool named reset
+		prop focus QtQml.bool named
+		prop activeFocus QtQml.bool named readonly
+		prop enabled QtQml.bool named
+		prop clip QtQml.bool named
+		prop opacity QtQml.real named
+		prop scale QtQml.real named
+		prop transformOrigin TransformOrigin
+		prop closePolicy ClosePolicy reset
+		prop popupType PopupType
+		prop enter QtQml.QtObject named pointer
+		prop exit QtQml.QtObject named pointer
+		prop font QtQuick.font named reset
+		prop palette QtQuick.Templates.Palette pointer readonly
+		prop locale QtQml.var named reset
+		prop mirrored QtQml.bool named readonly
+		prop anchors QtQuick.Templates.PopupAnchors pointer readonly
+		signal xChanged
+		signal yChanged
+		signal zChanged
+		signal widthChanged
+		signal heightChanged
+		signal implicitWidthChanged
+		signal implicitHeightChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		signal availableWidthChanged
+		signal availableHeightChanged
+		signal marginsChanged
+		signal topMarginChanged
+		signal leftMarginChanged
+		signal rightMarginChanged
+		signal bottomMarginChanged
+		signal paddingChanged
+		signal topPaddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal bottomPaddingChanged
+		signal horizontalPaddingChanged
+		signal verticalPaddingChanged
+		signal topInsetChanged
+		signal leftInsetChanged
+		signal rightInsetChanged
+		signal bottomInsetChanged
+		signal spacingChanged
+		signal implicitBackgroundWidthChanged
+		signal implicitBackgroundHeightChanged
+		signal implicitContentWidthChanged
+		signal implicitContentHeightChanged
+		signal backgroundChanged
+		signal contentItemChanged
+		signal contentDataChanged
+		signal contentChildrenChanged
+		signal parentChanged
+		signal visibleChanged
+		signal openedChanged
+		signal modalChanged
+		signal dimChanged
+		signal focusChanged
+		signal activeFocusChanged
+		signal enabledChanged
+		signal clipChanged
+		signal opacityChanged
+		signal scaleChanged
+		signal transformOriginChanged
+		signal closePolicyChanged
+		signal popupTypeChanged
+		signal enterChanged
+		signal exitChanged
+		signal fontChanged
+		signal localeChanged
+		signal mirroredChanged
+		signal aboutToShow
+		signal aboutToHide
+		signal opened
+		signal closed
+		method open
+		method close
+		method forceActiveFocus
+	type QtQuick.Templates.RadioButton RadioButton
+		prototype QtQuick.Templates.AbstractButton named
+	type QtQuick.Templates.ScrollBar ScrollBar
+		prototype QtQuick.Templates.Control named
+		attached QtQuick.Templates.ScrollBarAttached
+		enum Policy AsNeeded=0 AlwaysOff=1 AlwaysOn=2
+		enum SnapMode NoSnap=0 SnapAlways=1 SnapOnRelease=2
+		prop size QtQml.real named
+		prop position QtQml.real named
+		prop stepSize QtQml.real named
+		prop active QtQml.bool named
+		prop pressed QtQml.bool named
+		prop orientation Qt::Orientation
+		prop snapMode SnapMode
+		prop interactive QtQml.bool named
+		prop policy Policy
+		prop horizontal QtQml.bool named readonly
+		prop vertical QtQml.bool named readonly
+		prop minimumSize QtQml.real named
+		prop visualSize QtQml.real named readonly
+		prop visualPosition QtQml.real named readonly
+		signal sizeChanged
+		signal positionChanged
+		signal stepSizeChanged
+		signal activeChanged
+		signal pressedChanged
+		signal orientationChanged
+		signal snapModeChanged
+		signal interactiveChanged
+		signal policyChanged
+		signal horizontalChanged
+		signal verticalChanged
+		signal minimumSizeChanged
+		signal visualSizeChanged
+		signal visualPositionChanged
+		method increase
+		method decrease
+	type QtQuick.Templates.ScrollIndicator ScrollIndicator
+		prototype QtQuick.Templates.Control named
+		attached QtQuick.Templates.ScrollIndicatorAttached
+		prop size QtQml.real named
+		prop position QtQml.real named
+		prop active QtQml.bool named
+		prop orientation Qt::Orientation
+		prop horizontal QtQml.bool named readonly
+		prop vertical QtQml.bool named readonly
+		prop minimumSize QtQml.real named
+		prop visualSize QtQml.real named readonly
+		prop visualPosition QtQml.real named readonly
+		signal sizeChanged
+		signal positionChanged
+		signal activeChanged
+		signal orientationChanged
+		signal horizontalChanged
+		signal verticalChanged
+		signal minimumSizeChanged
+		signal visualSizeChanged
+		signal visualPositionChanged
+	type QtQuick.Templates.ScrollView ScrollView
+		prototype QtQuick.Templates.Pane named
+		prop effectiveScrollBarWidth QtQml.real named readonly
+		prop effectiveScrollBarHeight QtQml.real named readonly
+		signal effectiveScrollBarWidthChanged
+		signal effectiveScrollBarHeightChanged
+	type QtQuick.Templates.SpinBox SpinBox
+		prototype QtQuick.Templates.Control named
+		prop from QtQml.int named
+		prop to QtQml.int named
+		prop value QtQml.int named
+		prop stepSize QtQml.int named
+		prop editable QtQml.bool named
+		prop wrap QtQml.bool named
+		prop live QtQml.bool named
+		prop validator QtQml.QtObject named pointer
+		prop textFromValue QtQml.var named
+		prop valueFromText QtQml.var named
+		prop displayText QtQml.string named readonly
+		prop inputMethodHints Qt::InputMethodHints
+		prop inputMethodComposing QtQml.bool named readonly
+		prop up QtQuick.Templates.SpinButton pointer readonly
+		prop down QtQuick.Templates.SpinButton pointer readonly
+		signal fromChanged
+		signal toChanged
+		signal valueChanged
+		signal stepSizeChanged
+		signal editableChanged
+		signal wrapChanged
+		signal liveChanged
+		signal validatorChanged
+		signal textFromValueChanged
+		signal valueFromTextChanged
+		signal displayTextChanged
+		signal inputMethodHintsChanged
+		signal inputMethodComposingChanged
+		signal valueModified
+		method increase
+		method decrease
+	type QtQuick.Templates.Switch Switch
+		prototype QtQuick.Templates.AbstractButton named
+		prop position QtQml.real named
+		prop visualPosition QtQml.real named readonly
+		signal positionChanged
+		signal visualPositionChanged
+	type QtQuick.Templates.TextArea TextArea
+		prototype QtQuick.TextEdit named
+		prop background QtQml.QtObject named pointer
+		prop topInset QtQml.real named reset
+		prop leftInset QtQml.real named reset
+		prop rightInset QtQml.real named reset
+		prop bottomInset QtQml.real named reset
+		prop implicitBackgroundWidth QtQml.real named readonly
+		prop implicitBackgroundHeight QtQml.real named readonly
+		prop placeholderText QtQml.string named
+		prop placeholderTextColor QtQuick.color named
+		prop hovered QtQml.bool named readonly
+		prop hoverEnabled QtQml.bool named reset
+		prop focusReason Qt::FocusReason readonly
+		prop focusPolicy Qt::FocusPolicy
+		prop palette QtQuick.Templates.Palette pointer readonly
+		signal backgroundChanged
+		signal topInsetChanged
+		signal leftInsetChanged
+		signal rightInsetChanged
+		signal bottomInsetChanged
+		signal implicitBackgroundWidthChanged
+		signal implicitBackgroundHeightChanged
+		signal placeholderTextChanged
+		signal placeholderTextColorChanged
+		signal hoveredChanged
+		signal hoverEnabledChanged
+		signal focusReasonChanged
+		signal focusPolicyChanged
+		signal pressed event
+		signal released event
+		signal pressAndHold event
+	type QtQuick.Templates.TextField TextField
+		prototype QtQuick.TextInput named
+		prop background QtQml.QtObject named pointer
+		prop topInset QtQml.real named reset
+		prop leftInset QtQml.real named reset
+		prop rightInset QtQml.real named reset
+		prop bottomInset QtQml.real named reset
+		prop implicitBackgroundWidth QtQml.real named readonly
+		prop implicitBackgroundHeight QtQml.real named readonly
+		prop placeholderText QtQml.string named
+		prop placeholderTextColor QtQuick.color named
+		prop hovered QtQml.bool named readonly
+		prop hoverEnabled QtQml.bool named reset
+		prop focusReason Qt::FocusReason readonly
+		prop focusPolicy Qt::FocusPolicy
+		prop palette QtQuick.Templates.Palette pointer readonly
+		signal backgroundChanged
+		signal topInsetChanged
+		signal leftInsetChanged
+		signal rightInsetChanged
+		signal bottomInsetChanged
+		signal implicitBackgroundWidthChanged
+		signal implicitBackgroundHeightChanged
+		signal placeholderTextChanged
+		signal placeholderTextColorChanged
+		signal hoveredChanged
+		signal hoverEnabledChanged
+		signal focusReasonChanged
+		signal focusPolicyChanged
+		signal pressed event
+		signal released event
+		signal pressAndHold event
+	type QtQuick.Templates.ToolBar ToolBar
+		prototype QtQuick.Templates.Pane named
+		enum Position Header=0 Footer=1
+		prop position Position
+		signal positionChanged
+	type QtQuick.Templates.ToolButton ToolButton
+		prototype QtQuick.Templates.Button named
+	type QtQuick.Templates.ToolTip ToolTip
+		prototype QtQuick.Templates.Popup named
+		attached QtQuick.Templates.ToolTipAttached
+		prop text QtQml.string named
+		prop delay QtQml.int named
+		prop timeout QtQml.int named
+		signal textChanged
+		signal delayChanged
+		signal timeoutChanged
+		method show
+		method hide
+	type QtQuick.Templates.ButtonIcon ButtonIcon
+		is uncreatable
+		prop name QtQml.string named
+		prop source QtQml.url named
+		prop width QtQml.int named
+		prop height QtQml.int named
+		prop color QtQuick.color named
+		prop cache QtQml.bool named
+		signal nameChanged
+		signal sourceChanged
+		signal widthChanged
+		signal heightChanged
+		signal colorChanged
+		signal cacheChanged
+	type QtQuick.Templates.ButtonGroupAttached ButtonGroupAttached
+		is uncreatable
+		prop group QtQml.QtObject named pointer
+		signal groupChanged
+	type QtQuick.Templates.Palette Palette
+		is uncreatable
+		prop accent QtQuick.color named reset
+		prop alternateBase QtQuick.color named reset
+		prop base QtQuick.color named reset
+		prop brightText QtQuick.color named reset
+		prop button QtQuick.color named reset
+		prop buttonText QtQuick.color named reset
+		prop dark QtQuick.color named reset
+		prop highlight QtQuick.color named reset
+		prop highlightedText QtQuick.color named reset
+		prop light QtQuick.color named reset
+		prop link QtQuick.color named reset
+		prop linkVisited QtQuick.color named reset
+		prop mid QtQuick.color named reset
+		prop midlight QtQuick.color named reset
+		prop placeholderText QtQuick.color named reset
+		prop shadow QtQuick.color named reset
+		prop text QtQuick.color named reset
+		prop toolTipBase QtQuick.color named reset
+		prop toolTipText QtQuick.color named reset
+		prop window QtQuick.color named reset
+		prop windowText QtQuick.color named reset
+		signal accentChanged
+		signal alternateBaseChanged
+		signal baseChanged
+		signal brightTextChanged
+		signal buttonChanged
+		signal buttonTextChanged
+		signal darkChanged
+		signal highlightChanged
+		signal highlightedTextChanged
+		signal lightChanged
+		signal linkChanged
+		signal linkVisitedChanged
+		signal midChanged
+		signal midlightChanged
+		signal placeholderTextChanged
+		signal shadowChanged
+		signal textChanged
+		signal toolTipBaseChanged
+		signal toolTipTextChanged
+		signal windowChanged
+		signal windowTextChanged
+	type QtQuick.Templates.DialogButtonBoxAttached DialogButtonBoxAttached
+		is uncreatable
+		enum Position Header=0 Footer=1
+		enum ButtonLayout WinLayout=0 MacLayout=1 KdeLayout=2 GnomeLayout=3 AndroidLayout=4
+		enum ButtonRole InvalidRole=-1 AcceptRole=0 RejectRole=1 DestructiveRole=2 ActionRole=3 HelpRole=4 YesRole=5 NoRole=6 ResetRole=7 ApplyRole=8
+		enum StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728
+		prop buttonBox QtQml.QtObject named pointer readonly
+		prop buttonRole ButtonRole
+		signal buttonBoxChanged
+		signal buttonRoleChanged
+	type QtQuick.Templates.OverlayAttached OverlayAttached
+		is uncreatable
+		prop overlay QtQml.QtObject named pointer readonly
+		prop modal QtQml.Component named pointer
+		prop modeless QtQml.Component named pointer
+		signal overlayChanged
+		signal modalChanged
+		signal modelessChanged
+	type QtQuick.Templates.PopupAnchors PopupAnchors
+		is uncreatable
+		prop centerIn QtQml.QtObject named pointer reset
+		signal centerInChanged
+	type QtQuick.Templates.ScrollBarAttached ScrollBarAttached
+		is uncreatable
+		prop horizontal QtQml.QtObject named pointer
+		prop vertical QtQml.QtObject named pointer
+		signal horizontalChanged
+		signal verticalChanged
+	type QtQuick.Templates.ScrollIndicatorAttached ScrollIndicatorAttached
+		is uncreatable
+		prop horizontal QtQml.QtObject named pointer
+		prop vertical QtQml.QtObject named pointer
+		signal horizontalChanged
+		signal verticalChanged
+	type QtQuick.Templates.SpinButton SpinButton
+		is uncreatable
+		prop pressed QtQml.bool named
+		prop indicator QtQml.QtObject named pointer
+		prop hovered QtQml.bool named
+		prop implicitIndicatorWidth QtQml.real named readonly
+		prop implicitIndicatorHeight QtQml.real named readonly
+		signal pressedChanged
+		signal indicatorChanged
+		signal hoveredChanged
+		signal implicitIndicatorWidthChanged
+		signal implicitIndicatorHeightChanged
+	type QtQuick.Templates.ToolTipAttached ToolTipAttached
+		is uncreatable
+		prop text QtQml.string named
+		prop delay QtQml.int named
+		prop timeout QtQml.int named
+		prop visible QtQml.bool named
+		prop toolTip QtQml.QtObject named pointer readonly
+		signal textChanged
+		signal delayChanged
+		signal timeoutChanged
+		signal visibleChanged
+		signal toolTipChanged
+		method show
+		method hide
+
+module QtQuick.Window
+	import QtQuick
+	Window QtQuick.Window
+
 module QtTest
-	uses QtQml
-	uses QtQuick
 	GrabbedImage QtTest.GrabbedImage
 	SignalSpy QtTest.SignalSpy
 	TestCase QtTest.TestCase
 	TouchEventSequence QtTest.TouchEventSequence
 	type QtTest.GrabbedImage GrabbedImage
-		prototype QtObject named
+		prototype QtQml.QtObject named
 		is uncreatable
-		prop width int named readonly
-		prop height int named readonly
-		prop size var named readonly
+		prop width QtQml.int named readonly
+		prop height QtQml.int named readonly
+		prop size QtQml.var named readonly
 		method pixel
 		method red
 		method green
@@ -61,12 +3492,12 @@ module QtTest
 		method equals
 		method save
 	type QtTest.SignalSpy SignalSpy
-		prototype Item named
-		prop target QtObject named pointer
-		prop signalName string named
-		prop count int named readonly
-		prop signalArguments var named readonly
-		prop valid bool named readonly
+		prototype QtQuick.Item named
+		prop target QtQml.QtObject named pointer
+		prop signalName QtQml.string named
+		prop count QtQml.int named readonly
+		prop signalArguments QtQml.var named readonly
+		prop valid QtQml.bool named readonly
 		signal targetChanged
 		signal signalNameChanged
 		signal countChanged
@@ -75,13 +3506,13 @@ module QtTest
 		method clear
 		method wait
 	type QtTest.TestCase TestCase
-		prototype Item named
-		prop name string named
-		prop when bool named
-		prop windowShown bool named readonly
-		prop completed bool named readonly
-		prop running bool named readonly
-		prop optional bool named
+		prototype QtQuick.Item named
+		prop name QtQml.string named
+		prop when QtQml.bool named
+		prop windowShown QtQml.bool named readonly
+		prop completed QtQml.bool named readonly
+		prop running QtQml.bool named readonly
+		prop optional QtQml.bool named
 		signal nameChanged
 		signal whenChanged
 		signal windowShownChanged
@@ -120,7 +3551,7 @@ module QtTest
 		method keySequence
 		method touchEvent
 	type QtTest.TouchEventSequence TouchEventSequence
-		prototype QtObject named
+		prototype QtQml.QtObject named
 		is uncreatable
 		method press
 		method move

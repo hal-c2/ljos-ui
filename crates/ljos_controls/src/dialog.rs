@@ -272,7 +272,7 @@ pub struct DialogButtonBox {
     #[qml(notify, enumeration = "ButtonLayout")]
     pub button_layout: i32,
     /// What a standard button is made from.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
     /// Whether the box is the header or the footer of what it is in, for
     /// a style that draws the two differently.

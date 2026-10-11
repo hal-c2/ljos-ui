@@ -1,17 +1,53 @@
-//! What Qt's QML types are: the modules, types, properties, signals and enum
-//! keys Qt describes for itself.
+//! What the QML types are: the modules, types, properties, signals and enum
+//! keys a file may name. This says what a name *is* (a type, a property, a
+//! signal, an enum key); what it means on a render target is not for a table
+//! to say.
 //!
-//! Nobody writes these down by hand. Qt ships a `qmldir` and a `.qmltypes`
-//! next to every plugin, and `mise run types` (`crates/qmltypes`) boils them
-//! down to `src/types.txt`, which is compiled in and indexed on first use.
-//! This says what a name *is* (a type, a property, a signal, an enum key);
-//! what it means on a render target is not Qt's to say.
+//! There are two descriptions, in one format, and nobody writes either by
+//! hand:
 //!
-//! The table is derived from a local Qt install, so it is git-ignored and never
-//! committed (ARCHITECTURE.md D1). Without one the crate still builds, with an
-//! empty table: [`is_available`] is false and every lookup finds nothing.
-//! `LJOS_QT_TYPES=/path/to/types.txt` at build time takes a table from
-//! elsewhere.
+//! - **Qt's of its own types.** Qt ships a `qmldir` and a `.qmltypes` next to
+//!   every plugin, and `mise run types` (`crates/qmltypes`) boils them down to
+//!   `src/types.txt`. It is derived from a local Qt install, so it is
+//!   git-ignored and never committed (ARCHITECTURE.md D1): a machine has it
+//!   only when somebody generated it there.
+//! - **Ljós's of its own types**, `src/ljos.txt`, which is committed. It is
+//!   what the native types of the runtime and the QML files of its style
+//!   declare of themselves, written out by
+//!   `crates/ljos_cli/tests/own_types.rs`. Nothing in it comes from Qt.
+//!
+//! # Which one is read
+//!
+//! Without Qt's table, Ljós's own is the whole table: QML is read, checked
+//! and compiled against what Ljós has. Nothing needs a Qt anywhere.
+//! [`has_qt_table`] is false, and the only thing lost is what only Qt's
+//! table can say: that a type nobody here has is one Qt has. Such a type is
+//! an unknown type like any other.
+//!
+//! With Qt's table, Qt's description is the whole truth of every module it
+//! describes, and Ljós's own table gives only the modules Qt's has not
+//! (`Ljos`, `QtTest`, a module of an add-on the local Qt was installed
+//! without). The choice is made by module, never by type, for three reasons:
+//!
+//! 1. Qt's is the complete description. It also lists what Qt has and Ljós
+//!    has not yet, which is what `ljos check`, the `api_status` tool and the
+//!    lints tell apart; and a file written for Qt is read as Qt reads it,
+//!    which is what parity work needs.
+//! 2. A type's description names others (what it inherits, what a property
+//!    holds). Taking one type from one table and its base from the other
+//!    would make chains nobody described.
+//! 3. It is what a build with Qt's table has always done, so nothing that
+//!    was read one way there is read another way now.
+//!
+//! So the two never describe one module at once, and a build without Qt's
+//! table is held to the other by tests that compare the two where both
+//! exist (`crates/ljos_cli/tests/own_types.rs`), not by mixing them.
+//!
+//! `LJOS_QT_TYPES=/path/to/types.txt` at build time takes Qt's table from
+//! elsewhere; `LJOS_QT_TYPES=none` builds without one on a machine that has
+//! it.
+//!
+//! # The format
 //!
 //! The table is lines of words, indented by what they belong to:
 //!
@@ -27,48 +63,69 @@
 //!         default data                  the property that takes its children
 //!         is singleton uncreatable value namespace parser
 //!         enum TransformOrigin TopLeft Top ...        `flags` when the keys combine
-//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`
+//!         prop anchors QQuickAnchors readonly pointer   also `list`, `required`, `reset`, `script`
 //!         signal clicked mouse          the arguments by name, `_` for one without
 //!         method forceActiveFocus
 //! ```
 //!
-//! A class is the C++ class a type is registered from. A type that is a QML
-//! file (Controls' `Button.qml`) is a class named by that file's path under
-//! Qt's QML directory. The generator reads only `qmldir` and `.qmltypes`, never
-//! the QML file itself, so such a type has no members of its own: its
+//! A class is what a type is registered from: in Qt's table the C++ class, in
+//! Ljós's own the module and the name (`QtQuick.Item`; no class of Qt's has a
+//! dot before its last word). A type that is a QML file (Controls'
+//! `Button.qml`) is a class named by that file's path under the directory of
+//! QML modules. Qt's generator reads only `qmldir` and `.qmltypes`, never the
+//! QML file itself, so such a type of Qt's has no members of its own: its
 //! prototype is the type of the same name in a module its qmldir depends on
 //! (Basic's `Button` is Templates' `QQuickButton`), when there is one.
 //!
-//! Enum keys have no numbers: `.qmltypes` has listed only the names since Qt
-//! 5.15. Versions are not kept either; the table is one Qt, the newest name
-//! wins.
+//! Enum keys of Qt's table have no numbers: `.qmltypes` has listed only the
+//! names since Qt 5.15. Ljós's own types say theirs (`Top=1`). Versions are
+//! not kept; the table is one Qt, the newest name wins.
 //!
-//! # Ljós's own modules
-//!
-//! `Ljos` and `QtTest` are not Qt's to describe: their types are native
-//! types of Ljós. Their part of the table is `src/ljos.txt`, which is
-//! committed and compiled in after Qt's. It is not written by hand: it is
-//! what those native types declare of themselves, written out by
-//! `crates/ljos_cli/tests/own_types.rs`, which fails when the file is not
-//! what they declare now and writes it again when asked to. A crate that
-//! reads QML cannot link the runtime that has the types, so the description
-//! comes to it as text.
+//! # What Ljós's own table adds to the format
 //!
 //! A native type names what it inherits and what its properties hold as
-//! QML does (`Item`, `string`), not by Qt's classes, so that file has two
-//! things Qt's table has no use for:
+//! QML does (`Item`, `string`), not by classes, so that file has one thing
+//! Qt's table has no use for:
 //!
 //! ```text
 //! module Ljos
-//!     uses QtQuick                      the names below are read as in a file that imports QtQuick
 //!     type Ljos.ErrorBoundary ErrorBoundary
-//!         prototype Item named          `named`: a QML name, not a class
-//!         prop failed bool named readonly
+//!         prototype QtQuick.Item named  `named`: what a file that imports QtQuick calls `Item`
+//!         prop failed QtQml.bool named readonly
 //! ```
 //!
-//! A name is looked for in the module itself and then in each module it
-//! `uses`. Unlike an `import`, what a module uses is not its own: a file
-//! that imports `Ljos` has no `Item`.
+//! A `named` type is the module and the name: it is looked up as a file
+//! that imports that module would find it, in whichever table describes the
+//! module. This is what lets one text serve both builds: `QtQuick.Item
+//! named` is Qt's `QQuickItem` beside Qt's table and Ljós's `QtQuick.Item`
+//! without it. Naming a type of another module gives the module nothing: a
+//! file that imports `Ljos` has no `Item`.
+//!
+//! # How the committed table is made, and why that is not a circle
+//!
+//! The crates that read QML must not link the runtime that has the types
+//! (ARCHITECTURE.md principle 5), so the description
+//! reaches them as text, and the text is written by a test that links
+//! both. In order:
+//!
+//! 1. This crate compiles `src/ljos.txt` in, as committed.
+//! 2. `ljos_controls`' build script compiles the Basic style's QML with the
+//!    compiler, which reads it against that text (or against Qt's table,
+//!    where there is one).
+//! 3. `LJOS_OWN_TYPES=write cargo test -p ljos_cli --test own_types` links
+//!    the runtime, asks every registered type what it declares and writes
+//!    `src/ljos.txt`; without `write` it fails when the file is not what
+//!    would be written.
+//!
+//! The committed text is what breaks the circle: step 2 never needs step 3
+//! to have run on this machine. The one case where it does is a style file
+//! that uses a native member added since the text was last written. Then,
+//! in a build without Qt's table, the style does not compile until the text
+//! is written again, which needs the build: so with `LJOS_OWN_TYPES=write`
+//! set the build script only warns and packs no style, the text is written
+//! from the native types, and running the same command once more (the
+//! style compiles now) adds what the style's files declare. The test says so
+//! when it is the case.
 
 #[cfg(test)]
 mod tests;
@@ -78,36 +135,62 @@ use std::{
     sync::OnceLock,
 };
 
-/// Whether a table was compiled in. Without one every lookup finds nothing,
-/// which a caller should report rather than treat as "no such type".
-pub fn is_available() -> bool {
+/// Whether Qt's own description of its types was compiled in. Without it
+/// the table is Ljós's description of its own types alone: every lookup
+/// still answers, but a type that is not found may be one Qt has, which a
+/// caller that reports it should say ([`WITHOUT_QT_TABLE`]).
+pub fn has_qt_table() -> bool {
     cfg!(qt_types_table)
 }
 
-/// The text the table was read from, empty without one.
+/// What a message about a name the table does not have ends with in a build
+/// without Qt's table: the name may be Qt's all the same.
+pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it";
+
+/// For a test that holds only of Qt's description of its types (a class
+/// name, a type Ljós does not have): whether there is one to hold it of.
+/// Without it the test is named as skipped on the terminal, past what the
+/// test harness captures, so that a green run does not pass for a run of it.
+pub fn test_has_qt_table(test: &str) -> bool {
+    if !has_qt_table() {
+        use std::io::Write as _;
+        // Written to the stream itself: `eprintln!` in a passing test is
+        // swallowed by the harness.
+        let _ = writeln!(
+            std::io::stderr(),
+            "SKIPPED {test}: it is about Qt's own description of its types, and this build has \
+             no table of them (`mise run types`, and build without LJOS_QT_TYPES=none)"
+        );
+    }
+    has_qt_table()
+}
+
+/// Qt's table as it was compiled in, empty without one.
 const TEXT: &str = include_str!(concat!(env!("OUT_DIR"), "/types.txt"));
 
-/// The module `uri` is imported as, when it is one of Qt's that the table has.
+/// The module `uri` is imported as, when the table has it.
 pub fn module(uri: &str) -> Option<&'static Module> {
     table().modules.get(uri)
 }
 
 /// The URI of every module the table has, in order: what a file may import,
-/// and what [`module`] finds. Empty without a table.
+/// and what [`module`] finds.
 pub fn modules() -> Vec<&'static str> {
     let mut uris: Vec<&'static str> = table().modules.keys().copied().collect();
     uris.sort_unstable();
     uris
 }
 
-/// The types of the module `uri` that Qt has in C++ and not as QML files:
-/// what a runtime has to have of it. None when the table has no such module.
+/// The types of the module `uri` that are native and not QML files: of Qt's
+/// description, what a runtime has to have of it. None when the table has no
+/// such module.
 pub fn native_types(uri: &str) -> Option<Vec<&'static str>> {
     types_of(uri, false)
 }
 
-/// The types of the module `uri` that Qt has as QML files: what is there only
-/// where Qt's own module is installed. None when the table has no such module.
+/// The types of the module `uri` that are QML files: of Qt's description,
+/// what is there only where Qt's own module is installed. None when the
+/// table has no such module.
 pub fn written_types(uri: &str) -> Option<Vec<&'static str>> {
     types_of(uri, true)
 }
@@ -133,6 +216,8 @@ pub struct Module {
     pub uri: &'static str,
     /// The modules its qmldir imports, in the order it does.
     pub imports: Vec<Import>,
+    /// Described by Ljós's own table, not by Qt's.
+    pub is_own: bool,
     exports: HashMap<&'static str, usize>,
 }
 
@@ -176,7 +261,10 @@ pub struct Type {
     /// `QQuickAnchors`) has only its class.
     pub name: &'static str,
     /// The C++ class, or the path of the QML file under Qt's QML directory.
+    /// Of a type Ljós describes, the module and the name: `QtQuick.Item`.
     pub class: &'static str,
+    /// Described by Ljós's own table, not by Qt's.
+    pub is_own: bool,
     /// The module that describes it; of a type several modules export, one
     /// of them.
     pub module: &'static str,
@@ -207,6 +295,13 @@ pub struct Type {
 impl Type {
     pub fn prototype(&self) -> Option<&'static Type> {
         self.prototype.map(|index| &table().types[index])
+    }
+
+    /// Whether the type is, or inherits, one of `classes`. The same type has
+    /// one class in Qt's table and another in Ljós's own (`QQuickImage`,
+    /// `QtQuick.Image`), so whoever asks names both.
+    pub fn is_a(&self, classes: &[&str]) -> bool {
+        classes.contains(&self.class) || self.prototype().is_some_and(|ty| ty.is_a(classes))
     }
 
     /// The property an object written inside this one is put in (`data` for
@@ -320,6 +415,9 @@ pub struct Property {
     /// The value is a `Component`: what is written there is a template that
     /// is instantiated later (a `delegate`), not an object that exists.
     pub is_component: bool,
+    /// What is written there is run when its time comes and is worth nothing
+    /// until then: the `script` of a `ScriptAction`.
+    pub is_script: bool,
 }
 
 impl Property {
@@ -362,8 +460,21 @@ pub struct EnumValue {
     pub number: Option<i64>,
 }
 
-/// Whether some type of Qt's has a member called `name`: a name that is
-/// most likely that member wherever it is written.
+/// Whether some module of the table has a type called `name`.
+pub fn is_type_name(name: &str) -> bool {
+    static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            let modules = table().modules.values();
+            modules
+                .flat_map(|module| module.exports.keys().copied())
+                .collect()
+        })
+        .contains(name)
+}
+
+/// Whether some type of the table has a member called `name`: a name that
+/// is most likely that member wherever it is written.
 pub fn is_member_name(name: &str) -> bool {
     static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
     NAMES
@@ -414,64 +525,75 @@ impl Table {
             .find_map(|import| self.type_named(import.module, name, seen))
     }
 
-    /// The type a description in the module `uri` means by the QML name
-    /// `name`: one of the module's own, or of a module it uses.
-    fn type_meant(&self, uri: &str, uses: &[(&str, &str)], name: &str) -> Option<usize> {
-        let of = |uri: &str| self.type_named(uri, name, &mut Vec::new());
-        of(uri).or_else(|| {
-            uses.iter()
-                .filter(|(user, _)| *user == uri)
-                .find_map(|(_, used)| of(used))
-        })
+    /// The type a description means by `Module.Name`: what `Name` is in a
+    /// file that imports `Module`.
+    fn type_meant(&self, named: &str) -> Option<usize> {
+        let (uri, name) = named.rsplit_once('.')?;
+        self.type_named(uri, name, &mut Vec::new())
     }
 }
 
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
-    // Ljós's own types inherit Qt's (`QQuickItem`), so without Qt's table
-    // they are left out too: nothing is known, as `is_available` says.
-    TABLE.get_or_init(|| {
-        read(if is_available() {
-            &[TEXT, OWN]
-        } else {
-            &[TEXT]
-        })
-    })
+    TABLE.get_or_init(|| read(TEXT, OWN))
 }
 
-/// The modules that are Ljós's own and not Qt's (`import Ljos`, `import
-/// QtTest`), in the table's format. Committed, and nothing in it comes from
-/// Qt: it is what Ljós's native types declare, kept so by
+/// Every module Ljós implements, in the table's format. Committed, and
+/// nothing in it comes from Qt: it is what Ljós's native types and the QML
+/// files of its style declare, kept so by
 /// `crates/ljos_cli/tests/own_types.rs` (see the crate's documentation).
 const OWN: &str = include_str!("ljos.txt");
 
-fn read(texts: &[&'static str]) -> Table {
+/// The classes of the types the front end knows by what they are, in each
+/// table: Qt's class, and the one of Ljós's own description.
+pub mod class {
+    pub const COMPONENT: [&str; 2] = ["QQmlComponent", "QtQml.Component"];
+    pub const CONNECTIONS: [&str; 2] = ["QQmlConnections", "QtQml.Connections"];
+    pub const PROPERTY_CHANGES: [&str; 2] = ["QQuickPropertyChanges", "QtQuick.PropertyChanges"];
+    pub const ANCHOR_CHANGES: [&str; 2] = ["QQuickAnchorChanges", "QtQuick.AnchorChanges"];
+    pub const LIST_ELEMENT: [&str; 2] = ["QQmlListElement", "QtQml.Models.ListElement"];
+    pub const STRING: [&str; 2] = ["QString", "QtQml.string"];
+    pub const URL: [&str; 2] = ["QUrl", "QtQml.url"];
+}
+
+/// Reads Qt's table, then of Ljós's own the modules Qt's does not describe
+/// (see "Which one is read" in the crate's documentation).
+fn read(qt: &'static str, own: &'static str) -> Table {
     let mut table = Table::default();
     // Classes are named before they are described, so what refers to one is
     // looked up once all are read.
     let mut exports = Vec::new();
     let mut links = Vec::new();
     // What is `named` is a QML name, which only the exports can turn into
-    // a class: the modules that are used, and the properties to look up.
-    let mut uses = Vec::new();
+    // a class: the properties to look up once those are read.
     let mut named = Vec::new();
     let mut module = "";
+    // A module of the own table that Qt's has described already is passed
+    // over, with everything in it.
+    let mut passed_over = false;
 
-    for line in texts.iter().flat_map(|text| text.lines()) {
+    let lines = |text: &'static str, is_own| text.lines().map(move |line| (line, is_own));
+    for (line, is_own) in lines(qt, false).chain(lines(own, true)) {
         let depth = line.len() - line.trim_start_matches('\t').len();
         let mut words = line.split_ascii_whitespace();
         let mut word = || words.next().unwrap_or("");
         match (depth, word()) {
             (0, "module") => {
                 module = word();
+                passed_over = is_own && table.modules.contains_key(module);
+                if passed_over {
+                    continue;
+                }
                 let empty = Module {
                     uri: module,
                     imports: Vec::new(),
+                    is_own,
                     exports: HashMap::new(),
                 };
                 table.modules.insert(module, empty);
             }
             (0, _) => {}
+            _ if passed_over => {}
             (1, "import") => {
                 let import = Import {
                     module: word(),
@@ -488,13 +610,13 @@ fn read(texts: &[&'static str]) -> Table {
                     .imports
                     .push(import);
             }
-            (1, "uses") => uses.push((module, word())),
             (1, "type") => {
                 let (class, name) = (word(), word());
                 table.classes.insert(class, table.types.len());
                 table.types.push(Type {
                     name: if name.is_empty() { class } else { name },
                     class,
+                    is_own,
                     module,
                     qml_file: class.ends_with(".qml").then_some(class),
                     is_singleton: false,
@@ -571,7 +693,11 @@ fn read(texts: &[&'static str]) -> Table {
                             is_pointer: flags.contains(&"pointer"),
                             is_required: flags.contains(&"required"),
                             has_reset: flags.contains(&"reset"),
-                            is_component: type_name == "QQmlComponent",
+                            is_component: class::COMPONENT.contains(&type_name),
+                            // Qt's table has no word for it: there it is
+                            // the property of that name and type.
+                            is_script: flags.contains(&"script")
+                                || (type_name == "QQmlScriptString" && name == "script"),
                         });
                     }
                     "signal" => {
@@ -600,19 +726,18 @@ fn read(texts: &[&'static str]) -> Table {
         }
     }
     for (index, at) in named {
-        let ty = &table.types[index];
-        let meant = table.type_meant(ty.module, &uses, ty.properties[at].type_name);
+        let meant = table.type_meant(table.types[index].properties[at].type_name);
         // A name nothing has stays as it is written: a value of no known
         // type, as a class the table does not describe is.
         if let Some(class) = meant.map(|index| table.types[index].class) {
             let property = &mut table.types[index].properties[at];
             property.type_name = class;
-            property.is_component = class == "QQmlComponent";
+            property.is_component = class::COMPONENT.contains(&class);
         }
     }
     for (index, link, class, named) in links {
         let to = if named {
-            table.type_meant(table.types[index].module, &uses, class)
+            table.type_meant(class)
         } else {
             table.classes.get(class).copied()
         };

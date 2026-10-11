@@ -25,7 +25,7 @@ pub mod project;
 pub mod scope;
 pub mod types;
 
-pub use oracle::{Property, QtType, QtTypeOracle, Special, TypeOracle};
+pub use oracle::{Property, QtType, QtTypeOracle, Special, TypeOracle, unknown_type};
 pub use qml_syntax::Span;
 
 /// What kind of problem an [`Error`] is, for a caller that acts on the kind

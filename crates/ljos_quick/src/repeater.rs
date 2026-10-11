@@ -31,7 +31,7 @@ pub struct Repeater {
     pub item_base: Item,
     #[qml(notify)]
     pub model: Value,
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub count: i32,

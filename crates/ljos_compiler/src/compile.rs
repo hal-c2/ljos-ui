@@ -485,10 +485,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 let n = if qualified { 2 } else { 1 };
                 if self.types.find(&path[..n]).is_none() {
                     self.diagnostics.push(Diagnostic::error(
-                        format!(
-                            "`{}` is not a type of anything the file imports",
-                            path[..n].join(".")
-                        ),
+                        qml_front::unknown_type(self.types.oracle, &path[..n].join(".")),
                         self.lines.span(self.source, span),
                     ));
                 }

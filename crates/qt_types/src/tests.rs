@@ -1,25 +1,25 @@
-//! Facts about Qt that the front end leans on, read back from the table.
+//! Facts the front end leans on, read back from the table.
 //!
-//! The table is generated locally (`mise run types`), so these skip with a
-//! message where there is none, as on CI.
+//! Three kinds of test: of Qt's own description (they are ignored, with the
+//! reason, in a build that has no table of Qt's types), of Ljós's own table
+//! read alone (the same in every build), and of the reader itself on small
+//! tables written here.
 
 use super::*;
 
-/// Returns from the test when no table was compiled in, or the local Qt the
-/// table came from lacks one of the modules the test is about.
-macro_rules! require_table {
-    ($($module:literal),*) => {
-        if !is_available() {
-            eprintln!("skipped: no Qt type table; run `mise run types`");
-            return;
-        }
-        $(
-            if module($module).is_none() {
-                eprintln!("skipped: {} is not installed where the table came from", $module);
-                return;
-            }
-        )*
-    };
+/// False, having said so on the terminal, when the local Qt the table came
+/// from was installed without one of `modules`.
+fn installed(test: &str, modules: &[&str]) -> bool {
+    let missing = modules.iter().find(|uri| module(uri).is_none());
+    if let Some(uri) = missing {
+        use std::io::Write as _;
+        // Past what the harness captures of a passing test.
+        let _ = writeln!(
+            std::io::stderr(),
+            "SKIPPED {test}: {uri} is not installed where the table of Qt's types came from"
+        );
+    }
+    missing.is_none()
 }
 
 fn ty(module: &str, name: &str) -> &'static Type {
@@ -36,8 +36,11 @@ fn property(module: &str, name: &str, property: &str) -> &'static Property {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_module_has_its_own_types() {
-    require_table!();
     let rectangle = ty("QtQuick", "Rectangle");
     assert_eq!(
         (rectangle.name, rectangle.class, rectangle.module),
@@ -52,7 +55,7 @@ fn a_module_has_its_own_types() {
     );
     assert!(super::module("QtQuick.NoSuchModule").is_none());
     // A module of Qt.labs is a module like any other.
-    if super::module("Qt.labs.qmlmodels").is_none() {
+    if !installed("a_module_has_its_own_types", &["Qt.labs.qmlmodels"]) {
         return;
     }
     let model = ty("Qt.labs.qmlmodels", "TableModel");
@@ -70,8 +73,17 @@ fn a_module_has_its_own_types() {
 
 /// What a runtime has to have of a module, and what is QML of Qt's own.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_module_has_types_in_cpp_and_types_in_qml() {
-    require_table!("QtQuick3D.Helpers");
+    if !installed(
+        "a_module_has_types_in_cpp_and_types_in_qml",
+        &["QtQuick3D.Helpers"],
+    ) {
+        return;
+    }
     let native = native_types("QtQuick3D.Helpers").unwrap();
     let written = written_types("QtQuick3D.Helpers").unwrap();
     assert!(native.contains(&"ProceduralMesh") && !native.contains(&"OrbitCameraController"));
@@ -88,8 +100,11 @@ fn a_module_has_types_in_cpp_and_types_in_qml() {
 
 /// `import QtQuick` is also `QtQml`, `QtQml.Models` and the builtins.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_module_has_the_types_of_the_modules_it_imports() {
-    require_table!();
     for (name, module) in [
         ("Timer", "QtQml"),
         ("Connections", "QtQml"),
@@ -112,8 +127,11 @@ fn a_module_has_the_types_of_the_modules_it_imports() {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn members_are_found_up_the_prototype_chain() {
-    require_table!();
     let rectangle = ty("QtQuick", "Rectangle");
     assert_eq!(rectangle.property("color").unwrap().type_name, "QColor");
     assert!(
@@ -135,8 +153,11 @@ fn members_are_found_up_the_prototype_chain() {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_property_knows_what_it_holds() {
-    require_table!();
     let delegate = property("QtQuick", "ListView", "delegate");
     assert!(delegate.is_component && delegate.is_pointer && !delegate.is_list);
     assert!(property("QtQuick", "Loader", "sourceComponent").is_component);
@@ -154,8 +175,11 @@ fn a_property_knows_what_it_holds() {
 /// What Qt answers: with `QtQuick.VectorImage` imported `ItemSpy` is a type
 /// and `Shape` is not, though its qmldir names both modules.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_default_import_is_followed_where_there_is_a_choice() {
-    require_table!();
     let module = |uri| super::module(uri).unwrap();
     assert_eq!(
         ty("QtQuick.Controls", "Button").module,
@@ -177,8 +201,17 @@ fn a_default_import_is_followed_where_there_is_a_choice() {
 /// class: an axis of a graph has a delegate for its labels, one of a chart
 /// has a font for them.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn classes_of_one_name_are_each_their_modules() {
-    require_table!("QtGraphs", "QtCharts");
+    if !installed(
+        "classes_of_one_name_are_each_their_modules",
+        &["QtGraphs", "QtCharts"],
+    ) {
+        return;
+    }
     assert!(property("QtGraphs", "ValueAxis", "labelDelegate").is_component);
     assert!(ty("QtGraphs", "ValueAxis").property("labelsFont").is_none());
     assert_eq!(
@@ -201,8 +234,11 @@ fn classes_of_one_name_are_each_their_modules() {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn the_default_property_is_inherited() {
-    require_table!();
     assert_eq!(ty("QtQuick", "Item").default_property(), Some("data"));
     assert_eq!(ty("QtQuick", "Rectangle").default_property(), Some("data"));
     assert_eq!(ty("QtQuick", "QtObject").default_property(), None);
@@ -213,8 +249,11 @@ fn the_default_property_is_inherited() {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_signal_names_its_parameters() {
-    require_table!();
     let mouse_area = ty("QtQuick", "MouseArea");
     assert_eq!(mouse_area.signal("clicked").unwrap().parameters, ["mouse"]);
     assert_eq!(mouse_area.signal("wheel").unwrap().parameters, ["wheel"]);
@@ -239,8 +278,11 @@ fn a_signal_names_its_parameters() {
 
 /// Qt 6 describes an enum by its keys alone, so there is no number to give.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn an_enum_key_is_found_on_the_type() {
-    require_table!();
     let raised = ty("QtQuick", "Text").enum_value("Raised").unwrap();
     assert_eq!(
         (raised.enumeration.name, raised.key, raised.number),
@@ -267,8 +309,11 @@ fn an_enum_key_is_found_on_the_type() {
 
 /// `Qt.AlignLeft`: the singleton has its enums from a namespace extension.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn the_qt_singleton_has_the_qt_namespace() {
-    require_table!();
     let qt = ty("QtQuick", "Qt");
     assert!(qt.is_singleton && !qt.is_creatable);
     let left = qt.enum_value("AlignLeft").unwrap();
@@ -284,8 +329,11 @@ fn the_qt_singleton_has_the_qt_namespace() {
 /// A property declared `Qt::Alignment` holds several keys; one declared
 /// with the enum the flags are made of, or with a plain enum, holds one.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn flags_are_told_from_the_enum_of_one_key() {
-    require_table!();
     let qt = ty("QtQuick", "Qt");
     assert_eq!(qt.enum_is_flags("Alignment"), Some(true));
     assert_eq!(qt.enum_is_flags("AlignmentFlag"), Some(false));
@@ -301,8 +349,11 @@ fn flags_are_told_from_the_enum_of_one_key() {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn an_attached_type_has_its_own_members() {
-    require_table!();
     let layout = ty("QtQuick.Layouts", "Layout");
     assert!(!layout.is_creatable);
     let attached = layout.attached().unwrap();
@@ -335,8 +386,11 @@ fn an_attached_type_has_its_own_members() {
 
 /// `font.bold`, `anchors.fill`, `border.color`.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn a_grouped_property_is_walked_through_its_type() {
-    require_table!();
     let font = property("QtQuick", "Text", "font").value_type().unwrap();
     assert!(font.is_value && !font.is_creatable);
     assert_eq!((font.name, font.class), ("font", "QFont"));
@@ -361,8 +415,11 @@ fn a_grouped_property_is_walked_through_its_type() {
 /// `default import QtQuick.Controls.Basic` and `optional import` for the
 /// other styles, one of which takes Basic's place when chosen at run time.
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn controls_are_those_of_the_default_style() {
-    require_table!();
     let controls = super::module("QtQuick.Controls").unwrap();
     let kind = |uri| {
         controls
@@ -413,8 +470,11 @@ fn controls_are_those_of_the_default_style() {
 }
 
 #[test]
+#[cfg_attr(
+    not(qt_types_table),
+    ignore = "about Qt's own description of its types, and this build has no table of them"
+)]
 fn every_link_in_the_table_is_to_a_type() {
-    require_table!();
     let table = table();
     assert!(table.modules.len() > 20 && table.types.len() > 500);
     for uri in table.modules.keys() {
@@ -430,43 +490,56 @@ fn every_link_in_the_table_is_to_a_type() {
     }
 }
 
-/// Without a table nothing is known, and nothing panics.
+/// Which description a module is read from is one answer per build.
 #[test]
-fn an_absent_table_finds_nothing() {
-    if is_available() {
-        assert!(module("QtQuick").is_some());
-        return;
+fn a_module_is_described_by_one_table() {
+    for (uri, module) in &table().modules {
+        // Qt has no `Ljos`; everything else is Qt's wherever Qt's table is.
+        let own = !has_qt_table() || *uri == "Ljos";
+        assert!(!own || module.is_own, "{uri}");
     }
-    assert!(modules().is_empty());
-    assert!(module("QtQuick").is_none());
-    assert_eq!(native_types("QtQuick"), None);
-    assert!(!is_member_name("width"));
+    for ty in &table().types {
+        assert_eq!(ty.is_own, module(ty.module).unwrap().is_own, "{}", ty.class);
+    }
+    assert!(module("QtQuick").is_some(), "in either table");
+    assert_eq!(module("QtQuick").unwrap().is_own, !has_qt_table());
+    assert!(module("QtQuick.NoSuchModule").is_none());
 }
 
 /// The listing is every module `module` finds, once, in order.
 #[test]
 fn modules_lists_every_module_in_order() {
-    require_table!("QtQuick");
     let all = modules();
     assert!(
         all.windows(2).all(|pair| pair[0] < pair[1]),
         "sorted, unique"
     );
-    assert!(all.contains(&"QtQuick"));
+    assert!(all.contains(&"QtQuick") && all.contains(&"Ljos"));
     assert!(all.iter().all(|uri| module(uri).is_some()));
 }
 
-/// Ljós's own module is read next to Qt's: its types inherit Qt's and have
-/// the members its native types declare.
+#[test]
+fn a_name_some_module_has_is_a_type_name() {
+    assert!(is_type_name("Rectangle") && is_type_name("ErrorBoundary"));
+    assert!(!is_type_name("NoSuchType") && !is_type_name("width"));
+    assert!(is_member_name("width") && !is_member_name("noSuchMember"));
+}
+
+/// Ljós's own module is in the table of either build: its types are
+/// `Item`s, whichever table says what an `Item` is.
 #[test]
 fn the_ljos_module_is_in_the_table() {
-    require_table!("QtQuick");
     let boundary = ty("Ljos", "ErrorBoundary");
-    assert!(boundary.is_creatable);
+    assert!(boundary.is_creatable && boundary.is_own);
     assert_eq!(boundary.default_property(), Some("content"));
     assert!(boundary.property("content").unwrap().is_component);
     assert!(boundary.property("fallback").unwrap().is_component);
     assert!(boundary.property("width").is_some(), "an Item");
+    assert_eq!(boundary.prototype().map(|item| item.name), Some("Item"));
+    assert_eq!(
+        boundary.prototype().map(|item| item.is_own),
+        Some(!has_qt_table())
+    );
     assert!(boundary.has_method("retry"));
     let fault = boundary.property("fault").unwrap();
     assert!(fault.is_readonly);
@@ -480,18 +553,17 @@ fn the_ljos_module_is_in_the_table() {
     );
 }
 
-/// `QtTest` is a module of native types too, described as `Ljos` is.
+/// `QtTest` is a module of native types too. Qt's table describes it only
+/// where the local Qt has it, and then Qt's description is the one read.
 #[test]
 fn the_qttest_module_is_in_the_table() {
-    require_table!("QtQuick");
     let case = ty("QtTest", "TestCase");
     assert!(case.is_creatable);
     assert_eq!((case.name, case.module), ("TestCase", "QtTest"));
-    assert_eq!(case.prototype().map(|item| item.class), Some("QQuickItem"));
+    assert!(case.property("width").is_some(), "an Item");
     assert_eq!(case.default_property(), Some("data"), "an Item's");
     assert!(case.has_method("compare") && !case.has_method("clear"));
-    // A type is named as QML names it and known by Qt's class.
-    assert_eq!(property("QtTest", "TestCase", "name").type_name, "QString");
+    assert!(class::STRING.contains(&property("QtTest", "TestCase", "name").type_name));
     assert!(case.signal("whenChanged").is_some());
     let spy = ty("QtTest", "SignalSpy");
     assert!(spy.has_method("clear") && spy.signal("countChanged").is_some());
@@ -499,45 +571,289 @@ fn the_qttest_module_is_in_the_table() {
     let target = property("QtTest", "SignalSpy", "target");
     assert!(target.is_pointer && !target.is_readonly);
     assert_eq!(
-        target.value_type().map(|object| object.class),
-        Some("QObject")
+        target.value_type().map(|object| object.name),
+        Some("QtObject")
     );
-    // What a test is handed, and cannot make.
-    assert!(!ty("QtTest", "TouchEventSequence").is_creatable);
     // What the module's types are written with is not the module's.
     assert!(module("QtTest").unwrap().type_named("Item").is_none());
     assert!(module("QtQuick").unwrap().type_named("TestCase").is_none());
 }
 
-/// The own modules name types as QML does. Every such name has to be one
-/// Qt's table or the module itself has, or a member is of no known type.
+/// Ljós's own table read with no other, as a build without Qt's has it:
+/// the same in every build, so a machine that has Qt's table sees here what
+/// one without it is given.
+fn own() -> &'static Table {
+    static TABLE: OnceLock<Table> = OnceLock::new();
+    TABLE.get_or_init(|| read("", OWN))
+}
+
+fn own_type(uri: &str, name: &str) -> &'static Type {
+    let own = own();
+    let index = own
+        .type_named(uri, name, &mut Vec::new())
+        .unwrap_or_else(|| panic!("no {name} in {uri} of Ljós's own table"));
+    &own.types[index]
+}
+
+/// The classes from a type up what it inherits, in a table read here (the
+/// lookups of [`Type`] are of the build's table).
+fn chain(table: &'static Table, ty: &'static Type) -> Vec<&'static Type> {
+    let mut chain = vec![ty];
+    while let Some(index) = chain.last().unwrap().prototype {
+        chain.push(&table.types[index]);
+    }
+    chain
+}
+
+fn own_property(ty: &'static Type, name: &str) -> Option<&'static Property> {
+    chain(own(), ty)
+        .into_iter()
+        .find_map(|ty| ty.properties.iter().find(|property| property.name == name))
+}
+
 #[test]
-fn every_name_in_the_own_modules_is_a_type() {
-    require_table!("QtQuick");
-    let own = read(&[OWN]);
-    assert!(own.modules.contains_key("Ljos") && own.modules.contains_key("QtTest"));
-    for uri in own.modules.keys() {
-        let exported = native_types(uri).expect("an own module is in the table");
-        assert!(!exported.is_empty(), "{uri}");
-        for name in exported {
-            assert!(ty(uri, name).prototype().is_some(), "what {name} inherits");
+fn the_own_table_alone_has_the_modules_ljos_implements() {
+    let own = own();
+    for uri in [
+        "Ljos",
+        "QtQml",
+        "QtQml.Models",
+        "QtQuick",
+        "QtQuick.Window",
+        "QtQuick.Layouts",
+        "QtQuick.Templates",
+        "QtQuick.Controls",
+        "QtQuick.Controls.Basic",
+        "QtTest",
+    ] {
+        let module = own.modules.get(uri).unwrap_or_else(|| panic!("{uri}"));
+        assert!(module.is_own && !module.exports.is_empty(), "{uri}");
+    }
+    assert!(own.types.iter().all(|ty| ty.is_own));
+}
+
+#[test]
+fn the_own_table_alone_says_what_a_rectangle_is() {
+    let rectangle = own_type("QtQuick", "Rectangle");
+    assert_eq!(
+        (rectangle.name, rectangle.class, rectangle.module),
+        ("Rectangle", "QtQuick.Rectangle", "QtQuick")
+    );
+    assert!(rectangle.is_creatable && !rectangle.is_singleton && rectangle.qml_file.is_none());
+    let classes: Vec<&str> = chain(own(), rectangle).iter().map(|ty| ty.class).collect();
+    assert_eq!(
+        classes,
+        ["QtQuick.Rectangle", "QtQuick.Item", "QtQml.QtObject"]
+    );
+    let color = own_property(rectangle, "color").unwrap();
+    assert_eq!(color.type_name, "QtQuick.color");
+    assert!(own().types[own().classes[color.type_name]].is_value);
+    assert!(own_property(rectangle, "width").is_some(), "an Item's");
+    assert!(own_property(rectangle, "objectName").is_some());
+    assert!(own_property(rectangle, "colour").is_none());
+    let item = own_type("QtQuick", "Item");
+    assert_eq!(item.default_property, Some("data"));
+    assert!(item.enums.iter().any(|e| e.name == "TransformOrigin"));
+    // A number for every key: Ljós's types say theirs.
+    assert!(
+        item.enums
+            .iter()
+            .all(|e| e.keys.iter().all(|(_, n)| n.is_some()))
+    );
+}
+
+/// `import QtQuick` is also `QtQml` and its models; not the other way.
+#[test]
+fn the_own_table_alone_follows_what_a_module_comes_with() {
+    for (name, module) in [
+        ("Timer", "QtQml"),
+        ("QtObject", "QtQml"),
+        ("Component", "QtQml"),
+        ("Connections", "QtQml"),
+        ("ListModel", "QtQml.Models"),
+    ] {
+        assert_eq!(own_type("QtQuick", name).module, module, "{name}");
+        assert_eq!(own_type("QtQuick.Window", name).module, module, "{name}");
+    }
+    let find = |uri: &str, name: &str| own().type_named(uri, name, &mut Vec::new());
+    assert!(find("QtQml", "Item").is_none());
+    assert!(find("QtQuick", "Button").is_none());
+    assert!(find("QtQuick.Controls", "Item").is_none());
+    assert!(find("QtQuick.Layouts", "Item").is_none());
+}
+
+/// A control is the QML file of the style, over the template that has the
+/// members.
+#[test]
+fn the_own_table_alone_has_the_style_s_files() {
+    let button = own_type("QtQuick.Controls", "Button");
+    assert_eq!(button.qml_file, Some("QtQuick/Controls/Basic/Button.qml"));
+    assert_eq!(button.module, "QtQuick.Controls.Basic");
+    assert!(button.is_creatable);
+    let classes: Vec<&str> = chain(own(), button).iter().map(|ty| ty.class).collect();
+    assert_eq!(classes[1], "QtQuick.Templates.Button");
+    assert!(classes.contains(&"QtQuick.Templates.AbstractButton"));
+    assert!(classes.contains(&"QtQuick.Item"));
+    assert!(own_property(button, "text").is_some());
+    assert_eq!(
+        own_type("QtQuick.Controls.Basic", "Button").class,
+        button.class,
+        "one type in both modules"
+    );
+}
+
+#[test]
+fn the_own_table_alone_has_the_values_and_the_namespace() {
+    let font = own_type("QtQuick", "font");
+    assert!(font.is_value && !font.is_creatable);
+    assert_eq!(
+        own_property(font, "bold").map(|p| p.type_name),
+        Some("QtQml.bool")
+    );
+    let text = own_type("QtQuick", "Text");
+    assert_eq!(
+        own_property(text, "font").map(|p| p.type_name),
+        Some("QtQuick.font")
+    );
+    let qt = own_type("QtQml", "Qt");
+    assert!(qt.is_singleton && !qt.is_creatable);
+    let alignment = qt.enums.iter().find(|e| e.name == "Alignment").unwrap();
+    assert!(alignment.is_flag);
+    assert_eq!(alignment.alias, Some("AlignmentFlag"));
+    assert!(alignment.keys.iter().any(|(key, _)| *key == "AlignLeft"));
+    let has_key = |key: &str| {
+        qt.enums
+            .iter()
+            .any(|e| e.keys.iter().any(|(known, _)| *known == key))
+    };
+    assert!(has_key("Key_Return") && has_key("LeftButton") && !has_key("NoSuchKey"));
+}
+
+/// The reader drops what it cannot place without a word, which is right for
+/// a table of another Qt and wrong for one written here: every line of
+/// Ljós's own table has to say something the table then has.
+#[test]
+fn every_line_of_the_own_table_is_understood() {
+    let own = own();
+    let is_enum = |name: &str| {
+        let name = name.rsplit("::").next().unwrap_or(name);
+        own.types.iter().any(|ty| {
+            ty.enums
+                .iter()
+                .any(|e| e.name == name || e.alias == Some(name))
+        })
+    };
+    let mut module = "";
+    let mut class = "";
+    for (number, line) in OWN.lines().enumerate() {
+        let at = || format!("ljos.txt:{}: {line}", number + 1);
+        let depth = line.len() - line.trim_start_matches('\t').len();
+        let words: Vec<&str> = line.split_ascii_whitespace().collect();
+        match (depth, words.as_slice()) {
+            (0, ["module", uri]) => module = uri,
+            (0, _) => assert!(line.is_empty() || line.starts_with('#'), "{}", at()),
+            (1, ["import", uri, ..]) => assert!(own.modules.contains_key(uri), "{}", at()),
+            (1, ["type", name, ..]) => class = name,
+            (1, [name, class]) => {
+                assert_eq!(
+                    own.modules[module].exports.get(name),
+                    own.classes.get(class),
+                    "{}",
+                    at()
+                );
+                assert!(own.classes.contains_key(class), "{}", at());
+            }
+            (2, ["prototype" | "attached", to, rest @ ..]) => {
+                let found = if rest.contains(&"named") {
+                    own.type_meant(to)
+                } else {
+                    own.classes.get(to).copied()
+                };
+                assert!(found.is_some(), "{}", at());
+            }
+            (2, ["prop", _, of, rest @ ..]) => {
+                let found = if rest.contains(&"named") {
+                    own.type_meant(of).is_some()
+                } else {
+                    own.classes.contains_key(of) || is_enum(of)
+                };
+                assert!(found, "{}", at());
+            }
+            (2, ["default", name]) => {
+                let ty = &own.types[own.classes[class]];
+                assert!(own_property(ty, name).is_some(), "{}", at());
+            }
+            (2, ["is" | "enum" | "flags" | "signal" | "method", ..]) => {}
+            _ => panic!("{}", at()),
         }
     }
-    for described in &table().types {
-        if !own.modules.contains_key(described.module) {
-            continue;
-        }
-        for property in &described.properties {
-            assert!(
-                property.value_type().is_some()
-                    || described.enum_is_flags(property.type_name).is_some(),
-                "the type of {}.{}: {}",
-                described.class,
-                property.name,
-                property.type_name
-            );
-        }
-    }
+}
+
+/// The two tables are chosen between by module, never by type.
+const QT: &str = "\
+module Shared
+\tThing QThing
+\ttype QThing Thing
+\t\tprop theirs int
+";
+
+const BESIDE: &str = "\
+module Shared
+\tThing Shared.Thing
+\tOther Shared.Other
+\ttype Shared.Thing Thing
+\t\tprop ours int
+\ttype Shared.Other Other
+module Mine
+\tWidget Mine.Widget
+\ttype Mine.Widget Widget
+\t\tprototype Shared.Thing named
+\t\tprop other Shared.Other named pointer
+";
+
+fn class_of(table: &Table, index: Option<usize>) -> Option<&'static str> {
+    index.map(|index| table.types[index].class)
+}
+
+#[test]
+fn a_module_both_tables_describe_is_read_from_qt_s() {
+    let table = read(QT, BESIDE);
+    let find =
+        |uri: &str, name: &str| class_of(&table, table.type_named(uri, name, &mut Vec::new()));
+    assert_eq!(find("Shared", "Thing"), Some("QThing"));
+    // Not even the type only the own description has: the module is Qt's.
+    assert_eq!(find("Shared", "Other"), None);
+    assert!(!table.classes.contains_key("Shared.Thing"));
+    assert!(!table.classes.contains_key("Shared.Other"));
+    assert!(!table.modules["Shared"].is_own && table.modules["Mine"].is_own);
+    let thing = &table.types[table.classes["QThing"]];
+    assert!(!thing.is_own);
+    assert_eq!(thing.properties.len(), 1);
+    assert_eq!(thing.properties[0].name, "theirs");
+    // The module only the own table has is read, and what it names in the
+    // other is what Qt's table says that is.
+    let widget = &table.types[table.classes["Mine.Widget"]];
+    assert!(widget.is_own);
+    assert_eq!(class_of(&table, widget.prototype), Some("QThing"));
+    // A name Qt's module does not have stays as it was written.
+    assert_eq!(widget.properties[0].type_name, "Shared.Other");
+}
+
+#[test]
+fn without_qt_s_table_the_own_one_is_everything() {
+    let table = read("", BESIDE);
+    let find =
+        |uri: &str, name: &str| class_of(&table, table.type_named(uri, name, &mut Vec::new()));
+    assert_eq!(find("Shared", "Thing"), Some("Shared.Thing"));
+    assert_eq!(find("Shared", "Other"), Some("Shared.Other"));
+    assert!(table.modules.values().all(|module| module.is_own));
+    let widget = &table.types[table.classes["Mine.Widget"]];
+    assert_eq!(class_of(&table, widget.prototype), Some("Shared.Thing"));
+    assert_eq!(widget.properties[0].type_name, "Shared.Other");
+    // Neither table: nothing is known, and nothing panics.
+    let empty = read("", "");
+    assert!(empty.modules.is_empty() && empty.types.is_empty());
+    assert_eq!(empty.type_named("Shared", "Thing", &mut Vec::new()), None);
 }
 
 /// A table in which a module describes its types by QML names.
@@ -554,45 +870,42 @@ module Base
 \ttype QQmlComponent Component
 \ttype QPart Part
 module Own
-\tuses Base
 \tThing Own.Thing
 \tPart Own.Part
 \ttype Own.Thing Thing
-\t\tprototype Item named
-\t\tprop label string named
-\t\tprop template Component named pointer
-\t\tprop part Part named pointer
-\t\tprop lost Nothing named
+\t\tprototype Base.Item named
+\t\tprop label Base.string named
+\t\tprop template Base.Component named pointer
+\t\tprop part Own.Part named pointer
+\t\tprop theirs Base.Part named pointer
+\t\tprop lost Base.Nothing named
 \t\tprop plain QItem pointer
 \ttype Own.Part Part
 \t\tprototype Item
 ";
 
-fn class_of(table: &Table, index: Option<usize>) -> Option<&'static str> {
-    index.map(|index| table.types[index].class)
-}
-
 #[test]
-fn a_named_type_is_found_as_a_file_that_imports_what_the_module_uses_would() {
-    let table = read(&[NAMED]);
+fn a_named_type_is_what_a_file_that_imports_the_module_would_find() {
+    let table = read(NAMED, "");
     let thing = &table.types[table.classes["Own.Thing"]];
     assert_eq!(class_of(&table, thing.prototype), Some("QItem"));
     let type_of = |name: &str| {
         let property = thing.properties.iter().find(|p| p.name == name).unwrap();
         (property.type_name, property.is_component)
     };
-    // Through what the used module imports, as a file would find it.
+    // Through what the named module imports, as a file would find it.
     assert_eq!(type_of("label"), ("QString", false));
     assert_eq!(type_of("template"), ("QQmlComponent", true));
-    // The module's own type before another's of the same name.
+    // Two modules have a `Part`: the module named says which.
     assert_eq!(type_of("part"), ("Own.Part", false));
+    assert_eq!(type_of("theirs"), ("QPart", false));
     // A name nothing has stays what was written.
-    assert_eq!(type_of("lost"), ("Nothing", false));
+    assert_eq!(type_of("lost"), ("Base.Nothing", false));
 }
 
 #[test]
 fn a_type_that_is_not_named_is_a_class() {
-    let table = read(&[NAMED]);
+    let table = read(NAMED, "");
     let thing = &table.types[table.classes["Own.Thing"]];
     let plain = thing.properties.iter().find(|p| p.name == "plain").unwrap();
     assert_eq!(plain.type_name, "QItem");
@@ -602,13 +915,13 @@ fn a_type_that_is_not_named_is_a_class() {
 }
 
 #[test]
-fn what_a_module_uses_is_not_its_own() {
-    let table = read(&[NAMED]);
+fn naming_a_type_of_another_module_gives_the_module_nothing() {
+    let table = read(NAMED, "");
     let find =
         |uri: &str, name: &str| class_of(&table, table.type_named(uri, name, &mut Vec::new()));
     assert_eq!(find("Own", "Thing"), Some("Own.Thing"));
     assert_eq!(find("Own", "Item"), None);
     assert_eq!(find("Own", "string"), None);
-    // An import is: Deep's `string` is Base's too.
+    // An import does: Deep's `string` is Base's too.
     assert_eq!(find("Base", "string"), Some("QString"));
 }

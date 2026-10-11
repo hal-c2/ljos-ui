@@ -13,6 +13,10 @@ use gherkin::{Feature, Rule, Scenario};
 /// Surfaces the headless runner provides. A scenario with no surface tag is `@headless`.
 const SURFACES: &[&str] = &["headless", "desktop", "android", "ios", "wgpu"];
 
+/// On a scenario of what a build says that has no table of Qt's types. A build that has one
+/// says something else there, so the scenario is for the other build alone.
+const NO_QT_TABLE: &str = "no-qt-table";
+
 /// What a run keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -25,6 +29,9 @@ pub struct Selection {
     /// The Qt oracle is the only backend: Ljós's backlog status says nothing about whether
     /// Qt agrees, and verifying backlog expectations on Qt is the point of the oracle.
     pub oracle_only: bool,
+    /// The build reads QML against a table of Qt's types (`qt_types::has_qt_table`), so a
+    /// `@no-qt-table` scenario is not about it.
+    pub qt_table: bool,
 }
 
 impl Default for Selection {
@@ -34,6 +41,7 @@ impl Default for Selection {
             backlog_only: false,
             require_tag: None,
             oracle_only: false,
+            qt_table: qt_types::has_qt_table(),
         }
     }
 }
@@ -50,6 +58,9 @@ impl Selection {
         if let Some(req) = &self.require_tag
             && !has(req)
         {
+            return false;
+        }
+        if self.qt_table && has(NO_QT_TABLE) {
             return false;
         }
         // A scenario for another surface does not belong in this runner at all.
@@ -203,6 +214,22 @@ mod tests {
             !sel.keeps(&tags(&["backlog"])),
             "still needs the oracle tag"
         );
+    }
+
+    #[test]
+    fn a_scenario_of_a_build_without_qt_s_table_is_for_that_build() {
+        let with = Selection {
+            qt_table: true,
+            ..Selection::default()
+        };
+        let without = Selection {
+            qt_table: false,
+            ..Selection::default()
+        };
+        assert!(!with.keeps(&tags(&["ljos-only", "no-qt-table"])));
+        assert!(without.keeps(&tags(&["ljos-only", "no-qt-table"])));
+        assert!(with.keeps(&tags(&["ljos-only"])));
+        assert!(without.keeps(&tags(&["ljos-only"])));
     }
 
     #[test]

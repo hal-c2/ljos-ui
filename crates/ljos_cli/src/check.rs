@@ -65,8 +65,6 @@ pub struct Checked {
     pub coverage: Coverage,
     /// Whether the static lints are applied to each project as well.
     pub lint: bool,
-    /// The lints were asked for and could not be applied.
-    pub lint_skipped: bool,
 }
 
 impl Check {
@@ -92,12 +90,6 @@ impl Check {
             if !self.quiet || line.contains(": error: ") {
                 eprintln!("{line}");
             }
-        }
-        if checked.lint_skipped && !self.quiet {
-            eprintln!(
-                "the static lints were skipped: there is no table of types to tell a button \
-                 from an item with (`mise run types`)"
-            );
         }
         if self.stats {
             print!("{}", checked.stats(self.top, !self.summary));
@@ -159,7 +151,6 @@ impl Checked {
             let linted = lint::project(dir, label, &keys)?;
             self.warnings += linted.lines.len();
             self.diagnostics.extend(linted.lines);
-            self.lint_skipped |= linted.skipped;
         }
         Ok(())
     }

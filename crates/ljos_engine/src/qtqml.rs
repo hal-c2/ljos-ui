@@ -456,6 +456,11 @@ pub(crate) fn register(engine: &Engine) {
     engine.register_module(crate::module!("QtQml.Models" 2.0 => [
         crate::listmodel::ListModel, crate::listmodel::ListElement
     ]));
+    // A file that imports `QtQml` has the models too.
+    engine.register_import("QtQml", "QtQml.Models");
+    // Handlers for another object's signals, and the roles of a row.
+    engine.register_open_body(Connections::static_meta());
+    engine.register_open_body(crate::listmodel::ListElement::static_meta());
 }
 
 /// Drops the timers of destroyed objects.

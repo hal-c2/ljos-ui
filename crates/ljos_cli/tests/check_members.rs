@@ -7,20 +7,13 @@
 
 use std::{path::Path, process::Command};
 
-use qml_front::{QtTypeOracle, TypeOracle};
-
 fn write(dir: &Path, name: &str, source: &str) {
     std::fs::write(dir.join(name), source).unwrap();
 }
 
 /// What `ljos check` says of a project of one file: whether it passed, the
-/// lines of its diagnostics, and its count. `None` where there is no table
-/// of Qt's types, without which no type is known at all.
-fn check(name: &str, source: &str, more: &[&str]) -> Option<(bool, Vec<String>, String)> {
-    if !QtTypeOracle.has_module("QtQuick") {
-        eprintln!("skipped: there is no table of Qt's types (`mise run types`)");
-        return None;
-    }
+/// lines of its diagnostics, and its count.
+fn check(name: &str, source: &str, more: &[&str]) -> (bool, Vec<String>, String) {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), name, source);
     let mut args = vec!["check"];
@@ -35,7 +28,7 @@ fn check(name: &str, source: &str, more: &[&str]) -> Option<(bool, Vec<String>, 
         .map(str::to_string)
         .collect();
     let count = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Some((out.status.success(), lines, count))
+    (out.status.success(), lines, count)
 }
 
 const TEST: &str = r#"import QtQuick
@@ -73,9 +66,7 @@ Item {
 
 #[test]
 fn a_test_case_and_a_signal_spy_are_types_with_their_members() {
-    let Some((passed, lines, count)) = check("tst_poke.qml", TEST, &[]) else {
-        return;
-    };
+    let (passed, lines, count) = check("tst_poke.qml", TEST, &[]);
     assert!(passed, "{lines:?}");
     assert_eq!(lines, [] as [&str; 0]);
     assert_eq!(count, "1 files, 0 errors, 0 warnings");
@@ -83,9 +74,7 @@ fn a_test_case_and_a_signal_spy_are_types_with_their_members() {
 
 #[test]
 fn an_error_boundary_is_a_type_with_its_members() {
-    let Some((passed, lines, count)) = check("Main.qml", BOUNDARY, &[]) else {
-        return;
-    };
+    let (passed, lines, count) = check("Main.qml", BOUNDARY, &[]);
     assert!(passed, "{lines:?}");
     assert_eq!(lines, [] as [&str; 0]);
     assert_eq!(count, "1 files, 0 errors, 0 warnings");
@@ -96,9 +85,7 @@ fn a_misspelt_member_of_a_type_of_qttest_is_a_warning() {
     let source = TEST
         .replace("when: windowShown", "wen: windowShown")
         .replace("signalName:", "signalNam:");
-    let Some((passed, lines, count)) = check("tst_poke.qml", &source, &[]) else {
-        return;
-    };
+    let (passed, lines, count) = check("tst_poke.qml", &source, &[]);
     assert!(
         passed,
         "a name that is no member is not an error: {lines:?}"
@@ -120,9 +107,7 @@ fn a_misspelt_member_of_a_type_of_ljos_is_a_warning() {
     let source = BOUNDARY
         .replace("maxRestarts: 2", "maxRestart: 2")
         .replace("onFailedChanged:", "onFailChanged:");
-    let Some((passed, lines, count)) = check("Main.qml", &source, &[]) else {
-        return;
-    };
+    let (passed, lines, count) = check("Main.qml", &source, &[]);
     assert!(
         passed,
         "a name that is no member is not an error: {lines:?}"
@@ -144,9 +129,7 @@ fn a_misspelt_member_of_a_type_of_ljos_is_a_warning() {
 #[test]
 fn no_lint_keeps_what_is_no_member() {
     let source = BOUNDARY.replace("maxRestarts: 2", "maxRestart: 2");
-    let Some((_, lines, count)) = check("Main.qml", &source, &["--no-lint"]) else {
-        return;
-    };
+    let (_, lines, count) = check("Main.qml", &source, &["--no-lint"]);
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].ends_with("[unknown-property]"), "{lines:?}");
     assert_eq!(count, "1 files, 0 errors, 1 warnings");
@@ -159,9 +142,7 @@ fn an_own_type_is_no_type_of_a_file_that_does_not_import_its_module() {
         ("tst_poke.qml", TEST.replace("import QtTest\n", "")),
         ("Main.qml", BOUNDARY.replace("import Ljos\n", "")),
     ] {
-        let Some((passed, lines, _)) = check(name, &source, &[]) else {
-            return;
-        };
+        let (passed, lines, _) = check(name, &source, &[]);
         assert!(!passed, "{lines:?}");
         assert!(
             lines

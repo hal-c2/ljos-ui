@@ -62,15 +62,15 @@ fn builtin(cx: &Cx<'_, '_>, index: usize) -> Option<QtType> {
     }
 }
 
-fn inherits(ty: QtType, class: &str) -> bool {
-    let mut ty = Some(ty.0);
-    while let Some(t) = ty {
-        if t.class == class {
-            return true;
-        }
-        ty = t.prototype();
-    }
-    false
+/// The types a rule is about, each by its class in Qt's table and in
+/// Ljós's own (`qt_types::Type::is_a`).
+const ABSTRACT_BUTTON: &[&str] = &["QQuickAbstractButton", "QtQuick.Templates.AbstractButton"];
+const MOUSE_AREA: &[&str] = &["QQuickMouseArea", "QtQuick.MouseArea"];
+const TAP_HANDLER: &[&str] = &["QQuickTapHandler", "QtQuick.TapHandler"];
+const IMAGE: &[&str] = &["QQuickImage", "QtQuick.Image"];
+
+fn inherits(ty: QtType, classes: &[&str]) -> bool {
+    ty.0.is_a(classes)
 }
 
 fn parent_is_button(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
@@ -80,7 +80,7 @@ fn parent_is_button(cx: &Cx<'_, '_>, parent: Option<&QmlObject<'_>>) -> bool {
             Some(kind) => cx.types.base(kind),
             None => None,
         })
-        .is_some_and(|ty| inherits(ty, "QQuickAbstractButton"))
+        .is_some_and(|ty| inherits(ty, ABSTRACT_BUTTON))
 }
 
 const CLICK_HANDLERS: &[&str] = &[
@@ -110,7 +110,7 @@ fn accessibility<'a>(
     let name = &cx.tree.objects[index].name;
     let parent_described = parent.is_some_and(is_accessibly_described);
 
-    if inherits(ty, "QQuickMouseArea")
+    if inherits(ty, MOUSE_AREA)
         && CLICK_HANDLERS.iter().any(|h| has_binding(object, &[h]))
         && !is_accessibly_described(object)
         && !parent_described
@@ -131,7 +131,7 @@ fn accessibility<'a>(
     }
     // A handler is not an item and has no `Accessible`: the item it is in
     // is what a screen reader meets.
-    if inherits(ty, "QQuickTapHandler")
+    if inherits(ty, TAP_HANDLER)
         && TAP_HANDLERS.iter().any(|h| has_binding(object, &[h]))
         && parent.is_some_and(|p| !is_accessibly_described(p))
         && !parent_is_button(cx, parent)
@@ -150,7 +150,7 @@ fn accessibility<'a>(
         ));
     }
 
-    if inherits(ty, "QQuickAbstractButton")
+    if inherits(ty, ABSTRACT_BUTTON)
         && (has_binding(object, &["icon", "source"]) || has_binding(object, &["icon", "name"]))
         && !has_binding(object, &["text"])
         && !has_binding(object, &["action"])
@@ -171,7 +171,7 @@ fn accessibility<'a>(
         ));
     }
 
-    if inherits(ty, "QQuickImage")
+    if inherits(ty, IMAGE)
         && !is_accessibly_described(object)
         && !parent_described
         && !parent_is_button(cx, parent)
@@ -196,6 +196,10 @@ const EDITABLE: &[&str] = &[
     "QQuickTextEdit",
     "QQuickTextField",
     "QQuickTextArea",
+    "QtQuick.TextInput",
+    "QtQuick.TextEdit",
+    "QtQuick.Templates.TextField",
+    "QtQuick.Templates.TextArea",
 ];
 
 /// `i18n-untranslated-string`.
@@ -205,7 +209,7 @@ fn strings<'a>(cx: &Cx<'_, 'a>, object: &QmlObject<'a>, index: usize, out: &mut 
     let Shape::Complete(base) = cx.shapes[index] else {
         return;
     };
-    let editable = EDITABLE.iter().any(|class| inherits(base, class));
+    let editable = inherits(base, EDITABLE);
     for member in &object.members {
         let QmlMember::Binding(QmlBinding { name, value, .. }) = member else {
             continue;

@@ -311,11 +311,11 @@ fn the_outermost_boundary_over_its_intensity_tells_the_application() {
     assert_eq!(text(&e, outer, "failed"), "false");
 }
 
-/// A native type with state its component does not declare. Under a name
-/// of QtQuick's that `ljos_quick` does not implement, so the compiler
-/// knows it.
+/// A native type with state its component does not declare. Under the name
+/// of a type that is not `ljos_quick`'s to implement (the controls have
+/// it), so the compiler knows it whichever table of types the build reads.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "QtQuick", name = "Canvas", extends = QtObject)]
+#[qml(module = "QtQuick.Templates", name = "ButtonGroup", extends = QtObject)]
 struct Tally {
     #[qml(base)]
     base: QtObject,
@@ -341,6 +341,7 @@ impl Migrate for Tally {
 
 const KEEPING: &str = r#"
 import QtQuick
+import QtQuick.Templates
 import Ljos
 Item {
     objectName: "root"
@@ -350,7 +351,7 @@ Item {
         Item {
             objectName: "content"
             property int n: 0
-            Canvas { objectName: "tally" }
+            ButtonGroup { objectName: "tally" }
         }
     }
 }
@@ -358,7 +359,7 @@ Item {
 
 fn keeping(fallback: &str) -> (Engine, ObjectId) {
     let e = engine();
-    e.register_module(ljos_engine::module!("QtQuick" 2.0 => [Tally]));
+    e.register_module(ljos_engine::module!("QtQuick.Templates" 2.0 => [Tally]));
     e.register_migrate::<Tally>();
     let root = load(&e, &KEEPING.replace("FALLBACK", fallback));
     (e, root)

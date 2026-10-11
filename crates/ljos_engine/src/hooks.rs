@@ -254,6 +254,20 @@ impl Engine {
         }
     }
 
+    /// Whether `prop` of the type `meta` was registered as a script
+    /// property ([`Engine::register_script_property`]), by that type or
+    /// by one it derives from.
+    pub fn is_script_property_of(&self, meta: &MetaObject, name: &str) -> bool {
+        let props = self.inner.hooks.script_props.borrow();
+        props.iter().any(|(owner, prop)| {
+            meta.inherits(owner)
+                && meta
+                    .properties
+                    .get(prop.0 as usize)
+                    .is_some_and(|p| p.name == name)
+        })
+    }
+
     pub(crate) fn is_script_property(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let props = self.inner.hooks.script_props.borrow();
         if props.is_empty() {

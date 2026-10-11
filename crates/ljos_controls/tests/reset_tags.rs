@@ -104,19 +104,19 @@ fn not_yet(ty: &str, property: &str) -> bool {
 
 #[test]
 fn what_qt_takes_back_is_taken_back_here() {
-    // Without Qt's description every lookup finds nothing.
-    if QtTypeOracle.module_type("QtQuick", "Item").is_none() {
-        eprintln!("skipped: no Qt type description on this machine");
+    // Without Qt's description there is nothing to hold the resets to: the
+    // table is then written from these very types.
+    if !qt_types::test_has_qt_table("what_qt_takes_back_is_taken_back_here") {
         return;
     }
     let known = QtTypeOracle
         .module_type("QtQuick", "Item")
         .and_then(|item| qt_reset(item, "width"))
         == Some(true);
-    if !known {
-        eprintln!("skipped: the type description predates resets; run `mise run types`");
-        return;
-    }
+    assert!(
+        known,
+        "Qt's type description predates resets: write it again with `mise run types`"
+    );
     let e = engine();
     let mut missing = Vec::new();
     let mut extra = Vec::new();

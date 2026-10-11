@@ -47,7 +47,7 @@ pub struct Loader {
     pub item_base: Item,
     #[qml(notify)]
     pub source: Url,
-    #[qml(notify, reset)]
+    #[qml(notify, reset, object = "Component")]
     pub source_component: Option<ObjectId>,
     #[qml(notify)]
     pub active: bool,

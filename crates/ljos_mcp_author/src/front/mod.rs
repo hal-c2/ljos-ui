@@ -20,7 +20,6 @@
 //! |---|---|---|
 //! | `io` | error | The file could not be read as UTF-8 text. |
 //! | `syntax` | error | The parser rejected the file. The file is then not analysed further. |
-//! | `types-unavailable` | hint | No Qt type table was generated (`mise run types`), so only syntax was checked. Once per call. |
 //! | `unknown-module` | warning | An `import` names a module that neither Qt's table nor the project's `qmldir`/CMake files know. Type errors in that file are held back, because the module may provide the type. |
 //! | `unknown-type` | error | An object type, or the type an attached property is written on (`Layout.fillWidth`), is not provided by anything the file imports. |
 //! | `unknown-property` | error | A binding names a property the object's type definitely does not have. Held back where the type chain is not fully known, including a component whose file did not parse whole. |

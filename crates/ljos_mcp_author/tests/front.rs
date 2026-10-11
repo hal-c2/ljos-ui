@@ -1,6 +1,7 @@
-//! `QmlFrontEnd` against fixture QML files and throwaway projects. Tests that
-//! need Qt's type table say so and skip when it was not generated
-//! (`mise run types`).
+//! `QmlFrontEnd` against fixture QML files and throwaway projects. They hold
+//! of a build with a table of Qt's types and of one with Ljós's own
+//! description of its types alone; the few that are about one of the two say
+//! which.
 
 use std::path::{Path, PathBuf};
 
@@ -9,16 +10,6 @@ use ljos_mcp_core::{ErrorCode, SurfaceError};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-}
-
-/// Skips the test, with a note, when no type table was generated.
-macro_rules! need_types {
-    () => {
-        if !qt_types::is_available() {
-            eprintln!("skipped: no Qt type table (run `mise run types`)");
-            return;
-        }
-    };
 }
 
 fn run(root: &Path, files: &[&str], lint: bool) -> Vec<Diagnostic> {
@@ -67,19 +58,14 @@ fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
 
 #[test]
 fn clean_file_has_no_diagnostics_in_check_and_lint() {
-    need_types!();
     assert_eq!(brief(&check("clean.qml")), Vec::<String>::new());
     assert_eq!(brief(&lint("clean.qml")), Vec::<String>::new());
 }
 
 #[test]
 fn syntax_error_is_reported_with_position_and_stops_the_analysis() {
-    // No type table needed: syntax is always checked.
     let diagnostics = check("syntax_error.qml");
-    assert_eq!(
-        diagnostics.len() - with_code(&diagnostics, "types-unavailable").len(),
-        1
-    );
+    assert_eq!(diagnostics.len(), 1);
     let syntax = with_code(&diagnostics, "syntax");
     assert_eq!(syntax.len(), 1, "{diagnostics:?}");
     assert_eq!((syntax[0].line, syntax[0].column), (9, 1));
@@ -89,7 +75,6 @@ fn syntax_error_is_reported_with_position_and_stops_the_analysis() {
 
 #[test]
 fn unknown_type_is_an_error_with_a_suggestion() {
-    need_types!();
     let diagnostics = check("unknown_type.qml");
     assert_eq!(brief(&diagnostics), ["4:5 unknown-type"]);
     assert_eq!(diagnostics[0].severity, Severity::Error);
@@ -102,7 +87,6 @@ fn unknown_type_is_an_error_with_a_suggestion() {
 
 #[test]
 fn unknown_properties_signals_and_attached_members_are_errors() {
-    need_types!();
     let diagnostics = check("unknown_property.qml");
     assert_eq!(
         brief(&diagnostics),
@@ -122,14 +106,12 @@ fn unknown_properties_signals_and_attached_members_are_errors() {
 
 #[test]
 fn check_leaves_lint_rules_to_lint() {
-    need_types!();
     assert_eq!(brief(&check("a11y.qml")), Vec::<String>::new());
     assert_eq!(brief(&check("i18n.qml")), Vec::<String>::new());
 }
 
 #[test]
 fn siblings_are_types_and_undeclared_names_are_warnings() {
-    need_types!();
     let root = fixtures().join("app");
     let diagnostics = run(&root, &["Main.qml"], false);
     assert_eq!(
@@ -148,7 +130,6 @@ fn siblings_are_types_and_undeclared_names_are_warnings() {
 
 #[test]
 fn a_name_another_component_provides_is_not_unresolved() {
-    need_types!();
     // `gadgetScale` is declared by Provider, which makes a Gizmo.
     let root = fixtures().join("app");
     assert_eq!(
@@ -159,7 +140,6 @@ fn a_name_another_component_provides_is_not_unresolved() {
 
 #[test]
 fn duplicate_ids_and_dangling_aliases_are_errors() {
-    need_types!();
     let dir = project(&[(
         "Dup.qml",
         "import QtQuick\nItem {\n  id: a\n  Rectangle { id: a }\n  property alias x: missing.width\n}\n",
@@ -172,7 +152,6 @@ fn duplicate_ids_and_dangling_aliases_are_errors() {
 
 #[test]
 fn unknown_module_is_a_warning_and_holds_back_type_errors() {
-    need_types!();
     let dir = project(&[(
         "Main.qml",
         "import QtQuick\nimport Vendor.Widgets\nItem {\n  Gadget { sparkle: 1; onFizzed: x }\n}\n",
@@ -188,7 +167,6 @@ fn unknown_module_is_a_warning_and_holds_back_type_errors() {
 
 #[test]
 fn a_type_some_cpp_registers_is_not_unknown() {
-    need_types!();
     let dir = project(&[
         (
             "Main.qml",
@@ -210,7 +188,6 @@ fn a_type_some_cpp_registers_is_not_unknown() {
 
 #[test]
 fn types_of_a_module_the_project_describes_resolve_through_its_qmldir() {
-    need_types!();
     let dir = project(&[
         ("lib/qmldir", "module Lib\nBadge 1.0 Badge.qml\n"),
         (
@@ -239,7 +216,6 @@ fn unreadable_file_is_an_io_diagnostic() {
 
 #[test]
 fn several_files_are_reported_in_the_order_given() {
-    need_types!();
     let diagnostics = run(
         &fixtures(),
         &["unknown_type.qml", "syntax_error.qml", "clean.qml"],
@@ -252,25 +228,26 @@ fn several_files_are_reported_in_the_order_given() {
     assert_eq!(files, ["unknown_type.qml", "syntax_error.qml"]);
 }
 
+/// A build without a table of Qt's types cannot tell a misspelt name from a
+/// type of Qt's that Ljós lacks, and says so; a build with one can, and has
+/// nothing to add.
 #[test]
-fn without_a_type_table_check_reports_syntax_and_says_types_were_skipped() {
-    if qt_types::is_available() {
-        eprintln!("skipped: a type table exists, the unavailable path cannot be reached");
-        return;
-    }
-    let diagnostics = check("unknown_type.qml");
-    assert_eq!(brief(&diagnostics), ["1:1 types-unavailable"]);
-    assert_eq!(diagnostics[0].severity, Severity::Hint);
-    assert!(diagnostics[0].message.contains("mise run types"));
-    let diagnostics = check("syntax_error.qml");
-    assert_eq!(brief(&diagnostics), ["1:1 types-unavailable", "9:1 syntax"]);
+fn an_unknown_type_says_what_a_build_without_qt_s_table_cannot_know() {
+    let dir = project(&[("Main.qml", "import QtQuick\nItem { Sparkle {} }\n")]);
+    let diagnostics = run(dir.path(), &["Main.qml"], false);
+    assert_eq!(brief(&diagnostics), ["2:8 unknown-type"]);
+    assert_eq!(
+        diagnostics[0].message.contains(qt_types::WITHOUT_QT_TABLE),
+        !qt_types::has_qt_table(),
+        "{:?}",
+        diagnostics[0]
+    );
 }
 
 // --- lint ----------------------------------------------------------------
 
 #[test]
 fn lint_includes_everything_check_reports() {
-    need_types!();
     let checked = check("unknown_property.qml");
     let linted = lint("unknown_property.qml");
     for d in &checked {
@@ -280,7 +257,6 @@ fn lint_includes_everything_check_reports() {
 
 #[test]
 fn a11y_unnamed_interactive_covers_mouse_areas_and_tap_handlers() {
-    need_types!();
     let diagnostics = lint("a11y.qml");
     let hits = with_code(&diagnostics, "a11y-unnamed-interactive");
     // The MouseArea with a handler and no name; not the one under a named
@@ -294,7 +270,6 @@ fn a11y_unnamed_interactive_covers_mouse_areas_and_tap_handlers() {
 
 #[test]
 fn a11y_unnamed_icon_button_needs_an_icon_and_no_label() {
-    need_types!();
     let diagnostics = lint("a11y.qml");
     let hits = with_code(&diagnostics, "a11y-unnamed-icon-button");
     // The ToolButton with only an icon; not the named one, not the one with text.
@@ -306,7 +281,6 @@ fn a11y_unnamed_icon_button_needs_an_icon_and_no_label() {
 
 #[test]
 fn a11y_unnamed_image_accepts_ignored_and_named() {
-    need_types!();
     let diagnostics = lint("a11y.qml");
     let hits = with_code(&diagnostics, "a11y-unnamed-image");
     assert_eq!(
@@ -317,7 +291,6 @@ fn a11y_unnamed_image_accepts_ignored_and_named() {
 
 #[test]
 fn i18n_untranslated_string_is_a_hint_on_visible_text_only() {
-    need_types!();
     let diagnostics = lint("i18n.qml");
     let hits = with_code(&diagnostics, "i18n-untranslated-string");
     // "Hello", the placeholder, and the three tooltip/accessibility texts;
@@ -331,7 +304,6 @@ fn i18n_untranslated_string_is_a_hint_on_visible_text_only() {
 
 #[test]
 fn i18n_qstr_non_literal_is_a_warning() {
-    need_types!();
     let diagnostics = lint("i18n.qml");
     let hits = with_code(&diagnostics, "i18n-qstr-non-literal");
     assert_eq!(hits.len(), 1, "{diagnostics:?}");
@@ -341,7 +313,6 @@ fn i18n_qstr_non_literal_is_a_warning() {
 
 #[test]
 fn a_component_built_on_a_button_is_not_judged_by_its_own_use_site() {
-    need_types!();
     // `Fancy` may give its base a text; the use site cannot tell.
     let dir = project(&[
         (
@@ -365,7 +336,6 @@ fn lookup(module: &str, name: &str) -> Result<ljos_mcp_author::TypeInfo, Surface
 
 #[test]
 fn type_lookup_describes_a_type_with_its_chain() {
-    need_types!();
     let info = lookup("QtQuick", "Rectangle").unwrap();
     assert_eq!(info.name, "Rectangle");
     assert_eq!(info.base_chain.first().map(String::as_str), Some("Item"));
@@ -385,7 +355,7 @@ fn type_lookup_describes_a_type_with_its_chain() {
 
     let text = lookup("QtQuick", "Text").unwrap();
     assert!(
-        text.enums.iter().any(|e| e.starts_with("TextFormat")),
+        text.enums.iter().any(|e| e.starts_with("HAlignment")),
         "{:?}",
         text.enums
     );
@@ -393,14 +363,12 @@ fn type_lookup_describes_a_type_with_its_chain() {
 
 #[test]
 fn type_lookup_reports_attached_types() {
-    need_types!();
     let layout = lookup("QtQuick.Layouts", "Layout").unwrap();
     assert!(layout.attached.is_some(), "{layout:?}");
 }
 
 #[test]
 fn type_lookup_unknown_type_suggests_names() {
-    need_types!();
     let err = lookup("QtQuick", "Rectangel").unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
     let details = err.details.unwrap().to_string();
@@ -409,26 +377,27 @@ fn type_lookup_unknown_type_suggests_names() {
 
 #[test]
 fn type_lookup_unknown_module_is_not_found() {
-    need_types!();
     let err = lookup("QtQuik", "Item").unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
     assert!(err.details.unwrap().to_string().contains("QtQuick"));
 }
 
+/// The answer is "not found" in either build, never "unavailable": a build
+/// always has a table. Without Qt's the message says what it cannot know.
 #[test]
-fn type_lookup_without_a_table_says_how_to_make_one() {
-    if qt_types::is_available() {
-        eprintln!("skipped: a type table exists");
-        return;
-    }
-    let err = lookup("QtQuick", "Item").unwrap_err();
-    assert_eq!(err.code, ErrorCode::Unavailable);
-    assert!(err.message.contains("mise run types"));
+fn a_type_that_is_not_found_says_what_a_build_without_qt_s_table_cannot_know() {
+    let err = lookup("QtQuick", "Sparkle").unwrap_err();
+    assert_eq!(err.code, ErrorCode::NotFound);
+    assert_eq!(
+        err.message.contains(qt_types::WITHOUT_QT_TABLE),
+        !qt_types::has_qt_table(),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
 fn module_types_lists_the_types_of_a_module_sorted() {
-    need_types!();
     let front = QmlFrontEnd::new(fixtures());
     let info = front.module_types("QtQuick").unwrap();
     assert_eq!(info.module, "QtQuick");
@@ -445,7 +414,6 @@ fn module_types_lists_the_types_of_a_module_sorted() {
 
 #[test]
 fn module_types_of_an_unknown_module_suggests_modules() {
-    need_types!();
     let err = QmlFrontEnd::new(fixtures())
         .module_types("QtQuik.Controls")
         .unwrap_err();
@@ -461,23 +429,34 @@ fn module_types_of_an_unknown_module_suggests_modules() {
 }
 
 #[test]
-fn module_types_without_a_table_says_how_to_make_one() {
-    if qt_types::is_available() {
-        eprintln!("skipped: a type table exists");
-        return;
-    }
+fn a_module_that_is_not_found_says_what_a_build_without_qt_s_table_cannot_know() {
     let err = QmlFrontEnd::new(fixtures())
-        .module_types("QtQuick")
+        .module_types("QtSparkle")
         .unwrap_err();
-    assert_eq!(err.code, ErrorCode::Unavailable);
-    assert!(err.message.contains("mise run types"));
+    assert_eq!(err.code, ErrorCode::NotFound);
+    assert_eq!(
+        err.message.contains(qt_types::WITHOUT_QT_TABLE),
+        !qt_types::has_qt_table(),
+        "{}",
+        err.message
+    );
+}
+
+/// The modules Ljós implements are in the table of either build. (Not
+/// `QtQuick.Controls`: to Qt its types are the style's, which come with it.)
+#[test]
+fn the_modules_ljos_implements_are_listed_in_either_build() {
+    let front = QmlFrontEnd::new(fixtures());
+    for module in ["QtQml", "QtQuick", "QtQuick.Layouts", "QtTest", "Ljos"] {
+        let info = front.module_types(module).unwrap();
+        assert!(!info.types.is_empty(), "{module}");
+    }
 }
 
 // --- what is definitely missing and what is not --------------------------
 
 #[test]
 fn a_name_missing_from_a_component_that_did_not_parse_whole_is_not_reported() {
-    need_types!();
     let dir = project(&[
         // Whole: a typo on it is an error.
         ("Whole.qml", "import QtQuick\nItem { property int size }\n"),
@@ -506,14 +485,13 @@ fn a_name_missing_from_a_component_that_did_not_parse_whole_is_not_reported() {
 
 #[test]
 fn a_type_whose_members_qt_does_not_list_gets_no_unknown_property() {
-    need_types!();
     let dir = project(&[(
         "Main.qml",
-        "import QtQuick\nItem {\n    Loader { anything: 1 }\n    ListModel { anything: 1 }\n}\n",
+        "import QtQuick\nItem {\n    Loader { anything: 1 }\n    ListModel { ListElement { anything: 1 } }\n}\n",
     )]);
     let diagnostics = run(dir.path(), &["Main.qml"], false);
-    // `Loader` is an ordinary type, so its typo is reported; the model's
-    // body is read by a parser of its own.
+    // `Loader` is an ordinary type, so its typo is reported; what a row of
+    // a model has is the row's to say.
     let lines: Vec<u32> = diagnostics
         .iter()
         .filter(|d| d.code == "unknown-property")
@@ -542,7 +520,6 @@ fn qml_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 #[ignore = "reads corpus/qtdoc; run in release for the timing"]
 fn check_over_the_qtdoc_corpus_is_quick_and_quiet() {
-    need_types!();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/qtdoc")
         .canonicalize()
@@ -585,7 +562,6 @@ async fn tools_and_type_resource_are_served_by_the_real_front_end() {
     };
     use serde_json::{Value, json};
 
-    need_types!();
     let dir = project(&[("Main.qml", "import QtQuick\nItem { Rectngle {} }\n")]);
     let root = dir.path().canonicalize().unwrap();
     let front = QmlFrontEnd::new(&root);

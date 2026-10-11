@@ -382,10 +382,7 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         if found.is_none() {
             self.errors.push(Error::with_code(
                 Code::UnknownType,
-                format!(
-                    "`{}` is not a type of anything the file imports",
-                    object.type_name
-                ),
+                crate::oracle::unknown_type(self.types.oracle, &object.type_name.to_string()),
                 object.type_name.span,
             ));
         }

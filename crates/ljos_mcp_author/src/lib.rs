@@ -25,6 +25,6 @@ mod tools;
 pub use front::QmlFrontEnd;
 pub use frontend::{Diagnostic, FrontEnd, ModuleInfo, Severity, StubFrontEnd, TypeInfo};
 pub use ledger::{ApiStatus, Ledger, LedgerError, LedgerRow, MemberKind};
-pub use lints::{LINTS, Lint, TYPES_UNAVAILABLE};
+pub use lints::{LINTS, Lint};
 pub use project::{Project, ProjectError};
 pub use server::{AuthorServer, serve_stdio};

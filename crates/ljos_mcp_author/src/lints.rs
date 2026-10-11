@@ -75,10 +75,6 @@ pub const LINTS: [Lint; 5] = [
     UNTRANSLATED_STRING,
 ];
 
-/// The code of the diagnostic that says the rules could not be applied:
-/// there is no table of types to tell a `Button` from an `Item` with.
-pub const TYPES_UNAVAILABLE: &str = "types-unavailable";
-
 /// `ljos://lints`: the table as a page.
 pub(crate) fn markdown() -> String {
     let mut out = String::from(
@@ -104,8 +100,8 @@ pub(crate) fn markdown() -> String {
         ));
     }
     out.push_str(
-        "\nThe rules need the table of Qt types: without it the answer has one \
-         `types-unavailable` diagnostic and nothing was checked.\n",
+        "\nThe rules tell a `Button` from an `Item` by the table of types the build has: Qt's \
+         where one was generated, and Ljós's own description of its types where not.\n",
     );
     out
 }

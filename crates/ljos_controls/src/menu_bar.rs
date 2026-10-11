@@ -163,7 +163,7 @@ pub struct MenuBar {
     #[qml(notify, readonly)]
     pub count: i32,
     /// What the item of a menu is made from.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
     /// The menus of the items, in the order of the bar.
     #[qml(notify, list, append = menus_append)]

@@ -82,9 +82,9 @@ fn qt_enum(owner: QtType, declared: &str) -> Option<bool> {
 
 #[test]
 fn what_qt_declares_with_an_enum_is_tagged_with_one() {
-    // Without Qt's description every lookup finds nothing.
-    if QtTypeOracle.module_type("QtQuick", "Item").is_none() {
-        eprintln!("skipped: no Qt type description on this machine");
+    // Without Qt's description there is nothing to hold the tags to: the
+    // table is then written from these very tags.
+    if !qt_types::test_has_qt_table("what_qt_declares_with_an_enum_is_tagged_with_one") {
         return;
     }
     let e = engine();

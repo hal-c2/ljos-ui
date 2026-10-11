@@ -51,10 +51,10 @@ pub struct OverlayAttached {
     #[qml(notify, readonly)]
     pub overlay: Option<ObjectId>,
     /// The component of the shade behind the popup while it is modal.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub modal: Option<ObjectId>,
     /// The same for a popup that dims without being modal.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub modeless: Option<ObjectId>,
 }
 

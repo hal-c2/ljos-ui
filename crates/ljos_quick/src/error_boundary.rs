@@ -50,10 +50,10 @@ pub struct ErrorBoundary {
     #[qml(base)]
     pub item_base: Item,
     /// What the boundary shows and answers for.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub content: Option<ObjectId>,
     /// What it shows while the content is stopped.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub fallback: Option<ObjectId>,
     /// The item the boundary shows: the one made of `content`, or of
     /// `fallback` while the boundary has failed.
