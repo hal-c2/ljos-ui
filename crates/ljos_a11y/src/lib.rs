@@ -9,8 +9,11 @@
 //! See `docs/ARCHITECTURE.md` §14.
 
 mod role;
+mod text;
 mod tree;
 
 pub use accesskit;
 pub use role::{ROLE_ALIASES, ROLES, Role, RoleInfo, qt_role_keys, role_word};
+pub use text::{TextRun, TextValue};
 pub use tree::{Bounds, Changes, NodeData, NodeKey, Tree, TreeStats};
+pub use tree::{Range, Scroll};

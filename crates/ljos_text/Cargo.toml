@@ -12,6 +12,8 @@ publish.workspace = true
 ljos_render = { path = "../ljos_render", default-features = false }
 parley.workspace = true
 thiserror.workspace = true
+# Grapheme clusters for cursor movement.
+unicode-segmentation.workspace = true
 
 [lints]
 workspace = true

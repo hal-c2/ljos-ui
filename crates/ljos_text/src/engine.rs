@@ -32,6 +32,8 @@ const MAX_STYLES: usize = 256;
 /// Font sizes beyond this are a mistake in a binding, not a design.
 const MAX_FONT_SIZE: f32 = 4096.0;
 
+mod edit;
+
 type Shape = parley::Layout<()>;
 
 /// Counters for tests and diagnostics.

@@ -32,16 +32,22 @@
 mod bounds;
 mod cache;
 mod direction;
+mod edit;
 mod elide;
 mod engine;
 mod face;
 mod fonts;
 mod layout;
+mod model;
 mod snap;
 mod style;
 
 pub use direction::reads_right_to_left;
+pub use edit::{Caret, CaretCluster, EditLayout, EditLine, EditParams, EditRun};
 pub use engine::{CacheStats, TextEngine};
 pub use fonts::{BUNDLED_FAMILY, FontError};
 pub use layout::{FontMetrics, Line, LineRun, TextBounds, TextLayout};
+pub use model::{
+    Checkpoint, DEFAULT_MAX_LENGTH, TextModel, byte_to_utf16, utf16_len, utf16_to_byte,
+};
 pub use style::{ElideMode, LayoutParams, LineHeight, TextStyle, WrapMode};

@@ -11,6 +11,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use accesskit::{Action, Node, NodeId, Role as AkRole, TreeUpdate};
 
 use crate::role::Role;
+use crate::text::TextValue;
 
 /// The identity of a node: the owner's own stable number for the item.
 /// `0` is the tree's root, which stands for the scene and has no item.
@@ -46,6 +47,30 @@ impl Bounds {
     }
 }
 
+/// Where a node that stands for a number is between two ends: a scroll
+/// bar, a slider.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Range {
+    pub value: f64,
+    pub min: f64,
+    pub max: f64,
+    /// How far one increase or decrease goes. Nothing (`0`) for a node
+    /// that only shows its value: it takes no such action.
+    pub step: f64,
+}
+
+/// How far what is in a node is scrolled, and how far it can be, in each
+/// direction. The node takes the scroll actions that have somewhere to go.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Scroll {
+    pub x: f64,
+    pub x_min: f64,
+    pub x_max: f64,
+    pub y: f64,
+    pub y_min: f64,
+    pub y_max: f64,
+}
+
 /// What one exposed item tells an assistive technology.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeData {
@@ -67,6 +92,19 @@ pub struct NodeData {
     pub disabled: bool,
     /// Whether the node takes the press action.
     pub press: bool,
+    /// Whether what is outside the node cannot be reached while it is
+    /// shown (a modal dialog).
+    pub modal: bool,
+    /// The number the node stands for, when it stands for one.
+    pub range: Option<Range>,
+    /// Where the node's content is scrolled to, when it scrolls.
+    pub scroll: Option<Scroll>,
+    /// Whether what is in the node shows only inside its box. This is how
+    /// AccessKit learns that a child scrolled out of it is off screen:
+    /// the child stays in the tree, with bounds outside its parent's.
+    pub clips_children: bool,
+    /// The text the node holds, when it holds text that can be edited.
+    pub text: Option<TextValue>,
 }
 
 impl NodeData {
@@ -83,6 +121,11 @@ impl NodeData {
             focused: false,
             disabled: false,
             press: false,
+            modal: false,
+            range: None,
+            scroll: None,
+            clips_children: false,
+            text: None,
         }
     }
 
@@ -115,6 +158,59 @@ impl NodeData {
         if self.press && !self.disabled {
             node.add_action(Action::Click);
         }
+        if self.modal {
+            node.set_modal();
+        }
+        if let Some(r) = self.range {
+            node.set_numeric_value(r.value);
+            node.set_min_numeric_value(r.min);
+            node.set_max_numeric_value(r.max);
+            if r.step > 0.0 {
+                node.set_numeric_value_step(r.step);
+                if !self.disabled {
+                    node.add_action(Action::Increment);
+                    node.add_action(Action::Decrement);
+                    node.add_action(Action::SetValue);
+                }
+            }
+        }
+        if let Some(s) = self.scroll {
+            node.set_scroll_x(s.x);
+            node.set_scroll_x_min(s.x_min);
+            node.set_scroll_x_max(s.x_max);
+            node.set_scroll_y(s.y);
+            node.set_scroll_y_min(s.y_min);
+            node.set_scroll_y_max(s.y_max);
+            let ways = [
+                (Action::ScrollLeft, s.x > s.x_min),
+                (Action::ScrollRight, s.x < s.x_max),
+                (Action::ScrollUp, s.y > s.y_min),
+                (Action::ScrollDown, s.y < s.y_max),
+            ];
+            for (action, room) in ways {
+                if room && !self.disabled {
+                    node.add_action(action);
+                }
+            }
+        }
+        if self.clips_children {
+            node.set_clips_children();
+        }
+        if let Some(t) = &self.text {
+            // The runs and the selection are the caller's, as the children
+            // are: they name nodes.
+            node.set_value(t.value.clone());
+            if t.read_only {
+                node.set_read_only();
+            }
+            if !self.disabled {
+                node.add_action(Action::SetTextSelection);
+                if !t.read_only {
+                    node.add_action(Action::SetValue);
+                    node.add_action(Action::ReplaceSelectedText);
+                }
+            }
+        }
     }
 }
 
@@ -124,7 +220,13 @@ struct Slot {
     /// `None` while the node is in no child list.
     parent: Option<NodeKey>,
     children: Vec<NodeKey>,
+    /// The AccessKit ids of the runs of the node's text.
+    runs: Vec<NodeId>,
 }
+
+/// The ids of text runs are counted up from here. An item's key has this
+/// bit only after its slot was reused two thousand million times.
+const FIRST_RUN_ID: u64 = 1 << 63;
 
 /// How much work the tree has been asked to do, for tests that prove one
 /// change touches one node.
@@ -168,6 +270,9 @@ pub struct Tree {
     sent: bool,
     /// The focus the AccessKit consumer was last told.
     sent_focus: Option<NodeKey>,
+    /// How many run ids were given out, and whose run each is.
+    run_ids: u64,
+    run_owners: HashMap<NodeId, (NodeKey, usize)>,
 }
 
 impl Tree {
@@ -225,6 +330,7 @@ impl Tree {
         } else {
             self.focused.remove(&key);
         }
+        let runs = data.text.as_ref().map_or(0, |t| t.runs().len());
         match self.slots.get_mut(&key) {
             Some(slot) if slot.data == data => return false,
             Some(slot) => slot.data = data,
@@ -235,10 +341,12 @@ impl Tree {
                         data,
                         parent: None,
                         children: Vec::new(),
+                        runs: Vec::new(),
                     },
                 );
             }
         }
+        self.set_run_count(key, runs);
         self.dirty.insert(key);
         self.stats.node_updates += 1;
         true
@@ -278,11 +386,55 @@ impl Tree {
             self.dirty.insert(parent);
             self.stats.child_updates += 1;
         }
+        for id in &slot.runs {
+            self.run_owners.remove(id);
+        }
         self.dirty.remove(&key);
         self.focused.remove(&key);
         self.removed.push(key);
         self.stats.removals += 1;
         true
+    }
+
+    /// Gives the node's text `count` run ids, keeping the ones it has.
+    fn set_run_count(&mut self, key: NodeKey, count: usize) {
+        let Some(slot) = self.slots.get_mut(&key) else {
+            return;
+        };
+        for id in slot.runs.drain(count.min(slot.runs.len())..) {
+            self.run_owners.remove(&id);
+        }
+        while slot.runs.len() < count {
+            let id = NodeId(FIRST_RUN_ID | self.run_ids);
+            self.run_ids += 1;
+            self.run_owners.insert(id, (key, slot.runs.len()));
+            slot.runs.push(id);
+        }
+    }
+
+    /// The node whose text the run `id` is of, and which of its runs it
+    /// is: what a selection an assistive technology asks for names.
+    pub fn text_run(&self, id: NodeId) -> Option<(NodeKey, usize)> {
+        self.run_owners.get(&id).copied()
+    }
+
+    /// The AccessKit nodes of the runs of the text of `key`.
+    fn run_nodes(&self, key: NodeKey) -> Vec<(NodeId, Node)> {
+        let Some(slot) = self.slots.get(&key) else {
+            return Vec::new();
+        };
+        let Some(text) = &slot.data.text else {
+            return Vec::new();
+        };
+        text.runs()
+            .iter()
+            .zip(&slot.runs)
+            .map(|(run, id)| {
+                let mut node = Node::new(AkRole::TextRun);
+                run.apply(&text.value, &mut node);
+                (*id, node)
+            })
+            .collect()
     }
 
     /// Sets the child list of `parent` ([`NodeKey::ROOT`] for the scene).
@@ -444,10 +596,19 @@ impl Tree {
             });
             node
         };
+        // The runs of its text come first: they are what the node says.
+        let runs: &[NodeId] = self.slots.get(&key).map_or(&[], |s| &s.runs);
+        if let Some(text) = self.get(key).and_then(|d| d.text.as_ref())
+            && !runs.is_empty()
+        {
+            node.set_text_selection(
+                text.selection(&text.runs(), |i| runs.get(i).copied().unwrap_or(runs[0])),
+            );
+        }
         node.set_children(
-            self.children(key)
-                .iter()
-                .map(|c| c.node_id())
+            runs.iter()
+                .copied()
+                .chain(self.children(key).iter().map(|c| c.node_id()))
                 .collect::<Vec<_>>(),
         );
         Some(node)
@@ -465,6 +626,7 @@ impl Tree {
         for key in keys {
             if let Some(node) = self.accesskit_node(key) {
                 nodes.push((key.node_id(), node));
+                nodes.extend(self.run_nodes(key));
             }
         }
         let _ = self.take_changes();
@@ -495,11 +657,13 @@ impl Tree {
             return None;
         }
         self.sent_focus = focus;
-        let nodes = changes
-            .changed
-            .into_iter()
-            .filter_map(|k| Some((k.node_id(), self.accesskit_node(k)?)))
-            .collect();
+        let mut nodes = Vec::with_capacity(changes.changed.len());
+        for k in changes.changed {
+            if let Some(node) = self.accesskit_node(k) {
+                nodes.push((k.node_id(), node));
+                nodes.extend(self.run_nodes(k));
+            }
+        }
         Some(TreeUpdate {
             nodes,
             tree: None,
@@ -684,6 +848,54 @@ mod tests {
         assert!(node.is_disabled());
         assert!(!node.supports_action(Action::Click));
         assert!(!node.supports_action(Action::Focus));
+    }
+
+    #[test]
+    fn a_node_with_a_step_takes_increase_and_decrease() {
+        let mut bar = NodeData::new(AkRole::ScrollBar);
+        bar.range = Some(Range {
+            value: 0.25,
+            min: 0.0,
+            max: 0.75,
+            step: 0.1,
+        });
+        let mut node = Node::new(AkRole::Unknown);
+        bar.apply(&mut node);
+        assert_eq!(node.numeric_value(), Some(0.25));
+        assert_eq!(node.min_numeric_value(), Some(0.0));
+        assert_eq!(node.max_numeric_value(), Some(0.75));
+        assert_eq!(node.numeric_value_step(), Some(0.1));
+        assert!(node.supports_action(Action::Increment));
+        assert!(node.supports_action(Action::SetValue));
+
+        // One that only shows a number takes nothing.
+        bar.range = bar.range.map(|r| Range { step: 0.0, ..r });
+        let mut node = Node::new(AkRole::Unknown);
+        bar.apply(&mut node);
+        assert_eq!(node.numeric_value(), Some(0.25));
+        assert_eq!(node.numeric_value_step(), None);
+        assert!(!node.supports_action(Action::Increment));
+    }
+
+    #[test]
+    fn a_node_that_scrolls_takes_the_actions_that_have_somewhere_to_go() {
+        let mut view = NodeData::new(AkRole::ScrollView);
+        view.clips_children = true;
+        view.scroll = Some(Scroll {
+            x_max: 300.0,
+            y: 200.0,
+            y_max: 200.0,
+            ..Scroll::default()
+        });
+        let mut node = Node::new(AkRole::Unknown);
+        view.apply(&mut node);
+        assert!(node.clips_children());
+        assert_eq!(node.scroll_y(), Some(200.0));
+        assert_eq!(node.scroll_y_max(), Some(200.0));
+        assert!(node.supports_action(Action::ScrollUp));
+        assert!(!node.supports_action(Action::ScrollDown));
+        assert!(node.supports_action(Action::ScrollRight));
+        assert!(!node.supports_action(Action::ScrollLeft));
     }
 
     #[test]

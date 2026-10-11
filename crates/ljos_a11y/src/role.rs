@@ -197,6 +197,8 @@ impl Role {
                 | Role::MenuItem
                 | Role::PageTab
                 | Role::Link
+                | Role::ComboBox
+                | Role::ListItem
         )
     }
 }
