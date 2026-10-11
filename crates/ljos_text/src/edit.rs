@@ -228,30 +228,33 @@ impl EditLayout {
             return out;
         }
         for (index, line) in self.lines.iter().enumerate() {
-            if line.range.start >= range.end || line.range.end <= range.start {
-                continue;
-            }
-            let mut open: Option<(f64, f64)> = None;
-            for c in &line.clusters {
-                let inside = c.range.start >= range.start && c.range.end <= range.end;
-                match (&mut open, inside) {
-                    (Some((_, x1)), true) if (c.x0 - *x1).abs() < 1e-3 => *x1 = c.x1,
-                    (_, true) => {
-                        if let Some((x0, x1)) = open.replace((c.x0, c.x1)) {
-                            out.push((index, line_rect(line, x0, x1)));
-                        }
-                    }
-                    (_, false) => {
-                        if let Some((x0, x1)) = open.take() {
-                            out.push((index, line_rect(line, x0, x1)));
-                        }
-                    }
-                }
-            }
-            if let Some((x0, x1)) = open {
+            for (x0, x1) in line.range_extents(&range) {
                 out.push((index, line_rect(line, x0, x1)));
             }
         }
+        out
+    }
+}
+
+impl EditLine {
+    /// The stretches of the line a range of text covers: left and right
+    /// edge of each, from the line's left edge. More than one where text
+    /// of both directions is in the range.
+    pub fn range_extents(&self, range: &Range<usize>) -> Vec<(f64, f64)> {
+        let mut out = Vec::new();
+        if self.range.start >= range.end || self.range.end <= range.start {
+            return out;
+        }
+        let mut open: Option<(f64, f64)> = None;
+        for c in &self.clusters {
+            let inside = c.range.start >= range.start && c.range.end <= range.end;
+            match (&mut open, inside) {
+                (Some((_, x1)), true) if (c.x0 - *x1).abs() < 1e-3 => *x1 = c.x1,
+                (_, true) => out.extend(open.replace((c.x0, c.x1))),
+                (_, false) => out.extend(open.take()),
+            }
+        }
+        out.extend(open);
         out
     }
 }

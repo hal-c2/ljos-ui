@@ -5,6 +5,18 @@
 //! cache, and the glyph runs that are drawn live in the item's display list,
 //! which the scene drops when the item leaves the screen. So text that is not
 //! shown costs a few numbers, however much of it there is.
+//!
+//! Text that is more than plain (`textFormat`) is a [`ljos_text::rich::RichDoc`]
+//! the item keeps ([`rich`]): the document is what makes a change cost only
+//! the blocks it touches. Its links are [`links`], and selecting across
+//! several `Text` items is [`scope`].
+
+mod links;
+mod rich;
+mod scope;
+
+pub use rich::RichHandle;
+pub use scope::SelectionScope;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -15,14 +27,16 @@ use ljos_engine::{
     qml_impl,
 };
 use ljos_render::{DisplayListBuilder, kurbo};
+use ljos_text::rich::{DocMetrics, TextFormat, might_be_rich};
 use ljos_text::{
-    ElideMode, LayoutParams, Line, LineHeight, TextEngine, TextLayout, TextStyle, WrapMode,
+    ElideMode, LayoutParams, Line, LineHeight, Ranged, TextEngine, TextLayout, TextStyle, WrapMode,
     reads_right_to_left,
 };
 
 use crate::enums::{align, elide, line_height_mode, wrap_mode};
 use crate::item::{Item, is_unset, num, size_follows_implicit, write_computed};
 use crate::rectangle::to_rgba;
+use crate::text_input::text_format;
 
 /// A text engine shared by everything on the UI thread.
 pub type SharedTextEngine = Rc<RefCell<TextEngine>>;
@@ -58,16 +72,26 @@ pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
     shared
 }
 
-/// `Text` (QtQuick): plain text.
+/// `Text` (QtQuick): plain text, the tags of `StyledText`, the HTML subset
+/// of `RichText`, or Markdown, as `textFormat` says.
 ///
-/// Not implemented: `textFormat` (rich text and Markdown), `style`, links,
-/// `fontSizeMode`, padding and `renderType`.
+/// A document is untrusted: nothing in it is run or fetched. A link only
+/// reports its address (`linkActivated`); an image is shown when it is a
+/// file, a `data:` address or a registered resource, never from a network.
+///
+/// Beyond Qt: with the keyboard on a `Text`, Tab goes from link to link
+/// and Return activates the one it is on; the links are children of the
+/// `Text` in the accessibility tree.
+///
+/// Not implemented: `style`, `fontSizeMode`, padding and `renderType`.
+/// `font.capitalization` applies to plain text only; small capitals are a
+/// small letter's capital at seven tenths of the size, as Qt draws them.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
     name = "Text",
     extends = Item,
-    enums = crate::enums::text_enums
+    enums = text_enums
 )]
 pub struct Text {
     #[qml(base)]
@@ -113,12 +137,45 @@ pub struct Text {
     pub line_count: i32,
     #[qml(notify, readonly)]
     pub truncated: bool,
-    /// Kept; nothing is loaded relative to it.
+    /// What the address of an image in the text is relative to.
     #[qml(notify, reset = BASE_URL_RESET)]
     pub base_url: Url,
+    /// [`text_format`]: how `text` is read. `AUTO_TEXT` takes text that
+    /// starts like markup for `STYLED_TEXT`.
+    #[qml(notify, enumeration = "TextFormat")]
+    pub text_format: i32,
+    /// The colour of links.
+    #[qml(notify)]
+    pub link_color: Color,
+    /// The address of the link under the pointer, or empty.
+    #[qml(notify, readonly)]
+    pub hovered_link: Atom,
     /// [`init_text`] ran.
     #[qml(skip)]
     initialised: bool,
+    /// The document, once the text was more than plain.
+    #[qml(skip)]
+    pub(crate) rich: Option<rich::Shared>,
+}
+
+/// The enums of `Text`: those every text item has, and its own
+/// `TextFormat`, which has `StyledText` where an editor's has not.
+fn text_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    let mut table = crate::enums::text_enums();
+    table.push((
+        "TextFormat",
+        [
+            ("PlainText", text_format::PLAIN_TEXT),
+            ("RichText", text_format::RICH_TEXT),
+            ("AutoText", text_format::AUTO_TEXT),
+            ("MarkdownText", text_format::MARKDOWN_TEXT),
+            ("StyledText", text_format::STYLED_TEXT),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, i64::from(v)))
+        .collect(),
+    ));
+    table
 }
 
 impl Default for Text {
@@ -147,7 +204,12 @@ impl Default for Text {
             line_count: 1,
             truncated: false,
             base_url: Url::default(),
+            text_format: text_format::AUTO_TEXT,
+            // Qt's default, by running qml6.
+            link_color: Color::from_rgba8(0, 0, 255, 255),
+            hovered_link: Atom::EMPTY,
             initialised: false,
+            rich: None,
         }
     }
 }
@@ -158,6 +220,31 @@ impl Text {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init_text(cx.engine, cx.this)
     }
+
+    /// A link was pressed and released. Nothing is opened: what an address
+    /// means is the program's to decide.
+    #[qml(signal, name = "linkActivated")]
+    fn link_activated(link: String);
+
+    /// The pointer came over a link, or left one (an empty address).
+    #[qml(signal, name = "linkHovered")]
+    fn link_hovered(link: String);
+
+    /// `linkAt(x, y)`: the address of the link at a point of the item, or
+    /// an empty string.
+    #[qml(invokable, name = "linkAt")]
+    fn link_at(cx: &Cx, x: f64, y: f64) -> String {
+        links::link_at(cx.engine, cx.this, kurbo::Point::new(x, y))
+            .map(|href| href.to_string())
+            .unwrap_or_default()
+    }
+}
+
+/// Registers what `Text` does with the pointer and the keyboard, and the
+/// types that go with it.
+pub(crate) fn register(engine: &Engine) {
+    links::register(engine);
+    scope::register(engine);
 }
 
 /// The alignment of a text nobody aligned: right-to-left text is aligned
@@ -308,6 +395,37 @@ pub struct TextInputs {
     /// The item's height when the text is not aligned to the top (it moves
     /// the baseline), otherwise 0 so a height change costs nothing.
     pub align_height: f64,
+    /// How the text is read, with `AutoText` resolved.
+    pub format: TextFormat,
+    pub link_color: Color,
+    /// The document, for text that is not plain or that a
+    /// [`SelectionScope`] selects in.
+    pub rich: Option<RichHandle>,
+    /// Counts what changes the picture and is not a property: the link the
+    /// keyboard is on.
+    pub epoch: i32,
+    /// The keyboard is on the item, so the link it is on shows.
+    pub focused: bool,
+    /// The text is drawn in small capitals (`font.capitalization`). Plain
+    /// text only, and not text a [`SelectionScope`] selects in, which is
+    /// drawn as written.
+    pub small_caps: bool,
+    /// What a [`SelectionScope`] has selected of the item, in the offsets
+    /// of its document, and the colour behind it.
+    pub selection: Option<(std::ops::Range<usize>, Color)>,
+}
+
+/// How `text` is read under a `textFormat` (measured on qml6: `AutoText`
+/// never takes text for Markdown or for the HTML subset).
+fn resolve_format(format: i32, text: &str) -> TextFormat {
+    match format {
+        text_format::PLAIN_TEXT => TextFormat::Plain,
+        text_format::RICH_TEXT => TextFormat::Rich,
+        text_format::MARKDOWN_TEXT => TextFormat::Markdown,
+        text_format::STYLED_TEXT => TextFormat::Styled,
+        _ if might_be_rich(text) => TextFormat::Styled,
+        _ => TextFormat::Plain,
+    }
 }
 
 impl TextInputs {
@@ -339,12 +457,55 @@ impl TextInputs {
             None
         };
         let top = v_align & (align::BOTTOM | align::V_CENTER) == 0;
+        let color = |p: PropIndex, or: Color| match engine.read(obj, p) {
+            Value::Color(c) => c,
+            _ => or,
+        };
+        let written = engine.read(obj, Text::TEXT.index).to_js_string();
+        let format = resolve_format(int(Text::TEXT_FORMAT.index), written.as_str());
+        // Capitals are for plain text: in markup they would change tags,
+        // character references and addresses with the words.
+        let text = if format == TextFormat::Plain {
+            drawn_text(engine, obj, Text::FONT.index, Text::TEXT.index)
+        } else {
+            written
+        };
+        let member = scope::member(engine, obj);
+        let document = if format != TextFormat::Plain || member.is_some() {
+            rich::prepare(engine, obj, text.as_str(), format)
+        } else {
+            // Plain text that became plain again keeps no document.
+            rich::forget(engine, obj);
+            None
+        };
+        let has_links = document.as_ref().is_some_and(|(d, _)| d.has_links());
+        let focused = has_links && engine.read(obj, Item::ACTIVE_FOCUS.index).to_boolean();
+        if let Some((d, _)) = &document {
+            if focused {
+                links::arrive(engine, obj, d);
+            } else {
+                d.leave_keyboard();
+            }
+        }
+        let selection = match (&document, member) {
+            (Some((d, _)), Some(m)) => d.selection().map(|range| (range, m.color)),
+            _ => None,
+        };
+        let small_caps = document.is_none()
+            && matches!(
+                engine.read(obj, Text::FONT.index),
+                Value::Font(f) if f.capitalization == Font::SMALL_CAPS
+            );
         TextInputs {
-            text: drawn_text(engine, obj, Text::FONT.index, Text::TEXT.index),
-            color: match engine.read(obj, Text::COLOR.index) {
-                Value::Color(c) => c,
-                _ => Color::BLACK,
-            },
+            text,
+            small_caps,
+            color: color(Text::COLOR.index, Color::BLACK),
+            link_color: color(Text::LINK_COLOR.index, Color::BLACK),
+            format,
+            epoch: document.as_ref().map_or(0, |(_, epoch)| *epoch),
+            rich: document.map(|(d, _)| d),
+            focused,
+            selection,
             style: read_style(engine, obj, Text::FONT.index),
             h_align,
             v_align,
@@ -376,7 +537,34 @@ impl TextInputs {
     }
 
     fn layout(&self, te: &mut TextEngine) -> Arc<TextLayout> {
+        if self.small_caps {
+            let (drawn, spans) = Ranged::small_caps(self.text.as_str(), &self.style);
+            let ranged = Ranged {
+                spans: &spans,
+                strut: true,
+                ..Ranged::NONE
+            };
+            return te.layout_ranged(&drawn, &self.style, &ranged, &self.params);
+        }
         te.layout(self.text.as_str(), &self.style, &self.params)
+    }
+
+    /// Lays the text out and says what it measures.
+    fn measure(&self, te: &mut TextEngine) -> DocMetrics {
+        if let Some(d) = &self.rich {
+            return d.layout(te, self);
+        }
+        let l = self.layout(te);
+        DocMetrics {
+            natural_width: l.natural_width,
+            content_width: l.content_width,
+            content_height: l.content_height,
+            implicit_height: l.implicit_height,
+            line_count: l.line_count(),
+            truncated: l.truncated,
+            baseline: l.baseline,
+            rtl: l.rtl,
+        }
     }
 }
 
@@ -419,46 +607,17 @@ pub(crate) fn polish(
     init_text(engine, obj)?;
     let t = engine.untrack(|| TextInputs::read(engine, obj));
     // Borrowed for the layout only: the writes below run bindings.
-    let l = t.layout(&mut te.borrow_mut());
-    let shift = vertical_offset(t.v_align, t.align_height, l.content_height);
+    let m = t.measure(&mut te.borrow_mut());
+    let shift = vertical_offset(t.v_align, t.align_height, m.content_height);
     engine.batch(|| {
-        write_computed(
-            engine,
-            obj,
-            Item::IMPLICIT_WIDTH.index,
-            Value::Real(l.natural_width),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Item::IMPLICIT_HEIGHT.index,
-            Value::Real(l.implicit_height),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::CONTENT_WIDTH.index,
-            Value::Real(l.content_width),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::CONTENT_HEIGHT.index,
-            Value::Real(l.content_height),
-        )?;
-        write_computed(
-            engine,
-            obj,
-            Text::LINE_COUNT.index,
-            Value::Int(l.line_count() as i32),
-        )?;
-        write_computed(engine, obj, Text::TRUNCATED.index, Value::Bool(l.truncated))?;
-        write_computed(
-            engine,
-            obj,
-            Item::BASELINE_OFFSET.index,
-            Value::Real(l.baseline + shift),
-        )
+        let put = |p: PropIndex, v: Value| write_computed(engine, obj, p, v);
+        put(Item::IMPLICIT_WIDTH.index, Value::Real(m.natural_width))?;
+        put(Item::IMPLICIT_HEIGHT.index, Value::Real(m.implicit_height))?;
+        put(Text::CONTENT_WIDTH.index, Value::Real(m.content_width))?;
+        put(Text::CONTENT_HEIGHT.index, Value::Real(m.content_height))?;
+        put(Text::LINE_COUNT.index, Value::Int(m.line_count as i32))?;
+        put(Text::TRUNCATED.index, Value::Bool(m.truncated))?;
+        put(Item::BASELINE_OFFSET.index, Value::Real(m.baseline + shift))
     })
 }
 
@@ -470,6 +629,9 @@ pub(crate) fn paint(
     size: kurbo::Size,
     out: &mut DisplayListBuilder,
 ) {
+    if let Some(d) = &t.rich {
+        return rich::paint(te, t, d, size, out);
+    }
     if t.text.is_empty() || t.color.a == 0 {
         return;
     }

@@ -131,6 +131,12 @@ impl Shown {
         self.byte_at_units(self.cursor + self.preedit_caret)
     }
 
+    /// Whether what is shown is the text itself, so that a byte of the one
+    /// is a byte of the other (but for the composition).
+    pub fn is_plain(&self) -> bool {
+        self.mode == Mode::Plain
+    }
+
     /// The bytes the composition takes.
     pub fn preedit_bytes(&self) -> std::ops::Range<usize> {
         self.byte_at_units(self.cursor)..self.byte_at_units(self.cursor + self.preedit_units)
@@ -293,6 +299,10 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     let fresh = s.layout.is_some()
         && s.shown.text == shown.text
         && s.laid.as_ref() == Some(&(inputs.style.clone(), params));
+    if s.shown.text != shown.text {
+        // Spans a highlighter made are those of the text that was shown.
+        s.highlights.stale = true;
+    }
     s.shown = shown;
     if !fresh {
         let layout = text_engine()

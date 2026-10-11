@@ -11,17 +11,21 @@ use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
 use parley::fontique::GenericFamily;
 use parley::{
     Alignment, AlignmentOptions, BaseDirection, BreakReason, FontContext, FontData, FontFamily,
-    FontFamilyName, FontStyle, FontWeight, LayoutContext, OverflowWrap, PositionedLayoutItem,
-    StyleProperty, WordBreak,
+    FontFamilyName, FontStyle, FontWeight, InlineBox, InlineBoxKind, LayoutContext, OverflowWrap,
+    PositionedLayoutItem, StyleProperty, WordBreak,
 };
 
 use crate::cache::FrameCache;
+use crate::edit::CaretCluster;
 use crate::elide::{Clusters, ELLIPSIS};
 use crate::face;
 use crate::fonts::{self, FontError};
-use crate::layout::{FontMetrics, Line, LineRun, TextLayout};
+use crate::layout::{FontMetrics, Line, LineRun, PlacedBox, TextLayout};
 use crate::snap;
-use crate::style::{ElideMode, LayoutParams, LineHeight, ParamsKey, TextStyle, WrapMode};
+use crate::style::{
+    BoxAlign, ElideMode, InlineObject, LayoutParams, LineHeight, ParamsKey, Ranged, StyleSpan,
+    TextStyle, WrapMode,
+};
 
 /// A layout unused for this many frames is dropped.
 const KEEP_FRAMES: u64 = 30;
@@ -31,10 +35,16 @@ const MAX_SHAPES: usize = 1024;
 const MAX_STYLES: usize = 256;
 /// Font sizes beyond this are a mistake in a binding, not a design.
 const MAX_FONT_SIZE: f32 = 4096.0;
+/// Mixed into the key of a ranged layout, so it never answers for a plain
+/// one of the same text.
+const RANGED: u8 = 1;
 
 mod edit;
 
-type Shape = parley::Layout<()>;
+/// The brush is the tag of the [`StyleSpan`] a glyph belongs to, so Parley
+/// starts a new glyph run wherever the caller's parts change, also where only
+/// their colour does (which the engine never sees).
+type Shape = parley::Layout<u32>;
 
 /// Counters for tests and diagnostics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -78,6 +88,7 @@ struct ShapedEntry {
     text: Box<str>,
     style: TextStyle,
     class: BreakClass,
+    ranged: OwnedRanged,
     shape: Shape,
     natural_width: f32,
     rtl: bool,
@@ -87,7 +98,32 @@ struct LayoutEntry {
     text: Box<str>,
     style: TextStyle,
     params: ParamsKey,
+    /// `None` for plain text, which keeps no character places.
+    ranged: Option<OwnedRanged>,
     layout: Arc<TextLayout>,
+}
+
+/// The spans and objects of a request, kept with a cache entry so a hit can
+/// compare the whole key.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct OwnedRanged {
+    spans: Box<[StyleSpan]>,
+    objects: Box<[InlineObject]>,
+    strut: bool,
+}
+
+impl OwnedRanged {
+    fn of(r: &Ranged<'_>) -> Self {
+        Self {
+            spans: r.spans.into(),
+            objects: r.objects.into(),
+            strut: r.strut,
+        }
+    }
+
+    fn matches(&self, r: &Ranged<'_>) -> bool {
+        *self.spans == *r.spans && *self.objects == *r.objects && self.strut == r.strut
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +144,38 @@ impl Vertical {
     fn natural(self) -> f64 {
         (self.ascent + self.descent).ceil()
     }
+
+    fn max(self, other: Self) -> Self {
+        Self {
+            ascent: self.ascent.max(other.ascent),
+            descent: self.descent.max(other.descent),
+        }
+    }
+
+    /// The line with room for an object `height` tall. Measured on Qt 6.11:
+    /// an object stands on the bottom of the line (not on the baseline),
+    /// hangs from its top, or is centred on it.
+    fn with_box(self, height: f64, align: BoxAlign) -> Self {
+        let extra = (height - (self.ascent + self.descent)).max(0.0);
+        match align {
+            BoxAlign::Bottom => Self {
+                ascent: self.ascent + extra,
+                ..self
+            },
+            BoxAlign::Top => Self {
+                descent: self.descent + extra,
+                ..self
+            },
+            BoxAlign::Middle => Self {
+                ascent: self.ascent + extra / 2.0,
+                descent: self.descent + extra / 2.0,
+            },
+            BoxAlign::Baseline => Self {
+                ascent: self.ascent.max(height),
+                ..self
+            },
+        }
+    }
 }
 
 struct RawRun {
@@ -125,6 +193,20 @@ struct RawRun {
     /// Top above the baseline, and thickness.
     underline: Option<(f32, f32)>,
     strikeout: Option<(f32, f32)>,
+    /// How thick the font's lines are.
+    line_size: f32,
+    /// The tag of the span the glyphs belong to; 0 outside every span.
+    tag: u32,
+}
+
+/// An inline object where Parley put it on its line.
+struct RawBox {
+    id: u64,
+    /// From the line's left edge.
+    x: f32,
+    width: f32,
+    height: f32,
+    align: BoxAlign,
 }
 
 /// A line as Parley broke it, before it has a place in the layout.
@@ -136,6 +218,12 @@ struct RawLine {
     hard_break: bool,
     justified: bool,
     runs: Vec<RawRun>,
+    boxes: Vec<RawBox>,
+    /// Where the characters are; only filled for ranged layouts.
+    clusters: Vec<CaretCluster>,
+    /// The line has text of its own (a line that only breaks takes the
+    /// height of the style its line break is in).
+    has_glyphs: bool,
 }
 
 impl RawLine {
@@ -147,6 +235,9 @@ impl RawLine {
             hard_break: false,
             justified: false,
             runs: Vec::new(),
+            boxes: Vec::new(),
+            clusters: Vec::new(),
+            has_glyphs: false,
         }
     }
 }
@@ -161,6 +252,10 @@ impl Families {
     /// The family list for a style: what it names, then the engine's
     /// defaults, so a misspelt or missing family still shows text.
     fn stack<'a>(&'a self, style: &'a TextStyle) -> Vec<FontFamilyName<'a>> {
+        self.stack_of(&style.family)
+    }
+
+    fn stack_of<'a>(&'a self, family: &'a str) -> Vec<FontFamilyName<'a>> {
         let mut names = Vec::new();
         let mut add = |list: &'a str| {
             for part in list.split(',') {
@@ -174,7 +269,7 @@ impl Families {
                 });
             }
         };
-        add(&style.family);
+        add(family);
         if let Some(family) = &self.default_family {
             add(family);
         }
@@ -189,7 +284,7 @@ impl Families {
 /// Lays out text. One per scene, or one shared by several scenes.
 pub struct TextEngine {
     fcx: FontContext,
-    lcx: LayoutContext<()>,
+    lcx: LayoutContext<u32>,
     families: Families,
     shapes: FrameCache<u64, ShapedEntry>,
     layouts: FrameCache<u64, LayoutEntry>,
@@ -249,21 +344,37 @@ fn key_hash(text: &str, style: &TextStyle, extra: impl Hash) -> u64 {
     h.finish()
 }
 
+/// A font size the shaper can take.
+fn usable_size(size: f32) -> f32 {
+    if size.is_finite() {
+        size.clamp(0.0, MAX_FONT_SIZE)
+    } else {
+        0.0
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal; a struct would only rename them"
+)]
 fn shape(
     fcx: &mut FontContext,
-    lcx: &mut LayoutContext<()>,
+    lcx: &mut LayoutContext<u32>,
     families: &Families,
     text: &str,
     style: &TextStyle,
+    ranged: &Ranged<'_>,
     class: BreakClass,
     base: BaseDirection,
 ) -> Shape {
     let names = families.stack(style);
-    let size = if style.pixel_size.is_finite() {
-        style.pixel_size.clamp(0.0, MAX_FONT_SIZE)
-    } else {
-        0.0
-    };
+    // Resolved before the builder borrows the contexts.
+    let span_names: Vec<Option<Vec<FontFamilyName<'_>>>> = ranged
+        .spans
+        .iter()
+        .map(|s| s.family.as_deref().map(|f| families.stack_of(f)))
+        .collect();
+    let size = usable_size(style.pixel_size);
     let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
     // Scale 1 and no quantising: layouts are in logical pixels and unhinted,
     // so they do not depend on the screen and one cache entry fits every scale.
@@ -294,6 +405,64 @@ fn shape(
             b.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
         }
     }
+    for (span, names) in ranged.spans.iter().zip(&span_names) {
+        // A span that does not fit the text is a caller's mistake that must
+        // not take the application down: it is left out.
+        let range = span.range.clone();
+        if range.start >= range.end
+            || range.end > text.len()
+            || !text.is_char_boundary(range.start)
+            || !text.is_char_boundary(range.end)
+        {
+            continue;
+        }
+        if let Some(names) = names {
+            b.push(
+                StyleProperty::FontFamily(FontFamily::List(Cow::Borrowed(names))),
+                range.clone(),
+            );
+        }
+        b.push(
+            StyleProperty::FontSize(usable_size(span.pixel_size)),
+            range.clone(),
+        );
+        b.push(
+            StyleProperty::FontWeight(FontWeight::new(finite(span.weight).clamp(1.0, 1000.0))),
+            range.clone(),
+        );
+        b.push(
+            StyleProperty::FontStyle(if span.italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            }),
+            range.clone(),
+        );
+        b.push(StyleProperty::Underline(span.underline), range.clone());
+        b.push(StyleProperty::Strikethrough(span.strikeout), range.clone());
+        b.push(StyleProperty::Brush(span.tag), range);
+    }
+    for object in ranged.objects {
+        if object.index > text.len() || !text.is_char_boundary(object.index) {
+            continue;
+        }
+        let side = |v: f32| {
+            if v.is_finite() {
+                v.clamp(0.0, 16384.0)
+            } else {
+                0.0
+            }
+        };
+        b.push_inline_box(InlineBox {
+            id: object.id,
+            kind: InlineBoxKind::InFlow,
+            index: object.index,
+            width: side(object.width),
+            height: side(object.height),
+            baseline: None,
+            vertical_align: Default::default(),
+        });
+    }
     b.set_base_direction(base);
     b.build(text)
 }
@@ -317,13 +486,19 @@ fn break_lines(shape: &mut Shape, max: Option<f32>, justify: bool) {
     );
 }
 
-fn extract(shape: &Shape, fallback: Vertical, justify_width: Option<f32>) -> Vec<RawLine> {
+fn extract(
+    shape: &Shape,
+    fallback: Vertical,
+    justify_width: Option<f32>,
+    objects: &[InlineObject],
+) -> Vec<RawLine> {
     let mut out = Vec::with_capacity(shape.len());
     for line in shape.lines() {
         let m = *line.metrics();
         let reason = line.break_reason();
         let wrapped = matches!(reason, BreakReason::Regular | BreakReason::Emergency);
         let mut runs = Vec::new();
+        let mut boxes = Vec::new();
         let mut vertical: Option<Vertical> = None;
         let justified = wrapped && justify_width.is_some();
         // Spaces at a wrap hang outside the line and do not count.
@@ -337,8 +512,25 @@ fn extract(shape: &Shape, fallback: Vertical, justify_width: Option<f32>) -> Vec
         let mut shift = 0.0_f32;
         let mut width = 0.0_f32;
         for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(gr) = item else {
-                continue;
+            let gr = match item {
+                PositionedLayoutItem::GlyphRun(gr) => gr,
+                PositionedLayoutItem::InlineBox(placed) => {
+                    let align = objects
+                        .iter()
+                        .find(|o| o.id == placed.id)
+                        .map_or(BoxAlign::Bottom, |o| o.align);
+                    boxes.push(RawBox {
+                        id: placed.id,
+                        x: placed.x - shift,
+                        width: placed.width,
+                        height: placed.height,
+                        align,
+                    });
+                    if !justified {
+                        width += placed.width;
+                    }
+                    continue;
+                }
             };
             let run = gr.run();
             let fm = *run.font_metrics();
@@ -404,7 +596,26 @@ fn extract(shape: &Shape, fallback: Vertical, justify_width: Option<f32>) -> Vec
                     .map_or(0.0, |degrees| degrees.to_radians().tan()),
                 underline,
                 strikeout,
+                line_size: fm.underline_size,
+                tag: style.brush,
             });
+        }
+        let has_glyphs = !runs.is_empty() || !boxes.is_empty();
+        // Measured on Qt 6.11: a line that is only objects standing on the
+        // baseline is as tall as they are, without room for descenders.
+        let only_standing = runs.is_empty()
+            && !boxes.is_empty()
+            && boxes.iter().all(|b| b.align == BoxAlign::Baseline);
+        let mut vertical = if only_standing {
+            Vertical {
+                ascent: 0.0,
+                descent: 0.0,
+            }
+        } else {
+            vertical.unwrap_or(fallback)
+        };
+        for b in &boxes {
+            vertical = vertical.with_box(f64::from(b.height), b.align);
         }
         out.push(RawLine {
             range: line.text_range(),
@@ -412,10 +623,13 @@ fn extract(shape: &Shape, fallback: Vertical, justify_width: Option<f32>) -> Vec
                 Some(w) if justified => w,
                 _ => width,
             },
-            vertical: vertical.unwrap_or(fallback),
+            vertical,
             hard_break: reason == BreakReason::Explicit,
             justified,
             runs,
+            boxes,
+            clusters: Vec::new(),
+            has_glyphs,
         });
     }
     out
@@ -423,7 +637,7 @@ fn extract(shape: &Shape, fallback: Vertical, justify_width: Option<f32>) -> Vec
 
 /// The glyphs of a run where Parley put them, and the advance Qt gives each
 /// (see [`snap`]).
-fn snapped(gr: &parley::GlyphRun<'_, ()>) -> (Vec<parley::Glyph>, Vec<f32>) {
+fn snapped(gr: &parley::GlyphRun<'_, u32>) -> (Vec<parley::Glyph>, Vec<f32>) {
     let run = gr.run();
     let placed: Vec<parley::Glyph> = gr.positioned_glyphs().collect();
     let shaped: Vec<(u32, f32)> = placed.iter().map(|g| (g.id, g.advance)).collect();
@@ -432,7 +646,7 @@ fn snapped(gr: &parley::GlyphRun<'_, ()>) -> (Vec<parley::Glyph>, Vec<f32>) {
 }
 
 /// Where on its variation axes a run's font is.
-fn coords(run: &parley::Run<'_, ()>) -> Vec<i16> {
+fn coords(run: &parley::Run<'_, u32>) -> Vec<i16> {
     run.normalized_coords()
         .iter()
         .map(|c| c.to_bits())
@@ -445,9 +659,9 @@ fn snapped_width(shape: &Shape) -> f32 {
         .lines()
         .map(|line| {
             line.items()
-                .filter_map(|item| match item {
-                    PositionedLayoutItem::GlyphRun(gr) => Some(snapped(&gr).1.iter().sum::<f32>()),
-                    _ => None,
+                .map(|item| match item {
+                    PositionedLayoutItem::GlyphRun(gr) => snapped(&gr).1.iter().sum::<f32>(),
+                    PositionedLayoutItem::InlineBox(placed) => placed.width,
                 })
                 .sum::<f32>()
         })
@@ -495,6 +709,25 @@ impl RawLine {
     fn finish(self, top: f64, width: f64) -> Line {
         let baseline = top + self.vertical.ascent;
         let base = baseline as f32;
+        let natural = self.vertical.natural();
+        let boxes = self
+            .boxes
+            .iter()
+            .map(|b| {
+                let (w, h) = (f64::from(b.width), f64::from(b.height));
+                let y = match b.align {
+                    BoxAlign::Top => top,
+                    BoxAlign::Middle => top + (natural - h) / 2.0,
+                    BoxAlign::Bottom => top + natural - h,
+                    BoxAlign::Baseline => baseline - h,
+                };
+                let x = f64::from(b.x);
+                PlacedBox {
+                    id: b.id,
+                    rect: Rect::new(x, y, x + w, y + h),
+                }
+            })
+            .collect();
         let runs = self
             .runs
             .into_iter()
@@ -511,6 +744,11 @@ impl RawLine {
                     underline: run.underline.map(bar),
                     strike_through: run.strikeout.map(bar),
                 };
+                // Measured on Qt 6.11: an overline starts on the pixel row
+                // the font's ascent starts in, which for the line's tallest
+                // font is the line's first.
+                let over = (baseline - f64::from(run.ascent)).round().max(top);
+                let overline = Rect::new(x0, over, x1, over + f64::from(run.line_size.max(1.0)));
                 // Glyphs may reach past their advance (an italic f, an
                 // accent above the ascent), so the culling box has a margin.
                 let margin = f64::from(run.font_size) * (0.3 + f64::from(run.skew.abs()));
@@ -532,6 +770,8 @@ impl RawLine {
                         skew: run.skew,
                     }),
                     decorations,
+                    overline,
+                    tag: run.tag,
                 }
             })
             .collect();
@@ -541,6 +781,10 @@ impl RawLine {
             width,
             justified: self.justified,
             runs,
+            range: self.range,
+            height: natural,
+            clusters: self.clusters,
+            boxes,
         }
     }
 }
@@ -659,12 +903,13 @@ impl TextEngine {
             && &*e.text == text
             && e.style == *style
             && e.params == pk
+            && e.ranged.is_none()
         {
             self.stats.layout_hits += 1;
             return e.layout.clone();
         }
         self.stats.layout_misses += 1;
-        let layout = Arc::new(self.build_layout(text, style, params));
+        let layout = Arc::new(self.build_layout(text, style, None, params));
         // A hash collision replaces the other entry: a miss later, never a
         // wrong layout, because hits compare the whole key.
         self.layouts.insert(
@@ -673,6 +918,50 @@ impl TextEngine {
                 text: text.into(),
                 style: style.clone(),
                 params: pk,
+                ranged: None,
+                layout: layout.clone(),
+            },
+            self.frame,
+        );
+        layout
+    }
+
+    /// Lay out `text` whose parts differ in font, with objects standing in
+    /// its lines. Unlike [`Self::layout`] the result knows where every
+    /// character is ([`Line::clusters`]), so a point can be traced back to
+    /// the text, and every glyph run says which span it draws
+    /// ([`LineRun::tag`]). Cached like a plain layout.
+    pub fn layout_ranged(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        params: &LayoutParams,
+    ) -> Arc<TextLayout> {
+        let pk = params.key();
+        let key = key_hash(
+            text,
+            style,
+            (pk, ranged.spans, ranged.objects, ranged.strut, RANGED),
+        );
+        if let Some(e) = self.layouts.get_mut(&key, self.frame)
+            && &*e.text == text
+            && e.style == *style
+            && e.params == pk
+            && e.ranged.as_ref().is_some_and(|r| r.matches(ranged))
+        {
+            self.stats.layout_hits += 1;
+            return e.layout.clone();
+        }
+        self.stats.layout_misses += 1;
+        let layout = Arc::new(self.build_layout(text, style, Some(ranged), params));
+        self.layouts.insert(
+            key,
+            LayoutEntry {
+                text: text.into(),
+                style: style.clone(),
+                params: pk,
+                ranged: Some(OwnedRanged::of(ranged)),
                 layout: layout.clone(),
             },
             self.frame,
@@ -705,9 +994,20 @@ impl TextEngine {
             return text.to_owned();
         }
         let ellipsis = self.style_metrics(style).ellipsis;
-        let rtl = self.shaped(text, style, BreakClass::Word).rtl;
-        self.elide(text, style, mode, width as f32, false, rtl, ellipsis)
-            .0
+        let rtl = self
+            .shaped(text, style, &Ranged::NONE, BreakClass::Word)
+            .rtl;
+        self.elide(
+            text,
+            style,
+            &Ranged::NONE,
+            mode,
+            width as f32,
+            false,
+            rtl,
+            ellipsis,
+        )
+        .0
     }
 
     fn style_metrics(&mut self, style: &TextStyle) -> StyleMetrics {
@@ -781,24 +1081,40 @@ impl TextEngine {
 
     /// Shape without caching: probes and elide candidates are used once.
     fn shape_plain(&mut self, text: &str, style: &TextStyle, base: BaseDirection) -> Shape {
+        self.shape_once(text, style, &Ranged::NONE, base)
+    }
+
+    fn shape_once(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        base: BaseDirection,
+    ) -> Shape {
         shape(
             &mut self.fcx,
             &mut self.lcx,
             &self.families,
             text,
             style,
+            ranged,
             BreakClass::Word,
             base,
         )
     }
 
-    fn shaped(&mut self, text: &str, style: &TextStyle, class: BreakClass) -> &mut ShapedEntry {
-        let key = key_hash(text, style, class);
+    fn shaped(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        class: BreakClass,
+    ) -> &mut ShapedEntry {
+        let key = key_hash(text, style, (class, ranged.spans, ranged.objects));
         let frame = self.frame;
-        let hit = self
-            .shapes
-            .get_mut(&key, frame)
-            .is_some_and(|e| &*e.text == text && e.style == *style && e.class == class);
+        let hit = self.shapes.get_mut(&key, frame).is_some_and(|e| {
+            &*e.text == text && e.style == *style && e.class == class && e.ranged.matches(ranged)
+        });
         if !hit {
             let mut shape = shape(
                 &mut self.fcx,
@@ -806,6 +1122,7 @@ impl TextEngine {
                 &self.families,
                 text,
                 style,
+                ranged,
                 class,
                 BaseDirection::Auto,
             );
@@ -815,6 +1132,7 @@ impl TextEngine {
                 text: text.into(),
                 style: style.clone(),
                 class,
+                ranged: OwnedRanged::of(ranged),
                 natural_width: snapped_width(&shape),
                 rtl: shape.is_rtl(),
                 shape,
@@ -830,7 +1148,8 @@ impl TextEngine {
 
     /// Cut `text` (one line) to `width`. `force` puts the ellipsis even when
     /// the text fits: more text follows that is not shown. Returns the new
-    /// text and its shape; no shape when not even the ellipsis fits.
+    /// text, its shape (none when not even the ellipsis fits), and how many
+    /// bytes at its start are the text's own.
     #[expect(
         clippy::too_many_arguments,
         reason = "internal; a struct would only rename them"
@@ -839,12 +1158,13 @@ impl TextEngine {
         &mut self,
         text: &str,
         style: &TextStyle,
+        ranged: &Ranged<'_>,
         mode: ElideMode,
         width: f32,
         force: bool,
         rtl: bool,
         ellipsis: f32,
-    ) -> (String, Option<Shape>) {
+    ) -> (String, Option<Shape>, usize) {
         // The ellipsis has no direction of its own: without this a cut that
         // leaves only neutral characters would flip a right-to-left line.
         let base = if rtl {
@@ -852,32 +1172,45 @@ impl TextEngine {
         } else {
             BaseDirection::Ltr
         };
-        let mut full = self.shape_plain(text, style, base);
+        let mut full = self.shape_once(text, style, ranged, base);
         break_lines(&mut full, None, false);
         if !force && snapped_width(&full) <= width {
-            return (text.to_owned(), Some(full));
+            return (text.to_owned(), Some(full), text.len());
         }
         if ellipsis > width {
-            return (String::new(), None);
+            return (String::new(), None, 0);
         }
         let clusters = Clusters::new(cluster_advances(&full), text.len());
         let mut keep = clusters.fit(mode, width - ellipsis);
         loop {
             let candidate = clusters.elided(text, mode, keep);
-            let mut shape = self.shape_plain(&candidate, style, base);
+            let head = clusters.head_end(mode, keep);
+            let cut = cut_at(ranged, head);
+            let mut shape = self.shape_once(&candidate, style, &cut.borrowed(), base);
             break_lines(&mut shape, None, false);
             // The estimate ignores kerning against the ellipsis, so check the
             // real width and give up one more cluster if it is over.
             if keep == 0 || snapped_width(&shape) <= width {
-                return (candidate, Some(shape));
+                return (candidate, Some(shape), head);
             }
             keep = Clusters::fewer(mode, keep);
         }
     }
 
-    fn build_layout(&mut self, text: &str, style: &TextStyle, params: &LayoutParams) -> TextLayout {
-        // Qt does not start a new line for a line break that ends the text.
+    fn build_layout(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: Option<&Ranged<'_>>,
+        params: &LayoutParams,
+    ) -> TextLayout {
+        // Qt does not start a new line for a line break that ends the text
+        // (but see `implicit_height` below).
+        let ends_in_break = text.ends_with('\n');
         let text = text.strip_suffix('\n').unwrap_or(text);
+        // Only a ranged layout pays for knowing where its characters are.
+        let places = ranged.is_some();
+        let ranged = ranged.copied().unwrap_or(Ranged::NONE);
         let metrics = self.style_metrics(style);
         let fallback = Vertical {
             ascent: metrics.font.ascent,
@@ -892,23 +1225,38 @@ impl TextEngine {
         let justify = params.justify && wraps;
         let max_advance = width.filter(|_| wraps).map(|w| w as f32);
 
-        let (mut raw, natural, rtl) = if text.is_empty() {
+        let (mut raw, natural, rtl) = if text.is_empty() && ranged.objects.is_empty() {
             (Vec::new(), 0.0, false)
         } else {
-            let entry = self.shaped(text, style, BreakClass::of(wrap));
+            let entry = self.shaped(text, style, &ranged, BreakClass::of(wrap));
             // Parley breaks lines by the shaper's advances, which are a
             // touch wider than Qt's: a text that fits as Qt counts it (an
             // item as wide as its own text) must not be broken.
             let max_advance = max_advance.filter(|w| entry.natural_width > *w);
             break_lines(&mut entry.shape, max_advance, justify);
-            (
-                extract(&entry.shape, fallback, max_advance.filter(|_| justify)),
-                entry.natural_width,
-                entry.rtl,
-            )
+            let mut lines = extract(
+                &entry.shape,
+                fallback,
+                max_advance.filter(|_| justify),
+                ranged.objects,
+            );
+            if places {
+                for (line, carets) in lines.iter_mut().zip(edit::carets(&entry.shape, text)) {
+                    line.clusters = carets.clusters;
+                }
+            }
+            (lines, entry.natural_width, entry.rtl)
         };
         if raw.is_empty() {
             raw.push(RawLine::empty(fallback));
+        }
+        if !ranged.spans.is_empty() {
+            self.break_heights(&mut raw, text, style, ranged.spans);
+        }
+        if ranged.strut {
+            for line in &mut raw {
+                line.vertical = line.vertical.max(fallback);
+            }
         }
 
         let total = raw.len();
@@ -917,7 +1265,21 @@ impl TextEngine {
             n => total.min(n as usize),
         };
         let line_heights = heights(&raw[..by_count], params.line_height);
-        let implicit_height = line_heights[by_count - 1];
+        let mut implicit_height = line_heights[by_count - 1];
+        if ends_in_break && by_count == total {
+            // Measured on Qt 6.11: the empty line after a line break that
+            // ends the text is neither shown nor counted, but the text wants
+            // its height (`abc\n` and `<p>abc</p>` have an implicit height of
+            // two lines and a content height of one). It is a line of the
+            // text's own font, whatever the line before it is set in.
+            let top: f64 = raw
+                .iter()
+                .map(|l| params.line_height.advance(l.vertical.natural()))
+                .sum();
+            let natural = fallback.natural();
+            let advance = params.line_height.advance(natural);
+            implicit_height = top + advance + (natural - advance).floor().max(0.0);
+        }
         let mut visible = by_count;
         if let Some(limit) = params.usable_height() {
             // At least one line shows, however low the item is.
@@ -943,14 +1305,32 @@ impl TextEngine {
                     .get(start..end.max(start))
                     .unwrap_or("")
                     .trim_end_matches(['\n', '\r']);
-                raw[visible - 1] = self.elided_line(rest, style, elide, w32, true, rtl, &metrics);
+                raw[visible - 1] = self.elided_line(
+                    rest,
+                    start,
+                    style,
+                    &ranged,
+                    places,
+                    (elide, w32, true),
+                    rtl,
+                    &metrics,
+                );
             } else if !truncated
                 && total == 1
                 && !wraps
                 && elide != ElideMode::None
                 && raw[0].width > w32
             {
-                raw[0] = self.elided_line(text, style, elide, w32, false, rtl, &metrics);
+                raw[0] = self.elided_line(
+                    text,
+                    0,
+                    style,
+                    &ranged,
+                    places,
+                    (elide, w32, false),
+                    rtl,
+                    &metrics,
+                );
                 truncated = true;
             }
         }
@@ -980,6 +1360,45 @@ impl TextEngine {
         }
     }
 
+    /// A line that ends in a line break is at least as tall as the style its
+    /// line break is in, and exactly that tall when it has nothing else
+    /// (measured on Qt 6.11: in `abc<h1>def</h1>` the break before the
+    /// heading belongs to the heading and makes the first line as tall).
+    fn break_heights(
+        &mut self,
+        lines: &mut [RawLine],
+        text: &str,
+        style: &TextStyle,
+        spans: &[StyleSpan],
+    ) {
+        for line in lines.iter_mut().filter(|l| l.hard_break) {
+            let Some(at) = line.range.end.checked_sub(1) else {
+                continue;
+            };
+            if text.as_bytes().get(at) != Some(&b'\n') {
+                continue;
+            }
+            // A break outside every span is in the text's own style, which
+            // still counts on a line whose glyphs are all smaller.
+            let of_break = spans
+                .iter()
+                .find(|s| s.range.contains(&at))
+                .map_or_else(|| style.clone(), |s| s.style(style));
+            let font = self.style_metrics(&of_break).font;
+            let own = Vertical {
+                ascent: font.ascent,
+                descent: font.descent,
+            };
+            line.vertical = if line.has_glyphs {
+                line.vertical.max(own)
+            } else {
+                own
+            };
+        }
+    }
+
+    /// One line of `text` cut to a width. `at` is where `text` starts in the
+    /// whole text, which is what `ranged` and the character places count in.
     #[expect(
         clippy::too_many_arguments,
         reason = "internal; a struct would only rename them"
@@ -987,10 +1406,11 @@ impl TextEngine {
     fn elided_line(
         &mut self,
         text: &str,
+        at: usize,
         style: &TextStyle,
-        mode: ElideMode,
-        width: f32,
-        force: bool,
+        ranged: &Ranged<'_>,
+        places: bool,
+        (mode, width, force): (ElideMode, f32, bool),
         rtl: bool,
         metrics: &StyleMetrics,
     ) -> RawLine {
@@ -998,10 +1418,111 @@ impl TextEngine {
             ascent: metrics.font.ascent,
             descent: metrics.font.descent,
         };
-        let (_, shape) = self.elide(text, style, mode, width, force, rtl, metrics.ellipsis);
-        shape
-            .and_then(|shape| extract(&shape, fallback, None).into_iter().next())
-            .unwrap_or_else(|| RawLine::empty(fallback))
+        let part = part_of(ranged, at..at + text.len());
+        let (shown, shape, own) = self.elide(
+            text,
+            style,
+            &part.borrowed(),
+            mode,
+            width,
+            force,
+            rtl,
+            metrics.ellipsis,
+        );
+        let Some(shape) = shape else {
+            return RawLine::empty(fallback);
+        };
+        let Some(mut line) = extract(&shape, fallback, None, &part.objects)
+            .into_iter()
+            .next()
+        else {
+            return RawLine::empty(fallback);
+        };
+        if places {
+            // Only what stands before the cut is still where the text says.
+            line.clusters = edit::carets(&shape, &shown)
+                .into_iter()
+                .next()
+                .map(|c| c.clusters)
+                .unwrap_or_default();
+            line.clusters.retain(|c| c.range.end <= own);
+            for c in &mut line.clusters {
+                c.range = c.range.start + at..c.range.end + at;
+            }
+        }
+        line.range = at..at + text.len();
+        if ranged.strut {
+            line.vertical = line.vertical.max(fallback);
+        }
+        line
+    }
+}
+
+/// The spans and objects of `range`, counted from its start.
+fn part_of(ranged: &Ranged<'_>, range: Range<usize>) -> OwnedRanged {
+    let spans = ranged
+        .spans
+        .iter()
+        .filter(|s| s.range.start < range.end && s.range.end > range.start)
+        .map(|s| StyleSpan {
+            range: s.range.start.max(range.start) - range.start
+                ..s.range.end.min(range.end) - range.start,
+            ..s.clone()
+        })
+        .collect();
+    let objects = ranged
+        .objects
+        .iter()
+        .filter(|o| range.contains(&o.index))
+        .map(|o| InlineObject {
+            index: o.index - range.start,
+            ..*o
+        })
+        .collect();
+    OwnedRanged {
+        spans,
+        objects,
+        strut: ranged.strut,
+    }
+}
+
+/// The spans and objects that survive a cut after `head` bytes. A span the
+/// cut goes through also takes the ellipsis, which follows it; what comes
+/// after the ellipsis is in the text's own style.
+fn cut_at(ranged: &Ranged<'_>, head: usize) -> OwnedRanged {
+    let spans = ranged
+        .spans
+        .iter()
+        .filter(|s| s.range.start < head)
+        .map(|s| StyleSpan {
+            range: s.range.start..if s.range.end >= head {
+                head + ELLIPSIS.len()
+            } else {
+                s.range.end
+            },
+            ..s.clone()
+        })
+        .collect();
+    let objects = ranged
+        .objects
+        .iter()
+        .filter(|o| o.index < head)
+        .copied()
+        .collect();
+    OwnedRanged {
+        spans,
+        objects,
+        strut: ranged.strut,
+    }
+}
+
+impl OwnedRanged {
+    fn borrowed(&self) -> Ranged<'_> {
+        Ranged {
+            spans: &self.spans,
+            objects: &self.objects,
+            strut: self.strut,
+        }
     }
 }
 

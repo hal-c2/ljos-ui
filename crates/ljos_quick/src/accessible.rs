@@ -424,6 +424,69 @@ fn accessible_item(engine: &Engine, obj: ObjectId) -> Option<AccessibleItem> {
         .map(|(_, h)| *h)
 }
 
+/// A part of an item that is a node of its own inside the item's node: a
+/// link in a text. An assistive technology can go to it and press it; a
+/// press is a click at [`AccessiblePart::at`], so whatever a pointer click
+/// there does happens.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AccessiblePart {
+    pub role: AkRole,
+    pub name: String,
+    /// Where it is, in the item's coordinates.
+    pub rect: kurbo::Rect,
+    /// A point of the item that is on the part (the middle of the box
+    /// around a link of two lines need not be).
+    pub at: kurbo::Point,
+}
+
+/// Lists the parts of an item. Called in an effect: what it reads is
+/// what makes it run again.
+pub type AccessibleParts = fn(&Engine, ObjectId) -> Vec<AccessiblePart>;
+
+#[derive(Default)]
+struct PartTypes {
+    types: RefCell<Vec<(MetaRef, AccessibleParts)>>,
+}
+
+/// Makes the accessibility pass list the parts of exposed items of type
+/// `meta` (and of the types derived from it) through `parts`. A later
+/// registration wins.
+pub fn register_accessible_parts(engine: &Engine, meta: MetaRef, parts: AccessibleParts) {
+    engine
+        .extension::<PartTypes>()
+        .types
+        .borrow_mut()
+        .push((meta, parts));
+}
+
+fn accessible_parts(engine: &Engine, obj: ObjectId) -> Option<AccessibleParts> {
+    let reg = engine.extension::<PartTypes>();
+    let types = reg.types.borrow();
+    if types.is_empty() {
+        return None;
+    }
+    let meta = engine.meta_of(obj)?;
+    types
+        .iter()
+        .rev()
+        .find(|(m, _)| meta.inherits(m))
+        .map(|(_, h)| *h)
+}
+
+/// The keys of the nodes of parts are counted up from here. An item's key
+/// has these bits only after its slot was reused three thousand million
+/// times; the tree's own nodes (text runs, announcements) have one of the
+/// two bits and never both.
+const FIRST_PART_KEY: u64 = 3 << 62;
+
+/// A part as the tree is told it: in the scene's coordinates.
+struct PlacedPart {
+    role: AkRole,
+    name: String,
+    bounds: Bounds,
+    at: (f64, f64),
+}
+
 /// Gives every new `Accessible` object its role-dependent `focusable`.
 pub(crate) fn register(engine: &Engine) {
     engine.on_attached_created(|e, _, att| {
@@ -544,6 +607,8 @@ struct Pending {
     late: Vec<ObjectId>,
     /// What items announced since the last sync, in order.
     announced: Vec<(ObjectId, String, Politeness)>,
+    /// The latest parts of an item ([`register_accessible_parts`]).
+    parts: HashMap<ObjectId, Vec<PlacedPart>>,
 }
 
 impl Pending {
@@ -552,6 +617,7 @@ impl Pending {
             && self.bounds.is_empty()
             && self.late.is_empty()
             && self.announced.is_empty()
+            && self.parts.is_empty()
     }
 }
 
@@ -563,6 +629,10 @@ struct ItemState {
     describe: Option<GraphNode>,
     /// Only exposed items watch where they are.
     bounds: Option<GraphNode>,
+    /// Only exposed items of a type with parts list them.
+    parts: Option<GraphNode>,
+    /// The nodes of the item's parts, in their order.
+    part_keys: Vec<NodeKey>,
 }
 
 /// The accessibility side of a [`QuickScene`].
@@ -582,6 +652,11 @@ pub(crate) struct A11yPass {
     layer: Option<ObjectId>,
     /// The scene's own child list is to be made again.
     top_dirty: bool,
+    /// The item behind the node of a part, and the point of the scene a
+    /// press on the part lands on.
+    part_owner: HashMap<NodeKey, (ObjectId, (f64, f64))>,
+    /// How many part nodes were ever made: their keys are never reused.
+    next_part: u64,
 }
 
 impl A11yPass {
@@ -596,6 +671,8 @@ impl A11yPass {
             fresh: Vec::new(),
             layer: None,
             top_dirty: false,
+            part_owner: HashMap::new(),
+            next_part: 0,
         }
     }
 
@@ -633,12 +710,18 @@ impl A11yPass {
                 for n in st.describe.take().into_iter().chain(st.bounds.take()) {
                     let _ = g.dispose(n);
                 }
+                if let Some(n) = st.parts.take() {
+                    let _ = g.dispose(n);
+                }
+                st.part_keys.clear();
             }
+            self.part_owner.clear();
             let mut p = self.pending.borrow_mut();
             p.described.clear();
             p.bounds.clear();
             p.late.clear();
             p.announced.clear();
+            p.parts.clear();
             drop(p);
             self.tree = Tree::new();
             self.restructure.clear();
@@ -701,6 +784,7 @@ impl A11yPass {
 
     /// The scene no longer shows `obj`.
     pub(crate) fn forget(&mut self, engine: &Engine, obj: ObjectId) {
+        self.drop_parts(engine, obj);
         let Some(st) = self.items.remove(&obj) else {
             return;
         };
@@ -770,6 +854,110 @@ impl A11yPass {
         }
     }
 
+    /// Lists the parts of an exposed item from now on, if its type has
+    /// any.
+    fn watch_parts(&mut self, engine: &Engine, obj: ObjectId) {
+        let Some(list) = accessible_parts(engine, obj) else {
+            return;
+        };
+        let Some(st) = self.items.get_mut(&obj) else {
+            return;
+        };
+        if st.parts.is_some() {
+            return;
+        }
+        let pending = Rc::clone(&self.pending);
+        let wake = Rc::clone(&self.wake);
+        let effect = engine.effect_in(obj, move |e| {
+            if !e.is_alive(obj) {
+                return;
+            }
+            let parts = list(e, obj);
+            let placed = if parts.is_empty() {
+                Vec::new()
+            } else {
+                let t = crate::item::scene_transform(e, obj);
+                parts
+                    .into_iter()
+                    .map(|p| {
+                        let r = t.transform_rect_bbox(p.rect);
+                        let at = t * p.at;
+                        PlacedPart {
+                            role: p.role,
+                            name: p.name,
+                            bounds: Bounds::new(r.x0, r.y0, r.x1, r.y1),
+                            at: (at.x, at.y),
+                        }
+                    })
+                    .collect()
+            };
+            pending.borrow_mut().parts.insert(obj, placed);
+            wake();
+        });
+        match effect {
+            Ok(n) => st.parts = Some(n),
+            Err(err) => warn(engine, format!("cannot list the parts of an item: {err}")),
+        }
+    }
+
+    /// The item is no longer exposed: neither are its parts.
+    fn drop_parts(&mut self, engine: &Engine, obj: ObjectId) {
+        let Some(st) = self.items.get_mut(&obj) else {
+            return;
+        };
+        if let Some(n) = st.parts.take() {
+            let _ = engine.graph().dispose(n);
+        }
+        for key in std::mem::take(&mut st.part_keys) {
+            self.tree.remove(key);
+            self.part_owner.remove(&key);
+        }
+        self.pending.borrow_mut().parts.remove(&obj);
+    }
+
+    /// Makes the nodes of the parts of `obj` say `list`. A part keeps its
+    /// node while the item has that many parts, so a link that only moved
+    /// or was renamed is the same node to a screen reader.
+    fn apply_parts(&mut self, engine: &Engine, obj: ObjectId, list: Vec<PlacedPart>) {
+        let owner = key_of(obj);
+        if !self.tree.contains(owner) {
+            return;
+        }
+        let Some(st) = self.items.get_mut(&obj) else {
+            return;
+        };
+        let mut keys = std::mem::take(&mut st.part_keys);
+        let before = keys.len();
+        for key in keys.drain(list.len().min(before)..) {
+            self.tree.remove(key);
+            self.part_owner.remove(&key);
+        }
+        while keys.len() < list.len() {
+            keys.push(NodeKey(FIRST_PART_KEY | self.next_part));
+            self.next_part += 1;
+        }
+        for (key, part) in keys.iter().zip(list) {
+            let mut data = NodeData::new(part.role);
+            data.name = part.name;
+            data.press = true;
+            data.bounds = part.bounds;
+            self.tree.upsert(*key, data);
+            self.part_owner.insert(*key, (obj, part.at));
+        }
+        let changed = keys.len() != before;
+        if let Some(st) = self.items.get_mut(&obj) {
+            st.part_keys = keys;
+        }
+        if changed {
+            let start = engine.untrack(|| shown_children(engine, obj));
+            let mut kids = self.exposed_below(engine, start);
+            if let Some(st) = self.items.get(&obj) {
+                kids.extend(&st.part_keys);
+            }
+            self.tree.set_children(owner, &kids);
+        }
+    }
+
     /// Brings the tree in step with what the effects recorded. `root` is
     /// the scene's root item.
     pub(crate) fn sync(&mut self, engine: &Engine, root: Option<ObjectId>) {
@@ -790,6 +978,11 @@ impl A11yPass {
             self.apply(engine, obj, d);
         }
         self.place(engine, root);
+        let parts: Vec<(ObjectId, Vec<PlacedPart>)> =
+            self.pending.borrow_mut().parts.drain().collect();
+        for (obj, list) in parts {
+            self.apply_parts(engine, obj, list);
+        }
         let bounds: Vec<(ObjectId, Bounds)> = self.pending.borrow_mut().bounds.drain().collect();
         for (obj, b) in bounds {
             self.tree.set_bounds(key_of(obj), b);
@@ -819,9 +1012,11 @@ impl A11yPass {
                     self.tree.upsert(key, data);
                     self.fresh.push(obj);
                     self.watch_bounds(engine, obj);
+                    self.watch_parts(engine, obj);
                 }
             }
             None => {
+                self.drop_parts(engine, obj);
                 // The item's exposed descendants take its place.
                 if self.tree.remove(key) {
                     if let Some(n) = self.items.get_mut(&obj).and_then(|st| st.bounds.take()) {
@@ -863,7 +1058,11 @@ impl A11yPass {
                 Some(obj) => engine.untrack(|| shown_children(engine, obj)),
                 None => root.into_iter().chain(self.layer).collect(),
             };
-            let kids = self.exposed_below(engine, start);
+            let mut kids = self.exposed_below(engine, start);
+            // The item's own parts come after the items inside it.
+            if let Some(st) = t.and_then(|obj| self.items.get(&obj)) {
+                kids.extend(&st.part_keys);
+            }
             self.tree
                 .set_children(t.map_or(NodeKey::ROOT, key_of), &kids);
         }
@@ -1027,7 +1226,8 @@ fn describe(e: &Engine, obj: ObjectId, is_text: bool) -> Option<NodeData> {
     }
     if data.position_in_set.is_none()
         && qt_role.in_set()
-        && let Some((place, of)) = repeated_place(e, obj)
+        && let Some((place, of)) =
+            repeated_place(e, obj).or_else(|| crate::views::place_in_view(e, obj))
     {
         data.position_in_set = Some(place);
         data.size_of_set = Some(of);
@@ -1155,6 +1355,10 @@ impl QuickScene {
 
     /// The item behind a node of the tree.
     pub fn accessible_item(&self, key: NodeKey) -> Option<ObjectId> {
+        // A part is a node of the item it is a part of.
+        if let Some((owner, _)) = self.a11y.part_owner.get(&key) {
+            return Some(*owner);
+        }
         // An announcement is a node of the tree with no item behind it.
         (!key.is_announcement() && self.a11y.tree.contains(key)).then(|| item_of(key))
     }
@@ -1179,9 +1383,16 @@ impl QuickScene {
         if data.disabled || !data.press || key.is_announcement() {
             return false;
         }
-        let (x, y) = data.bounds.center();
+        let (mut x, mut y) = data.bounds.center();
+        // A part has no `Accessible` object to ask: the click is all.
+        let part = self.a11y.part_owner.get(&key).copied();
+        if let Some((_, at)) = part {
+            (x, y) = at;
+        }
         let item = item_of(key);
-        if let Some(att) = engine.existing_attached_object(item, &attacher()) {
+        if part.is_none()
+            && let Some(att) = engine.existing_attached_object(item, &attacher())
+        {
             let checkable = engine.untrack(|| {
                 engine
                     .read(att, AccessibleAttached::CHECKABLE.index)
@@ -1214,6 +1425,10 @@ impl QuickScene {
         action: AccessibleAction,
     ) -> bool {
         if key.is_announcement() || self.a11y.tree.get(key).is_none_or(|data| data.disabled) {
+            return false;
+        }
+        // A part can be pressed and nothing else.
+        if self.a11y.part_owner.contains_key(&key) {
             return false;
         }
         let item = item_of(key);

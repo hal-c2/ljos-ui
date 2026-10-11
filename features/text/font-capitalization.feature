@@ -78,22 +78,71 @@ Feature: The capitalization and the hinting preference of a font
 
   Rule: Small capitals are capital letters of a smaller size
 
-    # Small capitals are kept as a value and drawn as mixed case on Ljós.
-    @backlog
+    # The documentation says only that the text is rendered in small
+    # capitals. Qt 6.11.2 draws a small letter as its capital at seven tenths
+    # of the font's size, in a line as tall as the font's (by measuring).
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string words: "hello"
+          Text { id: small; objectName: "small"; text: root.words; font.pixelSize: 40; font.capitalization: Font.SmallCaps }
+          Text { id: written; text: root.words; font.pixelSize: 40 }
+          Text { id: low; text: "HELLO"; font.pixelSize: 28 }
+          Text { id: high; text: "HELLO"; font.pixelSize: 40 }
+          Row { id: parts; Text { text: "H"; font.pixelSize: 40 } Text { text: "ELLO"; font.pixelSize: 28 } }
+          property bool other: small.implicitWidth !== written.implicitWidth
+          property bool tall: small.implicitHeight === written.implicitHeight
+          property bool level: small.baselineOffset === written.baselineOffset
+          property bool asLow: small.implicitWidth === low.implicitWidth
+          property bool asHigh: small.implicitWidth === high.implicitWidth
+          property bool asParts: Math.abs(small.implicitWidth - parts.implicitWidth) < 1
+        }
+        """
+
     Scenario: Small capitals are of another width than the text as written, and as tall
+      Then the property "other" of "root" is true
+      And the property "tall" of "root" is true
+      And the property "level" of "root" is true
+      And the property "text" of "small" is "hello"
+
+    Scenario: A small letter is its capital at seven tenths of the size
+      Then the property "asLow" of "root" is true
+      And the property "asHigh" of "root" is false
+
+    Scenario: A capital letter stays as large as it is
+      When the property "words" of "root" is set to "HELLO"
+      Then the property "asHigh" of "root" is true
+      And the property "other" of "root" is false
+
+    Scenario: A capital among small letters is the larger one
+      When the property "words" of "root" is set to "Hello"
+      Then the property "asParts" of "root" is true
+      And the property "asLow" of "root" is false
+      And the property "tall" of "root" is true
+
+  Rule: Small capitals are cut short like any other text
+
+    Scenario: A text that is cut short is cut in small capitals
       Given the QML:
         """qml
         import QtQuick
         Item {
           objectName: "root"
-          Text { id: small; text: "hello World"; font.capitalization: Font.SmallCaps }
-          Text { id: mixed; text: "hello World" }
-          property bool other: small.implicitWidth !== mixed.implicitWidth
-          property bool tall: small.implicitHeight === mixed.implicitHeight
+          Text {
+            id: cut; objectName: "cut"; width: 100; elide: Text.ElideRight
+            text: "hello hello hello"; font.pixelSize: 40; font.capitalization: Font.SmallCaps
+          }
+          Text { id: whole; text: "hello"; font.pixelSize: 40 }
+          property bool tall: cut.contentHeight === whole.contentHeight
+          property bool fits: cut.contentWidth <= 100
         }
         """
-      Then the property "other" of "root" is true
+      Then the property "truncated" of "cut" is true
       And the property "tall" of "root" is true
+      And the property "fits" of "root" is true
 
   Rule: An editor shows its text in those letters too
 

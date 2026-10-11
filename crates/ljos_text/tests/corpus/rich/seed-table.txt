@@ -1,0 +1,1 @@
+<table border=1e30 cellpadding=-3 cellspacing=NaN><tr><td>a<table><tr><td>b</table><th>c<tr><tr><td><td></table>d<td>e<tr>f</table>

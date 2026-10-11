@@ -90,6 +90,13 @@ impl Clusters {
         keep.saturating_sub(Self::step(mode))
     }
 
+    /// How many bytes at the start of the text survive a cut to `keep`
+    /// clusters: where the ellipsis goes.
+    pub(crate) fn head_end(&self, mode: ElideMode, keep: usize) -> usize {
+        let (head, _) = Self::split(mode, keep.min(self.len()));
+        self.bounds[head]
+    }
+
     /// `text` with `keep` clusters left and an ellipsis where the rest was.
     pub(crate) fn elided(&self, text: &str, mode: ElideMode, keep: usize) -> String {
         let n = self.len();

@@ -1,6 +1,7 @@
 //! `TextEdit`: many lines of text the user edits (doc.qt.io,
 //! `qml-qtquick-textedit.html`). The text is plain: `textFormat` is kept
-//! and rich text is not implemented.
+//! and rich text is not implemented. A program colours stretches of the
+//! text through `textDocument` (see [`super::highlight`]).
 
 use ljos_engine::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl};
 
@@ -38,6 +39,10 @@ pub struct TextEdit {
     /// Kept; nothing is loaded relative to it.
     #[qml(notify, reset = crate::text::BASE_URL_RESET)]
     pub base_url: Url,
+    /// The [`super::highlight::TextDocument`], one for as long as the
+    /// editor lives. It is made when the editor completes.
+    #[qml(notify, readonly)]
+    pub text_document: Option<ObjectId>,
 }
 
 impl Default for TextEdit {
@@ -51,6 +56,7 @@ impl Default for TextEdit {
             select_by_keyboard: true,
             hovered_link: Atom::EMPTY,
             base_url: Url::default(),
+            text_document: None,
         }
     }
 }
@@ -114,8 +120,9 @@ impl TextEdit {
     pub(crate) fn init(
         engine: &Engine,
         obj: ObjectId,
-        _st: &SharedState,
+        st: &SharedState,
     ) -> Result<(), EngineError> {
+        super::highlight::init_document(engine, obj, st)?;
         if is_unset(engine, obj, TextEdit::SELECT_BY_KEYBOARD.index) {
             engine.bind(obj, TextEdit::SELECT_BY_KEYBOARD.index, move |e| {
                 Value::Bool(!e.read(obj, TextEditor::READ_ONLY.index).to_boolean())

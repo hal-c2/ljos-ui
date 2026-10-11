@@ -1,0 +1,1 @@
+<a>none</a><a href="">empty</a><a href="javascript:alert(1)">js</a><a href="a"><a href="b">nested</a></a>[a]([b](c))[](d)

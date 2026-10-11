@@ -1,0 +1,27 @@
+# h
+
+para
+soft  
+hard
+
+- a
+  - b
+    1. c
+
+> q
+> > qq
+
+```rust
+code
+```
+
+    indented
+
+***
+
+| a | b |
+|---|:-:|
+| 1 | 2 | 3 |
+
+setext
+===

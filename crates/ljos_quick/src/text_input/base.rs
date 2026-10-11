@@ -97,6 +97,10 @@ pub(crate) struct State {
     pub pointer: PointerState,
     /// The component of `cursorDelegate` and what was made from it.
     pub delegate: Option<(ObjectId, ObjectId)>,
+    /// `textDocument` of a `TextEdit`.
+    pub document: Option<ObjectId>,
+    /// The colours a program gave stretches of the text.
+    pub highlights: super::highlight::Highlights,
 }
 
 /// The base of `TextInput` and `TextEdit`. Not a QML type of its own.
@@ -154,7 +158,7 @@ pub struct TextEditor {
     #[qml(notify)]
     pub cursor_visible: bool,
     /// A `Component`; with one the editor draws no cursor of its own.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub cursor_delegate: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub cursor_rectangle: Rect,
@@ -711,6 +715,7 @@ pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Resul
         relayout(engine, obj, st, &inputs)
     });
     st.borrow_mut().syncing = false;
+    super::highlight::sync_modified(engine, st);
     show_cursor(engine, st);
     r
 }

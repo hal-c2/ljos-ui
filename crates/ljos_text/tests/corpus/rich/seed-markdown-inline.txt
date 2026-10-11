@@ -1,0 +1,3 @@
+**b** *i* ~~s~~ `c` [l](http://x "t") ![i](a.png) <http://auto> [ref] [x][ref] \* &copy; <b>raw</b> <!-- c -->
+
+[ref]: http://y/

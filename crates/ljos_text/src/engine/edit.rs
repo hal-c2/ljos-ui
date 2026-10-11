@@ -8,19 +8,19 @@ use super::{
     snapped,
 };
 use crate::edit::{CaretCluster, EditLayout, EditLine, EditParams, EditRun};
-use crate::style::{TextStyle, WrapMode};
+use crate::style::{Ranged, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
 /// byte each glyph's character starts at.
-struct LineCarets {
-    clusters: Vec<CaretCluster>,
-    glyph_bytes: Vec<Vec<usize>>,
+pub(super) struct LineCarets {
+    pub(super) clusters: Vec<CaretCluster>,
+    pub(super) glyph_bytes: Vec<Vec<usize>>,
 }
 
 /// Where the characters of every line are. Walks the shape the way
 /// [`extract`] does and takes the same amount off every advance, so a cursor
 /// stands exactly between two glyphs.
-fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
+pub(super) fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
     let mut out = Vec::with_capacity(shape.len());
     for line in shape.lines() {
         let m = *line.metrics();
@@ -31,6 +31,10 @@ fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
         let mut shift = 0.0_f32;
         let mut clusters = Vec::new();
         let mut glyph_bytes = Vec::new();
+        // A run whose text changes brush (a span that only tags or
+        // underlines) comes as several glyph runs: each takes the next
+        // clusters of the run, as many as its glyphs belong to.
+        let mut taken: Option<((usize, std::ops::Range<usize>), usize)> = None;
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(gr) = item else {
                 continue;
@@ -40,9 +44,21 @@ fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
             let mut pen = gr.offset();
             let mut next = 0;
             let mut bytes = Vec::with_capacity(placed.len());
-            for cluster in gr.run().visual_clusters() {
+            let run_key = (gr.run().index(), gr.run().cluster_range());
+            let skip = match &taken {
+                Some((key, n)) if *key == run_key => *n,
+                _ => 0,
+            };
+            let mut used = skip;
+            for cluster in gr.run().visual_clusters().skip(skip) {
                 let range = cluster.text_range();
                 let count = cluster.glyphs().count();
+                // A cluster without glyphs (the rest of a ligature) stays
+                // with the glyph run before it.
+                if count > 0 && next >= placed.len() {
+                    break;
+                }
+                used += 1;
                 let (mut shaped, mut qt) = (0.0_f32, 0.0_f32);
                 for (g, snapped) in placed.iter().zip(&advances).skip(next).take(count) {
                     shaped += g.advance;
@@ -75,6 +91,7 @@ fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
                 }
                 x += advance;
             }
+            taken = Some((run_key, used));
             if !placed.is_empty() {
                 glyph_bytes.push(bytes);
             }
@@ -96,6 +113,18 @@ impl TextEngine {
         style: &TextStyle,
         params: &EditParams,
     ) -> EditLayout {
+        self.edit_layout_ranged(text, style, &Ranged::NONE, params)
+    }
+
+    /// [`Self::edit_layout`] for a text whose parts differ in font (syntax
+    /// highlighting): every run says which span it draws.
+    pub fn edit_layout_ranged(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        params: &EditParams,
+    ) -> EditLayout {
         let metrics = self.style_metrics(style);
         let fallback = Vertical {
             ascent: metrics.font.ascent,
@@ -112,12 +141,12 @@ impl TextEngine {
         let (mut raw, natural, rtl): (Vec<(RawLine, LineCarets)>, f32, bool) = if text.is_empty() {
             (Vec::new(), 0.0, false)
         } else {
-            let entry = self.shaped(text, style, BreakClass::of(wrap));
+            let entry = self.shaped(text, style, ranged, BreakClass::of(wrap));
             // As in `build_layout`: a text that fits as Qt counts it is not
             // broken because the shaper's advances are a touch wider.
             let max_advance = max_advance.filter(|w| entry.natural_width > *w);
             break_lines(&mut entry.shape, max_advance, false);
-            let lines = extract(&entry.shape, fallback, None);
+            let lines = extract(&entry.shape, fallback, None, ranged.objects);
             let places = carets(&entry.shape, text);
             (
                 lines.into_iter().zip(places).collect(),

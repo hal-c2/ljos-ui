@@ -1,9 +1,12 @@
 //! What a layout reports and what a backend draws.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, GlyphRun};
+
+use crate::edit::CaretCluster;
 
 /// One run of glyphs on a line: one font, one direction.
 #[derive(Clone, Debug)]
@@ -13,6 +16,23 @@ pub struct LineRun {
     pub glyphs: Arc<GlyphRun>,
     /// Underline and strike-through bars, in the same coordinates.
     pub decorations: Decorations,
+    /// Where a line over these glyphs goes, in the same coordinates: along
+    /// the top of the font's ascent, as thick as its underline. No style of
+    /// the layout asks for one, so it is drawn only by a caller whose text
+    /// does. Its left and right are also where the run starts and ends.
+    pub overline: Rect,
+    /// The tag of the [`crate::StyleSpan`] these glyphs belong to; 0 for
+    /// text outside every span, which is all of a plain layout.
+    pub tag: u32,
+}
+
+/// An inline object where the layout put it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacedBox {
+    /// [`crate::InlineObject::id`].
+    pub id: u64,
+    /// From the line's left edge and the layout's top.
+    pub rect: Rect,
 }
 
 /// One laid-out line.
@@ -28,6 +48,68 @@ pub struct Line {
     pub justified: bool,
     /// The glyph runs, in visual order.
     pub runs: Vec<LineRun>,
+    /// Bytes of the laid-out text on this line, its line break included.
+    pub range: Range<usize>,
+    /// Height of the line on its own, whatever `lineHeight` makes of the
+    /// distance to the next.
+    pub height: f64,
+    /// Where the characters are, left to right. Only a ranged layout
+    /// ([`crate::TextEngine::layout_ranged`]) fills this.
+    pub clusters: Vec<CaretCluster>,
+    /// The inline objects on the line.
+    pub boxes: Vec<PlacedBox>,
+}
+
+impl Line {
+    /// The byte under `x` (from the line's left edge), if a character is
+    /// there: a point beside the text is on none.
+    pub fn byte_at(&self, x: f64) -> Option<usize> {
+        self.clusters
+            .iter()
+            .find(|c| c.x0 <= x && x < c.x1)
+            .map(|c| c.range.start)
+    }
+
+    /// The gap between two characters nearest to `x`, as a byte offset.
+    pub fn gap_at(&self, x: f64) -> usize {
+        let (Some(first), Some(last)) = (self.clusters.first(), self.clusters.last()) else {
+            return self.range.start;
+        };
+        let before = |c: &CaretCluster| if c.rtl { c.range.end } else { c.range.start };
+        let after = |c: &CaretCluster| if c.rtl { c.range.start } else { c.range.end };
+        if x < first.x0 {
+            before(first)
+        } else if x >= last.x1 {
+            after(last)
+        } else {
+            self.clusters
+                .iter()
+                .find(|c| x < c.x1)
+                .map_or(after(last), |c| {
+                    if x < (c.x0 + c.x1) / 2.0 {
+                        before(c)
+                    } else {
+                        after(c)
+                    }
+                })
+        }
+    }
+
+    /// The stretches of the line that `range` of the text covers, as pairs
+    /// of x from the line's left edge.
+    pub fn covered(&self, range: &Range<usize>) -> Vec<(f64, f64)> {
+        let mut out: Vec<(f64, f64)> = Vec::new();
+        for c in &self.clusters {
+            if c.range.start < range.start || c.range.end > range.end {
+                continue;
+            }
+            match out.last_mut() {
+                Some((_, x1)) if (c.x0 - *x1).abs() < 1e-3 => *x1 = c.x1,
+                _ => out.push((c.x0, c.x1)),
+            }
+        }
+        out
+    }
 }
 
 /// A finished layout: numbers for the item, glyph runs for the renderer.

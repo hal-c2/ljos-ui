@@ -181,6 +181,12 @@ impl ImageStore {
             .insert(url.into(), bytes.into());
     }
 
+    /// Whether `url` is registered: what it loads is in memory already, so
+    /// reading it reaches for nothing.
+    pub fn has_resource(&self, url: &str) -> bool {
+        self.state.borrow().resources.contains_key(url)
+    }
+
     /// Forgets a registered URL. Pictures already decoded from it stay
     /// cached.
     pub fn remove_resource(&self, url: &str) {

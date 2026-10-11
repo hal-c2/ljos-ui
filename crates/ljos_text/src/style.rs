@@ -1,6 +1,7 @@
 //! What a caller asks for: the font and the layout constraints.
 
 use std::hash::{Hash, Hasher};
+use std::ops::Range;
 use std::sync::Arc;
 
 /// A resolved font request, in logical pixels.
@@ -77,6 +78,193 @@ impl Hash for TextStyle {
         self.bits().hash(state);
     }
 }
+
+/// A part of a text set in another font: what `<b>`, a heading or a
+/// highlighted keyword is to the layout. The colour of a part is not the
+/// engine's business; `tag` comes back on the glyph runs
+/// ([`crate::LineRun::tag`]) so whoever draws them knows which part they are.
+#[derive(Clone, Debug)]
+pub struct StyleSpan {
+    /// Bytes of the text. Spans do not overlap; text outside every span is
+    /// in the layout's own style and has tag 0.
+    pub range: Range<usize>,
+    /// Any number but 0 the caller can find the part by.
+    pub tag: u32,
+    /// Font size in logical pixels.
+    pub pixel_size: f32,
+    /// Weight on the 1 to 1000 scale.
+    pub weight: f32,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikeout: bool,
+    /// Another family; none keeps the layout's.
+    pub family: Option<Arc<str>>,
+}
+
+impl StyleSpan {
+    /// A span that changes nothing but the tag, to start from.
+    pub fn of(base: &TextStyle, range: Range<usize>, tag: u32) -> Self {
+        Self {
+            range,
+            tag,
+            pixel_size: base.pixel_size,
+            weight: base.weight,
+            italic: base.italic,
+            underline: base.underline,
+            strikeout: base.strikeout,
+            family: None,
+        }
+    }
+
+    /// The whole style of the span's text, in a layout whose own is `base`.
+    pub fn style(&self, base: &TextStyle) -> TextStyle {
+        TextStyle {
+            family: self.family.clone().unwrap_or_else(|| base.family.clone()),
+            pixel_size: self.pixel_size,
+            weight: self.weight,
+            italic: self.italic,
+            underline: self.underline,
+            strikeout: self.strikeout,
+            letter_spacing: base.letter_spacing,
+            word_spacing: base.word_spacing,
+        }
+    }
+
+    fn bits(&self) -> (Range<usize>, u32, [u32; 2], [bool; 3], Option<&str>) {
+        (
+            self.range.clone(),
+            self.tag,
+            [self.pixel_size.to_bits(), self.weight.to_bits()],
+            [self.italic, self.underline, self.strikeout],
+            self.family.as_deref(),
+        )
+    }
+}
+
+// Cache keys, like `TextStyle`: floats compare by bit pattern.
+impl PartialEq for StyleSpan {
+    fn eq(&self, other: &Self) -> bool {
+        self.bits() == other.bits()
+    }
+}
+
+impl Eq for StyleSpan {}
+
+impl Hash for StyleSpan {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bits().hash(state);
+    }
+}
+
+/// Where an object stands on a line taller or lower than it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BoxAlign {
+    /// Its bottom on the bottom of the line.
+    #[default]
+    Bottom,
+    /// Centred on the line.
+    Middle,
+    /// Its top at the top of the line.
+    Top,
+    /// Standing on the baseline, as a letter without a descender does.
+    Baseline,
+}
+
+/// Something that is not text and stands in a line of it, such as an image.
+/// The layout leaves room for it and reports where
+/// ([`crate::Line::boxes`]); drawing it is the caller's business.
+#[derive(Clone, Copy, Debug)]
+pub struct InlineObject {
+    /// The caller's name for it.
+    pub id: u64,
+    /// The byte of the text it stands before.
+    pub index: usize,
+    pub width: f32,
+    pub height: f32,
+    pub align: BoxAlign,
+}
+
+impl InlineObject {
+    fn bits(&self) -> (u64, usize, [u32; 2], BoxAlign) {
+        (
+            self.id,
+            self.index,
+            [self.width.to_bits(), self.height.to_bits()],
+            self.align,
+        )
+    }
+}
+
+impl PartialEq for InlineObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.bits() == other.bits()
+    }
+}
+
+impl Eq for InlineObject {}
+
+impl Hash for InlineObject {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bits().hash(state);
+    }
+}
+
+/// What a ranged layout has besides its text and its own style.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ranged<'a> {
+    /// Sorted by start, not overlapping.
+    pub spans: &'a [StyleSpan],
+    pub objects: &'a [InlineObject],
+    /// Every line is at least as tall as a line of the text's own style,
+    /// whatever its glyphs are set in. Small capitals are smaller letters
+    /// in a line of the font, where a line of smaller markup is lower.
+    pub strut: bool,
+}
+
+impl Ranged<'_> {
+    /// Nothing: plain text.
+    pub const NONE: Ranged<'static> = Ranged {
+        spans: &[],
+        objects: &[],
+        strut: false,
+    };
+
+    /// `text` in small capitals: the text with every small letter replaced
+    /// by its capital, and the spans that set those capitals at the smaller
+    /// size. Measured on Qt 6.11: seven tenths of the font's size, as a
+    /// whole number of pixels. A letter whose capital is not one character
+    /// of as many UTF-16 units stays as it is, so positions in the two
+    /// texts are the same.
+    pub fn small_caps(text: &str, base: &TextStyle) -> (String, Vec<StyleSpan>) {
+        let size = (base.pixel_size * 0.7).round().max(1.0);
+        let mut drawn = String::with_capacity(text.len());
+        let mut spans: Vec<StyleSpan> = Vec::new();
+        for c in text.chars() {
+            let mut capitals = c.to_uppercase();
+            let capital = match (capitals.next(), capitals.next()) {
+                (Some(u), None) if u != c && u.len_utf16() == c.len_utf16() => Some(u),
+                _ => None,
+            };
+            let start = drawn.len();
+            drawn.push(capital.unwrap_or(c));
+            if capital.is_none() {
+                continue;
+            }
+            match spans.last_mut() {
+                Some(last) if last.range.end == start => last.range.end = drawn.len(),
+                _ => spans.push(StyleSpan {
+                    pixel_size: size,
+                    ..StyleSpan::of(base, start..drawn.len(), SMALL_CAPS_TAG)
+                }),
+            }
+        }
+        (drawn, spans)
+    }
+}
+
+/// Any tag but 0, which is the text outside every span: nobody draws small
+/// capitals in another colour than the text.
+const SMALL_CAPS_TAG: u32 = 1;
 
 /// Where lines may break (Qt's `Text.wrapMode`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

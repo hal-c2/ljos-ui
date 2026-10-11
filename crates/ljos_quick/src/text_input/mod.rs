@@ -14,6 +14,10 @@
 //! Behaviour follows doc.qt.io (`qml-qtquick-textinput.html`,
 //! `qml-qtquick-textedit.html`) and what `features/text-input/` pins down.
 //!
+//! A program colours stretches of an editor's text without owning its
+//! layout: [`set_highlights`], [`set_highlighter`] and, from QML, the
+//! `textDocument` of a `TextEdit`.
+//!
 //! Not implemented: `inputMask`, rich text (`textFormat` is kept, the text
 //! is always plain), wrapping in a `TextInput`, and the `Qt.inputMethod`
 //! object.
@@ -22,6 +26,7 @@ mod a11y;
 mod base;
 mod clipboard;
 mod edit;
+mod highlight;
 mod ime;
 mod input;
 mod keys;
@@ -43,6 +48,9 @@ pub use a11y::AccessibleTextAction;
 pub use base::TextEditor;
 pub use clipboard::Clipboard;
 pub use edit::TextEdit;
+pub use highlight::{
+    HighlightSpan, Highlighter, TextDocument, highlights, set_highlighter, set_highlights,
+};
 pub use ime::{ImeState, PlatformTextInput};
 pub use input::TextInput;
 pub use ops::accept_text;
@@ -80,6 +88,8 @@ pub mod text_format {
     pub const RICH_TEXT: i32 = 1;
     pub const AUTO_TEXT: i32 = 2;
     pub const MARKDOWN_TEXT: i32 = 3;
+    /// `Text` only: an editor has no styled text.
+    pub const STYLED_TEXT: i32 = 4;
 }
 
 /// `Qt.InputMethodHint` flags an editor adds to `inputMethodHints` itself.
@@ -231,6 +241,9 @@ pub(crate) fn register(engine: &Engine) {
     for ty in [
         TextInput::static_meta(),
         TextEdit::static_meta(),
+        // Not created from QML, and known by name all the same: what
+        // `textDocument` gives has members a file is checked against.
+        TextDocument::static_meta(),
         IntValidator::static_meta(),
         DoubleValidator::static_meta(),
         RegularExpressionValidator::static_meta(),

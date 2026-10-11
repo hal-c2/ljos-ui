@@ -116,6 +116,7 @@ pub struct Checkpoint {
     redo: Vec<Edit>,
     step: u64,
     break_next: bool,
+    clean: Option<usize>,
 }
 
 /// The text of an editing item with its cursor, selection and undo history.
@@ -131,6 +132,9 @@ pub struct TextModel {
     step: u64,
     /// The next edit starts a new undo step.
     break_next: bool,
+    /// How many changes the history held when the text was last said to be
+    /// unmodified; `None` once no undo or redo leads back there.
+    clean: Option<usize>,
 }
 
 impl Default for TextModel {
@@ -150,6 +154,7 @@ impl TextModel {
             redo: Vec::new(),
             step: 0,
             break_next: false,
+            clean: Some(0),
         }
     }
 
@@ -247,6 +252,8 @@ impl TextModel {
         self.cursor = self.text.len();
         self.anchor = self.cursor;
         self.clear_undo();
+        // A text that is assigned is the text as it was last saved.
+        self.clean = Some(0);
         true
     }
 
@@ -473,6 +480,11 @@ impl TextModel {
             self.step += 1;
             self.break_next = false;
         }
+        if self.clean.is_some_and(|clean| clean > self.undo.len()) {
+            // The unmodified text was a redo away, and this edit forgets
+            // what could be redone.
+            self.clean = None;
+        }
         self.undo.push(Edit {
             at: range.start,
             removed: self.text[range.clone()].to_owned(),
@@ -618,9 +630,32 @@ impl TextModel {
     }
 
     pub fn clear_undo(&mut self) {
+        // What the text is does not change, so neither does whether it is
+        // modified.
+        self.clean = (!self.is_modified()).then_some(0);
         self.undo.clear();
         self.redo.clear();
         self.break_next = false;
+    }
+
+    /// Whether the text differs from what it was when it was assigned or
+    /// last said to be unmodified. Undoing or redoing back to that text
+    /// makes it unmodified again.
+    pub fn is_modified(&self) -> bool {
+        self.clean != Some(self.undo.len())
+    }
+
+    /// Says the text as it is now is unmodified (a program saved it), or
+    /// that it is modified whatever the history says.
+    pub fn set_modified(&mut self, modified: bool) {
+        if !modified {
+            self.clean = Some(self.undo.len());
+            // What is typed next is a change to the saved text, so it must
+            // not join the step that led here.
+            self.break_next = true;
+        } else if !self.is_modified() {
+            self.clean = None;
+        }
     }
 
     /// Takes back the last step. The cursor goes to where it was before the
@@ -666,6 +701,7 @@ impl TextModel {
             redo: self.redo.clone(),
             step: self.step,
             break_next: self.break_next,
+            clean: self.clean,
         }
     }
 
@@ -678,6 +714,7 @@ impl TextModel {
         self.redo = to.redo;
         self.step = to.step;
         self.break_next = to.break_next;
+        self.clean = to.clean;
     }
 }
 
@@ -689,6 +726,46 @@ mod tests {
         let mut m = TextModel::new();
         m.set_text(text);
         m
+    }
+
+    #[test]
+    fn modified_follows_the_history_back_to_the_saved_text() {
+        let mut m = model("ab");
+        assert!(!m.is_modified());
+        m.insert(2, "c");
+        assert!(m.is_modified());
+        m.undo();
+        assert!(!m.is_modified());
+        m.redo();
+        m.set_modified(false);
+        assert!(!m.is_modified());
+        m.undo();
+        assert!(m.is_modified());
+        m.redo();
+        assert!(!m.is_modified());
+        // An edit made where the saved text was a redo away loses it.
+        m.undo();
+        m.insert(0, "x");
+        m.undo();
+        assert!(m.is_modified());
+        m.redo();
+        assert!(m.is_modified());
+        m.set_text("new");
+        assert!(!m.is_modified());
+        m.set_modified(true);
+        assert!(m.is_modified());
+    }
+
+    #[test]
+    fn typing_after_a_save_is_a_step_of_its_own() {
+        let mut m = model("");
+        m.insert(0, "a");
+        m.set_modified(false);
+        m.insert(1, "b");
+        assert!(m.is_modified());
+        m.undo();
+        assert_eq!(m.text(), "a");
+        assert!(!m.is_modified());
     }
 
     #[test]

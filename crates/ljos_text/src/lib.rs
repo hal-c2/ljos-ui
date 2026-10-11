@@ -21,7 +21,15 @@
 //!   `maximumLineCount` or at the item's height; `ElideMiddle` keeps as many
 //!   characters at one end as at the other;
 //! * right-to-left text is laid out by the Unicode bidi algorithm and reports
-//!   itself, so the item can align it to the right.
+//!   itself, so the item can align it to the right;
+//! * small capitals are a small letter's capital at seven tenths of the size,
+//!   in a line as tall as the font's ([`Ranged::small_caps`]).
+//!
+//! Text whose parts differ in font, with objects in its lines, is a ranged
+//! layout ([`TextEngine::layout_ranged`]). [`rich`] builds documents on it:
+//! blocks read from plain text, Qt's `StyledText`, its HTML subset or
+//! Markdown, each keeping its own layout so a change lays out only the
+//! blocks it touches.
 //!
 //! Layout happens in logical pixels without hinting, so a layout does not
 //! depend on the screen's scale factor and one cache entry serves every scale.
@@ -39,6 +47,7 @@ mod face;
 mod fonts;
 mod layout;
 mod model;
+pub mod rich;
 mod snap;
 mod style;
 
@@ -46,8 +55,11 @@ pub use direction::reads_right_to_left;
 pub use edit::{Caret, CaretCluster, EditLayout, EditLine, EditParams, EditRun};
 pub use engine::{CacheStats, TextEngine};
 pub use fonts::{BUNDLED_FAMILY, FontError};
-pub use layout::{FontMetrics, Line, LineRun, TextBounds, TextLayout};
+pub use layout::{FontMetrics, Line, LineRun, PlacedBox, TextBounds, TextLayout};
 pub use model::{
     Checkpoint, DEFAULT_MAX_LENGTH, TextModel, byte_to_utf16, utf16_len, utf16_to_byte,
 };
-pub use style::{ElideMode, LayoutParams, LineHeight, TextStyle, WrapMode};
+pub use style::{
+    BoxAlign, ElideMode, InlineObject, LayoutParams, LineHeight, Ranged, StyleSpan, TextStyle,
+    WrapMode,
+};

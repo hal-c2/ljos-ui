@@ -1,6 +1,7 @@
-//! What an editor paints: the selection behind the text, the text with the
-//! selected part in its own colour, a line under what an input method is
-//! composing, and the cursor.
+//! What an editor paints: the backgrounds a program highlighted stretches
+//! with, the selection behind the text, the text in the colours a program
+//! gave it with the selected part in its own colour, a line under what an
+//! input method is composing, and the cursor.
 //!
 //! The picture is taken from the layout the editor already has; painting
 //! shapes nothing.
@@ -14,6 +15,7 @@ use ljos_render::{Decorations, DisplayListBuilder, GlyphRun, Rgba, kurbo};
 use ljos_text::{EditLayout, EditLine};
 
 use super::base::{TextEditor, state_of};
+use super::highlight::{self, LinePaint, Lines};
 use super::layout::Geometry;
 use crate::rectangle::to_rgba;
 
@@ -31,6 +33,8 @@ pub struct EditorPaint {
     preedit: Range<usize>,
     /// The cursor, when the editor draws it and it is in its shown half.
     cursor: Option<Rect>,
+    /// How the lines a program highlighted are painted.
+    highlighted: Option<Lines>,
 }
 
 fn color(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> Rgba {
@@ -63,6 +67,9 @@ impl EditorPaint {
         if let Some(n) = epoch {
             let _ = engine.graph().get(n);
         }
+        // Before the state is borrowed: this may ask a program's
+        // highlighter for the spans of a text that changed.
+        let highlighted = highlight::lines(&st);
         let s = st.borrow();
         let selection = s.model.selection();
         EditorPaint {
@@ -74,6 +81,7 @@ impl EditorPaint {
             selection: s.shown.byte_of(selection.start)..s.shown.byte_of(selection.end),
             preedit: s.shown.preedit_bytes(),
             cursor: (cursor_visible && s.blink_on && !has_delegate).then_some(s.cursor_rect),
+            highlighted,
         }
     }
 
@@ -81,11 +89,30 @@ impl EditorPaint {
         self.geo.line_x.get(line).copied().unwrap_or(0.0)
     }
 
+    /// How line `index` is painted when a program highlighted on it.
+    fn highlighted(&self, index: usize) -> Option<&LinePaint> {
+        self.highlighted.as_ref()?.get(index)?.as_ref()
+    }
+
     pub(crate) fn paint(&self, _size: kurbo::Size, out: &mut DisplayListBuilder) {
         let Some(layout) = &self.layout else {
             return;
         };
         let top = self.geo.top;
+        // A highlighted background is behind the selection, which is what
+        // the user is doing now.
+        for (index, line) in layout.lines.iter().enumerate() {
+            let Some(marked) = self.highlighted(index) else {
+                continue;
+            };
+            let x = self.line_x(index);
+            for (x0, x1, color) in &marked.backgrounds {
+                out.fill_rect(
+                    kurbo::Rect::new(x + x0, top + line.top, x + x1, top + line.top + line.height),
+                    *color,
+                );
+            }
+        }
         for (line, r) in layout.range_rects(self.selection.clone()) {
             let x = self.line_x(line);
             out.fill_rect(
@@ -94,8 +121,41 @@ impl EditorPaint {
             );
         }
         for (index, line) in layout.lines.iter().enumerate() {
-            let origin = kurbo::Vec2::new(self.line_x(index), top);
-            self.glyphs(line, origin, out);
+            let x = self.line_x(index);
+            let origin = kurbo::Vec2::new(x, top);
+            let touches = self.touches(line);
+            let Some(marked) = self.highlighted(index) else {
+                for run in &line.runs {
+                    self.glyphs(
+                        &run.run.glyphs,
+                        &run.glyph_bytes,
+                        self.color,
+                        run.run.decorations,
+                        touches,
+                        origin,
+                        out,
+                    );
+                }
+                continue;
+            };
+            for piece in &marked.pieces {
+                self.glyphs(
+                    &piece.glyphs,
+                    &piece.bytes,
+                    piece.color.unwrap_or(self.color),
+                    piece.decorations,
+                    touches,
+                    origin,
+                    out,
+                );
+            }
+            let y = top + line.baseline + 1.0;
+            for (x0, x1, color) in &marked.underlines {
+                out.fill_rect(
+                    kurbo::Rect::new(x + x0, y, x + x1, y + 1.0),
+                    color.unwrap_or(self.color),
+                );
+            }
         }
         // The composition is marked with a line under it, in the colour of
         // the text.
@@ -112,54 +172,64 @@ impl EditorPaint {
         }
     }
 
-    fn glyphs(&self, line: &EditLine, origin: kurbo::Vec2, out: &mut DisplayListBuilder) {
+    /// Whether part of `line` is selected.
+    fn touches(&self, line: &EditLine) -> bool {
         let sel = &self.selection;
-        let touches = !sel.is_empty() && line.range.start < sel.end && line.range.end > sel.start;
-        for run in &line.runs {
-            let selected = |i: usize| run.glyph_bytes.get(i).is_some_and(|b| sel.contains(b));
-            let count = run.run.glyphs.glyphs.len();
-            let picked = if touches {
-                (0..count).filter(|i| selected(*i)).count()
+        !sel.is_empty() && line.range.start < sel.end && line.range.end > sel.start
+    }
+
+    /// Draws glyphs that are of `color` where they are not selected.
+    /// `bytes` says for each the byte its character starts at.
+    #[allow(clippy::too_many_arguments)]
+    fn glyphs(
+        &self,
+        glyphs: &Arc<GlyphRun>,
+        bytes: &[usize],
+        color: Rgba,
+        decorations: Decorations,
+        touches: bool,
+        origin: kurbo::Vec2,
+        out: &mut DisplayListBuilder,
+    ) {
+        let sel = &self.selection;
+        let selected = |i: usize| bytes.get(i).is_some_and(|b| sel.contains(b));
+        let count = glyphs.glyphs.len();
+        let picked = if touches {
+            (0..count).filter(|i| selected(*i)).count()
+        } else {
+            0
+        };
+        if picked == 0 || picked == count {
+            // The glyphs are of one colour: the shaped run is drawn as it
+            // is, nothing is copied.
+            let color = if picked == 0 {
+                color
             } else {
-                0
+                self.selected_text_color
             };
-            if picked == 0 || picked == count {
-                // The run is of one colour: the shaped run is drawn as it
-                // is, nothing is copied.
-                let color = if picked == 0 {
-                    self.color
-                } else {
-                    self.selected_text_color
-                };
-                if color.a > 0.0 {
-                    out.glyphs(
-                        Arc::clone(&run.run.glyphs),
-                        origin,
-                        color,
-                        run.run.decorations,
-                    );
-                }
-                continue;
+            if color.a > 0.0 {
+                out.glyphs(Arc::clone(glyphs), origin, color, decorations);
             }
-            let part = |want: bool| {
-                let mut part = GlyphRun::clone(&run.run.glyphs);
-                let mut i = 0;
-                part.glyphs.retain(|_| {
-                    let keep = selected(i) == want;
-                    i += 1;
-                    keep
-                });
-                Arc::new(part)
-            };
-            // An underline or strike-through runs under both parts and is
-            // drawn once, with the text that is not selected.
-            out.glyphs(part(false), origin, self.color, run.run.decorations);
-            out.glyphs(
-                part(true),
-                origin,
-                self.selected_text_color,
-                Decorations::default(),
-            );
+            return;
         }
+        let part = |want: bool| {
+            let mut part = GlyphRun::clone(glyphs);
+            let mut i = 0;
+            part.glyphs.retain(|_| {
+                let keep = selected(i) == want;
+                i += 1;
+                keep
+            });
+            Arc::new(part)
+        };
+        // An underline or strike-through runs under both parts and is
+        // drawn once, with the text that is not selected.
+        out.glyphs(part(false), origin, color, decorations);
+        out.glyphs(
+            part(true),
+            origin,
+            self.selected_text_color,
+            Decorations::default(),
+        );
     }
 }
