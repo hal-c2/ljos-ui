@@ -3003,6 +3003,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_test"
+version = "0.0.0"
+dependencies = [
+ "ljos_a11y",
+ "ljos_engine",
+ "ljos_quick",
+ "ljos_runtime",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_text"
 version = "0.0.0"
 dependencies = [
