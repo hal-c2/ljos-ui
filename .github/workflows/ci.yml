@@ -16,10 +16,18 @@ jobs:
   check:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # The workspace links well over a hundred test binaries, each with the whole toolkit in it,
+    # which is more than a hosted runner's disk holds with line tables in every one. A panic still
+    # names its file and line without them.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_STRIP: debuginfo
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: false
+      # Toolchains the image ships and this job never uses.
+      - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
       # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
@@ -27,6 +35,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev pkg-config
       - run: mise run check
       - run: mise run test
+      - run: df -h /
+        if: always()
       - run: mise run features:lint
       # Every scenario that is not backlog passes on the Ljós backend, so the whole ledger gates.
       # The Qt oracle (features:parity) runs nightly where Qt is installed (ARCHITECTURE.md 18.6).
