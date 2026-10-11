@@ -70,6 +70,10 @@ pub struct A11yNode {
     /// Whether this is the one node the keyboard is at: what a screen
     /// reader reads out. The top node when nothing below it has it.
     pub focused: bool,
+    /// What the node holds besides its name: the text of an editor.
+    pub value: String,
+    /// The part of `value` that is selected.
+    pub selected: String,
     pub children: Vec<A11yNode>,
 }
 
@@ -107,6 +111,16 @@ impl A11yNode {
     }
 }
 
+/// Why a changed file was not applied.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReloadFailure {
+    /// The file's name with `.qml`; empty when the fault is in no one file.
+    pub file: String,
+    /// 1-based; 0 when unknown.
+    pub line: u32,
+    pub message: String,
+}
+
 /// What a pointer does in one step of a press, drag and release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerStep {
@@ -114,6 +128,41 @@ pub enum PointerStep {
     /// With the button held if it was pressed and not yet released.
     Move,
     Release,
+}
+
+/// How far a wheel event scrolls, with Qt's signs: positive is away from
+/// the user (content goes up or left to its beginning).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WheelBy {
+    /// Notches of a mouse wheel, sideways and lengthways.
+    Notches(f64, f64),
+    /// Pixels, from a device that scrolls by the pixel (a touchpad).
+    Pixels(f64, f64),
+}
+
+/// What an assistive technology asks of a node besides a press and the
+/// focus.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum A11yAction {
+    Increase,
+    Decrease,
+    SetValue(f64),
+    /// `(0, 1)` is down and `(-1, 0)` left; by a page, or else by a step.
+    Scroll {
+        dx: i8,
+        dy: i8,
+        page: bool,
+    },
+}
+
+/// What an assistive technology asks of a node that holds text.
+/// Characters are counted from the start of the node's value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum A11yTextAction {
+    /// From the first character to the second, which may be before it.
+    Select(usize, usize),
+    ReplaceSelection(String),
+    SetValue(String),
 }
 
 /// The surface the steps drive. `!Send` is fine: cucumber 0.23 does not need `Send`.
@@ -157,6 +206,83 @@ pub trait Backend: fmt::Debug {
     /// Put a file that is not QML (an image) beside the QML files, where a
     /// relative URL in them finds it.
     fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()>;
+    /// Type `text` on the keyboard, one key press per character.
+    fn type_text(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("typing text"))
+    }
+    /// Two clicks at one place in quick succession.
+    fn double_click(&mut self, _x: f64, _y: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a double click"))
+    }
+    /// Press at `from`, move to `to` with the button held, release there.
+    fn drag(&mut self, _from: (f64, f64), _to: (f64, f64)) -> Result<()> {
+        Err(BackendError::NotImplemented("a drag"))
+    }
+    /// The wheel turns, or a touchpad scrolls, with the pointer at `at`.
+    fn wheel(&mut self, _at: (f64, f64), _by: WheelBy) -> Result<()> {
+        Err(BackendError::NotImplemented("the wheel"))
+    }
+    /// An assistive technology asks the node with this role and name to
+    /// do something. A node that refuses is not an error.
+    fn a11y_act(&mut self, _role: &str, _name: &str, _action: A11yAction) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an assistive technology's requests",
+        ))
+    }
+    /// An assistive technology asks the node with this role and name to
+    /// select or change its text. A node that refuses is not an error.
+    fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an assistive technology's requests",
+        ))
+    }
+    /// Put `text` on the clipboard, as copying it in another application
+    /// does.
+    fn set_clipboard(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("the clipboard"))
+    }
+    /// The text on the clipboard.
+    fn clipboard(&mut self) -> Result<String> {
+        Err(BackendError::NotImplemented("the clipboard"))
+    }
+    /// An input method shows `text` as what is being composed at the
+    /// cursor; an empty text ends the composition with nothing typed.
+    fn compose(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("an input method"))
+    }
+    /// An input method ends the composition and types `text`.
+    fn commit(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("an input method"))
+    }
+    /// The scenario changes files while the application runs: what a
+    /// reload needs is noted from the first load on, as a development
+    /// build notes it. Called before anything is loaded.
+    fn watch_files(&mut self) {}
+    /// A file of the running application is saved with new text, or
+    /// removed (`None`). It is applied when the files have been quiet.
+    fn change_file(&mut self, _name: &str, _source: Option<&str>) -> Result<()> {
+        Err(self.no_reload())
+    }
+    /// The quiet time ends now: what was saved is applied. A change that
+    /// cannot be applied is not an error here; `reload_error` says why.
+    fn reload(&mut self) -> Result<()> {
+        Err(self.no_reload())
+    }
+    /// The last reload that failed, until one succeeds.
+    fn reload_error(&mut self) -> Result<Option<ReloadFailure>> {
+        Err(self.no_reload())
+    }
+    /// How many reloads were applied.
+    fn reload_count(&mut self) -> Result<u64> {
+        Err(self.no_reload())
+    }
+    /// Hot reload is a Ljós extension; the oracle has nothing like it.
+    fn no_reload(&self) -> BackendError {
+        BackendError::Unsupported {
+            backend: self.name(),
+            what: "hot reload",
+        }
+    }
 }
 
 /// Which backends run a scenario (`LJOS_BDD_BACKEND=qt|ljos|both`).

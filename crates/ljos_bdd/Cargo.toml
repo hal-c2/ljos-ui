@@ -33,6 +33,9 @@ jpeg-encoder.workspace = true
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_controls = { path = "../ljos_controls" }
+# Hot reload scenarios run the dev loop's own pipeline (in memory, on the
+# virtual clock).
+ljos_dev = { path = "../ljos_dev" }
 ljos_engine = { path = "../ljos_engine" }
 # `.ts` catalogues of scenarios, read as a development build reads them.
 ljos_i18n = { path = "../ljos_i18n" }

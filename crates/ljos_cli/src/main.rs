@@ -8,7 +8,9 @@ use clap::{Parser, Subcommand};
 use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
+mod check;
 mod i18n;
+mod run;
 
 #[derive(Parser)]
 #[command(name = "ljos", version, about = "Ljós UI toolkit")]
@@ -34,6 +36,12 @@ enum Command {
         #[command(subcommand)]
         command: i18n::I18nCommand,
     },
+    /// Compile QML projects and report what the compiler says; with
+    /// `--stats`, how many expressions run in the tier-1 binding VM.
+    Check(check::Check),
+    /// Open a window on a QML file; with `--watch`, apply every save to
+    /// the running application.
+    Run(run::Run),
 }
 
 fn main() -> ExitCode {
@@ -72,5 +80,7 @@ fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::I18n { command } => i18n::run(command),
+        Command::Check(check) => check.run(),
+        Command::Run(run) => run.run(),
     }
 }

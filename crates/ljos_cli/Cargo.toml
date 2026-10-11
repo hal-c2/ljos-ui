@@ -18,6 +18,11 @@ ljos_mcp_author = { path = "../ljos_mcp_author" }
 # `ljos i18n extract`: the compiler finds the texts, ljos_i18n writes `.ts`.
 ljos_compiler = { path = "../ljos_compiler" }
 ljos_i18n = { path = "../ljos_i18n" }
+# `ljos run`: the desktop shell, with the dev loop (the watcher and the
+# reload driver). A development tool may link them; a shipped application
+# takes the shell without `dev`.
+ljos_engine = { path = "../ljos_engine" }
+ljos_shell = { path = "../ljos_shell", features = ["dev"] }
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true

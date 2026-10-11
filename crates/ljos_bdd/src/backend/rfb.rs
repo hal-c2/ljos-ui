@@ -395,6 +395,144 @@ impl Rfb {
         self.ack(&mut buf);
         self.stream.write_all(&buf)
     }
+
+    /// Two clicks of the left button at one place: a double click.
+    ///
+    /// The one place where time matters: Qt takes two presses with the same
+    /// timestamp for one, so the second click waits until the clock has
+    /// moved, far inside the double-click interval.
+    pub(super) fn double_click(&mut self, x: u16, y: u16) -> io::Result<()> {
+        let mut buf = Vec::new();
+        Self::pointer(&mut buf, 0, x, y);
+        Self::pointer(&mut buf, 1, x, y);
+        Self::pointer(&mut buf, 0, x, y);
+        self.stream.write_all(&buf)?;
+        thread::sleep(DOUBLE_CLICK_GAP);
+        buf.clear();
+        Self::pointer(&mut buf, 1, x, y);
+        Self::pointer(&mut buf, 0, x, y);
+        self.ack(&mut buf);
+        self.stream.write_all(&buf)
+    }
+
+    /// The left button goes down at `from`, the pointer moves to `to` in
+    /// steps of a few pixels, and the button goes up there.
+    pub(super) fn drag(&mut self, from: (u16, u16), to: (u16, u16)) -> io::Result<()> {
+        let mut buf = Vec::new();
+        Self::pointer(&mut buf, 0, from.0, from.1);
+        Self::pointer(&mut buf, 1, from.0, from.1);
+        for (x, y) in drag_path(from, to) {
+            Self::pointer(&mut buf, 1, x, y);
+        }
+        Self::pointer(&mut buf, 0, to.0, to.1);
+        self.ack(&mut buf);
+        self.stream.write_all(&buf)
+    }
+
+    /// One step of a press that is held across steps. No acknowledgement
+    /// move follows: with the button down it would be part of the drag, and
+    /// with it up it would let go. The driver acknowledges the step's own
+    /// event instead (`HELD_HANDLER` in `qt.rs`).
+    pub(super) fn held(&mut self, step: HeldStep, x: u16, y: u16) -> io::Result<()> {
+        let mut buf = Vec::new();
+        match step {
+            HeldStep::Press => {
+                Self::pointer(&mut buf, 0, x, y);
+                Self::pointer(&mut buf, 1, x, y);
+            }
+            HeldStep::Move => Self::pointer(&mut buf, 1, x, y),
+            HeldStep::Hover => Self::pointer(&mut buf, 0, x, y),
+            HeldStep::Release => {
+                // Where the button goes up is first a place the pointer is
+                // dragged to.
+                Self::pointer(&mut buf, 1, x, y);
+                Self::pointer(&mut buf, 0, x, y);
+            }
+        }
+        self.stream.write_all(&buf)
+    }
+
+    /// One key press per character, with Shift held around a capital
+    /// letter as a keyboard would have it.
+    pub(super) fn type_text(&mut self, text: &str) -> io::Result<()> {
+        let mut buf = Vec::new();
+        for c in text.chars() {
+            let sym = char_keysym(c)
+                .ok_or_else(|| io::Error::other(format!("the Qt oracle cannot type {c:?}")))?;
+            let shift = c.is_uppercase();
+            if shift {
+                Self::key(&mut buf, SHIFT, true);
+            }
+            Self::key(&mut buf, sym, true);
+            Self::key(&mut buf, sym, false);
+            if shift {
+                Self::key(&mut buf, SHIFT, false);
+            }
+        }
+        self.ack(&mut buf);
+        self.stream.write_all(&buf)
+    }
+}
+
+/// Between the clicks of a double click: longer than a tick of Qt's event
+/// clock, much shorter than its double-click interval (400 ms).
+const DOUBLE_CLICK_GAP: Duration = Duration::from_millis(50);
+
+/// What the pointer does in one step of a press that lasts several steps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HeldStep {
+    Press,
+    /// With the button down.
+    Move,
+    /// With no button down.
+    Hover,
+    Release,
+}
+
+impl HeldStep {
+    /// The name the step has in the replayed program.
+    pub(super) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "press" => Some(Self::Press),
+            "move" => Some(Self::Move),
+            "hover" => Some(Self::Hover),
+            "release" => Some(Self::Release),
+            _ => None,
+        }
+    }
+
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Press => "press",
+            Self::Move => "move",
+            Self::Hover => "hover",
+            Self::Release => "release",
+        }
+    }
+}
+
+/// The keysym that types `c`: Latin-1 keysyms are the character codes.
+pub(super) fn char_keysym(c: char) -> Option<u32> {
+    (c as u32 <= 0xff && !c.is_control()).then_some(c as u32)
+}
+
+/// The points a drag passes after the press, the last of them `to`.
+fn drag_path(from: (u16, u16), to: (u16, u16)) -> Vec<(u16, u16)> {
+    const STEP: f64 = 8.0;
+    let (dx, dy) = (
+        f64::from(to.0) - f64::from(from.0),
+        f64::from(to.1) - f64::from(from.1),
+    );
+    let steps = (dx.hypot(dy) / STEP).ceil().max(1.0) as u32;
+    (1..=steps)
+        .map(|i| {
+            let t = f64::from(i) / f64::from(steps);
+            (
+                (f64::from(from.0) + dx * t).round() as u16,
+                (f64::from(from.1) + dy * t).round() as u16,
+            )
+        })
+        .collect()
 }
 
 /// The errors of a server (or relay) that has not started listening yet.
@@ -435,6 +573,37 @@ mod tests {
     fn unknown_keys_and_modifiers_are_errors() {
         assert!(Chord::parse("Hyper+A").is_err());
         assert!(Chord::parse("Ctrl+NoSuchKey").is_err());
+    }
+
+    #[test]
+    fn a_drag_ends_where_it_was_told_to() {
+        let path = drag_path((10, 10), (50, 10));
+        assert_eq!(path.len(), 5);
+        assert_eq!(path.first(), Some(&(18, 10)));
+        assert_eq!(path.last(), Some(&(50, 10)));
+        assert_eq!(drag_path((10, 10), (10, 10)), [(10, 10)]);
+    }
+
+    #[test]
+    fn held_steps_go_by_their_names() {
+        for step in [
+            HeldStep::Press,
+            HeldStep::Move,
+            HeldStep::Hover,
+            HeldStep::Release,
+        ] {
+            assert_eq!(HeldStep::parse(step.name()), Some(step));
+        }
+        assert_eq!(HeldStep::parse("click"), None);
+    }
+
+    #[test]
+    fn only_latin_1_can_be_typed() {
+        assert_eq!(char_keysym('a'), Some(0x61));
+        assert_eq!(char_keysym('é'), Some(0xe9));
+        assert_eq!(char_keysym('\n'), None);
+        assert_eq!(char_keysym('þ'), Some(0xfe));
+        assert_eq!(char_keysym('あ'), None);
     }
 
     #[test]

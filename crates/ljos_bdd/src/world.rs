@@ -31,6 +31,28 @@ impl LjosWorld {
         self.backends = self.mode.backends_for(qt_parity);
     }
 
+    /// Called from the `before` hook for a scenario that changes files
+    /// while the application runs: the backends note what a reload needs
+    /// from the first load on.
+    pub fn watch_files(&mut self) {
+        for b in &mut self.backends {
+            b.watch_files();
+        }
+    }
+
+    /// A file of the running application is saved with new text, or
+    /// removed (`None`). A later `load` sees the files as they are now.
+    ///
+    /// # Errors
+    /// A backend cannot change files under a running application.
+    pub fn change_file(&mut self, name: &str, source: Option<&str>) -> Result<(), String> {
+        match source {
+            Some(text) => self.files.insert(name.to_owned(), text.to_owned()),
+            None => self.files.remove(name),
+        };
+        self.each(|b| b.change_file(name, source))
+    }
+
     /// Stage a source file for the next `load`.
     pub fn stage(&mut self, name: &str, source: &str) {
         self.files.insert(name.to_owned(), source.to_owned());

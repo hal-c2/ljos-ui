@@ -24,6 +24,8 @@ use serde_json::{Map, Number, Value, json};
 
 use super::{A11yNode, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile, Result};
 
+mod reload;
+
 /// The driver's file key. Not a valid QML type name for a scenario author
 /// to collide with by accident.
 const DRIVER: &str = "__LjosBddDriver";
@@ -116,6 +118,8 @@ impl Chord {
             (Some(c), None) if shift => c.to_uppercase().collect(),
             (Some(c), None) => c.to_lowercase().collect(),
             _ if code == key::SPACE => " ".to_owned(),
+            // A Qt key event for Tab carries the tab; a `TextEdit` types it.
+            _ if code == key::TAB && !shift => "\t".to_owned(),
             _ => String::new(),
         };
         Ok(Self {
@@ -144,6 +148,8 @@ struct Live {
     wake: Option<Time>,
     /// Whether a pointer step pressed the button and none released it.
     pointer_down: bool,
+    /// The reload session of a scenario that changes files while it runs.
+    reloads: Option<reload::Rig>,
 }
 
 #[derive(Default)]
@@ -154,6 +160,8 @@ pub struct LjosBackend {
     catalogs: Vec<ljos_i18n::Catalog>,
     /// Picture files given before anything was loaded, by URL.
     resources: Vec<(String, Vec<u8>)>,
+    /// Whether the scenario changes files while it runs.
+    watching: bool,
 }
 
 impl std::fmt::Debug for LjosBackend {
@@ -229,6 +237,7 @@ impl LjosBackend {
             compiled_from: compiled,
             wake: None,
             pointer_down: false,
+            reloads: None,
         };
         // A decode takes as long as it takes; scenarios see its result when
         // time is advanced and not before, whatever the machine's speed.
@@ -301,8 +310,11 @@ impl Live {
             .collect();
         wanted.insert(format!("{DRIVER}.qml"), DRIVER_SOURCE.to_owned());
         if wanted != self.compiled_from {
-            let source = compile(&wanted)?;
-            self.engine.set_component_source(source);
+            // A scenario that reloads compiles through its reload session.
+            if !self.reload_compile(&wanted)? {
+                let source = compile(&wanted)?;
+                self.engine.set_component_source(source);
+            }
             self.compiled_from = wanted;
         }
         let obj = self
@@ -374,9 +386,40 @@ impl Live {
                     obj = next;
                     rest = tail;
                 }
-                None => return Ok((obj, rest.to_owned())),
+                None => match self.further(obj, rest) {
+                    Some((next, tail)) => {
+                        obj = next;
+                        rest = tail;
+                    }
+                    None => return Ok((obj, rest.to_owned())),
+                },
             }
         }
+    }
+
+    /// The object further along `rest` than its first name: the one a
+    /// member of a group holds (`up.indicator.x`), or an element of a list
+    /// by its number (`children.0.visible`), and the path that is left.
+    fn further<'p>(&self, obj: ObjectId, rest: &'p str) -> Option<(ObjectId, &'p str)> {
+        for (at, _) in rest.match_indices('.') {
+            let (head, tail) = (&rest[..at], &rest[at + 1..]);
+            if self.engine.property_index(obj, head).is_err() {
+                continue;
+            }
+            match self.engine.read_by_name(obj, head) {
+                QmlValue::List(items) => {
+                    let (index, after) = tail.split_once('.')?;
+                    let next = items.get(index.parse::<usize>().ok()?)?.as_object()?;
+                    return Some((next, after));
+                }
+                held => {
+                    if let Some(next) = held.as_object() {
+                        return Some((next, tail));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// A write to a member of a value type (`font.pixelSize`) as the write
@@ -486,16 +529,21 @@ impl Live {
         // between, as a host woken at each deadline would. The scene's own
         // wakes (the frames of a running animation) are kept the same way.
         for _ in 0..MAX_TIMER_STEPS {
-            let next = [self.engine.next_timer_deadline(), self.wake]
-                .into_iter()
-                .flatten()
-                .min();
+            let next = [
+                self.engine.next_timer_deadline(),
+                self.wake,
+                self.reload_due(),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             match next {
                 Some(t) if t <= end => {
                     if t > self.clock.now() {
                         self.clock.set(t);
                     }
                     self.engine.advance_timers(self.clock.now());
+                    self.reload_if_due()?;
                     self.settle()?;
                 }
                 _ => {
@@ -546,6 +594,50 @@ impl Live {
         self.settle()
     }
 
+    /// Types `text`, one key per character, as a keyboard with a key for
+    /// each would.
+    fn type_text(&mut self, text: &str) -> Result<()> {
+        for c in text.chars() {
+            let code = key::from_char(c).unwrap_or(0);
+            let held = if c.is_uppercase() {
+                Modifiers::SHIFT
+            } else {
+                Modifiers::empty()
+            };
+            let typed = c.to_string();
+            let press = KeyEvent::press(code)
+                .with_modifiers(held)
+                .with_text(typed.clone());
+            self.scene.key_event(&self.engine, &press);
+            let release = KeyEvent::release(code)
+                .with_modifiers(held)
+                .with_text(typed);
+            self.scene.key_event(&self.engine, &release);
+        }
+        self.settle()
+    }
+
+    /// Press at `from`, move to `to` in steps a hand would make, release.
+    fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
+        const STEP: f64 = 8.0;
+        let now = self.clock.now();
+        self.scene
+            .pointer_event(&self.engine, &PointerEvent::press(from.0, from.1, now));
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        let steps = (dx.hypot(dy) / STEP).ceil().max(1.0) as u32;
+        for i in 1..=steps {
+            let t = f64::from(i) / f64::from(steps);
+            let (x, y) = (from.0 + dx * t, from.1 + dy * t);
+            self.scene.pointer_event(
+                &self.engine,
+                &PointerEvent::moved(x, y, MouseButtons::LEFT, now),
+            );
+        }
+        self.scene
+            .pointer_event(&self.engine, &PointerEvent::release(to.0, to.1, now));
+        self.settle()
+    }
+
     fn tap(&mut self, x: f64, y: f64) -> Result<()> {
         let now = self.clock.now();
         self.scene
@@ -579,6 +671,16 @@ impl Live {
         self.settle()
     }
 
+    fn wheel(&mut self, at: (f64, f64), by: super::WheelBy) -> Result<()> {
+        let now = self.clock.now();
+        let event = match by {
+            super::WheelBy::Notches(x, y) => ljos_quick::WheelEvent::notches(at.0, at.1, x, y, now),
+            super::WheelBy::Pixels(x, y) => ljos_quick::WheelEvent::pixels(at.0, at.1, x, y, now),
+        };
+        self.scene.wheel_event(&self.engine, &event);
+        self.settle()
+    }
+
     /// The scene builds its accessibility tree only while something reads
     /// it. The first question about the tree starts that, as an assistive
     /// technology starting up would; from then on the tree follows changes.
@@ -601,6 +703,15 @@ impl Live {
                     description: d.description.clone(),
                     object_name: d.author_id.clone(),
                     focused: focus == Some(*k),
+                    value: d.text.as_ref().map(|t| t.value.clone()).unwrap_or_default(),
+                    selected: d
+                        .text
+                        .as_ref()
+                        .and_then(|t| {
+                            let (a, b) = (t.anchor.min(t.cursor), t.anchor.max(t.cursor));
+                            t.value.get(a..b).map(str::to_owned)
+                        })
+                        .unwrap_or_default(),
                     children: below(tree, *k, focus),
                 })
             };
@@ -665,6 +776,13 @@ impl Backend for LjosBackend {
                 images.register_resource(url, bytes);
             }
             self.live = Some(live);
+            // Before the scenario's first object: a reload knows only
+            // what was made while it was noted.
+            if self.watching
+                && let Some(live) = self.live.as_mut()
+            {
+                reload::Rig::install(live);
+            }
         }
         self.live()?.load(files, entry)
     }
@@ -787,6 +905,49 @@ impl Backend for LjosBackend {
         self.live()?.pointer(step, x, y)
     }
 
+    fn wheel(&mut self, at: (f64, f64), by: super::WheelBy) -> Result<()> {
+        self.live()?.wheel(at, by)
+    }
+
+    fn type_text(&mut self, text: &str) -> Result<()> {
+        self.live()?.type_text(text)
+    }
+
+    fn double_click(&mut self, x: f64, y: f64) -> Result<()> {
+        let live = self.live()?;
+        live.tap(x, y)?;
+        live.tap(x, y)
+    }
+
+    fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
+        self.live()?.drag(from, to)
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        let live = self.live()?;
+        ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, text);
+        live.settle()
+    }
+
+    fn clipboard(&mut self) -> Result<String> {
+        let live = self.live()?;
+        Ok(ljos_quick::Clipboard::of(&live.engine).text())
+    }
+
+    fn compose(&mut self, text: &str) -> Result<()> {
+        let live = self.live()?;
+        // With no editor in focus the input method has nowhere to compose;
+        // the scenario says what it expects of that.
+        live.scene.ime_preedit(&live.engine, text, None);
+        live.settle()
+    }
+
+    fn commit(&mut self, text: &str) -> Result<()> {
+        let live = self.live()?;
+        live.scene.ime_commit(&live.engine, text);
+        live.settle()
+    }
+
     fn a11y_tree(&mut self) -> Result<A11yNode> {
         let live = self.live()?;
         live.listen()?;
@@ -801,6 +962,63 @@ impl Backend for LjosBackend {
             .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
         // A node may refuse; the scenario says what it expects of that.
         live.scene.accessible_focus(&live.engine, key);
+        live.settle()
+    }
+
+    fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {
+        use ljos_quick::AccessibleAction as To;
+        let live = self.live()?;
+        live.listen()?;
+        let key = live
+            .accessible_key(role, name)
+            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
+        let action = match action {
+            super::A11yAction::Increase => To::Increase,
+            super::A11yAction::Decrease => To::Decrease,
+            super::A11yAction::SetValue(to) => To::SetValue(to),
+            super::A11yAction::Scroll { dx, dy, page } => match (dx, dy) {
+                (0, 1..) => To::ScrollDown { page },
+                (0, _) => To::ScrollUp { page },
+                (1.., _) => To::ScrollRight { page },
+                _ => To::ScrollLeft { page },
+            },
+        };
+        // A node may refuse; the scenario says what it expects of that.
+        live.scene.accessible_action(&live.engine, key, action);
+        live.settle()
+    }
+
+    fn a11y_text(&mut self, role: &str, name: &str, action: super::A11yTextAction) -> Result<()> {
+        use ljos_quick::AccessibleTextAction as To;
+        let live = self.live()?;
+        live.listen()?;
+        let key = live
+            .accessible_key(role, name)
+            .ok_or_else(|| failed(format!("no {role:?} named {name:?}")))?;
+        let value = live
+            .scene
+            .accessibility_tree()
+            .get(key)
+            .and_then(|d| d.text.as_ref())
+            .map(|t| t.value.clone())
+            .unwrap_or_default();
+        // The scenario counts characters; the tree counts bytes.
+        let byte = |n: usize| {
+            value
+                .char_indices()
+                .nth(n)
+                .map_or(value.len(), |(at, _)| at)
+        };
+        let action = match action {
+            super::A11yTextAction::Select(from, to) => To::Select {
+                anchor: byte(from),
+                cursor: byte(to),
+            },
+            super::A11yTextAction::ReplaceSelection(text) => To::ReplaceSelection(text),
+            super::A11yTextAction::SetValue(text) => To::SetValue(text),
+        };
+        // A node may refuse; the scenario says what it expects of that.
+        live.scene.accessible_text_action(&live.engine, key, action);
         live.settle()
     }
 
@@ -852,6 +1070,31 @@ impl Backend for LjosBackend {
             None => self.resources.push((url, bytes.to_vec())),
         }
         Ok(())
+    }
+
+    fn watch_files(&mut self) {
+        self.watching = true;
+    }
+
+    fn change_file(&mut self, name: &str, source: Option<&str>) -> Result<()> {
+        self.live()?.change_file(name, source)
+    }
+
+    fn reload(&mut self) -> Result<()> {
+        self.live()?.reload_flush()
+    }
+
+    fn reload_error(&mut self) -> Result<Option<super::ReloadFailure>> {
+        let fault = self.live()?.engine.last_reload_error();
+        Ok(fault.map(|f| super::ReloadFailure {
+            file: f.file,
+            line: f.line,
+            message: f.message,
+        }))
+    }
+
+    fn reload_count(&mut self) -> Result<u64> {
+        self.live()?.reload_count()
     }
 }
 

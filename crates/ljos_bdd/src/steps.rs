@@ -7,7 +7,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::{
-    backend::{A11yNode, BackendError, LogLevel, PointerStep},
+    backend::{A11yAction, A11yNode, A11yTextAction, BackendError, LogLevel, PointerStep, WheelBy},
     fixture, value,
     world::{LjosWorld, MAIN_FILE},
 };
@@ -46,6 +46,11 @@ fn expect_value(
 }
 
 // ---------------------------------------------------------------- Given
+
+#[given(regex = r#"^"([^"]*)" was copied in another application$"#)]
+fn clipboard_given(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| b.set_clipboard(&text))
+}
 
 #[given("the QML:")]
 fn the_qml(w: &mut LjosWorld, step: &Step) -> StepResult {
@@ -164,6 +169,58 @@ fn a11y_focuses(w: &mut LjosWorld, role: String, name: String) -> StepResult {
     w.each(|b| b.a11y_focus(&role, &name))
 }
 
+// What a screen reader's "next step" and "scroll" commands ask of a node.
+fn a11y_action(what: &str) -> Result<A11yAction, String> {
+    let scroll = |dx, dy, page| Ok(A11yAction::Scroll { dx, dy, page });
+    let (way, page) = match what.strip_suffix(" a page") {
+        Some(way) => (way, true),
+        None => (what, false),
+    };
+    match way {
+        "increase" if !page => Ok(A11yAction::Increase),
+        "decrease" if !page => Ok(A11yAction::Decrease),
+        "scroll up" => scroll(0, -1, page),
+        "scroll down" => scroll(0, 1, page),
+        "scroll left" => scroll(-1, 0, page),
+        "scroll right" => scroll(1, 0, page),
+        _ => match what.strip_prefix("take the value ").map(str::parse) {
+            Some(Ok(to)) => Ok(A11yAction::SetValue(to)),
+            _ => Err(format!("{what:?} is not something to ask of a node")),
+        },
+    }
+}
+
+#[when(regex = r#"^an assistive technology asks the "([^"]+)" named "([^"]*)" to (.+)$"#)]
+fn a11y_asks(w: &mut LjosWorld, role: String, name: String, what: String) -> StepResult {
+    let action = a11y_action(&what)?;
+    w.each(|b| b.a11y_act(&role, &name, action))
+}
+
+// On one line, as the lint reads the patterns.
+#[rustfmt::skip]
+#[when(regex = r#"^an assistive technology selects characters (\d+) to (\d+) of the "([^"]+)" named "([^"]*)"$"#)]
+fn a11y_selects(
+    w: &mut LjosWorld,
+    from: usize,
+    to: usize,
+    role: String,
+    name: String,
+) -> StepResult {
+    w.each(|b| b.a11y_text(&role, &name, A11yTextAction::Select(from, to)))
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^an assistive technology replaces the selection of the "([^"]+)" named "([^"]*)" with "([^"]*)"$"#)]
+fn a11y_replaces(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
+    w.each(|b| b.a11y_text(&role, &name, A11yTextAction::ReplaceSelection(text.clone())))
+}
+
+#[rustfmt::skip]
+#[when(regex = r#"^an assistive technology sets the text of the "([^"]+)" named "([^"]*)" to "([^"]*)"$"#)]
+fn a11y_sets_text(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
+    w.each(|b| b.a11y_text(&role, &name, A11yTextAction::SetValue(text.clone())))
+}
+
 #[when(regex = r#"^the user presses "([^"]+)"$"#)]
 fn user_presses(w: &mut LjosWorld, chord: String) -> StepResult {
     w.each(|b| b.key(&chord))
@@ -200,6 +257,71 @@ fn user_moves_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
 #[when(regex = r"^the user releases the pointer at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
 fn user_releases_pointer(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
     w.each(|b| b.pointer(PointerStep::Release, x, y))
+}
+
+#[when(regex = r#"^the user types "([^"]+)"$"#)]
+fn user_types(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| b.type_text(&text))
+}
+
+#[when(regex = r"^the user double-clicks at (-?\d+(?:\.\d+)?), (-?\d+(?:\.\d+)?)$")]
+fn user_double_clicks(w: &mut LjosWorld, x: f64, y: f64) -> StepResult {
+    w.each(|b| b.double_click(x, y))
+}
+
+#[when(regex = r"^the user drags from ([-\d.]+), ([-\d.]+) to ([-\d.]+), ([-\d.]+)$")]
+fn user_drags(w: &mut LjosWorld, x1: f64, y1: f64, x2: f64, y2: f64) -> StepResult {
+    w.each(|b| b.drag((x1, y1), (x2, y2)))
+}
+
+// "Down" is towards the end of the content, as the user means it: the
+// wheel turns towards the user, which is a negative delta in Qt.
+fn wheel_delta(amount: f64, direction: &str) -> Result<(f64, f64), String> {
+    match direction {
+        "up" => Ok((0.0, amount)),
+        "down" => Ok((0.0, -amount)),
+        "left" => Ok((amount, 0.0)),
+        "right" => Ok((-amount, 0.0)),
+        _ => Err(format!("{direction:?} is not up, down, left or right")),
+    }
+}
+
+// The patterns are kept to one line each: the ledger's lint reads them so.
+#[when(regex = r"^the user turns the wheel ([\d.]+) notch(?:es)? (\w+) at ([-\d.]+), ([-\d.]+)$")]
+fn user_turns_wheel(w: &mut LjosWorld, n: f64, direction: String, x: f64, y: f64) -> StepResult {
+    let (dx, dy) = wheel_delta(n, &direction)?;
+    w.each(|b| b.wheel((x, y), WheelBy::Notches(dx, dy)))
+}
+
+#[when(regex = r"^the user scrolls ([\d.]+) pixels? (\w+) at ([-\d.]+), ([-\d.]+)$")]
+fn user_scrolls(w: &mut LjosWorld, n: f64, direction: String, x: f64, y: f64) -> StepResult {
+    let (dx, dy) = wheel_delta(n, &direction)?;
+    w.each(|b| b.wheel((x, y), WheelBy::Pixels(dx, dy)))
+}
+
+#[when(regex = r#"^the input method composes "([^"]*)"$"#)]
+fn input_method_composes(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| b.compose(&text))
+}
+
+#[when(regex = r#"^the input method commits "([^"]*)"$"#)]
+fn input_method_commits(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| b.commit(&text))
+}
+
+#[when(regex = r#"^the file "([^"]+\.qml)" is changed to:$"#)]
+fn file_changed(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    w.change_file(&name, Some(&docstring(step)?))
+}
+
+#[when(regex = r#"^the file "([^"]+\.qml)" is removed$"#)]
+fn file_removed(w: &mut LjosWorld, name: String) -> StepResult {
+    w.change_file(&name, None)
+}
+
+#[when("a reload happens")]
+fn reload_happens(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.reload())
 }
 
 // ----------------------------------------------------------------- Then
@@ -418,6 +540,62 @@ fn a11y_described(w: &mut LjosWorld, role: String, name: String, text: String) -
     })
 }
 
+#[then(regex = r#"^the clipboard holds "([^"]*)"$"#)]
+fn clipboard_holds(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| {
+        let held = b.clipboard()?;
+        if held == text {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the clipboard holds {held:?}, expected {text:?}"
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" has the value "([^"]*)"$"#)]
+fn a11y_value(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = tree.find(&role, &name).ok_or_else(|| {
+            BackendError::Failed(format!(
+                "no {role:?} named {name:?} in:\n{}",
+                render(&tree, 0)
+            ))
+        })?;
+        if node.value == text {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} has the value {:?}, expected {text:?}",
+                node.value
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" has "([^"]*)" selected$"#)]
+fn a11y_selected(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
+    w.each(|b| {
+        let tree = b.a11y_tree()?;
+        let node = tree.find(&role, &name).ok_or_else(|| {
+            BackendError::Failed(format!(
+                "no {role:?} named {name:?} in:\n{}",
+                render(&tree, 0)
+            ))
+        })?;
+        if node.selected == text {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the {role:?} named {name:?} has {:?} selected, expected {text:?}",
+                node.selected
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^the "([^"]+)" named "([^"]*)" is inside the "([^"]+)" named "([^"]*)"$"#)]
 fn a11y_inside(
     w: &mut LjosWorld,
@@ -463,6 +641,56 @@ fn a11y_focus_is(w: &mut LjosWorld, role: String, name: String) -> StepResult {
                 "nothing has the focus:\n{}",
                 render(&tree, 0)
             ))),
+        }
+    })
+}
+
+#[then(regex = r#"^the reload error matches "([^"]+)"$"#)]
+fn reload_error_matches(w: &mut LjosWorld, pattern: String) -> StepResult {
+    let re = Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
+    w.each(|b| match b.reload_error()? {
+        Some(e) if re.is_match(&e.message) => Ok(()),
+        Some(e) => Err(BackendError::Failed(format!(
+            "the reload error is {:?}, expected one matching {pattern:?}",
+            e.message
+        ))),
+        None => Err(BackendError::Failed("there is no reload error".into())),
+    })
+}
+
+#[then("there is no reload error")]
+fn no_reload_error(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.reload_error()? {
+        None => Ok(()),
+        Some(e) => Err(BackendError::Failed(format!(
+            "the reload error is {}:{}: {}",
+            e.file, e.line, e.message
+        ))),
+    })
+}
+
+#[then(regex = r#"^the reload error is in "([^"]+)" at line (\d+)$"#)]
+fn reload_error_is_in(w: &mut LjosWorld, file: String, line: u32) -> StepResult {
+    w.each(|b| match b.reload_error()? {
+        Some(e) if e.file == file && e.line == line => Ok(()),
+        Some(e) => Err(BackendError::Failed(format!(
+            "the reload error is in {:?} at line {}: {}",
+            e.file, e.line, e.message
+        ))),
+        None => Err(BackendError::Failed("there is no reload error".into())),
+    })
+}
+
+#[then(regex = r"^(\d+) reloads? ha(?:s|ve) happened$")]
+fn reloads_happened(w: &mut LjosWorld, want: u64) -> StepResult {
+    w.each(|b| {
+        let count = b.reload_count()?;
+        if count == want {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "{count} reload(s) happened, expected {want}"
+            )))
         }
     })
 }

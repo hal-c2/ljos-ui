@@ -32,6 +32,33 @@ pub fn junit_path() -> PathBuf {
     target_dir().join("features/junit.xml")
 }
 
+/// Whether a scenario changes files under the running application. Only
+/// then is what a reload needs noted, as only a development build notes
+/// it. `LJOS_BDD_RELOAD_TRACKING=1` notes it for every scenario: a run of
+/// the whole ledger that way shows that noting changes nothing else.
+fn changes_files(
+    feature: &gherkin::Feature,
+    rule: Option<&gherkin::Rule>,
+    scenario: &gherkin::Scenario,
+) -> bool {
+    let backgrounds = [
+        feature.background.as_ref(),
+        rule.and_then(|r| r.background.as_ref()),
+    ];
+    std::env::var_os("LJOS_BDD_RELOAD_TRACKING").is_some_and(|v| v == "1")
+        || backgrounds
+            .into_iter()
+            .flatten()
+            .flat_map(|b| &b.steps)
+            .chain(&scenario.steps)
+            .any(|s| {
+                let text = s.value.as_str();
+                text.contains("reload")
+                    || (text.starts_with("the file ")
+                        && (text.ends_with(" is changed to:") || text.ends_with(" is removed")))
+            })
+}
+
 /// Run the ledger and return whether every selected scenario passed.
 ///
 /// # Panics
@@ -70,6 +97,9 @@ pub fn run() -> bool {
                     || rule.is_some_and(|r| r.tags.iter().any(tagged))
                     || scenario.tags.iter().any(tagged);
                 world.prepare(parity);
+                if changes_files(feature, rule, scenario) {
+                    world.watch_files();
+                }
                 async {}.boxed_local()
             })
             .run(workspace_root().join("features")),

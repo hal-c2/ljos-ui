@@ -20,6 +20,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `controls/` | one file per Qt Quick Controls type |
 | `input/`, `focus/` | pointer, touch, keyboard, focus scopes, IME |
 | `text/`, `animation/`, `i18n/`, `rendering/` | text, animation and timers, localisation, pixels |
+| `text-input/` | `TextInput` and `TextEdit`: typing, keys, selection, the clipboard, undo, validators, echo modes, composing with an input method |
 | `a11y/` | accessibility tree, names, roles, actions |
 | `offscreen/` | resource policy: delegates near the viewport, freezing, memory |
 | `hot-reload/`, `runtime/`, `network/`, `mobile/` | dev loop, scheduler and faults, network, phones |
@@ -118,6 +119,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
 | `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
+| `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
 
 ### When
 
@@ -132,12 +134,26 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When N milliseconds pass` / `When N second(s) pass` | application time passes (`1 second passes`, `0.5 seconds pass`) |
 | `When the user clicks the "role" "name"` | click the control with that accessible role and name |
 | `When an assistive technology focuses the "role" named "name"` | what a screen reader's "move the focus here" does; an item may refuse |
+| `When an assistive technology asks the "role" named "name" to increase` | any other request of a screen reader: `increase`, `decrease`, `take the value N`, `scroll down` (or `up`, `left`, `right`) and `scroll down a page`; an item may refuse (`@ljos-only`) |
+| `When an assistive technology selects characters N to M of the "role" named "name"` | a screen reader selects in the node's text, from the first character to the second, which may be before it (`@ljos-only`) |
+| `When an assistive technology replaces the selection of the "role" named "name" with "text"` | a screen reader types over the selection (`@ljos-only`) |
+| `When an assistive technology sets the text of the "role" named "name" to "text"` | a screen reader types over the whole text (`@ljos-only`) |
 | `When the user presses "chord"` | press and release a key chord: `"Ctrl+S"`, `"Shift+Tab"`, `"Return"`, `"A"` (key names as in a `Shortcut` sequence) |
 | `When the user holds down "chord" until it repeats N times` | one press, `N` auto-repeated presses, one release |
 | `When the window loses focus` / `When the window gains focus` | another window takes the keyboard, or gives it back |
 | `When the user touches X, Y` | touch at a position |
 | `When the user presses the pointer at X, Y` / `releases the pointer at X, Y` | the two halves of a click, for what happens while the button is held |
 | `When the user moves the pointer to X, Y` | move the pointer, with the button held if it was pressed and not released (a drag), without it otherwise (hover) |
+| `When the user types "text"` | one key press per character, with Shift held for a capital letter; on Qt only Latin-1 characters |
+| `When the user double-clicks at X, Y` | two clicks at one place in quick succession |
+| `When the user drags from X, Y to X, Y` | press, move with the button held, release |
+| `When the user turns the wheel N notch(es) down at X, Y` | a mouse wheel turns with the pointer at a position; `down` (or `up`, `left`, `right`) is where the view goes over the content, so `down` is towards the content's end (`@ljos-only`: the oracle's input channel has no wheel) |
+| `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |
+| `When the input method composes "text"` | an input method shows the text at the cursor as what is being composed; `""` ends the composition with nothing typed (`@ljos-only`: the oracle has no input method) |
+| `When the input method commits "text"` | an input method ends the composition and types the text (`@ljos-only`) |
+| `When the file "X.qml" is changed to:` + doc string | a file of the running application is saved with that text, or made if there was none; it is applied once the files have been quiet for 120 milliseconds (`@ljos-only`: hot reload is a Ljós extension) |
+| `When the file "X.qml" is removed` | the file is deleted while the application runs (`@ljos-only`) |
+| `When a reload happens` | the quiet time ends now: what was saved is applied, or refused with a reload error (`@ljos-only`) |
 
 ### Then
 
@@ -156,8 +172,15 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the accessibility tree has no "role" named "name"` | |
 | `Then the object "o" is exposed as a "role" named "name"` | the node whose `objectName` is `o` |
 | `Then the "role" named "name" is described as "text"` | its accessible description; `""` when it has none |
+| `Then the "role" named "name" has the value "text"` | what the node holds besides its name: the text of an editor; `""` when it has none |
+| `Then the "role" named "name" has "text" selected` | the part of its value that is selected; `""` when none is |
+| `Then the clipboard holds "text"` | the text a paste would insert |
 | `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |
 | `Then the accessibility tree's focus is the "role" named "name"` | the one node a screen reader reads as having the keyboard; the `"window"` named `""` when no item has it |
+| `Then the reload error matches "regex"` | the message of the last reload that failed, which stays until a reload succeeds (`@ljos-only`) |
+| `Then there is no reload error` | no reload has failed, or one succeeded since (`@ljos-only`) |
+| `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
+| `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
 
 ### Planned (backlog scenarios may use them; not built yet)
 
@@ -180,3 +203,8 @@ That server has no password and listens on every interface, so the run gets a pr
 namespace and a relay to a unix socket. This needs Linux with `unshare`, `ip` and `socat`, and
 unprivileged user namespaces. Elsewhere such a scenario fails with a message that says so;
 `LJOS_BDD_OPEN_VNC=1` runs the server on an open port of the host instead.
+
+A pointer that is pressed, moved and released in steps of its own is sent to Qt one event a step, in
+real time. Qt measures how fast a drag was going when it was let go, so a scenario that does not mean
+a flick lets time pass before the release (`And 500 milliseconds pass`). The input channel has no
+wheel: wheel steps are `@ljos-only`.

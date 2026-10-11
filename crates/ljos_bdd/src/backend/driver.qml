@@ -18,6 +18,8 @@ Item {
     // arrives (rfb.rs), counted in `acks`.
     property bool waiting: false
     property int acks: 0
+    // The step of a held pointer the driver waits to see (qt.rs).
+    property var expect: null
     property bool wantActive: true
     property var other: null
 
@@ -34,11 +36,16 @@ Item {
 
     function kids(o) {
         var all = []
-        var lists = [o.data, o.resources]
+        var lists = [o.data, o.resources, o.contentData]
         for (var l = 0; l < lists.length; ++l) {
             var ds = lists[l]
             if (ds) for (var i = 0; i < ds.length; ++i) all.push(ds[i])
         }
+        // A menu behind a menu item and the popup of a combo box are in
+        // none of the lists.
+        var more = [o.subMenu, o.popup]
+        for (var m = 0; m < more.length; ++m)
+            if (more[m] && typeof more[m] === "object") all.push(more[m])
         return all
     }
 
@@ -93,6 +100,8 @@ Item {
         case "call": { var t = find(op.obj); return ser(t[op.method].apply(t, op.args)) }
         case "exists": { try { find(op.obj); return true } catch (e) { return false } }
         case "language": { Qt.uiLanguage = op.value; return null }
+        case "copy": { var cc = clipper(); cc.text = op.value; cc.selectAll(); cc.copy(); return null }
+        case "paste": { var cp = clipper(); cp.text = ""; cp.paste(); return cp.text }
         case "nop": return null
         default: throw new Error("unknown op " + op.op)
         }
@@ -112,8 +121,9 @@ Item {
                 driver.grabToImage(function(res) { res.saveToFile(grabPath); run() })
                 return
             }
-            if (op.op === "key" || op.op === "pointer") {
+            if (["key", "pointer", "type", "double", "drag"].indexOf(op.op) >= 0) {
                 out.push({})
+                expect = op.step ? op : null
                 waiting = true
                 console.log("@@input@@" + (pc - 1))
                 return
@@ -125,6 +135,15 @@ Item {
     }
 
     Timer { id: pause; repeat: false; onTriggered: driver.run() }
+
+    // The clipboard has no QML API of its own; an editor that is never
+    // shown copies into it and pastes out of it.
+    property var clip: null
+    function clipper() {
+        if (!clip) clip = clipHelper.createObject(driver)
+        return clip
+    }
+    Component { id: clipHelper; TextEdit { visible: false; textFormat: TextEdit.PlainText } }
 
     // Another window takes the keyboard, as when the user switches windows.
     function activate(on) {
@@ -146,6 +165,7 @@ Item {
         onTriggered: if ((driver.Window.activeFocusItem !== null) === driver.wantActive) { stop(); driver.run() }
     }
 /*INPUT*/
+/*HELD*/
 
     // Focus follows the active window, and a window becomes active a moment
     // after it is shown; the program starts then. The timer is for a platform

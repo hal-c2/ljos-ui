@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 
 use super::{
     A11yNode, Backend, BackendError, LogEntry, LogLevel, PointerStep, QmlFile, Result,
-    rfb::{Chord, Endpoint, Rfb, SCREEN},
+    rfb::{Chord, Endpoint, HeldStep, Rfb, SCREEN, char_keysym},
 };
 
 /// Marks the driver's result line among ordinary Qt log output.
@@ -49,6 +49,37 @@ const INPUT_HANDLER: &str = r"    HoverHandler {
         }
     }
 ";
+/// What the driver gets besides in a run that holds the pointer down across
+/// steps. Such a step cannot end with the move to the corner pixel: with the
+/// button down that move would be part of the drag. A handler above
+/// everything sees the step's own event instead (a passive grab, which takes
+/// nothing from what is beneath) and goes on once Qt has delivered it.
+const HELD_HANDLER: &str = r#"    function heldDone() { expect = null; waiting = false; Qt.callLater(run) }
+    function heldAt(p) { return p.x === expect.x && p.y === expect.y }
+    HoverHandler {
+        onPointChanged: {
+            var e = driver.expect
+            if (driver.waiting && e && e.step === "hover" && driver.heldAt(point.position)) driver.heldDone()
+        }
+    }
+    Item {
+        anchors.fill: parent
+        z: 1000000
+        PointHandler {
+            onActiveChanged: {
+                var e = driver.expect
+                if (driver.waiting && e && e.step === (active ? "press" : "release")) driver.heldDone()
+            }
+            onPointChanged: {
+                var e = driver.expect
+                if (active && driver.waiting && e && e.step === "move" && driver.heldAt(point.position)) driver.heldDone()
+            }
+        }
+    }
+"#;
+/// The ops that are input, sent over the input channel. `driver.qml`
+/// stops at the same ones and waits for the acknowledgement.
+const INPUT_OPS: [&str; 5] = ["key", "pointer", "type", "double", "drag"];
 static RUN_ID: AtomicU32 = AtomicU32::new(0);
 
 const DRIVER_TEMPLATE: &str = include_str!("driver.qml");
@@ -153,6 +184,14 @@ impl QtBackend {
                     ""
                 },
             )
+            .replace(
+                "/*HELD*/\n",
+                if self.holds_pointer() {
+                    HELD_HANDLER
+                } else {
+                    ""
+                },
+            )
             .replace("/*DIR*/\"\"", &json!(file_url(&dir)).to_string())
             .replace(
                 "/*GRAB*/\"\"",
@@ -211,7 +250,46 @@ impl QtBackend {
     fn sends_input(&self) -> bool {
         self.program
             .iter()
-            .any(|op| matches!(op["op"].as_str(), Some("key" | "pointer")))
+            .any(|op| op["op"].as_str().is_some_and(|o| INPUT_OPS.contains(&o)))
+    }
+
+    /// Whether the program holds the pointer down across steps, or moves it
+    /// with no button down.
+    fn holds_pointer(&self) -> bool {
+        self.program.iter().any(|op| op["step"].is_string())
+    }
+
+    /// Whether the button is down after the program as recorded so far.
+    fn pointer_held(&self) -> bool {
+        self.program
+            .iter()
+            .rev()
+            .find_map(|op| op["step"].as_str())
+            .is_some_and(|step| step == "press" || step == "move")
+    }
+
+    /// Where a step of a held pointer left the pointer, when it was the
+    /// last input. Any other input leaves it at the corner pixel.
+    fn pointer_at(&self) -> Option<(u64, u64)> {
+        let last = self
+            .program
+            .iter()
+            .rev()
+            .find(|op| op["op"].as_str().is_some_and(|o| INPUT_OPS.contains(&o)))?;
+        last["step"].as_str()?;
+        last["x"].as_u64().zip(last["y"].as_u64())
+    }
+
+    /// Input that ends with the acknowledgement move cannot be sent while
+    /// the button is down: the move would let go.
+    fn not_held(&self) -> Result<()> {
+        if self.pointer_held() {
+            return Err(BackendError::Unsupported {
+                backend: "qt",
+                what: "other input while the pointer is held down",
+            });
+        }
+        Ok(())
     }
 
     /// Sends what the op at `index` asks for, then the acknowledgement move.
@@ -226,6 +304,14 @@ impl QtBackend {
                     .map_err(BackendError::Failed)?;
                 rfb.press(&chord)?;
             }
+            Some("pointer") if op["step"].is_string() => {
+                let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
+                let step = op["step"].as_str().and_then(HeldStep::parse);
+                let (step, (x, y)) = step.zip(at("x").zip(at("y"))).ok_or_else(|| {
+                    BackendError::Failed(format!("op {index} is no step of a held pointer"))
+                })?;
+                rfb.held(step, x, y)?;
+            }
             Some("pointer") => {
                 let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
                 let (x, y) = at("x").zip(at("y")).ok_or_else(|| {
@@ -233,6 +319,22 @@ impl QtBackend {
                 })?;
                 rfb.click(x, y)?;
             }
+            Some("double") => {
+                let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
+                let (x, y) = at("x").zip(at("y")).ok_or_else(|| {
+                    BackendError::Failed(format!("op {index} has no pointer position"))
+                })?;
+                rfb.double_click(x, y)?;
+            }
+            Some("drag") => {
+                let at = |k: &str| op[k].as_u64().and_then(|v| u16::try_from(v).ok());
+                let ends = at("x").zip(at("y")).zip(at("x2").zip(at("y2")));
+                let (from, to) = ends.ok_or_else(|| {
+                    BackendError::Failed(format!("op {index} has no pointer positions"))
+                })?;
+                rfb.drag(from, to)?;
+            }
+            Some("type") => rfb.type_text(op["text"].as_str().unwrap_or_default())?,
             other => {
                 return Err(BackendError::Failed(format!(
                     "the driver asked for input at op {index}, which is {other:?}"
@@ -489,6 +591,7 @@ impl Backend for QtBackend {
         // Recorded only, like a wait; a chord the oracle cannot type is
         // reported by the step that names it.
         Chord::parse(chord).map_err(BackendError::Failed)?;
+        self.not_held()?;
         self.push(json!({"op": "key", "chord": chord}));
         Ok(())
     }
@@ -514,15 +617,37 @@ impl Backend for QtBackend {
                 "{x}, {y} is outside the {SCREEN} pixel window"
             )));
         }
+        self.not_held()?;
         self.push(json!({"op": "pointer", "x": x as u16, "y": y as u16}));
         Ok(())
     }
 
-    fn pointer(&mut self, _: PointerStep, _: f64, _: f64) -> Result<()> {
-        Err(BackendError::Unsupported {
-            backend: "qt",
-            what: "a held pointer: the replay sends whole clicks",
-        })
+    fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
+        let (x, y) = on_screen(x, y)?;
+        let held = self.pointer_held();
+        let step = match step {
+            PointerStep::Press if held => {
+                return Err(BackendError::Failed(
+                    "the pointer is pressed already".into(),
+                ));
+            }
+            PointerStep::Release if !held => {
+                return Err(BackendError::Failed("the pointer is not pressed".into()));
+            }
+            PointerStep::Press => HeldStep::Press,
+            PointerStep::Release => HeldStep::Release,
+            PointerStep::Move if held => HeldStep::Move,
+            PointerStep::Move => HeldStep::Hover,
+        };
+        let moves = matches!(step, HeldStep::Move | HeldStep::Hover);
+        if moves && self.pointer_at() == Some((u64::from(x), u64::from(y))) {
+            // A move to where the pointer is, is no event: nothing would
+            // acknowledge it.
+            self.push(json!({"op": "nop"}));
+            return Ok(());
+        }
+        self.push(json!({"op": "pointer", "step": step.name(), "x": x, "y": y}));
+        Ok(())
     }
 
     fn a11y_tree(&mut self) -> Result<A11yNode> {
@@ -567,6 +692,78 @@ impl Backend for QtBackend {
         self.cache = None;
         Ok(())
     }
+
+    fn type_text(&mut self, text: &str) -> Result<()> {
+        if let Some(c) = text.chars().find(|c| char_keysym(*c).is_none()) {
+            return Err(BackendError::Failed(format!(
+                "the Qt oracle cannot type {c:?}"
+            )));
+        }
+        self.not_held()?;
+        self.push(json!({"op": "type", "text": text}));
+        Ok(())
+    }
+
+    fn double_click(&mut self, x: f64, y: f64) -> Result<()> {
+        let (x, y) = on_screen(x, y)?;
+        self.not_held()?;
+        self.push(json!({"op": "double", "x": x, "y": y}));
+        Ok(())
+    }
+
+    fn drag(&mut self, from: (f64, f64), to: (f64, f64)) -> Result<()> {
+        let (x, y) = on_screen(from.0, from.1)?;
+        let (x2, y2) = on_screen(to.0, to.1)?;
+        self.not_held()?;
+        self.push(json!({"op": "drag", "x": x, "y": y, "x2": x2, "y2": y2}));
+        Ok(())
+    }
+
+    fn wheel(&mut self, _: (f64, f64), _: super::WheelBy) -> Result<()> {
+        // RFB has wheel buttons (4 and 5), and Qt's `vnc` platform makes no
+        // event of them (checked on Qt 6.11).
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "wheel events: the input platform has none",
+        })
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        self.ask(json!({"op": "copy", "value": text})).map(drop)
+    }
+
+    fn clipboard(&mut self) -> Result<String> {
+        Ok(self
+            .ask(json!({"op": "paste"}))?
+            .as_str()
+            .unwrap_or_default()
+            .to_owned())
+    }
+
+    fn compose(&mut self, _: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an input method: the input platform has none",
+        })
+    }
+
+    fn commit(&mut self, _: &str) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: "qt",
+            what: "an input method: the input platform has none",
+        })
+    }
+}
+
+/// A point of the window in whole pixels, as the input channel sends it.
+fn on_screen(x: f64, y: f64) -> Result<(u16, u16)> {
+    let inside = |v: f64| (0.0..f64::from(SCREEN)).contains(&v);
+    if !inside(x) || !inside(y) {
+        return Err(BackendError::Failed(format!(
+            "{x}, {y} is outside the {SCREEN} pixel window"
+        )));
+    }
+    Ok((x as u16, y as u16))
 }
 
 #[cfg(test)]
@@ -596,5 +793,44 @@ mod tests {
     #[test]
     fn missing_result_is_an_error() {
         assert!(parse_stderr("warning|boom\n").is_err());
+    }
+
+    #[test]
+    fn a_held_pointer_is_recorded_step_by_step() {
+        let mut qt = QtBackend::new();
+        qt.pointer(PointerStep::Move, 10.0, 10.0).unwrap();
+        qt.pointer(PointerStep::Press, 10.0, 20.0).unwrap();
+        qt.pointer(PointerStep::Move, 10.0, 40.0).unwrap();
+        // No event comes of a move to where the pointer is.
+        qt.pointer(PointerStep::Move, 10.0, 40.0).unwrap();
+        qt.pointer(PointerStep::Release, 10.0, 40.0).unwrap();
+        let steps: Vec<_> = qt
+            .program
+            .iter()
+            .map(|op| op["step"].as_str().unwrap_or("-"))
+            .collect();
+        assert_eq!(steps, ["hover", "press", "move", "-", "release"]);
+        assert!(qt.holds_pointer());
+        assert!(!qt.pointer_held());
+    }
+
+    #[test]
+    fn nothing_else_is_sent_while_the_pointer_is_held() {
+        let mut qt = QtBackend::new();
+        assert!(qt.pointer(PointerStep::Release, 10.0, 10.0).is_err());
+        qt.pointer(PointerStep::Press, 10.0, 10.0).unwrap();
+        assert!(qt.pointer(PointerStep::Press, 10.0, 10.0).is_err());
+        assert!(matches!(
+            qt.key("Tab"),
+            Err(BackendError::Unsupported { .. })
+        ));
+        assert!(matches!(
+            qt.touch(5.0, 5.0),
+            Err(BackendError::Unsupported { .. })
+        ));
+        qt.pointer(PointerStep::Release, 10.0, 10.0).unwrap();
+        qt.key("Tab").unwrap();
+        // The key's acknowledgement left the pointer in the corner.
+        assert_eq!(qt.pointer_at(), None);
     }
 }
