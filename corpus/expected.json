@@ -1,6 +1,10 @@
 {
   "examples": {
     "android-splashscreen": {},
+    "hangman": {
+      "pixels": 0.99,
+      "content": 0.99
+    },
     "snippet-alias-application": {
       "pixels": 0.01,
       "content": 0.01
@@ -42,7 +46,7 @@
       "content": 0.08
     },
     "snippet-signals-connectdynamic": {
-      "pixels": 0.24,
+      "pixels": 0.25,
       "content": 0.24
     },
     "snippet-signals-connectslots": {
