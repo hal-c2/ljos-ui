@@ -115,7 +115,7 @@ T.ComboBox {
 
     // The rows, under the combo box and as wide as it is, and no taller
     // than the window has room for between the margins: more rows than
-    // that scroll. TODO(listview): a list view on `delegateModel`.
+    // that scroll.
     popup: Component {
         T.Popup {
             y: control.height
@@ -127,12 +127,15 @@ T.ComboBox {
             // combo box's to answer.
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
-            // The combo box puts its rows in what this scrolls, and says
-            // how high they are together.
+            // The rows are those of `delegateModel`, and the view's
+            // current one is the one the keys or the pointer are on.
             contentItem: Component {
-                Flickable {
-                    implicitHeight: contentHeight
+                ListView {
                     clip: true
+                    implicitHeight: contentHeight
+                    model: control.delegateModel
+                    currentIndex: control.highlightedIndex
+                    highlightMoveDuration: 0
 
                     ScrollIndicator.vertical: ScrollIndicator {}
                 }

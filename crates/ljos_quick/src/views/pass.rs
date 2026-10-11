@@ -1,0 +1,1215 @@
+//! The layout pass: which rows have a delegate, and where each one is.
+//!
+//! A pass starts from the anchor (the first row in sight after the last
+//! pass, and where it was), lays rows out from there in both directions
+//! until the window around what is shown is full, gives back every
+//! delegate outside it, and writes the positions, the origin and the
+//! length of the content. Rows that were never measured count as long as
+//! the average of those that were, which is how Qt estimates too
+//! (observed on qml6): `contentHeight` of a long list is a guess that
+//! gets better as the view moves through it.
+//!
+//! The pass runs inside one effect ([`super::start`]) that reads what a
+//! layout depends on, and directly whenever the engine tells the view
+//! something (a model change, a delegate that is ready, a method).
+
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use ljos_engine::{
+    Atom, Engine, Made, ObjectId, OverrideContent, PropIndex, RestoreMode, RowKey, Urgency, Value,
+    ViewDelegates,
+};
+
+use super::state::{Extra, Geo, Slot, ViewState, average};
+use super::{
+    GridView, ItemView, ListView, Part, ViewAttached, attached_of, changes, current, enrol,
+    grid_flow, orientation, put, section_criteria, stack, state_of, strike,
+    vertical_layout_direction, warn,
+};
+use crate::enums::layout_direction;
+use crate::flickable::{self, X, Y};
+use crate::item::{Item, is_item, is_unset, size_follows_implicit, write_computed, write_placed};
+use crate::tree;
+
+/// How many rows either side of what is shown have delegates while an
+/// assistive technology listens (ARCHITECTURE.md §14): it walks to the
+/// next row, and that row has to be there.
+const READER_ROWS: f64 = 20.0;
+
+/// Lines laid out in one pass at most: rows that are 0 long would never
+/// fill a window.
+const MAX_LINES: usize = 10_000;
+const MAX_EMPTY_LINES: usize = 64;
+/// How far a pass walks from the anchor over rows it knows the length of
+/// before it estimates instead.
+const MAX_WALK: usize = 4096;
+/// How many row lengths are remembered before those out of sight go.
+const MAX_SIZES: usize = 16_384;
+
+pub(crate) fn pos_prop(axis: usize) -> PropIndex {
+    if axis == X {
+        Item::X.index
+    } else {
+        Item::Y.index
+    }
+}
+
+pub(crate) fn size_prop(axis: usize) -> PropIndex {
+    if axis == X {
+        Item::WIDTH.index
+    } else {
+        Item::HEIGHT.index
+    }
+}
+
+pub(crate) fn rd(e: &Engine, obj: ObjectId, p: PropIndex) -> f64 {
+    e.read(obj, p).to_number()
+}
+
+/// Makes the layout effect run again.
+pub(crate) fn bump(e: &Engine, st: &ViewState) {
+    if let Some(n) = st.trigger.get() {
+        let g = e.graph();
+        let now = g.get_untracked(n).to_number() as i32;
+        g.set(n, Value::Int(now.wrapping_add(1)));
+    }
+}
+
+/// Lays the rows out now: for whoever changed something the layout
+/// effect does not read.
+pub(crate) fn refresh(e: &Engine, view: ObjectId) {
+    let Some(st) = state_of(e, view) else {
+        return;
+    };
+    e.untrack(|| pass(e, view, &st, None));
+    // The effect reads the sizes of the delegates there are now.
+    bump(e, &st);
+}
+
+/// Whether the rows of `view` run from right to left.
+pub(crate) fn effective_rtl(e: &Engine, view: ObjectId) -> bool {
+    let asked = rd(e, view, ItemView::LAYOUT_DIRECTION.index) as i32;
+    (asked == layout_direction::RIGHT_TO_LEFT) != crate::mirroring::mirrored(e, view)
+}
+
+/// How the view is laid out now. Reads are tracked when an effect asks.
+pub(crate) fn read_geo(e: &Engine, view: ObjectId, st: &ViewState) -> Geo {
+    let n = |p: PropIndex| rd(e, view, p);
+    let rtl = effective_rtl(e, view);
+    let bottom_up = n(ItemView::VERTICAL_LAYOUT_DIRECTION.index) as i32
+        == vertical_layout_direction::BOTTOM_TO_TOP;
+    let (w, h) = (n(Item::WIDTH.index), n(Item::HEIGHT.index));
+    let buffer = n(ItemView::CACHE_BUFFER.index).max(0.0);
+    let margin_begin = n(ItemView::DISPLAY_MARGIN_BEGINNING.index);
+    let margin_end = n(ItemView::DISPLAY_MARGIN_END.index);
+    let mut g = if st.grid.get() {
+        let cw = n(GridView::CELL_WIDTH.index).max(0.0);
+        let ch = n(GridView::CELL_HEIGHT.index).max(0.0);
+        let fit = |space: f64, cell: f64| {
+            if cell > 0.0 && space.is_finite() {
+                ((space / cell).floor() as usize).max(1)
+            } else {
+                1
+            }
+        };
+        if n(GridView::FLOW.index) as i32 == grid_flow::TOP_TO_BOTTOM {
+            Geo {
+                grid: true,
+                main: X,
+                reversed: rtl,
+                cross_reversed: bottom_up,
+                spacing: 0.0,
+                per_line: fit(h, ch),
+                cell_main: cw,
+                cell_cross: ch,
+                view_main: w,
+                view_cross: h,
+                buffer,
+                margin_begin,
+                margin_end,
+            }
+        } else {
+            Geo {
+                grid: true,
+                main: Y,
+                reversed: bottom_up,
+                cross_reversed: rtl,
+                spacing: 0.0,
+                per_line: fit(w, cw),
+                cell_main: ch,
+                cell_cross: cw,
+                view_main: h,
+                view_cross: w,
+                buffer,
+                margin_begin,
+                margin_end,
+            }
+        }
+    } else {
+        let horizontal = n(ListView::ORIENTATION.index) as i32 == orientation::HORIZONTAL;
+        Geo {
+            grid: false,
+            main: if horizontal { X } else { Y },
+            reversed: if horizontal { rtl } else { bottom_up },
+            cross_reversed: false,
+            spacing: n(ListView::SPACING.index),
+            per_line: 1,
+            cell_main: 0.0,
+            cell_cross: 0.0,
+            view_main: if horizontal { w } else { h },
+            view_cross: if horizontal { h } else { w },
+            buffer,
+            margin_begin,
+            margin_end,
+        }
+    };
+    if crate::system_prefs::screen_reader_active(e) {
+        let per = if g.grid {
+            g.cell_main
+        } else {
+            st.avg.get() + g.spacing
+        };
+        g.buffer = g.buffer.max(READER_ROWS * per.max(0.0));
+    }
+    g
+}
+
+/// The three properties of the `section` group.
+fn section_props(st: &ViewState) -> Option<[PropIndex; 3]> {
+    if let Some(p) = st.section_props.get() {
+        return Some(p);
+    }
+    use ljos_engine::QmlType;
+    let meta = ListView::static_meta();
+    let p = [
+        meta.property_index("section.property")?,
+        meta.property_index("section.criteria")?,
+        meta.property_index("section.delegate")?,
+    ];
+    st.section_props.set(Some(p));
+    Some(p)
+}
+
+/// Reads, tracked, what a layout depends on besides the delegates.
+pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &ViewState) {
+    let g = read_geo(e, view, st);
+    let d = flickable::dir(g.main);
+    for p in [
+        d.position,
+        d.lead,
+        d.trail,
+        ItemView::HEADER.index,
+        ItemView::FOOTER.index,
+        ItemView::HIGHLIGHT.index,
+        ItemView::CURRENT_INDEX.index,
+        ItemView::HIGHLIGHT_FOLLOWS_CURRENT_ITEM.index,
+        ItemView::HIGHLIGHT_MOVE_DURATION.index,
+        ItemView::REUSE_ITEMS.index,
+    ] {
+        let _ = e.read(view, p);
+    }
+    if !g.grid {
+        let _ = e.read(view, ListView::HIGHLIGHT_MOVE_VELOCITY.index);
+        if let Some(props) = section_props(st) {
+            for p in props {
+                let _ = e.read(view, p);
+            }
+        }
+    }
+    if let Some(n) = st.trigger.get() {
+        let _ = e.graph().get(n);
+    }
+}
+
+/// Reads, tracked, the sizes the last pass laid the rows out by: a row
+/// that grows moves the rows after it.
+pub(crate) fn read_sizes(e: &Engine, view: ObjectId, st: &ViewState) {
+    let g = e.untrack(|| read_geo(e, view, st));
+    let size = size_prop(g.main);
+    let mut items: Vec<ObjectId> = Vec::new();
+    if !g.grid {
+        items.extend(st.placed.borrow().iter().map(|p| p.1));
+        items.extend(st.sections.borrow().values().map(|s| s.1));
+    }
+    for extra in [st.header.get(), st.footer.get()] {
+        items.extend(extra.map(|x| x.1));
+    }
+    for o in items {
+        if e.is_alive(o) {
+            let _ = e.read(o, size);
+        }
+    }
+    // The highlight is as large as the current row.
+    if let Some(c) = st.current.get().filter(|c| e.is_alive(*c)) {
+        let _ = e.read(c, Item::WIDTH.index);
+        let _ = e.read(c, Item::HEIGHT.index);
+    }
+}
+
+/// Makes an item of `component` that is the view's and not a row.
+pub(crate) fn make_extra(
+    e: &Engine,
+    view: ObjectId,
+    content: ObjectId,
+    component: ObjectId,
+    values: &[(&str, Value)],
+    z: Option<f64>,
+) -> Option<ObjectId> {
+    let made = e.create_in_context(component, Some(view), values, |e, root| {
+        if !is_item(e, root) {
+            return;
+        }
+        enrol(e, root, view, Part::Extra);
+        e.batch(|| {
+            warn(e, "parent", tree::set_parent_item(e, root, Some(content)));
+            if let Some(z) = z {
+                stack(e, root, z);
+            }
+        });
+    });
+    match made {
+        Ok(o) if is_item(e, o) => Some(o),
+        Ok(o) => {
+            e.destroy(o);
+            None
+        }
+        Err(err) => {
+            warn(e, "create", Err(err));
+            None
+        }
+    }
+}
+
+pub(crate) fn drop_extra(e: &Engine, item: ObjectId) {
+    strike(e, item);
+    if e.is_alive(item) {
+        // Told while it is still in the tree, as a delegate is.
+        e.announce_destruction(item);
+        let _ = tree::set_parent_item(e, item, None);
+        e.destroy(item);
+    }
+}
+
+/// Writes a property that holds an object or nothing.
+pub(crate) fn put_object(
+    e: &Engine,
+    view: ObjectId,
+    p: ljos_engine::Prop<Option<ObjectId>>,
+    v: Option<ObjectId>,
+) {
+    if e.untrack(|| e.get(view, p)).ok() != Some(v) {
+        warn(e, "write", e.set_internal(view, p, v));
+    }
+}
+
+/// Keeps the header or the footer in step with its component.
+fn ensure_extra(
+    e: &Engine,
+    view: ObjectId,
+    content: ObjectId,
+    slot: &std::cell::Cell<Extra>,
+    component: Option<ObjectId>,
+    out: ljos_engine::Prop<Option<ObjectId>>,
+) -> Option<ObjectId> {
+    let keep = matches!(slot.get(), Some((c, item)) if c == component && component.is_some() && e.is_alive(item));
+    if !keep {
+        if let Some((_, old)) = slot.take() {
+            drop_extra(e, old);
+        }
+        if let Some(c) = component
+            && let Some(item) = make_extra(e, view, content, c, &[], Some(1.0))
+        {
+            slot.set(Some((component, item)));
+        }
+    }
+    let item = slot.get().map(|x| x.1);
+    put_object(e, view, out, item);
+    item
+}
+
+/// Gives a delegate back: to the pool with `reuse`, hidden there.
+pub(crate) fn release(
+    e: &Engine,
+    view: ObjectId,
+    st: &ViewState,
+    d: &ViewDelegates,
+    obj: ObjectId,
+    reuse: bool,
+) {
+    if !d.release(e, obj, reuse) {
+        return;
+    }
+    if let Some(att) = attached_of(e, view, obj) {
+        warn(e, "pooled", e.emit_by_name(att, "pooled", &[]));
+    }
+    if !e.is_alive(obj) || st.hidden.borrow().contains_key(&obj) {
+        return;
+    }
+    // Not an assignment: what the delegate says about `visible` is there
+    // again when it shows another row.
+    match e.push_override(
+        obj,
+        Item::VISIBLE.index,
+        OverrideContent::Value(Value::Bool(false)),
+    ) {
+        Ok(id) => {
+            st.hidden.borrow_mut().insert(obj, id);
+        }
+        Err(err) => warn(e, "hide", Err(err)),
+    }
+}
+
+/// A delegate came out of the pool: it is shown again and told.
+fn revive(e: &Engine, view: ObjectId, st: &ViewState, obj: ObjectId) {
+    let hidden = st.hidden.borrow_mut().remove(&obj);
+    if let Some(id) = hidden {
+        warn(
+            e,
+            "show",
+            e.remove_override(obj, Item::VISIBLE.index, id, RestoreMode::BindingOrValue),
+        );
+    }
+    if let Some(att) = attached_of(e, view, obj) {
+        warn(e, "reused", e.emit_by_name(att, "reused", &[]));
+    }
+}
+
+/// The sections of a list: which property names them and how.
+struct Sections {
+    property: String,
+    first_character: bool,
+    delegate: Option<ObjectId>,
+    /// Asked once a pass per row.
+    seen: HashMap<usize, String>,
+}
+
+impl Sections {
+    fn read(e: &Engine, view: ObjectId, st: &ViewState) -> Option<Sections> {
+        if st.grid.get() {
+            return None;
+        }
+        let [property, criteria, delegate] = section_props(st)?;
+        let property = e.read(view, property).to_js_string().to_string();
+        if property.is_empty() {
+            return None;
+        }
+        Some(Sections {
+            property,
+            first_character: rd(e, view, criteria) as i32 == section_criteria::FIRST_CHARACTER,
+            delegate: e.read(view, delegate).as_object(),
+            seen: HashMap::new(),
+        })
+    }
+
+    /// The section row `row` is in; the empty string before the first
+    /// row and after the last.
+    fn of(&mut self, e: &Engine, d: &ViewDelegates, row: Option<usize>) -> String {
+        let Some(row) = row.filter(|r| *r < d.count()) else {
+            return String::new();
+        };
+        if let Some(s) = self.seen.get(&row) {
+            return s.clone();
+        }
+        let v = d.role(e, row, &self.property);
+        let mut s = if v.is_nullish() {
+            String::new()
+        } else {
+            v.to_js_string().to_string()
+        };
+        if self.first_character {
+            s = s.chars().next().map(String::from).unwrap_or_default();
+        }
+        self.seen.insert(row, s.clone());
+        s
+    }
+}
+
+/// Whether the rows of `view` are in sections.
+pub(crate) fn has_sections(e: &Engine, view: ObjectId, st: &ViewState) -> bool {
+    e.untrack(|| Sections::read(e, view, st)).is_some()
+}
+
+/// Where a line is put: from its start on, or back from its end.
+#[derive(Clone, Copy)]
+enum At {
+    Top(f64),
+    End(f64),
+}
+
+/// What a pass gathers while it lays lines out.
+struct Fill<'a> {
+    e: &'a Engine,
+    view: ObjectId,
+    content: ObjectId,
+    st: &'a ViewState,
+    d: &'a ViewDelegates,
+    g: Geo,
+    rows: usize,
+    /// What is shown: rows here have their delegate before the pass ends.
+    zone: (f64, f64),
+    current: Option<usize>,
+    sections: Option<Sections>,
+    /// How long a row that was never measured is taken to be.
+    guess: f64,
+    /// The delegates there are, with the logical span of each.
+    items: Vec<(usize, ObjectId, f64, f64)>,
+    /// Section headings, with where each starts and how long it is.
+    heads: Vec<(ObjectId, f64, f64)>,
+    used_heads: HashSet<RowKey>,
+}
+
+impl Fill<'_> {
+    fn lay(&mut self, line: usize, at: At) -> Slot {
+        if self.g.grid {
+            self.lay_cells(line)
+        } else {
+            self.lay_row(line, at)
+        }
+    }
+
+    fn lay_cells(&mut self, line: usize) -> Slot {
+        let (e, g) = (self.e, self.g);
+        let pos = line as f64 * g.cell_main;
+        let shown = pos < self.zone.1 && pos + g.cell_main.max(1.0) > self.zone.0;
+        let first = line * g.per_line;
+        for row in first..(first + g.per_line).min(self.rows) {
+            let urgency = if shown || Some(row) == self.current {
+                Urgency::Now
+            } else {
+                Urgency::Later
+            };
+            if let Some((o, made)) = self.d.request(e, row, urgency) {
+                if made == Made::Reused {
+                    revive(e, self.view, self.st, o);
+                }
+                if is_item(e, o) {
+                    self.items.push((row, o, pos, g.cell_main));
+                }
+            }
+        }
+        Slot {
+            line,
+            pos,
+            size: g.cell_main,
+            lead: 0.0,
+            measured: true,
+        }
+    }
+
+    /// The heading before `row`, made if it is not there: how long it is.
+    fn heading(&mut self, row: usize, key: Option<RowKey>) -> Option<(ObjectId, f64)> {
+        let (e, d) = (self.e, self.d);
+        let sections = self.sections.as_mut()?;
+        let name = sections.of(e, d, Some(row));
+        let before = sections.of(e, d, row.checked_sub(1));
+        if name == before {
+            return None;
+        }
+        let (component, key) = (sections.delegate?, key?);
+        let have = self.st.sections.borrow().get(&key).cloned();
+        let item = match have {
+            Some((old, item)) if old == name && e.is_alive(item) => item,
+            other => {
+                if let Some((_, item)) = other {
+                    self.st.sections.borrow_mut().remove(&key);
+                    drop_extra(e, item);
+                }
+                let values = [("section", Value::string(name.clone()))];
+                let item = make_extra(e, self.view, self.content, component, &values, Some(2.0))?;
+                self.st.sections.borrow_mut().insert(key, (name, item));
+                item
+            }
+        };
+        self.used_heads.insert(key);
+        Some((item, rd(e, item, size_prop(self.g.main))))
+    }
+
+    fn lay_row(&mut self, row: usize, at: At) -> Slot {
+        let (e, g) = (self.e, self.g);
+        let key = self.d.key_at(row);
+        let head = self.heading(row, key);
+        let lead = head.map_or(0.0, |h| h.1);
+        let known = key.and_then(|k| self.st.sizes.borrow().get(&k).copied());
+        let hint = known.unwrap_or(self.guess);
+        // A row not measured yet is taken to be there at all.
+        let block = lead + hint.max(1.0);
+        let (top, end) = match at {
+            At::Top(t) => (t, t + block),
+            At::End(end) => (end - block, end),
+        };
+        let shown = top < self.zone.1 && end > self.zone.0;
+        let urgency = if shown || Some(row) == self.current {
+            Urgency::Now
+        } else {
+            Urgency::Later
+        };
+        let mut item = None;
+        let (size, measured) = match self.d.request(e, row, urgency) {
+            Some((o, made)) => {
+                if made == Made::Reused {
+                    revive(e, self.view, self.st, o);
+                }
+                if is_item(e, o) {
+                    item = Some(o);
+                    let size = rd(e, o, size_prop(g.main));
+                    // A row whose length is still to come from what is in
+                    // it (a text not shaped yet) is not 0 long.
+                    if size > 0.0 || !size_follows_implicit(e, o, g.main == X) {
+                        (size, true)
+                    } else {
+                        (hint, false)
+                    }
+                } else {
+                    (0.0, true)
+                }
+            }
+            None => (hint, false),
+        };
+        if measured && let Some(k) = key {
+            self.st.sizes.borrow_mut().insert(k, size);
+        }
+        if measured && self.guess <= 0.0 {
+            // The first row measured says how long the ones still to be
+            // made are taken to be, so that a view that is new does not
+            // ask for every row it has.
+            self.guess = size;
+        }
+        let pos = match at {
+            At::Top(t) => t + lead,
+            At::End(end) => end - size,
+        };
+        let slot = Slot {
+            line: row,
+            pos,
+            size,
+            lead,
+            measured,
+        };
+        if let Some(o) = item {
+            self.items.push((row, o, pos, size));
+        }
+        if let Some((h, lead)) = head {
+            self.heads.push((h, slot.top(), lead));
+        }
+        slot
+    }
+
+    /// How long row `row` and the heading before it are, if the row was
+    /// measured before.
+    fn known_block(&mut self, row: usize) -> Option<f64> {
+        let key = self.d.key_at(row)?;
+        let size = self.st.sizes.borrow().get(&key).copied()?;
+        let lead = match self.sections.as_mut() {
+            Some(s) => {
+                let (name, before) = (
+                    s.of(self.e, self.d, Some(row)),
+                    s.of(self.e, self.d, row.checked_sub(1)),
+                );
+                if name != before && s.delegate.is_some() {
+                    let have = self.st.sections.borrow().get(&key).map(|x| x.1);
+                    match have.filter(|h| self.e.is_alive(*h)) {
+                        Some(h) => rd(self.e, h, size_prop(self.g.main)),
+                        None => self.st.heading.get(),
+                    }
+                } else {
+                    0.0
+                }
+            }
+            None => 0.0,
+        };
+        Some(lead + size)
+    }
+
+    /// The row to start from and where its block starts, near `v0`.
+    fn anchor(&mut self, lines: usize, v0: f64, window: (f64, f64)) -> (usize, f64) {
+        let g = self.g;
+        if g.grid {
+            let line = if g.cell_main > 0.0 {
+                (v0 / g.cell_main).floor().max(0.0) as usize
+            } else {
+                0
+            };
+            let line = line.min(lines - 1);
+            return (line, line as f64 * g.cell_main);
+        }
+        let (mut a, mut t) = self.st.anchor.get();
+        if a >= lines {
+            // The rows it stood on are gone: the last one is where it was.
+            a = lines - 1;
+        }
+        for round in 0..2 {
+            let mut steps = 0;
+            // Forward over rows that end before what is shown.
+            while a + 1 < lines && steps < MAX_WALK {
+                let Some(block) = self.known_block(a) else {
+                    break;
+                };
+                if t + block + g.spacing > v0 {
+                    break;
+                }
+                t += block + g.spacing;
+                a += 1;
+                steps += 1;
+            }
+            // Back over rows that start after it.
+            while a > 0 && t > v0 && steps < MAX_WALK {
+                let Some(block) = self.known_block(a - 1) else {
+                    break;
+                };
+                a -= 1;
+                t -= block + g.spacing;
+                steps += 1;
+            }
+            if round == 1 {
+                break;
+            }
+            let mut per = self.st.avg.get() + g.spacing;
+            let block = self.known_block(a).unwrap_or(per.max(1.0));
+            if t <= window.1 && t + block >= window.0 {
+                break;
+            }
+            // Far from what is shown and nothing known in between: rows
+            // of the average length are taken to be there.
+            if per <= 0.0 {
+                // Nothing was ever measured: one row says how long.
+                let probe = self.lay_row(a, At::Top(t));
+                per = probe.size + probe.lead + g.spacing;
+                self.items.clear();
+                self.heads.clear();
+                if per <= 0.0 {
+                    break;
+                }
+            }
+            let by = ((v0 - t) / per).floor();
+            let to = (a as f64 + by).clamp(0.0, (lines - 1) as f64) as usize;
+            t += (to as f64 - a as f64) * per;
+            a = to;
+            // A row the view was at before is where it was then.
+            if let Some(k) = self.d.key_at(a)
+                && let Some(place) = self.st.places.borrow().get(&k)
+            {
+                t = *place;
+            }
+        }
+        (a, t)
+    }
+}
+
+/// Where the row of `line` starts when it is outside what was laid out.
+fn place_outside(slots: &VecDeque<Slot>, line: usize, per: f64, spacing: f64) -> f64 {
+    let (Some(first), Some(last)) = (slots.front(), slots.back()) else {
+        return line as f64 * per;
+    };
+    if let Some(s) = slots.iter().find(|s| s.line == line) {
+        s.pos
+    } else if line < first.line {
+        first.top() - (first.line - line) as f64 * per
+    } else {
+        last.end() + spacing + (line - last.line - 1) as f64 * per
+    }
+}
+
+/// One layout pass. With `over` the rows are laid out as if the view
+/// started there, and the view is not moved: for the methods that have to
+/// measure a row before they can go to it.
+pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
+    if st.in_pass.replace(true) {
+        st.dirty.set(true);
+        return;
+    }
+    run(e, view, st, over);
+    st.in_pass.set(false);
+    if st.dirty.replace(false) {
+        bump(e, st);
+    }
+}
+
+fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
+    if !e.is_alive(view) {
+        return;
+    }
+    let (Some(d), Some(content)) = (st.delegates(), flickable::content_item(e, view)) else {
+        return;
+    };
+    let g = read_geo(e, view, st);
+    let dir = flickable::dir(g.main);
+    let first_pass = st.seen_index.get().is_none();
+    let rows = d.count();
+    put(e, view, ItemView::COUNT.index, Value::Int(rows as i32));
+    let current = current::normalise(e, view, st, rows);
+
+    // The direction the rows run in.
+    let axis = (g.main, g.reversed);
+    if st.last_main.get() != Some(axis) {
+        if let Some((old, _)) = st.last_main.get() {
+            if old != g.main {
+                let od = flickable::dir(old);
+                flickable::set_reversed(e, view, old, false);
+                // Nothing is anywhere along the way the rows ran before.
+                let mut theirs: Vec<ObjectId> = d.live().into_iter().map(|l| l.1).collect();
+                theirs.extend(st.header.get().map(|x| x.1));
+                theirs.extend(st.footer.get().map(|x| x.1));
+                theirs.extend(st.sections.borrow().values().map(|x| x.1));
+                let was = pos_prop(old);
+                e.batch(|| {
+                    for o in theirs {
+                        if e.is_alive(o) && is_item(e, o) {
+                            warn(e, "place", write_placed(e, o, was, Value::Real(0.0)));
+                        }
+                    }
+                    put(e, view, od.origin, Value::Real(0.0));
+                    put(e, view, od.content, Value::Real(-1.0));
+                    flickable::scroll_to(e, view, old, 0.0);
+                });
+            }
+            st.forget_rows();
+            st.positioned.set(false);
+        }
+        flickable::set_reversed(e, view, g.main, g.reversed);
+        st.last_main.set(Some(axis));
+    }
+    if g.grid {
+        // The cells of a grid that fills its lines from the far side end
+        // at the far side of the view.
+        let cross = 1 - g.main;
+        let at = if g.cross_reversed {
+            g.per_line as f64 * g.cell_cross - g.view_cross
+        } else {
+            0.0
+        };
+        e.batch(|| {
+            put(e, view, flickable::dir(cross).origin, Value::Real(at));
+            flickable::scroll_to(e, view, cross, at);
+        });
+    }
+
+    let header = e.get(view, ItemView::HEADER).ok().flatten();
+    let footer = e.get(view, ItemView::FOOTER).ok().flatten();
+    let head_item = ensure_extra(e, view, content, &st.header, header, ItemView::HEADER_ITEM);
+    let foot_item = ensure_extra(e, view, content, &st.footer, footer, ItemView::FOOTER_ITEM);
+    let size_p = size_prop(g.main);
+    let head = head_item.map_or(0.0, |h| rd(e, h, size_p));
+    let foot = foot_item.map_or(0.0, |f| rd(e, f, size_p));
+
+    // Where the view starts.
+    let margin = rd(e, view, if g.reversed { dir.trail } else { dir.lead });
+    let position = rd(e, view, dir.position);
+    if first_pass && !is_unset(e, view, dir.position) && position != -margin {
+        // A place that was declared is where the view starts.
+        st.positioned.set(true);
+    }
+    let to_begin = !st.positioned.get() && over.is_none();
+    let v0 = match over {
+        Some(v) => v,
+        None if to_begin => st.anchor.get().1 - head - margin,
+        None => g.viewport(position),
+    };
+    let zone = (v0 - g.margin_begin, v0 + g.view_main + g.margin_end);
+    let window = if d.rows_show_themselves() {
+        // Rows that are items of their own are all there already: each
+        // has its place, however far from what is shown, so that none is
+        // left lying where it was last.
+        (f64::NEG_INFINITY, f64::INFINITY)
+    } else {
+        (zone.0 - g.buffer, zone.1 + g.buffer)
+    };
+
+    let reuse = e.get(view, ItemView::REUSE_ITEMS).unwrap_or(false);
+    let lines = g.lines(rows);
+    if reuse {
+        // What left the window goes to the pool first, so that the rows
+        // that enter it find a delegate there.
+        let gone: Vec<ObjectId> = st
+            .placed
+            .borrow()
+            .iter()
+            .filter(|p| (p.2 + p.3 <= window.0 || p.2 > window.1) && Some(p.0) != current)
+            .map(|p| p.1)
+            .collect();
+        for o in gone {
+            if d.index_of(o).is_some_and(|row| Some(row) != current) {
+                release(e, view, st, &d, o, true);
+            }
+        }
+    }
+
+    let section_delegate = Sections::read(e, view, st).and_then(|s| s.delegate);
+    if st.section_delegate.replace(section_delegate) != section_delegate {
+        // Headings of another component: none of the old ones stays.
+        let old: Vec<ObjectId> = st.sections.borrow_mut().drain().map(|(_, s)| s.1).collect();
+        for h in old {
+            drop_extra(e, h);
+        }
+    }
+
+    let mut fill = Fill {
+        e,
+        view,
+        content,
+        st,
+        d: &d,
+        g,
+        rows,
+        zone,
+        current,
+        sections: Sections::read(e, view, st),
+        guess: st.avg.get(),
+        items: Vec::new(),
+        heads: Vec::new(),
+        used_heads: HashSet::new(),
+    };
+    let avg_before = st.avg.get();
+    let mut slots: VecDeque<Slot> = VecDeque::new();
+    if lines > 0 {
+        let (a, t) = fill.anchor(lines, v0, window);
+        slots.push_back(fill.lay(a, At::Top(t)));
+        let mut budget = MAX_LINES;
+        let mut empty = 0;
+        // Qt fills while the next row starts inside the window, its far
+        // edge included (observed on qml6).
+        while let Some(last) = slots.back().copied() {
+            if last.line + 1 >= lines || last.end() + g.spacing > window.1 || budget == 0 {
+                break;
+            }
+            let s = fill.lay(last.line + 1, At::Top(last.end() + g.spacing));
+            empty = if s.size + s.lead + g.spacing <= 0.0 {
+                empty + 1
+            } else {
+                0
+            };
+            slots.push_back(s);
+            budget -= 1;
+            if empty > MAX_EMPTY_LINES {
+                break;
+            }
+        }
+        empty = 0;
+        while let Some(first) = slots.front().copied() {
+            if first.line == 0 || first.top() <= window.0 || budget == 0 {
+                break;
+            }
+            let s = fill.lay(first.line - 1, At::End(first.top() - g.spacing));
+            empty = if s.size + s.lead + g.spacing <= 0.0 {
+                empty + 1
+            } else {
+                0
+            };
+            slots.push_front(s);
+            budget -= 1;
+            if empty > MAX_EMPTY_LINES {
+                break;
+            }
+        }
+    }
+
+    // How long everything is.
+    let avg = average(slots.make_contiguous()).unwrap_or(avg_before);
+    let per = avg + g.spacing;
+    let (start0, end) = match (slots.front(), slots.back()) {
+        (Some(first), Some(last)) if g.grid => {
+            let _ = (first, last);
+            (0.0, lines as f64 * g.cell_main)
+        }
+        (Some(first), Some(last)) => (
+            first.top() - first.line as f64 * per,
+            last.end() + (lines - 1 - last.line) as f64 * per,
+        ),
+        _ => (0.0, 0.0),
+    };
+
+    // The current row has a delegate wherever it is: `currentItem` is
+    // never a row that was scrolled away.
+    let mut current_span = None;
+    if let Some(ci) = current {
+        if let Some(found) = fill.items.iter().find(|i| i.0 == ci) {
+            current_span = Some((found.2, found.3));
+        } else if let Some((o, made)) = d.request(e, ci, Urgency::Now) {
+            if made == Made::Reused {
+                revive(e, view, st, o);
+            }
+            if is_item(e, o) {
+                let line = g.line_of(ci);
+                let (pos, size) = if g.grid {
+                    (line as f64 * g.cell_main, g.cell_main)
+                } else {
+                    (
+                        place_outside(&slots, line, per, g.spacing),
+                        rd(e, o, size_p),
+                    )
+                };
+                fill.items.push((ci, o, pos, size));
+                current_span = Some((pos, size));
+            }
+        }
+    }
+
+    // Everything else outside the window goes.
+    let in_run = |row: usize| {
+        let line = g.line_of(row);
+        matches!((slots.front(), slots.back()), (Some(f), Some(l)) if line >= f.line && line <= l.line)
+    };
+    for (row, o) in d.live() {
+        if !in_run(row) && Some(row) != current {
+            release(e, view, st, &d, o, reuse);
+        }
+    }
+    for row in d.pending() {
+        if !in_run(row) && Some(row) != current {
+            d.cancel(e, row);
+        }
+    }
+    d.trim_pool(
+        e,
+        if reuse {
+            2 * slots.len() * g.per_line + 4
+        } else {
+            0
+        },
+    );
+    let Fill {
+        items,
+        heads,
+        used_heads,
+        mut sections,
+        ..
+    } = fill;
+    let unused: Vec<ObjectId> = {
+        let mut all = st.sections.borrow_mut();
+        let keys: Vec<RowKey> = all
+            .keys()
+            .filter(|k| !used_heads.contains(k))
+            .copied()
+            .collect();
+        keys.iter()
+            .filter_map(|k| all.remove(k))
+            .map(|s| s.1)
+            .collect()
+    };
+    for h in unused {
+        drop_extra(e, h);
+    }
+    if let Some(longest) = heads.iter().map(|h| h.2).reduce(f64::max) {
+        st.heading.set(longest);
+    }
+
+    // Where everything is.
+    let pos_p = pos_prop(g.main);
+    let cross_p = pos_prop(1 - g.main);
+    e.batch(|| {
+        for &(row, o, pos, size) in &items {
+            let at = Value::Real(g.in_content(pos, size));
+            warn(e, "place", write_placed(e, o, pos_p, at));
+            if g.grid {
+                let across = Value::Real(g.cross_of(row % g.per_line));
+                warn(e, "place", write_placed(e, o, cross_p, across));
+            }
+        }
+        for &(h, top, lead) in &heads {
+            let at = Value::Real(g.in_content(top, lead));
+            warn(e, "place", write_placed(e, h, pos_p, at));
+        }
+        if let Some(h) = head_item {
+            let at = Value::Real(g.in_content(start0 - head, head));
+            warn(e, "place", write_placed(e, h, pos_p, at));
+        }
+        if let Some(f) = foot_item {
+            let at = Value::Real(g.in_content(end, foot));
+            warn(e, "place", write_placed(e, f, pos_p, at));
+        }
+        let (lo, hi) = (start0 - head, end + foot);
+        let origin = if g.reversed { -hi } else { lo };
+        put(e, view, dir.origin, Value::Real(origin));
+        put(e, view, dir.content, Value::Real(hi - lo));
+    });
+
+    // Where the view is.
+    let b = flickable::bounds(e, view, g.main);
+    if to_begin {
+        let begin = if g.reversed { b.max } else { b.min };
+        flickable::scroll_to(e, view, g.main, begin);
+        st.positioned.set(true);
+        st.bounds.set((b.min, b.max, 0.0));
+    } else if over.is_none() && st.bounds.get() != (b.min, b.max, 0.0) {
+        // The content got shorter, or starts elsewhere: what is past its
+        // ends now comes back inside.
+        st.bounds.set((b.min, b.max, 0.0));
+        let inside = b.position.clamp(b.min.min(b.max), b.max);
+        if inside != b.position {
+            flickable::scroll_to(e, view, g.main, inside);
+        }
+    }
+    let v_now = match over {
+        Some(v) => v,
+        None => g.viewport(rd(e, view, dir.position)),
+    };
+
+    // What the next pass starts from.
+    // A row with no length yet (none of a view that has no length either
+    // was made) ends where it starts: the first of those at the start of
+    // what is shown is the one, not the last, which the rows before it
+    // would then be laid out behind.
+    let anchor = slots
+        .iter()
+        .find(|s| s.end() > v_now)
+        .or_else(|| slots.iter().find(|s| s.top() >= v_now))
+        .or(slots.back())
+        .map_or((0, 0.0), |s| (s.line, s.top()));
+    st.anchor.set(anchor);
+    st.start.set(start0);
+    st.end.set(end);
+    st.avg.set(avg);
+    if !g.grid {
+        let mut places = st.places.borrow_mut();
+        if places.len() > MAX_SIZES {
+            places.clear();
+        }
+        for s in &slots {
+            // Only what was measured: a row that is still to be made is
+            // where the rows before it leave it, and that moves.
+            if s.measured
+                && let Some(k) = d.key_at(s.line)
+            {
+                places.insert(k, s.top());
+            }
+        }
+        let mut sizes = st.sizes.borrow_mut();
+        if sizes.len() > MAX_SIZES {
+            let keep: HashSet<RowKey> = slots.iter().filter_map(|s| d.key_at(s.line)).collect();
+            sizes.retain(|k, _| keep.contains(k));
+        }
+    }
+    let first_shown = slots.iter().find(|s| s.end() > v_now).map(|s| s.line);
+    *st.slots.borrow_mut() = slots.into_iter().collect();
+    *st.placed.borrow_mut() = items.clone();
+    if avg_before == 0.0 && avg > 0.0 && crate::system_prefs::screen_reader_active(e) {
+        // The larger cache is so many rows, and now a row has a length.
+        st.dirty.set(true);
+    }
+
+    // What the view says about its rows.
+    current::sync(e, view, st, &g, content, current.and(current_span));
+    for &(_, o, ..) in &items {
+        if let Some(att) = attached_of(e, view, o) {
+            tell(e, view, st, &d, sections.as_mut(), o, att);
+        }
+    }
+    if !g.grid {
+        let name = match sections.as_mut() {
+            Some(s) => s.of(e, &d, first_shown),
+            None => String::new(),
+        };
+        put(
+            e,
+            view,
+            ListView::CURRENT_SECTION.index,
+            Value::string(name),
+        );
+    }
+    put(
+        e,
+        view,
+        ItemView::EFFECTIVE_LAYOUT_DIRECTION.index,
+        Value::Int(i32::from(effective_rtl(e, view))),
+    );
+    announce(e, view, st, &d, &items);
+}
+
+/// Tells the rows that arrived, and shows the first rows of a model the
+/// way `populate` says.
+fn announce(
+    e: &Engine,
+    view: ObjectId,
+    st: &ViewState,
+    d: &ViewDelegates,
+    items: &[(usize, ObjectId, f64, f64)],
+) {
+    if st.populate.get() && d.count() == 0 {
+        // A model that starts with no rows has shown all it started
+        // with: the rows that come arrive.
+        st.populate.set(false);
+    }
+    if items.is_empty() && d.pending().is_empty() {
+        st.added.borrow_mut().clear();
+        return;
+    }
+    if st.populate.replace(false) {
+        // The rows a model starts with did not arrive.
+        st.added.borrow_mut().clear();
+        if let Some(t) = e.get(view, ItemView::POPULATE).ok().flatten() {
+            for &(_, o, ..) in items {
+                changes::animate(e, view, Some(t), o, |_| {});
+            }
+        }
+        return;
+    }
+    if st.added.borrow().is_empty() {
+        return;
+    }
+    let added = std::mem::take(&mut *st.added.borrow_mut());
+    let transition = e.get(view, ItemView::ADD).ok().flatten();
+    for &(row, o, ..) in items {
+        if d.key_at(row).is_some_and(|k| added.contains(&k)) {
+            if let Some(att) = attached_of(e, view, o) {
+                warn(e, "add", e.emit_by_name(att, "add", &[]));
+            }
+            changes::animate(e, view, transition, o, |_| {});
+        }
+    }
+    // A row whose delegate is still being made is told when it is there.
+    let waiting: HashSet<RowKey> = d
+        .pending()
+        .into_iter()
+        .filter_map(|row| d.key_at(row))
+        .filter(|k| added.contains(k))
+        .collect();
+    st.added.borrow_mut().extend(waiting);
+}
+
+/// Writes what the attached object of a delegate says about its row.
+fn tell(
+    e: &Engine,
+    view: ObjectId,
+    st: &ViewState,
+    d: &ViewDelegates,
+    sections: Option<&mut Sections>,
+    item: ObjectId,
+    att: ObjectId,
+) {
+    let Some(row) = d.index_of(item) else {
+        return;
+    };
+    let current = e.untrack(|| rd(e, view, ItemView::CURRENT_INDEX.index)) as i64;
+    let is_current = current == row as i64 && st.seen_index.get().is_some();
+    let names = match sections {
+        Some(s) => [
+            s.of(e, d, Some(row)),
+            s.of(e, d, row.checked_sub(1)),
+            s.of(e, d, Some(row + 1)),
+        ],
+        None => [String::new(), String::new(), String::new()],
+    };
+    e.batch(|| {
+        let write = |p: PropIndex, v: Value| warn(e, "attached", write_computed(e, att, p, v));
+        write(ViewAttached::IS_CURRENT_ITEM.index, Value::Bool(is_current));
+        let [name, before, after] = names;
+        write(ViewAttached::SECTION.index, Value::string(Atom::from(name)));
+        write(
+            ViewAttached::PREVIOUS_SECTION.index,
+            Value::string(Atom::from(before)),
+        );
+        write(
+            ViewAttached::NEXT_SECTION.index,
+            Value::string(Atom::from(after)),
+        );
+    });
+}
+
+/// What the attached object of one delegate says, for a delegate that
+/// asks after the view placed it.
+pub(crate) fn tell_row(e: &Engine, view: ObjectId, st: &ViewState, item: ObjectId, att: ObjectId) {
+    let Some(d) = st.delegates() else {
+        return;
+    };
+    let mut sections = Sections::read(e, view, st);
+    tell(e, view, st, &d, sections.as_mut(), item, att);
+}

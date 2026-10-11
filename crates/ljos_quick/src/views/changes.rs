@@ -1,0 +1,302 @@
+//! What a view does when the engine tells it something about its rows: a
+//! delegate was allocated or is ready, rows came, went or moved.
+//!
+//! The view keeps what the user sees where it is. The anchor of the
+//! layout is a row and a place; rows that arrive before that row push its
+//! number up and leave its place alone, so the content grows upwards (the
+//! origin moves) and nothing in sight jumps. qml6 does the same.
+
+use ljos_engine::{Engine, LogLevel, ModelChange, ObjectId, Value, ViewHost};
+
+use super::state::ViewState;
+use super::{
+    ItemView, Part, ViewAttached, attached_of, enrol, pass, put, stack, state_of, strike,
+    type_name, warn,
+};
+use crate::animation::{Transition, run_transition, stop_transition};
+use crate::flickable;
+use crate::item::{is_a, is_item, write_computed};
+use crate::tree;
+
+/// How many rows that arrived are remembered until the next layout tells
+/// those that got a delegate: a model that grows by a million rows has
+/// none of them in sight but the first few.
+const MAX_ADDED: usize = 4096;
+
+/// What the engine's delegates call on a view.
+pub(crate) struct Host(pub ObjectId);
+
+impl ViewHost for Host {
+    fn allocated(&self, e: &Engine, _: usize, object: ObjectId) {
+        let view = self.0;
+        if !is_item(e, object) {
+            e.log(
+                LogLevel::Warning,
+                "qml",
+                format!("QML {}: Delegate must be of Item type", type_name(e, view)),
+            );
+            return;
+        }
+        let Some(content) = flickable::content_item(e, view) else {
+            return;
+        };
+        enrol(e, object, view, Part::Row);
+        // Before the delegate's bindings run, so `parent` and
+        // `ListView.view` read right in them.
+        e.batch(|| {
+            warn(e, "parent", tree::set_parent_item(e, object, Some(content)));
+            stack(e, object, 1.0);
+            // An item that was there before the view took it (a row of an
+            // `ObjectModel`) may have asked for its view already.
+            if let Some(att) = attached_of(e, view, object) {
+                let v = Value::Object(view);
+                warn(
+                    e,
+                    "attach",
+                    write_computed(e, att, ViewAttached::VIEW.index, v),
+                );
+            }
+        });
+    }
+
+    fn ready(&self, e: &Engine, _: usize, _: ObjectId) {
+        pass::refresh(e, self.0);
+    }
+
+    fn destroying(&self, e: &Engine, object: ObjectId) {
+        let view = self.0;
+        strike(e, object);
+        // Out of the tree now; the object itself goes at the next frame.
+        if e.is_alive(object) && is_item(e, object) {
+            let _ = tree::set_parent_item(e, object, None);
+        }
+        let Some(st) = state_of(e, view) else {
+            return;
+        };
+        st.leaving.borrow_mut().retain(|o| *o != object);
+        st.hidden.borrow_mut().remove(&object);
+        if st.current.get() == Some(object) {
+            st.current.set(None);
+        }
+        let stopped: Vec<ObjectId> = {
+            let mut running = st.running.borrow_mut();
+            let of_it = running.iter().filter(|r| r.1 == object).map(|r| r.0);
+            let of_it: Vec<ObjectId> = of_it.collect();
+            running.retain(|r| r.1 != object);
+            of_it
+        };
+        for t in stopped {
+            stop_transition(e, t);
+        }
+    }
+
+    fn changed(&self, e: &Engine, change: &ModelChange, gone: &[(usize, ObjectId)]) {
+        let view = self.0;
+        let Some(st) = state_of(e, view) else {
+            return;
+        };
+        let Some(d) = st.delegates() else {
+            return;
+        };
+        // Before the first layout there is nothing to keep in place.
+        let laid_out = st.seen_index.get().is_some();
+        let current = e.untrack(|| pass::rd(e, view, ItemView::CURRENT_INDEX.index)) as i64;
+        let rows = d.count() as i64;
+        let (line, top) = st.anchor.get();
+        match *change {
+            // Rows are about to change, or the roles did on the way to a
+            // change of rows: the notice of that change is what the view
+            // acts on, when its rows and the model's are the same again.
+            ModelChange::RowsAboutToBeInserted { .. }
+            | ModelChange::RowsAboutToBeRemoved { .. }
+            | ModelChange::RolesChanged => return,
+            ModelChange::RowsInserted { first, count } => {
+                // A row that arrives exactly where the view starts is the
+                // first one shown; rows before that push the view's rows
+                // on without moving them (both observed on qml6).
+                if !st.grid.get() && first < line {
+                    st.anchor.set((line + count, top));
+                }
+                if laid_out && current >= first as i64 {
+                    set_current(e, view, &st, current + count as i64);
+                }
+                let mut added = st.added.borrow_mut();
+                for row in first..first.saturating_add(count) {
+                    if added.len() >= MAX_ADDED {
+                        break;
+                    }
+                    if let Some(k) = d.key_at(row) {
+                        added.insert(k);
+                    }
+                }
+                drop(added);
+                st.places.borrow_mut().clear();
+            }
+            ModelChange::RowsRemoved { first, count } => {
+                let end = first.saturating_add(count);
+                if !st.grid.get() {
+                    if line >= end {
+                        st.anchor.set((line - count, top));
+                    } else if line >= first {
+                        // The row the view started with is gone: the one
+                        // that follows is there instead.
+                        st.anchor.set((first, top));
+                    }
+                }
+                if laid_out && current >= end as i64 {
+                    set_current(e, view, &st, current - count as i64);
+                } else if laid_out && current >= first as i64 {
+                    set_current(e, view, &st, (first as i64).min(rows - 1));
+                }
+                st.places.borrow_mut().clear();
+            }
+            ModelChange::RowsMoved { from, to, count } => {
+                let (from, to, count) = (from as i64, to as i64, count as i64);
+                if laid_out && current >= 0 {
+                    let now = if current >= from && current < from + count {
+                        to + (current - from)
+                    } else {
+                        let without = if current >= from + count {
+                            current - count
+                        } else {
+                            current
+                        };
+                        if without >= to {
+                            without + count
+                        } else {
+                            without
+                        }
+                    };
+                    set_current(e, view, &st, now);
+                }
+                st.places.borrow_mut().clear();
+            }
+            ModelChange::DataChanged { .. } => {
+                // The delegates show the new values already. Only what
+                // names the sections moves anything.
+                if !pass::has_sections(e, view, &st) {
+                    return;
+                }
+            }
+            ModelChange::ModelReset => {
+                forget(e, view, &st);
+                if laid_out {
+                    // The first row is the current one again, unless the
+                    // author said there is none.
+                    st.auto_index.set(!st.cleared.get());
+                    set_current(e, view, &st, -1);
+                }
+            }
+        }
+        for &(_, object) in gone {
+            leave(e, view, &st, object);
+        }
+        pass::refresh(e, view);
+    }
+}
+
+/// Writes `currentIndex` as the view's own doing: the row is the same,
+/// its number is another, and the view does not go anywhere for it.
+fn set_current(e: &Engine, view: ObjectId, st: &ViewState, index: i64) {
+    let index = index.clamp(-1, i64::from(i32::MAX)) as i32;
+    st.seen_index.set(Some(index));
+    put(e, view, ItemView::CURRENT_INDEX.index, Value::Int(index));
+}
+
+/// A new model or delegate: nothing that was known about the rows holds.
+pub(crate) fn forget(e: &Engine, view: ObjectId, st: &ViewState) {
+    let _ = (e, view);
+    st.forget_rows();
+    st.positioned.set(false);
+    st.populate.set(true);
+}
+
+/// The row of `object` left the model: the delegate is told, and goes
+/// when nothing holds it back.
+fn leave(e: &Engine, view: ObjectId, st: &ViewState, object: ObjectId) {
+    let att = attached_of(e, view, object);
+    if let Some(att) = att {
+        warn(e, "remove", e.emit_by_name(att, "remove", &[]));
+    }
+    if !e.is_alive(object) {
+        return;
+    }
+    st.leaving.borrow_mut().push(object);
+    let held = att
+        .filter(|a| e.is_alive(*a))
+        .filter(|a| e.untrack(|| e.read(*a, ViewAttached::DELAY_REMOVE.index).to_boolean()));
+    match held {
+        Some(att) => {
+            // `ListView.delayRemove`: the delegate stays until it is false.
+            let watching = e.watch(att, ViewAttached::DELAY_REMOVE.index, move |e, v| {
+                if !v.to_boolean() {
+                    finish(e, view, object);
+                }
+            });
+            if let Err(err) = watching {
+                warn(e, "delayRemove", Err(err));
+                finish(e, view, object);
+            }
+        }
+        None => finish(e, view, object),
+    }
+}
+
+/// Shows a delegate out the way `remove` says, then gives it back.
+fn finish(e: &Engine, view: ObjectId, object: ObjectId) {
+    let Some(st) = state_of(e, view) else {
+        return;
+    };
+    {
+        // Once: `delayRemove` may go false, true and false again.
+        let mut leaving = st.leaving.borrow_mut();
+        let Some(i) = leaving.iter().position(|o| *o == object) else {
+            return;
+        };
+        leaving.swap_remove(i);
+    }
+    let transition = e.untrack(|| e.get(view, ItemView::REMOVE)).ok().flatten();
+    let animated = animate(e, view, transition, object, move |e| {
+        discard(e, view, object);
+        pass::refresh(e, view);
+    });
+    if !animated {
+        discard(e, view, object);
+    }
+}
+
+fn discard(e: &Engine, view: ObjectId, object: ObjectId) {
+    if let Some(d) = state_of(e, view).and_then(|st| st.delegates()) {
+        d.release(e, object, false);
+    }
+}
+
+/// Runs a view's transition on one of its items and calls `done` at its
+/// end. False, and `done` is not called, when there is no transition to
+/// run: none was given, or it is running on another item (a `Transition`
+/// runs on one target at a time).
+pub(crate) fn animate(
+    e: &Engine,
+    view: ObjectId,
+    transition: Option<ObjectId>,
+    item: ObjectId,
+    done: impl Fn(&Engine) + 'static,
+) -> bool {
+    let Some(t) = transition.filter(|t| e.is_alive(*t) && is_a::<Transition>(e, *t)) else {
+        return false;
+    };
+    let Some(st) = state_of(e, view) else {
+        return false;
+    };
+    if st.running.borrow().iter().any(|r| r.0 == t) {
+        return false;
+    }
+    st.running.borrow_mut().push((t, item));
+    run_transition(e, t, item, move |e| {
+        if let Some(st) = state_of(e, view) {
+            st.running.borrow_mut().retain(|r| r.0 != t);
+        }
+        done(e);
+    });
+    true
+}

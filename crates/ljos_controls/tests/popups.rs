@@ -238,15 +238,18 @@ Item {
 /// The texts of the rows of the combo box's popup, from the top.
 fn rows(e: &Engine, combo: ObjectId) -> Vec<String> {
     let popup = e.read_by_name(combo, "popup").as_object().unwrap();
-    // The style's popup has a list that scrolls, which keeps the rows in
-    // its own content item; a popup of the application's may have any item.
+    // The style's popup has a list view, which keeps the rows in its own
+    // content item, with the item that marks its current row among them;
+    // a popup of the application's may have any item.
     let list = e.read_by_name(popup, "contentItem").as_object().unwrap();
     let content = e
         .read_by_name(list, "contentItem")
         .as_object()
         .unwrap_or(list);
+    let mark = e.read_by_name(list, "highlightItem").as_object();
     let mut rows: Vec<(f64, String)> = ljos_quick::child_items(e, content)
         .into_iter()
+        .filter(|d| Some(*d) != mark)
         .map(|d| (e.read_by_name(d, "y").to_number(), text(e, d, "text")))
         .collect();
     rows.sort_by(|a, b| a.0.total_cmp(&b.0));

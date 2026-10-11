@@ -17,12 +17,16 @@ T.Menu {
     // What an `Action` or a `Menu` declared in the menu is shown as.
     delegate: MenuItem {}
 
-    // The menu lays its items out in what this scrolls, and says how high
-    // they are together. TODO(listview): a list view on `contentModel`.
+    // The items are the rows of `contentModel`; the view scrolls them
+    // only when the menu is lower than they are together, which is when
+    // its window is. A menu that is not open is as high as its items.
     contentItem: Component {
-        Flickable {
+        ListView {
             implicitHeight: contentHeight
+            model: control.contentModel
+            interactive: contentHeight + control.topPadding + control.bottomPadding > control.height
             clip: true
+            currentIndex: control.currentIndex
 
             ScrollIndicator.vertical: ScrollIndicator {}
         }

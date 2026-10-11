@@ -34,9 +34,17 @@ use crate::{QmlObject, WriteKind};
 /// by.
 pub type RowKey = u64;
 
-/// What a model tells its views. Each is sent after the model changed.
+/// What a model tells its views. Each is sent after the model changed,
+/// but for the two that say "about to": those are sent first, while the
+/// model still has (or does not yet have) the rows, so a view can look up
+/// what is leaving. A model need not send them; a view that needs them
+/// must also work without.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelChange {
+    /// `count` rows are about to start at `first`.
+    RowsAboutToBeInserted { first: usize, count: usize },
+    /// The `count` rows that start at `first` are about to go.
+    RowsAboutToBeRemoved { first: usize, count: usize },
     /// `count` rows now start at `first`.
     RowsInserted { first: usize, count: usize },
     /// The `count` rows that started at `first` are gone.
@@ -62,6 +70,19 @@ pub enum ModelChange {
 
 /// Receives a model's changes.
 pub type ModelListener = Rc<dyn Fn(&Engine, &ModelChange)>;
+
+/// Where the delegates of a model's rows come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DelegateSource {
+    /// The view makes one of its own `delegate` for each row it shows.
+    View,
+    /// Each row is an object that shows itself ([`ItemModel::row_object`]),
+    /// as the items of Qt's `ObjectModel`: nothing is made or destroyed.
+    Rows,
+    /// The model brings the component, as Qt's `DelegateModel`; `None`
+    /// while it has none, and then no row has a delegate.
+    Component(Option<ObjectId>),
+}
 
 /// Rows of named roles. Implemented by `ListModel`, by the adapters in
 /// this module, and by models written in Rust
@@ -109,6 +130,29 @@ pub trait ItemModel {
     fn unsubscribe(&self, id: u64) {
         let _ = id;
     }
+
+    /// Where a view gets the delegates of the rows from.
+    fn delegate_source(&self) -> DelegateSource {
+        DelegateSource::View
+    }
+
+    /// A view is making `object` for row `row` of a model that brings
+    /// its delegate ([`DelegateSource::Component`]): the object is there,
+    /// and none of its bindings has run.
+    fn delegate_allocated(&self, engine: &Engine, row: usize, object: ObjectId) {
+        let _ = (engine, row, object);
+    }
+
+    /// A view made `object` for row `row` of a model that brings its
+    /// delegate: it is complete.
+    fn delegate_made(&self, engine: &Engine, row: usize, object: ObjectId) {
+        let _ = (engine, row, object);
+    }
+
+    /// The delegate `object` a view made is about to be destroyed.
+    fn delegate_gone(&self, engine: &Engine, object: ObjectId) {
+        let _ = (engine, object);
+    }
 }
 
 /// The subscription list of a model that changes.
@@ -149,6 +193,156 @@ impl ModelListeners {
             l(engine, change);
         }
     }
+}
+
+/// A model written in Rust, as QML sees an item model: rows of named
+/// roles and the row signals (ARCHITECTURE.md §17).
+///
+/// The model keeps its own data and says what changed through the
+/// [`ModelSignals`] that [`Engine::set_list_model`] (or [`list_model`])
+/// returns. Every view, `Repeater` and `Instantiator` given the object as
+/// its `model` then follows it.
+pub trait QmlListModel {
+    fn row_count(&self) -> usize;
+
+    /// The roles a row has, in a stable order: it may grow (say so with
+    /// [`ModelSignals::roles_changed`]), never shrink or reorder.
+    fn role_names(&self) -> Vec<Atom>;
+
+    /// `undefined` for a row or role the model does not have.
+    fn data(&self, row: usize, role: &str) -> Value;
+
+    /// False: the model is read-only, or refused the value. A model that
+    /// takes it says so with [`ModelSignals::data_changed`].
+    fn set_data(&self, row: usize, role: &str, value: &Value) -> bool {
+        let _ = (row, role, value);
+        false
+    }
+
+    /// What identifies the row while it is in the model. The default, its
+    /// position, is right only for a model whose rows never move; a view
+    /// keeps a row's measured size and the scroll position by this.
+    fn row_key(&self, row: usize) -> RowKey {
+        row as RowKey
+    }
+}
+
+/// The row signals of a [`QmlListModel`]: the model calls one around each
+/// change, with the same meaning as the signals of Qt's item models.
+#[derive(Clone, Debug, Default)]
+pub struct ModelSignals(Rc<ModelListeners>);
+
+impl ModelSignals {
+    /// Before `count` rows go in at `first`.
+    pub fn rows_about_to_be_inserted(&self, engine: &Engine, first: usize, count: usize) {
+        self.0
+            .emit(engine, &ModelChange::RowsAboutToBeInserted { first, count });
+    }
+
+    /// After `count` rows went in at `first`.
+    pub fn rows_inserted(&self, engine: &Engine, first: usize, count: usize) {
+        self.0
+            .emit(engine, &ModelChange::RowsInserted { first, count });
+    }
+
+    /// Before the `count` rows from `first` go.
+    pub fn rows_about_to_be_removed(&self, engine: &Engine, first: usize, count: usize) {
+        self.0
+            .emit(engine, &ModelChange::RowsAboutToBeRemoved { first, count });
+    }
+
+    /// After the `count` rows from `first` went.
+    pub fn rows_removed(&self, engine: &Engine, first: usize, count: usize) {
+        self.0
+            .emit(engine, &ModelChange::RowsRemoved { first, count });
+    }
+
+    /// After the `count` rows from `from` moved to start at `to` (an index
+    /// into the model with those rows taken out).
+    pub fn rows_moved(&self, engine: &Engine, from: usize, to: usize, count: usize) {
+        self.0
+            .emit(engine, &ModelChange::RowsMoved { from, to, count });
+    }
+
+    /// After roles of `count` rows from `first` changed; no roles means
+    /// any of them.
+    pub fn data_changed(&self, engine: &Engine, first: usize, count: usize, roles: &[&str]) {
+        let roles = roles.iter().map(|r| Atom::intern(r)).collect();
+        self.0.emit(
+            engine,
+            &ModelChange::DataChanged {
+                first,
+                count,
+                roles,
+            },
+        );
+    }
+
+    /// After the model gained roles.
+    pub fn roles_changed(&self, engine: &Engine) {
+        self.0.emit(engine, &ModelChange::RolesChanged);
+    }
+
+    /// After anything else: every row may be different.
+    pub fn model_reset(&self, engine: &Engine) {
+        self.0.emit(engine, &ModelChange::ModelReset);
+    }
+
+    /// Whether any view follows the model.
+    pub fn is_watched(&self) -> bool {
+        !self.0.is_empty()
+    }
+}
+
+/// A [`QmlListModel`] as the model interface the views read.
+struct NativeModel {
+    model: Rc<dyn QmlListModel>,
+    listeners: Rc<ModelListeners>,
+}
+
+impl ItemModel for NativeModel {
+    fn row_count(&self) -> usize {
+        self.model.row_count()
+    }
+
+    fn role_names(&self) -> Vec<Atom> {
+        self.model.role_names()
+    }
+
+    fn data(&self, _: &Engine, row: usize, role: &str) -> Value {
+        self.model.data(row, role)
+    }
+
+    fn set_data(&self, _: &Engine, row: usize, role: &str, value: &Value) -> bool {
+        self.model.set_data(row, role, value)
+    }
+
+    fn row_key(&self, row: usize) -> RowKey {
+        self.model.row_key(row)
+    }
+
+    fn model_data(&self, _: &Engine, row: usize) -> Option<Value> {
+        // As Qt: a model with one role has that role as `modelData`.
+        match self.model.role_names().as_slice() {
+            [only] => Some(self.model.data(row, only)),
+            _ => None,
+        }
+    }
+
+    fn subscribe(&self, listener: ModelListener) -> u64 {
+        self.listeners.add(listener)
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        self.listeners.remove(id);
+    }
+}
+
+/// `model` as what a view reads, and the signals it is to send.
+pub fn list_model(model: Rc<dyn QmlListModel>) -> (Rc<dyn ItemModel>, ModelSignals) {
+    let listeners = Rc::new(ModelListeners::default());
+    let signals = ModelSignals(listeners.clone());
+    (Rc::new(NativeModel { model, listeners }), signals)
 }
 
 /// `model: 5`: rows with nothing but their number.
@@ -224,6 +418,296 @@ impl ItemModel for ObjectsModel {
 
     fn row_object(&self, row: usize) -> Option<ObjectId> {
         self.0.get(row).copied()
+    }
+}
+
+/// A model whose rows are objects that show themselves: what Qt's
+/// `ObjectModel` is to a view. The model does not own the objects.
+#[derive(Default)]
+pub struct ObjectRows {
+    rows: RefCell<Vec<(RowKey, ObjectId)>>,
+    next_key: Cell<RowKey>,
+    listeners: ModelListeners,
+}
+
+impl std::fmt::Debug for ObjectRows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectRows")
+            .field("rows", &self.rows.borrow().len())
+            .finish()
+    }
+}
+
+impl ObjectRows {
+    pub fn len(&self) -> usize {
+        self.rows.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.borrow().is_empty()
+    }
+
+    /// The objects, in row order.
+    pub fn objects(&self) -> Vec<ObjectId> {
+        self.rows.borrow().iter().map(|r| r.1).collect()
+    }
+
+    pub fn get(&self, row: usize) -> Option<ObjectId> {
+        self.rows.borrow().get(row).map(|r| r.1)
+    }
+
+    pub fn index_of(&self, object: ObjectId) -> Option<usize> {
+        self.rows.borrow().iter().position(|r| r.1 == object)
+    }
+
+    /// Puts `object` in as row `row`, or as the last one when there are
+    /// fewer rows.
+    pub fn insert(&self, engine: &Engine, row: usize, object: ObjectId) {
+        let row = {
+            let mut rows = self.rows.borrow_mut();
+            let row = row.min(rows.len());
+            let key = self.next_key.get() + 1;
+            self.next_key.set(key);
+            rows.insert(row, (key, object));
+            row
+        };
+        let (first, count) = (row, 1);
+        self.listeners
+            .emit(engine, &ModelChange::RowsInserted { first, count });
+    }
+
+    /// Takes `count` rows from `first` out; the result is what they were.
+    pub fn remove(&self, engine: &Engine, first: usize, count: usize) -> Vec<ObjectId> {
+        let gone: Vec<ObjectId> = {
+            let mut rows = self.rows.borrow_mut();
+            let first = first.min(rows.len());
+            let end = first.saturating_add(count).min(rows.len());
+            rows.drain(first..end).map(|r| r.1).collect()
+        };
+        if !gone.is_empty() {
+            let count = gone.len();
+            self.listeners
+                .emit(engine, &ModelChange::RowsRemoved { first, count });
+        }
+        gone
+    }
+
+    /// Moves `count` rows from `from` so that they start at `to`. False,
+    /// and nothing moves, when either range is not in the model.
+    pub fn move_rows(&self, engine: &Engine, from: usize, to: usize, count: usize) -> bool {
+        {
+            let mut rows = self.rows.borrow_mut();
+            let fits = |at: usize| at.checked_add(count).is_some_and(|end| end <= rows.len());
+            if count == 0 || !fits(from) || !fits(to) {
+                return false;
+            }
+            if from == to {
+                return true;
+            }
+            let moved: Vec<(RowKey, ObjectId)> = rows.drain(from..from + count).collect();
+            rows.splice(to..to, moved);
+        }
+        self.listeners
+            .emit(engine, &ModelChange::RowsMoved { from, to, count });
+        true
+    }
+
+    pub fn clear(&self, engine: &Engine) {
+        if self.rows.borrow().is_empty() {
+            return;
+        }
+        self.rows.borrow_mut().clear();
+        self.listeners.emit(engine, &ModelChange::ModelReset);
+    }
+}
+
+impl ItemModel for ObjectRows {
+    fn row_count(&self) -> usize {
+        self.rows.borrow().len()
+    }
+
+    fn role_names(&self) -> Vec<Atom> {
+        Vec::new()
+    }
+
+    fn data(&self, engine: &Engine, row: usize, role: &str) -> Value {
+        match self.get(row) {
+            Some(o) => engine.read_by_name(o, role),
+            None => Value::Undefined,
+        }
+    }
+
+    fn row_key(&self, row: usize) -> RowKey {
+        self.rows.borrow().get(row).map_or(0, |r| r.0)
+    }
+
+    fn model_data(&self, _: &Engine, row: usize) -> Option<Value> {
+        self.get(row).map(Value::Object)
+    }
+
+    fn row_object(&self, row: usize) -> Option<ObjectId> {
+        self.get(row)
+    }
+
+    fn subscribe(&self, listener: ModelListener) -> u64 {
+        self.listeners.add(listener)
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        self.listeners.remove(id);
+    }
+
+    fn delegate_source(&self) -> DelegateSource {
+        DelegateSource::Rows
+    }
+}
+
+/// Called with the row and the delegate a view made for it.
+pub type DelegateMade = Rc<dyn Fn(&Engine, usize, ObjectId)>;
+/// Called with a delegate that is about to be destroyed.
+pub type DelegateGone = Rc<dyn Fn(&Engine, ObjectId)>;
+
+/// A model together with the component of its rows' delegates: what Qt's
+/// `DelegateModel` is to a view. Every view of it is told to start over
+/// when either changes.
+#[derive(Default)]
+pub struct DelegateRows {
+    model: RefCell<Option<(Rc<dyn ItemModel>, u64)>>,
+    component: Cell<Option<ObjectId>>,
+    listeners: Rc<ModelListeners>,
+    allocated: RefCell<Option<DelegateMade>>,
+    made: RefCell<Option<DelegateMade>>,
+    gone: RefCell<Option<DelegateGone>>,
+}
+
+impl std::fmt::Debug for DelegateRows {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DelegateRows")
+            .field("rows", &self.row_count())
+            .field("component", &self.component.get())
+            .finish()
+    }
+}
+
+impl Drop for DelegateRows {
+    fn drop(&mut self) {
+        if let Some((m, id)) = self.model.get_mut().take() {
+            m.unsubscribe(id);
+        }
+    }
+}
+
+impl DelegateRows {
+    /// The model the rows are read from.
+    pub fn model(&self) -> Option<Rc<dyn ItemModel>> {
+        self.model.borrow().as_ref().map(|m| m.0.clone())
+    }
+
+    pub fn set_model(&self, engine: &Engine, model: Option<Rc<dyn ItemModel>>) {
+        let subscribed = model.map(|m| {
+            let listeners = Rc::downgrade(&self.listeners);
+            let id = m.subscribe(Rc::new(move |e: &Engine, c: &ModelChange| {
+                if let Some(l) = listeners.upgrade() {
+                    l.emit(e, c);
+                }
+            }));
+            (m, id)
+        });
+        let old = self.model.replace(subscribed);
+        if let Some((m, id)) = old {
+            m.unsubscribe(id);
+        }
+        self.listeners.emit(engine, &ModelChange::ModelReset);
+    }
+
+    pub fn component(&self) -> Option<ObjectId> {
+        self.component.get()
+    }
+
+    pub fn set_component(&self, engine: &Engine, component: Option<ObjectId>) {
+        if self.component.replace(component) != component {
+            self.listeners.emit(engine, &ModelChange::ModelReset);
+        }
+    }
+
+    /// What is told of every delegate a view makes of the component, and
+    /// of every one that goes.
+    pub fn on_delegates(&self, made: Option<DelegateMade>, gone: Option<DelegateGone>) {
+        *self.made.borrow_mut() = made;
+        *self.gone.borrow_mut() = gone;
+    }
+
+    /// What is told of a delegate before its bindings run: early enough
+    /// for what the delegate itself asks about its place.
+    pub fn on_allocated(&self, allocated: Option<DelegateMade>) {
+        *self.allocated.borrow_mut() = allocated;
+    }
+}
+
+impl ItemModel for DelegateRows {
+    fn row_count(&self) -> usize {
+        self.model().map_or(0, |m| m.row_count())
+    }
+
+    fn role_names(&self) -> Vec<Atom> {
+        self.model().map_or_else(Vec::new, |m| m.role_names())
+    }
+
+    fn data(&self, engine: &Engine, row: usize, role: &str) -> Value {
+        match self.model() {
+            Some(m) => m.data(engine, row, role),
+            None => Value::Undefined,
+        }
+    }
+
+    fn set_data(&self, engine: &Engine, row: usize, role: &str, value: &Value) -> bool {
+        self.model()
+            .is_some_and(|m| m.set_data(engine, row, role, value))
+    }
+
+    fn row_key(&self, row: usize) -> RowKey {
+        self.model().map_or(row as RowKey, |m| m.row_key(row))
+    }
+
+    fn model_data(&self, engine: &Engine, row: usize) -> Option<Value> {
+        self.model()?.model_data(engine, row)
+    }
+
+    fn row_object(&self, row: usize) -> Option<ObjectId> {
+        self.model()?.row_object(row)
+    }
+
+    fn subscribe(&self, listener: ModelListener) -> u64 {
+        self.listeners.add(listener)
+    }
+
+    fn unsubscribe(&self, id: u64) {
+        self.listeners.remove(id);
+    }
+
+    fn delegate_source(&self) -> DelegateSource {
+        DelegateSource::Component(self.component.get())
+    }
+
+    fn delegate_allocated(&self, engine: &Engine, row: usize, object: ObjectId) {
+        let allocated = self.allocated.borrow().clone();
+        if let Some(allocated) = allocated {
+            allocated(engine, row, object);
+        }
+    }
+
+    fn delegate_made(&self, engine: &Engine, row: usize, object: ObjectId) {
+        let made = self.made.borrow().clone();
+        if let Some(made) = made {
+            made(engine, row, object);
+        }
+    }
+
+    fn delegate_gone(&self, engine: &Engine, object: ObjectId) {
+        let gone = self.gone.borrow().clone();
+        if let Some(gone) = gone {
+            gone(engine, object);
+        }
     }
 }
 
@@ -438,6 +922,19 @@ impl Engine {
             .ok_or(EngineError::DeadObject(obj))?;
         h.ext_mut().model = model;
         Ok(())
+    }
+
+    /// Makes `obj` the model `model`: `model: obj` in a view, a
+    /// `Repeater` or an `Instantiator` shows its rows. The result is what
+    /// the model reports its changes with.
+    pub fn set_list_model(
+        &self,
+        obj: ObjectId,
+        model: Rc<dyn QmlListModel>,
+    ) -> Result<ModelSignals, EngineError> {
+        let (model, signals) = list_model(model);
+        self.set_object_model(obj, Some(model))?;
+        Ok(signals)
     }
 
     /// The model `obj` is, when it is one.

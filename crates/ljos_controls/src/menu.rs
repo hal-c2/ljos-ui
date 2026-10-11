@@ -11,10 +11,11 @@
 //! come were read off a running Qt 6.11.2; `features/controls/
 //! menu.feature` and `menu-pointer.feature` pin them.
 //!
-//! TODO(listview): the column is laid out here. Qt's is a `ListView` on
-//! `contentModel`, which reads null until there is one. A menu taller
-//! than its window scrolls when its content item is a `Flickable`
-//! ([`crate::rows`]).
+//! The items are the rows of `contentModel`, an `ObjectModel` the menu
+//! keeps in step with them. A content item that is a view (the Basic
+//! style's is a `ListView` on that model) puts each item where its row
+//! is, and scrolls a menu taller than its window; under any other content
+//! item the column is laid out here.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -27,7 +28,8 @@ use ljos_engine::{
 use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_quick::keys::key;
 use ljos_quick::{
-    Item, KeyEvent, Repeater, follows_implicit_size, is_item, scene_transform, set_parent_item,
+    Item, ItemView, KeyEvent, ObjectModel, Repeater, follows_implicit_size, is_item,
+    object_model_changed, object_model_rows, scene_transform, set_parent_item,
 };
 use ljos_render::kurbo;
 
@@ -136,10 +138,9 @@ struct Entry {
     made_for: Option<ObjectId>,
     /// What the menu listens to on the item.
     conns: Vec<ConnectionId>,
-    /// Where the menu holds the item's position, and its width unless
-    /// the author gave it one.
-    x: OverrideId,
-    y: OverrideId,
+    /// Where the menu holds the item's position while it lays the column
+    /// out itself, and its width unless the author gave it one.
+    place: Option<(OverrideId, OverrideId)>,
     width: Option<OverrideId>,
 }
 
@@ -160,6 +161,8 @@ pub(crate) struct MenuState {
     focused: Cell<Option<ObjectId>>,
     /// The repeaters whose items are items of the menu.
     repeaters: RefCell<Vec<ObjectId>>,
+    /// The `ObjectModel` that `contentModel` reads.
+    model: Cell<Option<ObjectId>>,
 }
 
 /// `Menu`.
@@ -179,13 +182,13 @@ pub struct Menu {
     #[qml(notify)]
     pub overlap: f64,
     /// What an item for an `Action` or a `Menu` is made from.
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
     #[qml(notify)]
     pub current_index: i32,
     #[qml(group)]
     pub icon: Icon,
-    /// See the module's TODO.
+    /// The items as a model: an `ObjectModel`, for a view to show.
     #[qml(notify, readonly)]
     pub content_model: Value,
     #[qml(skip)]
@@ -483,6 +486,12 @@ pub(crate) fn append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
 }
 
 fn init_menu(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
+    let model = e.create_native(ObjectModel::default(), Some(menu))?;
+    e.complete(model)?;
+    if let Some(st) = state_of(e, menu) {
+        st.model.set(Some(model));
+    }
+    set_computed(e, menu, Menu::CONTENT_MODEL.index, Value::Object(model))?;
     let declared: Vec<ObjectId> = match e.untrack(|| e.read(menu, POPUP.content_data)) {
         Value::List(l) => l.iter().filter_map(Value::as_object).collect(),
         _ => Vec::new(),
@@ -693,17 +702,15 @@ fn join(
         set_parent_item(e, item, Some(rows::home(e, ci)))?;
     }
     let own_width = e.untrack(|| !follows_implicit_size(e, item, true));
-    let hold = |prop: PropIndex| {
-        let now = e.untrack(|| e.read(item, prop));
-        e.push_override(item, prop, OverrideContent::Value(now))
-    };
     let mut entry = Entry {
         item,
         made_for,
         conns: Vec::new(),
-        x: hold(Item::X.index)?,
-        y: hold(Item::Y.index)?,
-        width: (!own_width).then(|| hold(Item::WIDTH.index)).transpose()?,
+        // Held by the layout, which knows whether a view places the item.
+        place: None,
+        width: (!own_width)
+            .then(|| hold(e, item, Item::WIDTH.index))
+            .transpose()?,
     };
     if is_a::<MenuItem>(e, item) {
         set_computed(e, item, MenuItem::MENU.index, Value::Object(menu))?;
@@ -728,6 +735,43 @@ fn join(
     Ok(())
 }
 
+/// Holds what `prop` of `item` reads now in a layer of the menu's own, so
+/// that what the author gave the item comes back when it leaves.
+fn hold(e: &Engine, item: ObjectId, prop: PropIndex) -> Result<OverrideId, EngineError> {
+    let now = e.untrack(|| e.read(item, prop));
+    e.push_override(item, prop, OverrideContent::Value(now))
+}
+
+/// Brings the rows of `contentModel` in step with the items, telling a
+/// view of each row that came, went or moved.
+fn sync_model(e: &Engine, st: &MenuState) {
+    let Some(model) = st.model.get().filter(|m| e.is_alive(*m)) else {
+        return;
+    };
+    let Some(rows) = object_model_rows(e, model) else {
+        return;
+    };
+    let want: Vec<ObjectId> = st.entries.borrow().iter().map(|en| en.item).collect();
+    if rows.objects() == want {
+        return;
+    }
+    for (row, object) in rows.objects().into_iter().enumerate().rev() {
+        if !want.contains(&object) {
+            rows.remove(e, row, 1);
+        }
+    }
+    for (row, object) in want.iter().enumerate() {
+        match rows.index_of(*object) {
+            Some(at) if at == row => {}
+            Some(at) => {
+                rows.move_rows(e, at, row, 1);
+            }
+            None => rows.insert(e, row, *object),
+        }
+    }
+    object_model_changed(e, model);
+}
+
 /// Takes `item` out of the menu: it is no child of it any more and keeps
 /// what it was given. None if it was not in the menu.
 fn leave(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<Option<Entry>, EngineError> {
@@ -744,6 +788,8 @@ fn leave(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<Option<Entry>, En
     for conn in &entry.conns {
         e.disconnect(*conn);
     }
+    // While the item is alive: a view lets go of its row.
+    sync_model(e, &st);
     if st.waiting_for.get() == Some(item) {
         stop_timer(e, &st);
     }
@@ -762,8 +808,8 @@ fn leave(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<Option<Entry>, En
         }
     }
     for (prop, layer) in [
-        (Item::X.index, Some(entry.x)),
-        (Item::Y.index, Some(entry.y)),
+        (Item::X.index, entry.place.map(|p| p.0)),
+        (Item::Y.index, entry.place.map(|p| p.1)),
         (Item::WIDTH.index, entry.width),
     ] {
         if let Some(layer) = layer {
@@ -863,6 +909,7 @@ fn sync_count(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
         return Ok(());
     };
     st.entries.borrow_mut().retain(|en| e.is_alive(en.item));
+    sync_model(e, &st);
     let count = st.entries.borrow().len() as i32;
     set_computed(e, menu, Menu::COUNT.index, Value::Int(count))
 }
@@ -878,8 +925,14 @@ fn changed(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
 
 // --------------------------------------------------------------- layout
 
-/// Puts the items below each other, as wide as the menu's content. What
-/// it reads is what moves an item when it runs in an effect.
+/// Whether the menu's content item places the items itself.
+fn placed_by_view(e: &Engine, content: ObjectId) -> bool {
+    is_a::<ItemView>(e, content)
+}
+
+/// Makes the items as wide as the menu's content and, unless a view
+/// places them, puts them below each other. What it reads is what moves
+/// an item when it runs in an effect.
 fn layout(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
     let Some(st) = state_of(e, menu) else {
         return Ok(());
@@ -888,41 +941,76 @@ fn layout(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
     let Some(ci) = object(e, menu, POPUP.content_item).filter(|c| is_item(e, *c)) else {
         return Ok(());
     };
+    let in_view = placed_by_view(e, ci);
     let width = num(e, ci, Item::WIDTH.index);
-    let rows: Vec<(ObjectId, f64, OverrideId, OverrideId, Option<OverrideId>)> = st
+    e.untrack(|| hold_places(e, &st, !in_view))?;
+    type Row = (
+        ObjectId,
+        f64,
+        Option<(OverrideId, OverrideId)>,
+        Option<OverrideId>,
+    );
+    let rows: Vec<Row> = st
         .entries
         .borrow()
         .iter()
         .filter(|en| e.is_alive(en.item))
         .map(|en| {
-            (
-                en.item,
-                num(e, en.item, Item::HEIGHT.index),
-                en.x,
-                en.y,
-                en.width,
-            )
+            // A view reads the heights itself.
+            let height = if in_view {
+                0.0
+            } else {
+                num(e, en.item, Item::HEIGHT.index)
+            };
+            (en.item, height, en.place, en.width)
         })
         .collect();
     e.untrack(|| {
         let mut top = 0.0;
-        for (item, height, x, y, w) in rows {
+        for (item, height, place, w) in rows {
             let put = |prop: PropIndex, layer: OverrideId, v: f64| {
                 if e.read(item, prop).to_number() == v {
                     return Ok(());
                 }
                 e.write_internal(item, prop, Value::Real(v), WriteKind::Override(layer))
             };
-            put(Item::X.index, x, 0.0)?;
-            put(Item::Y.index, y, top)?;
+            if let Some((x, y)) = place {
+                put(Item::X.index, x, 0.0)?;
+                put(Item::Y.index, y, top)?;
+            }
             if let Some(w) = w {
                 put(Item::WIDTH.index, w, width)?;
             }
             top += height;
         }
-        rows::set_extent(e, ci, top);
         Ok(())
     })
+}
+
+/// The menu holds where each item is exactly while it lays the column out
+/// itself: under a view the place is the view's to write.
+fn hold_places(e: &Engine, st: &MenuState, held: bool) -> Result<(), EngineError> {
+    for en in st.entries.borrow_mut().iter_mut() {
+        if !e.is_alive(en.item) {
+            continue;
+        }
+        match (held, en.place) {
+            (true, None) => {
+                en.place = Some((
+                    hold(e, en.item, Item::X.index)?,
+                    hold(e, en.item, Item::Y.index)?,
+                ));
+            }
+            (false, Some((x, y))) => {
+                en.place = None;
+                for (prop, layer) in [(Item::X.index, x), (Item::Y.index, y)] {
+                    let _ = e.remove_override(en.item, prop, layer, RestoreMode::BindingOrValue);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// How big the content of a menu is along one axis, for a popup that is
@@ -961,11 +1049,6 @@ fn apply_current(e: &Engine, menu: ObjectId) {
     }
     if st.waiting_for.get().is_some() && st.waiting_for.get() != current {
         stop_timer(e, &st);
-    }
-    if let Some(item) = current
-        && let Some(ci) = e.untrack(|| object(e, menu, POPUP.content_item))
-    {
-        rows::keep_in_view(e, ci, item);
     }
     let has_keyboard = popup::is_shown(e, menu) && e.untrack(|| flag(e, menu, Popup::FOCUS.index));
     if !has_keyboard {

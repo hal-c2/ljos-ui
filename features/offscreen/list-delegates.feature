@@ -4,7 +4,7 @@
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # Delegate counts are bands, never exact numbers.
 
-@backlog @qt-parity
+@qt-parity
 Feature: Delegates exist only near the viewport
   A long list costs what is visible, not what it holds.
 

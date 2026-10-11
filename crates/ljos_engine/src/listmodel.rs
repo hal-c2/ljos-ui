@@ -368,6 +368,10 @@ impl ListState {
         let had = self.roles.borrow().len();
         let rows = self.make_rows(engine, items);
         let count = rows.len();
+        self.listeners.emit(
+            engine,
+            &ModelChange::RowsAboutToBeInserted { first: at, count },
+        );
         self.rows.borrow_mut().splice(at..at, rows);
         self.changed(
             engine,
@@ -377,6 +381,12 @@ impl ListState {
     }
 
     fn remove(&self, engine: &Engine, first: usize, count: usize) {
+        self.listeners
+            .emit(engine, &ModelChange::RowsAboutToBeRemoved { first, count });
+        // A listener may have changed the model.
+        let len = self.len();
+        let first = first.min(len);
+        let count = count.min(len - first);
         let gone: Vec<ListRow> = self.rows.borrow_mut().drain(first..first + count).collect();
         let roles = self.roles.borrow().len();
         self.changed(
@@ -472,6 +482,14 @@ impl ListState {
     }
 
     fn clear(&self, engine: &Engine) {
+        let count = self.len();
+        if count == 0 {
+            return;
+        }
+        self.listeners.emit(
+            engine,
+            &ModelChange::RowsAboutToBeRemoved { first: 0, count },
+        );
         let gone: Vec<ListRow> = std::mem::take(&mut *self.rows.borrow_mut());
         if gone.is_empty() {
             return;

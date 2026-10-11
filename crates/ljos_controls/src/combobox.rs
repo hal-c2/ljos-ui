@@ -12,11 +12,12 @@
 //! combobox.feature`, `combobox-pointer.feature` and
 //! `combobox-editable.feature` pin them.
 //!
-//! TODO(listview): the delegates are children of the popup's content
-//! item, or of what that scrolls ([`crate::rows`]), in the order of the
-//! rows, and all of them are made when the popup first opens. Qt's are
-//! in a `ListView` on `delegateModel`, which reads null here until there
-//! is one.
+//! `delegateModel` is a `DelegateModel` of the rows and the delegate,
+//! which the combo box feeds once its popup has opened. A popup whose
+//! content item is a view (the Basic style's is a `ListView` on that
+//! model) makes the delegates of the rows it shows; under any other
+//! content item the combo box makes one for every row itself, as children
+//! of that item in the order of the rows.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -24,8 +25,8 @@ use std::rc::Rc;
 
 use ljos_a11y::{NodeData, Role};
 use ljos_engine::{
-    Atom, ConnectionId, Cx, DelegateHost, Delegates, Engine, EngineError, ItemModel, MetaRef,
-    ModelChange, NodeId, ObjectId, PropIndex, QmlObject, QmlType, RemovalOrder, Value, WriteKind,
+    Atom, ConnectionId, Cx, DelegateHost, DelegateRows, Delegates, Engine, EngineError, ItemModel,
+    MetaRef, ModelChange, ObjectId, PropIndex, QmlObject, QmlType, RemovalOrder, Value, WriteKind,
     qml_impl,
 };
 use ljos_quick::flickable::{WheelItem, register_wheel_item};
@@ -35,9 +36,9 @@ use ljos_quick::focus::{
 use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::text_input::{input_method_hint, last_edit_typed};
 use ljos_quick::{
-    AccessibleAction, AccessibleItem, Item, KeyEvent, PointerEvent, PointerItem, TextEditor,
-    TextInput, WheelEvent, contains_point, is_item, register_accessible_item,
-    register_pointer_item, set_parent_item,
+    AccessibleAction, AccessibleItem, DelegateModel, Item, ItemView, KeyEvent, PointerEvent,
+    PointerItem, TextEditor, TextInput, WheelEvent, contains_point, drive_delegate_model, is_item,
+    register_accessible_item, register_pointer_item, set_parent_item, view_index_of,
 };
 use ljos_render::kurbo;
 
@@ -94,8 +95,13 @@ pub(crate) struct ComboState {
     model: RefCell<Option<Rc<dyn ItemModel>>>,
     /// The combo box's own ear on the model.
     subscription: Cell<u64>,
-    /// The delegates in the popup, once it was opened.
+    /// The delegates the combo box makes itself, once the popup was
+    /// opened, where its content item is no view.
     delegates: RefCell<Option<Delegates>>,
+    /// The rows of `delegateModel`: what a view in the popup shows.
+    list_rows: RefCell<Option<Rc<DelegateRows>>>,
+    /// The popup was opened: a combo box that never is has no delegates.
+    opened: Cell<bool>,
     /// The value the combo box last gave `currentValue`: a write of
     /// anything else is the application's.
     own_value: RefCell<Value>,
@@ -105,9 +111,6 @@ pub(crate) struct ComboState {
     key_held: Cell<bool>,
     /// The popup the combo box listens to.
     wired: RefCell<Option<(ObjectId, ConnectionId)>>,
-    /// Counts the times a delegate came, went or moved: what stacks the
-    /// delegates reads it.
-    rows_epoch: Cell<Option<NodeId>>,
     /// The field the combo box listens to, and what it hears with.
     listening: RefCell<Option<(ObjectId, Vec<ConnectionId>)>>,
 }
@@ -171,9 +174,9 @@ pub struct ComboBox {
     /// A number, a list or a model object: what `Repeater` takes.
     #[qml(notify)]
     pub model: Value,
-    /// TODO(listview): the model of the popup's list; null until then.
-    /// It says it changed whenever a row did, which is what a binding on
-    /// `textAt` or `valueAt` waits for.
+    /// A `DelegateModel`: the model of the popup's list. It says it
+    /// changed whenever a row did, which is what a binding on `textAt` or
+    /// `valueAt` waits for.
     #[qml(notify, readonly)]
     pub delegate_model: Value,
     #[qml(notify, readonly)]
@@ -195,7 +198,7 @@ pub struct ComboBox {
     /// Writing it makes the row that has the value current.
     #[qml(notify)]
     pub current_value: Value,
-    #[qml(notify)]
+    #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
     #[qml(notify)]
     pub indicator: Option<ObjectId>,
@@ -644,72 +647,16 @@ fn content_of(engine: &Engine, combo: ObjectId) -> Option<ObjectId> {
         .filter(|c| is_item(engine, *c))
 }
 
-/// Where the delegates go: what the popup's content item scrolls, or
-/// that item itself.
+/// The popup's content item, when it is a view: it makes the delegates
+/// of the rows it shows, and puts each where its row is.
+fn list_of(engine: &Engine, combo: ObjectId) -> Option<ObjectId> {
+    content_of(engine, combo).filter(|c| is_a::<ItemView>(engine, *c))
+}
+
+/// Where the delegates the combo box makes itself go: what the popup's
+/// content item scrolls, or that item itself.
 fn rows_home(engine: &Engine, combo: ObjectId) -> Option<ObjectId> {
     content_of(engine, combo).map(|c| rows::home(engine, c))
-}
-
-fn rows_epoch(engine: &Engine, st: &ComboState) -> Option<NodeId> {
-    if st.rows_epoch.get().is_none() {
-        let g = engine.graph();
-        st.rows_epoch.set(g.property(g.root(), Value::Int(0)).ok());
-    }
-    st.rows_epoch.get()
-}
-
-/// A delegate came, went or moved: they are stacked again.
-fn delegates_changed(engine: &Engine, combo: ObjectId) {
-    let Some(st) = state_of(engine, combo) else {
-        return;
-    };
-    if let Some(node) = rows_epoch(engine, &st) {
-        let g = engine.graph();
-        let n = g.get_untracked(node).to_number() as i32;
-        g.set(node, Value::Int(n.wrapping_add(1)));
-    }
-}
-
-/// Puts the delegates below each other where the popup's content item
-/// scrolls them, and says how high they are together. A content item
-/// that does not scroll lays them out itself (a `Column`). What this
-/// reads is what stacks them again when it runs in an effect.
-fn stack(engine: &Engine, combo: ObjectId) {
-    let Some(st) = state_of(engine, combo) else {
-        return;
-    };
-    if let Some(node) = rows_epoch(engine, &st) {
-        let _ = engine.graph().get(node);
-    }
-    let content = object(engine, combo, ComboBox::POPUP.index)
-        .filter(|p| is_a::<Popup>(engine, *p))
-        .and_then(|p| object(engine, p, Popup::CONTENT_ITEM.index))
-        .filter(|c| is_item(engine, *c) && rows::scrolls(engine, *c));
-    let Some(content) = content else {
-        return;
-    };
-    let mut top = 0.0;
-    for row in st.delegates().map(|d| d.objects()).unwrap_or_default() {
-        if !is_item(engine, row) {
-            continue;
-        }
-        let height = num(engine, row, Item::HEIGHT.index);
-        let placed = set_computed(engine, row, Item::Y.index, Value::Real(top));
-        check(engine, "delegate", placed);
-        top += height;
-    }
-    rows::set_extent(engine, content, top);
-}
-
-/// The delegate of a row, when it is an item.
-fn delegate_at(engine: &Engine, combo: ObjectId, index: i32) -> Option<ObjectId> {
-    let delegates = state_of(engine, combo)?.delegates()?;
-    let row = usize::try_from(index).ok()?;
-    delegates
-        .objects()
-        .get(row)
-        .copied()
-        .filter(|d| is_item(engine, *d))
 }
 
 /// Puts `items` at the end of `parent`'s lists of children, in their
@@ -759,10 +706,7 @@ impl DelegateHost for Host {
             warn(e, "ComboBox: Delegate must be of Item type");
             return;
         }
-        e.extension::<RowOwners>()
-            .of
-            .borrow_mut()
-            .insert(object, combo);
+        own_row(e, combo, object);
         let Some(content) = rows_home(e, combo) else {
             return;
         };
@@ -776,37 +720,15 @@ impl DelegateHost for Host {
     }
 
     fn added(&self, e: &Engine, _: usize, object: ObjectId) {
-        let combo = self.0;
-        if is_a::<AbstractButton>(e, object) {
-            let r = e.connect_by_name(object, "clicked", move |e, _| {
-                if let Some(row) = row_of(e, combo, object) {
-                    pick(e, combo, row);
-                }
-            });
-            check(e, "delegate", r.map(|_| ()));
-        }
-        if is_a::<Control>(e, object) {
-            let r = e.connect_by_name(object, "hoveredChanged", move |e, _| {
-                let over = e.untrack(|| flag(e, object, Control::HOVERED.index));
-                if over
-                    && is_open(e, combo)
-                    && let Some(row) = row_of(e, combo, object)
-                {
-                    highlight(e, combo, row, true);
-                }
-            });
-            check(e, "delegate", r.map(|_| ()));
-        }
-        delegates_changed(e, combo);
+        listen_to_row(e, self.0, object);
     }
 
     fn removed(&self, e: &Engine, _: usize, object: ObjectId) {
-        e.extension::<RowOwners>().of.borrow_mut().remove(&object);
+        disown_row(e, object);
         // Out of the popup now; the object itself goes at the next frame.
         if is_item(e, object) {
             let _ = set_parent_item(e, object, None);
         }
-        delegates_changed(e, self.0);
     }
 
     fn moved(&self, e: &Engine) {
@@ -818,7 +740,6 @@ impl DelegateHost for Host {
             return;
         };
         check(e, "delegate", order(e, content, &delegates.objects()));
-        delegates_changed(e, combo);
     }
 
     fn count_changed(&self, _: &Engine, _: usize) {}
@@ -829,6 +750,45 @@ impl DelegateHost for Host {
 #[derive(Default)]
 struct RowOwners {
     of: RefCell<HashMap<ObjectId, ObjectId>>,
+}
+
+/// `object` is the delegate of a row of `combo`, whoever made it. False
+/// if that was known.
+fn own_row(e: &Engine, combo: ObjectId, object: ObjectId) -> bool {
+    e.extension::<RowOwners>()
+        .of
+        .borrow_mut()
+        .insert(object, combo)
+        .is_none()
+}
+
+fn disown_row(e: &Engine, object: ObjectId) {
+    e.extension::<RowOwners>().of.borrow_mut().remove(&object);
+}
+
+/// A click on a delegate picks its row, and the pointer over it
+/// highlights the row.
+fn listen_to_row(e: &Engine, combo: ObjectId, object: ObjectId) {
+    if is_a::<AbstractButton>(e, object) {
+        let r = e.connect_by_name(object, "clicked", move |e, _| {
+            if let Some(row) = row_of(e, combo, object) {
+                pick(e, combo, row);
+            }
+        });
+        check(e, "delegate", r.map(|_| ()));
+    }
+    if is_a::<Control>(e, object) {
+        let r = e.connect_by_name(object, "hoveredChanged", move |e, _| {
+            let over = e.untrack(|| flag(e, object, Control::HOVERED.index));
+            if over
+                && is_open(e, combo)
+                && let Some(row) = row_of(e, combo, object)
+            {
+                highlight(e, combo, row, true);
+            }
+        });
+        check(e, "delegate", r.map(|_| ()));
+    }
 }
 
 /// Where a row is among the rows of its combo box.
@@ -863,6 +823,9 @@ pub(crate) fn place_of_row(engine: &Engine, delegate: ObjectId) -> Option<RowPla
 }
 
 fn row_of(engine: &Engine, combo: ObjectId, delegate: ObjectId) -> Option<i32> {
+    if let Some(view) = list_of(engine, combo) {
+        return view_index_of(engine, view, delegate).map(|at| at as i32);
+    }
     let delegates = state_of(engine, combo)?.delegates()?;
     let at = delegates.objects().iter().position(|o| *o == delegate)?;
     Some(at as i32)
@@ -877,6 +840,7 @@ fn ensure_delegates(engine: &Engine, combo: ObjectId) {
     if st.delegates.borrow().is_some() {
         return;
     }
+    st.opened.set(true);
     let delegates = Delegates::new(combo, Rc::new(Host(combo)), RemovalOrder::FirstToLast);
     *st.delegates.borrow_mut() = Some(delegates);
     if let Some(p) = popup_of(engine, combo) {
@@ -886,14 +850,102 @@ fn ensure_delegates(engine: &Engine, combo: ObjectId) {
     resource(engine, combo, &st);
 }
 
-/// Makes the delegates again, of the delegate and the rows there are now.
+/// Makes the delegates again, of the delegate and the rows there are now:
+/// a view in the popup does, of what `delegateModel` is given here, and
+/// without one the combo box does.
 fn resource(engine: &Engine, combo: ObjectId, st: &ComboState) {
+    let component = engine.untrack(|| object(engine, combo, ComboBox::DELEGATE.index));
+    let rows = st.list_rows.borrow().clone();
+    if let Some(rows) = rows {
+        let model = st.model();
+        let same = match (rows.model(), &model) {
+            (Some(a), Some(b)) => std::ptr::addr_eq(Rc::as_ptr(&a), Rc::as_ptr(b)),
+            (None, None) => true,
+            _ => false,
+        };
+        // The model counts its rows from the start, and has their
+        // delegate once the popup was opened: a combo box that never is
+        // makes none.
+        let shown = component.filter(|_| st.opened.get());
+        engine.untrack(|| {
+            rows.set_component(engine, shown);
+            if !same {
+                rows.set_model(engine, model);
+            }
+            describe_delegate_model(engine, combo, component);
+        });
+    }
     let Some(delegates) = st.delegates() else {
         return;
     };
-    let component = engine.untrack(|| object(engine, combo, ComboBox::DELEGATE.index));
-    let model = st.model().filter(|_| content_of(engine, combo).is_some());
+    let in_view = list_of(engine, combo).is_some();
+    let model = st
+        .model()
+        .filter(|_| !in_view && content_of(engine, combo).is_some());
     engine.untrack(|| delegates.set_source(engine, model, component));
+}
+
+/// What QML reads of `delegateModel`: the combo box's own model and
+/// delegate.
+fn describe_delegate_model(engine: &Engine, combo: ObjectId, component: Option<ObjectId>) {
+    let Some(dm) = object(engine, combo, ComboBox::DELEGATE_MODEL.index) else {
+        return;
+    };
+    let model = engine.read(combo, ComboBox::MODEL.index);
+    let delegate = component.map_or(Value::Null, Value::Object);
+    for (prop, now) in [
+        (DelegateModel::MODEL.index, model),
+        (DelegateModel::DELEGATE.index, delegate),
+    ] {
+        if !engine.read(dm, prop).change_equals(&now) {
+            check(engine, "delegateModel", set_computed(engine, dm, prop, now));
+        }
+    }
+}
+
+/// Makes the `DelegateModel` that `delegateModel` reads. The combo box
+/// says what its rows and its delegate are; the model tells it of every
+/// delegate a view makes.
+fn make_delegate_model(
+    engine: &Engine,
+    combo: ObjectId,
+    st: &ComboState,
+) -> Result<(), EngineError> {
+    let model = engine.create_native(DelegateModel::default(), Some(combo))?;
+    let rows = drive_delegate_model(engine, model);
+    engine.complete(model)?;
+    if let Some(rows) = &rows {
+        // Before the delegate's bindings run, so that a row knows whose
+        // it is when it is first asked.
+        rows.on_allocated(Some(Rc::new(move |e: &Engine, _, object| {
+            if e.is_alive(combo) {
+                own_row(e, combo, object);
+            }
+        })));
+        // A delegate a view uses again for another row is listened to
+        // already.
+        let heard: Rc<RefCell<Vec<ObjectId>>> = Rc::default();
+        let gone = heard.clone();
+        rows.on_delegates(
+            Some(Rc::new(move |e: &Engine, _, object| {
+                if e.is_alive(combo) && !heard.borrow().contains(&object) {
+                    heard.borrow_mut().push(object);
+                    listen_to_row(e, combo, object);
+                }
+            })),
+            Some(Rc::new(move |e: &Engine, object| {
+                gone.borrow_mut().retain(|o| *o != object);
+                disown_row(e, object);
+            })),
+        );
+    }
+    *st.list_rows.borrow_mut() = rows;
+    set_computed(
+        engine,
+        combo,
+        ComboBox::DELEGATE_MODEL.index,
+        Value::Object(model),
+    )
 }
 
 // ------------------------------------------------------------ the popup
@@ -923,11 +975,6 @@ fn highlight(engine: &Engine, combo: ObjectId, index: i32, by_user: bool) {
         "highlightedIndex",
         set_computed(engine, combo, p, Value::Int(index)),
     );
-    if let (Some(content), Some(row)) =
-        (content_of(engine, combo), delegate_at(engine, combo, index))
-    {
-        rows::keep_in_view(engine, content, row);
-    }
     if by_user {
         emit(engine, combo, "highlighted", index);
     }
@@ -1010,6 +1057,9 @@ fn popup_switched(engine: &Engine, combo: ObjectId, open: bool) {
     }
 }
 
+/// `ListView.Beginning`, for `positionViewAtIndex`.
+const AT_BEGINNING: i32 = 0;
+
 /// The popup is on the screen: its rows start at the current one, as
 /// far as they go (read off qml6), whatever was in view when it was last
 /// open.
@@ -1019,15 +1069,17 @@ fn popup_shown(engine: &Engine, combo: ObjectId) {
     }
     engine.untrack(|| {
         ensure_delegates(engine, combo);
-        stack(engine, combo);
-        let Some(content) = content_of(engine, combo) else {
+        let Some(view) = list_of(engine, combo) else {
             return;
         };
         let current = int(engine, combo, ComboBox::CURRENT_INDEX.index);
-        match delegate_at(engine, combo, current) {
-            Some(row) => rows::start_at(engine, content, row),
-            None => rows::start(engine, content),
-        }
+        let placed = if current >= 0 {
+            let args = [Value::Int(current), Value::Int(AT_BEGINNING)];
+            engine.invoke_by_name(view, "positionViewAtIndex", &args)
+        } else {
+            engine.invoke_by_name(view, "positionViewAtBeginning", &[])
+        };
+        check(engine, "popup", placed.map(|_| ()));
     });
 }
 
@@ -1322,6 +1374,8 @@ fn init_combo(engine: &Engine, combo: ObjectId) -> Result<(), EngineError> {
         })?;
     }
 
+    make_delegate_model(engine, combo, &st)?;
+
     // A declared `currentIndex` is kept, whatever the model has.
     let restart = is_unset(engine, combo, ComboBox::CURRENT_INDEX.index);
     adopt_model(engine, combo, restart);
@@ -1351,8 +1405,6 @@ fn init_combo(engine: &Engine, combo: ObjectId) -> Result<(), EngineError> {
             resource(e, combo, &st);
         }
     })?;
-
-    engine.effect_in(combo, move |e| stack(e, combo))?;
 
     // The field: what it is typing, whether its text is acceptable, and
     // the Tab key, which stops in it and not at the combo box around it.

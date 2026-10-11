@@ -304,6 +304,11 @@ pub(crate) struct FlickState {
     wheel_timer: Cell<Option<ObjectId>>,
     /// False when whoever wraps the Flickable keeps the wheel from it.
     wheel_enabled: Cell<bool>,
+    /// A view whose rows run the other way in a direction (a list from
+    /// the bottom up) says so here: its content then ends at the origin
+    /// side and what is short of the view sits at the far end. Never set
+    /// for a plain Flickable.
+    reversed: Cell<[bool; 2]>,
     pub(crate) drag: drag::DragState,
 }
 
@@ -316,6 +321,7 @@ impl Default for FlickState {
             drag_moving: Cell::new([false; 2]),
             wheel_timer: Cell::new(None),
             wheel_enabled: Cell::new(true),
+            reversed: Cell::new([false; 2]),
             drag: drag::DragState::default(),
         }
     }
@@ -329,6 +335,8 @@ pub(crate) const Y: usize = 1;
 pub(crate) struct Dir {
     pub position: PropIndex,
     pub content: PropIndex,
+    /// Where the content starts: 0 unless a view moved it.
+    pub origin: PropIndex,
     pub view: PropIndex,
     pub lead: PropIndex,
     pub trail: PropIndex,
@@ -344,6 +352,7 @@ pub(crate) fn dir(axis: usize) -> Dir {
         Dir {
             position: Flickable::CONTENT_X.index,
             content: Flickable::CONTENT_WIDTH.index,
+            origin: Flickable::ORIGIN_X.index,
             view: Item::WIDTH.index,
             lead: Flickable::LEFT_MARGIN.index,
             trail: Flickable::RIGHT_MARGIN.index,
@@ -357,6 +366,7 @@ pub(crate) fn dir(axis: usize) -> Dir {
         Dir {
             position: Flickable::CONTENT_Y.index,
             content: Flickable::CONTENT_HEIGHT.index,
+            origin: Flickable::ORIGIN_Y.index,
             view: Item::HEIGHT.index,
             lead: Flickable::TOP_MARGIN.index,
             trail: Flickable::BOTTOM_MARGIN.index,
@@ -399,7 +409,7 @@ pub(crate) fn state_of(engine: &Engine, obj: ObjectId) -> Option<Rc<FlickState>>
 /// A native write that is not an assignment: the value is the same as
 /// before or the property takes it, and a binding the author put there
 /// gives its value again when it next runs.
-fn put(e: &Engine, obj: ObjectId, p: PropIndex, v: Value) {
+pub(crate) fn put(e: &Engine, obj: ObjectId, p: PropIndex, v: Value) {
     if e.untrack(|| e.read(obj, p)).change_equals(&v) {
         return;
     }
@@ -412,7 +422,7 @@ pub(crate) fn put_flag(e: &Engine, obj: ObjectId, p: PropIndex, v: bool) {
 
 /// How long the content is in one direction: the content size, or the
 /// Flickable's own when none was given. Reads are tracked.
-fn extent(e: &Engine, f: ObjectId, d: &Dir) -> f64 {
+pub(crate) fn extent(e: &Engine, f: ObjectId, d: &Dir) -> f64 {
     let content = num(e, f, d.content);
     if content < 0.0 {
         num(e, f, d.view)
@@ -429,8 +439,19 @@ pub fn axis_state(engine: &Engine, flickable: ObjectId, horizontal: bool) -> Axi
 
 pub(crate) fn bounds(e: &Engine, f: ObjectId, axis: usize) -> AxisState {
     let d = dir(axis);
-    let min = -num(e, f, d.lead);
-    let max = (extent(e, f, &d) - num(e, f, d.view) + num(e, f, d.trail)).max(min);
+    // The origin is 0 for a plain Flickable; a view moves it when rows
+    // come in before the first one it laid out.
+    let origin = num(e, f, d.origin);
+    let (lead, trail) = (num(e, f, d.lead), num(e, f, d.trail));
+    let far = origin + extent(e, f, &d) - num(e, f, d.view) + trail;
+    let reversed = e
+        .with(f, |fl: &Flickable| fl.state.reversed.get()[axis])
+        .unwrap_or(false);
+    let (min, max) = if reversed {
+        (far.min(origin - lead), far)
+    } else {
+        (origin - lead, far.max(origin - lead))
+    };
     AxisState {
         position: num(e, f, d.position),
         min,
@@ -500,8 +521,18 @@ fn align(e: &Engine, f: ObjectId, axis: usize) {
     });
 }
 
+/// Says that the content of `f` runs the other way in one direction
+/// (see [`FlickState`]). For the views.
+pub(crate) fn set_reversed(e: &Engine, f: ObjectId, axis: usize, reversed: bool) {
+    if let Some(st) = state_of(e, f) {
+        let mut now = st.reversed.get();
+        now[axis] = reversed;
+        st.reversed.set(now);
+    }
+}
+
 /// Brings the content inside its bounds in one direction.
-fn settle(e: &Engine, f: ObjectId, axis: usize) {
+pub(crate) fn settle(e: &Engine, f: ObjectId, axis: usize) {
     let state = e.untrack(|| bounds(e, f, axis));
     if let Motion::Jump(to) = scroll_physics(e).settle(&state) {
         scroll_to(e, f, axis, to);
@@ -645,7 +676,8 @@ fn visible_share(e: &Engine, f: ObjectId, axis: usize) -> (f64, f64) {
     if total <= 0.0 {
         return (0.0, 1.0);
     }
-    ((num(e, f, d.position) + lead) / total, view / total)
+    let from = num(e, f, d.position) - num(e, f, d.origin);
+    ((from + lead) / total, view / total)
 }
 
 #[qml_impl]
