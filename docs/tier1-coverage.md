@@ -1,8 +1,10 @@
 # Tier-1 coverage
 
 How much of real QML runs in the binding VM (tier 1, ARCHITECTURE.md §5.4) rather than in
-JavaScript (tier 2), why the rest does not, and what the VM is worth. Measured on 2026-10-11 at
-`IR_VERSION` 5. Tier-1 coverage is an M1 exit criterion; this page is where the number is published.
+JavaScript (tier 2), why the rest does not, and what the VM is worth. The qtdoc numbers were
+measured on 2026-10-11 at `IR_VERSION` 6, with QML singletons instantiated; the `features/` rows
+are from `IR_VERSION` 5 and were not measured again. Tier-1 coverage is an M1 exit criterion; this
+page is where the number is published.
 
 An expression is tier 1 only when all of it is in the subset. There is no partial compilation: one
 construct outside the subset leaves the whole expression to tier 2, and the reason is counted.
@@ -13,7 +15,8 @@ it never reaches JavaScript either.
 
 | Body of QML | Files | Bindings | Handlers | Functions | All |
 |---|---|---|---|---|---|
-| `corpus/qtdoc` at `e05e4f4` | 524 | 8548 / 9594 (**89.1 %**) | 157 / 762 (20.6 %) | 93 / 338 (27.5 %) | 8798 / 10694 (82.3 %) |
+| `corpus/qtdoc` at `e05e4f4` | 524 | 9387 / 9594 (**97.8 %**) | 166 / 762 (21.8 %) | 98 / 338 (29.0 %) | 9651 / 10694 (90.2 %) |
+| the same before singletons (`IR_VERSION` 5) | 524 | 8548 / 9594 (89.1 %) | 157 / 762 (20.6 %) | 93 / 338 (27.5 %) | 8798 / 10694 (82.3 %) |
 | `features/` (the QML of every scenario) | 1123 | 841 / 1036 (**81.2 %**) | 300 / 365 (82.2 %) | 262 / 420 (62.4 %) | 1403 / 1821 (77.0 %) |
 | `features/` without `bindings/expressions.feature` | 1030 | 747 / 942 (79.3 %) | 300 / 365 (82.2 %) | 78 / 236 (33.1 %) | 1125 / 1543 (72.9 %) |
 
@@ -26,9 +29,12 @@ the last row is the fairer picture of the ledger. The ledger also over-represent
 for: its scenarios exercise `Qt.locale`, colour functions, text metrics and array methods one by
 one.
 
-Of the 1046 corpus bindings that are tier 2, 875 read or call a QML singleton
-(`Constants.width`, `Theme.responsiveSize(8)`). The engine does not instantiate singletons yet, so
-neither tier evaluates them today. Leaving them out, 8548 of 8719 bindings (98.0 %) are tier 1.
+Singletons are where the difference between the two qtdoc rows comes from. Of the 1046 corpus
+bindings that were tier 2, 875 read or called a QML singleton (`Constants.width`,
+`Theme.responsiveSize(8)`). A read of a singleton's property is now a tracked read like any other
+(tier 0 when the binding is nothing else), and a call of one of its functions runs in the VM when
+the function is itself tier 1 and writes nothing (`Op::Invoke`). 38 bindings still call a
+singleton's function that is tier 2 or native (`.iconSource()` 27).
 
 ## Why expressions are tier 2
 
@@ -36,21 +42,18 @@ neither tier evaluates them today. Leaving them out, 8548 of 8719 bindings (98.0
 
 | All | Bindings | Handlers | Functions | Construct |
 |---:|---:|---:|---:|---|
-| 638 | 628 | 9 | 1 | member of a singleton |
-| 428 | 56 | 279 | 93 | method call (`.open()`, `.push()`, `.start()`, a signal emitted) |
-| 226 | 213 | 6 | 7 | method call of a singleton |
-| 170 | 16 | 135 | 19 | call of a function that is itself tier 2 |
-| 106 | 0 | 56 | 50 | more than one effect (two writes, or a write and a call) |
-| 77 | 38 | 26 | 13 | global function call (`console.log` 15, `Qt.resolvedUrl` 11, `Qt.darker` 10, `Qt.font` 8) |
+| 432 | 56 | 281 | 95 | method call (`.letterSelected()` 26, `.close()` 21, `.open()` 18, `.pop()` 13, `.push()` 12, `.start()` 12) |
+| 178 | 17 | 138 | 23 | call of a function that is itself tier 2 (it writes 58, it has a `for` 19) |
+| 110 | 0 | 60 | 50 | more than one effect (two writes, or a write and a call) |
+| 79 | 38 | 28 | 13 | global function call (`console.log` 15, `Qt.resolvedUrl` 11, `Qt.darker` 10, `Qt.font` 8) |
 | 54 | 2 | 25 | 27 | statement (`for` 26, `var` in a block 14, `switch` 11) |
-| 45 | 34 | 11 | 0 | singleton as a value |
+| 48 | 38 | 6 | 4 | method call of a singleton whose function is tier 2, writes or is native (`.iconSource()` 27) |
 | 29 | 2 | 26 | 1 | assignment (to an element 17, inside an expression 12) |
-| 23 | 3 | 14 | 6 | import namespace |
+| 22 | 2 | 14 | 6 | import namespace |
 | 20 | 10 | 3 | 7 | `new` (`Date` 15) |
 | 14 | 12 | 2 | 0 | attached object of a value (`item.Layout.fillWidth`) |
-| 10 | 10 | 0 | 0 | member (`Qt.platform` 6) |
 | 10 | 0 | 10 | 0 | write to a member of a value (`font.bold = true` through a held value) |
-| 46 | 22 | 3 | 21 | the rest, under ten each: a script that does not parse, assignment to a name only the run-time context can place, object literal, function value, regular expression, a pattern or default value as a parameter, call of a value, type as a value, `instanceof`, spread |
+| 47 | 30 | 3 | 14 | the rest, under ten each: object literal, assignment to a name only the run-time context can place, member (`Qt.platform` 6), function value, regular expression, a pattern or default value as a parameter, call of a value, type as a value, an operator, spread |
 
 ### features
 
@@ -66,9 +69,8 @@ neither tier evaluates them today. Leaving them out, 8548 of 8719 bindings (98.0
 
 ### What would move the number
 
-- **Singletons** are 909 of the 1896 tier-2 expressions of qtdoc. Once the engine instantiates
-  them, a singleton's property is a tracked read like any other and its pure functions can be
-  inlined as a file's own are; the generator already tells the three cases apart.
+- **Singletons** were 909 of the 1896 tier-2 expressions of qtdoc and are 48 of 1043 now. What is
+  left calls a function that is tier 2 for a reason of its own, so it moves with the rows above.
 - **Colour functions** (`Qt.lighter`, `darker`, `tint`, `alpha`, `colorEqual`) and **`Qt.font`**
   live in the engine's JavaScript prelude. Tier 1 can take them only by sharing one
   implementation with tier 2 or by proving a Rust port bit-exact.
@@ -86,7 +88,7 @@ target/debug/ljos check --stats --summary --tree --quiet corpus/qtdoc
 
 `--tree` reads a directory laid out as a set of examples and compiles every directory two below
 it as a project of its own. Without `--summary` the report has a row per file. `--top N` bounds
-the list of reasons. The command exits non-zero because 1401 qtdoc diagnostics are errors (types
+the list of reasons. The command exits non-zero because 1392 qtdoc diagnostics are errors (types
 Ljós does not have yet); the report is printed first, and a file with an error still counts with
 what did compile.
 

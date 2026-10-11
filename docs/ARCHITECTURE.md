@@ -278,6 +278,8 @@ ljos::module! { "QtQuick" 2.15 => [Item, Rectangle, Text, …] }
 - **Explicit registration** through `module!`, not `inventory` or linker sections. This keeps static linking on iOS deterministic and hot reload simple.
 - **Type dump.** The macros write `ljostypes.json`, which feeds the compiler, the LSP and the API ledger.
 - **`MetaObject` lifetime.** For types defined in QML it is behind an `Arc`, not `'static`, because hot reload replaces it.
+- **As built: enums, flags and reset.** A property says in its attribute which enum it holds (`enumeration = "Name"`) or which flags (`flags = "Name"`); a flags property accepts and reports combinations, and a plain enum written with two keys is a compile error. Enum keys are reachable from scripts through a type or an import namespace (`Text.AlignHCenter`, `T.ScrollBar.AlwaysOff`, `Font.Bold`). A property takes `undefined` only when its type declares a reset (`#[qml(reset)]`, `ljos_engine::Reset`): the write restores the default or the value it follows, and a binding that yields `undefined` stays installed and holds the reset value. Every other property refuses `undefined` with Qt's wording. Two ratchet tests in `ljos_controls` compare the tags and the resets of every registered type with the local Qt's type description; the resets still missing are listed there (`NOT_YET`).
+- **As built: singletons.** A `pragma Singleton` file named by a `qmldir` `singleton` line or found through a directory import is made lazily, once per engine; native singletons are registered per engine. Their members resolve at tier 0 and run in tier 1 where the expression allows.
 
 ---
 
@@ -371,6 +373,7 @@ Creation is a resumable state machine, the `Incubator`. Its phases:
 - **Charging.** Each step charges the owner's `SliceBudget`.
 - **Synchronous creation** runs to completion.
 - **Time-sliced creation.** `Loader.asynchronous`, `incubateObject`, ListView cache delegates and StackView pushes run in slices of at most 3 ms per frame at 60 Hz, scaled down at higher refresh rates. `forceCompletion()` drains the remaining work.
+- **As built.** `Loader.asynchronous` and `Component.incubateObject` (with its incubator object: `status`, `object`, `onStatusChanged`, `forceCompletion()`) run in slices. A frame gives creation jobs 3 ms at 60 Hz and below and the same share of a shorter frame above it, never less than 250 µs; a host that does not report its refresh rate (`QuickScene::set_refresh_rate`; the egui shell does not yet) is taken to show 60 Hz. The time is charged to the boundary or Loader that owns the job. Applying values, evaluating bindings, completion hooks and `Component.onCompleted` are each cut into steps; allocating a component's objects is still one step, and one long binding or handler is never interrupted. `Qt.createComponent` and `Component.createObject` with initial properties work from scripts. `Qt.createQmlObject` needs the compiler, so it goes through a hook the dev host installs and reports an error in a shipped app.
 
 ### 6.4 One Engine, many windows
 
@@ -629,6 +632,13 @@ Source: 03 §3.
           └─ DevSup: watcher → compiler → patch server
   ```
 
+**As built (M1).**
+- **One place.** Every fault comes through `Engine::report_fault`, is logged with its QML file and line (and stack for a JS exception), kept in a history of 32, and queued. Panics are caught around each native method, signal handler, completion hook and JS entry, so the later handlers of the same signal still run.
+- **Delivery is between turns,** at the start of the next frame (`Engine::deliver_faults`), never where the fault was caught: the code that failed may be on the stack of the object a boundary is about to discard.
+- **Boundaries.** `ErrorBoundary { fallback: Component }` lives in the QML module `Ljos` (`import Ljos`). A fault below it destroys its content and shows the fallback; it exposes the fault (kind, message, file, line) and `retry()`. A Loader is a boundary too and shows `Loader.Error`. When restarts exceed the boundary's intensity the fault goes to the boundary around it. A JS exception is a boundary's fault only when it asks (`catchExceptions: true`); otherwise it is logged, as in Qt.
+- **No boundary.** The fault reaches the application (`Engine::application_fault`, `set_fault_handler`) and nothing is destroyed. A development build shows it in the error overlay until the next reload that applies.
+- **Supervisor tree.** `ljos_runtime::supervisor` has the strategies, restart kinds and intensity on the engine's `Clock`. UI boundaries are supervisors created at their first fault. tokio tasks (`JoinSet`, `CancellationToken`) are behind the crate's `tasks` feature, as a tree of their own that its owner drives; escalation from it to the host is not wired yet. Plugin threads and `DevSup` are not built.
+
 kameo may be used inside the service layer later. ractor and actix are rejected.
 
 ---
@@ -852,6 +862,12 @@ Source: 05 §3.1.
   - interactive items with no name;
   - images with no name or `ignored`;
   - `qsTr` called with a non-literal.
+- **As built (M1).**
+  - The role table covers every documented `Accessible.Role`, with a test that none is missing. Checked, mixed, pressed, expanded, disabled, read-only and selected states, value ranges, and `position_in_set`/`size_of_set` for ComboBox and Menu rows are told. Default roles and states of controls are a reading of the documentation: what Qt hands to assistive technology by default cannot be read from QML.
+  - `SystemPrefs` (`ljos_a11y::prefs`) is set by the host and by tests. `Qt.styleHints.colorScheme`, `.accessibility.contrastPreference` and `.accessibility.motionPreference` read it; `fontScale`, `screenReaderActive` and `font.scaleWithSystem` are Ljós extensions. The egui host feeds the colour scheme and whether something listens, nothing else yet. Reduced motion completes finite animations on their first frame; timers and scrolling are unaffected.
+  - The audit has eight coded checks (`a11y-unnamed-interactive`, `a11y-unnamed-image`, `a11y-duplicate-name`, `a11y-target-size`, `a11y-tab-trap`, `a11y-tab-unreachable`, `a11y-contrast`, `a11y-set-size`). It presses nothing and measures contrast from the last frame. `ljos test` does not run it on every mounted component yet. Known finding: the Basic style's placeholder text is 3.04:1 on white, which is Qt's palette value.
+  - `ljos check` runs the static lints by default (`--no-lint` leaves them out); a finding is a warning.
+  - Controls take keyboard focus by `focusPolicy`, and the Basic style draws `visualFocus` on the button-like controls.
 
 ---
 
@@ -910,6 +926,8 @@ Many QML apps are a thin QML view over native controllers. The QML reads state f
   - `grabImage` and `SignalSpy`.
 
   This is an *import path* for existing tests. New behaviour is specified in Gherkin (section 18).
+
+  As built: `ljos test <files or dirs> [-import <dir>] [--filter name] [--json file]` finds `tst_*.qml`, runs each file in a fresh engine and prints QtTest's plain-text lines; its exit status is the number of failed tests, as Qt's is. Input goes through the scene's pointer, wheel and key paths, and every wait advances the virtual clock, so a suite is deterministic and as fast as the machine. `mise run qttest:parity` runs the crate's own suites on `ljos test` and on Qt's runner and compares the result lines. Not implemented: `failOnWarning`, `ignoreWarning`, benchmarks, and touch points told apart by id.
 - **External acceptance suites** (section 18.4): an app's own `.feature` files run against Ljós through an allowlist and a ratchet.
 - **A migration guide and `ljos check --port`,** which reports, from the API ledger, which types and members an app uses that Ljós does not yet support. The MCP tool `api_status` exposes the same data (section 19).
 
@@ -1014,6 +1032,8 @@ An app that migrates to Ljós can bring its own Gherkin suite as acceptance evid
 
 **First suite: `acceptance/hal-c2/`.** HAL-C2's `features/` tree, read in place at a pinned commit. About 51 of its files use `objectName`, 15 use bricks and 31 synthesise input.
 
+**As built.** `mise run features:acceptance <suite>` reads the suite in place (from `--path`, the environment variable the `PIN` names, or the `PIN`'s own path), refuses a checkout at another commit or with uncommitted changes, and refuses a glob that matches nothing. `--raise` adds what passes to `RATCHET` and never removes a line. The format is in `acceptance/README.md`. `acceptance/example/` is a small suite inside this repository that proves the mechanism and is the model to copy; an adapter crate is a workspace of its own. No application's suite is here yet.
+
 ### 18.5 API ledger
 
 `ledger/qtquick.toml` is generated from Ljós's type dump and qml-solid's `qmltypes` names. It has one row per type, property, signal and method.
@@ -1049,6 +1069,8 @@ An app that migrates to Ljós can bring its own Gherkin suite as acceptance evid
 4. Performance benches.
 
 **PR gate:** no scenario in `features/RATCHET` may regress.
+
+**As built: the gallery.** `mise run gallery` renders the qtdoc examples listed in `corpus/examples.json` with `ljos render` (R backend, headless, virtual clock), scores each against the picture `mise run gallery:reference` made with the local qml6, writes an HTML report and holds the floors in `corpus/expected.json`. An example that does not load scores 0 with its first error. The Qt pictures are not committed, so a checkout without them has nothing to hold and the task fails until `gallery:reference` has run. `mise run qttest` and `qttest:parity` run the QtTest suites.
 
 ---
 
@@ -1196,6 +1218,8 @@ Actions never quietly fall back to coordinates.
 - **Idle.** No timers and no polling. A request sets the wake flag. Subscriptions push only from events that already happen. **An idle app stays at 0 % CPU,** and with no client attached there is no MCP work at all.
 - **Accessibility tree on demand.** The a11y pass normally runs only for an active assistive technology. While a request is being served the inspector counts as one, and is released afterwards.
 - **Determinism.** With `--test-clock`, `app_advance` drives the virtual `Clock`. A BDD scenario and an agent session on the in-process transport have the same semantics.
+- **As built (M1, read-only).** `ljos run --mcp` serves `app_status`, `app_snapshot`, `app_find`, `app_inspect`, `app_screenshot`, `app_logs` and `app_metrics` and the resources `ljos://app/tree`, `ljos://app/logs` and `ljos://app/metrics`. Input, mutate and eval tools are not registered and the capability check refuses them. The server has a thread of its own that sleeps until a client writes; it reaches the Engine through an inbox of 16 that is its own, not a `UiMsg` variant, and wakes the UI thread once per call. Capture is one step; only rendering the outline yields. Screenshots are drawn by the R backend on the UI thread. The transport is HTTP on a loopback port of the system's choosing; the token is in `target/ljos/mcp-<pid>.json` below the directory `ljos run` started in, and a process killed by a signal leaves the file until the next start there. `--mcp-bind`, `--mcp-insecure-lan` and a Unix-socket option are not in the CLI yet. The `mcp` feature is off by default, and a test proves the default shell links no `rmcp`.
+- **As built: `top`.** `ljos run --top` shows the last frame's time per lane and its owners. The host hands the overlay the report of each frame the scene ran anyway, so it asks for no frame and holds no timer; hidden, it records nothing. Lanes cover scheduled jobs (creation, inbox, inspector), not the synchronous binding, layout and paint stages, which show in the frame time only.
 
 ### 19.6 Budgets
 
