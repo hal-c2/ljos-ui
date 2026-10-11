@@ -16,7 +16,7 @@ use crate::util::{bind_default, is_a, is_unset};
 
 /// Gives `obj` the role, and the name in `name` (a string property of
 /// `obj`), unless its author set them with `Accessible.`.
-fn defaults(
+pub(crate) fn defaults(
     engine: &Engine,
     obj: ObjectId,
     role: Role,
@@ -40,7 +40,11 @@ fn defaults(
 
 /// A button is named by its text.
 pub(crate) fn button_defaults(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    let role = if is_a::<CheckBox>(engine, obj) {
+    let role = if is_a::<crate::menu::MenuItem>(engine, obj) {
+        Role::MenuItem
+    } else if is_a::<crate::combobox::ItemDelegate>(engine, obj) {
+        Role::ListItem
+    } else if is_a::<CheckBox>(engine, obj) {
         Role::CheckBox
     } else if is_a::<RadioButton>(engine, obj) {
         Role::RadioButton

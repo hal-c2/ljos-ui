@@ -1,0 +1,390 @@
+//! What the scenarios in `features/controls/` cannot see of popups.
+
+use std::rc::Rc;
+use std::sync::Arc;
+
+use ljos_engine::{Engine, ObjectId, Value};
+use ljos_quick::{PointerEvent, QuickScene};
+use ljos_render::kurbo;
+use ljos_runtime::{Clock, Time, VirtualClock};
+
+fn engine() -> Engine {
+    let e = Engine::new();
+    ljos_quick::register(&e);
+    ljos_controls::register(&e);
+    // What a test then finds in the log is what its own steps said, not
+    // what registering every type of the module did.
+    e.take_log();
+    e
+}
+
+/// Compiles `source` as `Main.qml` and creates it.
+fn load(e: &Engine, source: &str) -> ObjectId {
+    use ljos_compiler::{Project, compile_file};
+    let mut project = Project::new(qml_front::QtTypeOracle);
+    project.add("Main", source);
+    let c = compile_file(&project, "Main").unwrap_or_else(|d| panic!("{d:?}"));
+    assert!(!c.has_errors(), "{:?}", c.diagnostics);
+    let mut files = ljos_engine::MapSource::new();
+    files.insert("Main", c.file);
+    e.set_component_source(files);
+    e.create_from_url("Main", None, Vec::new())
+        .unwrap_or_else(|err| panic!("Main.qml: {err}"))
+}
+
+fn find(e: &Engine, root: ObjectId, name: &str) -> ObjectId {
+    let mut stack = vec![root];
+    while let Some(o) = stack.pop() {
+        if e.read_by_name(o, "objectName").to_js_string().as_str() == name {
+            return o;
+        }
+        stack.extend(e.children(o));
+    }
+    panic!("no object named {name}")
+}
+
+fn scene(e: &Engine, root: ObjectId) -> QuickScene {
+    let mut s = QuickScene::new(kurbo::Size::new(400.0, 400.0));
+    s.set_root(e, root).unwrap();
+    s
+}
+
+/// Frames until the scene asks for no more, and returns its next wake.
+fn settle(s: &mut QuickScene, e: &Engine, now: Time) -> Option<Time> {
+    for _ in 0..16 {
+        let out = s.frame(e, now);
+        if !s.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
+            return out.next_wake;
+        }
+    }
+    panic!("the scene did not settle");
+}
+
+fn text(e: &Engine, o: ObjectId, name: &str) -> String {
+    e.read_by_name(o, name).to_js_string().to_string()
+}
+
+fn flag(e: &Engine, o: ObjectId, name: &str) -> bool {
+    e.read_by_name(o, name).to_boolean()
+}
+
+fn click(s: &mut QuickScene, e: &Engine, x: f64, y: f64) {
+    s.pointer_event(e, &PointerEvent::press(x, y, Time::ZERO));
+    s.pointer_event(e, &PointerEvent::release(x, y, Time::ZERO));
+    settle(s, e, Time::ZERO);
+}
+
+/// Nothing is waiting: no frame, no wake and no timer.
+fn assert_idle(s: &mut QuickScene, e: &Engine, when: &str) {
+    assert_eq!(settle(s, e, Time::ZERO), None, "a wake {when}");
+    assert!(!s.needs_frame(), "a frame {when}");
+    assert_eq!(e.next_timer_deadline(), None, "a timer {when}");
+}
+
+const POPUPS: &str = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    id: root
+    width: 400; height: 400
+    Item { objectName: "before"; focus: true; width: 10; height: 10 }
+    Popup { objectName: "plain"; width: 50; height: 50 }
+    Dialog {
+        objectName: "dialog"; title: "Sure?"; modal: true; focus: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+    }
+    Menu {
+        objectName: "menu"
+        MenuItem { text: "One" }
+        Menu { title: "More"; MenuItem { text: "Deep" } }
+    }
+    ComboBox { objectName: "combo"; y: 300; model: ["One", "Two"] }
+}
+"#;
+
+#[test]
+fn a_popup_that_is_open_or_closed_schedules_nothing() {
+    let e = engine();
+    let root = load(&e, POPUPS);
+    let mut s = scene(&e, root);
+    assert_idle(&mut s, &e, "before anything is open");
+    for name in ["plain", "dialog", "menu"] {
+        let p = find(&e, root, name);
+        e.invoke_by_name(p, "open", &[]).unwrap();
+        assert!(flag(&e, p, "opened"), "{name}");
+        assert_idle(&mut s, &e, &format!("with {name} open"));
+        e.invoke_by_name(p, "close", &[]).unwrap();
+        assert_idle(&mut s, &e, &format!("with {name} closed again"));
+    }
+    click(&mut s, &e, 20.0, 320.0);
+    let combo = find(&e, root, "combo");
+    assert!(flag(&e, combo, "down"));
+    assert_idle(&mut s, &e, "with the combo box open");
+    assert_eq!(format!("{:?}", e.take_log()), "[]", "a warning");
+}
+
+#[test]
+fn a_tool_tip_holds_a_timer_only_while_it_waits() {
+    let clock = Arc::new(VirtualClock::new());
+    let e = engine();
+    e.set_clock(Rc::new(clock.clone()));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    ToolTip { objectName: "tip"; text: "Hint"; delay: 500; timeout: 1000 }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    let tip = find(&e, root, "tip");
+    assert_idle(&mut s, &e, "before the tip is asked for");
+
+    // A timer is due within its own coarseness of what was asked.
+    let due = |ms: u64| {
+        let at = e.next_timer_deadline().expect("a timer");
+        let range = Time::from_millis(ms)..Time::from_millis(ms + 20);
+        assert!(range.contains(&at), "{at:?} is not {ms} ms");
+        at
+    };
+    e.invoke_by_name(tip, "open", &[]).unwrap();
+    let shows = due(500);
+    assert!(!flag(&e, tip, "opened"));
+
+    clock.set(shows);
+    e.advance_timers(clock.now());
+    settle(&mut s, &e, clock.now());
+    assert!(flag(&e, tip, "opened"));
+    let hides = due(1500);
+
+    clock.set(hides);
+    e.advance_timers(clock.now());
+    settle(&mut s, &e, clock.now());
+    assert!(!flag(&e, tip, "visible"));
+    assert_eq!(e.next_timer_deadline(), None);
+}
+
+/// The nodes of the tree as (role word, name, modal).
+fn nodes(s: &QuickScene) -> Vec<(String, String, bool)> {
+    let mut out = Vec::new();
+    s.accessibility_tree().walk(|_, _, d| {
+        out.push((ljos_a11y::role_word(d.role), d.name.clone(), d.modal));
+    });
+    out
+}
+
+#[test]
+fn a_shown_modal_popup_is_modal_to_an_assistive_technology() {
+    let e = engine();
+    let root = load(&e, POPUPS);
+    let mut s = scene(&e, root);
+    s.set_accessibility_active(&e, true);
+    settle(&mut s, &e, Time::ZERO);
+    assert!(nodes(&s).iter().all(|(role, ..)| role != "dialog"));
+
+    let dialog = find(&e, root, "dialog");
+    e.invoke_by_name(dialog, "open", &[]).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    let dialogs: Vec<_> = nodes(&s)
+        .into_iter()
+        .filter(|(role, ..)| role == "dialog")
+        .collect();
+    assert_eq!(dialogs, [("dialog".to_owned(), "Sure?".to_owned(), true)]);
+
+    // One that is not modal leaves the rest of the window reachable.
+    e.write_by_name(dialog, "modal", Value::Bool(false))
+        .unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    assert!(nodes(&s).iter().all(|(.., modal)| !modal));
+}
+
+#[test]
+fn the_keyboard_goes_into_a_popup_and_back() {
+    let e = engine();
+    let root = load(&e, POPUPS);
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let before = find(&e, root, "before");
+    let dialog = find(&e, root, "dialog");
+    assert!(flag(&e, before, "activeFocus"));
+    e.invoke_by_name(dialog, "open", &[]).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    assert!(flag(&e, dialog, "activeFocus"));
+    assert!(!flag(&e, before, "activeFocus"));
+    e.invoke_by_name(dialog, "close", &[]).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    assert!(flag(&e, before, "activeFocus"));
+}
+
+const COMBO: &str = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    id: root
+    width: 400; height: 400
+    ListModel {
+        id: rows
+        objectName: "rows"
+        ListElement { name: "Alpha"; code: 10 }
+        ListElement { name: "Beta"; code: 20 }
+    }
+    ComboBox { objectName: "combo"; model: rows; textRole: "name"; valueRole: "code" }
+}
+"#;
+
+/// The texts of the rows of the combo box's popup, from the top.
+fn rows(e: &Engine, combo: ObjectId) -> Vec<String> {
+    let popup = e.read_by_name(combo, "popup").as_object().unwrap();
+    let content = e.read_by_name(popup, "contentItem").as_object().unwrap();
+    let mut rows: Vec<(f64, String)> = ljos_quick::child_items(e, content)
+        .into_iter()
+        .map(|d| (e.read_by_name(d, "y").to_number(), text(e, d, "text")))
+        .collect();
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, t)| t).collect()
+}
+
+fn call(e: &Engine, o: ObjectId, method: &str, args: &[Value]) {
+    e.invoke_by_name(o, method, args).unwrap();
+}
+
+#[test]
+fn a_combo_box_makes_its_rows_when_it_first_opens() {
+    let e = engine();
+    let root = load(&e, COMBO);
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let combo = find(&e, root, "combo");
+    assert!(rows(&e, combo).is_empty());
+    click(&mut s, &e, 20.0, 20.0);
+    assert_eq!(rows(&e, combo), ["Alpha", "Beta"]);
+    // They are kept when it closes.
+    click(&mut s, &e, 20.0, 20.0);
+    assert!(!flag(&e, combo, "down"));
+    assert_eq!(rows(&e, combo), ["Alpha", "Beta"]);
+}
+
+#[test]
+fn the_rows_of_a_combo_box_follow_its_model() {
+    let e = engine();
+    let root = load(&e, COMBO);
+    let mut s = scene(&e, root);
+    let combo = find(&e, root, "combo");
+    let model = find(&e, root, "rows");
+    settle(&mut s, &e, Time::ZERO);
+    click(&mut s, &e, 20.0, 20.0);
+
+    let name = |n: &str| Value::string(n);
+    call(
+        &e,
+        model,
+        "setProperty",
+        &[Value::Int(1), name("name"), name("Bravo")],
+    );
+    settle(&mut s, &e, Time::ZERO);
+    assert_eq!(rows(&e, combo), ["Alpha", "Bravo"]);
+
+    call(
+        &e,
+        model,
+        "move",
+        &[Value::Int(1), Value::Int(0), Value::Int(1)],
+    );
+    settle(&mut s, &e, Time::ZERO);
+    assert_eq!(rows(&e, combo), ["Bravo", "Alpha"]);
+
+    call(&e, model, "remove", &[Value::Int(0)]);
+    settle(&mut s, &e, Time::ZERO);
+    assert_eq!(rows(&e, combo), ["Alpha"]);
+    assert_eq!(text(&e, combo, "currentText"), "Alpha");
+
+    // Another role names the rows, and they say so.
+    e.write_by_name(combo, "textRole", name("code")).unwrap();
+    settle(&mut s, &e, Time::ZERO);
+    assert_eq!(rows(&e, combo), ["10"]);
+    assert_eq!(format!("{:?}", e.take_log()), "[]", "a warning");
+}
+
+#[test]
+fn a_model_that_outlives_its_combo_box_does_not_reach_it() {
+    let e = engine();
+    let root = load(&e, COMBO);
+    let mut s = scene(&e, root);
+    let combo = find(&e, root, "combo");
+    let model = find(&e, root, "rows");
+    settle(&mut s, &e, Time::ZERO);
+    click(&mut s, &e, 20.0, 20.0);
+    assert_eq!(rows(&e, combo).len(), 2);
+    e.destroy(combo);
+    settle(&mut s, &e, Time::ZERO);
+    assert!(!e.is_alive(combo));
+    call(&e, model, "remove", &[Value::Int(0)]);
+    settle(&mut s, &e, Time::ZERO);
+    assert_eq!(e.read_by_name(model, "count").to_number(), 1.0);
+    assert_eq!(format!("{:?}", e.take_log()), "[]", "a warning");
+}
+
+#[test]
+fn a_combo_box_given_its_own_popup_has_no_other() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    ComboBox {
+        objectName: "combo"; model: 2
+        popup: Popup { objectName: "own"; y: 40; width: 80; contentItem: Column {} }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let combo = find(&e, root, "combo");
+    let own = find(&e, root, "own");
+    assert_eq!(e.read_by_name(combo, "popup").as_object(), Some(own));
+    let popups = e
+        .children(combo)
+        .into_iter()
+        .filter(|c| e.is_alive(*c) && e.property_index(*c, "closePolicy").is_ok())
+        .count();
+    assert_eq!(popups, 1);
+    click(&mut s, &e, 20.0, 20.0);
+    assert!(flag(&e, own, "visible"));
+    assert_eq!(rows(&e, combo), ["0", "1"]);
+}
+
+#[test]
+fn a_screen_reader_opens_a_combo_box_and_picks_a_row() {
+    let e = engine();
+    let root = load(&e, COMBO);
+    let mut s = scene(&e, root);
+    s.set_accessibility_active(&e, true);
+    settle(&mut s, &e, Time::ZERO);
+    let combo = find(&e, root, "combo");
+    let key = |s: &QuickScene, role: &str, name: &str| {
+        let mut found = None;
+        s.accessibility_tree().walk(|key, _, d| {
+            if found.is_none() && ljos_a11y::role_word(d.role) == role && d.name == name {
+                found = Some(key);
+            }
+        });
+        found.unwrap_or_else(|| panic!("no {role} named {name}"))
+    };
+    let node = key(&s, "combobox", "Alpha");
+    assert!(s.accessible_press(&e, node, Time::ZERO));
+    settle(&mut s, &e, Time::ZERO);
+    assert!(flag(&e, combo, "down"));
+    let row = key(&s, "listitem", "Beta");
+    assert!(s.accessible_press(&e, row, Time::ZERO));
+    settle(&mut s, &e, Time::ZERO);
+    assert!(!flag(&e, combo, "down"));
+    assert_eq!(text(&e, combo, "currentText"), "Beta");
+    assert_eq!(e.read_by_name(combo, "currentValue").to_number(), 20.0);
+}

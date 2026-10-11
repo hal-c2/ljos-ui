@@ -12,6 +12,8 @@ build = "build.rs"
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_engine = { path = "../ljos_engine" }
+# SpinBox writes and reads its number as the locale does.
+ljos_i18n = { path = "../ljos_i18n", default-features = false }
 # The compiled style is embedded as IR and read back at registration.
 ljos_ir = { path = "../ljos_ir" }
 ljos_quick = { path = "../ljos_quick" }

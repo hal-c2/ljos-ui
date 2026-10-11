@@ -19,14 +19,26 @@
 mod a11y;
 mod action;
 mod button;
+mod combobox;
 mod containers;
 mod control;
+mod dialog;
 mod group;
 mod inherit;
 mod label;
+mod menu;
 mod palette;
 mod parts;
+mod popup;
+mod scroll_bar;
+mod scroll_view;
+mod spin_box;
 mod style;
+mod text_area;
+mod text_control;
+mod text_field;
+mod ticker;
+mod tooltip;
 mod util;
 mod window;
 
@@ -36,11 +48,21 @@ use ljos_engine::{Engine, MetaRef, QmlType, Version};
 
 pub use action::Action;
 pub use button::{AbstractButton, Button, CheckBox, Icon, RadioButton, Switch, ToolButton};
+pub use combobox::{ComboBox, ItemDelegate};
 pub use containers::{Frame, GroupBox, Page, Pane, ToolBar};
 pub use control::Control;
+pub use dialog::{Dialog, DialogButtonBox, DialogButtonBoxAttached};
 pub use group::{ButtonGroup, ButtonGroupAttached};
 pub use label::Label;
+pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use palette::Palette;
+pub use popup::{Overlay, OverlayAttached, Popup, PopupAnchors};
+pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
+pub use scroll_view::ScrollView;
+pub use spin_box::{SpinBox, SpinButton};
+pub use text_area::TextArea;
+pub use text_field::TextField;
+pub use tooltip::{ToolTip, ToolTipAttached};
 pub use util::CATEGORY;
 pub use window::{ApplicationWindow, Window};
 
@@ -66,6 +88,10 @@ pub fn register(engine: &Engine) {
         Control, AbstractButton, Button, ToolButton, CheckBox, RadioButton, Switch,
         Pane, Frame, GroupBox, ToolBar, Page, Label,
         Action, ButtonGroup, ApplicationWindow,
+        Popup, Overlay, Dialog, DialogButtonBox,
+        Menu, MenuItem, MenuSeparator,
+        ToolTip,
+        ComboBox, ItemDelegate,
     ]));
     // Replaces the attached-only `Window` of `ljos_quick` with one that can
     // also be a root; the attached properties are the same type.
@@ -81,6 +107,35 @@ pub fn register(engine: &Engine) {
     control::register(engine);
     button::register(engine);
     group::register(engine);
+    popup::register(engine);
+    tooltip::register(engine);
+    combobox::register(engine);
+    for meta in [
+        ScrollBar::static_meta(),
+        ScrollIndicator::static_meta(),
+        ScrollView::static_meta(),
+    ] {
+        engine.register_type(
+            "QtQuick.Templates",
+            Version::new(2, 15),
+            MetaRef::Static(meta),
+        );
+    }
+    scroll_bar::register(engine);
+    scroll_view::register(engine);
+    for meta in [
+        TextField::static_meta(),
+        TextArea::static_meta(),
+        SpinBox::static_meta(),
+    ] {
+        engine.register_type(
+            "QtQuick.Templates",
+            Version::new(2, 15),
+            MetaRef::Static(meta),
+        );
+    }
+    text_control::register(engine);
+    spin_box::register(engine);
 
     let (library, undecoded) = StyleLibrary::embedded();
     let names = library.type_names();
@@ -101,6 +156,7 @@ pub fn register(engine: &Engine) {
             AbstractButton::static_meta(),
             Action::static_meta(),
             ButtonGroup::static_meta(),
+            Overlay::static_meta(),
         ] {
             engine.register_type(uri, Version::new(2, 15), MetaRef::Static(meta));
         }

@@ -183,13 +183,16 @@ pub(crate) fn declared_by_style(engine: &Engine, obj: ObjectId) -> bool {
 
 /// The properties of a control that hold parts, by name: a derived type
 /// adds its own to the first two.
-const PART_PROPERTIES: [&str; 6] = [
+const PART_PROPERTIES: [&str; 9] = [
     "background",
     "contentItem",
     "indicator",
     "label",
     "header",
     "footer",
+    "arrow",
+    "up.indicator",
+    "down.indicator",
 ];
 
 /// Destroys the parts the style declared that the application replaced

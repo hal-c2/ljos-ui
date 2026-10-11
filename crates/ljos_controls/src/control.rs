@@ -234,6 +234,14 @@ fn init_control(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
 /// Where a control's content item is: inside the padding, and on a page
 /// between the header and the footer (tracked).
 fn content_rect(engine: &Engine, obj: ObjectId) -> [f64; 4] {
+    // The content item of a scroll bar is its handle.
+    if let Some(handle) = crate::scroll_bar::handle_rect(engine, obj) {
+        return handle;
+    }
+    // That of a button box is around its buttons.
+    if let Some(row) = crate::dialog::button_box_rect(engine, obj) {
+        return row;
+    }
     let x = num(engine, obj, Control::LEFT_PADDING.index);
     let mut y = num(engine, obj, Control::TOP_PADDING.index);
     let w = num(engine, obj, Control::AVAILABLE_WIDTH.index);

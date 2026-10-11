@@ -25,11 +25,13 @@ use std::sync::{Arc, OnceLock};
 use ljos_engine::{
     Color, Engine, EngineError, Font, NodeId, ObjectId, PropIndex, Provenance, QmlType, Value,
 };
-use ljos_quick::{Item, Text};
+use ljos_quick::{Item, Text, TextEditor};
 
 use crate::control::Control;
 use crate::label::Label;
 use crate::palette::{ROLE_COUNT, ROLES, role_props};
+use crate::text_area::TextArea;
+use crate::text_field::TextField;
 use crate::util::{check, warn};
 use crate::window::{ApplicationWindow, Window};
 
@@ -38,6 +40,9 @@ use crate::window::{ApplicationWindow, Window};
 pub(crate) enum Kind {
     Control,
     Label,
+    /// An editor with a background: `TextField`, `TextArea`.
+    TextField,
+    TextArea,
     /// A palette and no font.
     Window,
     ApplicationWindow,
@@ -180,6 +185,10 @@ pub(crate) fn kind_of(engine: &Engine, obj: ObjectId) -> Option<Kind> {
         Some(Kind::Control)
     } else if meta.inherits(Label::static_meta()) {
         Some(Kind::Label)
+    } else if meta.inherits(TextField::static_meta()) {
+        Some(Kind::TextField)
+    } else if meta.inherits(TextArea::static_meta()) {
+        Some(Kind::TextArea)
     } else if meta.inherits(ApplicationWindow::static_meta()) {
         Some(Kind::ApplicationWindow)
     } else if meta.inherits(Window::static_meta()) {
@@ -193,6 +202,7 @@ fn font_prop(kind: Kind) -> Option<PropIndex> {
     match kind {
         Kind::Control => Some(Control::FONT.index),
         Kind::Label => Some(Text::FONT.index),
+        Kind::TextField | Kind::TextArea => Some(TextEditor::FONT.index),
         Kind::ApplicationWindow => Some(ApplicationWindow::FONT.index),
         Kind::Window => None,
     }
@@ -202,9 +212,13 @@ fn roles_of(kind: Kind) -> &'static [PropIndex; ROLE_COUNT] {
     static CONTROL: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     static LABEL: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     static WINDOW: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
+    static TEXT_FIELD: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
+    static TEXT_AREA: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     match kind {
         Kind::Control => CONTROL.get_or_init(|| role_props(Control::static_meta())),
         Kind::Label => LABEL.get_or_init(|| role_props(Label::static_meta())),
+        Kind::TextField => TEXT_FIELD.get_or_init(|| role_props(TextField::static_meta())),
+        Kind::TextArea => TEXT_AREA.get_or_init(|| role_props(TextArea::static_meta())),
         // An ApplicationWindow's palette is its Window part's.
         Kind::Window | Kind::ApplicationWindow => {
             WINDOW.get_or_init(|| role_props(Window::static_meta()))
@@ -216,6 +230,8 @@ fn state_of(engine: &Engine, obj: ObjectId, kind: Kind) -> Option<Rc<InheritStat
     match kind {
         Kind::Control => engine.with::<Control, _>(obj, |c| c.inherit.clone()),
         Kind::Label => engine.with::<Label, _>(obj, |c| c.inherit.clone()),
+        Kind::TextField => engine.with::<TextField, _>(obj, |c| c.inherit.clone()),
+        Kind::TextArea => engine.with::<TextArea, _>(obj, |c| c.inherit.clone()),
         Kind::Window | Kind::ApplicationWindow => {
             engine.with::<Window, _>(obj, |c| c.inherit.clone())
         }
@@ -306,7 +322,9 @@ fn inherited_font(engine: &Engine, obj: ObjectId) -> Arc<Font> {
         if let Some(fp) = kind_of(engine, p).and_then(font_prop) {
             return font_value(&engine.read(p, fp));
         }
-        cur = engine.visual_parent(p);
+        cur = engine
+            .visual_parent(p)
+            .or_else(|| ljos_quick::layer_host(engine, p));
     }
     Arc::new(Font::default())
 }
@@ -372,7 +390,9 @@ fn resolve_palette(
     let enabled = match kind {
         Kind::Window | Kind::ApplicationWindow => true,
         // In a scene this is false inside a disabled item too.
-        Kind::Control | Kind::Label => engine.read(obj, Item::ENABLED.index).to_boolean(),
+        Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
+            engine.read(obj, Item::ENABLED.index).to_boolean()
+        }
     };
     if !in_use && enabled && !state.palette_touched.get() {
         return Ok(());
@@ -403,7 +423,11 @@ fn resolve_palette(
                     }
                 }
             }
-            cur = engine.visual_parent(p);
+            // A popup's item is in the overlay, which is above the window
+            // and takes its look from it.
+            cur = engine
+                .visual_parent(p)
+                .or_else(|| ljos_quick::layer_host(engine, p));
         }
         if !ended {
             warn(engine, "palette: the item tree does not end");

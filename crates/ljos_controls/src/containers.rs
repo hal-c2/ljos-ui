@@ -41,9 +41,18 @@ pub(crate) fn host_append(cx: &Cx, child: ObjectId, host: Host) -> Result<(), En
         .flags(cx.this)
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
     if complete && let Some(ci) = e.untrack(|| object(e, cx.this, host.content_item)) {
-        set_parent_item(e, child, Some(ci))?;
+        set_parent_item(e, child, Some(holder(e, cx.this, ci)))?;
     }
     Ok(())
+}
+
+/// The item that what is declared in a host becomes a child of: its
+/// content item, or in a `ScrollView` what that content item scrolls.
+fn holder(engine: &Engine, host: ObjectId, content_item: ObjectId) -> ObjectId {
+    if !crate::scroll_view::is_scroll_view(engine, host) {
+        return content_item;
+    }
+    ljos_quick::flickable::content_item(engine, content_item).unwrap_or(content_item)
 }
 
 fn content_children(engine: &Engine, obj: ObjectId, host: Host) -> Vec<ObjectId> {
@@ -78,9 +87,10 @@ pub(crate) fn host_complete(engine: &Engine, obj: ObjectId, host: Host) -> Resul
         let Some(ci) = ci.filter(|c| is_item(e, *c)) else {
             return Ok(());
         };
+        let into = holder(e, obj, ci);
         for child in e.untrack(|| content_children(e, obj, host)) {
             if child != ci {
-                set_parent_item(e, child, Some(ci))?;
+                set_parent_item(e, child, Some(into))?;
             }
         }
         Ok(())
@@ -152,6 +162,7 @@ impl Pane {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, obj) = (cx.engine, cx.this);
+        crate::scroll_view::prepare(e, obj)?;
         host_complete(e, obj, PANE)?;
         bind_default(e, obj, Pane::CONTENT_WIDTH.index, move |e| {
             Value::Real(content_size(e, obj, PANE, Item::IMPLICIT_WIDTH.index))

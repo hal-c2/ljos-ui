@@ -1,0 +1,805 @@
+//! `Popup` (QtQuick.Templates): something shown above the content of its
+//! window.
+//!
+//! A popup is not an item. What draws is an item this module makes for
+//! it, the *popup item*, which lives in the window's overlay
+//! ([`overlay`]) and not under the item that declared the popup: nothing
+//! in the content clips or covers it, and the positioner the popup was
+//! declared in does not see it. The popup's properties are handed to that
+//! item, which is a `Page` underneath and so places the background, the
+//! content item and (for a `Dialog`) a header and a footer.
+//!
+//! A closed popup's item stays in the overlay, hidden. What is inside a
+//! closed popup therefore reads `visible: false` and costs nothing.
+//!
+//! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-popup.html and
+//! doc.qt.io/qt-6/qtquickcontrols-popups.html; pinned by
+//! `features/controls/popup*.feature` and `overlay.feature`.
+//!
+//! TODO(transition): `enter` and `exit` are stored; there is no
+//! `Transition` yet, so a popup is there or gone at once.
+
+mod item;
+mod overlay;
+mod position;
+
+use std::cell::Cell;
+use std::rc::Rc;
+
+use ljos_engine::{
+    Cx, Engine, EngineError, Font, ObjectId, Prop, PropIndex, QmlList, QmlObject, QtObject, Value,
+    WriteKind, qml_impl,
+};
+use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
+use ljos_quick::{Item, is_item, set_parent_item};
+
+use crate::containers::{Host, content_size, host_append, host_complete};
+use crate::control::Control;
+use crate::palette::Palette;
+use crate::parts::destroy_replaced_style_parts;
+use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
+use crate::window::Window;
+
+pub(crate) use item::{PopupItem, follow, set_role};
+pub(crate) use overlay::last_pointer;
+pub use overlay::{Overlay, OverlayAttached};
+
+/// `Popup.closePolicy` flags.
+pub(crate) mod close_policy {
+    pub const ON_PRESS_OUTSIDE: i32 = 1;
+    pub const ON_PRESS_OUTSIDE_PARENT: i32 = 2;
+    pub const ON_RELEASE_OUTSIDE: i32 = 4;
+    pub const ON_RELEASE_OUTSIDE_PARENT: i32 = 8;
+    pub const ON_ESCAPE: i32 = 16;
+}
+
+fn popup_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "ClosePolicy",
+            vec![
+                ("NoAutoClose", 0),
+                ("CloseOnPressOutside", 1),
+                ("CloseOnPressOutsideParent", 2),
+                ("CloseOnReleaseOutside", 4),
+                ("CloseOnReleaseOutsideParent", 8),
+                ("CloseOnEscape", 16),
+            ],
+        ),
+        ("PopupType", vec![("Item", 0), ("Window", 1), ("Native", 2)]),
+        (
+            "TransformOrigin",
+            vec![
+                ("TopLeft", 0),
+                ("Top", 1),
+                ("TopRight", 2),
+                ("Left", 3),
+                ("Center", 4),
+                ("Right", 5),
+                ("BottomLeft", 6),
+                ("Bottom", 7),
+                ("BottomRight", 8),
+            ],
+        ),
+    ]
+}
+
+/// The `anchors` group of a popup: it can only be centred.
+#[derive(Clone, Debug, Default, QmlObject)]
+#[qml(name = "PopupAnchors", uncreatable)]
+pub struct PopupAnchors {
+    #[qml(notify)]
+    pub center_in: Option<ObjectId>,
+}
+
+/// What a popup remembers that QML does not see.
+#[derive(Debug, Default)]
+pub(crate) struct PopupState {
+    /// The item that draws the popup.
+    pub item: Cell<Option<ObjectId>>,
+    /// The shade behind a modal or dimming popup, while it is shown.
+    pub dimmer: Cell<Option<ObjectId>>,
+    /// Shown in an overlay: open, and its window is known.
+    pub shown: Cell<bool>,
+    /// What had the keyboard before the popup took it.
+    saved_focus: Cell<Option<ObjectId>>,
+    took_focus: Cell<bool>,
+    /// `open()` and `close()` write `visible` themselves.
+    switching: Cell<bool>,
+    /// The position code is writing `x` and `y` back.
+    pub placing: Cell<bool>,
+    /// Where the author put the popup; `x` and `y` read as where it is.
+    pub requested: Cell<(f64, f64)>,
+    /// The press that is down began outside the popup.
+    pub pressed_outside: Cell<bool>,
+}
+
+/// `Popup`.
+#[derive(Debug, QmlObject)]
+#[qml(
+    module = "QtQuick.Templates",
+    name = "Popup",
+    extends = QtObject,
+    default = "contentData",
+    enums = popup_enums
+)]
+pub struct Popup {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(notify)]
+    pub x: f64,
+    #[qml(notify)]
+    pub y: f64,
+    #[qml(notify)]
+    pub z: f64,
+    #[qml(notify)]
+    pub width: f64,
+    #[qml(notify)]
+    pub height: f64,
+    #[qml(notify)]
+    pub implicit_width: f64,
+    #[qml(notify)]
+    pub implicit_height: f64,
+    #[qml(notify)]
+    pub content_width: f64,
+    #[qml(notify)]
+    pub content_height: f64,
+    #[qml(notify, readonly)]
+    pub available_width: f64,
+    #[qml(notify, readonly)]
+    pub available_height: f64,
+    /// The least distance to the edges of the window; negative for none.
+    #[qml(notify)]
+    pub margins: f64,
+    #[qml(notify)]
+    pub top_margin: f64,
+    #[qml(notify)]
+    pub left_margin: f64,
+    #[qml(notify)]
+    pub right_margin: f64,
+    #[qml(notify)]
+    pub bottom_margin: f64,
+    #[qml(notify)]
+    pub padding: f64,
+    #[qml(notify)]
+    pub top_padding: f64,
+    #[qml(notify)]
+    pub left_padding: f64,
+    #[qml(notify)]
+    pub right_padding: f64,
+    #[qml(notify)]
+    pub bottom_padding: f64,
+    #[qml(notify)]
+    pub horizontal_padding: f64,
+    #[qml(notify)]
+    pub vertical_padding: f64,
+    #[qml(notify)]
+    pub top_inset: f64,
+    #[qml(notify)]
+    pub left_inset: f64,
+    #[qml(notify)]
+    pub right_inset: f64,
+    #[qml(notify)]
+    pub bottom_inset: f64,
+    #[qml(notify)]
+    pub spacing: f64,
+    #[qml(notify, readonly)]
+    pub implicit_background_width: f64,
+    #[qml(notify, readonly)]
+    pub implicit_background_height: f64,
+    #[qml(notify, readonly)]
+    pub implicit_content_width: f64,
+    #[qml(notify, readonly)]
+    pub implicit_content_height: f64,
+    #[qml(notify)]
+    pub background: Option<ObjectId>,
+    #[qml(notify)]
+    pub content_item: Option<ObjectId>,
+    #[qml(notify, list, append = popup_append)]
+    pub content_data: QmlList,
+    #[qml(notify, list)]
+    pub content_children: QmlList,
+    /// The item the popup is placed from: the one that declares it until
+    /// another is given.
+    #[qml(notify)]
+    pub parent: Option<ObjectId>,
+    #[qml(notify)]
+    pub visible: bool,
+    #[qml(notify, readonly)]
+    pub opened: bool,
+    #[qml(notify)]
+    pub modal: bool,
+    #[qml(notify)]
+    pub dim: bool,
+    /// Whether the popup takes the keyboard when it opens.
+    #[qml(notify)]
+    pub focus: bool,
+    #[qml(notify, readonly)]
+    pub active_focus: bool,
+    #[qml(notify)]
+    pub enabled: bool,
+    #[qml(notify)]
+    pub clip: bool,
+    #[qml(notify)]
+    pub opacity: f64,
+    #[qml(notify)]
+    pub scale: f64,
+    #[qml(notify, enumeration = "TransformOrigin")]
+    pub transform_origin: i32,
+    #[qml(notify, enumeration = "ClosePolicy")]
+    pub close_policy: i32,
+    /// Stored: a popup is always an item of its window here.
+    #[qml(notify, enumeration = "PopupType")]
+    pub popup_type: i32,
+    /// Stored (see the module's TODO).
+    #[qml(notify)]
+    pub enter: Option<ObjectId>,
+    #[qml(notify)]
+    pub exit: Option<ObjectId>,
+    #[qml(notify)]
+    pub font: Font,
+    #[qml(group)]
+    pub palette: Palette,
+    /// Accepted and stored.
+    #[qml(notify)]
+    pub locale: Value,
+    #[qml(notify, readonly)]
+    pub mirrored: bool,
+    #[qml(group)]
+    pub anchors: PopupAnchors,
+    #[qml(skip)]
+    pub(crate) state: Rc<PopupState>,
+}
+
+impl Default for Popup {
+    fn default() -> Self {
+        Self {
+            object: QtObject::default(),
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            width: 0.0,
+            height: 0.0,
+            implicit_width: 0.0,
+            implicit_height: 0.0,
+            content_width: 0.0,
+            content_height: 0.0,
+            available_width: 0.0,
+            available_height: 0.0,
+            margins: -1.0,
+            top_margin: -1.0,
+            left_margin: -1.0,
+            right_margin: -1.0,
+            bottom_margin: -1.0,
+            padding: 0.0,
+            top_padding: 0.0,
+            left_padding: 0.0,
+            right_padding: 0.0,
+            bottom_padding: 0.0,
+            horizontal_padding: 0.0,
+            vertical_padding: 0.0,
+            top_inset: 0.0,
+            left_inset: 0.0,
+            right_inset: 0.0,
+            bottom_inset: 0.0,
+            spacing: 0.0,
+            implicit_background_width: 0.0,
+            implicit_background_height: 0.0,
+            implicit_content_width: 0.0,
+            implicit_content_height: 0.0,
+            background: None,
+            content_item: None,
+            content_data: QmlList::default(),
+            content_children: QmlList::default(),
+            parent: None,
+            visible: false,
+            opened: false,
+            modal: false,
+            dim: false,
+            focus: false,
+            active_focus: false,
+            enabled: true,
+            clip: false,
+            opacity: 1.0,
+            scale: 1.0,
+            transform_origin: 4,
+            close_policy: close_policy::ON_ESCAPE | close_policy::ON_PRESS_OUTSIDE,
+            popup_type: 0,
+            enter: None,
+            exit: None,
+            font: Font::default(),
+            palette: Palette::default(),
+            locale: Value::Undefined,
+            mirrored: false,
+            anchors: PopupAnchors::default(),
+            state: Rc::default(),
+        }
+    }
+}
+
+pub(crate) const POPUP: Host = Host {
+    content_item: Popup::CONTENT_ITEM.index,
+    content_data: Popup::CONTENT_DATA.index,
+    content_children: Popup::CONTENT_CHILDREN.index,
+};
+
+fn popup_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
+    if is_a::<crate::menu::Menu>(cx.engine, cx.this) {
+        // What is declared in a menu becomes one of its items.
+        return crate::menu::append(cx, child);
+    }
+    host_append(cx, child, POPUP)
+}
+
+#[qml_impl]
+impl Popup {
+    /// The popup is about to be shown.
+    #[qml(signal, name = "aboutToShow")]
+    fn about_to_show();
+    #[qml(signal, name = "aboutToHide")]
+    fn about_to_hide();
+    #[qml(signal, name = "opened")]
+    fn opened_signal();
+    #[qml(signal)]
+    fn closed();
+
+    #[qml(invokable)]
+    fn open(cx: &Cx) -> Result<(), EngineError> {
+        open(cx.engine, cx.this)
+    }
+
+    #[qml(invokable)]
+    fn close(cx: &Cx) -> Result<(), EngineError> {
+        close(cx.engine, cx.this)
+    }
+
+    /// Gives the popup the keyboard, as opening it with `focus` does.
+    #[qml(invokable, name = "forceActiveFocus")]
+    fn force_active_focus(cx: &Cx, reason: Value) -> Result<(), EngineError> {
+        let reason = match reason {
+            Value::Undefined | Value::Null => FocusReason::Other,
+            v => FocusReason::from_qt(v.to_number() as i32),
+        };
+        if let Some(item) = item_of(cx.engine, cx.this) {
+            force_active_focus(cx.engine, item, reason);
+        }
+        Ok(())
+    }
+
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        init_popup(cx.engine, cx.this)
+    }
+}
+
+pub(crate) fn state_of(engine: &Engine, popup: ObjectId) -> Option<Rc<PopupState>> {
+    engine.with::<Popup, _>(popup, |p| p.state.clone()).ok()
+}
+
+/// The item that draws `popup`.
+pub(crate) fn item_of(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+    state_of(engine, popup)?
+        .item
+        .get()
+        .filter(|i| engine.is_alive(*i))
+}
+
+/// The popup `item` draws, if it is a popup's item.
+pub(crate) fn popup_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+    if !is_a::<PopupItem>(engine, item) {
+        return None;
+    }
+    engine.owner(item).filter(|p| is_a::<Popup>(engine, *p))
+}
+
+/// Whether `popup` is open and on the screen.
+pub(crate) fn is_shown(engine: &Engine, popup: ObjectId) -> bool {
+    state_of(engine, popup).is_some_and(|s| s.shown.get())
+}
+
+fn emit(engine: &Engine, popup: ObjectId, signal: &str) {
+    if engine.is_alive(popup) {
+        check(engine, signal, engine.emit_by_name(popup, signal, &[]));
+    }
+}
+
+/// Writes a value as the type's own code does: a binding on the property
+/// stays, as `open()` leaves a `visible:` binding alone in Qt.
+pub(crate) fn put(
+    engine: &Engine,
+    obj: ObjectId,
+    prop: PropIndex,
+    v: Value,
+) -> Result<(), EngineError> {
+    if engine.untrack(|| engine.read(obj, prop)).change_equals(&v) {
+        return Ok(());
+    }
+    engine.write_derived(obj, prop, v)
+}
+
+/// Asks for `popup` to be at `x`, `y` from its parent, as a write of both
+/// at once: an open popup moves once, and a closed one opens there.
+pub(crate) fn move_to(engine: &Engine, popup: ObjectId, x: f64, y: f64) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    // The watches of `x` and `y` do not see a value that is the one
+    // read back from the last placing, so what is asked for is kept here.
+    state.requested.set((x, y));
+    state.placing.set(true);
+    let wrote = [(Popup::X.index, x), (Popup::Y.index, y)]
+        .into_iter()
+        .try_for_each(|(prop, v)| {
+            if engine.untrack(|| engine.read(popup, prop)).to_number() == v {
+                return Ok(());
+            }
+            engine.write(popup, prop, Value::Real(v), WriteKind::Imperative)
+        });
+    state.placing.set(false);
+    wrote?;
+    engine.untrack(|| position::place(engine, popup))
+}
+
+/// What a popup declared in `owner` is placed from: the item it is
+/// declared in, the content item of a popup or of a window.
+fn default_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+    let mut cur = engine.owner(popup);
+    for _ in 0..64 {
+        let o = cur?;
+        if is_a::<Popup>(engine, o) {
+            return object(engine, o, Popup::CONTENT_ITEM.index);
+        }
+        if is_a::<Window>(engine, o) {
+            return object(engine, o, Window::CONTENT_ITEM.index).or(Some(o));
+        }
+        if is_item(engine, o) {
+            return Some(o);
+        }
+        cur = engine.owner(o);
+    }
+    None
+}
+
+fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let Some(state) = state_of(e, popup) else {
+        return Ok(());
+    };
+    destroy_replaced_style_parts(e, popup);
+
+    let follow = |prop: Prop<f64>, from: Prop<f64>| {
+        bind_default(e, popup, prop.index, move |e| {
+            Value::Real(num(e, popup, from.index))
+        })
+    };
+    // As a control's: a side, then the axis, then `padding`.
+    follow(Popup::HORIZONTAL_PADDING, Popup::PADDING)?;
+    follow(Popup::VERTICAL_PADDING, Popup::PADDING)?;
+    follow(Popup::LEFT_PADDING, Popup::HORIZONTAL_PADDING)?;
+    follow(Popup::RIGHT_PADDING, Popup::HORIZONTAL_PADDING)?;
+    follow(Popup::TOP_PADDING, Popup::VERTICAL_PADDING)?;
+    follow(Popup::BOTTOM_PADDING, Popup::VERTICAL_PADDING)?;
+    for side in [
+        Popup::TOP_MARGIN,
+        Popup::LEFT_MARGIN,
+        Popup::RIGHT_MARGIN,
+        Popup::BOTTOM_MARGIN,
+    ] {
+        follow(side, Popup::MARGINS)?;
+    }
+    // A modal popup dims what is behind it unless it is told not to.
+    bind_default(e, popup, Popup::DIM.index, move |e| {
+        Value::Bool(flag(e, popup, Popup::MODAL.index))
+    })?;
+
+    host_complete(e, popup, POPUP)?;
+    bind_default(e, popup, Popup::CONTENT_WIDTH.index, move |e| {
+        Value::Real(
+            crate::menu::content_extent(e, popup, true)
+                .unwrap_or_else(|| content_size(e, popup, POPUP, Item::IMPLICIT_WIDTH.index)),
+        )
+    })?;
+    bind_default(e, popup, Popup::CONTENT_HEIGHT.index, move |e| {
+        Value::Real(
+            crate::menu::content_extent(e, popup, false)
+                .unwrap_or_else(|| content_size(e, popup, POPUP, Item::IMPLICIT_HEIGHT.index)),
+        )
+    })?;
+
+    let item = item::create(e, popup)?;
+    state.item.set(Some(item));
+
+    // What the item works out is what the popup reads.
+    for (out, from) in [
+        (Popup::AVAILABLE_WIDTH.index, Control::AVAILABLE_WIDTH.index),
+        (
+            Popup::AVAILABLE_HEIGHT.index,
+            Control::AVAILABLE_HEIGHT.index,
+        ),
+        (
+            Popup::IMPLICIT_BACKGROUND_WIDTH.index,
+            Control::IMPLICIT_BACKGROUND_WIDTH.index,
+        ),
+        (
+            Popup::IMPLICIT_BACKGROUND_HEIGHT.index,
+            Control::IMPLICIT_BACKGROUND_HEIGHT.index,
+        ),
+        (
+            Popup::IMPLICIT_CONTENT_WIDTH.index,
+            Control::IMPLICIT_CONTENT_WIDTH.index,
+        ),
+        (
+            Popup::IMPLICIT_CONTENT_HEIGHT.index,
+            Control::IMPLICIT_CONTENT_HEIGHT.index,
+        ),
+        (Popup::ACTIVE_FOCUS.index, Item::ACTIVE_FOCUS.index),
+        (Popup::MIRRORED.index, Control::MIRRORED.index),
+    ] {
+        e.bind_initial(popup, out, move |e| e.read(item, from))?;
+    }
+    bind_default(e, popup, Popup::WIDTH.index, move |e| {
+        Value::Real(num(e, popup, Popup::IMPLICIT_WIDTH.index))
+    })?;
+    bind_default(e, popup, Popup::HEIGHT.index, move |e| {
+        Value::Real(num(e, popup, Popup::IMPLICIT_HEIGHT.index))
+    })?;
+    bind_default(e, popup, Popup::PARENT.index, move |e| {
+        default_parent(e, popup).map_or(Value::Null, Value::Object)
+    })?;
+
+    state
+        .requested
+        .set(e.untrack(|| (num(e, popup, Popup::X.index), num(e, popup, Popup::Y.index))));
+    for (prop, is_x) in [(Popup::X.index, true), (Popup::Y.index, false)] {
+        let st = state.clone();
+        e.watch(popup, prop, move |e, v| {
+            if st.placing.get() {
+                return;
+            }
+            let (x, y) = st.requested.get();
+            let n = v.to_number();
+            st.requested.set(if is_x { (n, y) } else { (x, n) });
+            e.untrack(|| check(e, "popup", position::place(e, popup)));
+        })?;
+    }
+    let st = state.clone();
+    e.watch(popup, Popup::VISIBLE.index, move |e, v| {
+        if !st.switching.get() {
+            check(e, "visible", visible_written(e, popup, v.to_boolean()));
+        }
+    })?;
+    for prop in [Popup::MODAL.index, Popup::DIM.index] {
+        e.watch(popup, prop, move |e, _| {
+            check(e, "popup", overlay::reshade(e, popup));
+        })?;
+    }
+    item::mirror_look(e, popup, item)?;
+
+    // Where the popup's item lives follows the window its parent is in.
+    e.effect_in(popup, move |e| {
+        let parent = object(e, popup, Popup::PARENT.index);
+        let top = parent.and_then(|p| ljos_quick::window_of(e, p));
+        e.untrack(|| check(e, "popup", settle(e, popup, top)));
+    })?;
+    e.effect_in(popup, move |e| {
+        check(e, "popup", position::place(e, popup));
+    })?;
+
+    if e.untrack(|| flag(e, popup, Popup::VISIBLE.index)) {
+        // Declared open.
+        emit(e, popup, "aboutToShow");
+        try_present(e, popup)?;
+        set_computed(e, popup, Popup::OPENED.index, Value::Bool(true))?;
+        emit(e, popup, "opened");
+    }
+    Ok(())
+}
+
+/// The window the popup's parent is in, if it is in one (untracked).
+fn window_top(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+    engine.untrack(|| {
+        let parent = object(engine, popup, Popup::PARENT.index)?;
+        ljos_quick::window_of(engine, parent)
+    })
+}
+
+/// Puts the popup's item into the overlay of `top`, and on the screen if
+/// the popup is open.
+fn settle(engine: &Engine, popup: ObjectId, top: Option<ObjectId>) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    let Some(item) = item_of(engine, popup) else {
+        return Ok(());
+    };
+    let home = match top {
+        Some(t) => Some(overlay::ensure(engine, t)?),
+        None => None,
+    };
+    if engine.visual_parent(item) != home {
+        if state.shown.get() {
+            withdraw(engine, popup, &state)?;
+        }
+        set_parent_item(engine, item, home)?;
+    }
+    if home.is_some()
+        && !state.shown.get()
+        && flag(engine, popup, Popup::VISIBLE.index)
+        && !crate::tooltip::waiting(engine, popup)
+    {
+        present(engine, popup, &state)?;
+    }
+    Ok(())
+}
+
+fn try_present(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let top = window_top(engine, popup);
+    engine.untrack(|| settle(engine, popup, top))
+}
+
+pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    if engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
+        return Ok(());
+    }
+    if crate::tooltip::defer(engine, popup) {
+        // A tool tip that waits for its delay opens when that has passed.
+        return Ok(());
+    }
+    emit(engine, popup, "aboutToShow");
+    if !engine.is_alive(popup) {
+        return Ok(());
+    }
+    state.switching.set(true);
+    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
+    state.switching.set(false);
+    wrote?;
+    try_present(engine, popup)?;
+    set_computed(engine, popup, Popup::OPENED.index, Value::Bool(true))?;
+    emit(engine, popup, "opened");
+    Ok(())
+}
+
+pub(crate) fn close(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    if crate::tooltip::cancel(engine, popup) {
+        // Still waiting for its delay: it was never shown, so there is
+        // nothing to hide and nothing to say.
+        state.switching.set(true);
+        let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
+        state.switching.set(false);
+        return wrote;
+    }
+    if !engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
+        return Ok(());
+    }
+    emit(engine, popup, "aboutToHide");
+    if !engine.is_alive(popup) {
+        return Ok(());
+    }
+    set_computed(engine, popup, Popup::OPENED.index, Value::Bool(false))?;
+    if state.shown.get() {
+        engine.untrack(|| withdraw(engine, popup, &state))?;
+    }
+    state.switching.set(true);
+    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(false));
+    state.switching.set(false);
+    wrote?;
+    emit(engine, popup, "closed");
+    Ok(())
+}
+
+/// Closes a popup because the user turned away from it: Escape, or a
+/// press beside it. A dialog is rejected by that.
+pub(crate) fn dismiss(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    if is_a::<crate::dialog::Dialog>(engine, popup) {
+        crate::dialog::reject(engine, popup)
+    } else {
+        close(engine, popup)
+    }
+}
+
+/// `visible` was assigned, or its binding gave a new value: the same as
+/// `open()` and `close()`, with the property already written.
+pub(crate) fn visible_written(
+    engine: &Engine,
+    popup: ObjectId,
+    on: bool,
+) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    // A tool tip waits for its delay, and one that is still waiting has
+    // nothing to hide.
+    if (on && crate::tooltip::defer(engine, popup))
+        || (!on && crate::tooltip::cancel(engine, popup))
+    {
+        return Ok(());
+    }
+    if on {
+        emit(engine, popup, "aboutToShow");
+        try_present(engine, popup)?;
+        set_computed(engine, popup, Popup::OPENED.index, Value::Bool(true))?;
+        emit(engine, popup, "opened");
+    } else {
+        emit(engine, popup, "aboutToHide");
+        set_computed(engine, popup, Popup::OPENED.index, Value::Bool(false))?;
+        if state.shown.get() {
+            engine.untrack(|| withdraw(engine, popup, &state))?;
+        }
+        emit(engine, popup, "closed");
+    }
+    Ok(())
+}
+
+/// Shows an open popup whose item is in an overlay.
+fn present(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), EngineError> {
+    let Some(item) = item_of(engine, popup) else {
+        return Ok(());
+    };
+    let Some(home) = engine.visual_parent(item) else {
+        return Ok(());
+    };
+    state.shown.set(true);
+    state.pressed_outside.set(false);
+    overlay::raise(engine, popup, state, item, home)?;
+    position::place(engine, popup)?;
+    engine.write(
+        item,
+        Item::VISIBLE.index,
+        Value::Bool(true),
+        WriteKind::Imperative,
+    )?;
+    overlay::changed(engine, home);
+    if flag(engine, popup, Popup::FOCUS.index) {
+        let top = ljos_quick::window_item(engine, home);
+        state.saved_focus.set(active_focus_item(engine, top));
+        state.took_focus.set(true);
+        force_active_focus(engine, item, FocusReason::Popup);
+    }
+    item::set_modal(engine, popup, item)
+}
+
+/// Takes a shown popup off the screen. The keyboard goes back first, so
+/// that it never rests on something hidden.
+fn withdraw(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), EngineError> {
+    state.shown.set(false);
+    let Some(item) = item_of(engine, popup) else {
+        return Ok(());
+    };
+    if state.took_focus.replace(false) {
+        let saved = state.saved_focus.take().filter(|s| engine.is_alive(*s));
+        if flag(engine, item, Item::ACTIVE_FOCUS.index) {
+            match saved {
+                Some(s) => force_active_focus(engine, s, FocusReason::Popup),
+                None => engine.write(
+                    item,
+                    Item::FOCUS.index,
+                    Value::Bool(false),
+                    WriteKind::Imperative,
+                )?,
+            }
+        }
+    }
+    engine.write(
+        item,
+        Item::VISIBLE.index,
+        Value::Bool(false),
+        WriteKind::Imperative,
+    )?;
+    if let Some(d) = state.dimmer.take() {
+        engine.destroy(d);
+    }
+    if let Some(home) = engine.visual_parent(item) {
+        overlay::changed(engine, home);
+    }
+    item::set_modal(engine, popup, item)
+}
+
+pub(crate) fn register(engine: &Engine) {
+    item::register(engine);
+    overlay::register(engine);
+}
