@@ -19,7 +19,15 @@
 //!   copy;
 //! * gradient text uses its first stop colour, and colour glyphs (emoji) are
 //!   not drawn;
-//! * the unshaped `Text` op ignores rotation and shear.
+//! * the unshaped `Text` op ignores rotation and shear;
+//! * a [`DrawOp::Shape`] that should be drawn from pixels (see below) and
+//!   cannot be is drawn as triangles, a radial or conical gradient then in
+//!   one colour.
+//!
+//! Shapes ([`DrawOp::Shape`]) are triangles with a soft edge one device
+//! pixel wide, or, for the brushes and sizes triangles do badly, a texture
+//! that vello_cpu fills. The private `b0_shape` module has both and says
+//! which is used when.
 //!
 //! Text ([`DrawOp::Glyphs`]) is drawn as quads that sample the glyph atlas
 //! (the private `glyph_atlas` module). Upright text is placed on the device
@@ -44,6 +52,7 @@ use egui::{
 };
 use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 
+use crate::b0_shape::{ShapeCache, ShapeCmd, ShapeSeg};
 use crate::backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RgbaImage};
 use crate::display_list::{
     Decorations, DisplayList, DisplayListId, DrawOp, GlyphRun, LinearGradient, Paint, PathStyle,
@@ -100,6 +109,7 @@ enum LocalSeg {
     Text(TextCmd),
     Glyphs(GlyphsCmd),
     Image(ImageSeg),
+    Shape(ShapeCmd),
 }
 
 /// Which texture an image quad samples: the image and how it is sampled.
@@ -493,6 +503,36 @@ enum WorldSeg {
     },
     Glyphs(GlyphSeg),
     Image(ImageSeg),
+    Shape(ShapeSeg),
+}
+
+fn shape_of(seg: &WorldSeg) -> Option<&ShapeSeg> {
+    match seg {
+        WorldSeg::Shape(s) => Some(s),
+        _ => None,
+    }
+}
+
+fn shape_of_mut(seg: &mut WorldSeg) -> Option<&mut ShapeSeg> {
+    match seg {
+        WorldSeg::Shape(s) => Some(s),
+        _ => None,
+    }
+}
+
+/// A node's segments are replaced: what the old shapes built goes to the new
+/// ones that draw the same thing, and is dropped for the rest.
+fn hand_over(cache: &mut ShapeCache, old: &mut [WorldSeg], new: &mut [WorldSeg]) {
+    for o in old.iter_mut().filter_map(shape_of_mut) {
+        match new
+            .iter_mut()
+            .filter_map(shape_of_mut)
+            .find(|n| n.continues(o))
+        {
+            Some(n) => n.inherit(o),
+            None => cache.release(o.cmd()),
+        }
+    }
 }
 
 struct ListEntry {
@@ -522,11 +562,17 @@ pub struct EpaintBackend {
     lists: HashMap<DisplayListId, ListEntry>,
     nodes: HashMap<NodeId, NodeEntry>,
     frame: u64,
+    /// The frame of the last `encode`; `frame` is also set by `sync`.
+    encoded: u64,
     tessellations: u64,
     world_rebuilds: u64,
     atlas: GlyphAtlas,
     textures: HashMap<TextureKey, TextureEntry>,
     texture_uploads: u64,
+    shapes: ShapeCache,
+    /// The nodes that hold a shape texture, so the ones that left the frame
+    /// are found without walking every node.
+    textured: HashSet<NodeId>,
 }
 
 /// What the glyph atlas holds, for tests and diagnostics.
@@ -704,12 +750,55 @@ impl EpaintBackend {
             lists: HashMap::new(),
             nodes: HashMap::new(),
             frame: 0,
+            encoded: 0,
             tessellations: 0,
             world_rebuilds: 0,
             atlas: GlyphAtlas::default(),
             textures: HashMap::new(),
             texture_uploads: 0,
+            shapes: ShapeCache::default(),
+            textured: HashSet::new(),
         }
+    }
+
+    /// How many shapes were cut into triangles so far (tests use it to prove
+    /// that a shape is cut once, and not again when it only moves).
+    pub fn shape_tessellations(&self) -> u64 {
+        self.shapes.tessellated()
+    }
+
+    /// How many shape textures were filled so far.
+    pub fn shape_rasters(&self) -> u64 {
+        self.shapes.rasterised()
+    }
+
+    /// How many shapes have their triangles held now.
+    pub fn shape_geometries(&self) -> usize {
+        self.shapes.geometries()
+    }
+
+    /// How many shapes hold a texture now.
+    pub fn shape_textures(&self) -> usize {
+        self.nodes
+            .values()
+            .flat_map(|n| n.segs.iter().filter_map(shape_of))
+            .filter(|s| s.has_texture())
+            .count()
+    }
+
+    /// Drop the nodes not drawn since `keep_after`, and what their shapes
+    /// built with them.
+    fn retain_nodes(&mut self, keep_after: u64) {
+        let shapes = &mut self.shapes;
+        self.nodes.retain(|_, e| {
+            let keep = e.last_used >= keep_after;
+            if !keep {
+                for s in e.segs.iter().filter_map(shape_of) {
+                    shapes.release(s.cmd());
+                }
+            }
+            keep
+        });
     }
 
     /// How many image textures the backend holds now.
@@ -751,6 +840,7 @@ impl EpaintBackend {
             self.no_aa = tessellator(ppp, false);
             self.lists.clear();
             self.nodes.clear();
+            self.shapes.clear();
             // Glyphs are filled per device size; none of the old ones match.
             self.atlas.clear();
         }
@@ -871,6 +961,16 @@ impl EpaintBackend {
                             }
                         };
                         self.aa.tessellate_shape(Shape::Path(shape), &mut cur);
+                    }
+                }
+                DrawOp::Shape { path, style, brush } => {
+                    // Nothing is built here: a shape that is never inside
+                    // its clip rectangle costs nothing.
+                    if let Some(cmd) = ShapeCmd::new(path, style, brush) {
+                        if !cur.is_empty() {
+                            segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                        }
+                        segs.push(LocalSeg::Shape(cmd));
                     }
                 }
                 DrawOp::Text {
@@ -1027,6 +1127,9 @@ impl EpaintBackend {
                     image: seg.image.clone(),
                     mesh: Arc::new(map_mesh(&seg.mesh, to_screen, opacity)),
                 }),
+                LocalSeg::Shape(cmd) => {
+                    WorldSeg::Shape(ShapeSeg::new(cmd.clone(), to_screen, opacity))
+                }
             })
             .collect()
     }
@@ -1119,7 +1222,7 @@ impl RenderBackend for EpaintBackend {
         self.frame = view.snapshot.frame;
         let keep_after = self.frame.saturating_sub(KEEP_FRAMES);
         self.lists.retain(|_, e| e.last_used >= keep_after);
-        self.nodes.retain(|_, e| e.last_used >= keep_after);
+        self.retain_nodes(keep_after);
         // A texture outlives neither its image nor a long stretch unseen.
         self.textures
             .retain(|_, t| t.owner.is_alive() && t.last_used >= keep_after);
@@ -1129,6 +1232,8 @@ impl RenderBackend for EpaintBackend {
         self.set_ppp(view.scale_factor);
         let snap = view.snapshot;
         self.frame = snap.frame;
+        self.encoded = snap.frame;
+        self.shapes.begin_frame();
         let mut stats = EncodeStats::default();
         let mut warned_clips = HashSet::new();
         let shift = Affine::translate((
@@ -1196,7 +1301,10 @@ impl RenderBackend for EpaintBackend {
 
             let reuse = self.nodes.get(&item.node).is_some_and(|n| n.sig == sig);
             if !reuse {
-                let segs = Self::world_segs(&local, to_screen, item.opacity);
+                let mut segs = Self::world_segs(&local, to_screen, item.opacity);
+                if let Some(old) = self.nodes.get_mut(&item.node) {
+                    hand_over(&mut self.shapes, &mut old.segs, &mut segs);
+                }
                 self.world_rebuilds += 1;
                 self.nodes.insert(
                     item.node,
@@ -1257,6 +1365,25 @@ impl RenderBackend for EpaintBackend {
                             shape: Shape::Mesh(Arc::clone(&seg.mesh)),
                         });
                     }
+                    WorldSeg::Shape(s) => {
+                        let mesh = self.shapes.draw(
+                            s,
+                            clip,
+                            self.ppp,
+                            sink.ctx,
+                            self.frame,
+                            &mut stats.warnings,
+                        );
+                        if s.has_texture() {
+                            self.textured.insert(*node);
+                        }
+                        if let Some(mesh) = mesh {
+                            sink.shapes.push(ClippedShape {
+                                clip_rect: clip,
+                                shape: Shape::Mesh(mesh),
+                            });
+                        }
+                    }
                     WorldSeg::Glyphs(g) => {
                         if sink.ctx.is_none() {
                             continue;
@@ -1315,6 +1442,23 @@ impl RenderBackend for EpaintBackend {
                 }
             }
         }
+        // A node that is not in this frame keeps no pixels: megabytes for
+        // something nobody sees, and the next frame may be a long way off.
+        let (nodes, frame) = (&mut self.nodes, self.frame);
+        self.textured.retain(|id| {
+            let Some(e) = nodes.get_mut(id) else {
+                return false;
+            };
+            let shapes = e.segs.iter_mut().filter_map(shape_of_mut);
+            if e.last_used == frame {
+                shapes.fold(false, |any, s| any | s.has_texture())
+            } else {
+                shapes
+                    .filter(|s| s.has_texture())
+                    .for_each(ShapeSeg::forget);
+                false
+            }
+        });
         stats.shapes = sink.shapes.len() as u32;
         stats
     }
@@ -1324,13 +1468,30 @@ impl RenderBackend for EpaintBackend {
             MemoryPressure::Critical => {
                 self.lists.clear();
                 self.nodes.clear();
+                self.shapes.clear();
                 self.atlas.reset();
                 self.textures.clear();
             }
             MemoryPressure::Moderate => {
                 let keep_after = self.frame.saturating_sub(10);
                 self.lists.retain(|_, e| e.last_used >= keep_after);
-                self.nodes.retain(|_, e| e.last_used >= keep_after);
+                self.retain_nodes(keep_after);
+                // A shape that was out of sight in the last frame gives up
+                // its triangles and its pixels; both are built again when
+                // it is next seen.
+                let last = self.encoded;
+                let mut seen: Vec<ShapeCmd> = Vec::new();
+                for e in self.nodes.values_mut() {
+                    let in_frame = e.last_used >= last;
+                    for s in e.segs.iter_mut().filter_map(shape_of_mut) {
+                        if in_frame && s.drawn_in(last) {
+                            seen.push(s.cmd().clone());
+                        } else {
+                            s.forget();
+                        }
+                    }
+                }
+                self.shapes.retain(|cmd| seen.iter().any(|s| s.same(cmd)));
                 self.textures
                     .retain(|_, t| t.owner.is_alive() && t.last_used >= keep_after);
             }

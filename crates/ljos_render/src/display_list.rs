@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use vello_cpu::kurbo::{BezPath, Point, Rect, Shape, Size, Vec2};
+use vello_cpu::kurbo::{BezPath, Cap, Join, Point, Rect, Shape, Size, Stroke, Vec2};
 use vello_cpu::peniko::FontData;
 
 use crate::image::ImageHandle;
@@ -275,6 +275,250 @@ pub enum PathStyle {
     },
 }
 
+/// How a [`BrushGradient`] goes on outside its first and last stop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Spread {
+    /// The end colours go on for ever.
+    #[default]
+    Pad,
+    /// The gradient runs back and forth.
+    Reflect,
+    /// The gradient starts again.
+    Repeat,
+}
+
+impl Spread {
+    /// Where the unbounded parameter `t` falls in `0..=1`.
+    pub fn fold(self, t: f32) -> f32 {
+        match self {
+            Self::Pad => t.clamp(0.0, 1.0),
+            Self::Repeat => t - t.floor(),
+            Self::Reflect => {
+                let u = t.rem_euclid(2.0);
+                if u > 1.0 { 2.0 - u } else { u }
+            }
+        }
+    }
+}
+
+/// Where the colours of a [`BrushGradient`] lie, in the node's coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GradientGeometry {
+    /// Along the line from `start` (0) to `end` (1).
+    Linear {
+        /// Where the gradient is 0.
+        start: Point,
+        /// Where the gradient is 1.
+        end: Point,
+    },
+    /// Between two circles: 0 on the focal circle, 1 on the outer one.
+    Radial {
+        /// Centre of the circle where the gradient is 0.
+        focal: Point,
+        /// Its radius.
+        focal_radius: f64,
+        /// Centre of the circle where the gradient is 1.
+        center: Point,
+        /// Its radius.
+        radius: f64,
+    },
+    /// Around `center`: 0 at `angle` degrees from the positive x axis, going
+    /// anticlockwise on a screen whose y axis points down, 1 after a turn.
+    Conical {
+        /// The point the colours turn around.
+        center: Point,
+        /// Where the gradient starts, in degrees.
+        angle: f64,
+    },
+}
+
+/// A gradient for [`Brush::Gradient`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct BrushGradient {
+    /// Where the colours lie.
+    pub geometry: GradientGeometry,
+    /// Stops sorted by offset, each within `0.0..=1.0`.
+    pub stops: Vec<GradientStop>,
+    /// What happens outside the stops. A conical gradient has no outside.
+    pub spread: Spread,
+}
+
+impl BrushGradient {
+    /// Build a gradient; stops are sorted (stably) by offset.
+    pub fn new(geometry: GradientGeometry, mut stops: Vec<GradientStop>, spread: Spread) -> Self {
+        stops.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+        Self {
+            geometry,
+            stops,
+            spread,
+        }
+    }
+
+    /// Colour at `t` once folded into `0..=1`.
+    pub fn color_at(&self, t: f32) -> Rgba {
+        let (Some(first), Some(last)) = (self.stops.first(), self.stops.last()) else {
+            return Rgba::TRANSPARENT;
+        };
+        if t <= first.offset {
+            return first.color;
+        }
+        if t >= last.offset {
+            return last.color;
+        }
+        for pair in self.stops.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if t <= b.offset {
+                let span = b.offset - a.offset;
+                if span <= f32::EPSILON {
+                    return b.color;
+                }
+                return a.color.lerp(b.color, (t - a.offset) / span);
+            }
+        }
+        last.color
+    }
+
+    /// The gradient's parameter at `p`, before the spread folds it. `None`
+    /// where a radial gradient between two circles has no colour.
+    pub fn param(&self, p: Point) -> Option<f32> {
+        match self.geometry {
+            GradientGeometry::Linear { start, end } => {
+                let d = end - start;
+                let len2 = d.hypot2();
+                if len2 <= f64::EPSILON {
+                    return Some(0.0);
+                }
+                Some(((p - start).dot(d) / len2) as f32)
+            }
+            GradientGeometry::Radial {
+                focal,
+                focal_radius,
+                center,
+                radius,
+            } => {
+                // The circle through `p` with centre f + t (c - f) and
+                // radius r0 + t (r1 - r0): the largest t whose radius is
+                // not negative.
+                let cd = center - focal;
+                let pd = p - focal;
+                let dr = radius - focal_radius;
+                let a = cd.hypot2() - dr * dr;
+                let b = pd.dot(cd) + focal_radius * dr;
+                let c = pd.hypot2() - focal_radius * focal_radius;
+                let t = if a.abs() < 1e-9 {
+                    if b.abs() < 1e-12 {
+                        return None;
+                    }
+                    c / (2.0 * b)
+                } else {
+                    let disc = b * b - a * c;
+                    if disc < 0.0 {
+                        return None;
+                    }
+                    let root = disc.sqrt();
+                    let (t0, t1) = ((b + root) / a, (b - root) / a);
+                    let ok = |t: f64| focal_radius + t * dr >= 0.0;
+                    match (ok(t0.max(t1)), ok(t0.min(t1))) {
+                        (true, _) => t0.max(t1),
+                        (false, true) => t0.min(t1),
+                        _ => return None,
+                    }
+                };
+                (focal_radius + t * dr >= 0.0).then_some(t as f32)
+            }
+            GradientGeometry::Conical { center, angle } => {
+                let d = p - center;
+                let turns = (-d.y).atan2(d.x) / std::f64::consts::TAU - angle / 360.0;
+                Some((turns - turns.floor()) as f32)
+            }
+        }
+    }
+
+    fn map_colors(&self, f: impl Fn(Rgba) -> Rgba) -> Self {
+        let mut g = self.clone();
+        for s in &mut g.stops {
+            s.color = f(s.color);
+        }
+        g
+    }
+}
+
+/// What a [`DrawOp::Shape`] is painted with.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Brush {
+    /// One colour.
+    Solid(Rgba),
+    /// A linear, radial or conical gradient.
+    Gradient(Arc<BrushGradient>),
+}
+
+impl Brush {
+    /// Multiply the brush's alpha by `opacity`.
+    #[must_use]
+    pub fn with_opacity(&self, opacity: f32) -> Self {
+        match self {
+            Self::Solid(c) => Self::Solid(c.with_opacity(opacity)),
+            Self::Gradient(g) => {
+                Self::Gradient(Arc::new(g.map_colors(|c| c.with_opacity(opacity))))
+            }
+        }
+    }
+
+    /// True when the brush cannot produce visible pixels.
+    pub fn is_invisible(&self) -> bool {
+        match self {
+            Self::Solid(c) => c.is_transparent(),
+            Self::Gradient(g) => g.stops.iter().all(|s| s.color.is_transparent()),
+        }
+    }
+}
+
+impl From<Rgba> for Brush {
+    fn from(c: Rgba) -> Self {
+        Self::Solid(c)
+    }
+}
+
+/// Which points a path encloses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FillRule {
+    /// A point is inside when the path winds around it.
+    #[default]
+    NonZero,
+    /// A point is inside when a ray from it crosses the path an odd number
+    /// of times.
+    EvenOdd,
+}
+
+/// Fill or outline for [`DrawOp::Shape`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum ShapeStyle {
+    /// Fill what the path encloses. An open subpath is closed first.
+    Fill(FillRule),
+    /// Draw the outline: width, joins, caps, miter limit and dashes as
+    /// kurbo's [`Stroke`] has them (the miter limit is the SVG one).
+    Stroke(Arc<Stroke>),
+}
+
+impl ShapeStyle {
+    /// How far the ink can reach outside the path's own bounds.
+    pub fn reach(&self) -> f64 {
+        match self {
+            Self::Fill(_) => 0.0,
+            Self::Stroke(s) => {
+                let mut k: f64 = 1.0;
+                if s.join == Join::Miter {
+                    k = k.max(s.miter_limit);
+                }
+                if s.start_cap == Cap::Square || s.end_cap == Cap::Square {
+                    k = k.max(std::f64::consts::SQRT_2);
+                }
+                s.width.abs() / 2.0 * k
+            }
+        }
+    }
+}
+
 /// One drawing command in a node's local coordinates.
 #[derive(Clone, Debug)]
 pub enum DrawOp {
@@ -379,6 +623,17 @@ pub enum DrawOp {
         /// Paint.
         paint: Paint,
     },
+    /// A vector shape with the whole of a stroke's style and any [`Brush`].
+    /// Both backends draw it anti-aliased; [`DrawOp::Path`] stays for the
+    /// plain cases and means what it did.
+    Shape {
+        /// Geometry.
+        path: Arc<BezPath>,
+        /// Fill or outline.
+        style: ShapeStyle,
+        /// What it is painted with.
+        brush: Brush,
+    },
     /// Foreign surface (embedded egui widgets, video, ...). Splits batches.
     Embed {
         /// Surface id.
@@ -438,6 +693,10 @@ impl DrawOp {
                     + *origin
             }
             Self::Text { rect, .. } | Self::Embed { rect, .. } => *rect,
+            Self::Shape { path, style, .. } => {
+                let r = style.reach();
+                path.bounding_box().inflate(r, r)
+            }
             Self::Path { path, style, .. } => {
                 let b = path.bounding_box();
                 match style {
@@ -554,6 +813,11 @@ impl DisplayListBuilder {
             style,
             paint,
         })
+    }
+
+    /// A shape filled or outlined with a brush (see [`DrawOp::Shape`]).
+    pub fn shape(&mut self, path: Arc<BezPath>, style: ShapeStyle, brush: Brush) -> &mut Self {
+        self.push(DrawOp::Shape { path, style, brush })
     }
 
     /// A shaped run in one colour.

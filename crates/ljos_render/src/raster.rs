@@ -514,6 +514,10 @@ impl VelloCpuReference {
                     }
                 }
             }
+            DrawOp::Shape { path, style, brush } => {
+                let scale = to_device.determinant().abs().sqrt();
+                crate::shape::draw_shape(ctx, path, style, brush, opacity, scale);
+            }
             DrawOp::Text {
                 rect, color, size, ..
             } => {

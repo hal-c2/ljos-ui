@@ -14,10 +14,13 @@ mod glyph;
 mod image;
 mod raster;
 mod rgba;
+mod shape;
 mod tree;
 
 #[cfg(feature = "b0")]
 pub mod b0;
+#[cfg(feature = "b0")]
+mod b0_shape;
 #[cfg(feature = "b0")]
 mod glyph_atlas;
 
@@ -26,9 +29,10 @@ pub use compose::{
     ClipEntry, ClipId, ComposeStats, FrameSnapshot, PaintItem, hit_test, is_axis_aligned,
 };
 pub use display_list::{
-    Border, Decorations, DisplayList, DisplayListBuilder, DisplayListId, DrawOp, EmbedId, GlyphRun,
-    GradientStop, Insets, LinearGradient, Paint, PaintContent, PaintCx, PathStyle, PositionedGlyph,
-    TextAlign, TileMode, fill_area,
+    Border, Brush, BrushGradient, Decorations, DisplayList, DisplayListBuilder, DisplayListId,
+    DrawOp, EmbedId, FillRule, GlyphRun, GradientGeometry, GradientStop, Insets, LinearGradient,
+    Paint, PaintContent, PaintCx, PathStyle, PositionedGlyph, ShapeStyle, Spread, TextAlign,
+    TileMode, fill_area,
 };
 pub use glyph::{FontTables, Os2Table, font_tables, glyph_advances, glyph_ink_bounds};
 pub use image::{
