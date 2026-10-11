@@ -38,6 +38,10 @@ pub enum ResizeMode {
     RootToView,
     /// The view allocates the root's `width`/`height`.
     ViewToRoot,
+    /// The view takes all the space the `Ui` offers and leaves the root's
+    /// size alone: for a root that is a window, whose host says how large
+    /// the platform made it and keeps a binding on its size alive.
+    Fill,
 }
 
 /// When the view takes the keys: what a Qt Quick window does by being the
@@ -53,6 +57,20 @@ pub enum KeyboardPolicy {
     /// click on it, a Tab to it or [`QmlView::request_keyboard`]. For a view
     /// that is one widget among others.
     WhenFocused,
+}
+
+/// The AccessKit updates of one pass of a view whose tree is grafted
+/// ([`QmlView::graft_updates`]), in the order an adapter takes them.
+#[derive(Debug)]
+pub struct GraftUpdates {
+    /// egui's tree, with the graft node in it.
+    pub root: egui::accesskit::TreeUpdate,
+    /// The scene's tree: all of it the first time, afterwards what
+    /// changed. `None` when nothing did.
+    pub grafted: Option<egui::accesskit::TreeUpdate>,
+    /// egui's focus was on the graft node before its tree was there, and
+    /// was told to be elsewhere: one more pass says where it is.
+    pub again: bool,
 }
 
 /// Counters for tests and diagnostics.
@@ -169,6 +187,15 @@ pub struct QmlView {
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
+    /// The scene's accessibility tree is an AccessKit tree of its own
+    /// with this id, grafted into egui's, and not nodes of egui's tree.
+    graft: Option<TreeId>,
+    /// The graft node was in egui's tree in the last pass.
+    grafted: bool,
+    /// The adapter was last told that egui's focus is on the graft node:
+    /// the root of egui's tree, where the focus waits while the window's
+    /// own focus changes ([`QmlView::release_graft_focus`]).
+    graft_focus: Option<egui::accesskit::NodeId>,
     /// What egui said of the system's preferences when it was last asked.
     system: a11y::SystemFeed,
     text: TextBridge,
@@ -215,6 +242,9 @@ impl QmlView {
             painted_frame: None,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
+            graft: None,
+            grafted: false,
+            graft_focus: None,
             system: a11y::SystemFeed::default(),
             text: TextBridge::default(),
             stats: ViewStats::default(),
@@ -239,9 +269,139 @@ impl QmlView {
         self
     }
 
+    pub fn resize_mode(&self) -> ResizeMode {
+        self.resize
+    }
+
+    /// Changes who decides the size, for a view whose root was replaced
+    /// by one of another kind. The size the view last had is forgotten, so
+    /// the next pass sizes the root again if the new mode does that.
+    pub fn set_resize_mode(&mut self, mode: ResizeMode) {
+        if self.resize != mode {
+            self.resize = mode;
+            self.size = None;
+        }
+    }
+
     pub fn with_keyboard_policy(mut self, policy: KeyboardPolicy) -> Self {
         self.keyboard = policy;
         self
+    }
+
+    /// Keeps the scene's accessibility tree out of egui's: the view puts
+    /// one graft node into egui's tree and the scene's tree is an
+    /// AccessKit tree of its own, `tree`, that hangs there. For a host
+    /// that owns the platform's adapter, which is the only one that can
+    /// hand it a second tree: after each pass it sends egui's update and
+    /// then [`QmlView::take_accessibility_update`]. What it gains is that
+    /// only the nodes that changed are told, where egui's tree is told
+    /// whole every pass.
+    ///
+    /// Without this the view writes its nodes into egui's tree, which any
+    /// egui application shows as it is.
+    pub fn with_accessibility_graft(mut self, tree: TreeId) -> Self {
+        self.graft = Some(tree);
+        self
+    }
+
+    /// The node of egui's tree the scene's tree hangs at, while it is
+    /// there: after a pass in which something listened, of a view made
+    /// [`QmlView::with_accessibility_graft`].
+    ///
+    /// AccessKit refuses the focus on this node before the grafted tree
+    /// was sent once: a host keeps egui's update from saying so until
+    /// then.
+    pub fn accessibility_graft_node(&self) -> Option<egui::accesskit::NodeId> {
+        (self.graft.is_some() && self.grafted).then(|| self.focus_id().accesskit_id())
+    }
+
+    /// What the grafted tree has to say since the last call: everything
+    /// the first time, then the nodes that changed and where the focus
+    /// is. `full` asks for everything again, for an adapter that has not
+    /// been told (it was just activated). `None` when nothing changed,
+    /// when nothing listens and for a view without a graft.
+    ///
+    /// Send it straight after egui's own update of the same pass: the
+    /// graft node has to be there first.
+    pub fn take_accessibility_update(&mut self, full: bool) -> Option<egui::accesskit::TreeUpdate> {
+        let id = self.graft?;
+        if !self.grafted {
+            return None;
+        }
+        let tree = self.scene.accessibility_tree_mut();
+        let mut update = if full {
+            tree.full_update()
+        } else {
+            tree.take_update()?
+        };
+        update.tree_id = id;
+        Some(update)
+    }
+
+    /// What a host that owns the adapter sends after a pass of a view
+    /// with a graft: `root` is what egui said in that pass
+    /// (`PlatformOutput::accesskit_update`), `told` whether this adapter
+    /// was sent the grafted tree before; the host keeps it, and clears it
+    /// when the adapter is activated anew.
+    ///
+    /// It keeps the two rules AccessKit has for a graft: the grafted tree
+    /// follows the update that carries its graft node, and the focus is
+    /// not on the graft node before the grafted tree was told.
+    pub fn graft_updates(
+        &mut self,
+        mut root: egui::accesskit::TreeUpdate,
+        told: &mut bool,
+    ) -> GraftUpdates {
+        let Some(node) = self.accessibility_graft_node() else {
+            // Without the graft node an adapter drops the grafted tree.
+            *told = false;
+            self.graft_focus = None;
+            return GraftUpdates {
+                root,
+                grafted: None,
+                again: false,
+            };
+        };
+        let mut again = false;
+        if !*told
+            && root.focus == node
+            && let Some(tree) = &root.tree
+        {
+            // The pass after this one says where the focus is.
+            root.focus = tree.root;
+            again = true;
+        }
+        let grafted = self.take_accessibility_update(!*told);
+        *told = true;
+        self.graft_focus = match &root.tree {
+            Some(tree) if root.focus == node => Some(tree.root),
+            _ => None,
+        };
+        GraftUpdates {
+            root,
+            grafted,
+            again,
+        }
+    }
+
+    /// What a host that owns the adapter sends it before the adapter
+    /// hears that its window gained or lost the focus; `None` when there
+    /// is nothing to send. The host then asks for a pass, which says
+    /// again where the focus is.
+    ///
+    /// The adapters of this AccessKit (accesskit_consumer 0.36) take the
+    /// change of the window's focus for an update of egui's tree, and
+    /// name the focused node by the id it has in its own tree. With the
+    /// focus inside the grafted tree that id is none of egui's, and the
+    /// adapter panics. So the focus leaves the graft first.
+    pub fn release_graft_focus(&mut self) -> Option<egui::accesskit::TreeUpdate> {
+        let root = self.graft_focus.take()?;
+        Some(egui::accesskit::TreeUpdate {
+            nodes: Vec::new(),
+            tree: None,
+            tree_id: TreeId::ROOT,
+            focus: root,
+        })
     }
 
     /// The id of the egui widget that holds egui's focus for the whole
@@ -292,7 +452,9 @@ impl QmlView {
 
     /// The egui id of an item's accessibility node, if the item is exposed.
     /// It is made of the view's id and the item, so it is the same every
-    /// pass.
+    /// pass. With [`QmlView::with_accessibility_graft`] the item is a node
+    /// of the grafted tree instead, and its id there is its key
+    /// (`QuickScene::accessible_node`).
     pub fn accessible_id(&self, item: ObjectId) -> Option<Id> {
         let key = self.scene.accessible_node(item)?;
         Some(a11y::node_id(self.id, key))
@@ -334,7 +496,7 @@ impl QmlView {
             self.bind_context(&ctx);
         }
         let desired = match self.resize {
-            ResizeMode::RootToView => ui.available_size(),
+            ResizeMode::RootToView | ResizeMode::Fill => ui.available_size(),
             ResizeMode::ViewToRoot => self.root_size(),
         };
         // Before the view's widget exists in this pass: what the scene
@@ -391,6 +553,11 @@ impl QmlView {
         let texts = text::collect(&events, &keys);
         if keys.is_empty() && texts.is_empty() {
             return;
+        }
+        // The window may have got the keyboard in this very pass: what
+        // came after that was typed into it.
+        if ui.input(|i| i.focused) && !self.scene.is_window_active(&self.engine) {
+            self.scene.set_window_active(&self.engine, true);
         }
 
         // The frame of this pass shows what the keys change.
@@ -582,16 +749,28 @@ impl QmlView {
 
         // Accessibility. Like the shapes, egui keeps no nodes between
         // passes, so they are repeated while something listens.
-        if listening {
-            let tree = self.scene.accessibility_tree();
-            let holder = self.focus_id();
-            let runs = &mut self.emitted_runs;
-            a11y::emit(ui, self.id, holder, rect, tree, &mut self.emitted, runs);
-        } else {
-            self.emitted.clear();
-            self.emitted_runs.clear();
+        self.grafted = false;
+        match self.graft {
+            Some(tree) if listening => {
+                // One node, the same every pass: the scene's tree is told
+                // to the adapter by the host, and only what changed of it.
+                a11y::graft(&ctx, self.focus_id(), rect, tree);
+                self.grafted = true;
+                self.stats.accessible_nodes = self.scene.accessibility_tree().len();
+            }
+            None if listening => {
+                let tree = self.scene.accessibility_tree();
+                let holder = self.focus_id();
+                let runs = &mut self.emitted_runs;
+                a11y::emit(ui, self.id, holder, rect, tree, &mut self.emitted, runs);
+                self.stats.accessible_nodes = self.emitted.len();
+            }
+            _ => {
+                self.emitted.clear();
+                self.emitted_runs.clear();
+                self.stats.accessible_nodes = 0;
+            }
         }
-        self.stats.accessible_nodes = self.emitted.len();
 
         // Schedule the next pass.
         let missed = self.gate.missed.replace(false) && self.scene.needs_frame();
@@ -652,34 +831,37 @@ impl QmlView {
         for e in &events {
             match e {
                 Event::AccessKitActionRequest(req) => {
-                    if req.action == Action::Click
-                        && req.target_tree == TreeId::ROOT
-                        && let Some(key) = self.emitted.get(&req.target_node)
-                    {
-                        presses.push(*key);
+                    // egui's tree names a node by the id the view gave it;
+                    // a grafted tree by the scene's own key.
+                    let tree = self.scene.accessibility_tree();
+                    let key = match self.graft {
+                        None if req.target_tree == TreeId::ROOT => {
+                            self.emitted.get(&req.target_node).copied()
+                        }
+                        Some(id) if req.target_tree == id => {
+                            a11y::grafted_key(tree, req.target_node)
+                        }
+                        _ => None,
+                    };
+                    let Some(key) = key else {
+                        continue;
+                    };
+                    if req.action == Action::Click {
+                        presses.push(key);
                     }
-                    if req.action == Action::Focus
-                        && req.target_tree == TreeId::ROOT
-                        && let Some(key) = self.emitted.get(&req.target_node)
-                    {
-                        focuses.push(*key);
+                    if req.action == Action::Focus {
+                        focuses.push(key);
                     }
-                    if req.target_tree == TreeId::ROOT
-                        && let Some(action) = crate::a11y::item_action(req)
-                        && let Some(key) = self.emitted.get(&req.target_node)
-                    {
-                        actions.push((*key, action));
+                    if let Some(action) = a11y::item_action(req) {
+                        actions.push((key, action));
                     }
-                    if req.target_tree == TreeId::ROOT
-                        && let Some(key) = self.emitted.get(&req.target_node)
-                        && let Some(action) = crate::a11y::text_action(
-                            req,
-                            *key,
-                            self.scene.accessibility_tree(),
-                            &self.emitted_runs,
-                        )
-                    {
-                        text_actions.push((*key, action));
+                    let runs = &self.emitted_runs;
+                    let action = match self.graft {
+                        None => a11y::text_action(req, key, tree, |id| runs.get(&id).copied()),
+                        Some(_) => a11y::text_action(req, key, tree, |id| tree.text_run(id)),
+                    };
+                    if let Some(action) = action {
+                        text_actions.push((key, action));
                     }
                 }
                 Event::Touch { id, phase, pos, .. } => {

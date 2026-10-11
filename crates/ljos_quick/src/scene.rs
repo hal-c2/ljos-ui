@@ -85,6 +85,8 @@ enum Kind {
     Managed,
     /// A `TextInput` or `TextEdit`: lays itself out, the scene paints it.
     Editor,
+    /// A `Shape`: paints the paths declared in it.
+    Shape,
 }
 
 impl Kind {
@@ -103,6 +105,8 @@ impl Kind {
             Kind::Column
         } else if crate::layouts::managed(engine, obj) {
             Kind::Managed
+        } else if is_a::<crate::shapes::Shape>(engine, obj) {
+            Kind::Shape
         } else {
             Kind::Item
         }
@@ -111,7 +115,7 @@ impl Kind {
     fn paints(self) -> bool {
         matches!(
             self,
-            Kind::Rectangle | Kind::Text | Kind::Image | Kind::Editor
+            Kind::Rectangle | Kind::Text | Kind::Image | Kind::Editor | Kind::Shape
         )
     }
 
@@ -160,6 +164,7 @@ enum Paint {
     Text(TextInputs),
     Image(crate::image::ImagePaint),
     Editor(crate::text_input::EditorPaint),
+    Shape(crate::shapes::ShapePaint),
 }
 
 /// Dirty state written by effects and drained by `frame`.
@@ -369,6 +374,19 @@ impl QuickScene {
 
     pub fn root(&self) -> Option<ObjectId> {
         self.root
+    }
+
+    /// Makes this scene the one the engine's timers wake. An engine has
+    /// one such hook and [`QuickScene::set_root`] takes it for the scene
+    /// it is called on: a host that shows several scenes of one engine
+    /// gives it back to the scene whose frames always run.
+    pub fn take_timer_wake(&self, engine: &Engine) {
+        let shared = Rc::downgrade(&self.shared);
+        engine.set_timer_wake(move || {
+            if let Some(s) = shared.upgrade() {
+                mark(&s, |_| {});
+            }
+        });
     }
 
     /// What the scene shows, in logical pixels.
@@ -729,7 +747,7 @@ impl QuickScene {
                     Kind::Text => text::polish(engine, obj, &self.text),
                     // Only after the fonts changed (`refresh_text`).
                     Kind::Editor => crate::text_input::refresh(engine, obj),
-                    Kind::Item | Kind::Rectangle | Kind::Image => Ok(()),
+                    Kind::Item | Kind::Rectangle | Kind::Image | Kind::Shape => Ok(()),
                 };
                 if let Err(e) = r {
                     engine.log(
@@ -991,6 +1009,7 @@ impl QuickScene {
                 Paint::Text(t) => text::paint(&mut te, t, cx.size, b),
                 Paint::Image(i) => i.paint(cx.size, b),
                 Paint::Editor(p) => p.paint(cx.size, b),
+                Paint::Shape(s) => s.paint(cx.size, b),
             }
         });
     }
@@ -1013,6 +1032,10 @@ impl QuickScene {
                 continue;
             }
             let shown = visible.contains(obj);
+            // A Shape paints where its paths are, which need not be where
+            // the item is: only its display list tells whether it is in the
+            // frame, so it has one from the start and keeps it.
+            let shown = shown || e.kind == Kind::Shape;
             match (shown, e.content_effect) {
                 (true, None) => {
                     let shared = Rc::clone(&self.shared);
@@ -1108,6 +1131,8 @@ impl QuickScene {
         let mut hits: Vec<ObjectId> = hit_test(snap, pos)
             .filter_map(|n| self.by_node.get(&n).copied())
             .filter(|o| engine.is_alive(*o))
+            // A Shape that takes points by its fill lets the rest through.
+            .filter(|o| crate::shapes::takes_pointer(engine, *o, || local_point(engine, *o, pos)))
             .collect();
         crate::layer::trim(engine, self.layer, &mut hits);
         hits
@@ -1554,7 +1579,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             // Reads the item's size too, where the layout depends on it.
             TextInputs::read(e, obj);
         }
-        Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor => return,
+        Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor | Kind::Shape => return,
     }
     mark(shared, |s| {
         s.polish.insert(obj);
@@ -1570,6 +1595,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Text => Paint::Text(TextInputs::read(e, obj)),
         Kind::Image => Paint::Image(crate::image::ImagePaint::read(e, obj)),
         Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
+        Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         _ => return,
     };
     mark(shared, |s| {

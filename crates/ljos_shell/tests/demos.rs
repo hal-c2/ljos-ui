@@ -4,7 +4,7 @@
 //! Set `LJOS_SHOTS_DIR` to a directory to also write `demo.png`,
 //! `demo_clicked.png`, `demo_qml.png`, `demo_qml_clicked.png` and the
 //! `demo_qml_combo.png`, `demo_qml_menu.png` and `demo_qml_dialog.png` of
-//! the open popups there.
+//! the open popups there, and the `tiled.png` of an image that is tiled.
 //! Without wgpu the tests skip the pixels and say so.
 
 use std::cell::Cell;
@@ -30,11 +30,37 @@ const SIZE: Vec2 = Vec2::new(640.0, 480.0);
 /// Both demos anchor a 160×56 button 24 px from the bottom-right corner.
 const BUTTON_CENTRE: Pos2 = Pos2::new(SIZE.x - 24.0 - 80.0, SIZE.y - 24.0 - 28.0);
 
+/// What draws the pictures: a renderer that samples textures as a window
+/// does. kittest's default filters them in its shader, for pictures that
+/// are the same on every GPU, and that filter is always linear and always
+/// clamped, whatever the texture's sampler says: an image that is tiled
+/// came out as one copy with its edges smeared outwards, where a window
+/// tiles it. Nothing else of the default is given up (no dithering, no
+/// multisampling).
+///
+/// Without a GPU adapter the pictures are skipped: a renderer that says
+/// it cannot draw.
+fn sampling<S>(builder: egui_kittest::HarnessBuilder<S>) -> egui_kittest::HarnessBuilder<S> {
+    let options = egui_wgpu::RendererOptions {
+        predictable_texture_filtering: false,
+        ..egui_wgpu::RendererOptions::PREDICTABLE
+    };
+    match std::panic::catch_unwind(|| {
+        egui_kittest::wgpu::WgpuTestRenderer::with_render_options(options)
+    }) {
+        Ok(renderer) => builder.renderer(renderer),
+        Err(_) => builder.renderer(egui_kittest::LazyRenderer::Uninitialized {
+            textures_delta: egui::TexturesDelta::default(),
+            builder: None,
+        }),
+    }
+}
+
 fn harness(
     setup: impl FnOnce(&mut Setup<'_, String>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Harness<'static, ShellApp<String>> {
     let config = ShellConfig::default();
-    let mut h = Harness::builder().with_size(SIZE).build_eframe(move |cc| {
+    let mut h = sampling(Harness::builder().with_size(SIZE)).build_eframe(move |cc| {
         ShellApp::new(&cc.egui_ctx, &config, Arc::new(SystemClock::new()), setup).unwrap()
     });
     h.run();
@@ -245,4 +271,93 @@ fn demo_qml_opens_its_popups() {
     click(&mut h, BUTTON_CENTRE);
     let e = h.state().engine();
     assert_eq!(e.read_by_name(root, "clicks"), Value::Int(0));
+}
+
+/// A 4 by 2 PNG: the left half red, the right half blue.
+fn two_halves() -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, 4, 2);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        let row = [
+            [255, 0, 0, 255],
+            [255, 0, 0, 255],
+            [0, 0, 255, 255],
+            [0, 0, 255, 255],
+        ];
+        let data: Vec<u8> = row.iter().chain(&row).flatten().copied().collect();
+        w.write_image_data(&data).unwrap();
+    }
+    out
+}
+
+#[test]
+fn a_tiled_image_is_tiled_in_the_picture_too() {
+    use ljos_quick::{Image, ImageStore, add_data};
+
+    let mut h = harness(move |s| {
+        let e = s.engine();
+        ImageStore::of(e).register_resource("halves.png", two_halves());
+        let root = e
+            .create_native(Item::default(), None)
+            .map_err(|e| e.to_string())?;
+        e.complete(root).map_err(|e| e.to_string())?;
+        let image = e
+            .create_native(Image::default(), Some(root))
+            .map_err(|e| e.to_string())?;
+        add_data(e, root, image).map_err(|e| e.to_string())?;
+        e.complete(image).map_err(|e| e.to_string())?;
+        for (name, value) in [
+            ("x", Value::Real(10.0)),
+            ("y", Value::Real(10.0)),
+            ("width", Value::Real(80.0)),
+            ("height", Value::Real(40.0)),
+            ("smooth", Value::Bool(false)),
+            // `Image.Tile`.
+            ("fillMode", Value::Int(3)),
+            ("source", Value::Url("halves.png".into())),
+        ] {
+            e.write_by_name(image, name, value)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(root)
+    });
+    h.run();
+    // Twenty tiles side by side, each half red and half blue. Stretched
+    // from one tile's edge, everything after the first would be one colour.
+    let img = match h.render() {
+        Ok(img) => img,
+        Err(err) => {
+            eprintln!("render unavailable ({err}); skipping the tiles");
+            return;
+        }
+    };
+    let (w, ht) = img.dimensions();
+    if let Some(dir) = shots_dir() {
+        std::fs::create_dir_all(&dir).unwrap();
+        write_png(&dir.join("tiled.png"), w, ht, img.as_raw());
+    }
+    let scale = w as f32 / SIZE.x;
+    // Copies of a picture that is half red and half blue: the colour
+    // changes every second pixel. Stretched it changes once, and so does
+    // one copy with its edges smeared outwards.
+    let row: Vec<char> = (0..80)
+        .map(|x| {
+            let at = Pos2::new(10.5 + x as f32, 30.0);
+            let px = img
+                .get_pixel((at.x * scale) as u32, (at.y * scale) as u32)
+                .0;
+            match px {
+                px if is_red(px) => 'r',
+                px if is_blue(px) => 'b',
+                _ => '?',
+            }
+        })
+        .collect();
+    let text: String = row.iter().collect();
+    let changes = row.windows(2).filter(|w| w[0] != w[1]).count();
+    assert!(!text.contains('?'), "not the picture everywhere: {text}");
+    assert_eq!(changes, 39, "the image is not tiled: {text}");
 }

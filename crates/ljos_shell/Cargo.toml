@@ -1,6 +1,6 @@
 [package]
 name = "ljos_shell"
-description = "Desktop shell for Ljós on eframe: one window, one Engine, a full-window QmlView, and the UI inbox"
+description = "Desktop shell for Ljós: its own loop on ljos_host with egui-winit and egui-wgpu, one Engine, a platform window for every QML Window, and the UI inbox"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,15 +14,28 @@ ljos_egui = { path = "../ljos_egui" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
-eframe.workspace = true
+ljos_host = { path = "../ljos_host" }
 egui.workspace = true
+# The loop is the shell's own (ARCHITECTURE.md §7.3): winit through
+# ljos_host, egui's input translation and its wgpu painter. Not in the
+# workspace pins; the versions are egui's.
+egui-winit = { version = "0.36.2", features = ["accesskit"] }
+egui-wgpu = { version = "0.36.2", features = ["winit", "wayland", "x11"] }
+# Surface creation is asynchronous in wgpu and immediate on the desktop.
+pollster = "1.0.1"
 thiserror.workspace = true
+# Only with `eframe`: for a host that has an eframe application of its own
+# and shows a `ShellApp` in it.
+eframe = { workspace = true, optional = true }
 # Only with `dev`: the watcher and the reload driver, which link the
 # compiler and so the parser. A shipped application leaves the feature off
 # (CLAUDE.md rule 5; tests/no_parser.rs keeps it so).
 ljos_dev = { path = "../ljos_dev", optional = true }
 
 [features]
+# `impl eframe::App for ShellApp`. `run` does not need it: the shell has
+# its own loop (tests/no_eframe.rs keeps eframe out of it).
+eframe = ["dep:eframe"]
 # Dev hot reload: `Setup::watch` compiles a directory of QML, watches it
 # and applies every save to the running application.
 dev = ["dep:ljos_dev"]
@@ -32,6 +45,8 @@ dev = ["dep:ljos_dev"]
 mcp = ["dev", "ljos_dev/mcp"]
 
 [dev-dependencies]
+# The tests drive a `ShellApp` in kittest's eframe harness.
+ljos_shell = { path = ".", features = ["eframe"] }
 # Only the demo_qml example compiles QML; the shell itself never links the
 # compiler.
 ljos_compiler = { path = "../ljos_compiler" }
@@ -40,6 +55,8 @@ anyhow.workspace = true
 png.workspace = true
 # tests/dev.rs edits a project on disk under the watcher.
 tempfile.workspace = true
+# tests/tools.rs reads the inspector's answers.
+serde_json.workspace = true
 
 [lints]
 workspace = true

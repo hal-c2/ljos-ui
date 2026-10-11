@@ -16,4 +16,4 @@ mod view;
 
 pub use input::{Scroll, WheelTrack, map_button, map_modifiers, map_wheel};
 pub use keys::map_key;
-pub use view::{KeyboardPolicy, QmlView, ResizeMode, ViewError, ViewStats};
+pub use view::{GraftUpdates, KeyboardPolicy, QmlView, ResizeMode, ViewError, ViewStats};

@@ -1,0 +1,23 @@
+[package]
+name = "ljos_host"
+description = "Ljós platform host: the PlatformHost trait (events in, capabilities out) and WinitHost for the desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["winit"]
+# `WinitHost`: the desktop (and later iOS) host. Without it the crate is the
+# trait and the portable event types only, for a host of another kind.
+winit = ["dep:winit"]
+
+[dependencies]
+thiserror.workspace = true
+# The version ARCHITECTURE.md section 24 pins; not in the workspace pins.
+winit = { version = "0.30.13", optional = true }
+
+[lints]
+workspace = true

@@ -1,7 +1,14 @@
-//! The desktop shell: one eframe window, one [`Engine`] with QtQuick
-//! registered, a full-window [`QmlView`], and the UI inbox through which
-//! other threads talk to the Engine (ARCHITECTURE 7.2 step 1, principle:
-//! threads talk to the Engine through `UiHandle` only).
+//! The desktop shell: its own loop on `ljos_host` with egui-winit and
+//! egui-wgpu (ARCHITECTURE.md §7.3), one [`Engine`] with QtQuick
+//! registered, a platform window for the root and one for every QML
+//! `Window` that is shown, and the UI inbox through which other threads
+//! talk to the Engine (§7.2 step 1; principle: threads talk to the Engine
+//! through `UiHandle` only).
+//!
+//! The loop sleeps until something asks for a pass: input, a timer, an
+//! animation, a message or dirty state. The shell owns each window's
+//! surface (presented with vsync), and its AccessKit adapter, into whose
+//! tree of egui the scene's own tree is grafted (§14).
 //!
 //! ```no_run
 //! use ljos_shell::{ShellConfig, run};
@@ -18,7 +25,12 @@ mod tools;
 #[cfg(feature = "dev")]
 pub use ljos_dev::{TopRow, TopView};
 #[cfg(feature = "mcp")]
-pub use tools::{InspectorAddress, InspectorOptions};
+pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
+
+mod desktop;
+mod repaint;
+mod surface;
+mod windows;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -27,17 +39,20 @@ use std::time::Duration;
 use ljos_egui::{QmlView, ViewError};
 use ljos_engine::{Color, Engine, ObjectId};
 use ljos_quick::TimerHook;
-use ljos_runtime::{Clock, DrainBudget, DrainReport, SystemClock, UiHandle, UiInbox};
+use ljos_runtime::{Clock, DrainBudget, DrainReport, UiHandle, UiInbox};
 
-/// Window and pipeline settings. Later the root `Window`/`ApplicationWindow`
-/// will provide title and size; until then they come from here.
+/// Window and pipeline settings. A root that is a `Window` (or an
+/// `ApplicationWindow`) says its own title, size, limits and colour; what
+/// is here is for a root that is a plain item, and for the title and the
+/// size such a window leaves unsaid.
 #[derive(Clone, Debug)]
 pub struct ShellConfig {
     pub title: String,
     /// Initial inner size in logical pixels.
     pub size: [f32; 2],
     pub min_size: Option<[f32; 2]>,
-    /// Painted behind the root item (QQuickWindow's default is white).
+    /// Painted behind a root that is a plain item (QQuickWindow's default
+    /// is white). A root `Window` paints its own `color`.
     pub background: Color,
     /// Bound on queued messages; a full inbox pushes back on senders.
     pub inbox_capacity: usize,
@@ -93,7 +108,10 @@ pub type SetupError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
     #[error("window: {0}")]
-    Window(#[from] eframe::Error),
+    Window(#[from] ljos_host::HostError),
+    /// No surface to draw the first window into.
+    #[error("graphics: {0}")]
+    Gpu(String),
     #[error("setup: {0}")]
     Setup(SetupError),
     #[error(transparent)]
@@ -151,14 +169,21 @@ impl<M> std::fmt::Debug for Setup<'_, M> {
     }
 }
 
-/// The eframe app behind [`run`]. Public so tests (and hosts with their own
-/// eframe setup) can build it from an `egui::Context`.
+/// What [`run`] shows: the Engine, the view of its root, the inbox and
+/// the development tools. Public so that tests and hosts with an egui
+/// loop of their own can build one from an `egui::Context` and run its
+/// passes ([`ShellApp::begin_pass`], [`ShellApp::show`]); with the feature
+/// `eframe` it is an `eframe::App`. Shown that way a QML `Window` is an
+/// item of the scene: only [`run`] gives each a platform window.
 pub struct ShellApp<M> {
     view: QmlView,
     inbox: UiInbox<M>,
     on_message: Option<MessageHandler<M>>,
     budget: DrainBudget,
     background: egui::Color32,
+    /// Whether [`ShellApp::show`] paints the background: not behind a
+    /// root that is a window of its own, which paints its `color`.
+    backdrop: bool,
     last_drain: DrainReport,
     /// The watched application of a development build.
     #[cfg(feature = "dev")]
@@ -178,6 +203,15 @@ impl<M> std::fmt::Debug for ShellApp<M> {
     }
 }
 
+/// What [`run`] adds to a [`ShellApp`]: platform windows.
+pub(crate) struct Hosting {
+    /// The AccessKit tree of the root's scene, grafted into egui's.
+    pub(crate) tree: egui::accesskit::TreeId,
+    /// Called when a QML `Window` wants something else of its platform
+    /// window than it has.
+    pub(crate) changed: Box<dyn Fn()>,
+}
+
 impl<M: Send + 'static> ShellApp<M> {
     /// Creates the Engine, registers QtQuick, runs `setup` to build the
     /// root item and wires the inbox to wake `ctx`.
@@ -187,9 +221,37 @@ impl<M: Send + 'static> ShellApp<M> {
         clock: Arc<dyn Clock>,
         setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError>,
     ) -> Result<Self, ShellError> {
+        Self::build(ctx, config, clock, setup, None)
+    }
+
+    /// As [`ShellApp::new`], for the shell's own loop: every QML `Window`
+    /// of the engine is a platform window of `hosting`.
+    pub(crate) fn hosted(
+        ctx: &egui::Context,
+        config: &ShellConfig,
+        clock: Arc<dyn Clock>,
+        setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError>,
+        hosting: Hosting,
+    ) -> Result<Self, ShellError> {
+        Self::build(ctx, config, clock, setup, Some(hosting))
+    }
+
+    fn build(
+        ctx: &egui::Context,
+        config: &ShellConfig,
+        clock: Arc<dyn Clock>,
+        setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError>,
+        hosting: Option<Hosting>,
+    ) -> Result<Self, ShellError> {
         let engine = Rc::new(Engine::new());
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
+        // Before `setup`: a window knows from its first moment whether it
+        // is an item of a scene or a window of the platform.
+        let tree = hosting.map(|h| {
+            ljos_controls::WindowSystem::of(&engine).set_host(h.changed);
+            h.tree
+        });
         let wake_ctx = ctx.clone();
         let (inbox, handle) = UiInbox::channel_with_wake(
             config.inbox_capacity,
@@ -221,6 +283,9 @@ impl<M: Send + 'static> ShellApp<M> {
             ..
         } = s;
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
+        if let Some(tree) = tree {
+            view = view.with_accessibility_graft(tree);
+        }
         view.bind_context(ctx);
         if let Some(h) = timer_hook {
             view.set_timer_hook(h);
@@ -232,6 +297,7 @@ impl<M: Send + 'static> ShellApp<M> {
             on_message,
             budget: config.drain_budget,
             background: egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+            backdrop: true,
             last_drain: DrainReport::default(),
             #[cfg(feature = "dev")]
             dev: dev.finish(),
@@ -285,8 +351,11 @@ impl<M: Send + 'static> ShellApp<M> {
     }
 }
 
-impl<M: Send + 'static> eframe::App for ShellApp<M> {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl<M: Send + 'static> ShellApp<M> {
+    /// Pipeline step 1, at the start of a pass and before
+    /// [`ShellApp::show`]: the inbox, then what the watcher and the
+    /// inspector of a development build brought.
+    pub fn begin_pass(&mut self) {
         #[cfg(feature = "dev")]
         self.begin_tools();
         self.drain_inbox();
@@ -296,48 +365,49 @@ impl<M: Send + 'static> eframe::App for ShellApp<M> {
         self.pump_tools();
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, self.background);
+    /// The rest of a pass: the scene over all of `ui`, and the overlays
+    /// of a development build on top.
+    pub fn show(&mut self, ui: &mut egui::Ui) {
+        if self.backdrop {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, self.background);
+        }
         self.view.show(ui);
         #[cfg(feature = "dev")]
         self.show_dev(ui);
         #[cfg(feature = "dev")]
         self.end_tools(ui);
     }
+
+    /// Whether the background is painted behind the root.
+    pub(crate) fn set_backdrop(&mut self, on: bool) {
+        self.backdrop = on;
+    }
 }
 
-/// Opens a window and runs until it is closed. `setup` builds the root
+#[cfg(feature = "eframe")]
+impl<M: Send + 'static> eframe::App for ShellApp<M> {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.begin_pass();
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+    }
+}
+
+/// Opens the application's windows and runs until the last of them is
+/// closed or the application quits (`Qt.quit()`). `setup` builds the root
 /// item in the given Engine.
+///
+/// A root that is a plain item is shown in a window made from `config`.
+/// A root `Window` is that window, and like every other `Window` it is
+/// on the screen while its `visible` is true.
+///
+/// Call it on the main thread: some platforms allow a loop nowhere else.
 pub fn run<M: Send + 'static>(
     config: ShellConfig,
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title(config.title.clone())
-        .with_inner_size(config.size);
-    if let Some(min) = config.min_size {
-        viewport = viewport.with_min_inner_size(min);
-    }
-    let options = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
-    let title = config.title.clone();
-    eframe::run_native(
-        &title,
-        options,
-        Box::new(move |cc| {
-            // Before `setup`: bindings may measure text while the root is
-            // being built.
-            if config.system_fonts {
-                ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
-            }
-            let app = ShellApp::new(&cc.egui_ctx, &config, Arc::new(SystemClock::new()), setup)
-                // `ShellError` may hold non-Send engine errors; eframe needs Send.
-                .map_err(|e| -> SetupError { e.to_string().into() })?;
-            Ok(Box::new(app))
-        }),
-    )?;
-    Ok(())
+    desktop::run(config, setup)
 }

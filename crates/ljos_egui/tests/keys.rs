@@ -598,6 +598,40 @@ fn the_scene_s_window_is_active_while_the_viewport_has_the_focus() {
 }
 
 #[test]
+fn a_key_that_comes_with_the_window_s_focus_is_typed_into_the_scene() {
+    let s = scene();
+    let mut h = alone(&s);
+    h.input_mut().focused = false;
+    pass(&mut h, [Event::WindowFocused(false)]);
+    assert!(!h.state().view.scene().is_window_active(&s.engine));
+    assert!(log().is_empty());
+    // The user came back to the window and typed at once: one pass has
+    // the focus and the key.
+    h.input_mut().focused = true;
+    pass(
+        &mut h,
+        [
+            Event::WindowFocused(true),
+            down(Key::A, Modifiers::NONE),
+            Event::Text("a".to_owned()),
+        ],
+    );
+    assert_eq!(log(), ["one press 0x41 \"a\" 0"]);
+    assert!(h.state().view.scene().is_window_active(&s.engine));
+}
+
+#[test]
+fn a_key_for_a_window_without_the_focus_is_not_typed() {
+    let s = scene();
+    let mut h = alone(&s);
+    h.input_mut().focused = false;
+    pass(&mut h, [Event::WindowFocused(false)]);
+    pass(&mut h, [down(Key::A, Modifiers::NONE)]);
+    assert!(log().is_empty());
+    assert!(!h.state().view.scene().is_window_active(&s.engine));
+}
+
+#[test]
 fn an_assistive_technology_finds_the_focus_on_the_item() {
     let s = scene();
     tab_stops(&s);

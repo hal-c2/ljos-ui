@@ -180,6 +180,65 @@ fn view_to_root_allocates_the_root_size() {
 }
 
 #[test]
+fn fill_takes_the_space_and_leaves_the_root_size_alone() {
+    // A root that is a window: its host says how large it is, not the view.
+    let s = scene();
+    s.engine.set(s.root, Item::WIDTH, 120.0).unwrap();
+    s.engine.set(s.root, Item::HEIGHT, 30.0).unwrap();
+    let view = QmlView::new(Rc::clone(&s.engine), s.root)
+        .unwrap()
+        .with_resize_mode(ResizeMode::Fill);
+    assert_eq!(view.resize_mode(), ResizeMode::Fill);
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(300.0, 200.0))
+        .build_ui_state(
+            |ui, st: &mut State| st.rect = st.view.show(ui).rect,
+            State {
+                view,
+                rect: Rect::NOTHING,
+            },
+        );
+    h.run();
+    let r = h.state().rect;
+    assert!(r.width() > 120.0 && r.height() > 30.0, "{r:?}");
+    assert_eq!(s.engine.get(s.root, Item::WIDTH).unwrap(), 120.0);
+    assert_eq!(s.engine.get(s.root, Item::HEIGHT).unwrap(), 30.0);
+}
+
+#[test]
+fn the_resize_mode_can_change_while_the_view_lives() {
+    // A reload may replace a plain root with a window, or the other way.
+    let s = scene();
+    s.engine.set(s.root, Item::WIDTH, 120.0).unwrap();
+    s.engine.set(s.root, Item::HEIGHT, 30.0).unwrap();
+    let view = QmlView::new(Rc::clone(&s.engine), s.root)
+        .unwrap()
+        .with_resize_mode(ResizeMode::Fill);
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(300.0, 200.0))
+        .build_ui_state(
+            |ui, st: &mut State| st.rect = st.view.show(ui).rect,
+            State {
+                view,
+                rect: Rect::NOTHING,
+            },
+        );
+    h.run();
+    assert_eq!(s.engine.get(s.root, Item::WIDTH).unwrap(), 120.0);
+    h.state_mut().view.set_resize_mode(ResizeMode::RootToView);
+    h.run();
+    let r = h.state().rect;
+    assert_eq!(
+        s.engine.get(s.root, Item::WIDTH).unwrap(),
+        f64::from(r.width())
+    );
+    assert_eq!(
+        s.engine.get(s.root, Item::HEIGHT).unwrap(),
+        f64::from(r.height())
+    );
+}
+
+#[test]
 fn renders_the_rectangles() {
     let s = scene();
     let mut h = harness(&s, None);

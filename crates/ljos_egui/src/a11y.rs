@@ -78,12 +78,12 @@ pub(crate) type TextRuns = HashMap<accesskit::NodeId, (NodeKey, usize)>;
 
 /// What a request of an assistive technology asks of the text of the
 /// node `key`: a selection, or other text in place of the selection or of
-/// all of it.
+/// all of it. `owner` says whose run an id is, and which.
 pub(crate) fn text_action(
     req: &accesskit::ActionRequest,
     key: NodeKey,
     tree: &Tree,
-    runs: &TextRuns,
+    owner: impl Fn(accesskit::NodeId) -> Option<(NodeKey, usize)>,
 ) -> Option<AccessibleTextAction> {
     use accesskit::{Action, ActionData};
     let text = tree.get(key)?.text.as_ref()?;
@@ -91,7 +91,7 @@ pub(crate) fn text_action(
         (Action::SetTextSelection, Some(ActionData::SetTextSelection(selection))) => {
             let cut = text.runs();
             // A run of another node names no place in this one.
-            let run_of = |id| runs.get(&id).filter(|(k, _)| *k == key).map(|(_, i)| *i);
+            let run_of = |id| owner(id).filter(|(k, _)| *k == key).map(|(_, i)| i);
             let (anchor, cursor) = TextValue::bytes_of(&cut, selection, run_of)?;
             Some(AccessibleTextAction::Select { anchor, cursor })
         }
@@ -215,5 +215,45 @@ pub(crate) fn emit(
         if let Some(focus) = focus {
             node.set_active_descendant(focus);
         }
+    });
+}
+
+/// The node of a grafted tree a request names: the scene's own keys are
+/// its ids there. A run of a text stands for the node whose text it is.
+pub(crate) fn grafted_key(tree: &Tree, id: accesskit::NodeId) -> Option<NodeKey> {
+    let key = NodeKey(id.0);
+    if key != NodeKey::ROOT && tree.contains(key) {
+        return Some(key);
+    }
+    tree.text_run(id).map(|(owner, _)| owner)
+}
+
+/// Makes the node of `holder` the place where the scene's own AccessKit
+/// tree `tree` hangs in egui's, instead of copying the scene's nodes into
+/// egui's tree every pass. `rect` is where the scene is painted: the
+/// nodes of the grafted tree keep the scene's coordinates and the graft
+/// moves them there.
+///
+/// `holder` is the widget that has egui's focus for the scene: the focus
+/// of the grafted tree counts while the graft node has the focus of the
+/// tree around it.
+pub(crate) fn graft(ctx: &egui::Context, holder: Id, rect: Rect, tree: accesskit::TreeId) {
+    ctx.accesskit_node_builder(holder, |node| {
+        node.set_role(Role::Group);
+        // In the node's own space, which the transform puts in the window
+        // (logical points; egui's root node scales to pixels).
+        node.set_bounds(accesskit::Rect {
+            x0: 0.0,
+            y0: 0.0,
+            x1: f64::from(rect.width()),
+            y1: f64::from(rect.height()),
+        });
+        node.set_transform(accesskit::Affine::translate((
+            f64::from(rect.min.x),
+            f64::from(rect.min.y),
+        )));
+        // A graft node has the root of its tree for a child and no other.
+        node.clear_children();
+        node.set_tree_id(tree);
     });
 }
