@@ -33,6 +33,8 @@ Item {
             height: 48
             fillMode: Image.Tile
             smooth: false
+            // Decoration: it says nothing a listener would miss.
+            Accessible.ignored: true
             source: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIUlEQVR42mN4n8OAFf3/8RArYhjVQBMNuCRwGTSqgSYaAMXJGZ+uT/rTAAAAAElFTkSuQmCC"
         }
 
@@ -75,8 +77,8 @@ Item {
 
         Row {
             spacing: 8
-            TextField { objectName: "name"; width: 160; placeholderText: "Type here" }
-            SpinBox { value: 3; to: 10 }
+            TextField { objectName: "name"; width: 160; placeholderText: "Type here"; Accessible.name: "Name" }
+            SpinBox { value: 3; to: 10; Accessible.name: "Count" }
         }
 
         Row {

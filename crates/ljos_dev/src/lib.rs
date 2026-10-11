@@ -14,20 +14,30 @@
 //! - [`host`]: the application's side, and [`DevSession`] which is all of
 //!   it for a host with one root.
 //! - [`overlay`]: what the error overlay says.
+//! - [`text`]: QML a script holds as text (`Qt.createQmlObject`).
 //!
 //! This crate compiles QML, so it links the parser. A shipped program
 //! does not depend on it (CLAUDE.md rule 5): `ljos_shell` takes it behind
 //! its `dev` feature only.
 //!
-//! The devtools socket for a device, the inspector and the `top` overlay
-//! that ARCHITECTURE.md also puts in this crate come with later
-//! milestones.
+//! Also here, and apart from hot reload:
+//!
+//! - [`top`]: the model of the `top` overlay, "which component ate the
+//!   frame" (§9.1, §3.4).
+//! - `mcp` (feature `mcp`, off by default): the read-only MCP inspector
+//!   of a running application (§19.4 to §19.7).
+//!
+//! The devtools socket for a device comes with a later milestone.
 
 pub mod debounce;
 pub mod fingerprint;
 pub mod host;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod overlay;
 pub mod reloader;
+pub mod text;
+pub mod top;
 pub mod watch;
 
 pub use debounce::{Debounce, QUIET};
@@ -38,4 +48,6 @@ pub use host::{
 };
 pub use overlay::Overlay;
 pub use reloader::{Build, Reloader, Touch, classify};
+pub use text::{ProjectTexts, text_compiler};
+pub use top::{FrameStats, Top, TopRow, TopView};
 pub use watch::{DevMsg, WatchError, Watcher};

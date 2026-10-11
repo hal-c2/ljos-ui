@@ -1,12 +1,26 @@
 [package]
 name = "ljos_dev"
-description = "Dev tools for Ljós: the file watcher, the hot reload driver and the error overlay's model"
+description = "Dev tools for Ljós: hot reload, the error overlay's model, the `top` overlay's model and the read-only MCP inspector"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[features]
+default = []
+# The read-only MCP inspector (ARCHITECTURE.md §19.4). Off by default: a
+# build without it links no MCP SDK and no HTTP server.
+mcp = [
+    "dep:ljos_mcp_core",
+    "dep:ljos_a11y",
+    "dep:ljos_render",
+    "dep:tokio",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:schemars",
+]
 
 [dependencies]
 # A dev tool: it compiles QML, so it links the parser. A shipped program
@@ -21,11 +35,31 @@ qml_front = { path = "../qml_front" }
 blake3.workspace = true
 thiserror.workspace = true
 notify.workspace = true
+ljos_mcp_core = { path = "../ljos_mcp_core", features = ["inspect", "http"], optional = true }
+# The outline is the accessibility tree; a picture is drawn by the R backend.
+ljos_a11y = { path = "../ljos_a11y", optional = true }
+ljos_render = { path = "../ljos_render", default-features = false, optional = true }
+tokio = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The end-to-end test makes a scene of the right size.
 ljos_render = { path = "../ljos_render", default-features = false }
 tempfile.workspace = true
+# The inspector's tests drive it as a client in the same process.
+ljos_mcp_core = { path = "../ljos_mcp_core", features = ["inspect", "http", "client"] }
+serde_json.workspace = true
+png.workspace = true
+
+[[test]]
+name = "inspector"
+required-features = ["mcp"]
+
+[[test]]
+name = "inspector_http"
+required-features = ["mcp"]
 
 [lints]
 workspace = true

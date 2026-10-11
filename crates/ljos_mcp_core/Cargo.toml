@@ -8,6 +8,29 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# The engine-neutral half of the live inspector (§19.4): the snapshot
+# outline, the ref table and locators.
+inspect = ["dep:regex"]
+# Streamable HTTP on loopback or a 0600 Unix socket, behind a bearer token
+# (§19.7). Only the inspector listens; the authoring server is stdio.
+http = [
+    "rmcp/transport-streamable-http-server",
+    "tokio/net",
+    "tokio/rt",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http",
+    "dep:http-body-util",
+    "dep:bytes",
+    "dep:getrandom",
+    "dep:constant_time_eq",
+]
+# A client in the same process, for tests and for hosts that drive a
+# surface themselves (§19.2: "host the inspector in-process").
+client = ["rmcp/client", "tokio/rt"]
+
 [dependencies]
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 schemars.workspace = true
@@ -15,9 +38,19 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
+regex = { workspace = true, optional = true }
+# Only the `http` feature needs these.
+hyper = { workspace = true, features = ["server", "http1"], optional = true }
+hyper-util = { workspace = true, features = ["tokio"], optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+constant_time_eq = { workspace = true, optional = true }
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "server", "macros", "transport-io", "transport-worker"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

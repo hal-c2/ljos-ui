@@ -4,6 +4,7 @@
 
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -16,6 +17,7 @@ use qml_front::QtTypeOracle;
 
 use crate::{
     reloader::Reloader,
+    text::ProjectTexts,
     watch::{DevMsg, WatchError, Watcher},
 };
 
@@ -179,6 +181,8 @@ pub struct DevSession {
     settling: bool,
     more_errors: usize,
     reloads: u64,
+    /// What `Qt.createQmlObject` compiles against.
+    texts: Rc<ProjectTexts>,
 }
 
 impl DevSession {
@@ -204,6 +208,8 @@ impl DevSession {
         };
         prepare(engine);
         let mut reloader = Reloader::open(dir, QtTypeOracle)?;
+        let texts = ProjectTexts::new(dir);
+        engine.set_qml_text_compiler(Some(texts.compiler()));
         let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
         let mut root = None;
         let mut more_errors = 0;
@@ -235,6 +241,7 @@ impl DevSession {
             settling: false,
             more_errors,
             reloads: 0,
+            texts,
         })
     }
 
@@ -272,6 +279,10 @@ impl DevSession {
         self.inbox
             .drain(DrainBudget::count(INBOX), clock, |m| messages.push(m));
         let mut out = Vec::new();
+        if !messages.is_empty() {
+            // Every message follows a save.
+            self.texts.changed();
+        }
         for message in messages {
             match message {
                 DevMsg::Cleared => {
@@ -353,6 +364,9 @@ impl DevSession {
                 }
             }
         }
+        // The roots were made again, so what a fault no boundary took had
+        // left half done is gone, and its overlay with it.
+        engine.clear_application_fault();
         self.reloads += 1;
         Report::Reloaded(ReloadStats {
             generation: done.generation,

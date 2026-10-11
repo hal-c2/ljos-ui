@@ -1,10 +1,10 @@
 //! What the error overlay says. Painting it is the host's: this is the
 //! text, so every host says the same.
 
-use ljos_engine::{Engine, ReloadFault};
+use ljos_engine::{Engine, FaultReport, ReloadFault};
 
-/// The reload error as a developer reads it: where, what, and what
-/// happens next.
+/// A reload error, or a fault no boundary contained, as a developer reads
+/// it: where, what, and what happens next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Overlay {
     pub title: String,
@@ -40,11 +40,35 @@ impl Overlay {
         }
     }
 
-    /// The overlay for the engine's last reload error; None when the last
-    /// reload went well, and then nothing is shown.
+    /// The overlay for a fault that reached the application because no
+    /// boundary around it took it.
+    #[must_use]
+    pub fn of_fault(report: &FaultReport) -> Self {
+        let location = match (&report.file, report.line) {
+            (None, _) => String::new(),
+            (Some(file), 0) => file.clone(),
+            (Some(file), line) => format!("{file}:{line}"),
+        };
+        Self {
+            title: format!("Unhandled fault: {}", report.kind()),
+            location,
+            message: report.message(),
+            hint: "No ErrorBoundary contains this, so nothing was made again: what the failed \
+                   code left half done stays. Save a file to reload."
+                .to_owned(),
+        }
+    }
+
+    /// What there is to show: the engine's last reload error, else the
+    /// fault no boundary contained. None when neither, and then nothing is
+    /// shown. A reload error comes first because it is the one the
+    /// developer's next save answers.
     #[must_use]
     pub fn current(engine: &Engine, more: usize) -> Option<Self> {
-        engine.last_reload_error().map(|f| Self::of(&f, more))
+        engine
+            .last_reload_error()
+            .map(|f| Self::of(&f, more))
+            .or_else(|| engine.application_fault().map(|r| Self::of_fault(&r)))
     }
 }
 
@@ -105,5 +129,25 @@ mod tests {
             Overlay::current(&engine, 0).unwrap().location,
             "Main.qml:2:1"
         );
+    }
+
+    #[test]
+    fn a_fault_no_boundary_took_is_shown_until_it_is_cleared() {
+        let engine = Engine::new();
+        engine.report_fault(
+            None,
+            ljos_runtime::Fault::Panic("index out of range".into()),
+        );
+        engine.deliver_faults();
+        let o = Overlay::current(&engine, 0).unwrap();
+        assert_eq!(o.title, "Unhandled fault: Panic");
+        assert_eq!(o.message, "index out of range");
+        assert_eq!(o.location, "");
+        // The reload error is the one the next save answers.
+        engine.set_last_reload_error(Some(fault("Main.qml", 2, 1)));
+        assert_eq!(Overlay::current(&engine, 0).unwrap().title, "Reload failed");
+        engine.set_last_reload_error(None);
+        engine.clear_application_fault();
+        assert_eq!(Overlay::current(&engine, 0), None);
     }
 }

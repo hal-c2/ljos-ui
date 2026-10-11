@@ -1,0 +1,254 @@
+[
+  {
+    "description": "What is running: window size and scale, colour scheme, reduced motion, font scale, which item has keyboard focus, whether the clock is real or virtual, the reload generation, and the capabilities of this connection. Cheap; use it to check that the app is up.",
+    "input_schema": {
+      "additionalProperties": false,
+      "description": "No arguments.",
+      "title": "Nothing",
+      "type": "object"
+    },
+    "name": "app_status",
+    "read_only": true
+  },
+  {
+    "description": "Outline of what the app shows: one line per item with role, name, value, state and a reference (`e12`) to use in other tools. Start here. `root` limits it to one subtree, `depth` to some levels; a cut outline gives a `cursor` for the next part; `since` lists only what changed.",
+    "input_schema": {
+      "$defs": {
+        "Include": {
+          "description": "What a snapshot line shows beyond role, name, value and state.",
+          "oneOf": [
+            {
+              "const": "bounds",
+              "description": "` at=x,y size=WxH`, in window coordinates.",
+              "type": "string"
+            },
+            {
+              "const": "types",
+              "description": "` type=Rectangle`: the QML type.",
+              "type": "string"
+            },
+            {
+              "const": "description",
+              "description": "` desc=\"…\"`: the accessible description.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "default": null,
+          "description": "The `next_cursor` of a cut outline: gives its next part. Not\ncombined with `root`, `depth`, `include` or `since`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "default": null,
+          "description": "How many levels below the first line are listed. What is deeper is\ncounted, not listed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "image": {
+          "default": false,
+          "description": "Also attach a PNG of the window.",
+          "type": "boolean"
+        },
+        "include": {
+          "description": "Extra columns per line: `bounds`, `types`, `description`.",
+          "items": {
+            "$ref": "#/$defs/Include"
+          },
+          "type": "array"
+        },
+        "max_nodes": {
+          "default": null,
+          "description": "Cut the outline after this many items (default and limit 400).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "root": {
+          "default": null,
+          "description": "List only this item and what is below it: a reference (`e12`) or a\nlocator that matches exactly one item.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "description": "The `epoch` of an earlier snapshot: list only what changed since.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "SnapshotArgs",
+      "type": "object"
+    },
+    "name": "app_snapshot",
+    "read_only": true
+  },
+  {
+    "description": "Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`, `id=qmlId`, `name~=regex`, a reference `e12`; `a >> b` searches inside a, `>> nth=0` picks one. Returns a reference, path, bounds and states per match. No match is an empty list, not an error.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": null,
+          "description": "List at most this many matches (default 50, limit 200).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "locator": {
+          "description": "What to look for, e.g. `role=button[name=\"Save\"]`, `text=notes`,\n`#objectName`, `role=list >> role=listitem >> nth=0`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "locator"
+      ],
+      "title": "FindArgs",
+      "type": "object"
+    },
+    "name": "app_find",
+    "read_only": true
+  },
+  {
+    "description": "One item in depth: QML type, id, object key, the file and line that declare it, geometry, and its properties with where each value comes from (assigned, bound at tier 0, 1 or js, animated, default). `target` is a reference or a locator matching exactly one item. `all` adds defaults.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "default": false,
+          "description": "List every property, including those still at their default.",
+          "type": "boolean"
+        },
+        "target": {
+          "description": "A reference (`e12`) or a locator that matches exactly one item.\n`#objectName` and `id=qmlId` also reach items the outline does not\nlist (not exposed, or not shown).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "title": "InspectArgs",
+      "type": "object"
+    },
+    "name": "app_inspect",
+    "read_only": true
+  },
+  {
+    "description": "PNG of the window, or of one item when `target` is given, drawn by the software renderer (works headless). Scaled down so the longest side is at most `max_size` (default and limit 1280 px). Prefer `app_snapshot` for reading text and state: it is smaller and exact.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "max_size": {
+          "default": null,
+          "description": "Longest side of the picture in pixels (default and limit 1280).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "target": {
+          "default": null,
+          "description": "Picture only this item: a reference or a locator that matches\nexactly one item. Without it, the whole window.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "ScreenshotArgs",
+      "type": "object"
+    },
+    "name": "app_screenshot",
+    "read_only": true
+  },
+  {
+    "description": "Recent log lines of the app (`console.log`, warnings, JS errors) with QML file and line when known, oldest first, at most 100. `level` sets the least severe level listed; `since` takes the `next_since` of an earlier answer to get only newer lines.",
+    "input_schema": {
+      "$defs": {
+        "Level": {
+          "description": "How severe a log line is, least severe first.",
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "critical"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Level"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The least severe level to list: `debug` (default; `console.log`\nlogs at this level), `info`, `warning` or `critical`."
+        },
+        "limit": {
+          "default": null,
+          "description": "List at most this many lines, the newest ones (default and limit 100).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "description": "List only lines newer than this sequence number (the `next_since`\nof an earlier answer).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "LogsArgs",
+      "type": "object"
+    },
+    "name": "app_logs",
+    "read_only": true
+  },
+  {
+    "description": "Frame work since the inspector attached: frames, time over budget, time per scheduler lane, jobs polled and done, and the owners (application, boundaries, the inspector itself) that took the most time. Use it to see which component ate the frame.",
+    "input_schema": {
+      "additionalProperties": false,
+      "description": "No arguments.",
+      "title": "Nothing",
+      "type": "object"
+    },
+    "name": "app_metrics",
+    "read_only": true
+  }
+]

@@ -38,6 +38,26 @@ impl ErrorCode {
             ErrorCode::Internal => "internal",
         }
     }
+
+    /// The code `word` names: what a client reads back from an answer.
+    pub fn of(word: &str) -> Option<ErrorCode> {
+        [
+            ErrorCode::StaleRef,
+            ErrorCode::NotFound,
+            ErrorCode::Ambiguous,
+            ErrorCode::Busy,
+            ErrorCode::NotActionable,
+            ErrorCode::Timeout,
+            ErrorCode::CapabilityDenied,
+            ErrorCode::AppFaulted,
+            ErrorCode::InvalidArgument,
+            ErrorCode::Unavailable,
+            ErrorCode::PathDenied,
+            ErrorCode::Internal,
+        ]
+        .into_iter()
+        .find(|code| code.as_str() == word)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]

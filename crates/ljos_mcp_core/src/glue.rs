@@ -5,18 +5,25 @@ use std::sync::Arc;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     model::{
-        self, CallToolRequestParams, CallToolResponse, CallToolResult, GetPromptRequestParams,
-        GetPromptResponse, GetPromptResult, ListPromptsResult, ListResourceTemplatesResult,
-        ListResourcesResult, ListToolsResult, PaginatedRequestParams, Prompt, PromptArgument,
-        PromptMessage, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
-        ResourceContents, Role, ServerCapabilities, ServerConfig,
+        self, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        GetPromptRequestParams, GetPromptResponse, GetPromptResult, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        Prompt, PromptArgument, PromptMessage, ReadResourceRequestParams, ReadResourceResponse,
+        ReadResourceResult, ResourceContents, Role, ServerCapabilities, ServerConfig,
     },
     service::{MaybeSendFuture, RequestContext},
     transport::IntoTransport,
 };
 use serde_json::Value;
 
-use crate::{CallCtx, CapSet, ErrorCode, McpSurface, SurfaceError, ToolDef};
+use crate::{
+    CallCtx, CapSet, ErrorCode, McpSurface, SurfaceError, ToolDef, ToolReply, base64_encode,
+};
+
+#[cfg(feature = "http")]
+pub mod http;
+#[cfg(feature = "client")]
+pub mod local;
 
 /// Serves a surface to one client with a fixed capability grant.
 pub struct RmcpServer<S: McpSurface> {
@@ -95,13 +102,43 @@ fn tool_to_model(def: &ToolDef) -> model::Tool {
     tool
 }
 
-fn protocol_error(e: &SurfaceError) -> ErrorData {
-    match e.code {
-        ErrorCode::NotFound => ErrorData::resource_not_found(e.message.clone(), e.details.clone()),
-        ErrorCode::InvalidArgument | ErrorCode::PathDenied => {
-            ErrorData::invalid_params(e.message.clone(), e.details.clone())
+/// A tool's answer as MCP carries it: the text the model reads first, then
+/// the pictures, and the structured value beside them. A refusal is a tool
+/// result with `isError`, not a protocol error, so the model can read it and
+/// correct itself.
+fn tool_result(out: Result<ToolReply, SurfaceError>) -> CallToolResult {
+    match out {
+        Ok(reply) => {
+            if reply.text.is_none() && reply.images.is_empty() {
+                // Structured content plus a text mirror, for clients that only read text.
+                return CallToolResult::structured(reply.structured);
+            }
+            let text = reply.text.unwrap_or_else(|| reply.structured.to_string());
+            let mut content = vec![ContentBlock::text(text)];
+            for image in &reply.images {
+                content.push(ContentBlock::image(base64_encode(&image.data), image.mime));
+            }
+            let mut result = CallToolResult::success(content);
+            result.structured_content = Some(reply.structured);
+            result
         }
-        _ => ErrorData::internal_error(e.message.clone(), e.details.clone()),
+        Err(e) => CallToolResult::structured_error(e.to_value()),
+    }
+}
+
+/// A refusal where the protocol has no tool result to put it in (reading
+/// a resource, getting a prompt). JSON-RPC has three numbers for our twelve
+/// codes, so `data` carries the refusal as a tool would give it: `code`,
+/// `message` and `details`. A client that knows the codes reads `busy` or
+/// `timeout` there instead of "internal error".
+fn protocol_error(e: &SurfaceError) -> ErrorData {
+    let data = e.to_value().get_mut("error").map(Value::take);
+    match e.code {
+        ErrorCode::NotFound => ErrorData::resource_not_found(e.message.clone(), data),
+        ErrorCode::InvalidArgument | ErrorCode::PathDenied => {
+            ErrorData::invalid_params(e.message.clone(), data)
+        }
+        _ => ErrorData::internal_error(e.message.clone(), data),
     }
 }
 
@@ -144,19 +181,15 @@ impl<S: McpSurface> ServerHandler for RmcpServer<S> {
             .map(tool_to_model)
     }
 
-    fn call_tool(
+    async fn call_tool(
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<CallToolResponse, ErrorData>> + MaybeSendFuture + '_ {
+    ) -> Result<CallToolResponse, ErrorData> {
         let args = request.arguments.map_or(Value::Null, Value::Object);
-        let (out, _) = self.surface.tools().call(&request.name, &self.ctx(), args);
-        let result = match out {
-            // Structured content plus a text mirror, for clients that only read text.
-            Ok(v) => CallToolResult::structured(v),
-            Err(e) => CallToolResult::structured_error(e.to_value()),
-        };
-        std::future::ready(Ok(result.into()))
+        let ctx = self.ctx();
+        let out = self.surface.call_tool(&request.name, &ctx, args).await;
+        Ok(tool_result(out).into())
     }
 
     fn list_resources(
@@ -196,14 +229,15 @@ impl<S: McpSurface> ServerHandler for RmcpServer<S> {
         std::future::ready(Ok(ListResourceTemplatesResult::with_all_items(items)))
     }
 
-    fn read_resource(
+    async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + MaybeSendFuture + '_ {
-        let out = self
-            .surface
-            .read_resource(&request.uri, &self.ctx())
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let ctx = self.ctx();
+        self.surface
+            .read_resource_async(&request.uri, &ctx)
+            .await
             .map(|contents| {
                 ReadResourceResult::new(
                     contents
@@ -213,8 +247,7 @@ impl<S: McpSurface> ServerHandler for RmcpServer<S> {
                 )
                 .into()
             })
-            .map_err(|e| protocol_error(&e));
-        std::future::ready(out)
+            .map_err(|e| protocol_error(&e))
     }
 
     fn list_prompts(

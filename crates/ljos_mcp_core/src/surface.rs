@@ -1,4 +1,4 @@
-use crate::{CallCtx, SurfaceError, ToolRegistry};
+use crate::{CallCtx, ResourceFuture, SurfaceError, ToolFuture, ToolRegistry, ToolReply};
 
 #[derive(Clone, Debug)]
 pub struct ServerMeta {
@@ -54,11 +54,32 @@ pub struct PromptText {
 
 /// Everything an MCP server offers, independent of the SDK that carries it.
 ///
-/// Handlers are synchronous: M0 tools are quick file and table lookups. Long
-/// operations follow the `run_id` pattern (§19.1), not blocking calls.
+/// Registry handlers are synchronous: the authoring tools are quick file
+/// and table lookups, and long operations follow the `run_id` pattern
+/// (§19.1), not blocking calls. A surface whose answers come from another
+/// thread (the live inspector asks the UI thread) overrides
+/// [`call_tool`](Self::call_tool) and
+/// [`read_resource_async`](Self::read_resource_async) instead.
 pub trait McpSurface: Send + Sync + 'static {
     fn meta(&self) -> ServerMeta;
     fn tools(&self) -> &ToolRegistry;
+
+    /// Runs a tool. The default dispatches through [`tools`](Self::tools):
+    /// capability check, handler, response capping.
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        ctx: &'a CallCtx,
+        args: serde_json::Value,
+    ) -> ToolFuture<'a> {
+        let (out, _) = self.tools().call(name, ctx, args);
+        Box::pin(std::future::ready(out.map(ToolReply::from)))
+    }
+
+    /// Reads a resource. The default is [`read_resource`](Self::read_resource).
+    fn read_resource_async<'a>(&'a self, uri: &'a str, ctx: &'a CallCtx) -> ResourceFuture<'a> {
+        Box::pin(std::future::ready(self.read_resource(uri, ctx)))
+    }
 
     fn resources(&self, _ctx: &CallCtx) -> Vec<ResourceDef> {
         Vec::new()

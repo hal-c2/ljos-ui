@@ -26,6 +26,10 @@ ljos_dev = { path = "../ljos_dev", optional = true }
 # Dev hot reload: `Setup::watch` compiles a directory of QML, watches it
 # and applies every save to the running application.
 dev = ["dep:ljos_dev"]
+# The read-only MCP inspector an agent connects to (ARCHITECTURE.md §19.4):
+# `Setup::serve_inspector`. Off by default: without it the shell links no
+# MCP SDK and no HTTP server (tests/no_mcp.rs keeps it so).
+mcp = ["dev", "ljos_dev/mcp"]
 
 [dev-dependencies]
 # Only the demo_qml example compiles QML; the shell itself never links the

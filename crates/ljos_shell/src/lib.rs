@@ -13,6 +13,12 @@
 mod dev;
 #[cfg(feature = "dev")]
 pub use ljos_dev::{Overlay, ReloadStats, Report};
+#[cfg(feature = "dev")]
+mod tools;
+#[cfg(feature = "dev")]
+pub use ljos_dev::{TopRow, TopView};
+#[cfg(feature = "mcp")]
+pub use tools::{InspectorAddress, InspectorOptions};
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -106,6 +112,8 @@ pub struct Setup<'a, M> {
     timer_hook: Option<TimerHook>,
     #[cfg(feature = "dev")]
     dev: dev::DevSetup,
+    #[cfg(feature = "dev")]
+    tools: tools::ToolSetup,
 }
 
 impl<M> Setup<'_, M> {
@@ -155,6 +163,9 @@ pub struct ShellApp<M> {
     /// The watched application of a development build.
     #[cfg(feature = "dev")]
     dev: Option<dev::Dev>,
+    /// The `top` overlay and the inspector of a development build.
+    #[cfg(feature = "dev")]
+    tools: tools::Tools,
 }
 
 impl<M> std::fmt::Debug for ShellApp<M> {
@@ -192,6 +203,12 @@ impl<M: Send + 'static> ShellApp<M> {
             timer_hook: None,
             #[cfg(feature = "dev")]
             dev: dev::DevSetup::new(ctx),
+            #[cfg(feature = "dev")]
+            tools: {
+                let ctx = ctx.clone();
+                let [r, g, b, _] = config.background.to_rgba8();
+                tools::ToolSetup::new(Arc::new(move || ctx.request_repaint()), [r, g, b])
+            },
         };
         let root = setup(&mut s).map_err(ShellError::Setup)?;
         let Setup {
@@ -199,6 +216,8 @@ impl<M: Send + 'static> ShellApp<M> {
             timer_hook,
             #[cfg(feature = "dev")]
             dev,
+            #[cfg(feature = "dev")]
+            tools,
             ..
         } = s;
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
@@ -216,6 +235,8 @@ impl<M: Send + 'static> ShellApp<M> {
             last_drain: DrainReport::default(),
             #[cfg(feature = "dev")]
             dev: dev.finish(),
+            #[cfg(feature = "dev")]
+            tools: tools.finish(),
         })
     }
 
@@ -266,9 +287,13 @@ impl<M: Send + 'static> ShellApp<M> {
 
 impl<M: Send + 'static> eframe::App for ShellApp<M> {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "dev")]
+        self.begin_tools();
         self.drain_inbox();
         #[cfg(feature = "dev")]
         self.pump_dev();
+        #[cfg(feature = "dev")]
+        self.pump_tools();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -277,6 +302,8 @@ impl<M: Send + 'static> eframe::App for ShellApp<M> {
         self.view.show(ui);
         #[cfg(feature = "dev")]
         self.show_dev(ui);
+        #[cfg(feature = "dev")]
+        self.end_tools(ui);
     }
 }
 

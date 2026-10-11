@@ -112,6 +112,12 @@ impl ToolDef {
         self.max_result_bytes = bytes;
         self
     }
+
+    /// The budget of one copy of the answer: the model's text and the
+    /// structured value each get half of the tool's budget.
+    pub fn per_copy_bytes(&self) -> usize {
+        self.max_result_bytes.min(HARD_RESULT_BYTES) / 2
+    }
 }
 
 /// Per-call context: who is calling and with which rights.
@@ -145,6 +151,16 @@ where
         let out = f(ctx, input)?;
         serde_json::to_value(out).map_err(|e| SurfaceError::new(ErrorCode::Internal, e.to_string()))
     })
+}
+
+/// The refusal for a tool the caller has no right to: it names the missing
+/// capability, so the reader knows what to ask the person at the keyboard for.
+pub fn denied(name: &str, cap: Cap, ctx: &CallCtx) -> SurfaceError {
+    SurfaceError::new(
+        ErrorCode::CapabilityDenied,
+        format!("tool `{name}` needs the `{cap}` capability"),
+    )
+    .with_details(serde_json::json!({ "required": cap, "granted": ctx.caps }))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -221,6 +237,44 @@ impl ToolRegistry {
             .filter(move |d| d.required_cap.is_none_or(|c| caps.contains(c)))
     }
 
+    /// Registers a tool whose surface runs it itself (it overrides
+    /// [`crate::McpSurface::call_tool`]): the registry lists it and checks
+    /// the caller's capabilities, and has no handler to dispatch to.
+    ///
+    /// # Panics
+    /// On a duplicate name, which is a bug in the (static) registrant.
+    #[must_use]
+    pub fn declare(self, def: ToolDef) -> Self {
+        let name = def.name;
+        self.with(
+            def,
+            Arc::new(move |_, _| {
+                Err(SurfaceError::new(
+                    ErrorCode::Internal,
+                    format!("tool `{name}` is run by its surface, not by the registry"),
+                ))
+            }),
+        )
+    }
+
+    /// The tool `name`, if the caller may use it: the first half of
+    /// [`call`](Self::call), for surfaces that run their tools themselves.
+    ///
+    /// The capability check uses the full registry, so a hidden tool answers
+    /// `capability_denied` rather than pretending not to exist.
+    pub fn check(&self, name: &str, ctx: &CallCtx) -> Result<&ToolDef, SurfaceError> {
+        let Some(entry) = self.entries.iter().find(|e| e.def.name == name) else {
+            return Err(SurfaceError::not_found(format!("unknown tool `{name}`")));
+        };
+        let def = &entry.def;
+        if let Some(cap) = def.required_cap
+            && !ctx.caps.contains(cap)
+        {
+            return Err(denied(name, cap, ctx));
+        }
+        Ok(def)
+    }
+
     /// Runs a tool: capability check, dispatch, response capping.
     ///
     /// The capability check uses the full registry, so a hidden tool answers
@@ -236,15 +290,9 @@ impl ToolRegistry {
         if let Some(cap) = def.required_cap
             && !ctx.caps.contains(cap)
         {
-            let err = SurfaceError::new(
-                ErrorCode::CapabilityDenied,
-                format!("tool `{name}` needs the `{cap}` capability"),
-            )
-            .with_details(serde_json::json!({ "required": cap, "granted": ctx.caps }));
-            return (Err(err), Some(def));
+            return (Err(denied(name, cap, ctx)), Some(def));
         }
-        let per_copy = def.max_result_bytes.min(HARD_RESULT_BYTES) / 2;
-        let out = (entry.handler)(ctx, args).map(|v| cap_result(v, per_copy));
+        let out = (entry.handler)(ctx, args).map(|v| cap_result(v, def.per_copy_bytes()));
         (out, Some(def))
     }
 }
