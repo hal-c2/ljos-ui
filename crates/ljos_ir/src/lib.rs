@@ -23,9 +23,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Bumped whenever the serialised shape changes, so a cache written by an
-/// older compiler is rebuilt instead of misread.
-pub const IR_VERSION: u32 = 6;
+/// Bumped whenever the serialised shape changes, or what the compiled
+/// functions ask of the engine, so a cache written by an older compiler is
+/// rebuilt instead of misread.
+pub const IR_VERSION: u32 = 7;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -653,7 +654,9 @@ pub enum Arg {
     /// through its object.
     Property { object: ObjRef, name: String },
     /// A name the compiler could not resolve: the engine looks it up at run
-    /// time, or passes `undefined`.
+    /// time. Where nothing has the name it passes what `__ljos_named` knows
+    /// for nothing, and the function throws a ReferenceError where it reads
+    /// the name.
     Dynamic(String),
 }
 

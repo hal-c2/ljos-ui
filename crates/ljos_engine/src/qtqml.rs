@@ -12,7 +12,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos_js::{JsRef, JsValue, Scope};
-use ljos_runtime::{Clock, FrameScheduler, SystemClock, Time, TimerId, TimerKind, WakeReasons};
+use ljos_runtime::{Clock, FrameScheduler, SystemClock, Time, TimerId, TimerKind};
 
 use crate::atom::Atom;
 use crate::builtins::QtObject;
@@ -495,7 +495,14 @@ impl Engine {
     /// When [`Engine::advance_timers`] must next run; `None` while nothing
     /// is scheduled (sleep until input).
     pub fn next_timer_deadline(&self) -> Option<Time> {
-        self.inner.timers.borrow().sched.next_wake()
+        let st = self.inner.timers.borrow();
+        // A queued `Qt.callLater` is due at once, and only until it ran: a
+        // mark on the scheduler would stay, since nothing here starts its
+        // frames, and the host would never sleep again.
+        if !st.calls.is_empty() {
+            return Some(Time::ZERO);
+        }
+        st.sched.next_wake()
     }
 
     /// Whether `Qt.quit()` was called.
@@ -575,7 +582,6 @@ impl Engine {
                 Some(entry) => entry.1 = args,
                 None => st.calls.push((f, args)),
             }
-            st.sched.mark(WakeReasons::DIRTY);
         }
         self.wake_host();
     }

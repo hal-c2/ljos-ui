@@ -457,7 +457,7 @@ fn modules_lists_every_module_in_order() {
 }
 
 /// Ljós's own module is read next to Qt's: its types inherit Qt's and have
-/// the members written for them.
+/// the members its native types declare.
 #[test]
 fn the_ljos_module_is_in_the_table() {
     require_table!("QtQuick");
@@ -478,4 +478,137 @@ fn the_ljos_module_is_in_the_table() {
             .type_named("ErrorBoundary")
             .is_none()
     );
+}
+
+/// `QtTest` is a module of native types too, described as `Ljos` is.
+#[test]
+fn the_qttest_module_is_in_the_table() {
+    require_table!("QtQuick");
+    let case = ty("QtTest", "TestCase");
+    assert!(case.is_creatable);
+    assert_eq!((case.name, case.module), ("TestCase", "QtTest"));
+    assert_eq!(case.prototype().map(|item| item.class), Some("QQuickItem"));
+    assert_eq!(case.default_property(), Some("data"), "an Item's");
+    assert!(case.has_method("compare") && !case.has_method("clear"));
+    // A type is named as QML names it and known by Qt's class.
+    assert_eq!(property("QtTest", "TestCase", "name").type_name, "QString");
+    assert!(case.signal("whenChanged").is_some());
+    let spy = ty("QtTest", "SignalSpy");
+    assert!(spy.has_method("clear") && spy.signal("countChanged").is_some());
+    assert!(property("QtTest", "SignalSpy", "count").is_readonly);
+    let target = property("QtTest", "SignalSpy", "target");
+    assert!(target.is_pointer && !target.is_readonly);
+    assert_eq!(
+        target.value_type().map(|object| object.class),
+        Some("QObject")
+    );
+    // What a test is handed, and cannot make.
+    assert!(!ty("QtTest", "TouchEventSequence").is_creatable);
+    // What the module's types are written with is not the module's.
+    assert!(module("QtTest").unwrap().type_named("Item").is_none());
+    assert!(module("QtQuick").unwrap().type_named("TestCase").is_none());
+}
+
+/// The own modules name types as QML does. Every such name has to be one
+/// Qt's table or the module itself has, or a member is of no known type.
+#[test]
+fn every_name_in_the_own_modules_is_a_type() {
+    require_table!("QtQuick");
+    let own = read(&[OWN]);
+    assert!(own.modules.contains_key("Ljos") && own.modules.contains_key("QtTest"));
+    for uri in own.modules.keys() {
+        let exported = native_types(uri).expect("an own module is in the table");
+        assert!(!exported.is_empty(), "{uri}");
+        for name in exported {
+            assert!(ty(uri, name).prototype().is_some(), "what {name} inherits");
+        }
+    }
+    for described in &table().types {
+        if !own.modules.contains_key(described.module) {
+            continue;
+        }
+        for property in &described.properties {
+            assert!(
+                property.value_type().is_some()
+                    || described.enum_is_flags(property.type_name).is_some(),
+                "the type of {}.{}: {}",
+                described.class,
+                property.name,
+                property.type_name
+            );
+        }
+    }
+}
+
+/// A table in which a module describes its types by QML names.
+const NAMED: &str = "\
+module Deep
+\tstring QString
+\ttype QString string
+module Base
+\timport Deep
+\tItem QItem
+\tComponent QQmlComponent
+\tPart QPart
+\ttype QItem Item
+\ttype QQmlComponent Component
+\ttype QPart Part
+module Own
+\tuses Base
+\tThing Own.Thing
+\tPart Own.Part
+\ttype Own.Thing Thing
+\t\tprototype Item named
+\t\tprop label string named
+\t\tprop template Component named pointer
+\t\tprop part Part named pointer
+\t\tprop lost Nothing named
+\t\tprop plain QItem pointer
+\ttype Own.Part Part
+\t\tprototype Item
+";
+
+fn class_of(table: &Table, index: Option<usize>) -> Option<&'static str> {
+    index.map(|index| table.types[index].class)
+}
+
+#[test]
+fn a_named_type_is_found_as_a_file_that_imports_what_the_module_uses_would() {
+    let table = read(&[NAMED]);
+    let thing = &table.types[table.classes["Own.Thing"]];
+    assert_eq!(class_of(&table, thing.prototype), Some("QItem"));
+    let type_of = |name: &str| {
+        let property = thing.properties.iter().find(|p| p.name == name).unwrap();
+        (property.type_name, property.is_component)
+    };
+    // Through what the used module imports, as a file would find it.
+    assert_eq!(type_of("label"), ("QString", false));
+    assert_eq!(type_of("template"), ("QQmlComponent", true));
+    // The module's own type before another's of the same name.
+    assert_eq!(type_of("part"), ("Own.Part", false));
+    // A name nothing has stays what was written.
+    assert_eq!(type_of("lost"), ("Nothing", false));
+}
+
+#[test]
+fn a_type_that_is_not_named_is_a_class() {
+    let table = read(&[NAMED]);
+    let thing = &table.types[table.classes["Own.Thing"]];
+    let plain = thing.properties.iter().find(|p| p.name == "plain").unwrap();
+    assert_eq!(plain.type_name, "QItem");
+    // `Item` is a QML name: no class is called that.
+    let part = &table.types[table.classes["Own.Part"]];
+    assert_eq!(part.prototype, None);
+}
+
+#[test]
+fn what_a_module_uses_is_not_its_own() {
+    let table = read(&[NAMED]);
+    let find =
+        |uri: &str, name: &str| class_of(&table, table.type_named(uri, name, &mut Vec::new()));
+    assert_eq!(find("Own", "Thing"), Some("Own.Thing"));
+    assert_eq!(find("Own", "Item"), None);
+    assert_eq!(find("Own", "string"), None);
+    // An import is: Deep's `string` is Base's too.
+    assert_eq!(find("Base", "string"), Some("QString"));
 }

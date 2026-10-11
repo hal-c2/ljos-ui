@@ -18,6 +18,9 @@
 //!
 //! - `enums = path`: a `fn() -> Vec<(&'static str, Vec<(&'static str, i64)>)>`
 //!   listing the type's enums (`Component.Ready`).
+//! - `reset_inherited(baseline_offset = expr)`: how assigning `undefined`
+//!   takes back a property the base declares and cannot take back itself
+//!   (`expr` is a `ljos_engine::Reset`, as for a field's `reset = expr`).
 //!
 //! Field attributes: `base`, `notify` (adds `nameChanged`), `readonly`,
 //! `required`, `constant`, `group` (a grouped property; the field's type
@@ -192,6 +195,8 @@ struct ContainerAttrs {
     attached: Option<Type>,
     uncreatable: bool,
     enums: Option<syn::Path>,
+    /// (camelCase name, the `Reset`) for properties of the base.
+    reset_inherited: Vec<(String, syn::Expr)>,
 }
 
 #[derive(Default)]
@@ -231,9 +236,16 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 c.uncreatable = true;
             } else if m.path.is_ident("enums") {
                 c.enums = Some(m.value()?.parse::<syn::Path>()?);
+            } else if m.path.is_ident("reset_inherited") {
+                m.parse_nested_meta(|n| {
+                    let field = n.path.require_ident()?.to_string();
+                    let reset = n.value()?.parse::<syn::Expr>()?;
+                    c.reset_inherited.push((camel(&field), reset));
+                    Ok(())
+                })?;
             } else {
                 return Err(m.error(
-                    "expected one of: name, module, extends, default, attached, uncreatable, enums",
+                    "expected one of: name, module, extends, default, attached, uncreatable, enums, reset_inherited",
                 ));
             }
             Ok(())
@@ -533,6 +545,10 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             .enumerations(#f())
         }
     });
+    let inherited_resets = c
+        .reset_inherited
+        .iter()
+        .map(|(name, reset)| quote!(.reset_inherited(#name, #reset)));
     let attached_call = c
         .attached
         .as_ref()
@@ -570,6 +586,7 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                         #module_call
                         #base_call
                         #(#builder)*
+                        #(#inherited_resets)*
                         #default_call
                         #enums_call
                         #attached_call

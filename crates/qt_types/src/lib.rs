@@ -42,6 +42,33 @@
 //! Enum keys have no numbers: `.qmltypes` has listed only the names since Qt
 //! 5.15. Versions are not kept either; the table is one Qt, the newest name
 //! wins.
+//!
+//! # Ljós's own modules
+//!
+//! `Ljos` and `QtTest` are not Qt's to describe: their types are native
+//! types of Ljós. Their part of the table is `src/ljos.txt`, which is
+//! committed and compiled in after Qt's. It is not written by hand: it is
+//! what those native types declare of themselves, written out by
+//! `crates/ljos_cli/tests/own_types.rs`, which fails when the file is not
+//! what they declare now and writes it again when asked to. A crate that
+//! reads QML cannot link the runtime that has the types, so the description
+//! comes to it as text.
+//!
+//! A native type names what it inherits and what its properties hold as
+//! QML does (`Item`, `string`), not by Qt's classes, so that file has two
+//! things Qt's table has no use for:
+//!
+//! ```text
+//! module Ljos
+//!     uses QtQuick                      the names below are read as in a file that imports QtQuick
+//!     type Ljos.ErrorBoundary ErrorBoundary
+//!         prototype Item named          `named`: a QML name, not a class
+//!         prop failed bool named readonly
+//! ```
+//!
+//! A name is looked for in the module itself and then in each module it
+//! `uses`. Unlike an `import`, what a module uses is not its own: a file
+//! that imports `Ljos` has no `Item`.
 
 #[cfg(test)]
 mod tests;
@@ -137,29 +164,9 @@ impl Module {
     /// The type `name` is in a file that imports this module: one of its own
     /// or of a module that comes with it.
     pub fn type_named(&self, name: &str) -> Option<&'static Type> {
-        self.find(name, &mut Vec::new())
-    }
-
-    fn find(&self, name: &str, seen: &mut Vec<&'static str>) -> Option<&'static Type> {
-        if seen.contains(&self.uri) {
-            return None;
-        }
-        seen.push(self.uri);
-        if let Some(index) = self.exports.get(name) {
-            return Some(&table().types[*index]);
-        }
-        let chooses = self
-            .imports
-            .iter()
-            .any(|import| import.kind == ImportKind::Optional);
-        self.imports
-            .iter()
-            .filter(|import| match import.kind {
-                ImportKind::Always => true,
-                ImportKind::Default => chooses,
-                ImportKind::Optional => false,
-            })
-            .find_map(|import| module(import.module)?.find(name, seen))
+        let table = table();
+        let index = table.type_named(self.uri, name, &mut Vec::new())?;
+        Some(&table.types[index])
     }
 }
 
@@ -380,6 +387,45 @@ struct Table {
     classes: HashMap<&'static str, usize>,
 }
 
+impl Table {
+    /// The type `name` is in a file that imports the module `uri`, by its
+    /// index: one of the module's own or of a module that comes with it.
+    fn type_named(&self, uri: &str, name: &str, seen: &mut Vec<&'static str>) -> Option<usize> {
+        let module = self.modules.get(uri)?;
+        if seen.contains(&module.uri) {
+            return None;
+        }
+        seen.push(module.uri);
+        if let Some(index) = module.exports.get(name) {
+            return Some(*index);
+        }
+        let chooses = module
+            .imports
+            .iter()
+            .any(|import| import.kind == ImportKind::Optional);
+        module
+            .imports
+            .iter()
+            .filter(|import| match import.kind {
+                ImportKind::Always => true,
+                ImportKind::Default => chooses,
+                ImportKind::Optional => false,
+            })
+            .find_map(|import| self.type_named(import.module, name, seen))
+    }
+
+    /// The type a description in the module `uri` means by the QML name
+    /// `name`: one of the module's own, or of a module it uses.
+    fn type_meant(&self, uri: &str, uses: &[(&str, &str)], name: &str) -> Option<usize> {
+        let of = |uri: &str| self.type_named(uri, name, &mut Vec::new());
+        of(uri).or_else(|| {
+            uses.iter()
+                .filter(|(user, _)| *user == uri)
+                .find_map(|(_, used)| of(used))
+        })
+    }
+}
+
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
     // Ljós's own types inherit Qt's (`QQuickItem`), so without Qt's table
@@ -393,9 +439,10 @@ fn table() -> &'static Table {
     })
 }
 
-/// The modules that are Ljós's own and not Qt's (`import Ljos`), in the
-/// table's format. Written by hand and committed: nothing in it comes from
-/// Qt.
+/// The modules that are Ljós's own and not Qt's (`import Ljos`, `import
+/// QtTest`), in the table's format. Committed, and nothing in it comes from
+/// Qt: it is what Ljós's native types declare, kept so by
+/// `crates/ljos_cli/tests/own_types.rs` (see the crate's documentation).
 const OWN: &str = include_str!("ljos.txt");
 
 fn read(texts: &[&'static str]) -> Table {
@@ -404,6 +451,10 @@ fn read(texts: &[&'static str]) -> Table {
     // looked up once all are read.
     let mut exports = Vec::new();
     let mut links = Vec::new();
+    // What is `named` is a QML name, which only the exports can turn into
+    // a class: the modules that are used, and the properties to look up.
+    let mut uses = Vec::new();
+    let mut named = Vec::new();
     let mut module = "";
 
     for line in texts.iter().flat_map(|text| text.lines()) {
@@ -437,6 +488,7 @@ fn read(texts: &[&'static str]) -> Table {
                     .imports
                     .push(import);
             }
+            (1, "uses") => uses.push((module, word())),
             (1, "type") => {
                 let (class, name) = (word(), word());
                 table.classes.insert(class, table.types.len());
@@ -466,9 +518,12 @@ fn read(texts: &[&'static str]) -> Table {
                 let index = table.types.len() - 1;
                 let ty = &mut table.types[index];
                 match member {
-                    "prototype" | "attached" => links.push((index, member, word())),
+                    "prototype" | "attached" => {
+                        let to = word();
+                        links.push((index, member, to, word() == "named"));
+                    }
                     "extension" => {
-                        links.push((index, member, word()));
+                        links.push((index, member, word(), false));
                         ty.extension_is_namespace = word() == "namespace";
                     }
                     "default" => ty.default_property = Some(word()),
@@ -505,6 +560,9 @@ fn read(texts: &[&'static str]) -> Table {
                     "prop" => {
                         let (name, type_name) = (word(), word());
                         let flags: Vec<&str> = words.collect();
+                        if flags.contains(&"named") {
+                            named.push((index, ty.properties.len()));
+                        }
                         ty.properties.push(Property {
                             name,
                             type_name,
@@ -541,8 +599,23 @@ fn read(texts: &[&'static str]) -> Table {
                 .insert(name, *index);
         }
     }
-    for (index, link, class) in links {
-        let to = table.classes.get(class).copied();
+    for (index, at) in named {
+        let ty = &table.types[index];
+        let meant = table.type_meant(ty.module, &uses, ty.properties[at].type_name);
+        // A name nothing has stays as it is written: a value of no known
+        // type, as a class the table does not describe is.
+        if let Some(class) = meant.map(|index| table.types[index].class) {
+            let property = &mut table.types[index].properties[at];
+            property.type_name = class;
+            property.is_component = class == "QQmlComponent";
+        }
+    }
+    for (index, link, class, named) in links {
+        let to = if named {
+            table.type_meant(table.types[index].module, &uses, class)
+        } else {
+            table.classes.get(class).copied()
+        };
         let ty = &mut table.types[index];
         match link {
             "prototype" => ty.prototype = to,

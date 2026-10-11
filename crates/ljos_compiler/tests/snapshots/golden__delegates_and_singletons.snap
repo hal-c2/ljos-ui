@@ -56,7 +56,7 @@ export function f3(name) {
 
 // Main.qml:15:26 Timer.onTriggered
 export function f4(mystery) {
-  return (mystery.go());
+  return (__ljos_named(mystery, "mystery").go());
 }
 
 diagnostics

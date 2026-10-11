@@ -189,7 +189,7 @@ fn nested_enter_failure_is_contained() {
         })
         .unwrap();
     assert!(
-        matches!(&inner, Err(JsFault::JsException { message, .. }) if message == "inner broke"),
+        matches!(&inner, Err(JsFault::JsException { message, .. }) if message == "Error: inner broke"),
         "{inner:?}"
     );
     assert_eq!(after, 2.0);
@@ -542,7 +542,7 @@ fn host_errors_become_js_exceptions() {
         .call(m.function("f").unwrap(), &[JsValue::Object(1)])
         .unwrap_err();
     assert!(
-        matches!(&err, JsFault::JsException { message, .. } if message == "boom from getter"),
+        matches!(&err, JsFault::JsException { message, .. } if message == "Error: boom from getter"),
         "{err:?}"
     );
     assert_eq!(
@@ -719,7 +719,7 @@ fn global_functions_and_scripts() {
     );
     let err = host.eval_script("t.js", "twice('a')").unwrap_err();
     assert!(
-        matches!(&err, JsFault::JsException { message, .. } if message == "twice needs a number"),
+        matches!(&err, JsFault::JsException { message, .. } if message == "Error: twice needs a number"),
         "{err:?}"
     );
 }

@@ -196,6 +196,12 @@ pub struct Font {
     pub strikeout: bool,
     pub letter_spacing: f64,
     pub word_spacing: f64,
+    /// `Font.MixedCase` (0), `AllUppercase`, `AllLowercase`, `SmallCaps` or
+    /// `Capitalize`: the letters the text is drawn in ([`Font::drawn`]).
+    pub capitalization: i32,
+    /// `Font.PreferDefaultHinting` (0) and the others. Kept; glyphs are
+    /// hinted as the rasterizer does it.
+    pub hinting_preference: i32,
     /// Ours, not Qt's: whether the text grows with the system's text size
     /// (`Qt.styleHints.accessibility.fontScale`). The sizes above stay as
     /// written either way; the scale is applied where text is laid out.
@@ -214,12 +220,84 @@ impl Default for Font {
             strikeout: false,
             letter_spacing: 0.0,
             word_spacing: 0.0,
+            capitalization: 0,
+            hinting_preference: 0,
             scale_with_system: true,
         }
     }
 }
 
+/// The keys of `Font.Capitalization`, by number.
+const CAPITALIZATION: [&str; 5] = [
+    "MixedCase",
+    "AllUppercase",
+    "AllLowercase",
+    "SmallCaps",
+    "Capitalize",
+];
+/// The keys of `Font.HintingPreference`, by number.
+const HINTING_PREFERENCE: [&str; 4] = [
+    "PreferDefaultHinting",
+    "PreferNoHinting",
+    "PreferVerticalHinting",
+    "PreferFullHinting",
+];
+
+/// A key of an enum of the font value as it is assigned: its number, or its
+/// name as a string, which Qt takes too.
+fn font_key(v: &Value, names: &[&str]) -> i32 {
+    match v {
+        Value::String(s) => names
+            .iter()
+            .position(|n| *n == s.as_str())
+            .map_or(0, |i| i as i32),
+        _ => crate::number::to_int32(v.to_number()),
+    }
+}
+
 impl Font {
+    pub const MIXED_CASE: i32 = 0;
+    pub const ALL_UPPERCASE: i32 = 1;
+    pub const ALL_LOWERCASE: i32 = 2;
+    pub const SMALL_CAPS: i32 = 3;
+    pub const CAPITALIZE: i32 = 4;
+
+    /// `text` in the letters `capitalization` asks for: what is laid out
+    /// and drawn, while the text itself stays as written. Every character
+    /// stays one character of as many UTF-16 units, so positions in the
+    /// two are the same: a letter whose capital is several (`ß`) is left
+    /// as it is, as Qt leaves it. Small capitals are not drawn; the text is
+    /// as written.
+    pub fn drawn<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        fn one(mut to: impl Iterator<Item = char>, from: char) -> char {
+            match (to.next(), to.next()) {
+                (Some(c), None) if c.len_utf16() == from.len_utf16() => c,
+                _ => from,
+            }
+        }
+        let upper = |c: char| one(c.to_uppercase(), c);
+        match self.capitalization {
+            Self::ALL_UPPERCASE => text.chars().map(upper).collect::<String>().into(),
+            Self::ALL_LOWERCASE => text
+                .chars()
+                .map(|c| one(c.to_lowercase(), c))
+                .collect::<String>()
+                .into(),
+            Self::CAPITALIZE => {
+                let mut starts = true;
+                text.chars()
+                    .map(|c| {
+                        let c = if starts { upper(c) } else { c };
+                        starts = c.is_whitespace();
+                        c
+                    })
+                    .collect::<String>()
+                    .into()
+            }
+            _ => text.into(),
+        }
+    }
+
     /// QML's `font.bold`: heavier than medium (500).
     pub fn bold(&self) -> bool {
         self.weight > 500
@@ -314,6 +392,10 @@ impl Value {
                     "strikeout" => f.strikeout = v.to_boolean(),
                     "letterSpacing" => f.letter_spacing = n,
                     "wordSpacing" => f.word_spacing = n,
+                    "capitalization" => f.capitalization = font_key(v, &CAPITALIZATION),
+                    "hintingPreference" => {
+                        f.hinting_preference = font_key(v, &HINTING_PREFERENCE);
+                    }
                     "scaleWithSystem" => f.scale_with_system = v.to_boolean(),
                     _ => return None,
                 }

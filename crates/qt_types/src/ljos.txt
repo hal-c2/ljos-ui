@@ -1,17 +1,25 @@
+# The modules that are Ljós's own (`import Ljos`, `import QtTest`), as their
+# native types declare them, in the format of `qt_types`. Do not edit:
+# `crates/ljos_cli/tests/own_types.rs` writes this file, and fails when it
+# is not what the types declare now.
+#
+#     LJOS_OWN_TYPES=write cargo test -p ljos_cli --test own_types
+
 module Ljos
-	ErrorBoundary LjosErrorBoundary
-	type LjosErrorBoundary ErrorBoundary
-		prototype QQuickItem
+	uses QtQuick
+	ErrorBoundary Ljos.ErrorBoundary
+	type Ljos.ErrorBoundary ErrorBoundary
+		prototype Item named
 		default content
-		prop content QQmlComponent pointer
-		prop fallback QQmlComponent pointer
-		prop item QObject readonly pointer
-		prop failed bool readonly
-		prop fault LjosFault readonly pointer
-		prop catchExceptions bool
-		prop maxRestarts int
-		prop within int
-		prop restarts int readonly
+		prop content Component named pointer
+		prop fallback Component named pointer
+		prop item QtObject named pointer readonly
+		prop failed bool named readonly
+		prop fault Ljos.ErrorBoundaryFault pointer readonly
+		prop catchExceptions bool named
+		prop maxRestarts int named
+		prop within int named
+		prop restarts int named readonly
 		signal contentChanged
 		signal fallbackChanged
 		signal itemChanged
@@ -21,13 +29,101 @@ module Ljos
 		signal withinChanged
 		signal restartsChanged
 		method retry
-	type LjosFault
-		prototype QObject
-		prop kind QString readonly
-		prop message QString readonly
-		prop file QUrl readonly
-		prop line int readonly
+	type Ljos.ErrorBoundaryFault ErrorBoundaryFault
+		is uncreatable
+		prop kind string named readonly
+		prop message string named readonly
+		prop file url named readonly
+		prop line int named readonly
 		signal kindChanged
 		signal messageChanged
 		signal fileChanged
 		signal lineChanged
+
+module QtTest
+	uses QtQml
+	uses QtQuick
+	GrabbedImage QtTest.GrabbedImage
+	SignalSpy QtTest.SignalSpy
+	TestCase QtTest.TestCase
+	TouchEventSequence QtTest.TouchEventSequence
+	type QtTest.GrabbedImage GrabbedImage
+		prototype QtObject named
+		is uncreatable
+		prop width int named readonly
+		prop height int named readonly
+		prop size var named readonly
+		method pixel
+		method red
+		method green
+		method blue
+		method alpha
+		method equals
+		method save
+	type QtTest.SignalSpy SignalSpy
+		prototype Item named
+		prop target QtObject named pointer
+		prop signalName string named
+		prop count int named readonly
+		prop signalArguments var named readonly
+		prop valid bool named readonly
+		signal targetChanged
+		signal signalNameChanged
+		signal countChanged
+		signal signalArgumentsChanged
+		signal validChanged
+		method clear
+		method wait
+	type QtTest.TestCase TestCase
+		prototype Item named
+		prop name string named
+		prop when bool named
+		prop windowShown bool named readonly
+		prop completed bool named readonly
+		prop running bool named readonly
+		prop optional bool named
+		signal nameChanged
+		signal whenChanged
+		signal windowShownChanged
+		signal completedChanged
+		signal runningChanged
+		signal optionalChanged
+		method compare
+		method verify
+		method fuzzyCompare
+		method fail
+		method skip
+		method warn
+		method expectFail
+		method expectFailContinue
+		method tryCompare
+		method tryVerify
+		method wait
+		method sleep
+		method waitForRendering
+		method isPolishScheduled
+		method waitForPolish
+		method createTemporaryObject
+		method createTemporaryQmlObject
+		method findChild
+		method grabImage
+		method mouseClick
+		method mouseDoubleClickSequence
+		method mousePress
+		method mouseRelease
+		method mouseMove
+		method mouseDrag
+		method mouseWheel
+		method keyClick
+		method keyPress
+		method keyRelease
+		method keySequence
+		method touchEvent
+	type QtTest.TouchEventSequence TouchEventSequence
+		prototype QtObject named
+		is uncreatable
+		method press
+		method move
+		method release
+		method stationary
+		method commit

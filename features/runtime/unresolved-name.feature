@@ -3,11 +3,7 @@
 #   https://doc.qt.io/qt-6/qtquick-debugging.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
-# Waits for the compiler: a name that nothing declares is compiled to a
-# run-time lookup that gives `undefined` (`Arg::Dynamic` in `ljos_ir`), so
-# reading it does not throw and calling it is a TypeError. Qt throws a
-# ReferenceError in both cases.
-@qt-parity @backlog
+@qt-parity
 Feature: A name that nothing declares is a ReferenceError
   Reading or calling a name that no scope has throws, like any other
   exception: the handler or binding is cut short, the exception is logged

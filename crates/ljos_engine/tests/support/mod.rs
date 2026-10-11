@@ -120,8 +120,10 @@ impl Harness {
         find(&self.engine, root, name).unwrap_or_else(|| panic!("no object named {name}"))
     }
 
+    /// The property as native code reads it: an array a script holds in
+    /// a `var` is a list of what it holds now.
     pub fn get(&self, obj: ObjectId, prop: &str) -> Value {
-        self.engine.read_by_name(obj, prop)
+        self.engine.plain(&self.engine.read_by_name(obj, prop))
     }
 
     pub fn num(&self, obj: ObjectId, prop: &str) -> f64 {

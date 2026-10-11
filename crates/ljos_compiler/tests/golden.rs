@@ -329,6 +329,31 @@ Item {
     )]));
 }
 
+// A name nothing in sight has is read through `__ljos_named`, which throws
+// where the running program has none either; `typeof` asks without
+// throwing, and what `new` makes one of keeps its parentheses.
+#[test]
+fn names_nothing_declares() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    property string kind: typeof nowhere
+    property var made: new Maker.Kind(1)
+    property var both: ({ short })
+    function later() {
+        absent()
+        other.x = 1
+        written = 2
+        return written
+    }
+}
+"##,
+    )]));
+}
+
 #[test]
 fn delegates_and_singletons() {
     insta::assert_snapshot!(compile(&[(

@@ -183,9 +183,12 @@ Item {
     );
     assert_eq!(h.num(root, "runs"), 0.0);
     assert!(h.engine.has_pending_calls());
+    // Due at once, and nothing is once it ran: the host sleeps again.
+    assert!(h.engine.next_timer_deadline().is_some());
     h.engine.run_pending_calls();
     assert_eq!(h.num(root, "runs"), 1.0);
     assert_eq!(h.log(), vec!["now 0"]);
+    assert_eq!(h.engine.next_timer_deadline(), None);
 }
 
 #[test]

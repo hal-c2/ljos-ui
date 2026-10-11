@@ -21,6 +21,7 @@ use slotmap::{SlotMap, new_key_type};
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
     PropDef, SignalDef, Slice, SourceMapper, TypeDef, ValueKind, objects::HostWrapper,
+    value::WeakRef,
 };
 
 /// A Rust function callable from JS as a global (see
@@ -55,10 +56,24 @@ pub(crate) struct HostState {
     wrappers: RefCell<HashMap<u64, Persistent<Object<'static>>>>,
     host: RefCell<Option<Rc<dyn HostObjects>>>,
     released: Rc<RefCell<Vec<u64>>>,
+    /// The objects scripts own ([`JsHost::give_to_script`]), each with
+    /// how many of the wrappers made for it are still alive. One at most
+    /// is reachable; one more may be dead and not yet reported.
+    owned: RefCell<HashMap<u64, u32>>,
+    /// Made with the first wrapper of a script-owned object.
+    owned_face: RefCell<Option<OwnedFace>>,
     mapper: RefCell<Option<Rc<SourceMapper>>>,
     entered: Cell<bool>,
     /// JS values held by Rust through [`JsRef`].
-    handles: RefCell<HashMap<u64, Persistent<Value<'static>>>>,
+    handles: RefCell<HashMap<u64, Held>>,
+    /// The reference given out for each held JS object, by the object's
+    /// address, so one object has one [`JsRef`] while any is held and
+    /// equal references mean the same object. The address cannot be
+    /// another object's while the entry in `handles` keeps this one alive.
+    by_object: RefCell<HashMap<usize, (u64, WeakRef)>>,
+    /// Whether an array crosses to the embedder by reference
+    /// ([`HostObjects::arrays_by_reference`]).
+    arrays_by_reference: Cell<bool>,
     next_handle: Cell<u64>,
     /// Keys of dropped [`JsRef`]s. A mutex because a `JsRef` may be dropped
     /// on any thread; only this host ever drains it.
@@ -68,6 +83,13 @@ pub(crate) struct HostState {
     color: RefCell<Option<ColorFace>>,
     /// Indexed by [`ValueKind`].
     kinds: RefCell<Vec<KindFace>>,
+}
+
+/// One JS value held for Rust.
+struct Held {
+    value: Persistent<Value<'static>>,
+    /// Its key in `by_object`, when it is an object.
+    object: Option<usize>,
 }
 
 /// The JS side of one [`ValueKind`].
@@ -81,6 +103,34 @@ struct KindFace {
 /// The property of a kind's prototype that holds the kind's number. It only
 /// finds the candidate; the prototype itself is what is trusted.
 const KIND_MARK: &str = "__ljos_kind";
+
+/// Finds the wrapper of a script-owned object while a script still holds
+/// it, so the object is one object to the script however often it crosses.
+/// Held weakly: the collector is what says nobody holds it any more.
+struct OwnedFace {
+    get: Persistent<Function<'static>>,
+    set: Persistent<Function<'static>>,
+}
+
+const OWNED_FACE: &str = r"
+(function () {
+  const live = new Map();
+  let sweepAt = 64;
+  return {
+    get(key) {
+      const ref = live.get(key);
+      return ref === undefined ? undefined : ref.deref();
+    },
+    set(key, made) {
+      live.set(key, new WeakRef(made));
+      if (live.size >= sweepAt) {
+        for (const [k, w] of live) if (w.deref() === undefined) live.delete(k);
+        sweepAt = Math.max(64, live.size * 2);
+      }
+    },
+  };
+})()
+";
 
 /// The JS side of [`JsValue::Color`] (see [`crate::color`]).
 struct ColorFace {
@@ -103,7 +153,20 @@ impl HostState {
         }
         let freed: Vec<_> = {
             let mut handles = self.handles.borrow_mut();
-            keys.iter().filter_map(|k| handles.remove(k)).collect()
+            let mut by_object = self.by_object.borrow_mut();
+            keys.iter()
+                .filter_map(|k| {
+                    let held = handles.remove(k)?;
+                    // The object may have been given a new reference since
+                    // this one was dropped; that entry stays.
+                    if let Some(at) = held.object
+                        && by_object.get(&at).is_some_and(|(key, _)| key == k)
+                    {
+                        by_object.remove(&at);
+                    }
+                    Some(held)
+                })
+                .collect()
         };
         drop(freed);
     }
@@ -157,7 +220,7 @@ impl<'js> Scope<'js> {
             a.push_arg(self.to_value(arg)?)?;
         }
         let out: Value<'js> = func.call_arg(a)?;
-        self.from_value(&out)
+        self.script_value(&out)
     }
 
     /// Calls an exported function with an explicit `this` (signal handlers
@@ -201,30 +264,154 @@ impl<'js> Scope<'js> {
             a.push_arg(self.to_value(arg)?)?;
         }
         let out: Value<'js> = func.call_arg(a)?;
-        self.from_value(&out)
+        self.script_value(&out)
     }
 
-    /// The JS value behind a [`JsRef`].
+    /// The JS value behind a [`JsRef`]. An array made on the Rust side
+    /// ([`JsRef::array`]) becomes a JS array here, the first time.
     pub fn restore(&self, r: &JsRef) -> rquickjs::Result<Value<'js>> {
-        let p = self.state.handles.borrow().get(&r.key()).cloned();
+        let Some(key) = r.key() else {
+            return self.materialise(r);
+        };
+        let p = self
+            .state
+            .handles
+            .borrow()
+            .get(&key)
+            .map(|h| h.value.clone());
         match p {
             Some(p) => p.restore(&self.ctx),
-            None => Err(Exception::throw_reference(
-                &self.ctx,
-                "stale JS reference (from another host, or already released)",
-            )),
+            None => Err(self.stale()),
         }
     }
 
-    /// Keeps a JS value alive for Rust.
-    pub fn keep(&self, v: Value<'js>) -> JsRef {
+    fn stale(&self) -> rquickjs::Error {
+        Exception::throw_reference(
+            &self.ctx,
+            "stale JS reference (from another host, or already released)",
+        )
+    }
+
+    fn materialise(&self, r: &JsRef) -> rquickjs::Result<Value<'js>> {
+        let Some(items) = r.take_pending() else {
+            return Err(self.stale());
+        };
+        let arr = match Array::new(self.ctx.clone()) {
+            Ok(a) => a,
+            Err(e) => {
+                r.restore_pending(items);
+                return Err(e);
+            }
+        };
+        for (i, item) in items.iter().enumerate() {
+            let set = self.to_value(item).and_then(|v| arr.set(i, v));
+            if let Err(e) = set {
+                r.restore_pending(items);
+                return Err(e);
+            }
+        }
+        let v = arr.into_value();
+        let key = self.next_key();
+        let at = object_address(&v);
+        self.state.handles.borrow_mut().insert(
+            key,
+            Held {
+                value: Persistent::save(&self.ctx, v.clone()),
+                object: at,
+            },
+        );
+        if let Some(at) = at {
+            self.state
+                .by_object
+                .borrow_mut()
+                .insert(at, (key, r.downgrade()));
+        }
+        r.set_live(key, self.state.handle_release.clone());
+        Ok(v)
+    }
+
+    fn next_key(&self) -> u64 {
         let key = self.state.next_handle.get();
         self.state.next_handle.set(key + 1);
-        self.state
-            .handles
-            .borrow_mut()
-            .insert(key, Persistent::save(&self.ctx, v));
-        JsRef::new(key, self.state.handle_release.clone())
+        key
+    }
+
+    /// Keeps a JS value alive for Rust. An object that is held already
+    /// gives the reference it has.
+    pub fn keep(&self, v: Value<'js>) -> JsRef {
+        let at = object_address(&v);
+        if let Some(at) = at {
+            let known = self
+                .state
+                .by_object
+                .borrow()
+                .get(&at)
+                .and_then(|(_, weak)| weak.upgrade());
+            if let Some(r) = known {
+                return r;
+            }
+        }
+        let key = self.next_key();
+        // A proxy answers as what it stands for; it is not that array.
+        let array = !v.is_proxy() && v.is_array();
+        self.state.handles.borrow_mut().insert(
+            key,
+            Held {
+                value: Persistent::save(&self.ctx, v),
+                object: at,
+            },
+        );
+        let r = JsRef::new(key, self.state.handle_release.clone(), array);
+        if let Some(at) = at {
+            self.state
+                .by_object
+                .borrow_mut()
+                .insert(at, (key, r.downgrade()));
+        }
+        r
+    }
+
+    /// What the array behind `r` holds now: its entries as
+    /// [`Scope::from_value`] gives them, so an array inside it is a copy.
+    pub fn array_items(&self, r: &JsRef) -> rquickjs::Result<Vec<JsValue>> {
+        if let Some(items) = r.pending_items() {
+            return Ok(items);
+        }
+        let v = self.restore(r)?;
+        let Some(arr) = v.as_array() else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(arr.len());
+        for item in arr.iter::<Value>() {
+            out.push(self.read_value_at(&item?, 1)?);
+        }
+        Ok(out)
+    }
+
+    /// How many entries the array behind `r` has now.
+    pub fn array_len(&self, r: &JsRef) -> rquickjs::Result<usize> {
+        if let Some(len) = r.with_pending(<[JsValue]>::len) {
+            return Ok(len);
+        }
+        let v = self.restore(r)?;
+        Ok(v.as_array().map_or(0, Array::len))
+    }
+
+    /// One entry of the array behind `r`, as [`Scope::array_items`] gives
+    /// it; `undefined` past the end.
+    pub fn array_entry(&self, r: &JsRef, index: usize) -> rquickjs::Result<JsValue> {
+        if let Some(entry) = r.with_pending(|items| items.get(index).cloned()) {
+            return Ok(entry.unwrap_or(JsValue::Undefined));
+        }
+        let v = self.restore(r)?;
+        let Some(arr) = v.as_array() else {
+            return Ok(JsValue::Undefined);
+        };
+        if index >= arr.len() {
+            return Ok(JsValue::Undefined);
+        }
+        let item: Value = arr.get(index)?;
+        self.read_value_at(&item, 1)
     }
 
     pub fn is_function(&self, r: &JsRef) -> bool {
@@ -279,8 +466,13 @@ impl<'js> Scope<'js> {
             .unwrap_or_default()
     }
 
-    /// The cached Engine-owned wrapper for `obj`, created on first use.
+    /// The wrapper for `obj`, created on first use: the cached
+    /// Engine-owned one, or for an object given to scripts
+    /// ([`JsHost::give_to_script`]) the one a script still holds.
     pub fn wrapper(&self, obj: u64) -> rquickjs::Result<Object<'js>> {
+        if self.state.owned.borrow().contains_key(&obj) {
+            return self.owned_wrapper(obj);
+        }
         let cached = self.state.wrappers.borrow().get(&obj).cloned();
         if let Some(p) = cached {
             return p.restore(&self.ctx);
@@ -300,6 +492,42 @@ impl<'js> Scope<'js> {
     pub fn new_owned(&self, obj: u64) -> rquickjs::Result<Object<'js>> {
         let q = self.state.released.clone();
         Ok(self.instantiate(obj, Some(q))?.into_inner())
+    }
+
+    fn owned_wrapper(&self, obj: u64) -> rquickjs::Result<Object<'js>> {
+        let (get, set) = self.owned_face()?;
+        // A string: an id need not fit the integers a number is exact for.
+        let key = obj.to_string();
+        let held: Value<'js> = get.call((key.as_str(),))?;
+        if let Some(o) = held.into_object() {
+            return Ok(o);
+        }
+        let o = self.new_owned(obj)?;
+        if let Some(n) = self.state.owned.borrow_mut().get_mut(&obj) {
+            *n += 1;
+        }
+        set.call::<_, ()>((key, o.clone()))?;
+        Ok(o)
+    }
+
+    fn owned_face(&self) -> rquickjs::Result<(Function<'js>, Function<'js>)> {
+        let cached = self
+            .state
+            .owned_face
+            .borrow()
+            .as_ref()
+            .map(|f| (f.get.clone(), f.set.clone()));
+        if let Some((get, set)) = cached {
+            return Ok((get.restore(&self.ctx)?, set.restore(&self.ctx)?));
+        }
+        let face: Object<'js> = self.ctx.eval(OWNED_FACE)?;
+        let get: Function<'js> = face.get("get")?;
+        let set: Function<'js> = face.get("set")?;
+        *self.state.owned_face.borrow_mut() = Some(OwnedFace {
+            get: Persistent::save(&self.ctx, get.clone()),
+            set: Persistent::save(&self.ctx, set.clone()),
+        });
+        Ok((get, set))
     }
 
     fn instantiate(
@@ -451,14 +679,40 @@ impl<'js> Scope<'js> {
         Ok(Some(out))
     }
 
+    /// A JS value for Rust. An array is copied, entry by entry.
     pub fn from_value(&self, v: &Value<'js>) -> rquickjs::Result<JsValue> {
         self.read_value_at(v, 0)
+    }
+
+    /// [`Scope::from_value`], except that an array is not copied: it
+    /// crosses as a [`JsValue::Handle`] whose [`JsRef::is_array`] is true,
+    /// so Rust holds the script's own array.
+    pub fn from_value_kept(&self, v: &Value<'js>) -> rquickjs::Result<JsValue> {
+        if !v.is_proxy() && v.is_array() {
+            return Ok(JsValue::Handle(self.keep(v.clone())));
+        }
+        self.read_value_at(v, 0)
+    }
+
+    /// What a script gave the embedder: an argument, a value assigned, a
+    /// function's result.
+    fn script_value(&self, v: &Value<'js>) -> rquickjs::Result<JsValue> {
+        if self.state.arrays_by_reference.get() {
+            self.from_value_kept(v)
+        } else {
+            self.from_value(v)
+        }
     }
 
     fn read_value_at(&self, v: &Value<'js>, depth: u32) -> rquickjs::Result<JsValue> {
         // Cyclic arrays would otherwise recurse until the native stack limit.
         if depth > 32 {
             return Err(Exception::throw_type(&self.ctx, "value nested too deeply"));
+        }
+        // A proxy of an array says it is an array, and reading it entry by
+        // entry would run its traps: it crosses as the object it is.
+        if v.is_proxy() {
+            return Ok(JsValue::Handle(self.keep(v.clone())));
         }
         Ok(match v.type_of() {
             Type::Uninitialized | Type::Undefined => JsValue::Undefined,
@@ -503,6 +757,17 @@ impl<'js> Scope<'js> {
             }
         })
     }
+}
+
+/// The address of the object behind `v`, which is what tells one JS object
+/// from another on the Rust side.
+fn object_address(v: &Value<'_>) -> Option<usize> {
+    if !v.is_object() {
+        return None;
+    }
+    // SAFETY: the value is tagged as an object, so its payload is the
+    // pointer to it; the pointer is only compared, never followed.
+    Some(unsafe { rquickjs::qjs::JS_VALUE_GET_PTR(v.as_raw()) } as usize)
 }
 
 /// A loaded module and the functions it exports.
@@ -572,7 +837,9 @@ impl Drop for JsHost {
         self.state.types.borrow_mut().clear();
         self.state.wrappers.borrow_mut().clear();
         self.state.handles.borrow_mut().clear();
+        self.state.by_object.borrow_mut().clear();
         self.state.color.borrow_mut().take();
+        self.state.owned_face.borrow_mut().take();
         self.state.kinds.borrow_mut().clear();
     }
 }
@@ -624,9 +891,13 @@ impl JsHost {
             wrappers: RefCell::default(),
             host: RefCell::default(),
             released: Rc::default(),
+            owned: RefCell::default(),
+            owned_face: RefCell::default(),
             mapper: RefCell::default(),
             entered: Cell::new(false),
             handles: RefCell::default(),
+            by_object: RefCell::default(),
+            arrays_by_reference: Cell::new(false),
             next_handle: Cell::new(1),
             handle_release: Arc::default(),
             color: RefCell::default(),
@@ -650,6 +921,9 @@ impl JsHost {
 
     /// Installs the Engine side of the host-object seam.
     pub fn set_host_objects(&self, host: Rc<dyn HostObjects>) {
+        self.state
+            .arrays_by_reference
+            .set(host.arrays_by_reference());
         *self.state.host.borrow_mut() = Some(host);
     }
 
@@ -892,7 +1166,28 @@ impl JsHost {
     /// the next `wrapper(obj)` makes a fresh one. Call it when the Engine
     /// destroys the object.
     pub fn drop_wrapper(&self, obj: u64) -> bool {
+        self.state.owned.borrow_mut().remove(&obj);
         self.state.wrappers.borrow_mut().remove(&obj).is_some()
+    }
+
+    /// Gives `obj` to the scripts: from now on its wrapper lives only as
+    /// long as a script holds it, the object is still one object to them
+    /// while one does, and [`HostObjects::released_many`] says when none
+    /// does any more. False, and nothing changes, when `obj` has crossed
+    /// already: the wrapper it got then is the Engine's and never goes.
+    pub fn give_to_script(&self, obj: u64) -> bool {
+        if self.state.wrappers.borrow().contains_key(&obj) {
+            return false;
+        }
+        self.state.owned.borrow_mut().entry(obj).or_insert(0);
+        true
+    }
+
+    /// Whether a wrapper of the script-owned `obj` is alive: a script
+    /// holds it, or the collector has not looked since the last one let
+    /// go.
+    pub fn script_holds(&self, obj: u64) -> bool {
+        self.state.owned.borrow().get(&obj).is_some_and(|n| *n > 0)
     }
 
     pub fn wrapper_count(&self) -> usize {
@@ -909,11 +1204,25 @@ impl JsHost {
         if ids.is_empty() {
             return;
         }
+        // A wrapper of a script-owned object may have been made again
+        // before the death of the one before it was reported.
+        let gone: Vec<u64> = {
+            let mut owned = self.state.owned.borrow_mut();
+            ids.into_iter()
+                .filter(|id| match owned.get_mut(id) {
+                    Some(n) => {
+                        *n = n.saturating_sub(1);
+                        *n == 0
+                    }
+                    None => true,
+                })
+                .collect()
+        };
         let host = self.state.host.borrow().clone();
-        if let Some(host) = host {
-            for id in ids {
-                host.released(id);
-            }
+        if let Some(host) = host
+            && !gone.is_empty()
+        {
+            host.released_many(&gone);
         }
     }
 
@@ -1059,7 +1368,7 @@ fn install_prop<'js>(
           -> rquickjs::Result<()> {
         let (scope, host) = callback_scope(&ctx, &state)?;
         let id = this.borrow().id;
-        let v = scope.from_value(&value)?;
+        let v = scope.script_value(&value)?;
         host.set(&scope, id, prop, v).map_err(|e| e.into_js(&ctx))
     };
     proto.prop(
@@ -1094,7 +1403,7 @@ fn install_signal<'js>(
                 let argv = args
                     .0
                     .iter()
-                    .map(|a| scope.from_value(a))
+                    .map(|a| scope.script_value(a))
                     .collect::<rquickjs::Result<Vec<_>>>()?;
                 host.emit(&scope, id, signal, &argv)
                     .map_err(|e| e.into_js(&ctx))
@@ -1200,7 +1509,7 @@ fn make_method<'js>(
             let argv = args
                 .0
                 .iter()
-                .map(|a| scope.from_value(a))
+                .map(|a| scope.script_value(a))
                 .collect::<rquickjs::Result<Vec<_>>>()?;
             let out = host
                 .call(&scope, id, method, &argv)
@@ -1273,13 +1582,18 @@ fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMap
             let file = o.get::<_, Option<String>>("fileName").ok().flatten();
             let line = o.get::<_, Option<u32>>("lineNumber").ok().flatten();
             let (sf, sl) = first_frame(&stack);
-            // A TypeError or a ReferenceError is reported with its name, as
-            // QML reports one; a plain Error's message already says what a
-            // host or a script meant it to say.
+            // An error is reported with the name of its kind, as QML
+            // reports one: `Error: boom`, `TypeError: ...`.
             let message = e.message().unwrap_or_default();
+            // QuickJS words a read through nothing as QML does, but for
+            // the capital: one spelling for whoever matches the log.
+            let message = match message.strip_prefix("cannot read property ") {
+                Some(rest) => format!("Cannot read property {rest}"),
+                None => message,
+            };
             let message = match o.get::<_, Option<String>>("name").ok().flatten() {
                 // Heap exhaustion is told apart by its bare message below.
-                Some(name) if !name.is_empty() && name != "Error" && name != "InternalError" => {
+                Some(name) if !name.is_empty() && name != "InternalError" => {
                     format!("{name}: {message}")
                 }
                 _ => message,
@@ -1299,11 +1613,19 @@ fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMap
             label: label.to_owned(),
         };
     }
-    if let (Some(m), Some(f), Some(l)) = (mapper, file.as_deref(), line)
-        && let Some((mf, ml)) = m(f, l)
-    {
-        file = Some(mf);
-        line = Some(ml);
+    if let Some(m) = mapper {
+        // The exception is the embedder's where its code was running: the
+        // place it was thrown at when the mapper knows that place, else the
+        // nearest caller it knows. What a host function or a script of the
+        // embedder's own throws is then reported where it was asked for.
+        let thrown_at = match (file.as_deref(), line) {
+            (Some(f), Some(l)) => m(f, l),
+            _ => None,
+        };
+        if let Some((mf, ml)) = thrown_at.or_else(|| frames(&stack).find_map(|(f, l)| m(f, l))) {
+            file = Some(mf);
+            line = Some(ml);
+        }
     }
     JsFault::JsException {
         message,
@@ -1315,9 +1637,28 @@ fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMap
 
 /// Parses `at fn (file:line:col)` or `at file:line:col` from the first frame.
 fn first_frame(stack: &str) -> (Option<String>, Option<u32>) {
-    let Some(frame) = stack.lines().map(str::trim).find(|l| l.starts_with("at ")) else {
-        return (None, None);
-    };
+    match stack
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("at "))
+        .and_then(frame_place)
+    {
+        Some((f, l)) => (Some(f.to_owned()), Some(l)),
+        None => (None, None),
+    }
+}
+
+/// The file and line of every frame of a stack that has them, the one that
+/// threw first. A native function's frame has neither.
+fn frames(stack: &str) -> impl Iterator<Item = (&str, u32)> {
+    stack
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("at "))
+        .filter_map(frame_place)
+}
+
+fn frame_place(frame: &str) -> Option<(&str, u32)> {
     let frame = frame.trim_start_matches("at ");
     let inner = match (frame.rfind('('), frame.ends_with(')')) {
         (Some(open), true) => &frame[open + 1..frame.len() - 1],
@@ -1325,10 +1666,7 @@ fn first_frame(stack: &str) -> (Option<String>, Option<u32>) {
     };
     let mut parts = inner.rsplitn(3, ':');
     let (_col, line, file) = (parts.next(), parts.next(), parts.next());
-    match (file, line.and_then(|l| l.parse().ok())) {
-        (Some(f), Some(l)) => (Some(f.to_owned()), Some(l)),
-        _ => (None, None),
-    }
+    Some((file?, line?.parse().ok()?))
 }
 
 fn panic_message(p: &(dyn Any + Send)) -> String {

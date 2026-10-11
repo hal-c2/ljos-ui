@@ -391,7 +391,11 @@ impl Shared {
         }
         let weak = Rc::downgrade(s);
         engine.incubate(job.on_done(move |e, r| {
-            if let Some(s) = weak.upgrade() {
+            // A job whose owner went ends with an error nobody is to
+            // hear of: the view is gone, not the delegate wrong.
+            if let Some(s) = weak.upgrade()
+                && e.is_alive(s.owner)
+            {
                 s.finish_row(e, id, r.clone());
             }
         }));

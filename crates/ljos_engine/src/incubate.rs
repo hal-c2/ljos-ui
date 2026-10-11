@@ -6,6 +6,14 @@
 //! `onStatusChanged` that is called with the new status, and
 //! `forceCompletion()`, which makes what is left before it returns.
 //!
+//! It belongs to the script that holds it (script_owned.rs), as in Qt:
+//! it outlives its component, and goes when the script lets go of it.
+//! While its object is being made the engine holds it too, so an
+//! incubator nobody kept still makes its object. `onStatusChanged` is no
+//! property of the type: the script's function is kept by the incubator
+//! as the script sees it, so a function that closes over its own
+//! incubator (what Qt's documentation shows) is collected with it.
+//!
 //! An asynchronous incubation is a [`CreationJob`] like a Loader's: queued
 //! with [`Engine::incubate`], run by whoever runs the frame, a slice at a
 //! time, charged to the boundary the parent is in. Nothing is scheduled
@@ -13,6 +21,7 @@
 
 use std::cell::{Cell, RefCell};
 
+use ljos_js::JsRef;
 use ljos_runtime::Lane;
 
 use crate::boundary::APPLICATION_PROC;
@@ -22,8 +31,9 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::ObjectId;
 use crate::incubator::{CreationHandle, CreationJob, SharedCreation};
+use crate::js::obj_to_u64;
 use crate::value::Value;
-use crate::{QmlObject, WriteKind, qml_impl};
+use crate::{QmlObject, TypeTag, WriteKind, qml_impl};
 
 /// `Component.Status`, as far as an incubator has one.
 mod status {
@@ -45,12 +55,17 @@ pub struct Incubator {
     pub status: i32,
     #[qml(notify, readonly)]
     pub object: Option<ObjectId>,
-    /// A function called with the status when it changes.
-    #[qml(notify)]
-    pub on_status_changed: Value,
     #[qml(skip)]
     job: Option<(SharedCreation, CreationHandle)>,
+    /// The incubator as scripts see it, held while its object is being
+    /// made: what keeps it then, and where `onStatusChanged` is.
+    #[qml(skip)]
+    face: Option<JsRef>,
 }
+
+/// What a script assigns the function to that is called with the status
+/// when it changes.
+const ON_STATUS_CHANGED: &str = "onStatusChanged";
 
 impl std::fmt::Debug for Incubator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -108,8 +123,8 @@ impl Engine {
         props: Vec<(String, Value)>,
         synchronous: bool,
     ) -> Result<ObjectId, EngineError> {
-        // The component owns its incubators: they go when it goes.
-        let inc = self.create_native(Incubator::default(), Some(component))?;
+        let inc = self.create_native(Incubator::default(), None)?;
+        self.give_to_script(inc);
         self.write_internal(
             inc,
             Incubator::STATUS.index,
@@ -129,7 +144,13 @@ impl Engine {
             .handles
             .borrow_mut()
             .push(handle.clone());
-        self.with_mut(inc, |i: &mut Incubator| i.job = Some((shared, handle)))?;
+        let face = self.run_js("incubator", |s| {
+            Ok(s.keep(s.wrapper(obj_to_u64(inc))?.into_value()))
+        });
+        self.with_mut(inc, |i: &mut Incubator| {
+            i.job = Some((shared, handle));
+            i.face = face;
+        })?;
         self.incubate(job);
         Ok(inc)
     }
@@ -157,7 +178,14 @@ impl Engine {
             }
             return;
         }
-        let _ = self.with_mut(inc, |i: &mut Incubator| i.job = None);
+        // From here on only a script keeps the incubator.
+        let face = self
+            .with_mut(inc, |i: &mut Incubator| {
+                i.job = None;
+                i.face.take()
+            })
+            .ok()
+            .flatten();
         let status = match made {
             Ok(obj) => {
                 let _ = self.write_internal(
@@ -179,8 +207,13 @@ impl Engine {
             status.into(),
             WriteKind::Imperative,
         );
-        let callback = self.untrack(|| self.read(inc, Incubator::ON_STATUS_CHANGED.index));
-        if matches!(callback, Value::Js(_)) {
+        let callback = face.and_then(|face| {
+            self.run_js("incubator", |s| {
+                let f = s.get_field(&face, ON_STATUS_CHANGED)?;
+                Ok(self.js_to_value(s, f, &TypeTag::Var))
+            })
+        });
+        if let Some(callback @ Value::Js(_)) = callback {
             let _origin = self.origin(Some(inc));
             self.call_js(&callback, &[status.into()]);
         }

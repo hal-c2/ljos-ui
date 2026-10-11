@@ -1,0 +1,58 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property string kind: typeof nowhere\n    property var made: new Maker.Kind(1)\n    property var both: ({ short })\n    function later() {\n        absent()\n        other.x = 1\n        written = 2\n        return written\n    }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=77ee4330
+  o0 QtQuick/Item key=/
+    property string kind
+    property var made
+    property var both
+    function later = e3
+    kind := e0
+    made := e1
+    both := e2
+
+exprs
+  e0 property f0 scope=c0o0 at 5:27 params[nowhere=dynamic nowhere] args[] refs[nowhere:UNKNOWN]
+  e1 property f1 scope=c0o0 at 6:24 params[Maker=dynamic Maker] args[] refs[Maker:UNKNOWN]
+  e2 property f2 scope=c0o0 at 7:24 params[short=dynamic short] args[] refs[short:UNKNOWN]
+  e3 function f3 scope=c0o0 at 8:5 params[absent=dynamic absent, other=dynamic other, $w_written=holder of ?.written] args[] refs[absent:UNKNOWN, other:UNKNOWN, written:UNKNOWN]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:5:27 Item.kind
+export function f0(nowhere) {
+  return (typeof __ljos_known(nowhere));
+}
+
+// Main.qml:6:24 Item.made
+export function f1(Maker) {
+  return (new (__ljos_named(Maker, "Maker")).Kind(1));
+}
+
+// Main.qml:7:24 Item.both
+export function f2(short) {
+  return (({ short: __ljos_named(short, "short") }));
+}
+
+// Main.qml:8:5 Item.later()
+export function f3(absent, other, $w_written, ...$args) {
+  return (function later() {
+        __ljos_named(absent, "absent")()
+        __ljos_vl(__ljos_named(other, "other"), ($v) => other = $v).x = 1
+        $w_written.written = 2
+        return $w_written.written
+    }).apply(this, $args);
+}
+
+diagnostics
+  5:34: warning: `nowhere` is not a name in sight: it is looked up when the program runs
+  6:28: warning: `Maker` is not a name in sight: it is looked up when the program runs
+  7:27: warning: `short` is not a name in sight: it is looked up when the program runs
+  9:9: warning: `absent` is not a name in sight: it is looked up when the program runs
+  10:9: warning: `other` is not a name in sight: it is looked up when the program runs
+  11:9: warning: `written` is not a name in sight: it is looked up when the program runs

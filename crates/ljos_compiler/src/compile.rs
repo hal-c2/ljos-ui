@@ -1354,9 +1354,30 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             {
                 // The name reached the function by value: it is a variable
                 // of the function's like any other.
+                let unknown = plan
+                    .param
+                    .as_ref()
+                    .is_some_and(|param| matches!(param.arg, Arg::Dynamic(_)));
+                let text = if unknown {
+                    let name = &free.name;
+                    format!("{VALUE_IN}({}, ($v) => {name} = $v)", read_or_throw(name))
+                } else {
+                    value_in(&free.name)
+                };
                 edits.push(js::Edit {
                     span: free.span,
-                    text: value_in(&free.name),
+                    text,
+                });
+            } else if plan.replace.is_none()
+                && plan.param.as_ref().is_some_and(|param| {
+                    param.name == free.name && matches!(param.arg, Arg::Dynamic(_))
+                })
+            {
+                // Nothing in sight has the name. Where the running program
+                // has none either, reading it throws.
+                edits.push(js::Edit {
+                    span: free.span,
+                    text: or_throw(free),
                 });
             }
             if let Some((text, members)) = &plan.replace {
@@ -2047,6 +2068,37 @@ const VALUE_IN: &str = "__ljos_vl";
 /// with a parenthesis would be read as a call of the line before.
 fn value_in(name: &str) -> String {
     format!("{VALUE_IN}({name}, ($v) => {name} = $v)")
+}
+
+/// The global that gives back what a name is, or throws a ReferenceError
+/// for it when the engine found nothing of that name
+/// ([`ljos_ir::Arg::Dynamic`]). The engine defines it, and [`KNOWN`].
+const NAMED: &str = "__ljos_named";
+
+/// The same for `typeof name`, which is `"undefined"` and no error where
+/// nothing has the name.
+const KNOWN: &str = "__ljos_known";
+
+/// A name nothing in sight declares, where its value is read: what the
+/// engine found for it, or a ReferenceError. Like [`value_in`] it starts
+/// with a name.
+fn read_or_throw(name: &str) -> String {
+    format!("{NAMED}({name}, {name:?})")
+}
+
+/// [`read_or_throw`] as the name is written.
+fn or_throw(free: &js::Free) -> String {
+    let name = &free.name;
+    let read = if free.asked {
+        format!("{KNOWN}({name})")
+    } else {
+        read_or_throw(name)
+    };
+    match (free.shorthand, free.constructed) {
+        (true, _) => format!("{name}: {read}"),
+        (false, true) => format!("({read})"),
+        (false, false) => read,
+    }
 }
 
 /// The global that gives what a type attached to an object. The engine

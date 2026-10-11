@@ -152,6 +152,25 @@ pub enum Reset {
         apply: ResetApply,
         value: ResetValue,
     },
+    /// The property holds what `value` gives while it was given nothing,
+    /// and a value `absent` says yes to counts as nothing given: an empty
+    /// `baseUrl` is the document's address. `value` is asked once each
+    /// time; the property does not follow it.
+    Absent {
+        absent: fn(&Value) -> bool,
+        value: ResetValue,
+    },
+}
+
+impl Reset {
+    /// Whether assigning `v` takes the property back.
+    pub(crate) fn takes_back(&self, v: &Value) -> bool {
+        match self {
+            _ if matches!(v, Value::Undefined) => true,
+            Reset::Absent { absent, .. } => absent(v),
+            _ => false,
+        }
+    }
 }
 
 /// Where a property's value is stored.
@@ -263,6 +282,9 @@ struct Lookup {
     props: HashMap<Atom, PropIndex>,
     signals: HashMap<Atom, SignalIndex>,
     methods: HashMap<Atom, MethodIndex>,
+    /// The properties with a [`Reset::Absent`], and what gives each its
+    /// value. Empty for nearly every type.
+    absent: Vec<(PropIndex, ResetValue)>,
 }
 
 /// The description of one QML type. See the module docs.
@@ -315,6 +337,9 @@ impl MetaObject {
             let mut l = Lookup::default();
             for (i, p) in self.properties.iter().enumerate() {
                 l.props.insert(p.name.clone(), PropIndex(i as u32));
+                if let Some(Reset::Absent { value, .. }) = p.reset {
+                    l.absent.push((PropIndex(i as u32), value));
+                }
             }
             for (i, s) in self.signals.iter().enumerate() {
                 l.signals.insert(s.name.clone(), SignalIndex(i as u32));
@@ -324,6 +349,12 @@ impl MetaObject {
             }
             l
         })
+    }
+
+    /// The properties that hold what a function gives until they are given
+    /// a value ([`Reset::Absent`]), inherited ones included.
+    pub(crate) fn absent(&self) -> &[(PropIndex, ResetValue)] {
+        &self.lookup().absent
     }
 
     /// A property by name, inherited ones included.
@@ -341,6 +372,27 @@ impl MetaObject {
 
     pub fn signal(&self, i: SignalIndex) -> Option<&SignalInfo> {
         self.signals.get(i.0 as usize)
+    }
+
+    /// Whether the signal was declared in QML (`signal sent(var list)`)
+    /// and not by a native type.
+    pub fn signal_is_script(&self, i: SignalIndex) -> bool {
+        let mut m = self;
+        loop {
+            if m.native.is_some() {
+                return false;
+            }
+            if i.0 >= m.signal_offset {
+                return m
+                    .signals
+                    .get(i.0 as usize)
+                    .is_some_and(|s| s.notify_of.is_none());
+            }
+            match &m.base {
+                Some(b) => m = b,
+                None => return false,
+            }
+        }
     }
 
     pub fn method_index(&self, name: &str) -> Option<MethodIndex> {
@@ -821,6 +873,22 @@ impl MetaBuilder {
     /// Says how assigning `undefined` takes the property just added back.
     pub fn reset(mut self, reset: Reset) -> Self {
         if let Some(p) = self.meta.properties.last_mut() {
+            p.reset = Some(reset);
+        }
+        self
+    }
+
+    /// Says how assigning `undefined` takes back a property a base
+    /// declares and cannot take back itself: an item only stores its
+    /// `baselineOffset`, a control works one out.
+    pub fn reset_inherited(mut self, name: &str, reset: Reset) -> Self {
+        if let Some(p) = self
+            .meta
+            .properties
+            .iter_mut()
+            .rev()
+            .find(|p| p.name == name)
+        {
             p.reset = Some(reset);
         }
         self

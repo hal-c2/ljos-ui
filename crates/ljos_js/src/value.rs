@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// The engine-neutral value that crosses the Rust/JS boundary.
 ///
@@ -55,51 +55,140 @@ impl ValueKind {
 }
 
 /// A strong reference to a JS value held by Rust (a function given to
-/// `connect`, the object behind a `var` property).
+/// `connect`, the object or array behind a `var` property).
 ///
 /// It is `Send + Sync` so it can live inside values that cross threads, but
 /// it only means something to the host that made it. Dropping the last clone
 /// queues the slot for release; the host frees it the next time it runs, so
 /// a drop never touches the JS heap directly (it may happen anywhere,
 /// including after the host is gone).
+///
+/// The host gives one reference per JS object for as long as one is held,
+/// so two references are equal exactly when they are the same JS object.
+///
+/// An array can also be made on the Rust side ([`JsRef::array`]) before any
+/// script has seen it: it becomes a JS array the first time a script gets
+/// it, and is that array from then on. An embedder whose values are arrays
+/// that no script reads never starts a JS host for them.
 #[derive(Clone)]
 pub struct JsRef(Arc<RefSlot>);
 
-struct RefSlot {
+pub(crate) struct RefSlot {
+    /// Where the value is in the host's table, once it is in the JS heap.
+    live: OnceLock<Live>,
+    /// What an array made on the Rust side holds until a script gets it.
+    pending: Mutex<Option<Vec<JsValue>>>,
+    array: bool,
+}
+
+struct Live {
     key: u64,
     release: Arc<Mutex<Vec<u64>>>,
 }
 
 impl Drop for RefSlot {
     fn drop(&mut self) {
+        let Some(live) = self.live.get() else {
+            return;
+        };
         // A poisoned queue only happens after a panic elsewhere; leaking the
         // slot until the host drops is the safe outcome then.
-        if let Ok(mut q) = self.release.lock() {
-            q.push(self.key);
+        if let Ok(mut q) = live.release.lock() {
+            q.push(live.key);
         }
     }
 }
 
+/// A [`JsRef`] that does not keep the value alive, for the host's table of
+/// the references it has given out.
+pub(crate) struct WeakRef(Weak<RefSlot>);
+
+impl WeakRef {
+    pub(crate) fn upgrade(&self) -> Option<JsRef> {
+        self.0.upgrade().map(JsRef)
+    }
+}
+
 impl JsRef {
-    pub(crate) fn new(key: u64, release: Arc<Mutex<Vec<u64>>>) -> Self {
-        Self(Arc::new(RefSlot { key, release }))
+    pub(crate) fn new(key: u64, release: Arc<Mutex<Vec<u64>>>, array: bool) -> Self {
+        let live = OnceLock::new();
+        let _ = live.set(Live { key, release });
+        Self(Arc::new(RefSlot {
+            live,
+            pending: Mutex::new(None),
+            array,
+        }))
     }
 
-    pub(crate) fn key(&self) -> u64 {
-        self.0.key
+    /// An array of `items` that no script has seen yet. It has an identity
+    /// already: every clone is the same array, in Rust and later in JS.
+    pub fn array(items: Vec<JsValue>) -> Self {
+        Self(Arc::new(RefSlot {
+            live: OnceLock::new(),
+            pending: Mutex::new(Some(items)),
+            array: true,
+        }))
     }
 
-    /// Whether both are the same reference (not merely the same JS value:
-    /// two refs taken from one function at different times differ; use
-    /// `Scope::same_value` for JS identity).
+    /// Whether this is a JS array (and not a proxy of one): what a script
+    /// changes in place, and what Rust reads with `Scope::array_items`.
+    pub fn is_array(&self) -> bool {
+        self.0.array
+    }
+
+    /// The entries of an array no script has seen yet; `None` once one
+    /// has, because the script may have changed it since.
+    pub fn pending_items(&self) -> Option<Vec<JsValue>> {
+        if self.0.live.get().is_some() {
+            return None;
+        }
+        self.0.pending.lock().ok()?.clone()
+    }
+
+    /// [`JsRef::pending_items`] without the copy: `f` sees the entries of
+    /// an array no script has seen yet.
+    pub fn with_pending<R>(&self, f: impl FnOnce(&[JsValue]) -> R) -> Option<R> {
+        if self.0.live.get().is_some() {
+            return None;
+        }
+        self.0.pending.lock().ok()?.as_deref().map(f)
+    }
+
+    pub(crate) fn key(&self) -> Option<u64> {
+        self.0.live.get().map(|l| l.key)
+    }
+
+    /// Takes the entries to build the JS array from.
+    pub(crate) fn take_pending(&self) -> Option<Vec<JsValue>> {
+        self.0.pending.lock().ok()?.take()
+    }
+
+    /// Puts back what [`JsRef::take_pending`] took, when the array could
+    /// not be built after all.
+    pub(crate) fn restore_pending(&self, items: Vec<JsValue>) {
+        if let Ok(mut p) = self.0.pending.lock() {
+            *p = Some(items);
+        }
+    }
+
+    pub(crate) fn set_live(&self, key: u64, release: Arc<Mutex<Vec<u64>>>) {
+        let _ = self.0.live.set(Live { key, release });
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakRef {
+        WeakRef(Arc::downgrade(&self.0))
+    }
+
+    /// Whether both are the same reference, which is whether they are the
+    /// same JS value.
     pub fn ptr_eq(a: &JsRef, b: &JsRef) -> bool {
         Arc::ptr_eq(&a.0, &b.0)
     }
 
-    /// A number unique among the live refs of one host, for hashing and
-    /// debugging.
+    /// A number unique among the live refs, for hashing and debugging. It
+    /// stays what it is when an array made in Rust reaches the JS heap.
     pub fn id(&self) -> u64 {
-        self.0.key
+        Arc::as_ptr(&self.0) as usize as u64
     }
 }
 
@@ -111,7 +200,10 @@ impl PartialEq for JsRef {
 
 impl std::fmt::Debug for JsRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "JsRef({:#x})", self.0.key)
+        match self.key() {
+            Some(key) => write!(f, "JsRef({key:#x})"),
+            None => f.write_str("JsRef(array not in JS yet)"),
+        }
     }
 }
 

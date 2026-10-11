@@ -149,10 +149,28 @@ pub trait HostObjects {
         Err(HostError::msg("this host does not support signals"))
     }
 
+    /// Whether an array a script gives this host (assigned to a property,
+    /// passed to a method or a signal, returned from a function Rust
+    /// called) crosses as a [`crate::JsValue::Handle`] to the script's own
+    /// array instead of a copy of its entries. A host that says yes keeps
+    /// the array's identity and sees what the script changes in it later;
+    /// it reads the entries with [`Scope::array_items`].
+    fn arrays_by_reference(&self) -> bool {
+        false
+    }
+
     /// A JS-owned wrapper (see [`Scope::new_owned`]) was garbage collected.
     /// Called between runs, never from inside the collector, so the Engine
     /// may destroy the object here.
     fn released(&self, _obj: u64) {}
+
+    /// [`HostObjects::released`] for all the wrappers one collection
+    /// freed, for a host that has work to do once for all of them.
+    fn released_many(&self, objs: &[u64]) {
+        for obj in objs {
+            self.released(*obj);
+        }
+    }
 }
 
 /// The JS class behind every wrapper. Its `Drop` is the finaliser: QuickJS

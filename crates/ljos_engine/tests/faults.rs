@@ -820,7 +820,7 @@ fn a_binding_a_handler_and_a_hook_are_a_step_each() {
 }
 
 #[test]
-fn a_creation_called_off_while_it_completes_leaves_nothing() {
+fn a_creation_whose_parent_goes_while_it_completes_leaves_nothing() {
     let (h, root) = ordered();
     let e = &h.engine;
     let holder = h.find(root, "holder");
@@ -841,5 +841,12 @@ fn a_creation_called_off_while_it_completes_leaves_nothing() {
     assert!(matches!(jobs[0].step(&|| true), JobPoll::Done));
     assert!(!e.is_alive(kid));
     assert!(!e.has_half_made());
-    assert!(h.log().is_empty(), "no other handler ran");
+    // The incubator says so, and that is all that is said: no other
+    // `onCompleted` of the object that went runs.
+    let log = h.log();
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert!(log[0].starts_with("Component.incubateObject:"), "{log:?}");
+    let inc = e.read_by_name(root, "inc").as_object().expect("kept");
+    assert_eq!(e.read_by_name(inc, "status").to_number(), 3.0);
+    assert!(e.read_by_name(inc, "object").as_object().is_none());
 }

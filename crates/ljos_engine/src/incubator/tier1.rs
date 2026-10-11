@@ -551,6 +551,16 @@ pub(super) fn normal(e: &Engine, v: Value) -> Value {
     }
 }
 
+/// A value on the other side of a call from one function of a script to
+/// another: as [`normal`], but that an array is the caller's own array,
+/// holding what it held.
+pub(super) fn passed(e: &Engine, v: Value) -> Value {
+    match v {
+        Value::List(_) => v,
+        other => normal(e, other),
+    }
+}
+
 /// Whether there is a JS value in `v`, itself or in a list.
 pub(super) fn has_js(v: &Value) -> bool {
     match v {
@@ -593,6 +603,8 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
                 && x.strikeout == y.strikeout
                 && d(x.letter_spacing, y.letter_spacing)
                 && d(x.word_spacing, y.word_spacing)
+                && x.capitalization == y.capitalization
+                && x.hinting_preference == y.hinting_preference
                 && x.scale_with_system == y.scale_with_system
         }
         (Value::Vector2d(x), Value::Vector2d(y)) => s(x.x, y.x) && s(x.y, y.y),
@@ -674,6 +686,7 @@ impl Engine {
         expr: ExprId,
         hint: &TypeTag,
         args: &[Value],
+        kept: bool,
     ) -> Option<Option<Value>> {
         let st = &self.inner.tier1;
         if !st.enabled.get() {
@@ -703,6 +716,7 @@ impl Engine {
             t,
             p,
             args,
+            called: false,
         };
         let Some(done) = run.run() else {
             p.bailed();
@@ -735,7 +749,9 @@ impl Engine {
         };
         let outer = st.spy.replace(Some(Vec::new()));
         st.spying.set(true);
-        let js = self.eval_expr(inst, expr, hint, args);
+        let js = self.eval_expr_as(inst, expr, hint, args, false, kept);
+        // Tier 1 builds a list where the script builds an array.
+        let js_plain = js.as_ref().map(|v| self.plain(v));
         // Tier 0 may have answered before the key was taken off.
         st.skip.borrow_mut().truncate(depth);
         let seen = st.spy.replace(outer).unwrap_or_default();
@@ -752,7 +768,7 @@ impl Engine {
             seen.iter()
                 .any(|s| s.0 == w.0 && s.1 == w.1 && same(&s.2, &w.2))
         };
-        let agree = match (&js, &done.write) {
+        let agree = match (&js_plain, &done.write) {
             (Some(v), None) => same(&done.value, v) && seen.is_empty(),
             (Some(v), Some(w)) => same(&done.value, v) && wrote(w),
             // JavaScript threw at the write: unchecked, the write is
@@ -852,6 +868,10 @@ impl Engine {
 
     /// A JS function is about to write `v` to a property: the cross-check
     /// compares it with the write tier 1 would have made.
+    pub(crate) fn tier1_spying(&self) -> bool {
+        self.inner.tier1.spying.get()
+    }
+
     pub(crate) fn tier1_spy(&self, o: ObjectId, p: PropIndex, v: &Value) {
         let st = &self.inner.tier1;
         if st.spying.get()

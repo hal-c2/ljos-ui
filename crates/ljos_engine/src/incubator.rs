@@ -128,7 +128,6 @@ struct Creation {
     /// In allocation order.
     all: Vec<ObjectId>,
     nodes: HashMap<ObjectId, CompletionNode>,
-    depth: u32,
     /// The instance the creation was asked for.
     top: Option<Rc<Instance>>,
     /// Eager mode: the bindings installed so far, not yet run.
@@ -152,6 +151,51 @@ enum RootSpec {
     New(Option<ObjectId>),
     /// The object that uses the component (`Foo {}`), already made.
     Existing(ObjectId),
+}
+
+/// One component in the making: [`Engine::allocate_step`] makes its
+/// objects one at a time.
+struct AllocFrame {
+    file: Rc<LoadedFile>,
+    comp: CompIdx,
+    root: RootSpec,
+    outer: Option<Rc<Instance>>,
+    ctx: ContextId,
+    /// The objects made so far.
+    objects: Vec<ObjectId>,
+    inner: Vec<Option<Rc<Instance>>>,
+    /// Once every object exists: the instance, and the next object to
+    /// note for applying and completion.
+    closing: Option<(Rc<Instance>, usize)>,
+}
+
+impl AllocFrame {
+    fn new(
+        file: Rc<LoadedFile>,
+        comp: CompIdx,
+        root: RootSpec,
+        outer: Option<Rc<Instance>>,
+        ctx: ContextId,
+    ) -> Self {
+        let n = file.ir.component(comp).objects.len();
+        Self {
+            file,
+            comp,
+            root,
+            outer,
+            ctx,
+            objects: Vec::with_capacity(n),
+            inner: Vec::with_capacity(n),
+            closing: None,
+        }
+    }
+}
+
+/// An allocation that can stop between any two objects: the components
+/// being made, each inside the one before it. A list of work rather than
+/// a recursion, so a job can cut it where its slice ends.
+struct Allocation {
+    stack: Vec<AllocFrame>,
 }
 
 fn instance_key(inst: &Instance) -> usize {
@@ -381,8 +425,27 @@ impl Engine {
         parent: Option<ObjectId>,
         append: bool,
     ) -> Result<ObjectId, EngineError> {
-        if parent.is_some_and(|p| !self.is_alive(p)) {
-            return Err(EngineError::DeadObject(parent.expect("checked")));
+        let mut a = self.template_allocation(template, parent)?;
+        loop {
+            match self.allocate_step(cr, &mut a) {
+                Ok(Some(inst)) => return self.allocated_template(cr, inst, parent, append),
+                Ok(None) => {}
+                Err(e) => {
+                    self.drop_allocation(cr);
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    /// Starts the allocation of an instance of `template` under `parent`.
+    fn template_allocation(
+        &self,
+        template: &Template,
+        parent: Option<ObjectId>,
+    ) -> Result<Allocation, EngineError> {
+        if let Some(p) = parent.filter(|p| !self.is_alive(*p)) {
+            return Err(EngineError::DeadObject(p));
         }
         let ctx_parent = template.context.unwrap_or_else(|| {
             template
@@ -390,18 +453,28 @@ impl Engine {
                 .as_ref()
                 .map_or_else(|| self.root_context(), |o| o.context)
         });
-        let inst = self.allocate(
-            cr,
+        Ok(self.allocation(
             template.file.clone(),
             template.comp,
             RootSpec::New(parent),
             template.outer.clone(),
             ctx_parent,
-        )?;
+        ))
+    }
+
+    /// What is left once every object of a template's instance exists:
+    /// the root keeps the instance and takes its place under `parent`.
+    fn allocated_template(
+        &self,
+        cr: &mut Creation,
+        inst: Rc<Instance>,
+        parent: Option<ObjectId>,
+        append: bool,
+    ) -> Result<ObjectId, EngineError> {
         let root = inst.objects[0];
         cr.top = Some(inst.clone());
         // The instance (and so its contexts) lives as long as its root.
-        self.keep_with(root, inst.clone());
+        self.keep_with(root, inst);
         if append
             && let Some(p) = parent
             && self.default_property(p).is_ok()
@@ -706,115 +779,159 @@ impl Engine {
 
     // ---------------------------------------------------------- allocation
 
-    fn allocate(
+    /// Starts an allocation: nothing exists yet but the context of the
+    /// component.
+    fn allocation(
         &self,
-        cr: &mut Creation,
         file: Rc<LoadedFile>,
         comp: CompIdx,
         root: RootSpec,
         outer: Option<Rc<Instance>>,
         ctx_parent: ContextId,
-    ) -> Result<Rc<Instance>, EngineError> {
-        cr.depth += 1;
-        if cr.depth > MAX_DEPTH {
-            return Err(EngineError::Load(format!(
-                "{}: the component instantiates itself",
-                file.url
-            )));
-        }
+    ) -> Allocation {
         let ctx = self.create_context(Some(ctx_parent));
-        let def = file.ir.component(comp);
-        let mut objects: Vec<ObjectId> = Vec::with_capacity(def.objects.len());
-        let mut inner: Vec<Option<Rc<Instance>>> = Vec::with_capacity(def.objects.len());
-        for (i, od) in def.objects.iter().enumerate() {
-            let meta = self.object_meta(&file, comp, i)?;
-            let id = match (i, &root) {
-                (0, RootSpec::Existing(id)) => *id,
-                (0, RootSpec::New(owner)) => {
-                    let id = self.create(meta, *owner)?;
-                    self.set_context(id, ctx)?;
-                    id
-                }
-                _ => {
-                    let owner = od.parent.map(|p| objects[p.index()]);
-                    let id = self.create(meta, owner)?;
-                    self.set_context(id, ctx)?;
-                    id
-                }
-            };
-            if !matches!((i, &root), (0, RootSpec::Existing(_))) {
-                self.set_location(id, &file.url, od.span.line, od.span.column);
-                cr.all.push(id);
-            }
-            if let Some(name) = &od.id {
-                self.set_context_id(ctx, name, id);
-            }
-            objects.push(id);
-            inner.push(None);
-            // A component file, or a module type that is written in QML
-            // (`Engine::register_qml_type`).
-            let component = match &od.ty {
-                TypeRef::Component { file: f, inline } => Some((f.clone(), inline.clone())),
-                TypeRef::Native { module, name } => {
-                    self.qml_type_key(module, name).map(|k| (k, None))
-                }
-                TypeRef::Unresolved(name) => self.qml_type_key_any(name).map(|k| (k, None)),
-            };
-            if let Some((f, inline)) = &component {
-                let inner_file = if *f == file.key {
-                    file.clone()
-                } else {
-                    self.load_file(f)?
-                };
-                let inner_comp = inner_file
-                    .find_component(inline.as_deref())
-                    .ok_or_else(|| EngineError::Load(format!("{}: no component {f}", file.url)))?;
-                inner[i] = Some(self.allocate(
-                    cr,
-                    inner_file,
-                    inner_comp,
-                    RootSpec::Existing(id),
-                    None,
-                    ctx,
-                )?);
-            }
+        Allocation {
+            stack: vec![AllocFrame::new(file, comp, root, outer, ctx)],
         }
-        if let Some(&root_id) = objects.first() {
-            self.add_context(root_id, ctx);
+    }
+
+    /// Destroys what an allocation that cannot go on has made: all of it
+    /// is owned by the first object, which nothing refers to yet.
+    fn drop_allocation(&self, cr: &Creation) {
+        if let Some(&first) = cr.all.first() {
+            self.destroy_now(first);
         }
-        let inst = Rc::new(Instance {
-            file: file.clone(),
-            comp,
-            objects,
-            inner,
-            outer,
-            context: ctx,
-        });
-        for (i, od) in def.objects.iter().enumerate() {
-            let id = inst.objects[i];
-            let node = cr.nodes.entry(id).or_default();
-            for at in &od.attached {
-                if is_component_attached(&at.ty) {
-                    for h in &at.members.handlers {
-                        if h.signal == "completed" {
-                            node.handlers.push((inst.clone(), h.expr));
-                        } else if h.signal == "reloaded" {
-                            node.reloaded.push((inst.clone(), h.expr));
+    }
+
+    /// One step of an allocation: makes one object, or notes one object
+    /// of a component whose objects all exist for applying and
+    /// completion. Gives the instance when nothing is left.
+    ///
+    /// The order is the one of a walk into each object's component as
+    /// soon as the object is made: `cr.all`, `cr.units` and so the order
+    /// bindings are installed in depend on it.
+    fn allocate_step(
+        &self,
+        cr: &mut Creation,
+        a: &mut Allocation,
+    ) -> Result<Option<Rc<Instance>>, EngineError> {
+        let depth = a.stack.len();
+        let Some(f) = a.stack.last_mut() else {
+            return Err(EngineError::Load("nothing is being allocated".into()));
+        };
+        let def = f.file.ir.component(f.comp);
+        if let Some((inst, next)) = &mut f.closing {
+            if let Some(od) = def.objects.get(*next) {
+                let i = *next;
+                *next += 1;
+                let id = inst.objects[i];
+                let node = cr.nodes.entry(id).or_default();
+                for at in &od.attached {
+                    if is_component_attached(&at.ty) {
+                        for h in &at.members.handlers {
+                            if h.signal == "completed" {
+                                node.handlers.push((inst.clone(), h.expr));
+                            } else if h.signal == "reloaded" {
+                                node.reloaded.push((inst.clone(), h.expr));
+                            }
                         }
                     }
                 }
+                if let Some(p) = od.parent {
+                    let parent = inst.objects[p.index()];
+                    cr.nodes.entry(parent).or_default().children.push(id);
+                }
+                cr.units.push(Unit {
+                    inst: inst.clone(),
+                    obj: i,
+                });
+                if *next < def.objects.len() {
+                    return Ok(None);
+                }
             }
-            if let Some(p) = od.parent {
-                let parent = inst.objects[p.index()];
-                cr.nodes.entry(parent).or_default().children.push(id);
-            }
-            cr.units.push(Unit {
-                inst: inst.clone(),
-                obj: i,
+            let inst = inst.clone();
+            a.stack.pop();
+            return Ok(match a.stack.last_mut() {
+                // The object made last is the one this component is the
+                // type of.
+                Some(user) => {
+                    if let Some(slot) = user.inner.last_mut() {
+                        *slot = Some(inst);
+                    }
+                    None
+                }
+                None => Some(inst),
             });
         }
-        cr.depth -= 1;
-        Ok(inst)
+        let i = f.objects.len();
+        let Some(od) = def.objects.get(i) else {
+            if let Some(&root_id) = f.objects.first() {
+                self.add_context(root_id, f.ctx);
+            }
+            let inst = Rc::new(Instance {
+                file: f.file.clone(),
+                comp: f.comp,
+                objects: std::mem::take(&mut f.objects),
+                inner: std::mem::take(&mut f.inner),
+                outer: f.outer.take(),
+                context: f.ctx,
+            });
+            f.closing = Some((inst, 0));
+            return Ok(None);
+        };
+        let meta = self.object_meta(&f.file, f.comp, i)?;
+        let id = match (i, &f.root) {
+            (0, RootSpec::Existing(id)) => *id,
+            (0, RootSpec::New(owner)) => {
+                let id = self.create(meta, *owner)?;
+                self.set_context(id, f.ctx)?;
+                id
+            }
+            _ => {
+                let owner = od.parent.map(|p| f.objects[p.index()]);
+                let id = self.create(meta, owner)?;
+                self.set_context(id, f.ctx)?;
+                id
+            }
+        };
+        if !matches!((i, &f.root), (0, RootSpec::Existing(_))) {
+            self.set_location(id, &f.file.url, od.span.line, od.span.column);
+            // A `baseUrl` is the file's address from the start.
+            self.give_absent(id);
+            cr.all.push(id);
+        }
+        if let Some(name) = &od.id {
+            self.set_context_id(f.ctx, name, id);
+        }
+        f.objects.push(id);
+        f.inner.push(None);
+        // A component file, or a module type that is written in QML
+        // (`Engine::register_qml_type`).
+        let component = match &od.ty {
+            TypeRef::Component { file: key, inline } => Some((key.clone(), inline.clone())),
+            TypeRef::Native { module, name } => self.qml_type_key(module, name).map(|k| (k, None)),
+            TypeRef::Unresolved(name) => self.qml_type_key_any(name).map(|k| (k, None)),
+        };
+        if let Some((key, inline)) = &component {
+            let inner_file = if *key == f.file.key {
+                f.file.clone()
+            } else {
+                self.load_file(key)?
+            };
+            let inner_comp = inner_file
+                .find_component(inline.as_deref())
+                .ok_or_else(|| EngineError::Load(format!("{}: no component {key}", f.file.url)))?;
+            if depth as u32 >= MAX_DEPTH {
+                return Err(EngineError::Load(format!(
+                    "{}: the component instantiates itself",
+                    inner_file.url
+                )));
+            }
+            let ctx = self.create_context(Some(f.ctx));
+            let frame = AllocFrame::new(inner_file, inner_comp, RootSpec::Existing(id), None, ctx);
+            a.stack.push(frame);
+        }
+        Ok(None)
     }
 
     /// The type of object `obj` of `comp`: its declared type, or a type
@@ -1194,6 +1311,11 @@ impl Engine {
         path: &[String],
         scope: ObjectId,
     ) {
+        // Properties declared in QML that were given an array or an object
+        // where they are declared: Qt runs those as bindings, so each tells
+        // of its value once when the object is made, which a number or a
+        // string written there does not.
+        let mut told: Vec<Target> = Vec::new();
         for a in &m.assignments {
             let t = match self.member_target(obj, path, &a.name) {
                 Ok(t) => t,
@@ -1213,6 +1335,11 @@ impl Engine {
                 continue;
             }
             self.apply_literal(inst, &t, &a.value);
+            if matches!(a.value, Literal::List(_) | Literal::Object(_))
+                && self.is_declared_in_qml(t.obj, t.prop)
+            {
+                told.push(t);
+            }
         }
         for oa in &m.objects {
             let t = match self.member_target(obj, path, &oa.name) {
@@ -1274,6 +1401,10 @@ impl Engine {
                     &crate::qtqml::handler_name(&h.signal),
                 );
             }
+        }
+        for t in told {
+            // Nothing happens when no handler was connected above.
+            let _ = self.notify(t.obj, t.prop);
         }
         for pb in &m.bindings {
             let t = match self.member_target(obj, path, &pb.name) {
@@ -1575,7 +1706,11 @@ impl Engine {
             );
             return;
         }
-        let r = self.bind_fallible(t.obj, t.prop, move |e| e.eval_expr(&i, expr, &hint, &[]));
+        // A `var` holds the array the expression gives, not a copy of it.
+        let kept = matches!(hint, TypeTag::Var);
+        let r = self.bind_fallible(t.obj, t.prop, move |e| {
+            e.eval_expr_as(&i, expr, &hint, &[], false, kept)
+        });
         match r {
             Ok(()) => {
                 let (obj, prop) = self.redirect(t.obj, t.prop);
@@ -1603,7 +1738,8 @@ impl Engine {
     /// context and `faults.thrown` says so (see `EngineHost::call`).
     pub(crate) fn call_function(&self, inst: &Instance, expr: ExprId, args: &[Value]) -> Value {
         let propagate = self.inner.faults.propagate.take();
-        self.eval_expr_as(inst, expr, &TypeTag::Var, args, propagate)
+        // The caller gets the array the function returns, not a copy.
+        self.eval_expr_as(inst, expr, &TypeTag::Var, args, propagate, true)
             .unwrap_or(Value::Undefined)
     }
 
@@ -1616,16 +1752,19 @@ impl Engine {
         hint: &TypeTag,
         args: &[Value],
     ) -> Option<Value> {
-        self.eval_expr_as(inst, expr, hint, args, false)
+        self.eval_expr_as(inst, expr, hint, args, false, false)
     }
 
-    fn eval_expr_as(
+    /// `kept`: an array the expression gives stays the script's own array
+    /// (script_arrays.rs); otherwise the result is a list of its entries.
+    pub(super) fn eval_expr_as(
         &self,
         inst: &Instance,
         expr: ExprId,
         hint: &TypeTag,
         args: &[Value],
         propagate: bool,
+        kept: bool,
     ) -> Option<Value> {
         let file = &inst.file;
         let b = file.ir.expr(expr);
@@ -1637,7 +1776,7 @@ impl Engine {
         {
             return v;
         }
-        if let Some(v) = self.tier1_eval(inst, expr, hint, args) {
+        if let Some(v) = self.tier1_eval(inst, expr, hint, args, kept) {
             return v;
         }
         let f = match file.function(self, b.js_fn) {
@@ -1665,7 +1804,11 @@ impl Engine {
                 }
                 Err(e) => return Err(e),
             };
-            Ok(Some(self.js_to_value(s, out, hint)))
+            Ok(Some(if kept {
+                self.js_to_value_kept(s, out, hint)
+            } else {
+                self.js_to_value(s, out, hint)
+            }))
         })
         .flatten()
     }
@@ -1691,11 +1834,15 @@ impl Engine {
                     } else {
                         "null"
                     };
-                    self.warn(format!(
-                        "{}:{}: TypeError: Cannot read property '{name}' of {what}",
-                        inst.url(),
-                        b.span.line
-                    ));
+                    // What JavaScript would have thrown, to the place its
+                    // exceptions go: a boundary that asks for exceptions
+                    // is told of this one as well (fault.rs).
+                    self.report_js_fault(&ljos_js::JsFault::JsException {
+                        message: format!("TypeError: Cannot read property '{name}' of {what}"),
+                        stack: String::new(),
+                        file: Some(inst.url().to_string()),
+                        line: Some(b.span.line),
+                    });
                     return Some(None);
                 }
                 _ => return None,
@@ -1780,7 +1927,24 @@ impl Engine {
     /// A parameter as JS sees it.
     fn arg_js(&self, s: &Scope<'_>, inst: &Instance, arg: &Arg) -> JsValue {
         match arg {
-            Arg::Object(_) | Arg::Property { .. } | Arg::Attached { .. } => self
+            // A `list<T>` declared in QML is the property's own list to a
+            // script (list_faces.rs); the read is what a binding follows.
+            Arg::Property { object, name } => {
+                let Some(v) = self.arg_value(inst, arg) else {
+                    return JsValue::Undefined;
+                };
+                let face = matches!(v, Value::List(_))
+                    .then(|| {
+                        let o = inst.resolve(*object)?;
+                        let p = self.property_index(o, name).ok()?;
+                        let (owner, list) = self.script_list(o, p)?;
+                        let js = self.inner.js.borrow().clone()?;
+                        self.list_face(s, &js, owner, list).ok()
+                    })
+                    .flatten();
+                face.unwrap_or_else(|| self.to_js(&v))
+            }
+            Arg::Object(_) | Arg::Attached { .. } => self
                 .arg_value(inst, arg)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
             Arg::Type(t) => match self.type_meta(&inst.file, t) {
@@ -1812,7 +1976,11 @@ impl Engine {
                 Some(v) => self.to_js(&v),
                 None => match self.singleton_named(name) {
                     Some(o) => self.to_js(&Value::Object(o)),
-                    None => global(s, name),
+                    // Nothing has the name: the script throws where it
+                    // reads it (`__ljos_named`), which a value could not
+                    // say, `undefined` being a value a name may have.
+                    None if has_global(s, name) => global(s, name),
+                    None => global(s, NOWHERE),
                 },
             },
             Arg::Holder {
@@ -1830,7 +1998,16 @@ impl Engine {
                     Some(Err(v)) => held(self.to_js(&v)),
                     None => match fallback.and_then(|r| inst.resolve(r)) {
                         Some(o) => self.to_js(&Value::Object(o)),
-                        None => held(global(s, name)),
+                        None if has_global(s, name) => held(global(s, name)),
+                        // Nothing has the name: there is nothing to assign
+                        // to, and reading it is the error it is anywhere.
+                        None => s
+                            .globals()
+                            .get::<_, ljos_js::rquickjs::Function>(UNHELD)
+                            .and_then(|f| f.call::<_, ljos_js::rquickjs::Value>((name.as_str(),)))
+                            .ok()
+                            .and_then(|v| s.from_value(&v).ok())
+                            .unwrap_or_else(|| held(JsValue::Undefined)),
                     },
                 }
             }
@@ -1879,6 +2056,15 @@ fn property_type(ty: &str, own_enums: &[&str]) -> TypeTag {
     TypeTag::parse(ty)
 }
 
+/// The global that stands for a name nothing has (the prelude in `js.rs`).
+const NOWHERE: &str = "__ljos_nowhere";
+/// The global that makes what a script assigns to such a name through.
+const UNHELD: &str = "__ljos_unheld";
+
+fn has_global(s: &Scope<'_>, name: &str) -> bool {
+    s.globals().contains_key(name).unwrap_or(false)
+}
+
 fn global(s: &Scope<'_>, name: &str) -> JsValue {
     s.globals()
         .get::<_, ljos_js::rquickjs::Value>(name)
@@ -1911,6 +2097,8 @@ fn literal_js(lit: &Literal) -> JsValue {
 enum Phase {
     Load,
     Allocate(Rc<Template>),
+    /// Some of the objects exist.
+    Allocating(Creation, Allocation),
     Apply(Creation, ObjectId, usize),
     /// Every object is applied: bindings, hooks and handlers are left.
     Finish(sliced::Finish),
@@ -2018,8 +2206,10 @@ impl SharedCreation {
     }
 }
 
-/// [`Engine::create_from_url`] as a resumable [`Job`]: loads, allocates,
-/// then applies objects until the slice runs out, and finalizes. Unlike
+/// [`Engine::create_from_url`] as a resumable [`Job`]: loads, then
+/// allocates and applies objects until the slice runs out, and finalizes.
+/// A job whose parent is destroyed in between destroys what it made and
+/// ends with [`EngineError::DeadObject`]. Unlike
 /// the synchronous path each slice is its own batch, so a binding may see
 /// a half-applied component in between (it re-runs once it is complete).
 pub struct CreationJob {
@@ -2185,15 +2375,25 @@ impl CreationJob {
 
     /// Ends a job nobody waits for any more: what it made goes away.
     fn abandon(&mut self, engine: Option<&Engine>, why: EngineError) -> JobPoll {
-        if let (Some(e), Phase::Apply(_, root, _)) = (engine, &self.phase) {
-            e.destroy_now(*root);
-        }
-        if let (Some(e), Phase::Finish(f)) = (engine, &self.phase) {
-            e.destroy_now(f.root());
-        }
+        self.unmake(engine);
         // Not `finish`: the callback belongs to whoever called it off.
         self.done = None;
         self.finish(None, Err(why))
+    }
+
+    /// Destroys what the job has made so far.
+    fn unmake(&self, engine: Option<&Engine>) {
+        let Some(e) = engine else { return };
+        match &self.phase {
+            Phase::Allocating(cr, _) => e.drop_allocation(cr),
+            Phase::Apply(_, root, _) => {
+                e.destroy_now(*root);
+            }
+            Phase::Finish(f) => {
+                e.destroy_now(f.root());
+            }
+            Phase::Load | Phase::Allocate(_) | Phase::Done => {}
+        }
     }
 
     /// Runs one step; `check` says whether the slice is spent.
@@ -2220,7 +2420,10 @@ impl CreationJob {
                 return self.abandon(Some(&e), EngineError::Load("creation was cancelled".into()));
             }
             if let Some(p) = self.parent.filter(|p| !e.is_alive(*p)) {
-                return self.abandon(Some(&e), EngineError::DeadObject(p));
+                // Nobody called the job off, so whoever waits is told:
+                // there is nowhere to put the object.
+                self.unmake(Some(&e));
+                return self.finish(Some(&e), Err(EngineError::DeadObject(p)));
             }
             match std::mem::replace(&mut self.phase, Phase::Done) {
                 Phase::Load => {
@@ -2235,10 +2438,33 @@ impl CreationJob {
                         Err(err) => return self.finish(Some(&e), Err(err)),
                     }
                 }
-                Phase::Allocate(t) => {
-                    let mut cr = Creation::default();
+                Phase::Allocate(t) => match e.template_allocation(&t, self.parent) {
+                    Ok(a) => self.phase = Phase::Allocating(Creation::default(), a),
+                    Err(err) => return self.finish(Some(&e), Err(err)),
+                },
+                Phase::Allocating(mut cr, mut a) => {
+                    let made = loop {
+                        match e.allocate_step(&mut cr, &mut a) {
+                            Ok(None) if check() => break Ok(None),
+                            Ok(None) => {}
+                            Ok(Some(inst)) => break Ok(Some(inst)),
+                            Err(err) => break Err(err),
+                        }
+                    };
+                    let inst = match made {
+                        Ok(Some(inst)) => inst,
+                        Ok(None) => {
+                            self.phase = Phase::Allocating(cr, a);
+                            return JobPoll::Yield;
+                        }
+                        Err(err) => {
+                            e.drop_allocation(&cr);
+                            return self.finish(Some(&e), Err(err));
+                        }
+                    };
                     let setup = self.setup.take();
-                    match e.allocate_template_as(&mut cr, &t, self.parent, setup.is_none()) {
+                    let append = setup.is_none();
+                    match e.allocated_template(&mut cr, inst, self.parent, append) {
                         Ok(root) => {
                             if let (Some(setup), Some(top)) = (setup, &cr.top) {
                                 setup(&e, root, top.context);
@@ -2248,7 +2474,10 @@ impl CreationJob {
                             e.apply_aliases(&cr);
                             self.phase = Phase::Apply(cr, root, 0);
                         }
-                        Err(err) => return self.finish(Some(&e), Err(err)),
+                        Err(err) => {
+                            e.drop_allocation(&cr);
+                            return self.finish(Some(&e), Err(err));
+                        }
                     }
                 }
                 Phase::Apply(mut cr, root, mut next) => {

@@ -416,6 +416,15 @@ impl Engine {
         }
     }
 
+    /// The address of the file that declares `obj`, which is what
+    /// [`Engine::resolve_url`] resolves from. `None` for an object not made
+    /// from QML.
+    pub fn document_url(&self, obj: ObjectId) -> Option<Atom> {
+        let store = self.inner.store.borrow();
+        let location = store.objects.get(obj)?.ext.as_ref()?.location.as_ref()?;
+        Some(location.url.clone())
+    }
+
     /// The loaded file `key`, loading it on first use.
     pub(crate) fn load_file(&self, key: &str) -> Result<Rc<LoadedFile>, EngineError> {
         if let Some(f) = self.inner.loader.borrow().files.get(key) {

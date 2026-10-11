@@ -10,10 +10,10 @@
 
 use std::rc::{Rc, Weak};
 
-use ljos_ir::{Arg, Binding, ExprId, Op, Tier1};
+use ljos_ir::{Arg, Binding, BindingKind, ExprId, Op, Tier1};
 use smallvec::SmallVec;
 
-use super::{MethodFn, Program, builtins, has_js, normal, ops};
+use super::{MethodFn, Program, builtins, has_js, normal, ops, passed};
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{MethodIndex, ObjectId, PropIndex};
@@ -36,6 +36,9 @@ pub(super) struct Run<'a> {
     pub(super) p: &'a Program,
     /// The arguments of the call (a signal's, a method's).
     pub(super) args: &'a [Value],
+    /// The arguments are registers of the program that made the call, so
+    /// an array among them is the caller's own.
+    pub(super) called: bool,
 }
 
 /// What a member of an object is, found while the store is borrowed and
@@ -77,14 +80,20 @@ impl Run<'_> {
                 Op::Move { dst, src } => r[usize::from(dst)] = r[usize::from(src)].clone(),
                 Op::Pass { reg } => {
                     let v = std::mem::take(&mut r[usize::from(reg)]);
-                    r[usize::from(reg)] = normal(self.e, v);
+                    r[usize::from(reg)] = passed(self.e, v);
                 }
                 Op::Param { dst, param } => r[usize::from(dst)] = self.param(param)?,
                 Op::Local { dst, index } => {
-                    r[usize::from(dst)] = self
-                        .args
-                        .get(usize::from(index))
-                        .map_or(Value::Undefined, |v| normal(self.e, v.clone()));
+                    r[usize::from(dst)] =
+                        self.args
+                            .get(usize::from(index))
+                            .map_or(Value::Undefined, |v| {
+                                if self.called {
+                                    passed(self.e, v.clone())
+                                } else {
+                                    normal(self.e, v.clone())
+                                }
+                            });
                 }
                 Op::This { dst } => {
                     r[usize::from(dst)] = match self.inst.resolve(self.b.scope) {
@@ -103,7 +112,11 @@ impl Run<'_> {
                     r[usize::from(dst)] = v;
                 }
                 Op::Index { dst, obj, index } => {
-                    let v = element(&r[usize::from(obj)], &r[usize::from(index)])?;
+                    let (of, at) = (&r[usize::from(obj)], &r[usize::from(index)]);
+                    let v = match of {
+                        Value::Js(h) if h.0.is_array() => self.entry(&h.0, at)?,
+                        _ => element(of, at)?,
+                    };
                     r[usize::from(dst)] = v;
                 }
                 Op::EnumKey { dst, param, key } => {
@@ -244,6 +257,25 @@ impl Run<'_> {
         &self.t.names[usize::from(index)]
     }
 
+    /// `array[index]` for the array a script holds. Only an index that is
+    /// one: anything else names a property a script may have given it.
+    fn entry(&self, array: &ljos_js::JsRef, index: &Value) -> Option<Value> {
+        let Value::Real(n) = index else {
+            return None;
+        };
+        if n.fract() != 0.0 || *n < 0.0 || *n > f64::from(u32::MAX) {
+            return None;
+        }
+        // What the script reads is the entry as it is, a `-0` too: it did
+        // not go through a property on its way.
+        match self.e.array_entry(array, *n as usize)? {
+            // What a script is given for an object that is gone is not
+            // decided here.
+            Value::Object(o) if !self.e.is_alive(o) => None,
+            v => Some(v),
+        }
+    }
+
     /// The parameter `n`, as the JS function would be passed it.
     fn param(&self, n: u16) -> Option<Value> {
         let (inst, arg) = self.param_arg(n)?;
@@ -265,7 +297,18 @@ impl Run<'_> {
     /// Mirrors `Engine::arg_js`, for what has a value in a register.
     fn arg(&self, inst: &Instance, arg: &Arg) -> Option<Value> {
         match arg {
-            Arg::Object(_) | Arg::Property { .. } | Arg::Attached { .. } => Some(
+            Arg::Property { object, name } => {
+                let v = self.e.arg_value(inst, arg);
+                if matches!(v, Some(Value::List(_)))
+                    && let Some(o) = inst.resolve(*object)
+                    && let Ok(p) = self.e.property_index(o, name)
+                    && self.hands_on(o, p)
+                {
+                    return None;
+                }
+                Some(v.map_or(Value::Undefined, |v| normal(self.e, v)))
+            }
+            Arg::Object(_) | Arg::Attached { .. } => Some(
                 self.e
                     .arg_value(inst, arg)
                     .map_or(Value::Undefined, |v| normal(self.e, v)),
@@ -336,11 +379,20 @@ impl Run<'_> {
     /// A property of a live object, read as the JS host reads it.
     fn read(&self, o: ObjectId, p: PropIndex) -> Option<Value> {
         match self.e.try_read(o, p) {
+            Ok(Value::List(_)) if self.hands_on(o, p) => None,
             Ok(v) => Some(v),
             // Destroyed by something the read ran.
             Err(EngineError::DeadObject(_)) => Some(Value::Undefined),
             Err(_) => None,
         }
+    }
+
+    /// Whether what is read is a list a function may hand on. To a
+    /// script a `list<T>` declared in QML is the property's own list
+    /// (list_faces.rs), which what the function returns must be then,
+    /// where a register holds a copy of the entries.
+    fn hands_on(&self, o: ObjectId, p: PropIndex) -> bool {
+        self.b.kind == BindingKind::Function && self.e.script_list(o, p).is_some()
     }
 
     /// `base.a.b.c`.
@@ -369,6 +421,10 @@ impl Run<'_> {
                         // makes for the occasion.
                         Member::Group => return None,
                     }
+                }
+                // The array a script holds: how long it is now.
+                Value::Js(h) if h.0.is_array() && name == "length" => {
+                    Value::Real(self.e.array_len(&h.0)? as f64)
                 }
                 other => field(other, name)?,
             };
@@ -462,6 +518,7 @@ impl Run<'_> {
             t,
             p,
             args,
+            called: true,
         }
         .run();
         depth.set(depth.get() - 1);
@@ -584,6 +641,8 @@ fn field(v: &Value, name: &str) -> Option<Value> {
             "pixelSize" => Some(Value::Real(f64::from(f.pixel_size))),
             "letterSpacing" => d(f.letter_spacing),
             "wordSpacing" => d(f.word_spacing),
+            "capitalization" => Some(Value::Real(f64::from(f.capitalization))),
+            "hintingPreference" => Some(Value::Real(f64::from(f.hinting_preference))),
             "scaleWithSystem" => Some(Value::Bool(f.scale_with_system)),
             _ => None,
         },

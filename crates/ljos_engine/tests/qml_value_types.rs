@@ -5,7 +5,7 @@
 
 mod support;
 
-use ljos_engine::{Value, Vector3d};
+use ljos_engine::{Font, Value, Vector3d};
 use support::engine;
 
 #[test]
@@ -199,4 +199,30 @@ Item {
         warnings.contains("no valid font subproperties specified"),
         "{warnings}"
     );
+}
+
+/// What Qt 6.11.2 draws is in `features/text/font-capitalization.feature`.
+#[test]
+fn a_font_draws_the_letters_its_capitalization_asks_for() {
+    let drawn = |capitalization: i32, text: &str| {
+        let font = Font {
+            capitalization,
+            ..Font::default()
+        };
+        font.drawn(text).into_owned()
+    };
+    assert_eq!(drawn(Font::MIXED_CASE, "hello wORLD"), "hello wORLD");
+    assert_eq!(drawn(Font::ALL_UPPERCASE, "hello wORLD"), "HELLO WORLD");
+    assert_eq!(drawn(Font::ALL_LOWERCASE, "hello wORLD"), "hello world");
+    assert_eq!(drawn(Font::CAPITALIZE, "hello wORLD"), "Hello WORLD");
+    // A letter whose capital is two letters stays, so that a position in
+    // the text is the same position in what is drawn.
+    assert_eq!(drawn(Font::ALL_UPPERCASE, "straße"), "STRAßE");
+    // Small capitals are stored and not drawn.
+    assert_eq!(drawn(Font::SMALL_CAPS, "hello"), "hello");
+    // Text that needs no change is not copied.
+    assert!(matches!(
+        Font::default().drawn("hello"),
+        std::borrow::Cow::Borrowed(_)
+    ));
 }

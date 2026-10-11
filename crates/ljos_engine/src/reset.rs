@@ -66,7 +66,44 @@ impl Engine {
             // animates it either.
             Reset::Follow(value) => self.bind_computed(obj, prop, move |e| value(e, obj, prop)),
             Reset::Custom { apply, .. } => apply(self, obj, prop),
+            Reset::Absent { value, .. } => {
+                let v = self.untrack(|| value(self, obj, prop));
+                self.reset_to(obj, prop, v)
+            }
         }
+    }
+
+    /// Gives the [`Reset::Absent`] properties of an object that was just
+    /// created their first values. Nothing reads or watches them yet, so
+    /// nobody is told: the object has had them from the start.
+    pub(crate) fn give_absent(&self, obj: ObjectId) {
+        let meta = {
+            let store = self.inner.store.borrow();
+            match store.objects.get(obj) {
+                Some(h) if !h.meta.absent().is_empty() => h.meta.clone(),
+                _ => return,
+            }
+        };
+        for &(prop, value) in meta.absent() {
+            let v = self.untrack(|| value(self, obj, prop));
+            if let Some(h) = self.inner.store.borrow_mut().objects.get_mut(obj) {
+                let _ = store_in(h, prop, &v);
+            }
+        }
+    }
+
+    /// Whether writing `v` takes the property back instead: `undefined`
+    /// does for every property with a reset, and so does a value that
+    /// stands for none ([`Reset::Absent`]).
+    pub(crate) fn takes_back(&self, obj: ObjectId, prop: PropIndex, v: &Value) -> bool {
+        // Nearly every write is of a number, a string that is not empty or
+        // an object; none of those can stand for nothing.
+        let may = match v {
+            Value::Undefined | Value::Null => true,
+            Value::String(s) | Value::Url(s) => s.is_empty(),
+            _ => false,
+        };
+        may && self.reset_of(obj, prop).is_some_and(|r| r.takes_back(v))
     }
 
     /// What the property holds while it is reset. Reads are followed when
@@ -74,7 +111,9 @@ impl Engine {
     pub(crate) fn reset_value(&self, obj: ObjectId, prop: PropIndex, reset: Reset) -> Value {
         match reset {
             Reset::Default => self.default_value(obj, prop),
-            Reset::Follow(value) | Reset::Custom { value, .. } => value(self, obj, prop),
+            Reset::Follow(value) | Reset::Custom { value, .. } | Reset::Absent { value, .. } => {
+                value(self, obj, prop)
+            }
         }
     }
 

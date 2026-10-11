@@ -1910,3 +1910,38 @@ fn bench_binding_evaluations_per_second() {
     s.push_str("}\n");
     report("three string bindings", &s, &["a", "b", "c"], 200);
 }
+
+#[test]
+fn an_array_passed_to_a_function_holds_what_it_held() {
+    // The function is given the caller's array, not one read back from a
+    // property, so a `-0` in it is still one.
+    exact(&[
+        "[other.width, (-0)]",
+        "pick(yes, [other.width, (-0)], 1)",
+        "pick(no, 1, [[-0], -0])",
+    ]);
+}
+
+#[test]
+fn an_array_a_script_changed_is_read_as_it_is_now() {
+    let w = World::new(
+        "    property var xs: [1, 2]\n    property int count: xs.length\n    property var first: xs[0]\n    property var last: xs[xs.length - 1]\n    function grow() { xs.push(7); xs[0] = -0; xsChanged() }\n",
+        "",
+    );
+    for p in ["count", "first", "last"] {
+        assert_eq!(w.compare(w.root, p), Ok(true), "{p}");
+    }
+    w.h.engine.invoke_by_name(w.root, "grow", &[]).unwrap();
+    assert_eq!(w.h.num(w.root, "count"), 3.0);
+    assert_eq!(w.h.num(w.root, "last"), 7.0);
+    // Once a script has the array, tier 1 reads what the script reads.
+    for p in ["count", "first", "last"] {
+        assert_eq!(w.compare(w.root, p), Ok(true), "{p}");
+    }
+    // An array inside the array is the script's to hand out.
+    let w = World::new(
+        "    property var xs: [[1], 2]\n    property var inner: xs[0]\n",
+        "",
+    );
+    assert_eq!(w.compare(w.root, "inner"), Ok(false));
+}

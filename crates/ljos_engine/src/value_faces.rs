@@ -92,6 +92,8 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
                 JsValue::Number(font.letter_spacing),
                 JsValue::Number(font.word_spacing),
                 JsValue::Bool(font.scale_with_system),
+                JsValue::Number(f64::from(font.capitalization)),
+                JsValue::Number(f64::from(font.hinting_preference)),
             ],
         ),
         _ => return None,
@@ -142,6 +144,8 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
             letter_spacing: n(7),
             word_spacing: n(8),
             scale_with_system: b(9),
+            capitalization: n(10) as i32,
+            hinting_preference: n(11) as i32,
         })),
         _ => Value::Undefined,
     }
@@ -340,13 +344,14 @@ const FACES: &str = r##"
 
   // A font crosses as these, in this order (see `to_js` beside this text).
   const fontFields = ["family", "pointSize", "pixelSize", "weight", "italic", "underline",
-    "strikeout", "letterSpacing", "wordSpacing", "scaleWithSystem"];
+    "strikeout", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
+    "hintingPreference"];
   const whole = (v) => { v = Math.trunc(Number(v)); return v !== v ? 0 : v + 0; };
   const flag = (v) => !!v;
   const font = kind(fontFields,
-    [String, double, whole, whole, flag, flag, flag, double, double, flag],
+    [String, double, whole, whole, flag, flag, flag, double, double, flag, whole, whole],
     (o, [family, pointSize, pixelSize, weight, italic, underline, strikeout, letterSpacing, wordSpacing,
-      scaleWithSystem]) => {
+      scaleWithSystem, capitalization, hintingPreference]) => {
       o.family = family;
       o.bold = weight > 500;
       o.weight = weight;
@@ -355,8 +360,10 @@ const FACES: &str = r##"
       o.strikeout = strikeout;
       o.pointSize = pointSize;
       o.pixelSize = pixelSize;
+      o.capitalization = capitalization;
       o.letterSpacing = letterSpacing;
       o.wordSpacing = wordSpacing;
+      o.hintingPreference = hintingPreference;
       // Ours, so not one of the keys a script finds when it lists a font's:
       // those stay Qt's.
       hide(o, "scaleWithSystem", scaleWithSystem);
@@ -364,7 +371,7 @@ const FACES: &str = r##"
     // Every setting a font has in Qt; the ones a QML font here cannot
     // change are written as Qt has them by default.
     (o) => "QFont(" + [o.family, o.pointSize, o.pixelSize, 5, o.weight, +o.italic, +o.underline,
-      +o.strikeout, 0, 0, 0, o.letterSpacing !== 0 ? 1 : 0, o.letterSpacing, o.wordSpacing,
+      +o.strikeout, 0, 0, o.capitalization, o.letterSpacing !== 0 ? 1 : 0, o.letterSpacing, o.wordSpacing,
       0, 1, "", 0, 0].join(",") + ")");
   {
     const change = font.proto.__ljos_with;
@@ -373,10 +380,10 @@ const FACES: &str = r##"
       return change.call(this, member, value);
     });
   }
-  // What `Qt.font` knows by name. A font here keeps the first ten.
+  // What `Qt.font` knows by name. A font here keeps the first thirteen.
   const fontKeys = ["family", "bold", "weight", "italic", "underline", "strikeout", "pointSize",
-    "pixelSize", "letterSpacing", "wordSpacing", "scaleWithSystem", "styleName", "overline", "capitalization",
-    "hintingPreference", "kerning", "preferShaping", "features", "variableAxes",
+    "pixelSize", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
+    "hintingPreference", "styleName", "overline", "kerning", "preferShaping", "features", "variableAxes",
     "contextFontMerging", "preferTypoLineMetrics"];
   // `font.base`, the font a `Qt.font` call starts from, is set by the engine.
   const makeFont = function (settings) {

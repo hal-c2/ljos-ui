@@ -1139,6 +1139,7 @@ impl Engine {
         v: Value,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        let v = self.for_slot(obj, prop, v);
         {
             let mut store = self.inner.store.borrow_mut();
             let h = store
@@ -1185,13 +1186,16 @@ impl Engine {
         internal: bool,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
-        // `x = undefined` takes a property with a reset back.
-        if matches!(v, Value::Undefined)
-            && matches!(how, WriteKind::Imperative | WriteKind::Initial)
-            && self.reset_of(obj, prop).is_some()
+        // `x = undefined` takes a property with a reset back, and so does
+        // a value that stands for none.
+        if matches!(how, WriteKind::Imperative | WriteKind::Initial)
+            && self.takes_back(obj, prop, &v)
         {
             return self.reset_impl(obj, prop, internal);
         }
+        // An array is the script's own in a `var`, a list anywhere else
+        // (script_arrays.rs).
+        let v = self.for_slot(obj, prop, v);
         let (v, node, hook) = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
@@ -1515,12 +1519,13 @@ impl Engine {
             // A binding that yields `undefined` takes the property back
             // and stays: its next value is given as any other.
             let v = match reset {
-                Some(reset) if matches!(v, Value::Undefined) => {
+                Some(reset) if reset.takes_back(&v) => {
                     let _t = Tracking::enter(&engine.inner.tracking);
                     engine.reset_value(obj, prop, reset)
                 }
                 _ => v,
             };
+            let v = engine.for_slot(obj, prop, v);
             let coerced = {
                 let store = engine.inner.store.borrow();
                 coerce_for(&store, Some(obj), &ty, &v)
@@ -1658,6 +1663,7 @@ impl Engine {
         let g = &self.inner.graph;
         let value = match content {
             OverrideContent::Value(v) => {
+                let v = self.for_slot(obj, prop, v);
                 let v = coerce_for(&self.inner.store.borrow(), Some(obj), &ty, &v)?;
                 OverrideValue::Value(v)
             }
@@ -1824,7 +1830,9 @@ impl Engine {
         // caller's to catch, and a panic in it ends only this call
         // (fault.rs).
         self.inner.faults.propagate.set(false);
-        self.guarded_result(obj, || thunk(&Cx::new(self, obj), args))
+        // Native code reads lists, not a script's arrays.
+        let args = self.plain_args(args);
+        self.guarded_result(obj, || thunk(&Cx::new(self, obj), &args))
     }
 
     /// Gives the QML-declared method `method` of `obj` its body.

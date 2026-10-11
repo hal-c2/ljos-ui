@@ -124,6 +124,8 @@ pub(crate) struct JsState {
     /// The component instance whose script is running, for what a script
     /// makes in the place it runs in (incubator/dynamic.rs).
     pub(crate) calling: Cell<Option<crate::incubator::dynamic::Calling>>,
+    /// The faces of `list<T>` properties scripts hold (list_faces.rs).
+    pub(crate) lists: crate::list_faces::ListFaces,
 }
 
 impl JsState {
@@ -140,6 +142,7 @@ impl JsState {
         self.conns
             .borrow_mut()
             .retain(|c| !objects.contains(&c.sender));
+        self.lists.forget(objects);
     }
 
     fn type_id(&self, engine: &Engine, meta: &MetaRef) -> Result<HostTypeId, JsFault> {
@@ -269,6 +272,11 @@ fn host_err(e: EngineError) -> HostError {
 }
 
 impl HostObjects for EngineHost {
+    /// A `var` property holds the script's own array (script_arrays.rs).
+    fn arrays_by_reference(&self) -> bool {
+        true
+    }
+
     fn type_of(&self, obj: u64) -> Option<HostTypeId> {
         let engine = self.engine().ok()?;
         let meta = engine.meta_of(u64_to_obj(obj))?;
@@ -298,7 +306,18 @@ impl HostObjects for EngineHost {
         if let Some(name) = group {
             return group_proxy(scope, &engine, id, &name).map_err(HostError::from);
         }
-        match engine.try_read(id, p) {
+        let read = engine.try_read(id, p);
+        // A `list<T>` declared in QML is read as the property's own list
+        // (list_faces.rs). The read above is what a binding follows.
+        if read.is_ok()
+            && let Some((owner, list)) = engine.script_list(id, p)
+            && let Some(js) = engine.inner.js.borrow().clone()
+        {
+            return engine
+                .list_face(scope, &js, owner, list)
+                .map_err(HostError::from);
+        }
+        match read {
             Ok(v) => Ok(engine.to_js(&v)),
             Err(EngineError::DeadObject(_)) => Ok(JsValue::Undefined),
             Err(e) => Err(host_err(e)),
@@ -338,13 +357,16 @@ impl HostObjects for EngineHost {
                 .bind_fallible_checked(target, target_prop, move |e| {
                     e.run_js("Qt.binding", |s| {
                         let out = s.call_ref(&f, &this, &[])?;
-                        Ok(e.js_to_value(s, out, &hint))
+                        Ok(e.js_to_value_kept(s, out, &hint))
                     })
                 })
                 .map_err(host_err);
         }
-        let v = engine.js_to_value(scope, value, &ty);
-        engine.tier1_spy(id, p, &v);
+        let v = engine.js_to_value_kept(scope, value, &ty);
+        if engine.tier1_spying() {
+            // Tier 1 would write a list where the script wrote its array.
+            engine.tier1_spy(id, p, &engine.plain(&v));
+        }
         engine
             .write(id, p, v, crate::WriteKind::Imperative)
             .map_err(|e| match e {
@@ -354,7 +376,13 @@ impl HostObjects for EngineHost {
                 }
                 EngineError::Convert(c) => HostError::msg(format!(
                     "Cannot assign {} to {}",
-                    c.from,
+                    // A script's `null` is named as C++ names it; a
+                    // binding's warning says "null" (Qt 6.11.2).
+                    if c.from == "null" {
+                        "std::nullptr_t"
+                    } else {
+                        &c.from
+                    },
                     class_name(&ty).unwrap_or(&c.to)
                 )),
                 e => host_err(e),
@@ -384,9 +412,11 @@ impl HostObjects for EngineHost {
             );
             return Ok(JsValue::Undefined);
         }
+        // A function declared in QML gets the caller's array; a native
+        // method gets a list of it (`Engine::invoke`).
         let vals: Vec<Value> = args
             .iter()
-            .map(|a| engine.js_to_value(scope, a.clone(), &TypeTag::Var))
+            .map(|a| engine.js_to_value_kept(scope, a.clone(), &TypeTag::Var))
             .collect();
         // An exception in a QML function called from JS is the caller's to
         // catch: it is left pending instead of being logged where it left
@@ -410,12 +440,31 @@ impl HostObjects for EngineHost {
         args: &[JsValue],
     ) -> Result<(), HostError> {
         let engine = self.engine()?;
+        let id = u64_to_obj(obj);
+        // A signal declared in QML carries the script's array to its
+        // handlers; a native one tells native code, which reads lists.
+        let script = engine
+            .meta_of(id)
+            .is_some_and(|m| m.signal_is_script(SignalIndex(signal)));
         let vals: Vec<Value> = args
             .iter()
-            .map(|a| engine.js_to_value(scope, a.clone(), &TypeTag::Var))
+            .map(|a| {
+                if script {
+                    // A list property sent with a signal is the entries
+                    // it had (list_faces.rs).
+                    match a {
+                        JsValue::Handle(r) if engine.is_face(r) => {
+                            engine.js_to_value(scope, a.clone(), &TypeTag::Var)
+                        }
+                        _ => engine.js_to_value_kept(scope, a.clone(), &TypeTag::Var),
+                    }
+                } else {
+                    engine.js_to_value(scope, a.clone(), &TypeTag::Var)
+                }
+            })
             .collect();
         engine
-            .emit(u64_to_obj(obj), SignalIndex(signal), &vals)
+            .emit(id, SignalIndex(signal), &vals)
             .map_err(host_err)
     }
 
@@ -486,8 +535,12 @@ impl HostObjects for EngineHost {
     }
 
     fn released(&self, obj: u64) {
+        self.released_many(&[obj]);
+    }
+
+    fn released_many(&self, objs: &[u64]) {
         if let Ok(engine) = self.engine() {
-            engine.destroy(u64_to_obj(obj));
+            engine.scripts_let_go(objs);
         }
     }
 }
@@ -553,6 +606,7 @@ impl Engine {
             lines,
             budget: Cell::new(None),
             calling: Cell::new(None),
+            lists: crate::list_faces::ListFaces::default(),
         });
         *self.inner.js.borrow_mut() = Some(state.clone());
         self.install_globals(&state)?;
@@ -669,7 +723,16 @@ impl Engine {
             // Whatever it is going to: a `var` keeps the value, and a
             // property of another type refuses it by its name.
             JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
+            // The script's own array, going where a list is kept.
+            JsValue::Handle(r) if r.is_array() => {
+                let items = scope.array_items(&r).unwrap_or_default();
+                self.js_to_value(scope, JsValue::Array(items), ty)
+            }
             JsValue::Handle(r) => {
+                // The face of a list property: the list it stands for.
+                if let Some(list) = self.face_list(&r) {
+                    return list;
+                }
                 let num = |k: &str| match scope.get_field(&r, k) {
                     Ok(JsValue::Number(n)) => n,
                     _ => 0.0,
@@ -728,6 +791,22 @@ impl Engine {
                     _ => Value::Undefined,
                 }
             }
+        }
+    }
+
+    /// [`Engine::js_to_value`] for a value going where a script's array is
+    /// kept as that array: a `var` property, an argument or the result of
+    /// a function declared in QML (script_arrays.rs). A `var` of a native
+    /// type is given a list of it when it is stored
+    /// ([`Engine::for_slot`]).
+    pub(crate) fn js_to_value_kept(&self, scope: &Scope<'_>, v: JsValue, ty: &TypeTag) -> Value {
+        match v {
+            JsValue::Handle(r)
+                if matches!(ty, TypeTag::Var) && (r.is_array() || self.is_face(&r)) =>
+            {
+                Value::Js(JsHandle(r))
+            }
+            v => self.js_to_value(scope, v, ty),
         }
     }
 
@@ -858,6 +937,8 @@ impl Engine {
         // `Qt.createComponent`, `Qt.createQmlObject`, `Qt.resolvedUrl`:
         // see incubator/dynamic.rs.
         self.install_dynamic_globals(js)?;
+        // What stands for a `list<T>` property: see list_faces.rs.
+        self.install_list_globals(js)?;
         // The enums by name first: a key the older tables also have is
         // written again with the same number.
         let keys: Vec<String> = crate::qt_enums::QT_ENUMS
@@ -1014,6 +1095,24 @@ const PRELUDE: &str = r##"
   g.__ljos_att = function (o, module, name) {
     const a = hostAttached(o, module, name);
     return a === undefined ? o[name] : a;
+  };
+
+  // A name nothing in sight declares, compiled: what the engine found for
+  // it when the function was called. Where it found nothing it gave this
+  // object, and reading the name throws; asking for its type does not.
+  const nowhere = Object.freeze({});
+  g.__ljos_nowhere = nowhere;
+  g.__ljos_named = function (v, name) {
+    if (v === nowhere) throw new ReferenceError(name + " is not defined");
+    return v;
+  };
+  g.__ljos_known = function (v) { return v === nowhere ? undefined : v; };
+  // What a script that assigns to such a name is given to assign through.
+  g.__ljos_unheld = function (name) {
+    return Object.defineProperty({}, name, {
+      get() { throw new ReferenceError(name + " is not defined"); },
+      set() { throw new Error("Invalid write to global property \"" + name + "\""); },
+    });
   };
 
   // Colours come from the host: there is one object per colour, so that two

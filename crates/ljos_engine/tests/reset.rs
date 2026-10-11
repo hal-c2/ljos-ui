@@ -4,7 +4,7 @@
 //! `features/bindings/property-reset.feature`.
 
 use ljos_engine::{
-    Engine, EngineError, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Reset, Value,
+    Atom, Engine, EngineError, ObjectId, PropIndex, Provenance, QmlObject, QmlType, Reset, Value,
     WriteKind,
 };
 
@@ -83,10 +83,41 @@ impl Default for Shelf {
     }
 }
 
+fn unnamed(v: &Value) -> bool {
+    matches!(v, Value::String(s) if s.is_empty())
+}
+
+fn by_place(e: &Engine, obj: ObjectId, _tag: PropIndex) -> Value {
+    let place = e.read(obj, Cart::PLACE.index).to_number();
+    Value::String(Atom::intern(&format!("cart {place}")))
+}
+
+/// A shelf on wheels. It works out the `plain` a shelf only stores, and
+/// goes by its place until it is given a tag.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "Test",
+    name = "Cart",
+    extends = Shelf,
+    reset_inherited(plain = Reset::Follow(natural))
+)]
+pub struct Cart {
+    #[qml(base)]
+    pub shelf: Shelf,
+    #[qml(notify)]
+    pub place: f64,
+    #[qml(notify, reset = Reset::Absent { absent: unnamed, value: by_place })]
+    pub tag: String,
+}
+
 fn engine() -> Engine {
     let e = Engine::new();
-    e.register_module(ljos_engine::module!("Test" 1.0 => [Shelf]));
+    e.register_module(ljos_engine::module!("Test" 1.0 => [Shelf, Cart]));
     e
+}
+
+fn cart(e: &Engine) -> ObjectId {
+    e.create_by_name("Test", "Cart", None).unwrap()
 }
 
 fn shelf(e: &Engine) -> ObjectId {
@@ -292,4 +323,47 @@ fn what_a_new_object_is_given_as_undefined_is_as_it_was() {
         e.provenance(s, Shelf::DEPTH.index),
         Some(Provenance::Default)
     );
+}
+
+#[test]
+fn a_derived_type_takes_back_what_its_base_only_stores() {
+    let reset = |m: &'static ljos_engine::MetaObject| {
+        m.property(m.property_index("plain").unwrap())
+            .unwrap()
+            .reset
+    };
+    assert!(reset(Shelf::static_meta()).is_none());
+    assert!(matches!(reset(Cart::static_meta()), Some(Reset::Follow(_))));
+
+    let e = engine();
+    let c = cart(&e);
+    e.write_by_name(c, "natural", Value::Real(7.0)).unwrap();
+    e.write_by_name(c, "plain", Value::Real(2.0)).unwrap();
+    undefine(&e, c, "plain").unwrap();
+    assert_eq!(num(&e, c, "plain"), 7.0);
+    e.write_by_name(c, "natural", Value::Real(8.0)).unwrap();
+    assert_eq!(num(&e, c, "plain"), 8.0);
+    // The base is as it was.
+    let s = shelf(&e);
+    assert!(undefine(&e, s, "plain").is_err());
+    assert_eq!(num(&e, s, "plain"), 1.0);
+}
+
+#[test]
+fn a_value_that_stands_for_none_takes_the_property_back() {
+    let e = engine();
+    let c = cart(&e);
+    let tag = |e: &Engine| e.read_by_name(c, "tag").to_js_string().to_string();
+    e.write_by_name(c, "place", Value::Real(4.0)).unwrap();
+    e.write_by_name(c, "tag", Value::String(Atom::intern("red")))
+        .unwrap();
+    assert_eq!(tag(&e), "red");
+    e.write_by_name(c, "tag", Value::String(Atom::EMPTY))
+        .unwrap();
+    assert_eq!(tag(&e), "cart 4");
+    // What it was given is asked for once; the property does not follow.
+    e.write_by_name(c, "place", Value::Real(5.0)).unwrap();
+    assert_eq!(tag(&e), "cart 4");
+    undefine(&e, c, "tag").unwrap();
+    assert_eq!(tag(&e), "cart 5");
 }

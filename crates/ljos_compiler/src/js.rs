@@ -16,12 +16,13 @@ use oxc_ast::ast::{
     IdentifierReference, NewExpression, ObjectProperty, Program, SimpleAssignmentTarget, Statement,
     StaticMemberExpression, StringLiteral, TSAsExpression, TSNonNullExpression,
     TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion, TSTypeParameterDeclaration,
-    TSTypeParameterInstantiation, TaggedTemplateExpression,
+    TSTypeParameterInstantiation, TaggedTemplateExpression, UnaryExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_semantic::{Scoping, SemanticBuilder};
 use oxc_span::{GetSpan, SourceType, Span};
+use oxc_syntax::operator::UnaryOperator;
 use oxc_syntax::scope::ScopeId;
 
 /// How a script is written in QML.
@@ -51,6 +52,13 @@ pub(crate) struct Free {
     /// `{ name }` in an object literal or a destructuring: a rewrite has to
     /// spell the key out.
     pub shorthand: bool,
+    /// `typeof name`: asking what a name is does not throw where nothing
+    /// has the name.
+    pub asked: bool,
+    /// The name starts what `new` makes one of (`new Name()`,
+    /// `new Name.Kind()`): a call written in its place has to be put in
+    /// parentheses, or `new` would take the call for the constructor.
+    pub constructed: bool,
 }
 
 /// `object.Name`: a member that is named as a type is, read off a value.
@@ -182,6 +190,8 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
         chains: HashMap::new(),
         not_values: Vec::new(),
         optional: 0,
+        asked: Vec::new(),
+        constructed: Vec::new(),
         analysis: Analysis::default(),
     };
     reader.visit_program(program);
@@ -283,6 +293,10 @@ struct Reader<'s, 'r> {
     not_values: Vec<Span>,
     /// How many `a?.b` chains the visitor is inside.
     optional: u32,
+    /// Where the names start that a `typeof` is asked of.
+    asked: Vec<u32>,
+    /// Where the names start that a `new` makes one of.
+    constructed: Vec<u32>,
     analysis: Analysis,
 }
 
@@ -347,6 +361,8 @@ impl Reader<'_, '_> {
             chain_ends: ends.iter().map(|e| e - self.offset).collect(),
             written,
             shorthand,
+            asked: self.asked.contains(&it.span.start),
+            constructed: self.constructed.contains(&it.span.start),
         });
     }
 
@@ -540,8 +556,32 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
         walk::walk_simple_assignment_target(self, it);
     }
 
+    fn visit_unary_expression(&mut self, it: &UnaryExpression<'a>) {
+        if it.operator == UnaryOperator::Typeof {
+            let mut of = &it.argument;
+            while let Expression::ParenthesizedExpression(inner) = of {
+                of = &inner.expression;
+            }
+            if let Expression::Identifier(id) = of {
+                self.asked.push(id.span.start);
+            }
+        }
+        walk::walk_unary_expression(self, it);
+    }
+
     fn visit_new_expression(&mut self, it: &NewExpression<'a>) {
         self.not_values.push(it.callee.span());
+        let mut base = &it.callee;
+        loop {
+            base = match base {
+                Expression::StaticMemberExpression(member) => &member.object,
+                Expression::ComputedMemberExpression(member) => &member.object,
+                _ => break,
+            };
+        }
+        if let Expression::Identifier(id) = base {
+            self.constructed.push(id.span.start);
+        }
         walk::walk_new_expression(self, it);
     }
 
@@ -697,6 +737,35 @@ mod tests {
         let analysis = analyze("({ width }, arguments[0])", Form::Expression, &[]).unwrap();
         assert!(analysis.uses_arguments);
         assert!(analysis.free[0].shorthand);
+    }
+
+    #[test]
+    fn a_name_whose_type_is_asked_is_marked() {
+        let analysis = analyze(
+            "typeof a + typeof (b) + c + typeof d.e",
+            Form::Expression,
+            &[],
+        )
+        .unwrap();
+        let asked: Vec<bool> = analysis.free.iter().map(|free| free.asked).collect();
+        assert_eq!(asked, [true, true, false, false]);
+    }
+
+    #[test]
+    fn a_name_that_new_makes_one_of_is_marked() {
+        let analysis = analyze(
+            "new A(b) + new C.D[e].F() + new (G)()",
+            Form::Expression,
+            &[],
+        )
+        .unwrap();
+        let made: Vec<String> = analysis
+            .free
+            .iter()
+            .filter(|free| free.constructed)
+            .map(|free| free.name.clone())
+            .collect();
+        assert_eq!(made, ["A", "C"]);
     }
 
     #[test]

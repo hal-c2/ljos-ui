@@ -158,7 +158,7 @@ pub(crate) fn named(name: &str, numbers: &[f64]) -> String {
 pub(crate) fn font_text(f: &Font) -> String {
     let flag = |b: bool| u8::from(b);
     format!(
-        "QFont({},{},{},5,{},{},{},{},0,0,0,{},{},{},0,1,,0,0)",
+        "QFont({},{},{},5,{},{},{},{},0,0,{},{},{},{},0,1,,0,0)",
         f.family,
         crate::number::number_to_string(f.point_size),
         f.pixel_size,
@@ -166,6 +166,7 @@ pub(crate) fn font_text(f: &Font) -> String {
         flag(f.italic),
         flag(f.underline),
         flag(f.strikeout),
+        f.capitalization,
         flag(f.letter_spacing != 0.0),
         crate::number::number_to_string(f.letter_spacing),
         crate::number::number_to_string(f.word_spacing),
