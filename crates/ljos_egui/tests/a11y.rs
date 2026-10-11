@@ -406,3 +406,95 @@ fn a_scroll_with_nowhere_to_go_is_not_counted() {
     assert_eq!(s.engine.read_by_name(list, "contentY").to_number(), 0.0);
     assert_eq!(h.state().view.stats().accessible_actions, 0);
 }
+
+#[test]
+fn the_state_of_an_item_is_told() {
+    let s = scene();
+    let a = accessible(&s, s.save);
+    set(&s.engine, a, "checkable", Value::Bool(true));
+    set(&s.engine, a, "checked", Value::Bool(true));
+    set(&s.engine, a, "expandable", Value::Bool(true));
+    set(&s.engine, a, "selected", Value::Bool(true));
+    set(&s.engine, a, "readOnly", Value::Bool(true));
+    let h = harness(&s);
+    let save = h.get_by_role_and_label(Role::Button, "Save");
+    let node = save.accesskit_node();
+    assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::True));
+    assert_eq!(node.data().is_expanded(), Some(false));
+    assert!(node.supports_expand_collapse());
+    assert_eq!(node.is_selected(), Some(true));
+    assert!(node.is_read_only());
+    // An item that said nothing of the kind says nothing.
+    let open = h.get_by_role_and_label(Role::Button, "Open");
+    assert_eq!(open.accesskit_node().toggled(), None);
+    assert_eq!(open.accesskit_node().data().is_expanded(), None);
+}
+
+#[test]
+fn a_label_names_the_item_it_is_for() {
+    let s = scene();
+    let a = accessible(&s, s.save);
+    set(&s.engine, a, "labelledBy", Value::Object(s.status));
+    let h = harness(&s);
+    let label = h.state().view.accessible_id(s.status).unwrap();
+    let save = h.get_by_role_and_label(Role::Button, "Save");
+    let named_by: Vec<_> = save
+        .accesskit_node()
+        .labelled_by()
+        .map(|n| n.locate().0)
+        .collect();
+    assert_eq!(named_by, vec![label.accesskit_id()]);
+}
+
+#[test]
+fn what_is_announced_is_a_live_node() {
+    let s = scene();
+    let mut h = harness(&s);
+    let a = accessible(&s, s.save);
+    s.engine
+        .invoke_by_name(a, "announce", &[Value::string("Saved")])
+        .unwrap();
+    h.run();
+    let said = h.get_by_role_and_label(Role::Status, "Saved");
+    assert_eq!(said.accesskit_node().live(), egui::accesskit::Live::Polite);
+}
+
+#[test]
+fn the_view_says_that_something_listens() {
+    let s = scene();
+    assert!(!ljos_quick::system_prefs(&s.engine).screen_reader_active);
+    let _h = harness(&s);
+    assert!(ljos_quick::system_prefs(&s.engine).screen_reader_active);
+}
+
+#[test]
+fn the_scheme_of_the_system_is_the_application_s() {
+    use ljos_a11y::ColorScheme;
+    let s = scene();
+    let ctx = egui::Context::default();
+    let mut view = QmlView::new(Rc::clone(&s.engine), s.root).unwrap();
+    let mut pass_with = |theme| {
+        let input = egui::RawInput {
+            system_theme: theme,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            view.show(ui);
+        });
+        out.textures_delta.clear();
+    };
+    // egui does not know: the scheme is whatever it was.
+    let before = ljos_quick::color_scheme(&s.engine);
+    assert_ne!(before, ColorScheme::Dark);
+    pass_with(None);
+    assert_eq!(ljos_quick::color_scheme(&s.engine), before);
+    pass_with(Some(egui::Theme::Dark));
+    assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Dark);
+    // A host that knows better is not told otherwise every pass.
+    ljos_quick::update_system_prefs(&s.engine, |p| p.color_scheme = ColorScheme::Light);
+    pass_with(Some(egui::Theme::Dark));
+    assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Light);
+    pass_with(Some(egui::Theme::Light));
+    pass_with(Some(egui::Theme::Dark));
+    assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Dark);
+}

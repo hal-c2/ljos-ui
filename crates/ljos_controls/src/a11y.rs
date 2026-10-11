@@ -5,14 +5,25 @@
 //! The roles are the ones the documentation of each type and of
 //! `Accessible.role` name; Qt's own cannot be read from QML, where
 //! `Accessible.name` of a default reads `""`.
+//!
+//! How a control is (checked, held down, one of so many rows) goes into
+//! its node and not into its `Accessible` properties: Qt 6.11 reads
+//! `Accessible.checked` of a checked `CheckBox` as `false`, so QML reads
+//! the same here, and whatever the application does write there wins.
 
-use ljos_a11y::Role;
+use ljos_a11y::accesskit::Toggled;
+use ljos_a11y::{NodeData, Role};
 use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlType, Value};
-use ljos_quick::{Accessible, AccessibleAttached};
+use ljos_quick::{
+    Accessible, AccessibleAction, AccessibleAttached, AccessibleItem, register_accessible_item,
+};
 
 use crate::button::{AbstractButton, Button, CheckBox, RadioButton, Switch};
 use crate::containers::{Frame, GroupBox, Page, Pane, ToolBar};
-use crate::util::{bind_default, is_a, is_unset};
+use crate::util::{bind_default, flag, is_a, is_unset};
+
+/// `Qt.PartiallyChecked`.
+const PARTIALLY_CHECKED: i32 = 1;
 
 /// Gives `obj` the role, and the name in `name` (a string property of
 /// `obj`), unless its author set them with `Accessible.`.
@@ -80,4 +91,68 @@ pub(crate) fn pane_defaults(engine: &Engine, obj: ObjectId) -> Result<(), Engine
 /// A label is static text; the scene names a text item by its text.
 pub(crate) fn label_defaults(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     defaults(engine, obj, Role::StaticText, None)
+}
+
+/// What a button says of its state. Runs inside the effect that describes
+/// the item, so the node follows `checked`, `down` and the rows around it.
+fn describe_button(e: &Engine, obj: ObjectId, data: &mut NodeData) {
+    let att = e.existing_attached_object(obj, &MetaRef::Static(Accessible::static_meta()));
+    // What the application wrote, if it wrote anything, is what is said.
+    let own = |p: PropIndex, of_control: bool| match att {
+        Some(att) if !is_unset(e, att, p) => flag(e, att, p),
+        _ => of_control,
+    };
+    let checkable = own(
+        AccessibleAttached::CHECKABLE.index,
+        flag(e, obj, AbstractButton::CHECKABLE.index),
+    );
+    let checked = own(
+        AccessibleAttached::CHECKED.index,
+        flag(e, obj, AbstractButton::CHECKED.index),
+    );
+    let mixed = own(
+        AccessibleAttached::CHECK_STATE_MIXED.index,
+        is_a::<CheckBox>(e, obj)
+            && e.read(obj, CheckBox::CHECK_STATE.index).to_number() as i32 == PARTIALLY_CHECKED,
+    );
+    data.toggled = (checkable || checked || mixed).then_some(if mixed {
+        Toggled::Mixed
+    } else if checked {
+        Toggled::True
+    } else {
+        Toggled::False
+    });
+    data.pressed = own(
+        AccessibleAttached::PRESSED.index,
+        flag(e, obj, AbstractButton::DOWN.index),
+    );
+    let said = |p: PropIndex| att.is_some_and(|att| !is_unset(e, att, p));
+    if let Some((place, of)) = crate::menu::place_of_item(e, obj) {
+        data.position_in_set = Some(place);
+        data.size_of_set = Some(of);
+    }
+    if let Some(row) = crate::combobox::place_of_row(e, obj) {
+        data.position_in_set = Some(row.place);
+        data.size_of_set = Some(row.of);
+        if !said(AccessibleAttached::SELECTED.index) && !said(AccessibleAttached::SELECTABLE.index)
+        {
+            data.selected = Some(row.picked);
+        }
+    }
+}
+
+/// A press is the scene's to deliver; a button takes nothing else.
+fn no_action(_: &Engine, _: ObjectId, _: AccessibleAction) -> bool {
+    false
+}
+
+pub(crate) fn register(engine: &Engine) {
+    register_accessible_item(
+        engine,
+        MetaRef::Static(AbstractButton::static_meta()),
+        AccessibleItem {
+            describe: describe_button,
+            act: no_action,
+        },
+    );
 }

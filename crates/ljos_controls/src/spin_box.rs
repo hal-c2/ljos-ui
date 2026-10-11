@@ -156,7 +156,7 @@ pub struct SpinBox {
     pub value_from_text: Value,
     #[qml(notify, readonly)]
     pub display_text: Atom,
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.InputMethodHints")]
     pub input_method_hints: i32,
     #[qml(notify, readonly)]
     pub input_method_composing: bool,

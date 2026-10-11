@@ -25,9 +25,10 @@ T.RadioButton {
         y: control.topPadding + (control.availableHeight - height) / 2
         radius: width / 2
         color: control.down ? control.palette.light : control.palette.base
-        border.width: 1
-        border.color: control.palette.mid
-        // TODO(focus): a wider border in `palette.highlight` with visual focus.
+        // Wider and in the highlight where the keyboard is, when a key
+        // brought it there.
+        border.width: control.visualFocus ? 2 : 1
+        border.color: control.visualFocus ? control.palette.highlight : control.palette.mid
 
         Rectangle {
             x: (parent.width - width) / 2

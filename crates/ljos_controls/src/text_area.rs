@@ -25,13 +25,13 @@ pub struct TextArea {
     pub edit: TextEdit,
     #[qml(notify)]
     pub background: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub top_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub left_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub right_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub bottom_inset: f64,
     #[qml(notify, readonly)]
     pub implicit_background_width: f64,
@@ -44,10 +44,10 @@ pub struct TextArea {
     pub placeholder_text_color: Color,
     #[qml(notify, readonly)]
     pub hovered: bool,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub hover_enabled: bool,
     /// Why the area last got or lost the keyboard (`Qt.FocusReason`).
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Qt.FocusReason")]
     pub focus_reason: i32,
     #[qml(group)]
     pub palette: Palette,

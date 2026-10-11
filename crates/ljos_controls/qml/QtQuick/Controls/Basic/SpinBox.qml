@@ -37,6 +37,10 @@ T.SpinBox {
         validator: control.validator
         inputMethodHints: control.inputMethodHints
 
+        // The box speaks for its number: one thing with a value, a name
+        // and steps, and not a nameless field inside it.
+        Accessible.ignored: true
+
         // The frame of the box that has the keyboard.
         Rectangle {
             width: parent.width

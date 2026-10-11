@@ -8,6 +8,7 @@
 use std::rc::Rc;
 
 use ljos_engine::{Cx, Engine, EngineError, Font, ObjectId, QmlObject, QmlType, Value, qml_impl};
+use ljos_quick::focus::{FocusReason, focus_reason, force_active_focus};
 use ljos_quick::{
     Item, MouseButtons, PointerEvent, PointerItem, is_mirrored, register_pointer_item,
 };
@@ -17,40 +18,55 @@ use crate::containers::{Page, Pane, page_bars};
 use crate::inherit::{self, InheritState, Kind};
 use crate::palette::Palette;
 use crate::parts::{PartKind, destroy_replaced_style_parts, manage_part};
-use crate::util::{bind_default, flag, is_a, num, object, set_computed};
+use crate::util::{bind_default, check, flag, is_a, is_unset, num, object, set_computed};
+
+/// `Qt.FocusPolicy`, the bits of it.
+pub(crate) mod focus_policy {
+    /// Tab stops at the control.
+    pub const TAB: i32 = 1;
+    /// A click gives the control the keyboard.
+    pub const CLICK: i32 = 2;
+    /// `Qt.StrongFocus`: both, as a button has it.
+    pub const STRONG: i32 = 11;
+}
 
 /// `Control`.
 ///
-/// TODO(focus): `focusPolicy`, `focusReason` and `visualFocus` are stored
-/// and do nothing; a control does not take focus on a click or on Tab yet.
+/// `focusPolicy` says how the keyboard comes to a control: `Qt.TabFocus`
+/// makes it a stop of Tab (`activeFocusOnTab` follows the policy when the
+/// policy changes, and is the author's to set apart from it), and
+/// `Qt.ClickFocus` gives it the keyboard on a press. `visualFocus` is on
+/// while the keyboard is there because a key brought it. The defaults per
+/// type and these rules are what Qt 6.11 shows from QML
+/// (`features/controls/focus.feature`).
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick.Templates", name = "Control", extends = Item)]
 pub struct Control {
     #[qml(base)]
     pub item: Item,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub bottom_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub horizontal_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub vertical_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub top_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub left_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub right_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub bottom_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub spacing: f64,
     #[qml(notify, readonly)]
     pub available_width: f64,
@@ -70,7 +86,7 @@ pub struct Control {
     pub content_item: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub hovered: bool,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub hover_enabled: bool,
     /// Stored: nothing built so far scrolls.
     #[qml(notify)]
@@ -85,9 +101,9 @@ pub struct Control {
     /// mirror the control.
     #[qml(notify)]
     pub locale: Value,
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.FocusPolicy")]
     pub focus_policy: i32,
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Qt.FocusReason")]
     pub focus_reason: i32,
     #[qml(notify, readonly)]
     pub visual_focus: bool,
@@ -127,11 +143,27 @@ impl Default for Control {
             palette: Palette::default(),
             locale: Value::Undefined,
             focus_policy: 0,
-            focus_reason: 0,
+            focus_reason: FocusReason::Other as i32,
             visual_focus: false,
             inherit: Rc::default(),
         }
     }
+}
+
+/// `leftPadding = undefined`: a padding that is taken back follows the
+/// wider one again, a side its axis and an axis `padding`.
+const WIDER_PADDING: ljos_engine::Reset = ljos_engine::Reset::Follow(wider_padding);
+
+fn wider_padding(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> Value {
+    let sides = |a: ljos_engine::Prop<f64>, b: ljos_engine::Prop<f64>| p == a.index || p == b.index;
+    let from = if sides(Control::LEFT_PADDING, Control::RIGHT_PADDING) {
+        Control::HORIZONTAL_PADDING
+    } else if sides(Control::TOP_PADDING, Control::BOTTOM_PADDING) {
+        Control::VERTICAL_PADDING
+    } else {
+        Control::PADDING
+    };
+    engine.read(obj, from.index)
 }
 
 #[qml_impl]
@@ -228,7 +260,60 @@ fn init_control(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             let _ = set_computed(e, obj, Control::HOVERED.index, Value::Bool(false));
         }
     })?;
+    init_focus(engine, obj)
+}
+
+/// Tab stops where the policy says, and the control knows why it has the
+/// keyboard.
+fn init_focus(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let stop = Item::ACTIVE_FOCUS_ON_TAB.index;
+    // What the author wrote for `activeFocusOnTab` stands whatever the
+    // policy the control starts with.
+    if is_unset(engine, obj, stop) {
+        let policy = engine.untrack(|| num(engine, obj, Control::FOCUS_POLICY.index)) as i32;
+        engine.write_derived(obj, stop, Value::Bool(policy & focus_policy::TAB != 0))?;
+    }
+    // A policy given later takes Tab with it.
+    engine.watch(obj, Control::FOCUS_POLICY.index, move |e, v| {
+        let on = v.to_number() as i32 & focus_policy::TAB != 0;
+        check(
+            e,
+            "activeFocusOnTab",
+            set_computed(e, obj, stop, Value::Bool(on)),
+        );
+    })?;
+    // Why the keyboard came, and why it went: the scene knows both by the
+    // time the flag changes. Only a key shows where the keyboard is.
+    engine.watch(obj, Item::ACTIVE_FOCUS.index, move |e, v| {
+        let reason = focus_reason(e, obj);
+        let by_key = matches!(
+            reason,
+            FocusReason::Tab | FocusReason::Backtab | FocusReason::Shortcut
+        );
+        let r = set_computed(
+            e,
+            obj,
+            Control::FOCUS_REASON.index,
+            Value::Int(reason as i32),
+        );
+        check(e, "focusReason", r);
+        let shown = Value::Bool(v.to_boolean() && by_key);
+        check(
+            e,
+            "visualFocus",
+            set_computed(e, obj, Control::VISUAL_FOCUS.index, shown),
+        );
+    })?;
     Ok(())
+}
+
+/// A press on a control whose policy has `Qt.ClickFocus` brings the
+/// keyboard to it.
+pub(crate) fn click_focus(engine: &Engine, obj: ObjectId) {
+    let policy = engine.untrack(|| num(engine, obj, Control::FOCUS_POLICY.index)) as i32;
+    if policy & focus_policy::CLICK != 0 {
+        force_active_focus(engine, obj, FocusReason::Mouse);
+    }
 }
 
 /// Where a control's content item is: inside the padding, and on a page
@@ -267,7 +352,11 @@ pub(crate) fn is_left(ev: &PointerEvent) -> bool {
 fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, _at: kurbo::Point) -> bool {
     // A control is opaque to the pointer: what is behind it does not get
     // the click. A disabled one lets it through (checked on qml6).
-    takes_input(engine, obj) && is_left(ev)
+    if !(takes_input(engine, obj) && is_left(ev)) {
+        return false;
+    }
+    click_focus(engine, obj);
+    true
 }
 
 fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}

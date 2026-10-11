@@ -18,9 +18,10 @@
 //! TODO(text-input): `editable` and what goes with it are stored.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use ljos_a11y::Role;
+use ljos_a11y::{NodeData, Role};
 use ljos_engine::{
     Atom, ConnectionId, Cx, DelegateHost, Delegates, Engine, EngineError, ItemModel, MetaRef,
     ModelChange, ObjectId, PropIndex, QmlObject, QmlType, RemovalOrder, Value, WriteKind, qml_impl,
@@ -29,8 +30,8 @@ use ljos_quick::flickable::{WheelItem, register_wheel_item};
 use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::{
-    Item, KeyEvent, PointerEvent, PointerItem, WheelEvent, contains_point, is_item,
-    register_pointer_item, set_parent_item,
+    AccessibleAction, AccessibleItem, Item, KeyEvent, PointerEvent, PointerItem, WheelEvent,
+    contains_point, is_item, register_accessible_item, register_pointer_item, set_parent_item,
 };
 use ljos_render::kurbo;
 
@@ -55,7 +56,7 @@ mod match_flag {
 // --------------------------------------------------------- ItemDelegate
 
 /// `ItemDelegate`: a button that is one row of a list.
-#[derive(Debug, Default, QmlObject)]
+#[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick.Templates", name = "ItemDelegate", extends = AbstractButton)]
 pub struct ItemDelegate {
     #[qml(base)]
@@ -63,6 +64,18 @@ pub struct ItemDelegate {
     /// The row is the one the keys or the pointer are on.
     #[qml(notify)]
     pub highlighted: bool,
+}
+
+impl Default for ItemDelegate {
+    fn default() -> Self {
+        let mut button = AbstractButton::default();
+        // `Qt.NoFocus`: the keyboard stays with the view the row is in.
+        button.control.focus_policy = 0;
+        Self {
+            button,
+            highlighted: false,
+        }
+    }
 }
 
 // ------------------------------------------------------------- ComboBox
@@ -187,7 +200,7 @@ pub struct ComboBox {
     pub edit_text: Atom,
     #[qml(notify)]
     pub validator: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.InputMethodHints")]
     pub input_method_hints: i32,
     #[qml(notify, readonly)]
     pub input_method_composing: bool,
@@ -658,6 +671,10 @@ impl DelegateHost for Host {
             warn(e, "ComboBox: Delegate must be of Item type");
             return;
         }
+        e.extension::<RowOwners>()
+            .of
+            .borrow_mut()
+            .insert(object, combo);
         let Some(content) = content_of(e, combo) else {
             return;
         };
@@ -695,6 +712,7 @@ impl DelegateHost for Host {
     }
 
     fn removed(&self, e: &Engine, _: usize, object: ObjectId) {
+        e.extension::<RowOwners>().of.borrow_mut().remove(&object);
         // Out of the popup now; the object itself goes at the next frame.
         if is_item(e, object) {
             let _ = set_parent_item(e, object, None);
@@ -713,6 +731,44 @@ impl DelegateHost for Host {
     }
 
     fn count_changed(&self, _: &Engine, _: usize) {}
+}
+
+/// The combo box each delegate is a row of, so that a row can say where
+/// it is without the combo box describing it.
+#[derive(Default)]
+struct RowOwners {
+    of: RefCell<HashMap<ObjectId, ObjectId>>,
+}
+
+/// Where a row is among the rows of its combo box.
+pub(crate) struct RowPlace {
+    /// From 1.
+    pub place: usize,
+    pub of: usize,
+    /// The row is the combo box's current one.
+    pub picked: bool,
+}
+
+/// What `delegate` tells an assistive technology of its place, when it is
+/// a row of a combo box. Read inside an effect, it follows the rows and
+/// the current index.
+pub(crate) fn place_of_row(engine: &Engine, delegate: ObjectId) -> Option<RowPlace> {
+    let owners = engine.extension::<RowOwners>();
+    let combo = owners.of.borrow().get(&delegate).copied()?;
+    if !engine.is_alive(combo) {
+        return None;
+    }
+    depend_on_rows(engine, combo);
+    let of = engine.read(combo, ComboBox::COUNT.index).to_number() as usize;
+    let current = engine
+        .read(combo, ComboBox::CURRENT_INDEX.index)
+        .to_number() as i32;
+    let row = row_of(engine, combo, delegate)?;
+    Some(RowPlace {
+        place: row as usize + 1,
+        of,
+        picked: row == current,
+    })
 }
 
 fn row_of(engine: &Engine, combo: ObjectId, delegate: ObjectId) -> Option<i32> {
@@ -1185,4 +1241,32 @@ pub(crate) fn register(engine: &Engine) {
         },
     );
     register_wheel_item(engine, meta(), WheelItem { wheel });
+    register_accessible_item(engine, meta(), AccessibleItem { describe, act });
+}
+
+// --------------------------------------------------------- accessibility
+
+/// A combo box has a list it shows and hides. Runs inside the effect that
+/// describes the item, so the node follows the popup.
+fn describe(engine: &Engine, combo: ObjectId, node: &mut NodeData) {
+    // What the application said of it stays.
+    if node.expanded.is_some() {
+        return;
+    }
+    let open = object(engine, combo, ComboBox::POPUP.index)
+        .filter(|p| is_a::<Popup>(engine, *p))
+        .is_some_and(|p| flag(engine, p, Popup::VISIBLE.index));
+    node.expanded = Some(open);
+}
+
+fn act(engine: &Engine, combo: ObjectId, action: AccessibleAction) -> bool {
+    if !takes_input(engine, combo) {
+        return false;
+    }
+    match action {
+        AccessibleAction::Expand => open_popup(engine, combo),
+        AccessibleAction::Collapse => close_popup(engine, combo),
+        _ => return false,
+    }
+    true
 }

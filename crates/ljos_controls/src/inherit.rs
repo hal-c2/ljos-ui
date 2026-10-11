@@ -71,6 +71,7 @@ mod attr {
     pub const STRIKEOUT: u16 = 1 << 6;
     pub const LETTER_SPACING: u16 = 1 << 7;
     pub const WORD_SPACING: u16 = 1 << 8;
+    pub const SCALE_WITH_SYSTEM: u16 = 1 << 9;
 }
 
 /// The attributes in which two fonts differ.
@@ -90,6 +91,10 @@ fn differing(a: &Font, b: &Font) -> u16 {
     bit(a.strikeout != b.strikeout, attr::STRIKEOUT);
     bit(a.letter_spacing != b.letter_spacing, attr::LETTER_SPACING);
     bit(a.word_spacing != b.word_spacing, attr::WORD_SPACING);
+    bit(
+        a.scale_with_system != b.scale_with_system,
+        attr::SCALE_WITH_SYSTEM,
+    );
     m
 }
 
@@ -134,6 +139,9 @@ fn merged(base: &Font, own: &Font, mask: u16) -> Font {
     }
     if has(attr::WORD_SPACING) {
         f.word_spacing = own.word_spacing;
+    }
+    if has(attr::SCALE_WITH_SYSTEM) {
+        f.scale_with_system = own.scale_with_system;
     }
     f
 }

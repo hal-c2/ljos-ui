@@ -6,8 +6,9 @@
 //! signal; `features/controls/abstract-button.feature` pins it.
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-abstractbutton.html.
 //!
-//! TODO(focus): Space and Return do not press a button, and a button does
-//! not take focus when clicked.
+//! A button has `Qt.StrongFocus`: Tab stops at it, a press brings the
+//! keyboard to it, and Space, Return or Enter presses the one that has the keyboard
+//! (`features/controls/focus.feature`).
 //! TODO(image): `icon` is stored; nothing draws it.
 
 use std::cell::Cell;
@@ -18,15 +19,16 @@ use ljos_engine::{
     Atom, Color, ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent,
     OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Timer, Url, Value, WriteKind, qml_impl,
 };
+use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::{
-    DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, Item, PointerEvent, PointerItem, child_items,
+    DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, Item, KeyEvent, PointerEvent, PointerItem, child_items,
     contains_point, is_item, register_pointer_item,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use crate::action::Action;
-use crate::control::{Control, hover, is_left, takes_input};
+use crate::control::{Control, click_focus, focus_policy, hover, is_left, takes_input};
 use crate::group;
 use crate::parts::{PartKind, manage_part};
 use crate::util::{bind_default, check, flag, is_a, is_unset, num, object, set_computed};
@@ -79,6 +81,8 @@ impl Default for Icon {
 pub(crate) struct ButtonState {
     /// A press that landed on the button has not ended.
     held: Cell<bool>,
+    /// A key that presses went down on the button and has not come up.
+    key_held: Cell<bool>,
     /// When the last click ended, for telling a double click.
     last_click: Cell<Option<Time>>,
     /// The held press already did what a release would do (a double
@@ -131,7 +135,7 @@ pub struct AbstractButton {
     pub control: Control,
     #[qml(notify)]
     pub text: Atom,
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Display")]
     pub display: i32,
     /// Follows `pressed` until it is given a value.
     #[qml(notify)]
@@ -171,7 +175,10 @@ pub struct AbstractButton {
 impl Default for AbstractButton {
     fn default() -> Self {
         Self {
-            control: Control::default(),
+            control: Control {
+                focus_policy: focus_policy::STRONG,
+                ..Control::default()
+            },
             text: Atom::EMPTY,
             display: 2,
             down: false,
@@ -297,6 +304,13 @@ fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             }
         })?;
     }
+    // Nor does a key held down outlive the button's having the keyboard:
+    // the release goes to whatever has it then.
+    engine.watch(obj, Item::ACTIVE_FOCUS.index, move |e, v| {
+        if !v.to_boolean() && state_of(e, obj).is_some_and(|st| st.key_held.get()) {
+            cancel(e, obj);
+        }
+    })?;
 
     engine.watch(obj, AbstractButton::CHECKED.index, move |e, v| {
         checked_changed(e, obj, v.to_boolean());
@@ -468,10 +482,18 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) ->
     };
     st.held.set(true);
     st.press_at.set((at.x, at.y));
-    let double = st
+    click_focus(engine, obj);
+    let quick = st
         .last_click
         .take()
         .is_some_and(|t| ev.time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL);
+    // Only a button somebody listens to for double clicks has them. Every
+    // other button counts the second of two quick clicks as a click, so
+    // that tapping fast is not tapping half as often.
+    let double = quick
+        && engine
+            .signal_index(obj, "doubleClicked")
+            .is_ok_and(|signal| engine.signal_connected(obj, signal));
     st.spent.set(double);
     let _ = set_computed(
         engine,
@@ -556,7 +578,8 @@ fn cancel(engine: &Engine, obj: ObjectId) {
     let Some(st) = state_of(engine, obj) else {
         return;
     };
-    if !st.held.replace(false) {
+    let by_key = st.key_held.replace(false);
+    if !st.held.replace(false) && !by_key {
         return;
     }
     stop_timer(engine, &st);
@@ -634,6 +657,75 @@ fn timer_fired(engine: &Engine, obj: ObjectId) {
     }
 }
 
+// ---------------------------------------------------------- the keyboard
+
+/// Whether the key is one that presses the button: Space, Return and
+/// Enter, as Qt 6.11 does on a desktop. The rows of a menu are picked by
+/// the menu, which has its own way with the keys.
+fn takes_key(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
+    matches!(ev.key, key::SPACE | key::RETURN | key::ENTER) && !in_menu(engine, obj)
+}
+
+/// The menu `obj` is a row of.
+fn menu_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
+    if !is_a::<crate::menu::MenuItem>(engine, obj) {
+        return None;
+    }
+    engine
+        .untrack(|| object(engine, obj, crate::menu::MenuItem::MENU.index))
+        .filter(|m| engine.is_alive(*m))
+}
+
+fn in_menu(engine: &Engine, obj: ObjectId) -> bool {
+    menu_of(engine, obj).is_some()
+}
+
+/// The key down holds the button down, as a pointer's press does.
+fn key_press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
+    // A row of a menu is a stop of the Tab order like any button, and in
+    // its menu Tab is the menu's: it gets the key before Tab moves on.
+    if let Some(menu) = menu_of(engine, obj) {
+        return crate::menu::key_press(engine, menu, ev);
+    }
+    if !takes_key(engine, obj, ev) || !takes_input(engine, obj) {
+        return false;
+    }
+    let Some(st) = state_of(engine, obj) else {
+        return false;
+    };
+    // A key that repeats is one press, and a pointer that holds the
+    // button already has it.
+    if ev.auto_repeat || st.held.get() || st.key_held.replace(true) {
+        return true;
+    }
+    set_pressed(engine, obj, true);
+    emit(engine, obj, "pressed");
+    true
+}
+
+/// The key up is the click.
+fn key_release(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
+    if !takes_key(engine, obj, ev) {
+        return false;
+    }
+    let Some(st) = state_of(engine, obj) else {
+        return false;
+    };
+    if !st.key_held.replace(false) {
+        return false;
+    }
+    let was_pressed = engine.untrack(|| flag(engine, obj, AbstractButton::PRESSED.index));
+    set_pressed(engine, obj, false);
+    if was_pressed {
+        trigger(engine, obj);
+    }
+    true
+}
+
+fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
+    false
+}
+
 pub(crate) fn register(engine: &Engine) {
     register_pointer_item(
         engine,
@@ -644,6 +736,15 @@ pub(crate) fn register(engine: &Engine) {
             release,
             cancel,
             hover,
+        },
+    );
+    register_key_item(
+        engine,
+        MetaRef::Static(AbstractButton::static_meta()),
+        KeyItem {
+            shortcut_override: no_key,
+            press: key_press,
+            release: key_release,
         },
     );
 }
@@ -705,7 +806,7 @@ pub struct CheckBox {
     #[qml(notify)]
     pub tristate: bool,
     /// A `Qt.CheckState`.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.CheckState")]
     pub check_state: i32,
     #[qml(notify)]
     pub next_check_state: Value,

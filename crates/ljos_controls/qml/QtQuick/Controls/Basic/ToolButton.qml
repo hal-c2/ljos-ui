@@ -45,5 +45,8 @@ T.ToolButton {
         opacity: control.down ? 1.0 : 0.5
         color: control.down || control.checked || control.highlighted ? control.palette.mid
                                                                       : control.palette.button
+        // Where the keyboard is, when a key brought it there.
+        border.color: control.palette.highlight
+        border.width: control.visualFocus ? 2 : 0
     }
 }

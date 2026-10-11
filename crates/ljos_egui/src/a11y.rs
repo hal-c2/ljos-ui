@@ -9,8 +9,40 @@ use std::collections::HashMap;
 
 use egui::accesskit::{self, Role};
 use egui::{Id, Pos2, Rect, Ui, UiBuilder};
-use ljos_a11y::{NodeKey, TextValue, Tree};
+use ljos_a11y::{ColorScheme, NodeKey, TextValue, Tree};
+use ljos_engine::Engine;
 use ljos_quick::{AccessibleAction, AccessibleTextAction};
+
+/// Hands the application what egui knows of the system's preferences:
+/// the colour scheme, when the platform reports one. (That an assistive
+/// technology listens is told where the tree is switched on.) Contrast,
+/// reduced motion and the text size egui does not hear of; a host that
+/// does calls `ljos_quick::set_system_prefs`.
+///
+/// It tells the engine only when egui's answer changed, so a host or a
+/// test that set a scheme itself keeps it, and a pass in which nothing
+/// changed costs one comparison.
+#[derive(Debug, Default)]
+pub(crate) struct SystemFeed {
+    told: Option<egui::Theme>,
+}
+
+impl SystemFeed {
+    pub(crate) fn feed(&mut self, ctx: &egui::Context, engine: &Engine) {
+        let system = ctx.system_theme();
+        if system == self.told {
+            return;
+        }
+        self.told = system;
+        let scheme = match system {
+            Some(egui::Theme::Dark) => ColorScheme::Dark,
+            Some(egui::Theme::Light) => ColorScheme::Light,
+            // The platform stopped saying: what was last said stays.
+            None => return,
+        };
+        ljos_quick::update_system_prefs(engine, |p| p.color_scheme = scheme);
+    }
+}
 
 /// AccessKit ids of the nodes of the last pass, for routing actions back.
 pub(crate) type Emitted = HashMap<accesskit::NodeId, NodeKey>;
@@ -32,6 +64,9 @@ pub(crate) fn item_action(req: &accesskit::ActionRequest) -> Option<AccessibleAc
         Action::ScrollDown => Some(AccessibleAction::ScrollDown { page }),
         Action::ScrollLeft => Some(AccessibleAction::ScrollLeft { page }),
         Action::ScrollRight => Some(AccessibleAction::ScrollRight { page }),
+        Action::ScrollIntoView => Some(AccessibleAction::ShowOnScreen),
+        Action::Expand => Some(AccessibleAction::Expand),
+        Action::Collapse => Some(AccessibleAction::Collapse),
         _ => None,
     }
 }
@@ -135,6 +170,11 @@ pub(crate) fn emit(
         // The closure runs under the context lock: it only copies.
         ctx.accesskit_node_builder(id, |node| {
             data.apply(node);
+            // A label that is not in the tree (hidden, ignored) names
+            // nothing an assistive technology could go to.
+            data.apply_relations(node, |k| {
+                tree.contains(k).then(|| node_id(view, k).accesskit_id())
+            });
             // Logical points; egui's root node scales to pixels.
             node.set_bounds(accesskit::Rect {
                 x0: f64::from(min.x),

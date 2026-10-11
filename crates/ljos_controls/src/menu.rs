@@ -383,6 +383,25 @@ fn items(engine: &Engine, menu: ObjectId) -> Vec<ObjectId> {
     })
 }
 
+/// Where `item` is among the items of its menu that can be chosen, from
+/// 1, and how many there are: what an assistive technology reads as
+/// "2 of 3". A separator is not one of them. Read inside an effect, it
+/// follows the menu's items.
+pub(crate) fn place_of_item(engine: &Engine, item: ObjectId) -> Option<(usize, usize)> {
+    if !is_a::<MenuItem>(engine, item) {
+        return None;
+    }
+    let menu = object(engine, item, MenuItem::MENU.index).filter(|m| is_a::<Menu>(engine, *m))?;
+    // Changes whenever an item joins or leaves.
+    let _ = engine.read(menu, Menu::COUNT.index);
+    let choices: Vec<ObjectId> = items(engine, menu)
+        .into_iter()
+        .filter(|i| is_a::<MenuItem>(engine, *i))
+        .collect();
+    let at = choices.iter().position(|i| *i == item)?;
+    Some((at + 1, choices.len()))
+}
+
 fn sub_menu_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     if !is_a::<MenuItem>(engine, item) {
         return None;

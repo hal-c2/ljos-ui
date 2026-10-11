@@ -106,6 +106,7 @@ pub fn register(engine: &Engine) {
     // the one a button gets.
     control::register(engine);
     button::register(engine);
+    a11y::register(engine);
     group::register(engine);
     popup::register(engine);
     tooltip::register(engine);

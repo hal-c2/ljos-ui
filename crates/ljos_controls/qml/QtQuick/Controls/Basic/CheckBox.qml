@@ -24,9 +24,10 @@ T.CheckBox {
            : control.leftPadding + (control.availableWidth - width) / 2
         y: control.topPadding + (control.availableHeight - height) / 2
         color: control.down ? control.palette.light : control.palette.base
-        border.width: 1
-        border.color: control.palette.mid
-        // TODO(focus): a wider border in `palette.highlight` with visual focus.
+        // Wider and in the highlight where the keyboard is, when a key
+        // brought it there.
+        border.width: control.visualFocus ? 2 : 1
+        border.color: control.visualFocus ? control.palette.highlight : control.palette.mid
 
         // The mark is a filled square: a neutral drawing of our own.
         Rectangle {
@@ -36,7 +37,7 @@ T.CheckBox {
             height: 14
             radius: 2
             color: control.palette.text
-            visible: control.checkState === 2
+            visible: control.checkState === Qt.Checked
         }
 
         Rectangle {
@@ -45,7 +46,7 @@ T.CheckBox {
             width: 16
             height: 3
             color: control.palette.text
-            visible: control.checkState === 1
+            visible: control.checkState === Qt.PartiallyChecked
         }
     }
 

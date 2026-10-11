@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use accesskit::{Action, Node, NodeId, Role as AkRole, TreeUpdate};
+use accesskit::{Action, Live, Node, NodeId, Role as AkRole, Toggled, TreeUpdate};
 
 use crate::role::Role;
 use crate::text::TextValue;
@@ -26,6 +26,68 @@ impl NodeKey {
     pub fn node_id(self) -> NodeId {
         NodeId(self.0)
     }
+
+    /// Whether the node is one the tree made for an announcement
+    /// ([`Tree::announce`]): no item is behind it.
+    pub fn is_announcement(self) -> bool {
+        self.0 & FIRST_RUN_ID == 0 && self.0 & FIRST_ANNOUNCEMENT_KEY != 0
+    }
+}
+
+/// How much an announcement may interrupt, as `Accessible.announce` of Qt
+/// names it (doc.qt.io/qt-6/qaccessible.html#AnnouncementPoliteness-enum).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Politeness {
+    /// Said when the screen reader next has nothing to say.
+    #[default]
+    Polite,
+    /// Said at once, over whatever is being read.
+    Assertive,
+}
+
+impl Politeness {
+    /// Qt's number: `Accessible.Polite` is 0, `Accessible.Assertive` 1.
+    /// Any other number is polite, the kind that cannot do harm.
+    pub fn from_qt(value: i32) -> Politeness {
+        if value == 1 {
+            Politeness::Assertive
+        } else {
+            Politeness::Polite
+        }
+    }
+
+    pub fn qt_value(self) -> i32 {
+        match self {
+            Politeness::Polite => 0,
+            Politeness::Assertive => 1,
+        }
+    }
+
+    fn live(self) -> Live {
+        match self {
+            Politeness::Polite => Live::Polite,
+            Politeness::Assertive => Live::Assertive,
+        }
+    }
+
+    fn slot(self) -> usize {
+        self as usize
+    }
+}
+
+/// The actions an item's author handles (`Accessible.onIncreaseAction`
+/// and the rest), beyond those the node's other data already offers. The
+/// node offers each to the assistive technology.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Handled {
+    pub increase: bool,
+    pub decrease: bool,
+    pub scroll_up: bool,
+    pub scroll_down: bool,
+    pub scroll_left: bool,
+    pub scroll_right: bool,
+    /// `Accessible.onShowOnScreenAction`: bring the item into view.
+    pub show_on_screen: bool,
 }
 
 /// An axis-aligned box in scene coordinates.
@@ -105,6 +167,41 @@ pub struct NodeData {
     pub clips_children: bool,
     /// The text the node holds, when it holds text that can be edited.
     pub text: Option<TextValue>,
+    /// Whether it is checked, for a node that can be; `None` for one that
+    /// cannot. `Mixed` is the third state of a check box that stands for
+    /// several others.
+    pub toggled: Option<Toggled>,
+    /// Whether it is held down right now. AccessKit 0.24 has no property
+    /// for this, so it does not reach [`NodeData::apply`]; tests, the
+    /// audit and tools read it here.
+    pub pressed: bool,
+    /// Whether what it opens is open, for a node that opens something;
+    /// `None` for one that does not.
+    pub expanded: Option<bool>,
+    /// Whether it is selected, for a node that can be; `None` for one
+    /// that cannot. An assistive technology tells "not selected" from
+    /// "selection means nothing here".
+    pub selected: Option<bool>,
+    /// Whether what it shows can be read but not changed. A node with
+    /// [`NodeData::text`] says so there as well.
+    pub read_only: bool,
+    /// Which of its set the node is, counted from 1, and how many the set
+    /// has: a row of a list knows both even when its siblings do not
+    /// exist (a virtualised list makes only the rows on screen).
+    pub position_in_set: Option<usize>,
+    pub size_of_set: Option<usize>,
+    /// Whether a change of the node's name is said without the user going
+    /// to it, and how urgently.
+    pub live: Option<Politeness>,
+    /// The nodes that name this one. Keys the tree does not have are left
+    /// out when the node is written.
+    pub labelled_by: Vec<NodeKey>,
+    /// How deep a heading is, 1 being the top.
+    pub level: Option<usize>,
+    /// What to call the role when AccessKit's word says less than the
+    /// author's ("dial" for a slider that turns).
+    pub role_description: String,
+    pub handled: Handled,
 }
 
 impl NodeData {
@@ -126,7 +223,30 @@ impl NodeData {
             scroll: None,
             clips_children: false,
             text: None,
+            toggled: None,
+            pressed: false,
+            expanded: None,
+            selected: None,
+            read_only: false,
+            position_in_set: None,
+            size_of_set: None,
+            live: None,
+            labelled_by: Vec::new(),
+            level: None,
+            role_description: String::new(),
+            handled: Handled::default(),
         }
+    }
+
+    /// Whether an assistive technology may ask the node to do something,
+    /// or give it the keyboard: such a node needs a name.
+    pub fn actionable(&self) -> bool {
+        self.press
+            || self.focusable
+            || self.toggled.is_some()
+            || self.text.is_some()
+            || self.range.is_some_and(|r| r.step > 0.0)
+            || self.qt_role.actionable()
     }
 
     /// Writes the data onto an AccessKit node. The children and the bounds
@@ -174,6 +294,60 @@ impl NodeData {
                 }
             }
         }
+        if let Some(t) = self.toggled {
+            node.set_toggled(t);
+        }
+        if let Some(open) = self.expanded {
+            node.set_expanded(open);
+            if !self.disabled {
+                node.add_action(if open {
+                    Action::Collapse
+                } else {
+                    Action::Expand
+                });
+            }
+        }
+        if let Some(on) = self.selected {
+            node.set_selected(on);
+        }
+        if self.read_only {
+            node.set_read_only();
+        }
+        if let Some(at) = self.position_in_set {
+            node.set_position_in_set(at);
+        }
+        if let Some(of) = self.size_of_set {
+            node.set_size_of_set(of);
+        }
+        if let Some(p) = self.live {
+            node.set_live(p.live());
+            // The whole message is said, not the part that differs from
+            // the one before.
+            node.set_live_atomic();
+        }
+        if let Some(level) = self.level {
+            node.set_level(level);
+        }
+        if !self.role_description.is_empty() {
+            node.set_role_description(self.role_description.clone());
+        }
+        if !self.disabled {
+            let h = self.handled;
+            let offered = [
+                (Action::Increment, h.increase),
+                (Action::Decrement, h.decrease),
+                (Action::ScrollUp, h.scroll_up),
+                (Action::ScrollDown, h.scroll_down),
+                (Action::ScrollLeft, h.scroll_left),
+                (Action::ScrollRight, h.scroll_right),
+                (Action::ScrollIntoView, h.show_on_screen),
+            ];
+            for (action, on) in offered {
+                if on {
+                    node.add_action(action);
+                }
+            }
+        }
         if let Some(s) = self.scroll {
             node.set_scroll_x(s.x);
             node.set_scroll_x_min(s.x_min);
@@ -212,6 +386,16 @@ impl NodeData {
             }
         }
     }
+
+    /// Writes what names other nodes. `id_of` gives the id a node has
+    /// where this one is written, or `None` when it is not written there:
+    /// like the children, the ids are the caller's.
+    pub fn apply_relations(&self, node: &mut Node, id_of: impl Fn(NodeKey) -> Option<NodeId>) {
+        let named_by: Vec<NodeId> = self.labelled_by.iter().filter_map(|k| id_of(*k)).collect();
+        if !named_by.is_empty() {
+            node.set_labelled_by(named_by);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -227,6 +411,10 @@ struct Slot {
 /// The ids of text runs are counted up from here. An item's key has this
 /// bit only after its slot was reused two thousand million times.
 const FIRST_RUN_ID: u64 = 1 << 63;
+
+/// The keys of announcement nodes are counted up from here; an item's key
+/// has this bit only after its slot was reused a thousand million times.
+const FIRST_ANNOUNCEMENT_KEY: u64 = 1 << 62;
 
 /// How much work the tree has been asked to do, for tests that prove one
 /// change touches one node.
@@ -273,6 +461,10 @@ pub struct Tree {
     /// How many run ids were given out, and whose run each is.
     run_ids: u64,
     run_owners: HashMap<NodeId, (NodeKey, usize)>,
+    /// The node of the latest announcement of each [`Politeness`]. They
+    /// are the last children of the scene, whatever its other children.
+    announced: [Option<NodeKey>; 2],
+    announcements: u64,
 }
 
 impl Tree {
@@ -391,6 +583,11 @@ impl Tree {
         }
         self.dirty.remove(&key);
         self.focused.remove(&key);
+        for a in &mut self.announced {
+            if *a == Some(key) {
+                *a = None;
+            }
+        }
         self.removed.push(key);
         self.stats.removals += 1;
         true
@@ -445,11 +642,15 @@ impl Tree {
         if parent != NodeKey::ROOT && !self.slots.contains_key(&parent) {
             return false;
         }
-        let new: Vec<NodeKey> = children
+        let mut new: Vec<NodeKey> = children
             .iter()
             .copied()
-            .filter(|c| *c != parent && self.slots.contains_key(c))
+            .filter(|c| *c != parent && !c.is_announcement() && self.slots.contains_key(c))
             .collect();
+        if parent == NodeKey::ROOT {
+            // The scene's owner lists its items; what was announced stays.
+            new.extend(self.announced.iter().flatten());
+        }
         if self.children(parent) == new.as_slice() {
             return false;
         }
@@ -479,6 +680,50 @@ impl Tree {
         self.dirty.insert(parent);
         self.stats.child_updates += 1;
         true
+    }
+
+    /// Says `message` to whoever listens without moving them: the tree
+    /// gets a node that holds it, a status for a polite announcement and an
+    /// alert for an assertive one, in place of the one before of that
+    /// kind. The node has no size and nothing paints it.
+    ///
+    /// Each announcement is a new node: an assistive technology says a
+    /// live node when it appears, so the same message twice is said twice.
+    pub fn announce(&mut self, message: &str, politeness: Politeness) -> NodeKey {
+        if let Some(old) = self.announced[politeness.slot()].take() {
+            self.remove(old);
+        }
+        let key = NodeKey(FIRST_ANNOUNCEMENT_KEY | self.announcements);
+        self.announcements += 1;
+        let role = match politeness {
+            Politeness::Polite => AkRole::Status,
+            Politeness::Assertive => AkRole::Alert,
+        };
+        self.upsert(
+            key,
+            NodeData {
+                name: message.to_string(),
+                live: Some(politeness),
+                ..NodeData::new(role)
+            },
+        );
+        self.announced[politeness.slot()] = Some(key);
+        if let Some(slot) = self.slots.get_mut(&key) {
+            slot.parent = Some(NodeKey::ROOT);
+        }
+        // Polite before assertive, so the order does not depend on which
+        // was said first.
+        self.top.retain(|k| !k.is_announcement());
+        self.top.extend(self.announced.iter().flatten());
+        self.dirty.insert(NodeKey::ROOT);
+        self.stats.child_updates += 1;
+        key
+    }
+
+    /// What was last announced with `politeness`, if anything was.
+    pub fn announcement(&self, politeness: Politeness) -> Option<&str> {
+        let key = self.announced[politeness.slot()]?;
+        self.get(key).map(|d| d.name.as_str())
     }
 
     fn list_mut(&mut self, key: NodeKey) -> &mut Vec<NodeKey> {
@@ -588,6 +833,7 @@ impl Tree {
             let data = self.get(key)?;
             let mut node = Node::new(data.role);
             data.apply(&mut node);
+            data.apply_relations(&mut node, |k| self.attached(k).then(|| k.node_id()));
             node.set_bounds(accesskit::Rect {
                 x0: data.bounds.x0,
                 y0: data.bounds.y0,
@@ -1015,5 +1261,207 @@ mod tests {
             })
         );
         assert!(t.accesskit_node(D).is_none());
+    }
+
+    fn applied(data: &NodeData) -> Node {
+        let mut node = Node::new(data.role);
+        data.apply(&mut node);
+        node
+    }
+
+    #[test]
+    fn a_plain_node_says_none_of_the_states() {
+        let node = applied(&button("Save"));
+        assert_eq!(node.toggled(), None);
+        assert_eq!(node.is_expanded(), None);
+        assert_eq!(node.is_selected(), None);
+        assert!(!node.is_read_only());
+        assert_eq!(node.position_in_set(), None);
+        assert_eq!(node.size_of_set(), None);
+        assert_eq!(node.live(), None);
+        assert_eq!(node.level(), None);
+        assert_eq!(node.role_description(), None);
+    }
+
+    #[test]
+    fn check_states_reach_the_node() {
+        for (state, want) in [
+            (Toggled::False, Toggled::False),
+            (Toggled::True, Toggled::True),
+            (Toggled::Mixed, Toggled::Mixed),
+        ] {
+            let data = NodeData {
+                toggled: Some(state),
+                ..NodeData::new(AkRole::CheckBox)
+            };
+            assert_eq!(applied(&data).toggled(), Some(want));
+        }
+    }
+
+    #[test]
+    fn an_expandable_node_offers_the_other_state() {
+        let closed = NodeData {
+            expanded: Some(false),
+            ..NodeData::new(AkRole::ComboBox)
+        };
+        let node = applied(&closed);
+        assert_eq!(node.is_expanded(), Some(false));
+        assert!(node.supports_action(Action::Expand));
+        assert!(!node.supports_action(Action::Collapse));
+        let open = NodeData {
+            expanded: Some(true),
+            ..closed.clone()
+        };
+        let node = applied(&open);
+        assert_eq!(node.is_expanded(), Some(true));
+        assert!(node.supports_action(Action::Collapse));
+        let off = NodeData {
+            disabled: true,
+            ..closed
+        };
+        let node = applied(&off);
+        assert!(!node.supports_action(Action::Expand));
+    }
+
+    #[test]
+    fn selection_read_only_set_level_and_description_reach_the_node() {
+        let data = NodeData {
+            selected: Some(false),
+            read_only: true,
+            position_in_set: Some(2),
+            size_of_set: Some(40),
+            level: Some(3),
+            role_description: "dial".into(),
+            ..NodeData::new(AkRole::ListBoxOption)
+        };
+        let node = applied(&data);
+        assert_eq!(node.is_selected(), Some(false));
+        assert!(node.is_read_only());
+        assert_eq!(node.position_in_set(), Some(2));
+        assert_eq!(node.size_of_set(), Some(40));
+        assert_eq!(node.level(), Some(3));
+        assert_eq!(node.role_description(), Some("dial"));
+    }
+
+    #[test]
+    fn handled_actions_are_offered_unless_disabled() {
+        let data = NodeData {
+            handled: Handled {
+                increase: true,
+                scroll_down: true,
+                show_on_screen: true,
+                ..Handled::default()
+            },
+            ..NodeData::new(AkRole::Slider)
+        };
+        let node = applied(&data);
+        assert!(node.supports_action(Action::Increment));
+        assert!(!node.supports_action(Action::Decrement));
+        assert!(node.supports_action(Action::ScrollDown));
+        assert!(!node.supports_action(Action::ScrollUp));
+        assert!(node.supports_action(Action::ScrollIntoView));
+        let off = NodeData {
+            disabled: true,
+            ..data
+        };
+        assert!(!applied(&off).supports_action(Action::Increment));
+    }
+
+    #[test]
+    fn a_label_relation_names_only_nodes_that_are_there() {
+        let mut t = sample();
+        t.upsert(
+            C,
+            NodeData {
+                labelled_by: vec![B, D],
+                ..button("C")
+            },
+        );
+        // D is not in the tree: an id for it would point at nothing.
+        let node = t.accesskit_node(C).unwrap();
+        assert_eq!(node.labelled_by(), &[B.node_id()]);
+    }
+
+    #[test]
+    fn an_announcement_is_a_live_node_at_the_end_of_the_scene() {
+        let mut t = sample();
+        let _ = t.take_changes();
+        let said = t.announce("Saved", Politeness::Polite);
+        assert!(said.is_announcement());
+        assert!(!A.is_announcement());
+        assert_eq!(t.children(NodeKey::ROOT), &[A, said]);
+        assert_eq!(t.parent(said), Some(NodeKey::ROOT));
+        assert_eq!(t.announcement(Politeness::Polite), Some("Saved"));
+        assert_eq!(t.announcement(Politeness::Assertive), None);
+        let data = t.get(said).unwrap();
+        assert_eq!(data.role, AkRole::Status);
+        let node = t.accesskit_node(said).unwrap();
+        assert_eq!(node.live(), Some(Live::Polite));
+        assert!(node.is_live_atomic());
+        assert_eq!(node.label(), Some("Saved"));
+        let changes = t.take_changes();
+        assert_eq!(changes.changed, vec![NodeKey::ROOT, said]);
+    }
+
+    #[test]
+    fn the_same_message_again_is_a_new_node() {
+        let mut t = sample();
+        let first = t.announce("Saved", Politeness::Polite);
+        let _ = t.take_changes();
+        let second = t.announce("Saved", Politeness::Polite);
+        assert_ne!(first, second);
+        assert!(!t.contains(first));
+        assert_eq!(t.children(NodeKey::ROOT), &[A, second]);
+        let changes = t.take_changes();
+        assert_eq!(changes.removed, vec![first]);
+        assert!(changes.changed.contains(&second));
+    }
+
+    #[test]
+    fn an_alert_is_kept_beside_a_status_and_after_it() {
+        let mut t = sample();
+        let alert = t.announce("Connection lost", Politeness::Assertive);
+        let status = t.announce("Saved", Politeness::Polite);
+        assert_eq!(t.get(alert).unwrap().role, AkRole::Alert);
+        assert_eq!(t.children(NodeKey::ROOT), &[A, status, alert]);
+        assert_eq!(
+            t.accesskit_node(alert).unwrap().live(),
+            Some(Live::Assertive)
+        );
+    }
+
+    #[test]
+    fn the_scenes_new_child_list_keeps_what_was_announced() {
+        let mut t = sample();
+        let said = t.announce("Saved", Politeness::Polite);
+        t.upsert(D, button("D"));
+        t.set_children(NodeKey::ROOT, &[D, A]);
+        assert_eq!(t.children(NodeKey::ROOT), &[D, A, said]);
+        // Saying the same list again changes nothing.
+        assert!(!t.set_children(NodeKey::ROOT, &[D, A]));
+    }
+
+    #[test]
+    fn politeness_has_qts_numbers() {
+        assert_eq!(Politeness::from_qt(0), Politeness::Polite);
+        assert_eq!(Politeness::from_qt(1), Politeness::Assertive);
+        assert_eq!(Politeness::from_qt(7), Politeness::Polite);
+        assert_eq!(Politeness::Assertive.qt_value(), 1);
+    }
+
+    #[test]
+    fn what_can_be_acted_on_is_actionable() {
+        assert!(button("Save").actionable());
+        assert!(!group().actionable());
+        let checkable = NodeData {
+            toggled: Some(Toggled::False),
+            ..group()
+        };
+        assert!(checkable.actionable());
+        let slider = NodeData {
+            qt_role: Role::Slider,
+            ..NodeData::new(AkRole::Slider)
+        };
+        assert!(slider.actionable());
     }
 }

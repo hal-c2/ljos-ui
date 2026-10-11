@@ -189,7 +189,6 @@ Feature: Control
     Then the property "enabled" of "content" is false
     And the property "enabled" of "bg" is false
 
-  @backlog
   Scenario: Assigning undefined to a side makes it follow the padding again
     Given the QML:
       """qml

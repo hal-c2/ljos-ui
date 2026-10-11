@@ -12,10 +12,7 @@ T.ScrollBar {
                              implicitContentHeight + topPadding + bottomPadding)
 
     padding: 2
-    // The policies by number (1 is AlwaysOff, 2 is AlwaysOn): an enum of a
-    // type behind an import qualifier (T.ScrollBar.AlwaysOff) cannot be
-    // read from a script yet.
-    visible: control.policy !== 1
+    visible: control.policy !== T.ScrollBar.AlwaysOff
     // A handle is never shorter than the bar is thick.
     minimumSize: orientation === Qt.Horizontal ? height / width : width / height
 
@@ -24,7 +21,7 @@ T.ScrollBar {
     contentItem: Rectangle {
         id: handle
 
-        readonly property bool shown: control.policy === 2
+        readonly property bool shown: control.policy === T.ScrollBar.AlwaysOn
                                       || (control.active && control.size < 1.0)
 
         implicitWidth: control.interactive ? 6 : 2

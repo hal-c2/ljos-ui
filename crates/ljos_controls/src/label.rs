@@ -22,13 +22,13 @@ pub struct Label {
     pub text: Text,
     #[qml(notify)]
     pub background: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub top_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub left_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub right_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub bottom_inset: f64,
     #[qml(notify, readonly)]
     pub implicit_background_width: f64,

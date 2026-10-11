@@ -88,7 +88,7 @@ fn popup_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 #[derive(Clone, Debug, Default, QmlObject)]
 #[qml(name = "PopupAnchors", uncreatable)]
 pub struct PopupAnchors {
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub center_in: Option<ObjectId>,
 }
 
@@ -130,11 +130,11 @@ pub struct Popup {
     pub x: f64,
     #[qml(notify)]
     pub y: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub z: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(implicit_size))]
     pub width: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(implicit_size))]
     pub height: f64,
     #[qml(notify)]
     pub implicit_width: f64,
@@ -149,39 +149,39 @@ pub struct Popup {
     #[qml(notify, readonly)]
     pub available_height: f64,
     /// The least distance to the edges of the window; negative for none.
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub margins: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub top_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub left_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub right_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_margins))]
     pub bottom_margin: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub top_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub left_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub right_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub bottom_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub horizontal_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset = WIDER_PADDING)]
     pub vertical_padding: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub top_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub left_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub right_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub bottom_inset: f64,
-    #[qml(notify)]
+    #[qml(notify, reset)]
     pub spacing: f64,
     #[qml(notify, readonly)]
     pub implicit_background_width: f64,
@@ -201,7 +201,7 @@ pub struct Popup {
     pub content_children: QmlList,
     /// The item the popup is placed from: the one that declares it until
     /// another is given.
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(natural_parent))]
     pub parent: Option<ObjectId>,
     #[qml(notify)]
     pub visible: bool,
@@ -209,7 +209,7 @@ pub struct Popup {
     pub opened: bool,
     #[qml(notify)]
     pub modal: bool,
-    #[qml(notify)]
+    #[qml(notify, reset = ljos_engine::Reset::Follow(natural_dim))]
     pub dim: bool,
     /// Whether the popup takes the keyboard when it opens.
     #[qml(notify)]
@@ -226,7 +226,7 @@ pub struct Popup {
     pub scale: f64,
     #[qml(notify, enumeration = "TransformOrigin")]
     pub transform_origin: i32,
-    #[qml(notify, enumeration = "ClosePolicy")]
+    #[qml(notify, flags = "ClosePolicy", reset)]
     pub close_policy: i32,
     /// Stored: a popup is always an item of its window here.
     #[qml(notify, enumeration = "PopupType")]
@@ -458,6 +458,45 @@ fn default_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
         cur = engine.owner(o);
     }
     None
+}
+
+/// `leftPadding = undefined`: as a control's, a side follows its axis and
+/// an axis `padding`.
+const WIDER_PADDING: ljos_engine::Reset = ljos_engine::Reset::Follow(wider_padding);
+
+fn wider_padding(e: &Engine, popup: ObjectId, p: ljos_engine::PropIndex) -> Value {
+    let sides = |a: Prop<f64>, b: Prop<f64>| p == a.index || p == b.index;
+    let from = if sides(Popup::LEFT_PADDING, Popup::RIGHT_PADDING) {
+        Popup::HORIZONTAL_PADDING
+    } else if sides(Popup::TOP_PADDING, Popup::BOTTOM_PADDING) {
+        Popup::VERTICAL_PADDING
+    } else {
+        Popup::PADDING
+    };
+    e.read(popup, from.index)
+}
+
+/// What a side margin is while it has no value of its own.
+fn all_margins(e: &Engine, popup: ObjectId, _side: ljos_engine::PropIndex) -> Value {
+    e.read(popup, Popup::MARGINS.index)
+}
+
+/// A modal popup dims what is behind it unless it is told not to.
+fn natural_dim(e: &Engine, popup: ObjectId, _dim: ljos_engine::PropIndex) -> Value {
+    Value::Bool(flag(e, popup, Popup::MODAL.index))
+}
+
+fn implicit_size(e: &Engine, popup: ObjectId, size: ljos_engine::PropIndex) -> Value {
+    let implicit = if size == Popup::WIDTH.index {
+        Popup::IMPLICIT_WIDTH
+    } else {
+        Popup::IMPLICIT_HEIGHT
+    };
+    e.read(popup, implicit.index)
+}
+
+fn natural_parent(e: &Engine, popup: ObjectId, _parent: ljos_engine::PropIndex) -> Value {
+    default_parent(e, popup).map_or(Value::Null, Value::Object)
 }
 
 fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {

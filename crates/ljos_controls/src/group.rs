@@ -29,7 +29,7 @@ pub struct ButtonGroup {
     #[qml(notify)]
     pub exclusive: bool,
     /// A `Qt.CheckState`: none, some or all of the buttons are checked.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.CheckState")]
     pub check_state: i32,
     /// The checked button as the group last settled it, so that a change
     /// of `checkedButton` knows which button to uncheck.

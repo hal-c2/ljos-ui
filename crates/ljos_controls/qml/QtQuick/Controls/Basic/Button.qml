@@ -57,7 +57,8 @@ T.Button {
                            Math.round((base.g + mid.g) * 127.5 + 0.001) / 255,
                            Math.round((base.b + mid.b) * 127.5 + 0.001) / 255, 1)
         }
-        // TODO(focus): a border in `palette.highlight` while the button
-        // has visual focus.
+        // Where the keyboard is, when a key brought it there.
+        border.color: control.palette.highlight
+        border.width: control.visualFocus ? 2 : 0
     }
 }

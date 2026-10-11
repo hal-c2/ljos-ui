@@ -107,7 +107,7 @@ pub struct ScrollBar {
     #[qml(notify)]
     pub pressed: bool,
     /// A `Qt.Orientation`.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.Orientation")]
     pub orientation: i32,
     /// One of [`snap_mode`].
     #[qml(notify, enumeration = "SnapMode")]
@@ -192,7 +192,7 @@ pub struct ScrollIndicator {
     #[qml(notify)]
     pub active: bool,
     /// A `Qt.Orientation`.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.Orientation")]
     pub orientation: i32,
     #[qml(notify, readonly)]
     pub horizontal: bool,

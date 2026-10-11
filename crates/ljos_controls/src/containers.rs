@@ -273,7 +273,7 @@ pub struct ToolBar {
     pub pane: Pane,
     /// `ToolBar.Header` or `ToolBar.Footer`: where the bar is, for a
     /// style that draws the two differently.
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Position")]
     pub position: i32,
 }
 

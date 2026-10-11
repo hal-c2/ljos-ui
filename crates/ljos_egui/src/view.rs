@@ -169,6 +169,8 @@ pub struct QmlView {
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
+    /// What egui said of the system's preferences when it was last asked.
+    system: a11y::SystemFeed,
     text: TextBridge,
     stats: ViewStats,
 }
@@ -213,6 +215,7 @@ impl QmlView {
             painted_frame: None,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
+            system: a11y::SystemFeed::default(),
             text: TextBridge::default(),
             stats: ViewStats::default(),
         })
@@ -501,6 +504,9 @@ impl QmlView {
         let ctx = ui.ctx().clone();
         self.gate.held.set(true);
         self.gate.missed.set(false);
+
+        // Before the frame, so that it is laid out and painted with them.
+        self.system.feed(&ctx, &self.engine);
 
         // The accessibility tree exists only while something reads it.
         // Switched here, so the frame of this pass builds it.

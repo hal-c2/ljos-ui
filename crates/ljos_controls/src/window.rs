@@ -26,6 +26,22 @@ use crate::palette::Palette;
 use crate::parts::{PartKind, destroy_replaced_style_parts, manage_part};
 use crate::util::{is_a, num};
 
+/// `Window.Windowed`: what `visibility` holds (numbers read off qml6
+/// 6.11.2).
+fn window_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![(
+        "Visibility",
+        vec![
+            ("Hidden", 0),
+            ("AutomaticVisibility", 1),
+            ("Windowed", 2),
+            ("Minimized", 3),
+            ("Maximized", 4),
+            ("FullScreen", 5),
+        ],
+    )]
+}
+
 /// `Window`.
 ///
 /// It is a `Rectangle` underneath so that its `color` paints.
@@ -34,7 +50,8 @@ use crate::util::{is_a, num};
     module = "QtQuick",
     name = "Window",
     extends = Rectangle,
-    attached = WindowAttached
+    attached = WindowAttached,
+    enums = window_enums
 )]
 pub struct Window {
     #[qml(base)]
@@ -50,11 +67,11 @@ pub struct Window {
     #[qml(notify)]
     pub maximum_height: i32,
     /// Stored; the host decides what kind of window it is.
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.WindowFlags")]
     pub flags: i32,
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Qt.WindowModality")]
     pub modality: i32,
-    #[qml(notify)]
+    #[qml(notify, enumeration = "Visibility")]
     pub visibility: i32,
     #[qml(notify, readonly)]
     pub active: bool,

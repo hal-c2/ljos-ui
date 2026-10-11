@@ -267,7 +267,7 @@ pub struct DialogButtonBox {
     pub count: i32,
     /// `Qt.Alignment` flags: where the buttons are in a box that is
     /// larger than they need. 0 lets them share the whole width.
-    #[qml(notify)]
+    #[qml(notify, flags = "Qt.Alignment")]
     pub alignment: i32,
     #[qml(notify, enumeration = "ButtonLayout")]
     pub button_layout: i32,
@@ -278,7 +278,7 @@ pub struct DialogButtonBox {
     /// a style that draws the two differently.
     #[qml(notify, enumeration = "Position")]
     pub position: i32,
-    #[qml(notify, enumeration = "StandardButton")]
+    #[qml(notify, flags = "StandardButton")]
     pub standard_buttons: i32,
     #[qml(notify)]
     pub content_width: f64,
@@ -309,7 +309,7 @@ impl Default for DialogButtonBox {
 
 /// What `DialogButtonBox.buttonRole: …` attaches to a button.
 #[derive(Debug, QmlObject)]
-#[qml(name = "DialogButtonBoxAttached")]
+#[qml(name = "DialogButtonBoxAttached", enums = box_enums)]
 pub struct DialogButtonBoxAttached {
     /// The box the button is in.
     #[qml(notify, readonly)]
@@ -986,7 +986,7 @@ pub struct Dialog {
     pub header: Option<ObjectId>,
     #[qml(notify)]
     pub footer: Option<ObjectId>,
-    #[qml(notify, enumeration = "StandardButton")]
+    #[qml(notify, flags = "StandardButton")]
     pub standard_buttons: i32,
     /// `Dialog.Accepted`, `Dialog.Rejected` or what `done()` was given.
     #[qml(notify)]

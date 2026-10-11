@@ -26,7 +26,9 @@ T.Switch {
         y: control.topPadding + (control.availableHeight - height) / 2
         radius: 8
         color: control.checked ? control.palette.dark : control.palette.midlight
-        // TODO(focus): a border in `palette.highlight` with visual focus.
+        // Where the keyboard is, when a key brought it there.
+        border.color: control.palette.highlight
+        border.width: control.visualFocus ? 2 : 0
 
         Rectangle {
             x: control.visualPosition * (parent.width - width)

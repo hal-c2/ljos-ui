@@ -203,6 +203,109 @@ impl Role {
     }
 }
 
+/// What an item says of itself that changes which AccessKit role its Qt
+/// role becomes: Qt has one `EditableText` where AccessKit tells a search
+/// field from a password field. The flags are the `Accessible` properties
+/// of the same names; `exclusive` has none and is for a control that knows
+/// it is one of a group of which one is checked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RoleFlags {
+    pub default_button: bool,
+    pub editable: bool,
+    pub multi_line: bool,
+    pub password_edit: bool,
+    pub search_edit: bool,
+    pub selectable: bool,
+    pub checkable: bool,
+    pub exclusive: bool,
+}
+
+impl Role {
+    /// The AccessKit role of an item with these flags
+    /// (`docs/research/05-accessibility-and-localisation.md` §2.4, the
+    /// "refinements" column). Without flags this is [`Role::accesskit`].
+    pub fn refined(self, flags: RoleFlags) -> Option<Ak> {
+        let plain = self.accesskit()?;
+        Some(match self {
+            Role::Button if flags.default_button => Ak::DefaultButton,
+            Role::ComboBox if flags.editable => Ak::EditableComboBox,
+            // A field that hides what is typed is that before anything
+            // else: a screen reader must not echo it.
+            Role::EditableText if flags.password_edit => Ak::PasswordInput,
+            Role::EditableText if flags.search_edit => Ak::SearchInput,
+            Role::EditableText if flags.multi_line => Ak::MultilineTextInput,
+            Role::List if flags.selectable => Ak::ListBox,
+            Role::ListItem if flags.selectable => Ak::ListBoxOption,
+            Role::MenuItem if flags.checkable && flags.exclusive => Ak::MenuItemRadio,
+            Role::MenuItem if flags.checkable => Ak::MenuItemCheckBox,
+            _ => plain,
+        })
+    }
+
+    /// What a screen reader should call the role when AccessKit's word for
+    /// it says less than Qt's: a dial is a slider there.
+    pub fn role_description(self) -> Option<&'static str> {
+        match self {
+            Role::Dial => Some("dial"),
+            _ => None,
+        }
+    }
+
+    /// Qt's default of `Accessible.checkable`: what Qt 6.11 answers for an
+    /// item that has the role and was told nothing else.
+    pub fn checkable_by_default(self) -> bool {
+        matches!(self, Role::CheckBox | Role::RadioButton | Role::Switch)
+    }
+
+    /// Qt's default of `Accessible.editable`, found the same way.
+    pub fn editable_by_default(self) -> bool {
+        self == Role::EditableText
+    }
+
+    /// Qt's default of `Accessible.readOnly`, found the same way.
+    pub fn read_only_by_default(self) -> bool {
+        self == Role::StaticText
+    }
+
+    /// Whether the role is of something a user acts on: it needs a name,
+    /// and room for a finger (the audit asks both).
+    pub fn actionable(self) -> bool {
+        self.pressable()
+            || matches!(
+                self,
+                Role::EditableText
+                    | Role::SpinBox
+                    | Role::Slider
+                    | Role::Dial
+                    | Role::ScrollBar
+                    | Role::HotkeyField
+                    | Role::TreeItem
+            )
+    }
+
+    /// Whether the role is of one of a set of the same: a row, an item of
+    /// a menu, a tab. Such an item has a place in its set to tell.
+    pub fn in_set(self) -> bool {
+        matches!(
+            self,
+            Role::ListItem
+                | Role::TreeItem
+                | Role::MenuItem
+                | Role::PageTab
+                | Role::RadioButton
+                | Role::Row
+        )
+    }
+
+    /// Whether the role is a picture: it has a name, or it is left out.
+    pub fn image(self) -> bool {
+        matches!(
+            self,
+            Role::Graphic | Role::Chart | Role::Animation | Role::Canvas
+        )
+    }
+}
+
 /// Every `Accessible.<key>` role key with Qt's number, aliases included:
 /// the enum table a QML engine registers.
 pub fn qt_role_keys() -> Vec<(&'static str, i32)> {
@@ -263,6 +366,240 @@ mod tests {
             (Role::UserRole, 0xFFFF),
         ] {
             assert_eq!(role.qt_value(), qt, "{role:?}");
+        }
+    }
+
+    /// The whole of doc.qt.io/qt-6/qaccessible.html#Role-enum, in the
+    /// page's order: every constant and its number. A role Qt documents
+    /// and the table lacks fails here, and so does one the table invents.
+    const DOCUMENTED: &[(&str, i32)] = &[
+        ("AlertMessage", 0x08),
+        ("Animation", 0x36),
+        ("Application", 0x0E),
+        ("Assistant", 0x20),
+        ("BlockQuote", 0x431),
+        ("Border", 0x13),
+        ("ButtonDropDown", 0x38),
+        ("ButtonDropGrid", 0x3A),
+        ("ButtonMenu", 0x39),
+        ("Canvas", 0x35),
+        ("Caret", 0x07),
+        ("Cell", 0x1D),
+        ("Chart", 0x11),
+        ("CheckBox", 0x2C),
+        ("Client", 0x0A),
+        ("Clock", 0x3D),
+        ("ColorChooser", 0x404),
+        ("Column", 0x1B),
+        ("ColumnHeader", 0x19),
+        ("ComboBox", 0x2E),
+        ("ComplementaryContent", 0x42C),
+        ("Cursor", 0x06),
+        ("Desktop", 0x82),
+        ("Dial", 0x31),
+        ("Dialog", 0x12),
+        ("Document", 0x0F),
+        ("EditableText", 0x2A),
+        ("Equation", 0x37),
+        ("Footer", 0x40E),
+        ("Form", 0x410),
+        ("Graphic", 0x28),
+        ("Grip", 0x04),
+        ("Grouping", 0x14),
+        ("Heading", 0x414),
+        ("HelpBalloon", 0x1F),
+        ("HotkeyField", 0x32),
+        ("Indicator", 0x27),
+        ("LayeredPane", 0x80),
+        ("Link", 0x1E),
+        ("List", 0x21),
+        ("ListItem", 0x22),
+        ("MenuBar", 0x02),
+        ("MenuItem", 0x0C),
+        ("NoRole", 0x00),
+        ("Note", 0x41B),
+        ("Notification", 0x86),
+        ("PageTab", 0x25),
+        ("PageTabList", 0x3C),
+        ("Paragraph", 0x83),
+        ("Pane", 0x10),
+        ("PopupMenu", 0x0B),
+        ("ProgressBar", 0x30),
+        ("PropertyPage", 0x26),
+        ("Button", 0x2B),
+        ("RadioButton", 0x2D),
+        ("Row", 0x1C),
+        ("RowHeader", 0x1A),
+        ("ScrollBar", 0x03),
+        ("Section", 0x85),
+        ("Separator", 0x15),
+        ("Slider", 0x33),
+        ("Sound", 0x05),
+        ("SpinBox", 0x34),
+        ("Splitter", 0x3E),
+        ("StaticText", 0x29),
+        ("StatusBar", 0x17),
+        ("Switch", 0x87),
+        ("Table", 0x18),
+        ("Terminal", 0x81),
+        ("TitleBar", 0x01),
+        ("ToolBar", 0x16),
+        ("ToolTip", 0x0D),
+        ("Tree", 0x23),
+        ("TreeItem", 0x24),
+        ("UserRole", 0xFFFF),
+        ("WebDocument", 0x84),
+        ("Whitespace", 0x3B),
+        ("Window", 0x09),
+    ];
+
+    #[test]
+    fn no_documented_role_is_missing() {
+        for (key, qt) in DOCUMENTED {
+            let row = ROLES.iter().find(|r| r.key == *key);
+            assert_eq!(row.map(|r| r.qt), Some(*qt), "Accessible.{key}");
+        }
+        for r in ROLES {
+            assert!(
+                DOCUMENTED.iter().any(|(key, _)| *key == r.key),
+                "Accessible.{} is not a documented role",
+                r.key
+            );
+        }
+        assert_eq!(ROLES.len(), DOCUMENTED.len());
+    }
+
+    #[test]
+    fn every_role_maps_or_is_one_of_the_four_that_say_nothing() {
+        for r in ROLES {
+            let nothing = matches!(
+                r.role,
+                Role::NoRole | Role::Whitespace | Role::Cursor | Role::Caret
+            );
+            assert_eq!(r.accesskit.is_none(), nothing, "{}", r.key);
+            // No flags, no refinement.
+            assert_eq!(r.role.refined(RoleFlags::default()), r.accesskit);
+        }
+    }
+
+    #[test]
+    fn flags_refine_the_role() {
+        let f = RoleFlags::default;
+        let cases = [
+            (
+                Role::Button,
+                RoleFlags {
+                    default_button: true,
+                    ..f()
+                },
+                Ak::DefaultButton,
+            ),
+            (
+                Role::ComboBox,
+                RoleFlags {
+                    editable: true,
+                    ..f()
+                },
+                Ak::EditableComboBox,
+            ),
+            (
+                Role::EditableText,
+                RoleFlags {
+                    multi_line: true,
+                    ..f()
+                },
+                Ak::MultilineTextInput,
+            ),
+            (
+                Role::EditableText,
+                RoleFlags {
+                    search_edit: true,
+                    ..f()
+                },
+                Ak::SearchInput,
+            ),
+            (
+                Role::EditableText,
+                RoleFlags {
+                    password_edit: true,
+                    ..f()
+                },
+                Ak::PasswordInput,
+            ),
+            (
+                Role::List,
+                RoleFlags {
+                    selectable: true,
+                    ..f()
+                },
+                Ak::ListBox,
+            ),
+            (
+                Role::ListItem,
+                RoleFlags {
+                    selectable: true,
+                    ..f()
+                },
+                Ak::ListBoxOption,
+            ),
+            (
+                Role::MenuItem,
+                RoleFlags {
+                    checkable: true,
+                    ..f()
+                },
+                Ak::MenuItemCheckBox,
+            ),
+            (
+                Role::MenuItem,
+                RoleFlags {
+                    checkable: true,
+                    exclusive: true,
+                    ..f()
+                },
+                Ak::MenuItemRadio,
+            ),
+        ];
+        for (role, flags, want) in cases {
+            assert_eq!(role.refined(flags), Some(want), "{role:?} {flags:?}");
+        }
+        // A password field that is also a search field or has several
+        // lines stays a password field.
+        let all = RoleFlags {
+            password_edit: true,
+            search_edit: true,
+            multi_line: true,
+            ..f()
+        };
+        assert_eq!(Role::EditableText.refined(all), Some(Ak::PasswordInput));
+        // A flag that means nothing to a role changes nothing.
+        let odd = RoleFlags {
+            default_button: true,
+            ..f()
+        };
+        assert_eq!(Role::CheckBox.refined(odd), Some(Ak::CheckBox));
+        assert_eq!(Role::NoRole.refined(odd), None);
+    }
+
+    #[test]
+    fn a_dial_is_a_slider_called_a_dial() {
+        assert_eq!(Role::Dial.accesskit(), Some(Ak::Slider));
+        assert_eq!(Role::Dial.role_description(), Some("dial"));
+        assert_eq!(Role::Slider.role_description(), None);
+    }
+
+    #[test]
+    fn flag_defaults_follow_qt() {
+        for r in ROLES {
+            let role = r.role;
+            assert_eq!(
+                role.checkable_by_default(),
+                matches!(role, Role::CheckBox | Role::RadioButton | Role::Switch),
+                "{}",
+                r.key
+            );
+            assert_eq!(role.editable_by_default(), role == Role::EditableText);
+            assert_eq!(role.read_only_by_default(), role == Role::StaticText);
         }
     }
 
