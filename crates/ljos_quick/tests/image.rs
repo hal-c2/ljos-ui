@@ -720,10 +720,15 @@ Item {
     store.set_waker(move || {
         let _ = tx.send(());
     });
+    // Held while the decode runs: on a slow machine it can be back before
+    // the frame below, which would then deliver it and leave nothing waiting.
+    store.set_held(true);
     set(&e, picture, "source", Value::Url("blue.png".into()));
     frame(&mut s, &e);
     rx.recv_timeout(std::time::Duration::from_secs(30))
         .expect("a wake");
+    assert_eq!(status(&e, picture), image_status::LOADING);
+    store.set_held(false);
     assert!(s.needs_frame(), "the host's repaint finds work");
     frame(&mut s, &e);
     assert_eq!(status(&e, picture), image_status::READY);

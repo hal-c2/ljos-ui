@@ -42,7 +42,8 @@ jobs:
           cache: true
       - run: mise run types -- --qt "$QT_ROOT_DIR/qml"
       - run: mise run check
-      - run: mise run test
+      # All of them, so one run shows every failure a runner has.
+      - run: mise run test -- --no-fail-fast
       - run: df -h /
         if: always()
       - run: mise run features:lint
