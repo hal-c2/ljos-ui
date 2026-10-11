@@ -1,9 +1,16 @@
-//! Supervisor policy types (ARCHITECTURE.md 9.4).
+//! Supervision (ARCHITECTURE.md 9.4).
 //!
-//! Only the decision logic lives here for now: restart strategy, restart type
-//! and the restart-intensity window. The tree, child start/stop and the tokio
-//! and pinned-thread child kinds come with the engine, which supplies
-//! `ChildSpec` and `StartCx` (they need component definitions).
+//! - The policy, here: restart strategy, restart kind and the
+//!   restart-intensity window, as pure decisions ([`Supervisor`]).
+//! - The tree, in [`tree`]: supervisors and their children, child specs,
+//!   start and stop ([`SupervisorTree`]). The engine keeps its UI boundaries
+//!   in one; time comes from the caller's [`Clock`](crate::Clock), so tests
+//!   run on virtual time.
+//! - tokio tasks, in [`tasks`] (cargo feature `tasks`): a tree whose
+//!   children are tasks in a `JoinSet`, each with a `CancellationToken`.
+//!
+//! Pinned plugin threads (watched by heartbeat) and the development tools'
+//! supervisor are later milestones; [`ChildKind`] is open for them.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -12,6 +19,15 @@ use thiserror::Error;
 
 use crate::fault::Fault;
 use crate::time::Time;
+
+#[cfg(feature = "tasks")]
+pub mod tasks;
+pub mod tree;
+
+pub use tree::{
+    APP_INTENSITY, ChildInfo, ChildKind, ChildSpec, Outcome, PLUGIN_INTENSITY, SERVICE_INTENSITY,
+    StandardSups, StartError, SupId, SupervisorTree,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Strategy {
@@ -124,6 +140,16 @@ impl IntensityTracker {
     pub fn recent(&self) -> usize {
         self.restarts.len()
     }
+
+    /// Changes the limit. Restarts already counted stay counted.
+    pub fn set_intensity(&mut self, intensity: Intensity) {
+        self.intensity = intensity;
+    }
+
+    /// Forgets the restarts counted so far.
+    pub fn clear(&mut self) {
+        self.restarts.clear();
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -144,12 +170,16 @@ pub enum Directive {
     Escalate,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum SupervisorError {
     #[error("unknown child {0:?}")]
     UnknownChild(ChildId),
     #[error("duplicate child {0:?}")]
     DuplicateChild(ChildId),
+    #[error("unknown supervisor")]
+    UnknownSupervisor,
+    #[error("child {0:?} is a supervisor, not a leaf")]
+    NotALeaf(ChildId),
 }
 
 #[derive(Debug)]
@@ -175,6 +205,33 @@ impl Supervisor {
 
     pub fn children(&self) -> impl Iterator<Item = ChildId> + '_ {
         self.children.iter().map(|&(id, _)| id)
+    }
+
+    pub fn intensity(&self) -> Intensity {
+        self.tracker.intensity()
+    }
+
+    /// Changes the limit. Restarts already counted stay counted.
+    pub fn set_intensity(&mut self, intensity: Intensity) {
+        self.tracker.set_intensity(intensity);
+    }
+
+    /// Restarts counted inside the window as of the last exit.
+    pub fn recent_restarts(&self) -> usize {
+        self.tracker.recent()
+    }
+
+    /// Forgets the restarts counted so far (the supervisor itself was
+    /// restarted).
+    pub fn reset(&mut self) {
+        self.tracker.clear();
+    }
+
+    /// Forgets `id`. False when there is no such child.
+    pub fn remove_child(&mut self, id: ChildId) -> bool {
+        let before = self.children.len();
+        self.children.retain(|&(c, _)| c != id);
+        self.children.len() != before
     }
 
     pub fn add_child(&mut self, id: ChildId, restart: Restart) -> Result<(), SupervisorError> {

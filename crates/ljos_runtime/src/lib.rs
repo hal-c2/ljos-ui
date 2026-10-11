@@ -10,7 +10,7 @@
 //! | [`time`] | `Time`, `Clock`, `SystemClock`, `VirtualClock` | 8.1 |
 //! | [`frame_scheduler`] | next wake time, timers, 0 % idle | 8.1 |
 //! | [`lane`], [`budget`], [`job`], [`scheduler`] | lanes, slices, jobs, `FrameReport` | 9.1 |
-//! | [`fault`], [`supervisor`] | `Fault`, restart policy and intensity | 9.3, 9.4 |
+//! | [`fault`], [`supervisor`] | `Fault`, restart policy and intensity, the supervisor tree, supervised tokio tasks (feature `tasks`) | 9.3, 9.4 |
 //! | [`pool`] | `ComputePool`: bounded worker threads for decode and parse | 3.3 |
 //! | [`memory`] | `MemoryPressure`, `Evictable`, byte budgets, `ByteLru` | 8.5 |
 //!
@@ -43,6 +43,10 @@ pub use memory::{
 };
 pub use pool::{ComputePool, PoolFull};
 pub use scheduler::{FrameReport, Scheduler};
+pub use supervisor::{
+    APP_INTENSITY, ChildInfo, ChildKind, ChildSpec, Outcome, PLUGIN_INTENSITY, SERVICE_INTENSITY,
+    StandardSups, StartError, SupId, SupervisorTree,
+};
 pub use supervisor::{
     ChildId, Directive, ExitReason, Intensity, IntensityTracker, IntensityVerdict, Restart,
     Strategy, Supervisor, SupervisorError,
