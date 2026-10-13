@@ -80,7 +80,7 @@ pub(crate) fn text_enums() -> EnumTable {
 
 pub(crate) fn tap_handler_enums() -> EnumTable {
     use gesture_policy as g;
-    vec![(
+    let mut enums = vec![(
         "GesturePolicy",
         keys(&[
             ("DragThreshold", g::DRAG_THRESHOLD),
@@ -88,7 +88,11 @@ pub(crate) fn tap_handler_enums() -> EnumTable {
             ("ReleaseWithinBounds", g::RELEASE_WITHIN_BOUNDS),
             ("DragWithinBounds", g::DRAG_WITHIN_BOUNDS),
         ]),
-    )]
+    )];
+    // Qt's TapHandler is a PointerHandler; here it is not, so it carries
+    // the enum its `grabPermissions` is written with itself.
+    enums.extend(crate::handlers::grab_permission_enums());
+    enums
 }
 
 pub(crate) fn loader_enums() -> EnumTable {

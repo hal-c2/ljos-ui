@@ -199,6 +199,9 @@ pub struct MouseArea {
     /// effect beyond being readable.
     #[qml(notify)]
     pub prevent_stealing: bool,
+    /// Moving an item by dragging the area (`crate::mouse_drag`).
+    #[qml(group)]
+    pub drag: crate::drag::Drag,
 }
 
 impl Default for MouseArea {
@@ -213,6 +216,7 @@ impl Default for MouseArea {
             mouse_y: 0.0,
             accepted_buttons: mouse_button::LEFT,
             prevent_stealing: false,
+            drag: crate::drag::Drag::default(),
         }
     }
 }
@@ -355,6 +359,27 @@ pub struct TapHandler {
     /// six values here (`velocity`, `pressure`, `sceneGrabPosition` …).
     #[qml(group)]
     pub point: HandlerPoint,
+    /// The properties every pointer handler has (`crate::handlers`).
+    /// Only `grabPermissions` acts: the rest are kept for what binds to
+    /// them.
+    #[qml(notify)]
+    pub target: Option<ObjectId>,
+    #[qml(notify)]
+    pub margin: f64,
+    #[qml(notify, reset)]
+    pub drag_threshold: i32,
+    #[qml(flags = "GrabPermissions")]
+    pub grab_permissions: i32,
+    #[qml(notify)]
+    pub accepted_devices: i32,
+    #[qml(notify)]
+    pub accepted_pointer_types: i32,
+    #[qml(notify, flags = "Qt.KeyboardModifiers")]
+    pub accepted_modifiers: i32,
+    #[qml(notify, reset, enumeration = "Qt.CursorShape")]
+    pub cursor_shape: i32,
+    #[qml(notify, reset)]
+    pub long_press_threshold: f64,
 }
 
 impl Default for TapHandler {
@@ -368,6 +393,15 @@ impl Default for TapHandler {
             accepted_buttons: mouse_button::LEFT,
             parent: None,
             point: HandlerPoint::default(),
+            target: None,
+            margin: 0.0,
+            drag_threshold: crate::scene::DRAG_THRESHOLD as i32,
+            grab_permissions: crate::handlers::grab_permission::DEFAULT,
+            accepted_devices: 0x7FFF_FFFF,
+            accepted_pointer_types: 0x7FFF,
+            accepted_modifiers: -0x0200_0000,
+            cursor_shape: 0,
+            long_press_threshold: 0.5,
         }
     }
 }
@@ -396,8 +430,21 @@ impl TapHandler {
         if cx.get(TapHandler::PARENT)?.is_none() {
             cx.engine.set_internal(cx.this, TapHandler::PARENT, owner)?;
         }
+        if crate::item::is_unset(cx.engine, cx.this, TapHandler::TARGET.index) {
+            let parent = cx.get(TapHandler::PARENT)?;
+            cx.engine
+                .set_internal(cx.this, TapHandler::TARGET, parent)?;
+        }
         Ok(())
     }
+}
+
+/// Who may take the pointer from the handler (`PointerHandler`'s
+/// `grabPermissions`).
+pub(crate) fn tap_grab_permissions(engine: &Engine, h: ObjectId) -> i32 {
+    engine
+        .untrack(|| engine.read(h, TapHandler::GRAB_PERMISSIONS.index))
+        .to_number() as i32
 }
 
 /// The item a TapHandler acts on: its `parent`, else its owner.

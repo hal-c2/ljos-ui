@@ -15,7 +15,8 @@ use ljos_render::kurbo;
 
 use super::physics::{Motion, WHEEL_NOTCH_PIXELS, scroll_physics};
 use super::{
-    Flickable, X, Y, bounds, can_flick, flag, scroll_to, wheel_enabled, wheel_moved, wheel_rested,
+    Flickable, X, Y, bounds, can_flick, flag, fling, scroll_to, state_of, wheel_enabled,
+    wheel_moved, wheel_rested,
 };
 use crate::input::{ScrollPhase, WheelEvent};
 use crate::item::Item;
@@ -104,9 +105,18 @@ fn wheel(e: &Engine, f: ObjectId, ev: &WheelEvent, _at: kurbo::Point) -> bool {
             continue;
         }
         let state = e.untrack(|| bounds(e, f, axis));
-        if let Motion::Jump(to) = physics.wheel(&state, distance[axis]) {
-            scroll_to(e, f, axis, to);
-            moved[axis] = true;
+        match physics.wheel(&state, distance[axis]) {
+            Motion::Jump(to) => {
+                stop_fling(e, f, axis);
+                scroll_to(e, f, axis, to);
+                moved[axis] = true;
+            }
+            Motion::Start(seg) => {
+                stop_fling(e, f, axis);
+                fling::glide(e, f, axis, seg);
+                moved[axis] = true;
+            }
+            _ => {}
         }
     }
     let ended = ev.phase == ScrollPhase::End;
@@ -120,6 +130,15 @@ fn wheel(e: &Engine, f: ObjectId, ev: &WheelEvent, _at: kurbo::Point) -> bool {
         wheel_rested(e, f);
     }
     false
+}
+
+/// The wheel takes over from a fling in its direction.
+fn stop_fling(e: &Engine, f: ObjectId, axis: usize) {
+    if let Some(st) = state_of(e, f) {
+        let mut axes = [false; 2];
+        axes[axis] = true;
+        fling::stop(e, f, &st, axes);
+    }
 }
 
 pub(crate) fn hooks() -> WheelItem {

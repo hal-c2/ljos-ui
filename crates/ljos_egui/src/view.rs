@@ -16,7 +16,7 @@ use ljos_quick::{
 };
 use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::{FrameView, RenderBackend, kurbo};
-use ljos_runtime::{Clock, SystemClock, Time};
+use ljos_runtime::{Clock, MemoryPressure, SystemClock, Time};
 
 use crate::a11y;
 use crate::input::{WheelTrack, map_button, map_modifiers, map_wheel};
@@ -184,6 +184,8 @@ pub struct QmlView {
     size: Option<Vec2>,
     ppp: Option<f32>,
     painted_frame: Option<u64>,
+    /// Passes paint; off while the window is hidden ([`QmlView::set_drawn`]).
+    drawn: bool,
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
@@ -200,6 +202,11 @@ pub struct QmlView {
     system: a11y::SystemFeed,
     text: TextBridge,
     stats: ViewStats,
+    /// Files a file manager drags over the window, told to the scene's
+    /// DropAreas.
+    /// Files dragged over the view from outside, and where the scene was
+    /// last told they are.
+    file_drag: Option<(ljos_quick::PlatformDrag, Option<kurbo::Point>)>,
 }
 
 impl std::fmt::Debug for QmlView {
@@ -240,6 +247,7 @@ impl QmlView {
             size: None,
             ppp: None,
             painted_frame: None,
+            drawn: true,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
             graft: None,
@@ -248,6 +256,7 @@ impl QmlView {
             system: a11y::SystemFeed::default(),
             text: TextBridge::default(),
             stats: ViewStats::default(),
+            file_drag: None,
         })
     }
 
@@ -448,6 +457,30 @@ impl QmlView {
 
     pub fn stats(&self) -> ViewStats {
         self.stats
+    }
+
+    /// The renderer, for what it holds (`image_textures`, `glyph_atlas`).
+    pub fn backend(&self) -> &EpaintBackend {
+        &self.backend
+    }
+
+    /// Gives back what the view can rebuild (ARCHITECTURE §8.5): the
+    /// renderer's meshes, glyph atlas and textures, and the scene's
+    /// copies of pictures. A host calls it when the platform reports
+    /// memory pressure or the view's window is hidden; the next pass
+    /// builds again what it draws.
+    pub fn trim(&mut self, pressure: MemoryPressure) {
+        self.backend.trim(pressure);
+        self.scene.trim(&self.engine, pressure);
+        // The renderer may have forgotten the nodes of the last snapshot.
+        self.painted_frame = None;
+    }
+
+    /// Whether passes paint. A host turns it off for a window that is not
+    /// on the screen, whose passes still run the scene: the renderer then
+    /// builds nothing that [`QmlView::trim`] gave back until it is shown.
+    pub fn set_drawn(&mut self, drawn: bool) {
+        self.drawn = drawn;
     }
 
     /// The egui id of an item's accessibility node, if the item is exposed.
@@ -712,6 +745,7 @@ impl QmlView {
         // 2. Input, against the snapshot the user is looking at.
         let now = self.clock.now();
         self.deliver_input(ui, rect, now);
+        self.deliver_files(ui, rect);
         self.sync_keyboard(ui);
 
         // 3-9. The pipeline, only when something asked for it.
@@ -736,7 +770,9 @@ impl QmlView {
 
         // Paint. egui keeps no retained shapes, so every pass re-emits the
         // snapshot; B0 caches meshes per node, so this is mostly Arc clones.
-        if let Some(snap) = self.scene.snapshot().cloned() {
+        if self.drawn
+            && let Some(snap) = self.scene.snapshot().cloned()
+        {
             let view = FrameView::new(&snap, ppp);
             if self.painted_frame != Some(snap.frame) {
                 self.backend.sync(&view);
@@ -1024,6 +1060,65 @@ impl QmlView {
 }
 
 impl QmlView {
+    /// Files dragged over the window from another application go to the
+    /// scene's DropAreas, as a drag with no source whose key is
+    /// `text/uri-list`. egui says only that files hover and that they were
+    /// dropped, not where: the drag is where the pointer was last seen.
+    ///
+    /// This is the one way a file drop reaches the scene. Every host egui
+    /// runs in reports the window system's file events here (egui-winit
+    /// for the shell), per window, and only the view knows where its scene
+    /// is in the window and which tree it shows.
+    fn deliver_files(&mut self, ui: &Ui, rect: Rect) {
+        use ljos_quick::{DragData, PlatformDrag, PlatformDragKind, platform_drag};
+        let (hovered, dropped, pos) = ui.input(|i| {
+            (
+                i.raw.hovered_files.clone(),
+                i.raw.dropped_files.clone(),
+                i.pointer.latest_pos(),
+            )
+        });
+        if hovered.is_empty() && dropped.is_empty() && self.file_drag.is_none() {
+            return;
+        }
+        let at = pos
+            .filter(|p| rect.contains(*p))
+            .map(|p| kurbo::Point::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y)));
+        let root = self.scene.root();
+        let engine = &self.engine;
+        let start = |files: Vec<std::path::PathBuf>| {
+            let drag = PlatformDrag::new(DragData::files(files));
+            match root {
+                Some(root) => drag.over(engine, root),
+                None => drag,
+            }
+        };
+        if !dropped.is_empty() {
+            let drag = match self.file_drag.take() {
+                Some((drag, _)) => drag,
+                None => start(dropped.iter().map(|f| f.path().to_path_buf()).collect()),
+            };
+            let kind = at.map_or(PlatformDragKind::Leave, PlatformDragKind::Drop);
+            platform_drag(engine, &drag, &kind);
+        } else if !hovered.is_empty() {
+            let (drag, told) = self.file_drag.get_or_insert_with(|| {
+                (
+                    start(hovered.iter().filter_map(|f| f.path.clone()).collect()),
+                    None,
+                )
+            });
+            // egui keeps the hovered files in every pass while the drag
+            // lasts; the scene hears of the drag only when it went somewhere.
+            if *told != at {
+                *told = at;
+                let kind = at.map_or(PlatformDragKind::Leave, PlatformDragKind::Move);
+                platform_drag(engine, drag, &kind);
+            }
+        } else if let Some((drag, _)) = self.file_drag.take() {
+            platform_drag(engine, &drag, &PlatformDragKind::Leave);
+        }
+    }
+
     /// Keeps a scroll the scene used from also scrolling an egui scroll
     /// area around the view. egui spreads one turn of the wheel over
     /// several passes and a scroll area reads it when its content has been

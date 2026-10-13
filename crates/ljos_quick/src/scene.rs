@@ -29,9 +29,7 @@ use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
 use crate::enums::gesture_policy;
 use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
-use crate::item::{
-    Item, compose_transform, init_item, is_a, is_item, num, scene_transform, write_computed,
-};
+use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
 use crate::loader::{Loader, shown_children};
 #[allow(deprecated)]
 use crate::log::QuickLog;
@@ -51,8 +49,10 @@ pub const MAX_POLISH_PASSES: usize = 10;
 pub const INCUBATION_BUDGET: Duration = Duration::from_millis(3);
 /// Qt's default `QStyleHints::mouseDoubleClickInterval`.
 pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
-/// Qt's default `QStyleHints::startDragDistance`, in logical pixels.
-pub const DRAG_THRESHOLD: f64 = 10.0;
+/// The default of `Qt.styleHints.startDragDistance`, in logical pixels.
+/// What decides at an event asks [`crate::system_prefs::start_drag_distance`],
+/// which a host may change.
+pub const DRAG_THRESHOLD: f64 = crate::system_prefs::START_DRAG_DISTANCE as f64;
 
 /// Extra host work for pipeline step 3: it advances whatever the host
 /// animates itself at `now` and returns when it next needs a frame.
@@ -87,6 +87,8 @@ enum Kind {
     Editor,
     /// A `Shape`: paints the paths declared in it.
     Shape,
+    /// A `Canvas`: paints in its polish, shows the picture.
+    Canvas,
 }
 
 impl Kind {
@@ -107,6 +109,8 @@ impl Kind {
             Kind::Managed
         } else if is_a::<crate::shapes::Shape>(engine, obj) {
             Kind::Shape
+        } else if is_a::<crate::canvas::Canvas>(engine, obj) {
+            Kind::Canvas
         } else {
             Kind::Item
         }
@@ -115,12 +119,15 @@ impl Kind {
     fn paints(self) -> bool {
         matches!(
             self,
-            Kind::Rectangle | Kind::Text | Kind::Image | Kind::Editor | Kind::Shape
+            Kind::Rectangle | Kind::Text | Kind::Image | Kind::Editor | Kind::Shape | Kind::Canvas
         )
     }
 
     fn polishes(self) -> bool {
-        matches!(self, Kind::Text | Kind::Row | Kind::Column | Kind::Managed)
+        matches!(
+            self,
+            Kind::Text | Kind::Row | Kind::Column | Kind::Managed | Kind::Canvas
+        )
     }
 }
 
@@ -138,6 +145,8 @@ struct Geom {
     rotation: f64,
     scale: f64,
     origin: i32,
+    /// The item's `transform` list.
+    list: crate::transform::Projective,
 }
 
 impl Geom {
@@ -148,12 +157,14 @@ impl Geom {
             z: num(e, obj, Item::Z.index),
             w: num(e, obj, Item::WIDTH.index),
             h: num(e, obj, Item::HEIGHT.index),
-            visible: e.read(obj, Item::VISIBLE.index).to_boolean(),
+            visible: e.read(obj, Item::VISIBLE.index).to_boolean()
+                && !crate::flipable::faces_away(e, obj),
             opacity: num(e, obj, Item::OPACITY.index),
             clip: e.read(obj, Item::CLIP.index).to_boolean(),
             rotation: num(e, obj, Item::ROTATION.index),
             scale: num(e, obj, Item::SCALE.index),
             origin: num(e, obj, Item::TRANSFORM_ORIGIN.index) as i32,
+            list: crate::transform::list_map(e, obj),
         }
     }
 }
@@ -165,6 +176,7 @@ enum Paint {
     Image(crate::image::ImagePaint),
     Editor(crate::text_input::EditorPaint),
     Shape(crate::shapes::ShapePaint),
+    Canvas(crate::canvas::CanvasPicture),
 }
 
 /// Dirty state written by effects and drained by `frame`.
@@ -291,6 +303,9 @@ pub struct QuickScene {
     /// The engine's picture store, known from the first frame on, so that
     /// `needs_frame` sees decoded pictures waiting to be shown.
     images: Option<Rc<crate::image::ImageStore>>,
+    /// The engine's platform, for the same reason: answers of dialogs,
+    /// downloads and the settings writer wait there.
+    platform: Option<Rc<ljos_platform::Platform>>,
 }
 
 impl std::fmt::Debug for QuickScene {
@@ -338,6 +353,7 @@ impl QuickScene {
             incubation_budget: INCUBATION_BUDGET,
             a11y,
             images: None,
+            platform: None,
         }
     }
 
@@ -361,6 +377,9 @@ impl QuickScene {
         self.root = Some(root);
         // The scene is the window: its focus item gets active focus.
         crate::focus::tree::add_window(engine, root);
+        // canPaste hears of other applications' copies when the window
+        // comes back or an editor gets the keyboard.
+        crate::Clipboard::follow_window(engine, root);
         // A Timer started from a handler changes nothing visible, so
         // without this the host would never ask for its deadline.
         let shared = Rc::downgrade(&self.shared);
@@ -419,6 +438,20 @@ impl QuickScene {
     /// says is taken to show 60 frames a second.
     pub fn set_refresh_rate(&mut self, hz: f64) {
         self.incubation_budget = crate::incubation::incubation_budget(hz);
+    }
+
+    /// Gives back memory the scene can rebuild (ARCHITECTURE §8.5): the
+    /// canvases' copies of images and glyph outlines, and decoded pictures
+    /// nothing shows. What is on screen stays. Returns the bytes of
+    /// pictures freed.
+    pub fn trim(&mut self, engine: &Engine, pressure: ljos_runtime::MemoryPressure) -> usize {
+        let canvases = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.kind == Kind::Canvas)
+            .map(|(id, _)| *id);
+        crate::canvas::trim(engine, canvases);
+        crate::image::ImageStore::of(engine).trim(pressure)
     }
 
     /// What a frame gives the creation jobs.
@@ -535,6 +568,7 @@ impl QuickScene {
                 .images
                 .as_ref()
                 .is_some_and(|i| i.has_results() && !i.is_held())
+            || self.platform.as_ref().is_some_and(|p| p.has_answers())
     }
 
     // ------------------------------------------------------------ frame
@@ -554,6 +588,10 @@ impl QuickScene {
         let images = crate::image::ImageStore::of(engine);
         images.deliver(engine);
         self.images = Some(images);
+        // Answers of the platform's services (dialogs, downloads).
+        let platform = ljos_platform::Platform::of(engine);
+        platform.deliver(engine);
+        self.platform = Some(platform);
         // 3. Timers and animations.
         let engine_now = engine.now();
         engine.advance_timers(engine_now);
@@ -575,6 +613,9 @@ impl QuickScene {
         self.sync_layer(engine);
         // 5. Animations, from the frame's time and nothing else.
         crate::animation::tick(engine, now);
+        crate::flickable::fling::tick(engine, now);
+        crate::canvas::tick(engine);
+        crate::views::path_view::tick(engine, now);
         // 6. Polish.
         self.polish(engine);
         // 7. Incubate. New items join the tree and are laid out in this
@@ -634,10 +675,20 @@ impl QuickScene {
                 // A running animation asks for its next frame here, and
                 // for none once it has stopped.
                 let animation_wake = crate::animation::next_wake(engine, now);
-                [engine_wake, self.next_timer, animation_wake]
-                    .into_iter()
-                    .flatten()
-                    .min()
+                let fling_wake = crate::flickable::fling::next_wake(engine, now);
+                let canvas_wake = crate::canvas::next_wake(engine, now);
+                let path_view_wake = crate::views::path_view::next_wake(engine, now);
+                [
+                    engine_wake,
+                    self.next_timer,
+                    animation_wake,
+                    fling_wake,
+                    canvas_wake,
+                    path_view_wake,
+                ]
+                .into_iter()
+                .flatten()
+                .min()
             },
         }
     }
@@ -747,6 +798,7 @@ impl QuickScene {
                     Kind::Text => text::polish(engine, obj, &self.text),
                     // Only after the fonts changed (`refresh_text`).
                     Kind::Editor => crate::text_input::refresh(engine, obj),
+                    Kind::Canvas => crate::canvas::polish(engine, obj),
                     Kind::Item | Kind::Rectangle | Kind::Image | Kind::Shape => Ok(()),
                 };
                 if let Err(e) = r {
@@ -969,7 +1021,9 @@ impl QuickScene {
             let size = kurbo::Size::new(g.w.max(0.0), g.h.max(0.0));
             self.tree.set_local(
                 node,
-                compose_transform(g.x, g.y, g.w, g.h, g.rotation, g.scale, g.origin),
+                crate::transform::compose(
+                    g.x, g.y, g.w, g.h, g.rotation, g.scale, g.origin, &g.list,
+                ),
             );
             if size != e.size {
                 e.size = size;
@@ -1010,6 +1064,7 @@ impl QuickScene {
                 Paint::Image(i) => i.paint(cx.size, b),
                 Paint::Editor(p) => p.paint(cx.size, b),
                 Paint::Shape(s) => s.paint(cx.size, b),
+                Paint::Canvas(c) => c.paint(cx.size, b),
             }
         });
     }
@@ -1096,7 +1151,11 @@ impl QuickScene {
             PointerKind::Press => self.press(engine, ev),
             PointerKind::Move => self.moved(engine, ev),
             PointerKind::Release => self.release(engine, ev),
-            PointerKind::Cancel => self.cancel(engine, ev),
+            PointerKind::Cancel => {
+                let handled = self.cancel(engine, ev);
+                crate::handlers::canceled(engine);
+                handled
+            }
             PointerKind::Leave => {
                 self.update_hover(engine, ev, &[]);
                 false
@@ -1121,6 +1180,13 @@ impl QuickScene {
     ) -> bool {
         let hits = self.hits(engine, ev.pos);
         crate::wheel::deliver(engine, &hits, ev, buttons)
+    }
+
+    /// Offers a pinch the platform recognised (a touchpad's) to the
+    /// `PinchHandler`s under it. Returns whether one took it.
+    pub fn pinch_event(&mut self, engine: &Engine, g: &crate::handlers::PinchGesture) -> bool {
+        let hits = self.hits(engine, g.center);
+        crate::handlers::pinch_gesture(engine, g, &hits)
     }
 
     /// Items under `pos`, topmost first.
@@ -1164,12 +1230,21 @@ impl QuickScene {
         self.pointer.press_pos = ev.pos;
         self.pointer.double = false;
         crate::flickable::drag::pressed(engine);
+        crate::handlers::pressed(engine, ev);
         let mut handled = false;
         let hits = self.hits(engine, ev.pos);
         // After the hits: a popup that closes on this press still keeps
         // it from what it covered.
         crate::layer::press(engine, self.layer, ev);
+        // A press on content that is flung stops it, and is not a click
+        // on what was flung past.
+        if let Some(f) = crate::flickable::fling::catch(engine, &hits) {
+            self.pointer.grab = Some(Grab::Item(f));
+            return true;
+        }
         for obj in hits {
+            // Drag and point handlers grab passively, and see it first.
+            handled |= crate::handlers::press(engine, obj, ev);
             // An item's pointer handlers see the event before the item.
             for h in resources(engine, obj) {
                 if !is_a::<TapHandler>(engine, h)
@@ -1201,11 +1276,14 @@ impl QuickScene {
             {
                 return true;
             }
-            if let Some(h) = crate::pointer_item::pointer_item(engine, obj)
-                && (h.press)(engine, obj, ev, local_point(engine, obj, ev.pos))
-            {
-                self.pointer.grab = Some(Grab::Item(obj));
-                return true;
+            if let Some(h) = crate::pointer_item::pointer_item(engine, obj) {
+                // Areas around it that drag from their children hear it first.
+                crate::mouse_drag::filter_press(engine, obj, ev);
+                if (h.press)(engine, obj, ev, local_point(engine, obj, ev.pos)) {
+                    self.pointer.grab = Some(Grab::Item(obj));
+                    return true;
+                }
+                crate::mouse_drag::filter_undo(engine);
             }
         }
         handled
@@ -1218,6 +1296,8 @@ impl QuickScene {
         ev: &PointerEvent,
         button: MouseButtons,
     ) -> bool {
+        // Areas around it that drag from their children hear it first.
+        crate::mouse_drag::filter_press(engine, m, ev);
         let local = local_point(engine, m, ev.pos);
         set(engine, m, MouseArea::PRESSED.index, Value::Bool(true));
         set(
@@ -1238,9 +1318,11 @@ impl QuickScene {
             if entered && !hover_enabled(engine, m) && set_contains(engine, m, false) {
                 emit(engine, m, "exited", &[]);
             }
+            crate::mouse_drag::filter_undo(engine);
             return false;
         }
         self.pointer.grab = Some(Grab::Mouse(m));
+        crate::mouse_drag::pressed(engine, m, ev);
         if let Some((last, t, p)) = self.pointer.last_click
             && last == m
             && ev.time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL
@@ -1254,7 +1336,38 @@ impl QuickScene {
 
     fn moved(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         let mut handled = false;
-        if (ev.pos - self.pointer.press_pos).hypot() > DRAG_THRESHOLD {
+        // The layer sees a drag before anything under it does: a drawer
+        // dragged in from the edge takes the pointer from what was pressed
+        // there, passive grabs included.
+        if !ev.buttons.is_empty()
+            && let Some(o) = crate::layer::take(engine, self.layer, self.pointer.press_pos, ev)
+            && self.pointer.grab != Some(Grab::Item(o))
+        {
+            self.cancel(engine, ev);
+            crate::handlers::canceled(engine);
+            self.pointer.grab = Some(Grab::Item(o));
+        }
+        // A pointer handler whose gesture begins takes the pointer from
+        // what holds it. As qml6 tells it, what held the pointer hears that
+        // its press was cancelled before the handler becomes active, and a
+        // TapHandler that only watched the press after.
+        let held = match self.pointer.grab {
+            Some(Grab::Mouse(o) | Grab::Tap(o) | Grab::Item(o)) => Some(o),
+            None => None,
+        };
+        if let Some(h) = crate::handlers::moved(engine, ev, held) {
+            let watching = std::mem::take(&mut self.pointer.passive);
+            self.cancel(engine, ev);
+            crate::handlers::activate(engine, h, ev, held);
+            for t in watching {
+                cancel_tap(engine, t, ev.pos);
+            }
+            self.pointer.grab = Some(Grab::Item(h));
+            handled = true;
+        }
+        if (ev.pos - self.pointer.press_pos).hypot()
+            > crate::system_prefs::start_drag_distance(engine)
+        {
             // A drag is not a tap.
             for h in std::mem::take(&mut self.pointer.passive) {
                 cancel_tap(engine, h, ev.pos);
@@ -1265,6 +1378,13 @@ impl QuickScene {
                 crate::input::tap_point_moved(engine, *h, ev);
             }
         }
+        // An area that drags from its children hears the move first, and
+        // takes the press when its drag starts.
+        if let Some(m) = crate::mouse_drag::filter_move(engine, ev) {
+            self.cancel(engine, ev);
+            self.pointer.grab = Some(Grab::Mouse(m));
+            return true;
+        }
         // A Flickable around whatever holds the press may take it for a
         // drag; the holder is told its press was cancelled.
         let holder = match self.pointer.grab {
@@ -1272,14 +1392,19 @@ impl QuickScene {
             Some(Grab::Tap(h)) => crate::input::tap_handler_target(engine, h),
             None => None,
         };
-        if let Some(f) = holder
-            .and_then(|o| crate::flickable::drag::steal(engine, o, self.pointer.press_pos, ev))
-        {
+        // So may a PathView around it.
+        if let Some(f) = holder.and_then(|o| {
+            crate::flickable::drag::steal(engine, o, self.pointer.press_pos, ev)
+                .or_else(|| crate::views::path_view::steal(engine, o, self.pointer.press_pos, ev))
+        }) {
             self.cancel(engine, ev);
             self.pointer.grab = Some(Grab::Item(f));
         }
         match self.pointer.grab {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
+                // The target moves first: the position is then the one in
+                // the area where it went.
+                crate::mouse_drag::moved(engine, m, ev);
                 let local = local_point(engine, m, ev.pos);
                 let inside = contains_local(engine, m, local);
                 // As in Qt, crossing the edge is told before the position
@@ -1325,6 +1450,7 @@ impl QuickScene {
     fn release(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         let mut handled = false;
         crate::layer::release(engine, self.layer, ev);
+        crate::mouse_drag::filter_release(engine, ev);
         match self.pointer.grab {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
                 let held = ev.buttons.bits() as i32 & accepted_buttons(engine, m);
@@ -1340,7 +1466,9 @@ impl QuickScene {
                 }
                 self.pointer.grab = None;
                 let local = local_point(engine, m, ev.pos);
-                let inside = contains_local(engine, m, local);
+                // A press that became a drag is no click.
+                let inside =
+                    contains_local(engine, m, local) && !crate::mouse_drag::dragged(engine, m);
                 set_mouse_pos(engine, m, local);
                 set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
                 set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
@@ -1349,6 +1477,7 @@ impl QuickScene {
                     emit_mouse(engine, m, "clicked", ev, local, true);
                     self.pointer.last_click = Some((m, ev.time, ev.pos));
                 }
+                crate::mouse_drag::released(engine, m);
                 if engine.is_alive(m) {
                     if hover_enabled(engine, m) {
                         if !self.pointer.hovered.contains(&m) {
@@ -1386,6 +1515,9 @@ impl QuickScene {
                 handled = true;
             }
         }
+        // After the taps, as in Qt: a PointHandler lets go after the
+        // TapHandler beside it has tapped.
+        crate::handlers::released(engine, ev);
         self.pointer.double = false;
         // A MouseArea's hover follows at the next move, as in Qt; the
         // other items' hover follows now.
@@ -1404,6 +1536,7 @@ impl QuickScene {
                     set_contains(engine, m, false);
                 }
                 emit(engine, m, "canceled", &[]);
+                crate::mouse_drag::released(engine, m);
                 handled = true;
             }
             Some(Grab::Tap(h)) if engine.is_alive(h) => {
@@ -1422,6 +1555,7 @@ impl QuickScene {
             cancel_tap(engine, h, ev.pos);
             handled = true;
         }
+        crate::mouse_drag::filter_cancel(engine);
         handled
     }
 
@@ -1464,6 +1598,7 @@ impl QuickScene {
     /// Hover of the items that are not MouseAreas (`pointer_item.rs`).
     fn update_item_hover(&mut self, engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) {
         crate::pointer_item::update_hover(engine, hits, &mut self.pointer.item_hovered);
+        crate::handlers::hover(engine, ev, hits);
         crate::pointer_item::hover_moved(engine, &self.pointer.item_hovered, |o| {
             local_point(engine, o, ev.pos)
         });
@@ -1579,6 +1714,7 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             // Reads the item's size too, where the layout depends on it.
             TextInputs::read(e, obj);
         }
+        Kind::Canvas => crate::canvas::read_inputs(e, obj),
         Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor | Kind::Shape => return,
     }
     mark(shared, |s| {
@@ -1596,6 +1732,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Image => Paint::Image(crate::image::ImagePaint::read(e, obj)),
         Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
+        Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),
         _ => return,
     };
     mark(shared, |s| {
@@ -1699,11 +1836,11 @@ fn depth(engine: &Engine, obj: ObjectId) -> usize {
     d
 }
 
-fn set(engine: &Engine, obj: ObjectId, p: PropIndex, v: Value) {
+pub(crate) fn set(engine: &Engine, obj: ObjectId, p: PropIndex, v: Value) {
     let _ = write_computed(engine, obj, p, v);
 }
 
-fn emit(engine: &Engine, obj: ObjectId, name: &str, args: &[Value]) {
+pub(crate) fn emit(engine: &Engine, obj: ObjectId, name: &str, args: &[Value]) {
     let _ = engine.emit_by_name(obj, name, args);
 }
 
@@ -1762,12 +1899,12 @@ fn accepted_buttons(engine: &Engine, m: ObjectId) -> i32 {
     num(engine, m, MouseArea::ACCEPTED_BUTTONS.index) as i32
 }
 
-fn hover_enabled(engine: &Engine, m: ObjectId) -> bool {
+pub(crate) fn hover_enabled(engine: &Engine, m: ObjectId) -> bool {
     engine.read(m, MouseArea::HOVER_ENABLED.index).to_boolean()
 }
 
 /// Sets `containsMouse`; true if it changed.
-fn set_contains(engine: &Engine, m: ObjectId, v: bool) -> bool {
+pub(crate) fn set_contains(engine: &Engine, m: ObjectId, v: bool) -> bool {
     let cur = engine.read(m, MouseArea::CONTAINS_MOUSE.index).to_boolean();
     if cur == v {
         return false;
@@ -1778,7 +1915,7 @@ fn set_contains(engine: &Engine, m: ObjectId, v: bool) -> bool {
 
 /// Sets `mouseX` and `mouseY`. As in Qt both tell of a change at every
 /// new position, also the one that kept its value.
-fn set_mouse_pos(engine: &Engine, m: ObjectId, local: kurbo::Point) {
+pub(crate) fn set_mouse_pos(engine: &Engine, m: ObjectId, local: kurbo::Point) {
     let x = MouseArea::MOUSE_X.index;
     let y = MouseArea::MOUSE_Y.index;
     let old = kurbo::Point::new(num(engine, m, x), num(engine, m, y));
@@ -1799,11 +1936,11 @@ fn set_mouse_pos(engine: &Engine, m: ObjectId, local: kurbo::Point) {
     });
 }
 
-fn local_point(engine: &Engine, obj: ObjectId, pos: kurbo::Point) -> kurbo::Point {
+pub(crate) fn local_point(engine: &Engine, obj: ObjectId, pos: kurbo::Point) -> kurbo::Point {
     engine.untrack(|| scene_transform(engine, obj)).inverse() * pos
 }
 
-fn contains_local(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> bool {
+pub(crate) fn contains_local(engine: &Engine, obj: ObjectId, p: kurbo::Point) -> bool {
     let w = num(engine, obj, Item::WIDTH.index);
     let h = num(engine, obj, Item::HEIGHT.index);
     p.x >= 0.0 && p.y >= 0.0 && p.x < w && p.y < h
@@ -1834,7 +1971,7 @@ fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point) {
 
 /// Emits a MouseArea signal with a fresh `mouse` object and returns its
 /// `accepted` after the handlers ran.
-fn emit_mouse(
+pub(crate) fn emit_mouse(
     engine: &Engine,
     m: ObjectId,
     name: &str,

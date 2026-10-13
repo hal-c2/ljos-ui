@@ -35,7 +35,16 @@ pub struct StyleHints {
     /// lives.
     #[qml(constant)]
     pub accessibility: Option<ObjectId>,
+    /// How far a pointer goes from where it pressed, in logical pixels,
+    /// before the press is a drag. Every drag in Ljós starts from it: a
+    /// drag starts once the pointer is further than this along an axis.
+    #[qml(notify, readonly)]
+    pub start_drag_distance: i32,
 }
+
+/// `startDragDistance` until a host says otherwise: what qml6 reads on a
+/// desktop (features/input/drag-threshold.feature).
+pub const START_DRAG_DISTANCE: i32 = 8;
 
 /// `Qt.styleHints.accessibility`. `contrastPreference` is Qt's (6.10),
 /// `motionPreference` is documented for Qt 6.12; `fontScale` and
@@ -64,6 +73,8 @@ struct State {
     system: Cell<SystemPrefs>,
     /// The scheme the application asked for, while it asks for one.
     asked: Cell<Option<ColorScheme>>,
+    /// `startDragDistance`.
+    drag_distance: Cell<i32>,
 }
 
 impl Default for State {
@@ -72,6 +83,7 @@ impl Default for State {
             objects: Cell::new(None),
             system: Cell::new(SystemPrefs::default()),
             asked: Cell::new(None),
+            drag_distance: Cell::new(START_DRAG_DISTANCE),
         }
     }
 }
@@ -108,6 +120,7 @@ fn objects(engine: &Engine) -> Option<(ObjectId, ObjectId)> {
             StyleHints {
                 color_scheme: shown_scheme(&s).qt_value(),
                 accessibility: Some(a11y),
+                start_drag_distance: s.drag_distance.get(),
             },
             None,
         )
@@ -274,6 +287,30 @@ pub fn screen_reader_active(engine: &Engine) -> bool {
             .to_boolean(),
         None => system_prefs(engine).screen_reader_active,
     }
+}
+
+/// Tells the application how far a pointer goes before a press is a drag,
+/// for a platform that says. Telling the same again costs nothing.
+pub fn set_start_drag_distance(engine: &Engine, pixels: i32) {
+    let s = state(engine);
+    let pixels = pixels.max(0);
+    if s.drag_distance.replace(pixels) == pixels {
+        return;
+    }
+    if let Some((hints, _)) = s.objects.get().filter(|(h, _)| engine.is_alive(*h)) {
+        let _ = engine.write_internal(
+            hints,
+            StyleHints::START_DRAG_DISTANCE.index,
+            Value::Int(pixels),
+            WriteKind::Imperative,
+        );
+    }
+}
+
+/// `Qt.styleHints.startDragDistance`, for what decides at an event whether
+/// a press became a drag. Not tracked: it is asked once per move.
+pub fn start_drag_distance(engine: &Engine) -> f64 {
+    f64::from(state(engine).drag_distance.get())
 }
 
 /// [`reduced_motion`] for the animation driver, which asks once per run

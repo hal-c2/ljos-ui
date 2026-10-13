@@ -19,15 +19,15 @@ use ljos_engine::{Engine, ObjectId};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
+use super::fling::{self, Kind};
 use super::physics::{Motion, VelocityTracker, scroll_physics};
 use super::{
-    FlickState, Flickable, X, Y, bounds, can_flick, dir, flag, is_flickable, put_flag, scroll_to,
+    FlickState, Flickable, X, Y, bounds, can_flick, dir, flag, is_flickable, put_flag,
     set_drag_moving, state_of, warn,
 };
 use crate::input::{MouseArea, MouseButtons, PointerEvent};
 use crate::item::{Item, is_a, scene_transform};
 use crate::pointer_item::PointerItem;
-use crate::scene::DRAG_THRESHOLD;
 
 /// A tree deeper than this is a cycle someone built by hand.
 const DEPTH: usize = 4096;
@@ -68,6 +68,12 @@ pub(crate) fn pressed(engine: &Engine) {
     p.serial.set(p.serial.get().wrapping_add(1));
 }
 
+/// Which press the scene is on: another number for each press. For other
+/// views that watch presses as a Flickable does (`PathView`).
+pub(crate) fn press_serial(engine: &Engine) -> u64 {
+    engine.extension::<Presses>().serial.get()
+}
+
 /// Says whether `item` keeps the press it holds when a Flickable around
 /// it would take it for a drag. A scroll bar's handle says so while it is
 /// held: dragging it must not drag the content.
@@ -79,6 +85,12 @@ pub fn keep_pointer_grab(engine: &Engine, item: ObjectId, keep: bool) {
     } else {
         set.remove(&item);
     }
+}
+
+/// Whether `obj` is a Flickable that is being dragged: it keeps the
+/// pointer from a pointer handler that would take it.
+pub(crate) fn is_dragging(engine: &Engine, obj: ObjectId) -> bool {
+    is_flickable(engine, obj) && state_of(engine, obj).is_some_and(|st| st.drag.taken.get())
 }
 
 /// Whether `item` keeps its press ([`keep_pointer_grab`]).
@@ -127,7 +139,7 @@ fn observe(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point) -> [bool;
             continue;
         }
         let moved = coordinate(at, axis) - coordinate(d.press.get(), axis);
-        if moved.abs() > DRAG_THRESHOLD {
+        if moved.abs() > crate::system_prefs::start_drag_distance(e) {
             over[axis] = true;
             new[axis] = true;
         }
@@ -136,13 +148,22 @@ fn observe(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point) -> [bool;
     new
 }
 
+/// Whether one direction of the content follows the pointer.
+pub(crate) fn follows(st: &FlickState, axis: usize) -> bool {
+    st.drag.anchor.get()[axis].is_some()
+}
+
 /// Makes the directions in `axes` follow the pointer from `at`.
 fn anchor(e: &Engine, f: ObjectId, st: &FlickState, axes: [bool; 2], at: kurbo::Point) {
     let d = &st.drag;
     let mut anchors = d.anchor.get();
+    let physics = scroll_physics(e);
+    let s = fling::settings(e, f);
     for axis in [X, Y] {
         if axes[axis] {
-            let content = e.untrack(|| bounds(e, f, axis)).position;
+            // Content past a bound (caught in a rebound) gives way as a
+            // drag there would: from what that drag asked for.
+            let content = physics.undragged(&fling::virtual_position(e, f, axis), &s);
             anchors[axis] = Some((coordinate(at, axis), content));
         }
     }
@@ -153,6 +174,7 @@ fn anchor(e: &Engine, f: ObjectId, st: &FlickState, axes: [bool; 2], at: kurbo::
 /// here.
 fn take(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point) {
     let d = &st.drag;
+    fling::stop(e, f, st, [true; 2]);
     d.taken.set(true);
     anchor(e, f, st, d.over.get(), at);
     show_dragging(e, f, st);
@@ -186,46 +208,70 @@ fn follow(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point, time: Time
         show_dragging(e, f, st);
     }
     let physics = scroll_physics(e);
+    let s = fling::settings(e, f);
     let anchors = st.drag.anchor.get();
     for axis in [X, Y] {
         let Some((pointer, content)) = anchors[axis] else {
             continue;
         };
         let state = e.untrack(|| bounds(e, f, axis));
-        let to = physics.dragged(&state, content + pointer - coordinate(at, axis));
-        st.drag.velocity.borrow_mut()[axis].push(time, to);
-        scroll_to(e, f, axis, to);
+        // The velocity is the finger's, not the content's that gives way
+        // past a bound: it is what a fling is thrown with.
+        let wanted = content + pointer - coordinate(at, axis);
+        let to = physics.dragged(&state, wanted, &s);
+        let velocity = {
+            let mut tracker = st.drag.velocity.borrow_mut();
+            tracker[axis].push(time, wanted);
+            tracker[axis].velocity(time)
+        };
+        fling::place(e, f, axis, to, velocity);
     }
 }
 
-/// The press ended, or was taken away: the content is let go.
+/// The press ended, or was taken away: the content is let go. It flings,
+/// or comes back inside its bounds, as the physics says.
 fn let_go(e: &Engine, f: ObjectId, st: &FlickState, time: Time) {
     let d = &st.drag;
     let was_taken = d.taken.replace(false);
     let anchors = d.anchor.replace([None; 2]);
     d.armed.set(false);
     d.over.set([false; 2]);
-    if !was_taken {
-        return;
+    if st.fling.release_caught() {
+        warn(e, "flickEnded", e.emit_by_name(f, "flickEnded", &[]));
     }
     let physics = scroll_physics(e);
-    let mut jumps = [None; 2];
+    let s = fling::settings(e, f);
+    let mut segs = [None; 2];
     for axis in [X, Y] {
-        if anchors[axis].is_none() {
+        if fling::runs(e, f, axis) {
             continue;
         }
-        let mut state = e.untrack(|| bounds(e, f, axis));
-        state.velocity = d.velocity.borrow()[axis].velocity(time);
-        if let Motion::Jump(to) = physics.released(&state) {
-            jumps[axis] = Some(to);
+        let mut state = fling::virtual_position(e, f, axis);
+        if anchors[axis].is_some() {
+            let tracker = d.velocity.borrow()[axis];
+            // A finger that rested before it let go throws nothing.
+            let rested = tracker
+                .last_time()
+                .is_none_or(|t| time.saturating_since(t) > physics.release_rest());
+            state.velocity = if rested { 0.0 } else { tracker.velocity(time) };
+        } else if state.clamp(state.position) == state.position {
+            // A press caught content that was moving; only content left
+            // past a bound has somewhere to go.
+            continue;
+        }
+        match physics.released(&state, &s) {
+            Motion::Start(seg) => segs[axis] = Some(seg),
+            _ => fling::show_velocity(e, f, axis, 0.0),
         }
     }
-    show_dragging(e, f, st);
-    for axis in [X, Y] {
-        if let Some(to) = jumps[axis] {
-            scroll_to(e, f, axis, to);
-        }
+    // The fling is under way before the drag ends, so that `moving` does
+    // not drop between them; it is shown after `dragEnded`, as Qt says
+    // them.
+    fling::begin(e, f, st, segs, Kind::Flick);
+    if was_taken {
+        show_dragging(e, f, st);
     }
+    fling::show(e, f, st);
 }
 
 /// Asked by the scene before it delivers a move of a held press: whether
@@ -251,7 +297,14 @@ pub(crate) fn steal(
     {
         return None;
     }
-    let mut cur = Some(holder);
+    // A pointer handler is not in the item tree: the Flickables asked are
+    // those around its item, when the handler lets them take the press.
+    let start = if is_a::<crate::handlers::PointerHandler>(engine, holder) {
+        crate::handlers::yields_to_flickable(engine, holder)?
+    } else {
+        holder
+    };
+    let mut cur = Some(start);
     for _ in 0..DEPTH {
         let f = cur?;
         cur = engine.untrack(|| engine.visual_parent(f));

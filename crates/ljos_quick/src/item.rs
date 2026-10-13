@@ -118,6 +118,10 @@ pub struct Item {
     pub state: Atom,
     #[qml(notify, list)]
     pub transitions: QmlList,
+    /// `Rotation`, `Scale`, `Translate`, `Matrix4x4` and `Shear`, applied
+    /// after `rotation` and `scale` (see [`crate::transform`]).
+    #[qml(notify, list)]
+    pub transform: QmlList,
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]
     pub accessible: AccessibleInfo,
@@ -178,6 +182,7 @@ impl Default for Item {
             states: QmlList::new(),
             state: Atom::EMPTY,
             transitions: QmlList::new(),
+            transform: QmlList::new(),
             accessible: AccessibleInfo::default(),
             synced_parent: None,
             follows_implicit: [Weak::new(), Weak::new()],
@@ -686,7 +691,8 @@ pub fn local_transform(engine: &Engine, obj: ObjectId) -> Affine {
     let rotation = num(engine, obj, Item::ROTATION.index);
     let scale = num(engine, obj, Item::SCALE.index);
     let origin = engine.read(obj, Item::TRANSFORM_ORIGIN.index).to_number() as i32;
-    compose_transform(x, y, w, h, rotation, scale, origin)
+    let list = crate::transform::list_map(engine, obj);
+    crate::transform::compose(x, y, w, h, rotation, scale, origin, &list)
 }
 
 pub(crate) fn compose_transform(
@@ -738,9 +744,15 @@ pub fn scene_transform(engine: &Engine, obj: ObjectId) -> Affine {
 }
 
 fn map_point(engine: &Engine, from: Option<ObjectId>, to: Option<ObjectId>, p: Point) -> Point {
-    let from_t = from.map_or(Affine::IDENTITY, |o| scene_transform(engine, o));
-    let to_t = to.map_or(Affine::IDENTITY, |o| scene_transform(engine, o));
-    let q = to_t.inverse() * (from_t * kurbo::Point::new(p.x, p.y));
+    // Exact, perspective and all, as Qt maps: the render tree's affine
+    // fit is only for the picture.
+    use crate::transform::{Projective, scene_map};
+    let from_t = from.map_or(Projective::IDENTITY, |o| scene_map(engine, o));
+    let to_t = to.map_or(Projective::IDENTITY, |o| scene_map(engine, o));
+    let q = to_t
+        .inverse()
+        .and_then(|inv| inv.apply(from_t.apply(kurbo::Point::new(p.x, p.y))?))
+        .unwrap_or(kurbo::Point::new(p.x, p.y));
     Point { x: q.x, y: q.y }
 }
 

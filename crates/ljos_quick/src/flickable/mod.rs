@@ -9,10 +9,13 @@
 //!
 //! The pointer drags the content ([`drag`]) and the wheel moves it
 //! ([`wheel`]). What the content does when nothing holds it is asked of a
-//! [`ScrollPhysics`] ([`physics`]); today that is "stop".
+//! [`ScrollPhysics`] ([`physics`]) as curves, which [`fling`] follows frame
+//! by frame: by default it keeps going, slows down, gives way past its
+//! bounds and comes back, as on a desktop Qt.
 
 mod a11y;
 pub mod drag;
+pub(crate) mod fling;
 pub mod physics;
 pub mod wheel;
 
@@ -31,8 +34,8 @@ use crate::tree;
 pub use a11y::{scroll_by_action, scroll_extent};
 pub use drag::{keep_pointer_grab, keeps_pointer_grab};
 pub use physics::{
-    AxisState, Motion, ScrollPhysics, VelocityTracker, WHEEL_NOTCH_PIXELS, scroll_physics,
-    set_scroll_physics,
+    AxisState, FlickSettings, Kinetic, Motion, ScrollPhysics, Segment, VelocityTracker,
+    WHEEL_NOTCH_PIXELS, scroll_physics, set_scroll_physics,
 };
 pub use wheel::{WheelItem, register_wheel_item};
 
@@ -48,8 +51,8 @@ pub mod flickable_direction {
     pub const AUTO_IF_NEEDED: i32 = 12;
 }
 
-/// `Flickable.boundsBehavior`. Only [`bounds_behavior::STOP_AT_BOUNDS`]
-/// is what happens: the others are kept and read back.
+/// `Flickable.boundsBehavior`, flags: whether a drag, and whether a
+/// fling, may take the content past its bounds.
 pub mod bounds_behavior {
     pub const STOP_AT_BOUNDS: i32 = 0;
     pub const DRAG_OVER_BOUNDS: i32 = 1;
@@ -102,9 +105,9 @@ fn flickable_enums() -> EnumTable {
 
 /// `Flickable` (QtQuick).
 ///
-/// Content stops at its bounds whatever `boundsBehavior` says, and stops
-/// when the finger or the wheel does: flings, overshoot and rebound are
-/// further [`ScrollPhysics`], not written yet. `flicking` is never true.
+/// What the content does when it is let go is the engine's
+/// [`ScrollPhysics`]; with [`ScrollPhysics::Immediate`] it stops when the
+/// finger or the wheel does and never leaves its bounds.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -203,7 +206,8 @@ pub struct Flickable {
     pub pixel_aligned: bool,
     #[qml(notify)]
     pub synchronous_drag: bool,
-    /// The transition that would bring the content back; kept.
+    /// The transition that brings the content back inside its bounds,
+    /// instead of the physics' own rebound.
     #[qml(notify)]
     pub rebound: Option<ObjectId>,
     #[qml(group)]
@@ -310,6 +314,7 @@ pub(crate) struct FlickState {
     /// for a plain Flickable.
     reversed: Cell<[bool; 2]>,
     pub(crate) drag: drag::DragState,
+    pub(crate) fling: fling::FlingState,
 }
 
 impl Default for FlickState {
@@ -323,6 +328,7 @@ impl Default for FlickState {
             wheel_enabled: Cell::new(true),
             reversed: Cell::new([false; 2]),
             drag: drag::DragState::default(),
+            fling: fling::FlingState::default(),
         }
     }
 }
@@ -531,8 +537,15 @@ pub(crate) fn set_reversed(e: &Engine, f: ObjectId, axis: usize, reversed: bool)
     }
 }
 
-/// Brings the content inside its bounds in one direction.
+/// Brings the content inside its bounds in one direction. Content that
+/// moves by itself or follows the pointer is left alone: what moves it
+/// takes the new bounds into account.
 pub(crate) fn settle(e: &Engine, f: ObjectId, axis: usize) {
+    if let Some(st) = state_of(e, f)
+        && (st.fling.axes()[axis] || drag::follows(&st, axis))
+    {
+        return;
+    }
     let state = e.untrack(|| bounds(e, f, axis));
     if let Motion::Jump(to) = scroll_physics(e).settle(&state) {
         scroll_to(e, f, axis, to);
@@ -540,12 +553,13 @@ pub(crate) fn settle(e: &Engine, f: ObjectId, axis: usize) {
 }
 
 /// Brings `moving` and the per-direction flags in step with what the
-/// wheel and the pointer are doing, and says when movement starts and
-/// ends.
+/// wheel, the pointer and a fling are doing, and says when movement
+/// starts and ends.
 pub(crate) fn sync_moving(e: &Engine, f: ObjectId, st: &FlickState) {
     let (wheel, drag) = (st.wheel_moving.get(), st.drag_moving.get());
+    let fling = st.fling.moving();
     let was = e.untrack(|| flag(e, f, Flickable::MOVING.index));
-    let now = [wheel[X] || drag[X], wheel[Y] || drag[Y]];
+    let now = [X, Y].map(|a| wheel[a] || drag[a] || fling[a]);
     let any = now[X] || now[Y];
     e.batch(|| {
         for axis in [X, Y] {
@@ -757,12 +771,11 @@ impl Flickable {
     }
 
     /// `returnToBounds()`: content that is outside its bounds comes back
-    /// inside. At once: the rebound transition is a later physics.
+    /// inside, with the rebound. Neither `flicking` nor `moving` shows it
+    /// (measured on qml6).
     #[qml(invokable, name = "returnToBounds")]
     fn return_to_bounds(cx: &Cx) {
-        for axis in [X, Y] {
-            settle(cx.engine, cx.this, axis);
-        }
+        fling::return_to_bounds(cx.engine, cx.this);
     }
 
     /// `resizeContent(width, height, center)`: gives the content a new
@@ -793,14 +806,19 @@ impl Flickable {
         warn(e, "resizeContent", wrote);
     }
 
-    /// `flick(xVelocity, yVelocity)`: accepted. Nothing moves until a
-    /// physics with flings is there.
+    /// `flick(xVelocity, yVelocity)`: the content is flung as a finger
+    /// would fling it at that velocity. A positive velocity moves the
+    /// content towards its beginning, as a finger moving that way does.
     #[qml(invokable)]
-    fn flick(_cx: &Cx, _x_velocity: f64, _y_velocity: f64) {}
+    fn flick(cx: &Cx, x_velocity: f64, y_velocity: f64) {
+        fling::flick(cx.engine, cx.this, [-x_velocity, -y_velocity]);
+    }
 
-    /// `cancelFlick()`: there is never a flick to stop.
+    /// `cancelFlick()`: content that moves by itself stops where it is.
     #[qml(invokable, name = "cancelFlick")]
-    fn cancel_flick(_cx: &Cx) {}
+    fn cancel_flick(cx: &Cx) {
+        fling::stop_all(cx.engine, cx.this);
+    }
 }
 
 fn start_wheel_timer(e: &Engine, f: ObjectId, st: &FlickState, ms: i32) {

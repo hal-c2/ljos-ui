@@ -1,12 +1,9 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-flickable.html
 # Verified on Qt 6.11.2 (qml6, vnc).
-# Content that keeps moving by itself is planned for the milestone that
-# brings lists: flings, going past the bounds and coming back. Until then
-# the content of a Flickable stops when the pointer or the wheel does, and
-# these scenarios wait in the backlog. Qt runs them today.
+# The measured numbers of the same behaviour are in flickable-fling.feature.
 
-@backlog @qt-parity
+@qt-parity
 Feature: Flicking a Flickable
   Content that is let go while it moves keeps moving and slows down.
   Dragged past its bounds it gives way, and comes back when it is let go.
@@ -68,6 +65,11 @@ Feature: Flicking a Flickable
       Then the property "flicking" of "f" is false
       And the property "moving" of "f" is false
 
+    # On Ljós the steps of this scenario happen at one instant of the
+    # virtual clock, so the pointer has no speed when it is let go; the
+    # same drag with time between the moves flicks there
+    # (flickable-fling.feature, "The content goes on after the pointer lets go").
+    @backlog-headless
     Scenario: A drag that is let go while it moves goes on as a flick
       When the user presses the pointer at 100, 190
       And the user moves the pointer to 100, 160

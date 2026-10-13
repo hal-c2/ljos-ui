@@ -65,7 +65,27 @@ const FOREIGN: &[(&str, bool)] = &[
     ("QPlatformDialogHelper::ButtonRole", false),
     ("QAccessible::Role", false),
     ("QWindow::Visibility", false),
+    // Declared on the type, read through what it attaches.
+    ("QQuickTabBar::Position", false),
+    ("QQuickStackView::Status", false),
+    ("QQuickDrag::DragType", false),
+    // QtQuick.Dialogs: the options are declared on classes of QtGui.
+    ("QColorDialogOptions::ColorDialogOptions", true),
+    ("QFileDialogOptions::FileDialogOptions", true),
+    ("QFontDialogOptions::FontDialogOptions", true),
+    ("QQuickSystemPalette::ColorGroup", false),
+    // QtCore's permissions: the enums are on the C++ permission classes.
+    ("QLocationPermission::Accuracy", false),
+    ("QLocationPermission::Availability", false),
+    ("QCalendarPermission::AccessMode", false),
+    ("QContactsPermission::AccessMode", false),
+    ("QBluetoothPermission::CommunicationModes", true),
 ];
+
+/// Enums of a type Ljós does not have yet (`PointerDevice`): what is
+/// declared with them stays a plain number, since no key could be looked
+/// up. Remove an entry when its type is registered.
+const NOT_YET: &[&str] = &["QInputDevice::DeviceTypes", "QPointingDevice::PointerTypes"];
 
 /// Whether Qt declares a property of `owner` with an enum, and if so
 /// whether with flags.
@@ -106,7 +126,10 @@ fn what_qt_declares_with_an_enum_is_tagged_with_one() {
             let Some(declared) = qt.0.property(&property.name) else {
                 continue;
             };
-            if declared.is_list || declared.value_type().is_some() {
+            if declared.is_list
+                || declared.value_type().is_some()
+                || NOT_YET.contains(&declared.type_name)
+            {
                 continue;
             }
             let Some(flags) = qt_enum(qt, declared.type_name) else {

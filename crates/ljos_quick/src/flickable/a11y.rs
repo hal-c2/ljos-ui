@@ -10,7 +10,9 @@
 use ljos_a11y::{NodeData, Scroll};
 use ljos_engine::{Engine, ObjectId};
 
-use super::{WHEEL_NOTCH_PIXELS, X, Y, bounds, dir, flag, is_flickable, num, scroll_to};
+use super::{
+    WHEEL_NOTCH_PIXELS, X, Y, bounds, dir, flag, fling, is_flickable, num, scroll_to, state_of,
+};
 use crate::accessible::{AccessibleAction, AccessibleItem};
 use crate::item::Item;
 
@@ -59,6 +61,12 @@ pub fn scroll_by_action(engine: &Engine, flickable: ObjectId, action: Accessible
         let to = to.clamp(at.min, at.max);
         if to == at.position {
             return false;
+        }
+        // The assistive technology's step wins over a fling under way.
+        if let Some(st) = state_of(engine, flickable) {
+            let mut axes = [false; 2];
+            axes[axis] = true;
+            fling::stop(engine, flickable, &st, axes);
         }
         scroll_to(engine, flickable, axis, to);
         true

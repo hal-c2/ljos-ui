@@ -194,7 +194,8 @@ fn a_scroll_bar_reads_and_moves_the_content_through_the_seam() {
     assert_eq!(flickable::axis_state(&e, f, false).position, 250.0);
     assert!(flickable::is_flickable(&e, f));
     assert!(!flickable::is_flickable(&e, root));
-    assert_eq!(flickable::scroll_physics(&e), ScrollPhysics::Immediate);
+    assert_eq!(flickable::scroll_physics(&e), ScrollPhysics::default());
+    assert!(flickable::scroll_physics(&e).kinetic().is_some());
 }
 
 #[test]
@@ -369,4 +370,50 @@ fn a_scroll_asked_by_an_assistive_technology_moves_the_content() {
     assert!(!s.accessible_action(&e, rows, AccessibleAction::ScrollRight { page: false }));
     // A value is not something a Flickable takes.
     assert!(!s.accessible_action(&e, rows, AccessibleAction::SetValue(1.0)));
+}
+
+#[test]
+fn a_fling_asks_for_frames_until_it_rests_and_then_for_none() {
+    let e = engine();
+    let root = load(&e, PLAIN);
+    let f = find(&e, root, "f");
+    let mut s = ready(&e, root);
+    e.invoke_by_name(f, "flick", &[Value::Real(0.0), Value::Real(-800.0)])
+        .unwrap();
+    assert_eq!(get(&e, f, "flicking"), Value::Bool(true));
+
+    let mut now = ms(0);
+    let mut frames = 0;
+    loop {
+        let out = s.frame(&e, now);
+        frames += 1;
+        match out.next_wake {
+            Some(t) => {
+                assert!(t > now, "a wake that does not move on");
+                now = t;
+            }
+            None => break,
+        }
+        assert!(frames < 200, "the fling never rested");
+    }
+    // 800 / 1500 s at about sixty frames a second.
+    assert!((30..=36).contains(&frames), "{frames} frames");
+    assert!((num(&e, f, "contentY") - 213.333).abs() < 0.01);
+    assert_eq!(get(&e, f, "flicking"), Value::Bool(false));
+    assert_eq!(get(&e, f, "moving"), Value::Bool(false));
+    assert!(!s.needs_frame());
+    assert_eq!(s.frame(&e, now).next_wake, None);
+}
+
+#[test]
+fn immediate_physics_flings_nothing() {
+    let e = engine();
+    flickable::set_scroll_physics(&e, ScrollPhysics::Immediate);
+    let root = load(&e, PLAIN);
+    let f = find(&e, root, "f");
+    let mut s = ready(&e, root);
+    e.invoke_by_name(f, "flick", &[Value::Real(0.0), Value::Real(-800.0)])
+        .unwrap();
+    assert_eq!(get(&e, f, "flicking"), Value::Bool(false));
+    assert_eq!(s.frame(&e, ms(0)).next_wake, None);
 }

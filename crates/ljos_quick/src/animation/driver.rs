@@ -537,6 +537,11 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
                 d.remove(run);
                 continue;
             }
+            // A frozen page's run stands still with its clock: on thaw it
+            // goes on from where it would be by then (§8.3).
+            if engine.is_frozen(run.anim) {
+                continue;
+            }
             if calm {
                 run.last.set(Some(now));
                 if let Some(end) = run.calm_end() {
@@ -591,7 +596,7 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     let mut soonest: Option<Time> = None;
     let calm = crate::system_prefs::reduced_motion_now(engine);
     for run in d.runs.borrow().iter() {
-        if run.paused.get() {
+        if run.paused.get() || engine.is_frozen(run.anim) {
             continue;
         }
         // Started in this frame after its tick: it began with this frame.
