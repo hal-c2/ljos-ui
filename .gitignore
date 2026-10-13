@@ -6,3 +6,4 @@
 /target/features/
 /target/ljos/
 .DS_Store
+mise.local.toml
