@@ -747,6 +747,10 @@ impl Backend for QtBackend {
         self.ask(json!({"op": "copy", "value": text})).map(drop)
     }
 
+    fn set_clipboard_html(&mut self, html: &str) -> Result<()> {
+        self.ask(json!({"op": "copyHtml", "value": html})).map(drop)
+    }
+
     fn clipboard(&mut self) -> Result<String> {
         Ok(self
             .ask(json!({"op": "paste"}))?

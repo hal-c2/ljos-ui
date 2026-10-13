@@ -80,7 +80,8 @@ pub struct A11yNode {
     /// What the node says of itself, in the words of the steps:
     /// "checkable", "checked", "partially checked", "pressed",
     /// "expandable", "expanded", "selectable", "selected", "read-only",
-    /// "disabled".
+    /// "disabled", and for a live region "live" (and "assertive" when
+    /// it interrupts).
     pub states: Vec<String>,
     /// Its place among the rows it is one of, counted from 1, and how
     /// many there are.
@@ -200,6 +201,17 @@ pub enum SystemSetting {
     ScreenReader(bool),
 }
 
+/// What the user does with a dialog the system shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SystemDialogAnswer {
+    /// Chooses these files or this folder.
+    Choose(Vec<String>),
+    /// Presses the button with this text (`"OK"`).
+    Button(String),
+    /// Closes it without choosing.
+    Dismiss,
+}
+
 /// What an assistive technology asks of a node that holds text.
 /// Characters are counted from the start of the node's value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -292,9 +304,65 @@ pub trait Backend: fmt::Debug {
     fn set_clipboard(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("the clipboard"))
     }
+    /// Put formatted text on the clipboard, as copying it in a rich text
+    /// editor of another application does: `html`, and its characters as
+    /// plain text beside it.
+    fn set_clipboard_html(&mut self, _html: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("HTML on the clipboard"))
+    }
     /// The text on the clipboard.
     fn clipboard(&mut self) -> Result<String> {
         Err(BackendError::NotImplemented("the clipboard"))
+    }
+    /// A text file beside the QML files, where a relative URL finds it.
+    fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.resource(name, text.as_bytes())
+    }
+    /// A text file in the user's home directory, at `path` below it.
+    fn user_file(&mut self, _path: &str, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("the user's home directory"))
+    }
+    /// What the text file beside the QML files holds, once everything the
+    /// application wrote has reached it; `None` when there is no file.
+    fn read_text_file(&mut self, _name: &str) -> Result<Option<String>> {
+        Err(BackendError::NotImplemented("reading back files"))
+    }
+    /// The kind (`"open file"`) and title of each dialog the system shows.
+    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+    /// The user answers the dialog the system shows.
+    fn answer_system_dialog(&mut self, _answer: SystemDialogAnswer) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+    /// The system cannot take away a dialog it shows, from now on.
+    fn system_dialogs_stay(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's dialogs"))
+    }
+    /// Another application copies `text` while this one runs, and nobody
+    /// tells it. Where the clipboard tells every application of a change,
+    /// that is putting it on the clipboard.
+    fn copy_elsewhere(&mut self, text: &str) -> Result<()> {
+        self.set_clipboard(text)
+    }
+    /// The system asks the user before it grants a permission. Said before
+    /// anything is loaded.
+    fn permissions_ask(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a system that asks for permissions",
+        ))
+    }
+    /// The permissions (`"camera"`) the system is asking the user for.
+    fn permission_requests(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented(
+            "a system that asks for permissions",
+        ))
+    }
+    /// The user grants or denies the permission the system asks for.
+    fn answer_permission(&mut self, _name: &str, _granted: bool) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a system that asks for permissions",
+        ))
     }
     /// An input method shows `text` as what is being composed at the
     /// cursor; an empty text ends the composition with nothing typed.

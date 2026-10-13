@@ -129,6 +129,13 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
 | `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
+| `Given the HTML "html" was copied in another application` | the clipboard holds formatted text, as a rich text editor elsewhere copies it: the HTML (single quotes for attributes), and its characters as plain text; give it after the QML |
+| `Given the font file "X.ttf"` | make a font file of `features/text/fonts` available beside the QML files under its own name |
+| `Given a file "X.ttf" that is not a font` | make a file with that name and no font inside available |
+| `Given the text file "X":` + doc string | make a text file available beside the QML files, each line trimmed of the scenario's indentation |
+| `Given the user has the text file "path":` + doc string | a text file under the user's home directory (`.config/tool.conf`), which is `/home/user` in a scenario (`@ljos-only`: the oracle's home is the real one) |
+| `Given the system cannot take its dialogs away` | a dialog the system shows stays up when the application closes it, until the user ends it (`@ljos-only`) |
+| `Given the system asks the user before it grants a permission` | a permission starts undetermined and `request()` asks the user, as a phone does; give it before the QML (`@ljos-only`: desktop Linux grants everything) |
 
 ### When
 
@@ -169,6 +176,12 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When the tests are run with the import path "dir"` | the same, with a directory of test-only modules given to the runner (`-import`) |
 | `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
 | `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
+| `When the user chooses "path" in the system dialog` | the user picks a file or folder in the dialog the system shows (`@ljos-only`: the oracle cannot answer a dialog the system shows) |
+| `When the user chooses the files "path, path" in the system dialog` | the user picks several files, named with `", "` between them (`@ljos-only`) |
+| `When the user answers "button" in the system dialog` | the user presses the button with that text in the message the system shows (`@ljos-only`) |
+| `When the user dismisses the system dialog` | the user closes the dialog the system shows without choosing (`@ljos-only`) |
+| `When "text" is copied in another application` | another application puts the text on the clipboard while this one runs; it is not told, and finds out when it asks |
+| `When the user grants the "name" permission` / `denies` | the user answers the system's question for a permission: `"camera"`, `"microphone"`, `"location"`, `"calendar"`, `"contacts"`, `"bluetooth"` (`@ljos-only`) |
 
 ### Then
 
@@ -191,9 +204,15 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the "role" named "name" has the value "text"` | what the node holds besides its name: the text of an editor; `""` when it has none |
 | `Then the "role" named "name" has "text" selected` | the part of its value that is selected; `""` when none is |
 | `Then the clipboard holds "text"` | the text a paste would insert |
+| `Then the text file "X" has the line "text"` | a file the application wrote beside the QML files (or `Given` there) has that whole line, once what it writes in the background is on disk (`@ljos-only`: the oracle's files cannot be read back) |
+| `Then the text file "X" does not exist` | the application has not written that file (`@ljos-only`) |
+| `Then the system shows a "kind" dialog titled "title"` | the system's own dialog is up: `"open file"`, `"open files"`, `"save file"`, `"folder"`, `"message"`, `"color"`, `"font"` (`@ljos-only`) |
+| `Then the system shows no dialog` | no dialog of the system's is up (`@ljos-only`) |
+| `Then the system asks the user for the "name" permission` | the system has asked the user for that permission and has no answer yet (`@ljos-only`) |
+| `Then the system asks the user for no permission` | no question about a permission is waiting (`@ljos-only`) |
 | `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |
 | `Then the accessibility tree's focus is the "role" named "name"` | the one node a screen reader reads as having the keyboard; the `"window"` named `""` when no item has it |
-| `Then the "role" named "name" is checked` / `is not checked` | a state a screen reader reads of the node: `checkable`, `checked`, `partially checked`, `pressed`, `expandable`, `expanded`, `selectable`, `selected`, `read-only`, `disabled` (`@ljos-only`: what Qt hands an assistive technology cannot be read from QML) |
+| `Then the "role" named "name" is checked` / `is not checked` | a state a screen reader reads of the node: `checkable`, `checked`, `partially checked`, `pressed`, `expandable`, `expanded`, `selectable`, `selected`, `read-only`, `disabled`, and `live` (a change of it is said without the user going to it) or `assertive` (said at once) (`@ljos-only`: what Qt hands an assistive technology cannot be read from QML) |
 | `Then the "role" named "name" is item N of M` | its place among the ones it is listed with, from 1, and how many there are (`@ljos-only`) |
 | `Then the "role" named "name" is not an item of a set` | it tells no place (`@ljos-only`) |
 | `Then the "role" named "name" is at N in the range N to N` | the value of a slider, a spin box or a scroll bar, and its least and greatest (`@ljos-only`) |

@@ -6,6 +6,7 @@ use gherkin::Step;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::backend::SystemDialogAnswer;
 use crate::backend::SystemSetting;
 use crate::backend::testrun::{TestRun, expected_lines};
 use crate::{
@@ -52,6 +53,11 @@ fn expect_value(
 #[given(regex = r#"^"([^"]*)" was copied in another application$"#)]
 fn clipboard_given(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| b.set_clipboard(&text))
+}
+
+#[given(regex = r#"^the HTML "([^"]*)" was copied in another application$"#)]
+fn clipboard_html_given(w: &mut LjosWorld, html: String) -> StepResult {
+    w.each(|b| b.set_clipboard_html(&html))
 }
 
 #[given("the QML:")]
@@ -105,7 +111,80 @@ fn not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.resource(&name, &fixture::not_an_image()))
 }
 
+// A font file of features/text/fonts, beside the QML under its own name.
+#[given(regex = r#"^the font file "([^"]+)"$"#)]
+fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../features/text/fonts")
+        .join(&name);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    w.each(|b| b.resource(&name, &bytes))
+}
+
+// A file with a font's name and something else inside.
+#[given(regex = r#"^a file "([^"]+)" that is not a font$"#)]
+fn not_a_font(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.resource(&name, &fixture::not_an_image()))
+}
+
+// A text file beside the QML (a settings file, say).
+#[given(regex = r#"^the text file "([^"]+)":$"#)]
+fn the_text_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.text_file(&name, &text))
+}
+
+// A text file under the user's home directory.
+#[given(regex = r#"^the user has the text file "([^"]+)":$"#)]
+fn the_user_file(w: &mut LjosWorld, path: String, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.user_file(&path, &text))
+}
+
+#[given("the system cannot take its dialogs away")]
+fn dialogs_stay(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.system_dialogs_stay())
+}
+
+// Before the QML: what the application reads at the start.
+#[given("the system asks the user before it grants a permission")]
+fn permissions_ask(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.permissions_ask())
+}
+
 // ----------------------------------------------------------------- When
+
+#[when(regex = r#"^the user chooses "([^"]+)" in the system dialog$"#)]
+fn user_chooses(w: &mut LjosWorld, path: String) -> StepResult {
+    w.each(|b| b.answer_system_dialog(SystemDialogAnswer::Choose(vec![path.clone()])))
+}
+
+#[when(regex = r#"^the user chooses the files "([^"]+)" in the system dialog$"#)]
+fn user_chooses_files(w: &mut LjosWorld, paths: String) -> StepResult {
+    let paths: Vec<String> = paths.split(", ").map(str::to_owned).collect();
+    w.each(|b| b.answer_system_dialog(SystemDialogAnswer::Choose(paths.clone())))
+}
+
+#[when(regex = r#"^the user answers "([^"]+)" in the system dialog$"#)]
+fn user_answers(w: &mut LjosWorld, button: String) -> StepResult {
+    w.each(|b| b.answer_system_dialog(SystemDialogAnswer::Button(button.clone())))
+}
+
+#[when("the user dismisses the system dialog")]
+fn user_dismisses(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.answer_system_dialog(SystemDialogAnswer::Dismiss))
+}
+
+// The application is not told; it finds out when it asks.
+#[when(regex = r#"^"([^"]*)" is copied in another application$"#)]
+fn copied_elsewhere(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| b.copy_elsewhere(&text))
+}
+
+#[when(regex = r#"^the user (grants|denies) the "([^"]+)" permission$"#)]
+fn user_answers_permission(w: &mut LjosWorld, how: String, name: String) -> StepResult {
+    w.each(|b| b.answer_permission(&name, how == "grants"))
+}
 
 #[when(regex = r#"^the UI language is set to "([^"]*)"$"#)]
 fn ui_language_set(w: &mut LjosWorld, language: String) -> StepResult {
@@ -684,6 +763,79 @@ fn clipboard_holds(w: &mut LjosWorld, text: String) -> StepResult {
     })
 }
 
+#[then(regex = r#"^the text file "([^"]+)" has the line "([^"]*)"$"#)]
+fn text_file_has_line(w: &mut LjosWorld, name: String, line: String) -> StepResult {
+    w.each(|b| match b.read_text_file(&name)? {
+        Some(text) if text.lines().any(|l| l == line) => Ok(()),
+        Some(text) => Err(BackendError::Failed(format!(
+            "{name} has no line {line:?}; it holds:\n{text}"
+        ))),
+        None => Err(BackendError::Failed(format!("there is no file {name}"))),
+    })
+}
+
+#[then(regex = r#"^the text file "([^"]+)" does not exist$"#)]
+fn text_file_absent(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| match b.read_text_file(&name)? {
+        None => Ok(()),
+        Some(text) => Err(BackendError::Failed(format!("{name} exists:\n{text}"))),
+    })
+}
+
+#[then(regex = r#"^the system shows an? "([^"]+)" dialog titled "([^"]*)"$"#)]
+fn system_shows(w: &mut LjosWorld, kind: String, title: String) -> StepResult {
+    w.each(|b| {
+        let shown = b.system_dialogs()?;
+        if shown.iter().any(|(k, t)| *k == kind && *t == title) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system shows {shown:?}, not a {kind:?} dialog titled {title:?}"
+            )))
+        }
+    })
+}
+
+#[then("the system shows no dialog")]
+fn system_shows_none(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let shown = b.system_dialogs()?;
+        if shown.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!("the system shows {shown:?}")))
+        }
+    })
+}
+
+#[then(regex = r#"^the system asks the user for the "([^"]+)" permission$"#)]
+fn system_asks_permission(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| {
+        let asked = b.permission_requests()?;
+        if asked.contains(&name) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system asks for {asked:?}, not the {name:?} permission"
+            )))
+        }
+    })
+}
+
+#[then("the system asks the user for no permission")]
+fn system_asks_no_permission(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let asked = b.permission_requests()?;
+        if asked.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system asks for {asked:?}"
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^the "([^"]+)" named "([^"]*)" has the value "([^"]*)"$"#)]
 fn a11y_value(w: &mut LjosWorld, role: String, name: String, text: String) -> StepResult {
     w.each(|b| {
@@ -766,7 +918,7 @@ fn a11y_node<'t>(tree: &'t A11yNode, role: &str, name: &str) -> Result<&'t A11yN
 }
 
 #[rustfmt::skip]
-#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is (not )?(checkable|checked|partially checked|pressed|expandable|expanded|selectable|selected|read-only|disabled)$"#)]
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is (not )?(checkable|checked|partially checked|pressed|expandable|expanded|selectable|selected|read-only|disabled|live|assertive)$"#)]
 fn a11y_state(
     w: &mut LjosWorld,
     role: String,

@@ -28,6 +28,7 @@ use super::{
 };
 
 mod inspect;
+mod platform;
 mod reload;
 mod text;
 mod top;
@@ -174,6 +175,8 @@ pub struct LjosBackend {
     settings: Vec<super::SystemSetting>,
     /// The inspector of a scenario that an agent looks at.
     inspector: Option<inspect::Rig>,
+    /// The scenario's file system and the system's dialogs.
+    platform: platform::Rig,
 }
 
 impl std::fmt::Debug for LjosBackend {
@@ -581,6 +584,7 @@ impl Live {
         // Pictures asked for before now have arrived by the time any time
         // has passed: waited for, not slept for.
         images.finish(&self.engine);
+        ljos_platform::Platform::of(&self.engine).finish(&self.engine);
         let end = self.clock.now() + Duration::from_millis(ms);
         // Each timer fires at its own deadline, and the scene is settled in
         // between, as a host woken at each deadline would. The scene's own
@@ -608,6 +612,7 @@ impl Live {
                     self.engine.advance_timers(end);
                     // And so have those a timer asked for on the way.
                     images.finish(&self.engine);
+                    ljos_platform::Platform::of(&self.engine).finish(&self.engine);
                     return self.settle();
                 }
             }
@@ -765,6 +770,12 @@ impl Live {
                 ("selected", d.selected == Some(true)),
                 ("read-only", d.read_only),
                 ("disabled", d.disabled),
+                // A live region: what it says is said again when it changes.
+                ("live", d.politeness().is_some()),
+                (
+                    "assertive",
+                    d.politeness() == Some(ljos_a11y::Politeness::Assertive),
+                ),
             ];
             says.iter()
                 .filter(|(_, is)| *is)
@@ -872,8 +883,10 @@ impl Backend for LjosBackend {
             for setting in self.settings.drain(..) {
                 apply_setting(&live.engine, setting);
             }
+            self.platform.install(&live.engine)?;
             let images = ljos_quick::ImageStore::of(&live.engine);
             for (url, bytes) in self.resources.drain(..) {
+                ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
                 images.register_resource(url, bytes);
             }
             self.live = Some(live);
@@ -1035,9 +1048,87 @@ impl Backend for LjosBackend {
         live.settle()
     }
 
+    fn set_clipboard_html(&mut self, html: &str) -> Result<()> {
+        use ljos_text::rich::{ParseOptions, RichText, TextFormat};
+        let live = self.live()?;
+        let doc = RichText::parse(TextFormat::Rich, html, &ParseOptions::default(), &|c| {
+            Some(c.into())
+        });
+        // The characters as a plain text editor takes them: paragraphs on
+        // lines, an image as nothing.
+        let text: String = doc.text().chars().filter(|c| *c != '\u{FFFC}').collect();
+        ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, &text);
+        ljos_platform::Platform::of(&live.engine)
+            .clipboard()
+            .set_html(html, &text);
+        live.settle()
+    }
+
     fn clipboard(&mut self) -> Result<String> {
         let live = self.live()?;
         Ok(ljos_quick::Clipboard::of(&live.engine).text())
+    }
+
+    fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
+        self.platform.write(name, text)
+    }
+
+    fn user_file(&mut self, path: &str, text: &str) -> Result<()> {
+        self.platform
+            .write(&format!("{}/{path}", platform::HOME), text)
+    }
+
+    fn read_text_file(&mut self, name: &str) -> Result<Option<String>> {
+        if let Some(live) = self.live.as_ref() {
+            platform::settle_writes(&live.engine);
+        }
+        self.platform.read(name)
+    }
+
+    fn system_dialogs(&mut self) -> Result<Vec<(String, String)>> {
+        Ok(self.platform.shown())
+    }
+
+    fn answer_system_dialog(&mut self, answer: super::SystemDialogAnswer) -> Result<()> {
+        self.platform.answer(answer)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
+    }
+
+    fn system_dialogs_stay(&mut self) -> Result<()> {
+        self.platform.dialogs_stay();
+        Ok(())
+    }
+
+    fn copy_elsewhere(&mut self, text: &str) -> Result<()> {
+        let live = self.live()?;
+        // Straight to the clipboard, behind the application's back.
+        ljos_platform::Platform::of(&live.engine)
+            .clipboard()
+            .set_text(ljos_platform::ClipboardMode::Clipboard, text);
+        live.settle()
+    }
+
+    fn permissions_ask(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "say that the system asks for permissions before the QML",
+            ));
+        }
+        self.platform.permissions_ask();
+        Ok(())
+    }
+
+    fn permission_requests(&mut self) -> Result<Vec<String>> {
+        Ok(self.platform.permission_requests())
+    }
+
+    fn answer_permission(&mut self, name: &str, granted: bool) -> Result<()> {
+        self.platform.answer_permission(name, granted)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
     }
 
     fn compose(&mut self, text: &str) -> Result<()> {
@@ -1192,6 +1283,7 @@ impl Backend for LjosBackend {
         let url = format!("file:///{name}");
         match self.live.as_ref() {
             Some(live) => {
+                ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.to_vec());
                 ljos_quick::ImageStore::of(&live.engine).register_resource(url, bytes.to_vec());
             }
             None => self.resources.push((url, bytes.to_vec())),

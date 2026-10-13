@@ -10,12 +10,18 @@
 mod accessible;
 mod anchors;
 mod animation;
+mod canvas;
+mod drag;
+mod drop_area;
 pub mod enums;
 mod error_boundary;
 pub mod flickable;
+mod flipable;
 pub mod focus;
 mod font_enums;
+mod font_loader;
 mod gradient;
+mod handlers;
 mod image;
 mod incubation;
 mod input;
@@ -27,6 +33,7 @@ mod loader;
 mod log;
 mod metrics;
 mod mirroring;
+mod mouse_drag;
 mod pointer_item;
 mod positioners;
 mod rectangle;
@@ -34,9 +41,11 @@ mod repeater;
 mod scene;
 mod shapes;
 mod states;
+mod system_palette;
 mod system_prefs;
 mod text;
 pub mod text_input;
+pub mod transform;
 mod tree;
 mod views;
 mod wheel;
@@ -54,9 +63,18 @@ pub use animation::{
     running_animation_count, set_animation_frame_period,
 };
 pub use animation::{Transition, run_transition, stop_transition};
+pub use drag::{Drag, DragAttached, drag_attached, drag_type};
+pub use drop_area::{
+    DragData, DragEvent, DropArea, DropAreaDrag, PlatformDrag, PlatformDragKind, platform_drag,
+};
 pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
+pub use font_loader::{FontFamilies, FontLoader};
 pub use gradient::{Gradient, GradientPaint, GradientStop};
+pub use handlers::{
+    DragAxis, DragHandler, HoverHandler, PinchGesture, PinchHandler, PinchPhase, PointHandler,
+    PointerHandler, grab_permission, grab_transition, snap_mode,
+};
 pub use image::{
     BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint, ImageStore, LoadError,
     Request as ImageRequest, fill_mode, image_status, requested_size, tile_mode,
@@ -75,7 +93,8 @@ pub use item::{
     init_item, is_item, local_transform, scene_transform, set_accessible,
 };
 pub use layer::{
-    LayerHooks, layer_host, layer_of, set_layer, set_layer_hooks, tab_scope, window_item, window_of,
+    LayerHooks, LayerTake, layer_host, layer_of, set_layer, set_layer_hooks, set_layer_take,
+    tab_scope, window_item, window_of,
 };
 pub use layouts::{
     ColumnLayout, GridLayout, Layout, LayoutAttached, RowLayout, StackLayout, layout_runs,
@@ -102,9 +121,11 @@ pub use states::{
     AnchorChanges, AnchorChangesAnchors, Binding, ParentChange, PropertyChanges, State,
     StateChangeScript, StateGroup,
 };
+pub use system_palette::{SystemPalette, color_group};
 pub use system_prefs::{
-    AccessibilityHints, StyleHints, color_scheme, contrast, font_scale, reduced_motion,
-    screen_reader_active, set_system_prefs, system_prefs, update_system_prefs,
+    AccessibilityHints, START_DRAG_DISTANCE, StyleHints, color_scheme, contrast, font_scale,
+    reduced_motion, screen_reader_active, set_start_drag_distance, set_system_prefs,
+    start_drag_distance, system_prefs, update_system_prefs,
 };
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, set_text_engine, text_engine,
@@ -120,6 +141,7 @@ pub use views::{
     DelegateModel, ObjectModel, drive_delegate_model, object_model_changed, object_model_rows,
 };
 pub use views::{GridView, ItemView, ListView, ViewAttached, ViewSection};
+pub use views::{PathView, PathViewAttached, path_view};
 pub use views::{view_index_of, view_item_at};
 pub use wheel_handler::WheelHandler;
 
@@ -179,4 +201,17 @@ pub fn register(engine: &Engine) {
     error_boundary::register(engine);
     loader::register(engine);
     shapes::register(engine);
+    transform::register(engine);
+    flipable::register(engine);
+    canvas::register(engine);
+    handlers::register(engine);
+    drag::register(engine);
+    drop_area::register(engine);
+    // FontLoader, SystemPalette, Qt.fontFamilies, and the platform's
+    // modules (QtQuick.Dialogs, QtCore) whose drawn dialogs are items.
+    engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
+        FontLoader, SystemPalette,
+    ]));
+    font_loader::register(engine);
+    ljos_platform::register(engine);
 }

@@ -49,7 +49,12 @@ ljos_engine = { path = "../ljos_engine" }
 # `.ts` catalogues of scenarios, read as a development build reads them.
 ljos_i18n = { path = "../ljos_i18n" }
 ljos_quick = { path = "../ljos_quick" }
+# The system a scenario runs on: its files and its dialogs, answered by
+# the scenario.
+ljos_platform = { path = "../ljos_platform" }
 ljos_runtime = { path = "../ljos_runtime" }
+# The characters of HTML another application copies, which it copies too.
+ljos_text = { path = "../ljos_text" }
 qml_front = { path = "../qml_front" }
 # Which table of types the build reads QML against: a `@no-qt-table` scenario
 # is for a build without Qt's.

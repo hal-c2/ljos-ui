@@ -68,6 +68,80 @@ module Ljos
 		signal fileChanged
 		signal lineChanged
 
+module QtCore
+	BluetoothPermission QtCore.BluetoothPermission
+	CalendarPermission QtCore.CalendarPermission
+	CameraPermission QtCore.CameraPermission
+	ContactsPermission QtCore.ContactsPermission
+	LocationPermission QtCore.LocationPermission
+	MicrophonePermission QtCore.MicrophonePermission
+	Settings QtCore.Settings
+	StandardPaths QtCore.StandardPaths
+	type QtCore.BluetoothPermission BluetoothPermission
+		prototype QtQml.QtObject named
+		flags CommunicationMode Access=1 Advertise=2 Default=3
+		prop status Qt::PermissionStatus readonly
+		prop communicationModes CommunicationMode
+		signal statusChanged
+		signal communicationModesChanged
+		method request
+	type QtCore.CalendarPermission CalendarPermission
+		prototype QtQml.QtObject named
+		enum AccessMode ReadOnly=0 ReadWrite=1
+		prop status Qt::PermissionStatus readonly
+		prop accessMode AccessMode
+		signal statusChanged
+		signal accessModeChanged
+		method request
+	type QtCore.CameraPermission CameraPermission
+		prototype QtQml.QtObject named
+		prop status Qt::PermissionStatus readonly
+		signal statusChanged
+		method request
+	type QtCore.ContactsPermission ContactsPermission
+		prototype QtQml.QtObject named
+		enum AccessMode ReadOnly=0 ReadWrite=1
+		prop status Qt::PermissionStatus readonly
+		prop accessMode AccessMode
+		signal statusChanged
+		signal accessModeChanged
+		method request
+	type QtCore.LocationPermission LocationPermission
+		prototype QtQml.QtObject named
+		enum Accuracy Approximate=0 Precise=1
+		enum Availability WhenInUse=0 Always=1
+		prop status Qt::PermissionStatus readonly
+		prop accuracy Accuracy
+		prop availability Availability
+		signal statusChanged
+		signal accuracyChanged
+		signal availabilityChanged
+		method request
+	type QtCore.MicrophonePermission MicrophonePermission
+		prototype QtQml.QtObject named
+		prop status Qt::PermissionStatus readonly
+		signal statusChanged
+		method request
+	type QtCore.Settings Settings
+		prototype QtQml.QtObject named
+		prop category QtQml.string named
+		prop location QtQml.url named
+		signal categoryChanged
+		signal locationChanged
+		method value
+		method setValue
+		method sync
+	type QtCore.StandardPaths StandardPaths
+		is singleton
+		enum StandardLocation DesktopLocation=0 DocumentsLocation=1 FontsLocation=2 ApplicationsLocation=3 MusicLocation=4 MoviesLocation=5 PicturesLocation=6 TempLocation=7 HomeLocation=8 AppLocalDataLocation=9 CacheLocation=10 GenericDataLocation=11 RuntimeLocation=12 ConfigLocation=13 DownloadLocation=14 GenericCacheLocation=15 GenericConfigLocation=16 AppDataLocation=17 AppConfigLocation=18 PublicShareLocation=19 TemplatesLocation=20 StateLocation=21 GenericStateLocation=22
+		enum LocateOption LocateFile=0 LocateDirectory=1
+		method displayName
+		method writableLocation
+		method standardLocations
+		method findExecutable
+		method locate
+		method locateAll
+
 module QtQml
 	import QtQml.Models
 	Binding QtQml.Binding
@@ -322,20 +396,28 @@ module QtQuick
 	Application QtQuick.Application
 	Behavior QtQuick.Behavior
 	BorderImage QtQuick.BorderImage
+	Canvas QtQuick.Canvas
 	CloseEvent QtQuick.CloseEvent
 	ColorAnimation QtQuick.ColorAnimation
 	Column QtQuick.Column
 	DoubleValidator QtQuick.DoubleValidator
+	Drag QtQuick.Drag
+	DragEvent QtQuick.DragEvent
+	DragHandler QtQuick.DragHandler
+	DropArea QtQuick.DropArea
 	Easing QtQuick.Easing
 	Flickable QtQuick.Flickable
+	Flipable QtQuick.Flipable
 	Flow QtQuick.Flow
 	FocusScope QtQuick.FocusScope
 	Font QtQuick.Font
+	FontLoader QtQuick.FontLoader
 	FontMetrics QtQuick.FontMetrics
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
 	Grid QtQuick.Grid
 	GridView QtQuick.GridView
+	HoverHandler QtQuick.HoverHandler
 	Image QtQuick.Image
 	IntValidator QtQuick.IntValidator
 	Item QtQuick.Item
@@ -345,6 +427,7 @@ module QtQuick
 	LayoutMirroring QtQuick.LayoutMirroring
 	ListView QtQuick.ListView
 	Loader QtQuick.Loader
+	Matrix4x4 QtQuick.Matrix4x4
 	MouseArea QtQuick.MouseArea
 	MouseEvent QtQuick.MouseEvent
 	NumberAnimation QtQuick.NumberAnimation
@@ -354,16 +437,22 @@ module QtQuick
 	Path QtQuick.Path
 	PathAngleArc QtQuick.PathAngleArc
 	PathArc QtQuick.PathArc
+	PathAttribute QtQuick.PathAttribute
 	PathCubic QtQuick.PathCubic
 	PathCurve QtQuick.PathCurve
 	PathLine QtQuick.PathLine
 	PathMove QtQuick.PathMove
 	PathMultiline QtQuick.PathMultiline
+	PathPercent QtQuick.PathPercent
 	PathPolyline QtQuick.PathPolyline
 	PathQuad QtQuick.PathQuad
 	PathRectangle QtQuick.PathRectangle
 	PathSvg QtQuick.PathSvg
+	PathView QtQuick.PathView
 	PauseAnimation QtQuick.PauseAnimation
+	PinchHandler QtQuick.PinchHandler
+	PointHandler QtQuick.PointHandler
+	PointerHandler QtQuick.PointerHandler
 	Positioner QtQuick.Positioner
 	PropertyAction QtQuick.PropertyAction
 	PropertyAnimation QtQuick.PropertyAnimation
@@ -371,11 +460,14 @@ module QtQuick
 	Rectangle QtQuick.Rectangle
 	RegularExpressionValidator QtQuick.RegularExpressionValidator
 	Repeater QtQuick.Repeater
+	Rotation QtQuick.Rotation
 	RotationAnimation QtQuick.RotationAnimation
 	Row QtQuick.Row
+	Scale QtQuick.Scale
 	ScreenInfo QtQuick.ScreenInfo
 	ScriptAction QtQuick.ScriptAction
 	SequentialAnimation QtQuick.SequentialAnimation
+	Shear QtQuick.Shear
 	Shortcut QtQuick.Shortcut
 	SmoothedAnimation QtQuick.SmoothedAnimation
 	SpringAnimation QtQuick.SpringAnimation
@@ -383,13 +475,16 @@ module QtQuick
 	State QtQuick.State
 	StateChangeScript QtQuick.StateChangeScript
 	StateGroup QtQuick.StateGroup
+	SystemPalette QtQuick.SystemPalette
 	TapHandler QtQuick.TapHandler
 	Text QtQuick.Text
 	TextDocument QtQuick.TextDocument
 	TextEdit QtQuick.TextEdit
 	TextInput QtQuick.TextInput
 	TextMetrics QtQuick.TextMetrics
+	TextSelection QtQuick.TextSelection
 	Transition QtQuick.Transition
+	Translate QtQuick.Translate
 	ViewSection QtQuick.ViewSection
 	WheelEvent QtQuick.WheelEvent
 	WheelHandler QtQuick.WheelHandler
@@ -523,6 +618,42 @@ module QtQuick
 		prop verticalTileMode TileMode
 		signal horizontalTileModeChanged
 		signal verticalTileModeChanged
+	type QtQuick.Canvas Canvas
+		prototype QtQuick.Item named
+		default data
+		enum RenderTarget Image=0 FramebufferObject=1
+		enum RenderStrategy Immediate=0 Threaded=1 Cooperative=2
+		prop available QtQml.bool named readonly
+		prop canvasSize QtQml.size named
+		prop canvasWindow QtQml.rect named
+		prop tileSize QtQml.size named
+		prop context QtQml.var named readonly
+		prop contextType QtQml.string named
+		prop renderTarget RenderTarget
+		prop renderStrategy RenderStrategy
+		signal availableChanged
+		signal canvasSizeChanged
+		signal canvasWindowChanged
+		signal tileSizeChanged
+		signal contextChanged
+		signal contextTypeChanged
+		signal renderTargetChanged
+		signal renderStrategyChanged
+		signal paint region
+		signal painted
+		signal imageLoaded
+		method getContext
+		method requestPaint
+		method markDirty
+		method requestAnimationFrame
+		method cancelRequestAnimationFrame
+		method loadImage
+		method unloadImage
+		method isImageLoaded
+		method isImageLoading
+		method isImageError
+		method save
+		method toDataURL
 	type QtQuick.CloseEvent CloseEvent
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -556,6 +687,86 @@ module QtQuick
 		signal decimalsChanged
 		signal notationChanged
 		signal localeChanged
+	type QtQuick.Drag Drag
+		attached QtQuick.DragAttached
+		is uncreatable
+		enum DragType None=0 Automatic=1 Internal=2
+		enum Axis XAxis=1 YAxis=2 XAndYAxis=3 XandYAxis=3
+		prop target QtQml.QtObject named pointer reset
+		prop axis Axis
+		prop minimumX QtQml.real named
+		prop maximumX QtQml.real named
+		prop minimumY QtQml.real named
+		prop maximumY QtQml.real named
+		prop active QtQml.bool named readonly
+		prop filterChildren QtQml.bool named
+		prop smoothed QtQml.bool named
+		prop threshold QtQml.real named reset
+		signal targetChanged
+		signal axisChanged
+		signal minimumXChanged
+		signal maximumXChanged
+		signal minimumYChanged
+		signal maximumYChanged
+		signal activeChanged
+		signal filterChildrenChanged
+		signal smoothedChanged
+		signal thresholdChanged
+	type QtQuick.DragEvent DragEvent
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop source QtQml.QtObject named pointer readonly
+		prop keys QtQml.var named list readonly
+		prop supportedActions Qt::DropActions readonly
+		prop proposedAction Qt::DropActions readonly
+		prop action Qt::DropAction reset
+		prop accepted QtQml.bool named
+		prop hasColor QtQml.bool named readonly
+		prop hasHtml QtQml.bool named readonly
+		prop hasText QtQml.bool named readonly
+		prop hasUrls QtQml.bool named readonly
+		prop colorData QtQml.var named readonly
+		prop html QtQml.string named readonly
+		prop text QtQml.string named readonly
+		prop urls QtQml.var named list readonly
+		prop formats QtQml.var named list readonly
+		method getDataAsString
+		method getDataAsArrayBuffer
+		method acceptProposedAction
+		method accept
+	type QtQuick.DragHandler DragHandler
+		prototype QtQuick.PointerHandler named
+		enum SnapMode NoSnap=0 SnapAuto=1 SnapIfPressedOutsideTarget=2 SnapAlways=3
+		prop minimumPointCount QtQml.int named
+		prop maximumPointCount QtQml.int named
+		prop centroid QtQuick.HandlerPoint pointer readonly
+		prop xAxis QtQuick.DragAxis pointer readonly
+		prop yAxis QtQuick.DragAxis pointer readonly
+		prop translation QtQuick.vector2d named readonly
+		prop activeTranslation QtQuick.vector2d named readonly
+		prop persistentTranslation QtQuick.vector2d named
+		prop snapMode SnapMode
+		signal minimumPointCountChanged
+		signal maximumPointCountChanged
+		signal persistentTranslationChanged
+		signal snapModeChanged
+		signal centroidChanged
+		signal translationChanged delta
+		signal activeTranslationChanged
+	type QtQuick.DropArea DropArea
+		prototype QtQuick.Item named
+		prop containsDrag QtQml.bool named readonly
+		prop keys QtQml.var named list
+		prop drag QtQuick.DropAreaDrag pointer readonly
+		signal containsDragChanged
+		signal keysChanged
+		signal entered drag
+		signal exited
+		signal positionChanged drag
+		signal dropped drop
+		signal sourceChanged
 	type QtQuick.Easing Easing
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -657,6 +868,17 @@ module QtQuick
 		method resizeContent
 		method flick
 		method cancelFlick
+	type QtQuick.Flipable Flipable
+		prototype QtQuick.Item named
+		default data
+		enum Side Front=0 Back=1
+		prop front QtQml.QtObject named pointer
+		prop back QtQml.QtObject named pointer
+		prop side Side readonly
+		signal frontChanged
+		signal backChanged
+		signal sideChanged
+		method retransformBack
 	type QtQuick.Flow Flow
 		prototype QtQuick.Item named
 		enum Flow LeftToRight=0 TopToBottom=1
@@ -686,6 +908,17 @@ module QtQuick
 		enum Capitalization MixedCase=0 AllUppercase=1 AllLowercase=2 SmallCaps=3 Capitalize=4
 		enum HintingPreference PreferDefaultHinting=0 PreferNoHinting=1 PreferVerticalHinting=2 PreferFullHinting=3
 		enum Style StyleNormal=0 StyleItalic=1 StyleOblique=2
+	type QtQuick.FontLoader FontLoader
+		prototype QtQml.QtObject named
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		prop source QtQml.url named
+		prop name QtQml.string named readonly
+		prop status Status readonly
+		prop font QtQuick.font named readonly
+		signal sourceChanged
+		signal nameChanged
+		signal statusChanged
+		signal fontChanged
 	type QtQuick.FontMetrics FontMetrics
 		prototype QtQml.QtObject named
 		prop font QtQuick.font named
@@ -788,6 +1021,14 @@ module QtQuick
 		method moveCurrentIndexDown
 		method moveCurrentIndexLeft
 		method moveCurrentIndexRight
+	type QtQuick.HoverHandler HoverHandler
+		prototype QtQuick.PointerHandler named
+		prop point QtQuick.HandlerPoint pointer readonly
+		prop hovered QtQml.bool named readonly
+		prop blocking QtQml.bool named
+		signal hoveredChanged
+		signal blockingChanged
+		signal pointChanged
 	type QtQuick.Image Image
 		prototype QtQuick.ImageBase
 		enum FillMode Stretch=0 PreserveAspectFit=1 PreserveAspectCrop=2 Tile=3 TileVertically=4 TileHorizontally=5 Pad=6
@@ -856,6 +1097,7 @@ module QtQuick
 		prop states QtQml.var named list
 		prop state QtQml.string named
 		prop transitions QtQml.var named list
+		prop transform QtQml.var named list
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -890,6 +1132,7 @@ module QtQuick
 		signal statesChanged
 		signal stateChanged
 		signal transitionsChanged
+		signal transformChanged
 		method mapToItem
 		method mapFromItem
 		method contains
@@ -964,6 +1207,10 @@ module QtQuick
 		signal progressChanged
 		signal loaded
 		method setSource
+	type QtQuick.Matrix4x4 Matrix4x4
+		prototype QtQuick.Transform
+		prop matrix QtQml.var named
+		signal matrixChanged
 	type QtQuick.MouseArea MouseArea
 		prototype QtQuick.Item named
 		prop hoverEnabled QtQml.bool named
@@ -974,6 +1221,7 @@ module QtQuick
 		prop mouseY QtQml.real named readonly
 		prop acceptedButtons Qt::MouseButtons
 		prop preventStealing QtQml.bool named
+		prop drag QtQuick.Drag pointer readonly
 		signal hoverEnabledChanged
 		signal containsMouseChanged
 		signal pressedChanged
@@ -1082,6 +1330,12 @@ module QtQuick
 		signal useLargeArcChanged
 		signal directionChanged
 		signal xAxisRotationChanged
+	type QtQuick.PathAttribute PathAttribute
+		prototype QtQuick.PathElement
+		prop name QtQml.string named
+		prop value QtQml.real named
+		signal nameChanged
+		signal valueChanged
 	type QtQuick.PathCubic PathCubic
 		prototype QtQuick.PathCurveElement
 		prop control1X QtQml.real named
@@ -1112,6 +1366,10 @@ module QtQuick
 		prop paths QtQml.var named
 		signal startChanged
 		signal pathsChanged
+	type QtQuick.PathPercent PathPercent
+		prototype QtQuick.PathElement
+		prop value QtQml.real named
+		signal valueChanged
 	type QtQuick.PathPolyline PathPolyline
 		prototype QtQuick.PathCurveElement
 		prop start QtQml.point named readonly
@@ -1160,10 +1418,150 @@ module QtQuick
 		prototype QtQuick.PathCurveElement
 		prop path QtQml.string named
 		signal pathChanged
+	type QtQuick.PathView PathView
+		prototype QtQuick.Item named
+		attached QtQuick.PathViewAttached
+		enum HighlightRangeMode NoHighlightRange=0 ApplyRange=1 StrictlyEnforceRange=2
+		enum SnapMode NoSnap=0 SnapToItem=1 SnapOneItem=2
+		enum MovementDirection Shortest=0 Negative=1 Positive=2
+		enum PositionMode Beginning=0 Center=1 End=2 Contain=4 SnapPosition=5
+		prop model QtQml.var named
+		prop path QtQuick.Path named pointer
+		prop currentIndex QtQml.int named
+		prop currentItem QtQml.QtObject named pointer readonly
+		prop offset QtQml.real named
+		prop highlight QtQml.Component named pointer
+		prop highlightItem QtQml.QtObject named pointer readonly
+		prop preferredHighlightBegin QtQml.real named
+		prop preferredHighlightEnd QtQml.real named
+		prop highlightRangeMode HighlightRangeMode
+		prop highlightMoveDuration QtQml.int named
+		prop dragMargin QtQml.real named
+		prop maximumFlickVelocity QtQml.real named
+		prop flickDeceleration QtQml.real named
+		prop interactive QtQml.bool named
+		prop moving QtQml.bool named readonly
+		prop flicking QtQml.bool named readonly
+		prop dragging QtQml.bool named readonly
+		prop count QtQml.int named readonly
+		prop delegate QtQml.Component named pointer
+		prop pathItemCount QtQml.int named reset
+		prop snapMode SnapMode
+		prop movementDirection MovementDirection
+		prop cacheItemCount QtQml.int named
+		signal modelChanged
+		signal pathChanged
+		signal currentIndexChanged
+		signal currentItemChanged
+		signal offsetChanged
+		signal highlightChanged
+		signal highlightItemChanged
+		signal preferredHighlightBeginChanged
+		signal preferredHighlightEndChanged
+		signal highlightRangeModeChanged
+		signal highlightMoveDurationChanged
+		signal dragMarginChanged
+		signal maximumFlickVelocityChanged
+		signal flickDecelerationChanged
+		signal interactiveChanged
+		signal movingChanged
+		signal flickingChanged
+		signal draggingChanged
+		signal countChanged
+		signal delegateChanged
+		signal pathItemCountChanged
+		signal snapModeChanged
+		signal movementDirectionChanged
+		signal cacheItemCountChanged
+		signal movementStarted
+		signal movementEnded
+		signal flickStarted
+		signal flickEnded
+		signal dragStarted
+		signal dragEnded
+		method incrementCurrentIndex
+		method decrementCurrentIndex
+		method positionViewAtIndex
+		method indexAt
+		method itemAt
+		method itemAtIndex
 	type QtQuick.PauseAnimation PauseAnimation
 		prototype QtQuick.Animation named
 		prop duration QtQml.int named
 		signal durationChanged
+	type QtQuick.PinchHandler PinchHandler
+		prototype QtQuick.PointerHandler named
+		prop minimumPointCount QtQml.int named
+		prop maximumPointCount QtQml.int named
+		prop centroid QtQuick.HandlerPoint pointer readonly
+		prop scaleAxis QtQuick.DragAxis pointer readonly
+		prop rotationAxis QtQuick.DragAxis pointer readonly
+		prop xAxis QtQuick.DragAxis pointer readonly
+		prop yAxis QtQuick.DragAxis pointer readonly
+		prop minimumScale QtQml.real named
+		prop maximumScale QtQml.real named
+		prop minimumRotation QtQml.real named
+		prop maximumRotation QtQml.real named
+		prop scale QtQml.real named readonly
+		prop activeScale QtQml.real named readonly
+		prop persistentScale QtQml.real named
+		prop rotation QtQml.real named readonly
+		prop activeRotation QtQml.real named readonly
+		prop persistentRotation QtQml.real named
+		prop translation QtQuick.vector2d named readonly
+		prop activeTranslation QtQml.point named readonly
+		prop persistentTranslation QtQml.point named
+		signal minimumPointCountChanged
+		signal maximumPointCountChanged
+		signal minimumScaleChanged
+		signal maximumScaleChanged
+		signal minimumRotationChanged
+		signal maximumRotationChanged
+		signal activeScaleChanged
+		signal persistentScaleChanged
+		signal activeRotationChanged
+		signal persistentRotationChanged
+		signal activeTranslationChanged
+		signal persistentTranslationChanged
+		signal centroidChanged
+		signal scaleChanged delta
+		signal rotationChanged delta
+		signal translationChanged delta
+	type QtQuick.PointHandler PointHandler
+		prototype QtQuick.PointerHandler named
+		prop point QtQuick.HandlerPoint pointer readonly
+		prop translation QtQuick.vector2d named readonly
+		signal pointChanged
+		signal translationChanged
+	type QtQuick.PointerHandler PointerHandler
+		prototype QtQml.QtObject named
+		is uncreatable
+		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		prop enabled QtQml.bool named
+		prop active QtQml.bool named readonly
+		prop target QtQml.QtObject named pointer
+		prop parent QtQml.QtObject named pointer
+		prop grabPermissions GrabPermissions
+		prop margin QtQml.real named
+		prop dragThreshold QtQml.int named reset
+		prop cursorShape Qt::CursorShape reset
+		prop acceptedDevices QtQml.int named
+		prop acceptedPointerTypes QtQml.int named
+		prop acceptedButtons Qt::MouseButtons
+		prop acceptedModifiers Qt::KeyboardModifiers
+		signal enabledChanged
+		signal activeChanged
+		signal targetChanged
+		signal parentChanged
+		signal marginChanged
+		signal dragThresholdChanged
+		signal cursorShapeChanged
+		signal acceptedDevicesChanged
+		signal acceptedPointerTypesChanged
+		signal acceptedButtonsChanged
+		signal acceptedModifiersChanged
+		signal grabChanged transition point
+		signal canceled point
 	type QtQuick.Positioner Positioner
 		attached QtQuick.PositionerAttached
 		is uncreatable
@@ -1226,6 +1624,16 @@ module QtQuick
 		signal itemAdded index item
 		signal itemRemoved index item
 		method itemAt
+	type QtQuick.Rotation Rotation
+		prototype QtQuick.Transform
+		prop origin QtQuick.vector3d named
+		prop angle QtQml.real named
+		prop axis QtQuick.vector3d named
+		prop distanceToPlane QtQml.real named
+		signal originChanged
+		signal angleChanged
+		signal axisChanged
+		signal distanceToPlaneChanged
 	type QtQuick.RotationAnimation RotationAnimation
 		prototype QtQuick.PropertyAnimation named
 		enum RotationDirection Numerical=0 Shortest=1 Clockwise=2 Counterclockwise=3
@@ -1249,6 +1657,17 @@ module QtQuick
 		signal bottomPaddingChanged
 		signal layoutDirectionChanged
 		signal effectiveLayoutDirectionChanged
+	type QtQuick.Scale Scale
+		prototype QtQuick.Transform
+		prop origin QtQuick.vector3d named
+		prop xScale QtQml.real named
+		prop yScale QtQml.real named
+		prop zScale QtQml.real named
+		signal originChanged
+		signal xScaleChanged
+		signal yScaleChanged
+		signal zScaleChanged
+		signal scaleChanged
 	type QtQuick.ScreenInfo ScreenInfo
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -1290,6 +1709,18 @@ module QtQuick
 		prototype QtQuick.Animation named
 		default animations
 		prop animations QtQml.var named list
+	type QtQuick.Shear Shear
+		prototype QtQuick.Transform
+		prop origin QtQuick.vector3d named
+		prop xFactor QtQml.real named
+		prop yFactor QtQml.real named
+		prop xAngle QtQml.real named
+		prop yAngle QtQml.real named
+		signal originChanged
+		signal xFactorChanged
+		signal yFactorChanged
+		signal xAngleChanged
+		signal yAngleChanged
 	type QtQuick.Shortcut Shortcut
 		prototype QtQml.QtObject named
 		prop sequence QtQml.var named
@@ -1358,9 +1789,48 @@ module QtQuick
 		signal stateChanged
 		signal statesChanged
 		signal transitionsChanged
+	type QtQuick.SystemPalette SystemPalette
+		prototype QtQml.QtObject named
+		enum ColorGroup Active=0 Disabled=1 Inactive=2
+		prop colorGroup ColorGroup
+		prop window QtQuick.color named readonly
+		prop windowText QtQuick.color named readonly
+		prop base QtQuick.color named readonly
+		prop text QtQuick.color named readonly
+		prop alternateBase QtQuick.color named readonly
+		prop button QtQuick.color named readonly
+		prop buttonText QtQuick.color named readonly
+		prop light QtQuick.color named readonly
+		prop midlight QtQuick.color named readonly
+		prop dark QtQuick.color named readonly
+		prop mid QtQuick.color named readonly
+		prop shadow QtQuick.color named readonly
+		prop highlight QtQuick.color named readonly
+		prop highlightedText QtQuick.color named readonly
+		prop placeholderText QtQuick.color named readonly
+		prop accent QtQuick.color named readonly
+		signal colorGroupChanged
+		signal windowChanged
+		signal windowTextChanged
+		signal baseChanged
+		signal textChanged
+		signal alternateBaseChanged
+		signal buttonChanged
+		signal buttonTextChanged
+		signal lightChanged
+		signal midlightChanged
+		signal darkChanged
+		signal midChanged
+		signal shadowChanged
+		signal highlightChanged
+		signal highlightedTextChanged
+		signal placeholderTextChanged
+		signal accentChanged
+		signal paletteChanged
 	type QtQuick.TapHandler TapHandler
 		prototype QtQml.QtObject named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
+		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		prop enabled QtQml.bool named
 		prop pressed QtQml.bool named readonly
 		prop tapCount QtQml.int named readonly
@@ -1368,12 +1838,29 @@ module QtQuick
 		prop acceptedButtons Qt::MouseButtons
 		prop parent QtQml.QtObject named pointer readonly
 		prop point QtQuick.HandlerPoint pointer readonly
+		prop target QtQml.QtObject named pointer
+		prop margin QtQml.real named
+		prop dragThreshold QtQml.int named reset
+		prop grabPermissions GrabPermissions
+		prop acceptedDevices QtQml.int named
+		prop acceptedPointerTypes QtQml.int named
+		prop acceptedModifiers Qt::KeyboardModifiers
+		prop cursorShape Qt::CursorShape reset
+		prop longPressThreshold QtQml.real named reset
 		signal enabledChanged
 		signal pressedChanged
 		signal tapCountChanged
 		signal gesturePolicyChanged
 		signal acceptedButtonsChanged
 		signal parentChanged
+		signal targetChanged
+		signal marginChanged
+		signal dragThresholdChanged
+		signal acceptedDevicesChanged
+		signal acceptedPointerTypesChanged
+		signal acceptedModifiersChanged
+		signal cursorShapeChanged
+		signal longPressThresholdChanged
 		signal pointChanged
 		signal tapped eventPoint button
 		signal singleTapped eventPoint button
@@ -1430,10 +1917,19 @@ module QtQuick
 		method linkAt
 	type QtQuick.TextDocument TextDocument
 		is uncreatable
+		enum Status Null=0 Loading=1 Loaded=2 Saving=3 Saved=4 ReadError=5 WriteError=6 NonLocalFileError=7
 		prop modified QtQml.bool named
+		prop source QtQml.url named
+		prop status Status readonly
+		prop errorString QtQml.string named readonly
 		signal modifiedChanged
+		signal sourceChanged
+		signal statusChanged
+		signal errorStringChanged
 		method highlight
 		method clearHighlights
+		method save
+		method saveAs
 	type QtQuick.TextEdit TextEdit
 		prototype QtQuick.TextEditorBase
 		prop lineCount QtQml.int named readonly
@@ -1444,6 +1940,7 @@ module QtQuick
 		prop hoveredLink QtQml.string named readonly
 		prop baseUrl QtQml.url named reset
 		prop textDocument QtQml.QtObject named pointer readonly
+		prop cursorSelection QtQuick.TextSelection named pointer readonly
 		signal lineCountChanged
 		signal textFormatChanged
 		signal tabStopDistanceChanged
@@ -1452,6 +1949,7 @@ module QtQuick
 		signal hoveredLinkChanged
 		signal baseUrlChanged
 		signal textDocumentChanged
+		signal cursorSelectionChanged
 		signal linkActivated link
 		signal linkHovered link
 		method append
@@ -1503,6 +2001,15 @@ module QtQuick
 		signal widthChanged
 		signal heightChanged
 		signal elidedTextChanged
+	type QtQuick.TextSelection TextSelection
+		prop text QtQml.string named
+		prop font QtQuick.font named
+		prop color QtQuick.color named
+		prop alignment Qt::Alignment
+		signal textChanged
+		signal fontChanged
+		signal colorChanged
+		signal alignmentChanged
 	type QtQuick.Transition Transition
 		prototype QtQml.QtObject named
 		default animations
@@ -1517,6 +2024,12 @@ module QtQuick
 		signal toChanged
 		signal reversibleChanged
 		signal runningChanged
+	type QtQuick.Translate Translate
+		prototype QtQuick.Transform
+		prop x QtQml.real named
+		prop y QtQml.real named
+		signal xChanged
+		signal yChanged
 	type QtQuick.ViewSection ViewSection
 		is uncreatable
 		enum SectionCriteria FullString=0 FirstCharacter=1
@@ -1756,6 +2269,70 @@ module QtQuick
 		signal topChanged
 		signal rightChanged
 		signal bottomChanged
+	type QtQuick.DragAttached DragAttached
+		is uncreatable
+		enum DragType None=0 Automatic=1 Internal=2
+		enum Axis XAxis=1 YAxis=2 XAndYAxis=3 XandYAxis=3
+		prop active QtQml.bool named
+		prop source QtQml.QtObject named pointer reset
+		prop target QtQml.QtObject named pointer readonly
+		prop hotSpot QtQml.point named
+		prop imageSource QtQml.url named
+		prop imageSourceSize QtQml.size named
+		prop keys QtQml.var named list
+		prop mimeData QtQml.var named
+		prop supportedActions Qt::DropActions
+		prop proposedAction Qt::DropAction
+		prop dragType DragType
+		signal activeChanged
+		signal sourceChanged
+		signal targetChanged
+		signal hotSpotChanged
+		signal imageSourceChanged
+		signal imageSourceSizeChanged
+		signal keysChanged
+		signal mimeDataChanged
+		signal supportedActionsChanged
+		signal proposedActionChanged
+		signal dragTypeChanged
+		signal dragStarted
+		signal dragFinished dropAction
+		method start
+		method startDrag
+		method cancel
+		method drop
+	type QtQuick.HandlerPoint HandlerPoint
+		is uncreatable
+		prop position QtQml.point named readonly
+		prop scenePosition QtQml.point named readonly
+		prop pressPosition QtQml.point named readonly
+		prop scenePressPosition QtQml.point named readonly
+		prop pressedButtons Qt::MouseButtons readonly
+		prop id QtQml.int named readonly
+		signal positionChanged
+		signal scenePositionChanged
+		signal pressPositionChanged
+		signal scenePressPositionChanged
+		signal pressedButtonsChanged
+		signal idChanged
+	type QtQuick.DragAxis DragAxis
+		is uncreatable
+		prop minimum QtQml.real named
+		prop maximum QtQml.real named
+		prop enabled QtQml.bool named
+		prop activeValue QtQml.real named readonly
+		signal minimumChanged
+		signal maximumChanged
+		signal enabledChanged
+		signal activeValueChanged
+	type QtQuick.DropAreaDrag DropAreaDrag
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop source QtQml.QtObject named pointer readonly
+		signal xChanged
+		signal yChanged
+		signal sourceChanged
 	type QtQuick.FlickableVisibleArea FlickableVisibleArea
 		is uncreatable
 		prop xPosition QtQml.real named readonly
@@ -1973,6 +2550,10 @@ module QtQuick
 		prop childrenInherit QtQml.bool named
 		signal enabledChanged
 		signal childrenInheritChanged
+	type QtQuick.Transform Transform
+		prototype QtQml.QtObject named
+		is uncreatable
+		method update
 	type QtQuick.PathCurveElement PathCurveElement
 		prototype QtQuick.PathElement
 		is uncreatable
@@ -1984,6 +2565,19 @@ module QtQuick
 		signal yChanged
 		signal relativeXChanged
 		signal relativeYChanged
+	type QtQuick.PathElement PathElement
+		prototype QtQml.QtObject named
+		is uncreatable
+	type QtQuick.PathViewAttached PathViewAttached
+		is uncreatable
+		prop view QtQml.QtObject named pointer readonly
+		prop isCurrentItem QtQml.bool named readonly
+		prop onPath QtQml.bool named readonly
+		signal viewChanged
+		signal isCurrentItemChanged
+		signal onPathChanged
+		signal currentItemChanged
+		signal pathChanged
 	type QtQuick.PositionerAttached PositionerAttached
 		is uncreatable
 		prop index QtQml.int named readonly
@@ -1998,20 +2592,6 @@ module QtQuick
 		prop color QtQuick.color named
 		signal widthChanged
 		signal colorChanged
-	type QtQuick.HandlerPoint HandlerPoint
-		is uncreatable
-		prop position QtQml.point named readonly
-		prop scenePosition QtQml.point named readonly
-		prop pressPosition QtQml.point named readonly
-		prop scenePressPosition QtQml.point named readonly
-		prop pressedButtons Qt::MouseButtons readonly
-		prop id QtQml.int named readonly
-		signal positionChanged
-		signal scenePositionChanged
-		signal pressPositionChanged
-		signal scenePressPositionChanged
-		signal pressedButtonsChanged
-		signal idChanged
 	type QtQuick.TextEditorBase TextEditorBase
 		prototype QtQuick.Item named
 		is uncreatable
@@ -2164,21 +2744,26 @@ module QtQuick
 		signal toolTipTextChanged
 		signal windowChanged
 		signal windowTextChanged
-	type QtQuick.PathElement PathElement
-		prototype QtQml.QtObject named
-		is uncreatable
 
 module QtQuick.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
 	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
 	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
+	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
+	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Basic/Frame.qml
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
@@ -2190,31 +2775,53 @@ module QtQuick.Controls
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
+	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup QtQuick/Controls/Basic/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RoundButton QtQuick/Controls/Basic/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider QtQuick/Controls/Basic/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick/Controls/Basic/SplitView.qml
+	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
+	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 
 module QtQuick.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
 	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
 	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
+	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
+	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Basic/Frame.qml
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
@@ -2226,33 +2833,59 @@ module QtQuick.Controls.Basic
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
+	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup QtQuick/Controls/Basic/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RoundButton QtQuick/Controls/Basic/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider QtQuick/Controls/Basic/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick/Controls/Basic/SplitView.qml
+	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
+	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	type QtQuick/Controls/Basic/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
+	type QtQuick/Controls/Basic/BusyIndicator.qml BusyIndicator
+		prototype QtQuick.Templates.BusyIndicator named
 	type QtQuick/Controls/Basic/Button.qml Button
 		prototype QtQuick.Templates.Button named
 	type QtQuick/Controls/Basic/CheckBox.qml CheckBox
 		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Basic/CheckDelegate.qml CheckDelegate
+		prototype QtQuick.Templates.CheckDelegate named
 	type QtQuick/Controls/Basic/ComboBox.qml ComboBox
 		prototype QtQuick.Templates.ComboBox named
 	type QtQuick/Controls/Basic/Control.qml Control
 		prototype QtQuick.Templates.Control named
+	type QtQuick/Controls/Basic/DelayButton.qml DelayButton
+		prototype QtQuick.Templates.DelayButton named
+	type QtQuick/Controls/Basic/Dial.qml Dial
+		prototype QtQuick.Templates.Dial named
 	type QtQuick/Controls/Basic/Dialog.qml Dialog
 		prototype QtQuick.Templates.Dialog named
 	type QtQuick/Controls/Basic/DialogButtonBox.qml DialogButtonBox
 		prototype QtQuick.Templates.DialogButtonBox named
+	type QtQuick/Controls/Basic/DoubleSpinBox.qml DoubleSpinBox
+		prototype QtQuick.Templates.DoubleSpinBox named
+	type QtQuick/Controls/Basic/Drawer.qml Drawer
+		prototype QtQuick.Templates.Drawer named
 	type QtQuick/Controls/Basic/Frame.qml Frame
 		prototype QtQuick.Templates.Frame named
 	type QtQuick/Controls/Basic/GroupBox.qml GroupBox
@@ -2273,22 +2906,46 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.MenuSeparator named
 	type QtQuick/Controls/Basic/Page.qml Page
 		prototype QtQuick.Templates.Page named
+	type QtQuick/Controls/Basic/PageIndicator.qml PageIndicator
+		prototype QtQuick.Templates.PageIndicator named
 	type QtQuick/Controls/Basic/Pane.qml Pane
 		prototype QtQuick.Templates.Pane named
 	type QtQuick/Controls/Basic/Popup.qml Popup
 		prototype QtQuick.Templates.Popup named
+	type QtQuick/Controls/Basic/ProgressBar.qml ProgressBar
+		prototype QtQuick.Templates.ProgressBar named
 	type QtQuick/Controls/Basic/RadioButton.qml RadioButton
 		prototype QtQuick.Templates.RadioButton named
+	type QtQuick/Controls/Basic/RadioDelegate.qml RadioDelegate
+		prototype QtQuick.Templates.RadioDelegate named
+	type QtQuick/Controls/Basic/RangeSlider.qml RangeSlider
+		prototype QtQuick.Templates.RangeSlider named
+	type QtQuick/Controls/Basic/RoundButton.qml RoundButton
+		prototype QtQuick.Templates.RoundButton named
 	type QtQuick/Controls/Basic/ScrollBar.qml ScrollBar
 		prototype QtQuick.Templates.ScrollBar named
 	type QtQuick/Controls/Basic/ScrollIndicator.qml ScrollIndicator
 		prototype QtQuick.Templates.ScrollIndicator named
 	type QtQuick/Controls/Basic/ScrollView.qml ScrollView
 		prototype QtQuick.Templates.ScrollView named
+	type QtQuick/Controls/Basic/Slider.qml Slider
+		prototype QtQuick.Templates.Slider named
 	type QtQuick/Controls/Basic/SpinBox.qml SpinBox
 		prototype QtQuick.Templates.SpinBox named
+	type QtQuick/Controls/Basic/SplitView.qml SplitView
+		prototype QtQuick.Templates.SplitView named
+	type QtQuick/Controls/Basic/StackView.qml StackView
+		prototype QtQuick.Templates.StackView named
+	type QtQuick/Controls/Basic/SwipeView.qml SwipeView
+		prototype QtQuick.Templates.SwipeView named
 	type QtQuick/Controls/Basic/Switch.qml Switch
 		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Basic/SwitchDelegate.qml SwitchDelegate
+		prototype QtQuick.Templates.SwitchDelegate named
+	type QtQuick/Controls/Basic/TabBar.qml TabBar
+		prototype QtQuick.Templates.TabBar named
+	type QtQuick/Controls/Basic/TabButton.qml TabButton
+		prototype QtQuick.Templates.TabButton named
 	type QtQuick/Controls/Basic/TextArea.qml TextArea
 		prototype QtQuick.Templates.TextArea named
 	type QtQuick/Controls/Basic/TextField.qml TextField
@@ -2297,6 +2954,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.ToolBar named
 	type QtQuick/Controls/Basic/ToolButton.qml ToolButton
 		prototype QtQuick.Templates.ToolButton named
+	type QtQuick/Controls/Basic/ToolSeparator.qml ToolSeparator
+		prototype QtQuick.Templates.ToolSeparator named
 	type QtQuick/Controls/Basic/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named
 
@@ -2351,6 +3010,112 @@ module QtQuick.Controls.impl
 		signal heightChanged
 		signal colorChanged
 		signal cacheChanged
+
+module QtQuick.Dialogs
+	ColorDialog QtQuick.Dialogs.ColorDialog
+	FileDialog QtQuick.Dialogs.FileDialog
+	FolderDialog QtQuick.Dialogs.FolderDialog
+	FontDialog QtQuick.Dialogs.FontDialog
+	MessageDialog QtQuick.Dialogs.MessageDialog
+	type QtQuick.Dialogs.ColorDialog ColorDialog
+		prototype QtQuick.Dialogs.AbstractDialog
+		default data
+		flags ColorDialogOption ShowAlphaChannel=1 NoButtons=2 DontUseNativeDialog=4 NoEyeDropperButton=8
+		prop selectedColor QtQuick.color named
+		prop options ColorDialogOption reset
+		signal selectedColorChanged
+		signal optionsChanged
+	type QtQuick.Dialogs.FileDialog FileDialog
+		prototype QtQuick.Dialogs.AbstractDialog
+		default data
+		enum FileMode OpenFile=0 OpenFiles=1 SaveFile=2
+		flags FileDialogOption ShowDirsOnly=1 DontResolveSymlinks=2 DontConfirmOverwrite=4 DontUseNativeDialog=8 ReadOnly=16 HideNameFilterDetails=32 DontUseCustomDirectoryIcons=64
+		prop fileMode FileMode
+		prop selectedFile QtQml.url named
+		prop selectedFiles QtQml.var named list readonly
+		prop currentFile QtQml.url named
+		prop currentFiles QtQml.var named list
+		prop currentFolder QtQml.url named
+		prop options FileDialogOption reset
+		prop nameFilters QtQml.var named list reset
+		prop defaultSuffix QtQml.string named reset
+		prop acceptLabel QtQml.string named reset
+		prop rejectLabel QtQml.string named reset
+		signal fileModeChanged
+		signal selectedFileChanged
+		signal selectedFilesChanged
+		signal currentFileChanged
+		signal currentFilesChanged
+		signal currentFolderChanged
+		signal optionsChanged
+		signal nameFiltersChanged
+		signal defaultSuffixChanged
+		signal acceptLabelChanged
+		signal rejectLabelChanged
+	type QtQuick.Dialogs.FolderDialog FolderDialog
+		prototype QtQuick.Dialogs.AbstractDialog
+		default data
+		flags FileDialogOption ShowDirsOnly=1 DontResolveSymlinks=2 DontConfirmOverwrite=4 DontUseNativeDialog=8 ReadOnly=16 HideNameFilterDetails=32 DontUseCustomDirectoryIcons=64
+		prop currentFolder QtQml.url named
+		prop selectedFolder QtQml.url named
+		prop options FileDialogOption reset
+		prop acceptLabel QtQml.string named reset
+		prop rejectLabel QtQml.string named reset
+		signal currentFolderChanged
+		signal selectedFolderChanged
+		signal optionsChanged
+		signal acceptLabelChanged
+		signal rejectLabelChanged
+	type QtQuick.Dialogs.FontDialog FontDialog
+		prototype QtQuick.Dialogs.AbstractDialog
+		default data
+		flags FontDialogOption NoButtons=1 DontUseNativeDialog=2 ScalableFonts=4 NonScalableFonts=8 MonospacedFonts=16 ProportionalFonts=32
+		prop selectedFont QtQuick.font named
+		prop currentFont QtQuick.font named
+		prop options FontDialogOption reset
+		signal selectedFontChanged
+		signal currentFontChanged
+		signal optionsChanged
+	type QtQuick.Dialogs.MessageDialog MessageDialog
+		prototype QtQuick.Dialogs.AbstractDialog
+		default data
+		flags StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728 FirstButton=1024 LastButton=134217728
+		enum ButtonRole InvalidRole=-1 AcceptRole=0 RejectRole=1 DestructiveRole=2 ActionRole=3 HelpRole=4 YesRole=5 NoRole=6 ResetRole=7 ApplyRole=8
+		prop text QtQml.string named
+		prop informativeText QtQml.string named
+		prop detailedText QtQml.string named
+		prop buttons StandardButton
+		signal textChanged
+		signal informativeTextChanged
+		signal detailedTextChanged
+		signal buttonsChanged
+		signal buttonClicked button role
+	type QtQuick.Dialogs.AbstractDialog AbstractDialog
+		prototype QtQml.QtObject named
+		default data
+		is uncreatable
+		enum StandardCode Rejected=0 Accepted=1
+		prop data QtQml.var named list
+		prop parentWindow QtQml.QtObject named pointer reset
+		prop title QtQml.string named
+		prop flags Qt::WindowFlags
+		prop modality Qt::WindowModality
+		prop visible QtQml.bool named
+		prop result QtQml.int named
+		signal dataChanged
+		signal parentWindowChanged
+		signal titleChanged
+		signal flagsChanged
+		signal modalityChanged
+		signal visibleChanged
+		signal resultChanged
+		signal accepted
+		signal rejected
+		method open
+		method close
+		method accept
+		method reject
+		method done
 
 module QtQuick.Layouts
 	ColumnLayout QtQuick.Layouts.ColumnLayout
@@ -2543,14 +3308,22 @@ module QtQuick.Shapes
 module QtQuick.Templates
 	AbstractButton QtQuick.Templates.AbstractButton
 	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
 	ApplicationWindow QtQuick.Templates.ApplicationWindow
+	BusyIndicator QtQuick.Templates.BusyIndicator
 	Button QtQuick.Templates.Button
 	ButtonGroup QtQuick.Templates.ButtonGroup
 	CheckBox QtQuick.Templates.CheckBox
+	CheckDelegate QtQuick.Templates.CheckDelegate
 	ComboBox QtQuick.Templates.ComboBox
+	Container QtQuick.Templates.Container
 	Control QtQuick.Templates.Control
+	DelayButton QtQuick.Templates.DelayButton
+	Dial QtQuick.Templates.Dial
 	Dialog QtQuick.Templates.Dialog
 	DialogButtonBox QtQuick.Templates.DialogButtonBox
+	DoubleSpinBox QtQuick.Templates.DoubleSpinBox
+	Drawer QtQuick.Templates.Drawer
 	Frame QtQuick.Templates.Frame
 	GroupBox QtQuick.Templates.GroupBox
 	ItemDelegate QtQuick.Templates.ItemDelegate
@@ -2562,18 +3335,32 @@ module QtQuick.Templates
 	MenuSeparator QtQuick.Templates.MenuSeparator
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick.Templates.Page
+	PageIndicator QtQuick.Templates.PageIndicator
 	Pane QtQuick.Templates.Pane
 	Popup QtQuick.Templates.Popup
+	ProgressBar QtQuick.Templates.ProgressBar
 	RadioButton QtQuick.Templates.RadioButton
+	RadioDelegate QtQuick.Templates.RadioDelegate
+	RangeSlider QtQuick.Templates.RangeSlider
+	RoundButton QtQuick.Templates.RoundButton
 	ScrollBar QtQuick.Templates.ScrollBar
 	ScrollIndicator QtQuick.Templates.ScrollIndicator
 	ScrollView QtQuick.Templates.ScrollView
+	Slider QtQuick.Templates.Slider
 	SpinBox QtQuick.Templates.SpinBox
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick.Templates.SplitView
+	StackView QtQuick.Templates.StackView
+	SwipeView QtQuick.Templates.SwipeView
 	Switch QtQuick.Templates.Switch
+	SwitchDelegate QtQuick.Templates.SwitchDelegate
+	TabBar QtQuick.Templates.TabBar
+	TabButton QtQuick.Templates.TabButton
 	TextArea QtQuick.Templates.TextArea
 	TextField QtQuick.Templates.TextField
 	ToolBar QtQuick.Templates.ToolBar
 	ToolButton QtQuick.Templates.ToolButton
+	ToolSeparator QtQuick.Templates.ToolSeparator
 	ToolTip QtQuick.Templates.ToolTip
 	type QtQuick.Templates.AbstractButton AbstractButton
 		prototype QtQuick.Templates.Control named
@@ -2637,6 +3424,21 @@ module QtQuick.Templates
 		signal toggled source
 		method trigger
 		method toggle
+	type QtQuick.Templates.ActionGroup ActionGroup
+		prototype QtQml.QtObject named
+		attached QtQuick.Templates.ActionGroupAttached
+		default actions
+		prop actions QtQml.var named list
+		prop checkedAction QtQml.QtObject named pointer
+		prop exclusive QtQml.bool named
+		prop enabled QtQml.bool named
+		signal actionsChanged
+		signal checkedActionChanged
+		signal exclusiveChanged
+		signal enabledChanged
+		signal triggered action
+		method addAction
+		method removeAction
 	type QtQuick.Templates.ApplicationWindow ApplicationWindow
 		prototype QtQuick.Window named
 		default contentData
@@ -2656,6 +3458,10 @@ module QtQuick.Templates
 		signal menuBarChanged
 		signal contentDataChanged
 		signal contentChildrenChanged
+	type QtQuick.Templates.BusyIndicator BusyIndicator
+		prototype QtQuick.Templates.Control named
+		prop running QtQml.bool named
+		signal runningChanged
 	type QtQuick.Templates.Button Button
 		prototype QtQuick.Templates.AbstractButton named
 		prop highlighted QtQml.bool named
@@ -2678,6 +3484,14 @@ module QtQuick.Templates
 		method removeButton
 	type QtQuick.Templates.CheckBox CheckBox
 		prototype QtQuick.Templates.AbstractButton named
+		prop tristate QtQml.bool named
+		prop checkState Qt::CheckState
+		prop nextCheckState QtQml.var named
+		signal tristateChanged
+		signal checkStateChanged
+		signal nextCheckStateChanged
+	type QtQuick.Templates.CheckDelegate CheckDelegate
+		prototype QtQuick.Templates.ItemDelegate named
 		prop tristate QtQml.bool named
 		prop checkState Qt::CheckState
 		prop nextCheckState QtQml.var named
@@ -2749,6 +3563,34 @@ module QtQuick.Templates
 		method selectAll
 		method textAt
 		method valueAt
+	type QtQuick.Templates.Container Container
+		prototype QtQuick.Templates.Control named
+		default contentData
+		prop contentData QtQml.var named list
+		prop contentChildren QtQml.var named list
+		prop contentModel QtQml.var named readonly
+		prop count QtQml.int named readonly
+		prop currentIndex QtQml.int named
+		prop currentItem QtQml.QtObject named pointer readonly
+		prop contentWidth QtQml.real named reset
+		prop contentHeight QtQml.real named reset
+		signal contentDataChanged
+		signal contentChildrenChanged
+		signal contentModelChanged
+		signal countChanged
+		signal currentIndexChanged
+		signal currentItemChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		method itemAt
+		method addItem
+		method insertItem
+		method moveItem
+		method removeItem
+		method takeItem
+		method setCurrentIndex
+		method incrementCurrentIndex
+		method decrementCurrentIndex
 	type QtQuick.Templates.Control Control
 		prototype QtQuick.Item named
 		prop padding QtQml.real named reset
@@ -2810,6 +3652,48 @@ module QtQuick.Templates
 		signal focusPolicyChanged
 		signal focusReasonChanged
 		signal visualFocusChanged
+	type QtQuick.Templates.DelayButton DelayButton
+		prototype QtQuick.Templates.AbstractButton named
+		prop delay QtQml.int named
+		prop progress QtQml.real named
+		signal delayChanged
+		signal progressChanged
+		signal activated
+	type QtQuick.Templates.Dial Dial
+		prototype QtQuick.Templates.Control named
+		enum SnapMode NoSnap=0 SnapAlways=1 SnapOnRelease=2
+		enum InputMode Circular=0 Horizontal=1 Vertical=2
+		prop from QtQml.real named
+		prop to QtQml.real named
+		prop value QtQml.real named
+		prop position QtQml.real named readonly
+		prop angle QtQml.real named readonly
+		prop startAngle QtQml.real named
+		prop endAngle QtQml.real named
+		prop stepSize QtQml.real named
+		prop snapMode SnapMode
+		prop wrap QtQml.bool named
+		prop pressed QtQml.bool named readonly
+		prop handle QtQml.QtObject named pointer
+		prop live QtQml.bool named
+		prop inputMode InputMode
+		signal fromChanged
+		signal toChanged
+		signal valueChanged
+		signal positionChanged
+		signal angleChanged
+		signal startAngleChanged
+		signal endAngleChanged
+		signal stepSizeChanged
+		signal snapModeChanged
+		signal wrapChanged
+		signal pressedChanged
+		signal handleChanged
+		signal liveChanged
+		signal inputModeChanged
+		signal moved
+		method increase
+		method decrease
 	type QtQuick.Templates.Dialog Dialog
 		prototype QtQuick.Templates.Popup named
 		enum StandardCode Rejected=0 Accepted=1
@@ -2883,6 +3767,49 @@ module QtQuick.Templates
 		method removeItem
 		method takeItem
 		method standardButton
+	type QtQuick.Templates.DoubleSpinBox DoubleSpinBox
+		prototype QtQuick.Templates.Control named
+		prop from QtQml.real named
+		prop to QtQml.real named
+		prop value QtQml.real named
+		prop stepSize QtQml.real named
+		prop decimals QtQml.int named
+		prop editable QtQml.bool named
+		prop wrap QtQml.bool named
+		prop validator QtQml.QtObject named pointer
+		prop textFromValue QtQml.var named
+		prop valueFromText QtQml.var named
+		prop displayText QtQml.string named readonly
+		prop inputMethodHints Qt::InputMethodHints
+		prop inputMethodComposing QtQml.bool named readonly
+		prop up QtQuick.Templates.SpinButton pointer readonly
+		prop down QtQuick.Templates.SpinButton pointer readonly
+		signal fromChanged
+		signal toChanged
+		signal valueChanged
+		signal stepSizeChanged
+		signal decimalsChanged
+		signal editableChanged
+		signal wrapChanged
+		signal validatorChanged
+		signal textFromValueChanged
+		signal valueFromTextChanged
+		signal displayTextChanged
+		signal inputMethodHintsChanged
+		signal inputMethodComposingChanged
+		signal valueModified
+		method increase
+		method decrease
+	type QtQuick.Templates.Drawer Drawer
+		prototype QtQuick.Templates.Popup named
+		prop edge Qt::Edge
+		prop position QtQml.real named
+		prop dragMargin QtQml.real named reset
+		prop interactive QtQml.bool named
+		signal edgeChanged
+		signal positionChanged
+		signal dragMarginChanged
+		signal interactiveChanged
 	type QtQuick.Templates.Frame Frame
 		prototype QtQuick.Templates.Pane named
 	type QtQuick.Templates.GroupBox GroupBox
@@ -3025,6 +3952,16 @@ module QtQuick.Templates
 		signal implicitHeaderHeightChanged
 		signal implicitFooterWidthChanged
 		signal implicitFooterHeightChanged
+	type QtQuick.Templates.PageIndicator PageIndicator
+		prototype QtQuick.Templates.Control named
+		prop count QtQml.int named
+		prop currentIndex QtQml.int named
+		prop interactive QtQml.bool named
+		prop delegate QtQml.Component named pointer
+		signal countChanged
+		signal currentIndexChanged
+		signal interactiveChanged
+		signal delegateChanged
 	type QtQuick.Templates.Pane Pane
 		prototype QtQuick.Templates.Control named
 		default contentData
@@ -3161,8 +4098,53 @@ module QtQuick.Templates
 		method open
 		method close
 		method forceActiveFocus
+	type QtQuick.Templates.ProgressBar ProgressBar
+		prototype QtQuick.Templates.Control named
+		prop from QtQml.real named
+		prop to QtQml.real named
+		prop value QtQml.real named
+		prop position QtQml.real named readonly
+		prop visualPosition QtQml.real named readonly
+		prop indeterminate QtQml.bool named
+		signal fromChanged
+		signal toChanged
+		signal valueChanged
+		signal positionChanged
+		signal visualPositionChanged
+		signal indeterminateChanged
 	type QtQuick.Templates.RadioButton RadioButton
 		prototype QtQuick.Templates.AbstractButton named
+	type QtQuick.Templates.RadioDelegate RadioDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+	type QtQuick.Templates.RangeSlider RangeSlider
+		prototype QtQuick.Templates.Control named
+		enum SnapMode NoSnap=0 SnapAlways=1 SnapOnRelease=2
+		prop from QtQml.real named
+		prop to QtQml.real named
+		prop stepSize QtQml.real named
+		prop snapMode SnapMode
+		prop live QtQml.bool named
+		prop orientation Qt::Orientation
+		prop horizontal QtQml.bool named readonly
+		prop vertical QtQml.bool named readonly
+		prop touchDragThreshold QtQml.real named reset
+		prop first QtQuick.Templates.RangeSliderNode pointer readonly
+		prop second QtQuick.Templates.RangeSliderNode pointer readonly
+		signal fromChanged
+		signal toChanged
+		signal stepSizeChanged
+		signal snapModeChanged
+		signal liveChanged
+		signal orientationChanged
+		signal horizontalChanged
+		signal verticalChanged
+		signal touchDragThresholdChanged
+		method setValues
+		method valueAt
+	type QtQuick.Templates.RoundButton RoundButton
+		prototype QtQuick.Templates.Button named
+		prop radius QtQml.real named reset
+		signal radiusChanged
 	type QtQuick.Templates.ScrollBar ScrollBar
 		prototype QtQuick.Templates.Control named
 		attached QtQuick.Templates.ScrollBarAttached
@@ -3225,6 +4207,45 @@ module QtQuick.Templates
 		prop effectiveScrollBarHeight QtQml.real named readonly
 		signal effectiveScrollBarWidthChanged
 		signal effectiveScrollBarHeightChanged
+	type QtQuick.Templates.Slider Slider
+		prototype QtQuick.Templates.Control named
+		enum SnapMode NoSnap=0 SnapAlways=1 SnapOnRelease=2
+		prop from QtQml.real named
+		prop to QtQml.real named
+		prop value QtQml.real named
+		prop stepSize QtQml.real named
+		prop snapMode SnapMode
+		prop live QtQml.bool named
+		prop orientation Qt::Orientation
+		prop horizontal QtQml.bool named readonly
+		prop vertical QtQml.bool named readonly
+		prop position QtQml.real named readonly
+		prop visualPosition QtQml.real named readonly
+		prop pressed QtQml.bool named
+		prop handle QtQml.QtObject named pointer
+		prop implicitHandleWidth QtQml.real named readonly
+		prop implicitHandleHeight QtQml.real named readonly
+		prop touchDragThreshold QtQml.real named reset
+		signal fromChanged
+		signal toChanged
+		signal valueChanged
+		signal stepSizeChanged
+		signal snapModeChanged
+		signal liveChanged
+		signal orientationChanged
+		signal horizontalChanged
+		signal verticalChanged
+		signal positionChanged
+		signal visualPositionChanged
+		signal pressedChanged
+		signal handleChanged
+		signal implicitHandleWidthChanged
+		signal implicitHandleHeightChanged
+		signal touchDragThresholdChanged
+		signal moved
+		method increase
+		method decrease
+		method valueAt
 	type QtQuick.Templates.SpinBox SpinBox
 		prototype QtQuick.Templates.Control named
 		prop from QtQml.int named
@@ -3258,12 +4279,91 @@ module QtQuick.Templates
 		signal valueModified
 		method increase
 		method decrease
+	type QtQuick.Templates.SplitHandle SplitHandle
+		attached QtQuick.Templates.SplitHandleAttached
+		is uncreatable
+	type QtQuick.Templates.SplitView SplitView
+		prototype QtQuick.Templates.Container named
+		attached QtQuick.Templates.SplitViewAttached
+		prop orientation Qt::Orientation
+		prop resizing QtQml.bool named readonly
+		prop handle QtQml.Component named pointer
+		signal orientationChanged
+		signal resizingChanged
+		signal handleChanged
+		method saveState
+		method restoreState
+	type QtQuick.Templates.StackView StackView
+		prototype QtQuick.Templates.Control named
+		attached QtQuick.Templates.StackViewAttached
+		enum Status Inactive=0 Deactivating=1 Activating=2 Active=3
+		enum LoadBehavior DontLoad=0 ForceLoad=1
+		enum Operation Transition=-1 Immediate=0 PushTransition=1 ReplaceTransition=2 PopTransition=3
+		prop busy QtQml.bool named readonly
+		prop currentItem QtQml.QtObject named pointer readonly
+		prop depth QtQml.int named readonly
+		prop empty QtQml.bool named readonly
+		prop initialItem QtQml.var named
+		prop pushEnter QtQml.QtObject named pointer
+		prop pushExit QtQml.QtObject named pointer
+		prop popEnter QtQml.QtObject named pointer
+		prop popExit QtQml.QtObject named pointer
+		prop replaceEnter QtQml.QtObject named pointer
+		prop replaceExit QtQml.QtObject named pointer
+		signal busyChanged
+		signal currentItemChanged
+		signal depthChanged
+		signal emptyChanged
+		signal initialItemChanged
+		signal pushEnterChanged
+		signal pushExitChanged
+		signal popEnterChanged
+		signal popExitChanged
+		signal replaceEnterChanged
+		signal replaceExitChanged
+		method push
+		method pushItem
+		method pushItems
+		method pop
+		method popToItem
+		method popToIndex
+		method popCurrentItem
+		method replace
+		method replaceCurrentItem
+		method clear
+		method get
+		method find
+	type QtQuick.Templates.SwipeView SwipeView
+		prototype QtQuick.Templates.Container named
+		attached QtQuick.Templates.SwipeViewAttached
+		prop interactive QtQml.bool named
+		prop orientation Qt::Orientation
+		prop horizontal QtQml.bool named readonly
+		prop vertical QtQml.bool named readonly
+		signal interactiveChanged
+		signal orientationChanged
+		signal horizontalChanged
+		signal verticalChanged
 	type QtQuick.Templates.Switch Switch
 		prototype QtQuick.Templates.AbstractButton named
 		prop position QtQml.real named
 		prop visualPosition QtQml.real named readonly
 		signal positionChanged
 		signal visualPositionChanged
+	type QtQuick.Templates.SwitchDelegate SwitchDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+		prop position QtQml.real named
+		prop visualPosition QtQml.real named readonly
+		signal positionChanged
+		signal visualPositionChanged
+	type QtQuick.Templates.TabBar TabBar
+		prototype QtQuick.Templates.Container named
+		attached QtQuick.Templates.TabBarAttached
+		enum Position Header=0 Footer=1
+		prop position Position
+		signal positionChanged
+	type QtQuick.Templates.TabButton TabButton
+		prototype QtQuick.Templates.AbstractButton named
 	type QtQuick.Templates.TextArea TextArea
 		prototype QtQuick.TextEdit named
 		prop background QtQml.QtObject named pointer
@@ -3335,6 +4435,14 @@ module QtQuick.Templates
 		signal positionChanged
 	type QtQuick.Templates.ToolButton ToolButton
 		prototype QtQuick.Templates.Button named
+	type QtQuick.Templates.ToolSeparator ToolSeparator
+		prototype QtQuick.Templates.Control named
+		prop orientation Qt::Orientation
+		prop horizontal QtQml.bool named readonly
+		prop vertical QtQml.bool named readonly
+		signal orientationChanged
+		signal horizontalChanged
+		signal verticalChanged
 	type QtQuick.Templates.ToolTip ToolTip
 		prototype QtQuick.Templates.Popup named
 		attached QtQuick.Templates.ToolTipAttached
@@ -3360,6 +4468,10 @@ module QtQuick.Templates
 		signal heightChanged
 		signal colorChanged
 		signal cacheChanged
+	type QtQuick.Templates.ActionGroupAttached ActionGroupAttached
+		is uncreatable
+		prop group QtQml.QtObject named pointer
+		signal groupChanged
 	type QtQuick.Templates.ButtonGroupAttached ButtonGroupAttached
 		is uncreatable
 		prop group QtQml.QtObject named pointer
@@ -3418,30 +4530,6 @@ module QtQuick.Templates
 		prop buttonRole ButtonRole
 		signal buttonBoxChanged
 		signal buttonRoleChanged
-	type QtQuick.Templates.OverlayAttached OverlayAttached
-		is uncreatable
-		prop overlay QtQml.QtObject named pointer readonly
-		prop modal QtQml.Component named pointer
-		prop modeless QtQml.Component named pointer
-		signal overlayChanged
-		signal modalChanged
-		signal modelessChanged
-	type QtQuick.Templates.PopupAnchors PopupAnchors
-		is uncreatable
-		prop centerIn QtQml.QtObject named pointer reset
-		signal centerInChanged
-	type QtQuick.Templates.ScrollBarAttached ScrollBarAttached
-		is uncreatable
-		prop horizontal QtQml.QtObject named pointer
-		prop vertical QtQml.QtObject named pointer
-		signal horizontalChanged
-		signal verticalChanged
-	type QtQuick.Templates.ScrollIndicatorAttached ScrollIndicatorAttached
-		is uncreatable
-		prop horizontal QtQml.QtObject named pointer
-		prop vertical QtQml.QtObject named pointer
-		signal horizontalChanged
-		signal verticalChanged
 	type QtQuick.Templates.SpinButton SpinButton
 		is uncreatable
 		prop pressed QtQml.bool named
@@ -3454,6 +4542,113 @@ module QtQuick.Templates
 		signal hoveredChanged
 		signal implicitIndicatorWidthChanged
 		signal implicitIndicatorHeightChanged
+	type QtQuick.Templates.OverlayAttached OverlayAttached
+		is uncreatable
+		prop overlay QtQml.QtObject named pointer readonly
+		prop modal QtQml.Component named pointer
+		prop modeless QtQml.Component named pointer
+		signal overlayChanged
+		signal modalChanged
+		signal modelessChanged
+	type QtQuick.Templates.PopupAnchors PopupAnchors
+		is uncreatable
+		prop centerIn QtQml.QtObject named pointer reset
+		signal centerInChanged
+	type QtQuick.Templates.RangeSliderNode RangeSliderNode
+		is uncreatable
+		prop value QtQml.real named
+		prop position QtQml.real named readonly
+		prop visualPosition QtQml.real named readonly
+		prop handle QtQml.QtObject named pointer
+		prop pressed QtQml.bool named
+		prop hovered QtQml.bool named
+		prop implicitHandleWidth QtQml.real named readonly
+		prop implicitHandleHeight QtQml.real named readonly
+		signal valueChanged
+		signal positionChanged
+		signal visualPositionChanged
+		signal handleChanged
+		signal pressedChanged
+		signal hoveredChanged
+		signal implicitHandleWidthChanged
+		signal implicitHandleHeightChanged
+	type QtQuick.Templates.ScrollBarAttached ScrollBarAttached
+		is uncreatable
+		prop horizontal QtQml.QtObject named pointer
+		prop vertical QtQml.QtObject named pointer
+		signal horizontalChanged
+		signal verticalChanged
+	type QtQuick.Templates.ScrollIndicatorAttached ScrollIndicatorAttached
+		is uncreatable
+		prop horizontal QtQml.QtObject named pointer
+		prop vertical QtQml.QtObject named pointer
+		signal horizontalChanged
+		signal verticalChanged
+	type QtQuick.Templates.SplitHandleAttached SplitHandleAttached
+		is uncreatable
+		prop hovered QtQml.bool named readonly
+		prop pressed QtQml.bool named readonly
+		signal hoveredChanged
+		signal pressedChanged
+	type QtQuick.Templates.SplitViewAttached SplitViewAttached
+		is uncreatable
+		prop view QtQml.QtObject named pointer readonly
+		prop minimumWidth QtQml.real named reset
+		prop minimumHeight QtQml.real named reset
+		prop preferredWidth QtQml.real named reset
+		prop preferredHeight QtQml.real named reset
+		prop maximumWidth QtQml.real named reset
+		prop maximumHeight QtQml.real named reset
+		prop fillWidth QtQml.bool named
+		prop fillHeight QtQml.bool named
+		signal viewChanged
+		signal minimumWidthChanged
+		signal minimumHeightChanged
+		signal preferredWidthChanged
+		signal preferredHeightChanged
+		signal maximumWidthChanged
+		signal maximumHeightChanged
+		signal fillWidthChanged
+		signal fillHeightChanged
+	type QtQuick.Templates.StackViewAttached StackViewAttached
+		is uncreatable
+		enum Status Inactive=0 Deactivating=1 Activating=2 Active=3
+		enum LoadBehavior DontLoad=0 ForceLoad=1
+		enum Operation Transition=-1 Immediate=0 PushTransition=1 ReplaceTransition=2 PopTransition=3
+		prop index QtQml.int named readonly
+		prop view QtQml.QtObject named pointer readonly
+		prop status Status readonly
+		prop visible QtQml.bool named reset
+		signal indexChanged
+		signal viewChanged
+		signal statusChanged
+		signal visibleChanged
+		signal activated
+		signal activating
+		signal deactivated
+		signal deactivating
+		signal removed
+	type QtQuick.Templates.SwipeViewAttached SwipeViewAttached
+		is uncreatable
+		prop index QtQml.int named readonly
+		prop isCurrentItem QtQml.bool named readonly
+		prop isNextItem QtQml.bool named readonly
+		prop isPreviousItem QtQml.bool named readonly
+		prop view QtQml.QtObject named pointer readonly
+		signal indexChanged
+		signal isCurrentItemChanged
+		signal isNextItemChanged
+		signal isPreviousItemChanged
+		signal viewChanged
+	type QtQuick.Templates.TabBarAttached TabBarAttached
+		is uncreatable
+		enum Position Header=0 Footer=1
+		prop index QtQml.int named readonly
+		prop tabBar QtQml.QtObject named pointer readonly
+		prop position Position readonly
+		signal indexChanged
+		signal tabBarChanged
+		signal positionChanged
 	type QtQuick.Templates.ToolTipAttached ToolTipAttached
 		is uncreatable
 		prop text QtQml.string named

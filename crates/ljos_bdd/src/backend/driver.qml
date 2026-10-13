@@ -102,6 +102,7 @@ Item {
         case "language": { Qt.uiLanguage = op.value; return null }
         case "copy": { var cc = clipper(); cc.text = op.value; cc.selectAll(); cc.copy(); return null }
         case "paste": { var cp = clipper(); cp.text = ""; cp.paste(); return cp.text }
+        case "copyHtml": { var ch = richClipHelper.createObject(driver, { text: op.value }); ch.selectAll(); ch.copy(); ch.destroy(); return null }
         case "nop": return null
         default: throw new Error("unknown op " + op.op)
         }
@@ -144,6 +145,8 @@ Item {
         return clip
     }
     Component { id: clipHelper; TextEdit { visible: false; textFormat: TextEdit.PlainText } }
+    // A rich text editor copies HTML, and the characters as plain text.
+    Component { id: richClipHelper; TextEdit { visible: false; textFormat: TextEdit.RichText } }
 
     // Another window takes the keyboard, as when the user switches windows.
     function activate(on) {
