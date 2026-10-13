@@ -96,6 +96,13 @@ jobs:
           submodules: true
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-window qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qt6-declarative-dev-tools
+      - run: sudo apt-get update && sudo apt-get install -y qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-window qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qt6-declarative-dev-tools qml-qt6
+      # The scripts run `qml6`; Ubuntu may install the runner only as Qt's own `qml`.
+      - run: |
+          if ! command -v qml6 >/dev/null; then
+            mkdir -p "$HOME/.local/bin"
+            ln -s /usr/lib/qt6/bin/qml "$HOME/.local/bin/qml6"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
       - run: mise run gallery:reference
       - run: mise run gallery
