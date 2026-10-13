@@ -66,6 +66,10 @@ pub(super) fn fitted(engine: &Engine, popup: ObjectId, horizontal: bool, wanted:
 /// `y` read as where that is. Everything it reads is a dependency when
 /// it runs in an effect, except `x` and `y` themselves: those it writes.
 pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    if super::drawer::is_drawer(engine, popup) {
+        // A drawer is placed by its edge, not by `x` and `y`.
+        return super::drawer::place(engine, popup);
+    }
     let Some(state) = state_of(engine, popup) else {
         return Ok(());
     };

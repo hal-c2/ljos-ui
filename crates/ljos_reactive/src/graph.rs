@@ -100,6 +100,10 @@ struct Node<V> {
     /// Its cycle is being settled: marks that reach it are dropped, which
     /// is what breaks the loop.
     settling: bool,
+    /// While it settles: a source of it took a new value, so its change
+    /// came back round as a change. That is the binding loop; a cycle whose
+    /// other members give the values they had is none.
+    came_back: bool,
     /// A binding set aside by [`Graph::hold`]: installed, not run.
     held: bool,
     height: u32,
@@ -200,6 +204,8 @@ struct Inner<V> {
     wave_origin: Option<NodeId>,
     batch_depth: u32,
     flush_depth: u32,
+    /// Scopes to freeze once the work under way is done (`set_frozen`).
+    freeze_later: Vec<ScopeId>,
     flush_epoch: u64,
     tick: u64,
     seq: u64,
@@ -278,6 +284,7 @@ impl<V: Clone + 'static> Drop for BatchGuard<'_, V> {
         };
         if outermost && !std::thread::panicking() {
             self.0.flush();
+            self.0.freeze_waiting();
         }
     }
 }
@@ -286,7 +293,14 @@ struct FlushGuard<'g, V: Clone + 'static>(&'g Graph<V>);
 
 impl<V: Clone + 'static> Drop for FlushGuard<'_, V> {
     fn drop(&mut self) {
-        self.0.inner.borrow_mut().flush_depth -= 1;
+        let idle = {
+            let mut i = self.0.inner.borrow_mut();
+            i.flush_depth -= 1;
+            i.flush_depth == 0 && i.batch_depth == 0
+        };
+        if idle && !std::thread::panicking() {
+            self.0.freeze_waiting();
+        }
     }
 }
 
@@ -355,6 +369,7 @@ impl<V: Clone + 'static> Graph<V> {
                 wave_origin: None,
                 batch_depth: 0,
                 flush_depth: 0,
+                freeze_later: Vec::new(),
                 flush_epoch: 0,
                 tick: 0,
                 seq: 0,
@@ -494,18 +509,39 @@ impl<V: Clone + 'static> Graph<V> {
     /// repeated changes coalesce, and on thaw each parked effect runs once
     /// against the latest values. Bindings are unaffected: they stay lazy
     /// and still evaluate when read.
+    ///
+    /// Freezing stops work to come, not work already caused: asked for
+    /// inside a batch or while effects run, it takes hold once those
+    /// effects have run. A page hidden and frozen in one statement still
+    /// sees itself hidden. Thawing is at once.
     pub fn set_frozen(&self, scope: ScopeId, frozen: bool) -> Result<(), ReactiveError> {
         {
             let mut g = self.inner.borrow_mut();
-            let s = g
-                .scopes
-                .get_mut(scope)
-                .ok_or(ReactiveError::DeadScope(scope))?;
-            s.frozen_self = frozen;
+            if !g.scopes.contains_key(scope) {
+                return Err(ReactiveError::DeadScope(scope));
+            }
+            g.freeze_later.retain(|s| *s != scope);
+            if frozen && (g.batch_depth > 0 || g.flush_depth > 0) {
+                g.freeze_later.push(scope);
+                return Ok(());
+            }
+            g.scopes[scope].frozen_self = frozen;
             g.refreeze(scope);
         }
         self.flush_if_idle();
         Ok(())
+    }
+
+    /// Freezes the scopes `set_frozen` put off, now that nothing runs.
+    fn freeze_waiting(&self) {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        for scope in std::mem::take(&mut i.freeze_later) {
+            if let Some(s) = i.scopes.get_mut(scope) {
+                s.frozen_self = true;
+                i.refreeze(scope);
+            }
+        }
     }
 
     /// Moves `scope` (with its subtree) to the end of `new_parent`'s
@@ -1780,8 +1816,14 @@ impl<V: Clone + 'static> Graph<V> {
     /// new value, and the mark that would make `n` run again is dropped.
     /// Without it the members would re-dirty each other on every read (or
     /// up to the re-run cap in eager mode) and never agree.
+    ///
+    /// The mark that came back only says the change may travel round. Qt
+    /// warns when it does: when a member gives a new value and so the
+    /// binding is asked to run again. A cycle whose members settle on the
+    /// values they had (two views that follow each other's current index)
+    /// is no loop, and is not reported.
     fn settle(&self, n: NodeId) {
-        let sources: SmallVec<[NodeId; 4]> = {
+        let (sources, cycle): (SmallVec<[NodeId; 4]>, Vec<NodeId>) = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             let Some(node) = i.nodes.get_mut(n) else {
@@ -1793,14 +1835,22 @@ impl<V: Clone + 'static> Graph<V> {
             node.cyclic = false;
             node.settling = true;
             let sources = node.sources.iter().map(|e| e.node).collect();
-            i.report_loop(n);
-            sources
+            // Found now, while the members the change went through are
+            // still marked.
+            (sources, i.find_cycle(n))
         };
         let _guard = SettleGuard(self, n);
         // Every path from `n` back to itself ends in one of its sources,
         // so pulling those evaluates exactly the members of its cycles.
         for s in sources {
             self.update(s);
+        }
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        if let Some(node) = i.nodes.get_mut(n)
+            && std::mem::take(&mut node.came_back)
+        {
+            i.emit(Diagnostic::BindingLoop { node: n, cycle });
         }
     }
 
@@ -1853,9 +1903,12 @@ impl<V: Clone + 'static> Graph<V> {
                         i.wave_origin = Some(n);
                         let changed = i.set_value(n, v);
                         i.wave_origin = None;
-                        // A self-read leaves no edge, so no mark returns.
+                        // A self-read leaves no edge, so no mark returns;
+                        // a change of what it read is its change coming
+                        // back.
                         if changed && self_read {
                             i.nodes[n].cyclic = true;
+                            i.nodes[n].came_back = true;
                         }
                     }
                     if i.nodes[n].pending {
@@ -1967,6 +2020,7 @@ impl<V: Clone + 'static> Inner<V> {
             self_read: false,
             cyclic: false,
             settling: false,
+            came_back: false,
             held: false,
             height: 0,
             seq: self.seq,
@@ -2040,9 +2094,9 @@ impl<V: Clone + 'static> Inner<V> {
         self.diagnostics.push(d);
     }
 
-    /// Reports the cycle through `n`: `n`, then one chain of sources that
-    /// its change just dirtied and that leads back to it.
-    fn report_loop(&mut self, n: NodeId) {
+    /// The cycle through `n`: `n`, then one chain of sources that its
+    /// change just dirtied and that leads back to it.
+    fn find_cycle(&mut self, n: NodeId) -> Vec<NodeId> {
         self.tick += 1;
         let seen = self.tick;
         let mut cycle = vec![n];
@@ -2071,7 +2125,7 @@ impl<V: Clone + 'static> Inner<V> {
                 break 'search;
             }
         }
-        self.emit(Diagnostic::BindingLoop { node: n, cycle });
+        cycle
     }
 
     /// Stores `v` if it differs and marks direct observers dirty. Returns
@@ -2196,7 +2250,11 @@ impl<V: Clone + 'static> Inner<V> {
             }
             if node.settling {
                 // Its cycle is settling against the value it just
-                // produced. Running it again is the loop.
+                // produced. Running it again would be the loop; a source
+                // that changed says the change came back.
+                if st == NodeState::Dirty {
+                    node.came_back = true;
+                }
                 continue;
             }
             if node.state == NodeState::Computing {

@@ -124,7 +124,7 @@ pub(super) fn ensure(engine: &Engine, top: ObjectId) -> Result<ObjectId, EngineE
 
 /// The shown popups of an overlay, the lowest first: by `z`, and in the
 /// order they were opened among equals.
-fn stack(engine: &Engine, overlay: ObjectId) -> Vec<(ObjectId, ObjectId)> {
+pub(super) fn stack(engine: &Engine, overlay: ObjectId) -> Vec<(ObjectId, ObjectId)> {
     engine.untrack(|| {
         let mut shown: Vec<(f64, ObjectId, ObjectId)> = child_items(engine, overlay)
             .into_iter()
@@ -139,17 +139,28 @@ fn stack(engine: &Engine, overlay: ObjectId) -> Vec<(ObjectId, ObjectId)> {
     })
 }
 
-/// A popup was shown or hidden: the overlay is there while one is shown.
+/// A popup was shown or hidden: the overlay is there while one is shown,
+/// and while the window has a drawer, which can be dragged in at any time
+/// (measured on qml6: so it is with one that is not interactive too).
 pub(super) fn changed(engine: &Engine, overlay: ObjectId) {
     if !engine.is_alive(overlay) {
         return;
     }
-    let any = !stack(engine, overlay).is_empty();
+    let any = !stack(engine, overlay).is_empty() || has_drawer(engine, overlay);
     check(
         engine,
         "overlay",
         set_computed(engine, overlay, Item::VISIBLE.index, Value::Bool(any)),
     );
+}
+
+fn has_drawer(engine: &Engine, overlay: ObjectId) -> bool {
+    engine.untrack(|| {
+        child_items(engine, overlay)
+            .into_iter()
+            .filter_map(|item| popup_of(engine, item))
+            .any(|popup| super::drawer::is_drawer(engine, popup))
+    })
 }
 
 /// Makes the shade of `popup`, if it has one, as a child of `overlay`.
@@ -190,6 +201,12 @@ fn make_shade(
         engine.bind(shade, size, move |e| e.read(overlay, size))?;
     }
     engine.bind(shade, Item::Z.index, move |e| e.read(popup, Popup::Z.index))?;
+    if super::drawer::is_drawer(engine, popup) {
+        // The shade fades in as the drawer comes in.
+        engine.bind(shade, Item::OPACITY.index, move |e| {
+            super::drawer::shade_opacity(e, popup)
+        })?;
+    }
     set_parent_item(engine, shade, Some(overlay))?;
     Ok(Some(shade))
 }
@@ -277,7 +294,7 @@ pub(super) fn reshade(engine: &Engine, popup: ObjectId) -> Result<(), EngineErro
 
 // ---------------------------------------------------------------- pointer
 
-fn point_in(engine: &Engine, item: ObjectId, scene: kurbo::Point) -> bool {
+pub(super) fn point_in(engine: &Engine, item: ObjectId, scene: kurbo::Point) -> bool {
     let local = engine.untrack(|| scene_transform(engine, item)).inverse() * scene;
     contains_point(engine, item, local)
 }
@@ -288,7 +305,7 @@ fn policy(engine: &Engine, popup: ObjectId) -> i32 {
         .to_number() as i32
 }
 
-fn is_modal(engine: &Engine, popup: ObjectId) -> bool {
+pub(super) fn is_modal(engine: &Engine, popup: ObjectId) -> bool {
     engine.untrack(|| flag(engine, popup, Popup::MODAL.index))
 }
 
@@ -350,11 +367,13 @@ fn press(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) {
             check(engine, "close", dismiss(engine, popup));
         }
     });
+    super::drawer_drag::pressed(engine, overlay, ev);
 }
 
 fn release(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) {
     let at = ev.pos;
     remember_pointer(engine, overlay, at);
+    super::drawer_drag::let_go(engine);
     beside(engine, overlay, at, |popup| {
         // Only what was pressed beside is released beside: a drag that
         // began on the popup and ends off it closes nothing.
@@ -382,6 +401,7 @@ pub(super) fn register(engine: &Engine) {
             release,
         },
     );
+    ljos_quick::set_layer_take(engine, super::drawer_drag::take);
     engine.on_attached_created(|e, owner, att| {
         if !is_a::<OverlayAttached>(e, att) {
             return true;

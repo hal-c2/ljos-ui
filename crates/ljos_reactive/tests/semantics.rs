@@ -484,6 +484,37 @@ fn frozen_scope_defers_and_coalesces_effects() {
     assert_eq!(*seen.borrow(), vec![3, 4]);
 }
 
+/// A page hidden and frozen in one statement still sees itself hidden: the
+/// freeze waits for the effects that change already caused.
+#[test]
+fn freezing_inside_a_batch_waits_for_the_effects_it_caused() {
+    let g = Graph::new();
+    let r = g.root();
+    let page = g.create_scope(r).unwrap();
+    let x = g.property(r, 0).unwrap();
+    let seen = log();
+    let s = seen.clone();
+    g.watch(page, x, move |_, v| s.borrow_mut().push(*v))
+        .unwrap();
+    g.batch(|| {
+        g.set(x, 1);
+        g.set_frozen(page, true).unwrap();
+        assert!(!g.is_frozen(page), "not before the batch ends");
+    });
+    assert_eq!(*seen.borrow(), vec![1]);
+    assert!(g.is_frozen(page));
+    g.set(x, 2);
+    assert_eq!(*seen.borrow(), vec![1], "frozen from then on");
+    // Thawed before the batch ends: the freeze that waited is dropped.
+    g.set_frozen(page, false).unwrap();
+    g.batch(|| {
+        g.set_frozen(page, true).unwrap();
+        g.set_frozen(page, false).unwrap();
+    });
+    assert!(!g.is_frozen(page));
+    assert_eq!(*seen.borrow(), vec![1, 2]);
+}
+
 #[test]
 fn thawing_a_child_of_a_frozen_parent_stays_frozen() {
     let g: Graph<i64> = Graph::new();

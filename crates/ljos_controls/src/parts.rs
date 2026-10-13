@@ -201,7 +201,7 @@ pub(crate) fn declared_by_style(engine: &Engine, obj: ObjectId) -> bool {
 
 /// The properties of a control that hold parts, by name: a derived type
 /// adds its own to the first two.
-const PART_PROPERTIES: [&str; 11] = [
+const PART_PROPERTIES: [&str; 13] = [
     "background",
     "contentItem",
     "indicator",
@@ -213,6 +213,8 @@ const PART_PROPERTIES: [&str; 11] = [
     "down.indicator",
     "handle",
     "popup",
+    "first.handle",
+    "second.handle",
 ];
 
 /// Makes the parts a style left to be made, and clears away the ones it
@@ -229,12 +231,26 @@ const PART_PROPERTIES: [&str; 11] = [
 /// A style that gives a part as the object itself (as Qt's files are
 /// written) has it made with the file, whole; such a part that the
 /// application replaced is destroyed here.
+/// Whether the property is typed `Component`: it holds the component, to
+/// make objects from as often as the control needs, and is no part.
+fn holds_components(engine: &Engine, control: ObjectId, prop: PropIndex) -> bool {
+    engine.meta_of(control).is_some_and(|m| {
+        m.property(prop).is_some_and(
+            |p| matches!(&p.ty, ljos_engine::TypeTag::Object(Some(n)) if n.as_str() == "Component"),
+        )
+    })
+}
+
 pub(crate) fn settle_parts(engine: &Engine, control: ObjectId) {
     engine.untrack(|| {
         for name in PART_PROPERTIES {
             let Ok(prop) = engine.property_index(control, name) else {
                 continue;
             };
+            if holds_components(engine, control, prop) {
+                // A split view's `handle` is what each handle is made from.
+                continue;
+            }
             let Some(component) =
                 object(engine, control, prop).filter(|c| is_a::<Component>(engine, *c))
             else {

@@ -311,7 +311,8 @@ fn a_panicking_member_leaves_the_graph_usable() {
     }));
     assert!(r.is_err());
     g.check_invariants().unwrap();
-    assert_eq!(loops(&g), [p]);
+    // q gave no value, so p's change never came back round: no loop yet.
+    assert_eq!(loops(&g), []);
     // p is not left settling: q's retry is a new trigger, which comes
     // back to q and moves p once more.
     assert_eq!(g.get(q), 8);

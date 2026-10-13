@@ -502,6 +502,14 @@ impl Engine {
         Some(self.inner.store.borrow().objects.get(obj)?.meta.clone())
     }
 
+    /// Gives `obj` the type `meta`, which must derive from the type it
+    /// has: for an object whose properties are only known at run time
+    /// (the names the `PathAttribute`s of a path give `PathView`'s
+    /// attached object). What it had keeps its value.
+    pub fn extend_type(&self, obj: ObjectId, meta: MetaRef) -> Result<(), EngineError> {
+        self.extend_meta(obj, meta)
+    }
+
     pub fn flags(&self, obj: ObjectId) -> Option<ObjectFlags> {
         Some(self.inner.store.borrow().objects.get(obj)?.flags)
     }
@@ -973,6 +981,7 @@ impl Engine {
             NeedNode,
             Alias(Option<AliasTarget>),
         }
+        self.make_if_due(obj, prop);
         let got = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
@@ -1139,6 +1148,7 @@ impl Engine {
         v: Value,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        self.drop_maker(obj, prop);
         let v = self.for_slot(obj, prop, v);
         {
             let mut store = self.inner.store.borrow_mut();
@@ -1186,6 +1196,7 @@ impl Engine {
         internal: bool,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        self.drop_maker(obj, prop);
         // `x = undefined` takes a property with a reset back, and so does
         // a value that stands for none.
         if matches!(how, WriteKind::Imperative | WriteKind::Initial)
@@ -1425,6 +1436,7 @@ impl Engine {
         free: Free,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        self.drop_maker(obj, prop);
         let ty = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
@@ -2130,6 +2142,28 @@ impl Engine {
             .ok_or(EngineError::DeadObject(obj))?
             .context = ctx;
         Ok(())
+    }
+
+    /// Has `component` make its objects in a child of `ctx` from now on.
+    /// A view that makes a page from a file (a `StackView` given a URL)
+    /// makes it in its own context, so the page sees the names around
+    /// the view as it does in Qt; a file component alone sees only the
+    /// root context.
+    pub fn set_component_context(
+        &self,
+        component: ObjectId,
+        ctx: ContextId,
+    ) -> Result<(), EngineError> {
+        let t = self.component_template(component)?;
+        let t = crate::incubator::Template {
+            file: t.file.clone(),
+            comp: t.comp,
+            outer: t.outer.clone(),
+            context: Some(ctx),
+        };
+        self.with_mut::<crate::qtqml::Component, _>(component, |c| {
+            c.template = Some(Rc::new(t));
+        })
     }
 
     // -------------------------------------------------------- translation

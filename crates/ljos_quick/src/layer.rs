@@ -15,6 +15,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use ljos_engine::{Engine, NodeId, ObjectId, Value};
+use ljos_render::kurbo;
 
 use crate::input::PointerEvent;
 
@@ -33,12 +34,21 @@ pub struct LayerHooks {
     pub release: fn(&Engine, ObjectId, &PointerEvent),
 }
 
+/// A move with a button held, before the scene delivers it: the layer,
+/// where the press was and the move, in scene coordinates. Returns an item
+/// that takes the pointer from whatever holds it, which hears that its
+/// press was cancelled. Something in the layer that is dragged in from
+/// beside it (a drawer from the edge of the window) is not under the press,
+/// so nothing else would give it the pointer.
+pub type LayerTake = fn(&Engine, ObjectId, kurbo::Point, &PointerEvent) -> Option<ObjectId>;
+
 #[derive(Default)]
 struct Layers {
     /// The layer of each tree, by the tree's top item.
     by_top: RefCell<HashMap<ObjectId, ObjectId>>,
     by_layer: RefCell<HashMap<ObjectId, ObjectId>>,
     hooks: Cell<Option<LayerHooks>>,
+    take: Cell<Option<LayerTake>>,
     /// Bumped when a layer comes or goes, for bindings that found none.
     epoch: Cell<Option<NodeId>>,
 }
@@ -54,6 +64,12 @@ fn epoch(engine: &Engine, layers: &Layers) -> Option<NodeId> {
 /// Says who answers for the layers of this engine.
 pub fn set_layer_hooks(engine: &Engine, hooks: LayerHooks) {
     engine.extension::<Layers>().hooks.set(Some(hooks));
+}
+
+/// Says who may take the pointer for the layers of this engine while a
+/// button is held ([`LayerTake`]).
+pub fn set_layer_take(engine: &Engine, take: LayerTake) {
+    engine.extension::<Layers>().take.set(Some(take));
 }
 
 /// Makes `layer` the layer above the tree that hangs from `top`. The
@@ -156,6 +172,17 @@ pub(crate) fn press(engine: &Engine, layer: Option<ObjectId>, ev: &PointerEvent)
     {
         (hooks.press)(engine, layer, ev);
     }
+}
+
+pub(crate) fn take(
+    engine: &Engine,
+    layer: Option<ObjectId>,
+    press: kurbo::Point,
+    ev: &PointerEvent,
+) -> Option<ObjectId> {
+    let layer = layer.filter(|l| engine.is_alive(*l))?;
+    let take = engine.extension::<Layers>().take.get()?;
+    take(engine, layer, press, ev).filter(|o| engine.is_alive(*o))
 }
 
 pub(crate) fn release(engine: &Engine, layer: Option<ObjectId>, ev: &PointerEvent) {

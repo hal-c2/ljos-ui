@@ -299,7 +299,15 @@ fn press(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) -> bool {
 
 fn ignore(_: &Engine, _: ObjectId, _: &PointerEvent, _: kurbo::Point) {}
 
-fn ignore_cancel(_: &Engine, _: ObjectId) {}
+/// A drawer that has the pointer follows it from the overlay, which sees
+/// each move first; what is left here is to let go.
+fn release(engine: &Engine, item: ObjectId, ev: &PointerEvent, _: kurbo::Point) {
+    super::drawer_drag::released(engine, item, ev);
+}
+
+fn cancel(engine: &Engine, item: ObjectId) {
+    super::drawer_drag::canceled(engine, item);
+}
 
 fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
     false
@@ -367,8 +375,8 @@ pub(super) fn register(engine: &Engine) {
         PointerItem {
             press,
             moved: ignore,
-            release: ignore,
-            cancel: ignore_cancel,
+            release,
+            cancel,
             hover: crate::control::hover,
         },
     );

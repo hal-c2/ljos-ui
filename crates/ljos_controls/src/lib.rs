@@ -18,10 +18,16 @@
 
 mod a11y;
 mod action;
+mod action_group;
+mod bars;
 mod button;
 mod combobox;
+mod container;
 mod containers;
 mod control;
+mod delay_button;
+mod delegates;
+mod dial;
 mod dialog;
 mod focus;
 mod group;
@@ -30,20 +36,27 @@ mod inherit;
 mod label;
 mod menu;
 mod menu_bar;
+mod page_indicator;
 mod palette;
 mod parts;
 mod popup;
 mod rows;
 mod scroll_bar;
 mod scroll_view;
+mod slider;
 mod spin_box;
+mod split_view;
+mod stack_view;
 mod style;
+mod swipe_view;
+mod tab_bar;
 mod text_area;
 mod text_control;
 mod text_field;
 mod ticker;
 mod tooltip;
 mod util;
+mod value_controls;
 mod window;
 
 use std::cell::Cell;
@@ -51,20 +64,32 @@ use std::cell::Cell;
 use ljos_engine::{Engine, MetaRef, QmlType, Version};
 
 pub use action::Action;
+pub use action_group::{ActionGroup, ActionGroupAttached};
+pub use bars::{BusyIndicator, ProgressBar, ToolSeparator};
 pub use button::{AbstractButton, Button, CheckBox, Icon, RadioButton, Switch, ToolButton};
 pub use combobox::{ComboBox, ItemDelegate};
+pub use container::Container;
 pub use containers::{Frame, GroupBox, Page, Pane, ToolBar};
 pub use control::Control;
+pub use delay_button::{DelayButton, RoundButton};
+pub use delegates::{CheckDelegate, RadioDelegate, SwitchDelegate};
+pub use dial::Dial;
 pub use dialog::{Dialog, DialogButtonBox, DialogButtonBoxAttached};
 pub use group::{ButtonGroup, ButtonGroupAttached};
 pub use label::Label;
 pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use menu_bar::{MenuBar, MenuBarItem};
+pub use page_indicator::PageIndicator;
 pub use palette::Palette;
-pub use popup::{Overlay, OverlayAttached, Popup, PopupAnchors};
+pub use popup::{Drawer, Overlay, OverlayAttached, Popup, PopupAnchors};
 pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
 pub use scroll_view::ScrollView;
-pub use spin_box::{SpinBox, SpinButton};
+pub use slider::{RangeSlider, RangeSliderNode, Slider};
+pub use spin_box::{DoubleSpinBox, SpinBox, SpinButton};
+pub use split_view::{SplitHandle, SplitHandleAttached, SplitView, SplitViewAttached};
+pub use stack_view::{StackView, StackViewAttached};
+pub use swipe_view::{SwipeView, SwipeViewAttached};
+pub use tab_bar::{TabBar, TabBarAttached, TabButton};
 pub use text_area::TextArea;
 pub use text_field::TextField;
 pub use tooltip::{ToolTip, ToolTipAttached};
@@ -143,6 +168,7 @@ pub fn register(engine: &Engine) {
         TextField::static_meta(),
         TextArea::static_meta(),
         SpinBox::static_meta(),
+        DoubleSpinBox::static_meta(),
     ] {
         engine.register_type(
             "QtQuick.Templates",
@@ -152,6 +178,8 @@ pub fn register(engine: &Engine) {
     }
     text_control::register(engine);
     spin_box::register(engine);
+    value_controls::register(engine);
+    container::register(engine);
 
     let (library, undecoded) = StyleLibrary::embedded();
     let names = library.type_names();

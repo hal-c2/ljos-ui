@@ -23,6 +23,8 @@
 //! `opacity` and `scale` are its item's. With reduced motion they are
 //! over in the step they start in.
 
+mod drawer;
+mod drawer_drag;
 mod item;
 mod overlay;
 mod position;
@@ -44,6 +46,7 @@ use crate::parts::settle_parts;
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 use crate::window::Window;
 
+pub use drawer::Drawer;
 pub(crate) use item::{PopupItem, follow, look_from_above, set_role, take_look_back};
 pub(crate) use overlay::last_pointer;
 pub use overlay::{Overlay, OverlayAttached};
@@ -637,8 +640,21 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
     bind_default(e, popup, Popup::HEIGHT.index, move |e| {
         Value::Real(natural_size(e, popup, false))
     })?;
+    // A drawer is placed by the edges of its window, so it hangs from the
+    // window's overlay as soon as it is in one (as in Qt). Reset still
+    // gives where it was declared.
+    let drawer = drawer::is_drawer(e, popup);
     bind_default(e, popup, Popup::PARENT.index, move |e| {
-        default_parent(e, popup).map_or(Value::Null, Value::Object)
+        let natural = default_parent(e, popup);
+        let parent = if drawer {
+            natural
+                .and_then(|p| ljos_quick::window_of(e, p))
+                .and_then(|top| overlay::ensure(e, top).ok())
+                .or(natural)
+        } else {
+            natural
+        };
+        parent.map_or(Value::Null, Value::Object)
     })?;
 
     state
@@ -778,6 +794,89 @@ pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> 
         try_present(engine, popup)?;
     }
     arrive(engine, popup, &state)
+}
+
+/// Whether `popup` is on its way out: its exit transition runs.
+pub(super) fn is_going(engine: &Engine, popup: ObjectId) -> bool {
+    state_of(engine, popup).is_some_and(|s| s.phase.get() == Phase::Going)
+}
+
+/// Shows a closed popup where it is, without its enter transition: a
+/// drawer that the pointer brings in.
+pub(super) fn show_still(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    if engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
+        return Ok(());
+    }
+    emit(engine, popup, "aboutToShow");
+    if !engine.is_alive(popup) {
+        return Ok(());
+    }
+    state.switching.set(true);
+    let wrote = put(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
+    state.switching.set(false);
+    wrote?;
+    try_present(engine, popup)
+}
+
+/// Holds a popup that is coming where it is: the pointer has it now.
+pub(super) fn hold(engine: &Engine, popup: ObjectId) {
+    if let Some(state) = state_of(engine, popup)
+        && state.phase.get() == Phase::Coming
+    {
+        stop(engine, popup, &state, Popup::ENTER.index);
+    }
+}
+
+/// Brings a popup the pointer let go of the rest of the way in with its
+/// enter transition. One that was open (`again`) says once more that it
+/// is about to show, as Qt does.
+pub(super) fn settle_open(
+    engine: &Engine,
+    popup: ObjectId,
+    again: bool,
+) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    match state.phase.get() {
+        Phase::Coming => stop(engine, popup, &state, Popup::ENTER.index),
+        Phase::Going => {
+            stop(engine, popup, &state, Popup::EXIT.index);
+            state.before_exit.set(None);
+        }
+        Phase::Rest => {}
+    }
+    if again {
+        emit(engine, popup, "aboutToShow");
+        if !engine.is_alive(popup) {
+            return Ok(());
+        }
+    }
+    arrive(engine, popup, &state)
+}
+
+/// Closes a popup without its exit transition: a drawer let go where
+/// nothing of it is in.
+pub(super) fn close_at_once(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let Some(state) = state_of(engine, popup) else {
+        return Ok(());
+    };
+    if !engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
+        return Ok(());
+    }
+    for prop in [Popup::ENTER.index, Popup::EXIT.index] {
+        stop(engine, popup, &state, prop);
+    }
+    state.before_exit.set(None);
+    emit(engine, popup, "aboutToHide");
+    if !engine.is_alive(popup) {
+        return Ok(());
+    }
+    set_computed(engine, popup, Popup::OPENED.index, Value::Bool(false))?;
+    gone(engine, popup, &state)
 }
 
 /// The `Transition` in `prop` of `popup`.

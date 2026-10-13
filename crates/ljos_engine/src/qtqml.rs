@@ -424,6 +424,11 @@ pub(crate) struct TimerState {
     pending: HashMap<TimerId, Pending>,
     by_timer: HashMap<ObjectId, TimerId>,
     by_start: HashMap<ObjectId, TimerId>,
+    /// When each entry of `by_timer` is due.
+    due_at: HashMap<ObjectId, Time>,
+    /// Running timers of frozen objects (§8.3) and when they were due:
+    /// armed again on thaw.
+    parked: HashMap<ObjectId, Time>,
     /// `Qt.callLater` queue: one entry per function, with its last args.
     calls: Vec<(JsRef, Vec<JsValue>)>,
     quit: bool,
@@ -438,6 +443,8 @@ impl Default for TimerState {
             pending: HashMap::new(),
             by_timer: HashMap::new(),
             by_start: HashMap::new(),
+            due_at: HashMap::new(),
+            parked: HashMap::new(),
             calls: Vec::new(),
             quit: false,
             wake: None,
@@ -467,10 +474,70 @@ pub(crate) fn register(engine: &Engine) {
 pub(crate) fn forget_timers(engine: &Engine, objects: &[ObjectId]) {
     let mut st = engine.inner.timers.borrow_mut();
     for o in objects {
+        st.parked.remove(o);
+        st.due_at.remove(o);
         let ids = [st.by_timer.remove(o), st.by_start.remove(o)];
         for t in ids.into_iter().flatten() {
             st.sched.cancel(t);
             st.pending.remove(&t);
+        }
+    }
+}
+
+/// Takes the timers of frozen objects off the schedule (§8.3): a frozen
+/// page's timer wakes nobody.
+pub(crate) fn park_timers(engine: &Engine) {
+    let armed: Vec<ObjectId> = {
+        let st = engine.inner.timers.borrow();
+        st.by_timer
+            .keys()
+            .chain(st.by_start.keys())
+            .copied()
+            .collect()
+    };
+    let frozen: Vec<ObjectId> = armed.into_iter().filter(|o| engine.is_frozen(*o)).collect();
+    let now = engine.now();
+    let mut st = engine.inner.timers.borrow_mut();
+    for o in frozen {
+        // A posted `triggeredOnStart` is due at once.
+        let due = match st.by_start.contains_key(&o) {
+            true => now,
+            false => st.due_at.get(&o).copied().unwrap_or(now),
+        };
+        let ids = [st.by_timer.remove(&o), st.by_start.remove(&o)];
+        for t in ids.into_iter().flatten() {
+            st.sched.cancel(t);
+            st.pending.remove(&t);
+        }
+        st.parked.insert(o, due);
+    }
+}
+
+/// Arms the parked timers that are no longer frozen. One that came due
+/// while frozen fires once, at once, and a repeating one goes on from
+/// there: observers see that it triggered, not how often (§8.3).
+pub(crate) fn unpark_timers(engine: &Engine) {
+    let parked: Vec<(ObjectId, Time)> = engine
+        .inner
+        .timers
+        .borrow()
+        .parked
+        .iter()
+        .map(|(o, t)| (*o, *t))
+        .collect();
+    let now = engine.now();
+    for (o, due) in parked {
+        if engine.is_frozen(o) {
+            continue;
+        }
+        engine.inner.timers.borrow_mut().parked.remove(&o);
+        let Ok((running, interval)) =
+            engine.untrack(|| engine.with::<Timer, _>(o, |t| (t.running, t.interval)))
+        else {
+            continue;
+        };
+        if running {
+            engine.timer_schedule_at(o, due.max(now), interval);
         }
     }
 }
@@ -641,9 +708,20 @@ impl Engine {
             }
         }
         if !running {
+            self.inner.timers.borrow_mut().parked.remove(&obj);
             return;
         }
         let now = self.now();
+        if self.is_frozen(obj) {
+            let posted = on_start && on_start_flag;
+            let due = match posted {
+                true => now,
+                false => now + Duration::from_millis(u64::try_from(interval.max(0)).unwrap_or(0)),
+            };
+            self.inner.timers.borrow_mut().parked.insert(obj, due);
+            return;
+        }
+        self.inner.timers.borrow_mut().parked.remove(&obj);
         self.timer_schedule(obj, now, interval);
         // Starts within one turn trigger once (checked with qml6).
         let posted = self.inner.timers.borrow().by_start.contains_key(&obj);
@@ -660,14 +738,18 @@ impl Engine {
     }
 
     fn timer_schedule(&self, obj: ObjectId, from: Time, interval: i32) {
+        let ms = Duration::from_millis(u64::try_from(interval.max(0)).unwrap_or(0));
+        self.timer_schedule_at(obj, from + ms, interval);
+    }
+
+    fn timer_schedule_at(&self, obj: ObjectId, at: Time, interval: i32) {
         let interval = Duration::from_millis(u64::try_from(interval.max(0)).unwrap_or(0));
         {
             let mut st = self.inner.timers.borrow_mut();
-            let id = st
-                .sched
-                .add_timer(from + interval, TimerKind::for_interval(interval));
+            let id = st.sched.add_timer(at, TimerKind::for_interval(interval));
             st.pending.insert(id, Pending::Timer(obj));
             st.by_timer.insert(obj, id);
+            st.due_at.insert(obj, at);
         }
         self.wake_host();
     }
