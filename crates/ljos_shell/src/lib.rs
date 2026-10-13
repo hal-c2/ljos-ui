@@ -28,6 +28,7 @@ pub use ljos_dev::{TopRow, TopView};
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
 mod desktop;
+mod platform;
 mod repaint;
 mod surface;
 mod windows;
@@ -252,6 +253,12 @@ impl<M: Send + 'static> ShellApp<M> {
             ljos_controls::WindowSystem::of(&engine).set_host(h.changed);
             h.tree
         });
+        if tree.is_some() {
+            // Before `setup` too: a `Settings` reads its file, and a
+            // binding may ask `Qt.platform`, while the root is built.
+            let wake_ctx = ctx.clone();
+            platform::install(&engine, move || wake_ctx.request_repaint());
+        }
         let wake_ctx = ctx.clone();
         let (inbox, handle) = UiInbox::channel_with_wake(
             config.inbox_capacity,

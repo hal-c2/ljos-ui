@@ -32,7 +32,7 @@ use ljos_host::{
     AppState, ButtonState, Event, HostApp, HostControl, PlatformHost, PointerKind, Screen, Wake,
     WindowChange, WindowEvent, WindowId, WindowState, WinitControl, WinitHost,
 };
-use ljos_runtime::SystemClock;
+use ljos_runtime::{MemoryPressure, SystemClock};
 
 use crate::repaint::RepaintSchedule;
 use crate::surface::{self, Gpu, Surface};
@@ -756,6 +756,10 @@ impl<M: Send + 'static> Desktop<M> {
         note_size(slot, engine, sys, false);
         self.repaints.request(slot.key, Instant::now());
         self.screens_stale = true;
+        match self.slots[i].view.as_mut() {
+            Some(view) => view.set_drawn(true),
+            None => self.app.view_mut().set_drawn(true),
+        }
     }
 
     /// The platform refused a window. Without the root's there is no
@@ -794,6 +798,31 @@ impl<M: Send + 'static> Desktop<M> {
         slot.ctx.disable_accesskit();
         self.repaints.forget(slot.key);
         self.screens_stale = true;
+        // What only drawing needs is built again when it is shown
+        // (ARCHITECTURE §8.5); its scene keeps running meanwhile.
+        let view = match self.slots[i].view.as_mut() {
+            Some(view) => view,
+            None => self.app.view_mut(),
+        };
+        view.set_drawn(false);
+        view.trim(MemoryPressure::Critical);
+    }
+
+    /// The system is short of memory: hidden windows give back all they
+    /// can rebuild, shown ones what they did not draw lately.
+    fn trim(&mut self) {
+        for i in 0..self.slots.len() {
+            let level = if self.slots[i].surface.is_some() {
+                MemoryPressure::Moderate
+            } else {
+                MemoryPressure::Critical
+            };
+            let view = match self.slots[i].view.as_mut() {
+                Some(view) => view,
+                None => self.app.view_mut(),
+            };
+            view.trim(level);
+        }
     }
 
     /// One pass of slot `i`: input, the scene, and (`paint`) the picture
@@ -872,6 +901,7 @@ impl<M: Send + 'static> Desktop<M> {
 
         let Some(surface) = slot.surface.as_mut() else {
             surface::forget_freed(&mut slot.pending);
+            surface::free_now(slot.painter.as_ref(), &mut slot.pending);
             return;
         };
         surface.info.events.clear();
@@ -1336,12 +1366,9 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
             Event::User(ShellEvent::AccessKit(event)) => self.accesskit_event(event),
             Event::AboutToWait => self.settle(host),
             Event::Exiting => self.shut_down(),
+            Event::MemoryPressure => self.trim(),
             // Each is followed by `AboutToWait`, which looks at everything.
-            Event::Wake
-            | Event::User(ShellEvent::Wake)
-            | Event::MemoryPressure
-            | Event::OpenUrl(_)
-            | Event::SaveState => {}
+            Event::Wake | Event::User(ShellEvent::Wake) | Event::OpenUrl(_) | Event::SaveState => {}
         }
     }
 }

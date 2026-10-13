@@ -164,6 +164,22 @@ pub(crate) fn forget_freed(pending: &mut egui::TexturesDelta) {
     pending.set.retain(|id, _| !free.contains(id));
 }
 
+/// Gives the GPU memory of what `pending` frees back now, for a window
+/// that is not on the screen: its next picture may be far off, and a
+/// trimmed view frees most of what it drew (ARCHITECTURE §8.5).
+pub(crate) fn free_now(painter: Option<&Painter>, pending: &mut egui::TexturesDelta) {
+    let Some(state) = painter.and_then(Painter::render_state) else {
+        return;
+    };
+    if pending.free.is_empty() {
+        return;
+    }
+    let mut renderer = state.renderer.write();
+    for id in std::mem::take(&mut pending.free) {
+        renderer.free_texture(&id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use egui::epaint::ImageDelta;

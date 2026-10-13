@@ -1,0 +1,461 @@
+//! The platform of one engine: the services a host installs, and the way
+//! work done away from the Engine thread comes back to it.
+//!
+//! A service that waits on the system (a dialog, a download, a disk) does
+//! so on a thread of its own and hands its answer back as a [`Job`] through
+//! a bounded inbox. The host's frame drains it ([`Platform::deliver`]); the
+//! inbox wakes the host when something arrives, so nothing polls.
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::time::Duration;
+
+use ljos_engine::{Atom, Engine, LogLevel, ObjectId};
+use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
+
+use crate::clipboard::{ClipboardService, MemoryClipboard};
+use crate::dialogs::{DialogService, NoSystemDialogs};
+use crate::drop::ExternalDrag;
+use crate::fetch::{FetchError, Fetcher, NoNetwork};
+use crate::paths::PathEnv;
+use crate::permissions::{PermissionService, UngatedPermissions};
+
+/// The log category of platform services.
+pub const CATEGORY: &str = "ljos.platform";
+
+/// Work for the Engine thread, sent from another.
+pub type Job = Box<dyn FnOnce(&Engine) + Send>;
+
+/// Answers that may wait in the inbox at once. A sender that finds it full
+/// waits its turn: answers are few and none may be lost.
+const INBOX: usize = 256;
+
+/// How long [`Platform::finish`] waits for an answer before it gives up.
+const FINISH_TIMEOUT: Duration = Duration::from_secs(10);
+
+type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// What answering threads share with the engine's side.
+#[derive(Default)]
+struct Signal {
+    /// Answers sent so far; [`Platform::finish`] sleeps on changes.
+    sent: Mutex<u64>,
+    arrived: Condvar,
+    waker: Mutex<Option<Waker>>,
+}
+
+impl Signal {
+    fn count(&self) -> u64 {
+        *self.sent.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn sent_one(&self) {
+        *self.sent.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        self.arrived.notify_all();
+    }
+
+    fn wake(&self) {
+        // Outside the lock: a waker may take its time.
+        let waker = self
+            .waker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(w) = waker {
+            w();
+        }
+    }
+}
+
+/// A promise of one answer for the Engine thread. Made on the Engine
+/// thread by [`Platform::expect`], sent to wherever the answer is made,
+/// and kept with [`Reply::send`]. One dropped unkept still counts as
+/// answered, so [`Platform::finish`] never waits for it.
+pub struct Reply {
+    tx: UiHandle<Job>,
+    signal: Arc<Signal>,
+    kept: bool,
+}
+
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reply").field("kept", &self.kept).finish()
+    }
+}
+
+impl Reply {
+    /// Hands `job` to the Engine thread, which runs it at its next frame.
+    pub fn send(mut self, job: impl FnOnce(&Engine) + Send + 'static) {
+        self.kept = true;
+        self.post(Box::new(move |e: &Engine| {
+            Platform::of(e).answered();
+            job(e);
+        }));
+    }
+
+    fn post(&self, mut job: Job) {
+        loop {
+            match self.tx.send(job) {
+                Ok(()) => {
+                    self.signal.sent_one();
+                    return;
+                }
+                Err(SendError::Full(j)) => {
+                    // Off the Engine thread: waiting here costs the UI
+                    // nothing, and the frame that drains is coming.
+                    job = j;
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                // The engine is gone; so is whoever wanted the answer.
+                Err(SendError::Disconnected(_)) => return,
+            }
+        }
+    }
+}
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        if !self.kept {
+            self.post(Box::new(|e: &Engine| Platform::of(e).answered()));
+        }
+    }
+}
+
+/// What takes a drag from another application; true when a target took it.
+pub(crate) type DropHandler = Rc<dyn Fn(&Engine, &ExternalDrag) -> bool>;
+
+/// The platform services of one engine. See the module documentation.
+pub struct Platform {
+    inbox: UiInbox<Job>,
+    tx: UiHandle<Job>,
+    signal: Arc<Signal>,
+    /// Answers promised and not delivered yet.
+    pending: Cell<usize>,
+    held: Cell<bool>,
+    clipboard: RefCell<Rc<dyn ClipboardService>>,
+    dialogs: RefCell<Rc<dyn DialogService>>,
+    permissions: RefCell<Rc<dyn PermissionService>>,
+    fetcher: RefCell<Arc<dyn Fetcher>>,
+    env: RefCell<Rc<PathEnv>>,
+    plugin_name: RefCell<Atom>,
+    application: RefCell<Option<(String, String)>>,
+    drop_handler: RefCell<Option<DropHandler>>,
+    fetches: RefCell<HashMap<u64, FetchDone>>,
+    next_fetch: Cell<u64>,
+    resources: RefCell<HashMap<String, Rc<[u8]>>>,
+}
+
+type FetchDone = Box<dyn FnOnce(&Engine, Result<Vec<u8>, FetchError>)>;
+
+impl std::fmt::Debug for Platform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Platform")
+            .field("pending", &self.pending.get())
+            .field("held", &self.held.get())
+            .field("plugin_name", &self.plugin_name.borrow())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for Platform {
+    fn default() -> Self {
+        let signal = Arc::new(Signal::default());
+        let hook = Arc::clone(&signal);
+        let (inbox, tx) = UiInbox::channel_with_wake(INBOX, Arc::new(move || hook.wake()));
+        Platform {
+            inbox,
+            tx,
+            signal,
+            pending: Cell::new(0),
+            held: Cell::new(false),
+            clipboard: RefCell::new(Rc::new(MemoryClipboard::default())),
+            dialogs: RefCell::new(Rc::new(NoSystemDialogs)),
+            permissions: RefCell::new(Rc::new(UngatedPermissions)),
+            fetcher: RefCell::new(Arc::new(NoNetwork)),
+            env: RefCell::new(Rc::new(PathEnv::from_process())),
+            // What a run without a window system is called (Qt.platform).
+            plugin_name: RefCell::new(Atom::from("offscreen")),
+            application: RefCell::new(None),
+            drop_handler: RefCell::new(None),
+            fetches: RefCell::new(HashMap::new()),
+            next_fetch: Cell::new(0),
+            resources: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+impl Platform {
+    pub fn of(engine: &Engine) -> Rc<Platform> {
+        engine.extension::<Platform>()
+    }
+
+    /// Promises an answer: what is sent through the [`Reply`] runs on the
+    /// Engine thread at the next frame.
+    pub fn expect(&self) -> Reply {
+        self.pending.set(self.pending.get() + 1);
+        Reply {
+            tx: self.tx.clone(),
+            signal: Arc::clone(&self.signal),
+            kept: false,
+        }
+    }
+
+    fn answered(&self) {
+        self.pending.set(self.pending.get().saturating_sub(1));
+    }
+
+    /// Answers promised that have not been delivered.
+    pub fn pending(&self) -> usize {
+        self.pending.get()
+    }
+
+    /// Whether answers wait for a frame to deliver them.
+    pub fn has_answers(&self) -> bool {
+        !self.held.get() && !self.inbox.is_empty()
+    }
+
+    /// Called when an answer arrives, from the thread that sent it. A host
+    /// asks for a frame here.
+    pub fn set_waker(&self, waker: impl Fn() + Send + Sync + 'static) {
+        *self
+            .signal
+            .waker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(waker));
+        if !self.inbox.is_empty() {
+            self.signal.wake();
+        }
+    }
+
+    /// Keeps answers back until [`Platform::finish`]: a test sees the
+    /// moment before they arrive, as a user would on a slow system.
+    pub fn set_held(&self, held: bool) {
+        self.held.set(held);
+    }
+
+    pub fn is_held(&self) -> bool {
+        self.held.get()
+    }
+
+    /// Runs the answers that have arrived and returns how many there were.
+    /// The scene calls it at the start of a frame; it never waits.
+    pub fn deliver(&self, engine: &Engine) -> usize {
+        if self.held.get() {
+            return 0;
+        }
+        self.deliver_now(engine)
+    }
+
+    fn deliver_now(&self, engine: &Engine) -> usize {
+        let mut jobs = Vec::new();
+        self.inbox
+            .drain(DrainBudget::UNLIMITED, &SystemClock::new(), |j| {
+                jobs.push(j)
+            });
+        let count = jobs.len();
+        for job in jobs {
+            job(engine);
+        }
+        count
+    }
+
+    /// Waits until every promised answer has come back and runs them,
+    /// held or not. For tests and harnesses: a UI thread that must stay
+    /// responsive never calls it.
+    pub fn finish(&self, engine: &Engine) {
+        loop {
+            let seen = self.signal.count();
+            self.deliver_now(engine);
+            if self.pending.get() == 0 {
+                return;
+            }
+            let sent = self
+                .signal
+                .sent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let (_sent, timeout) = self
+                .signal
+                .arrived
+                .wait_timeout_while(sent, FINISH_TIMEOUT, |n| *n == seen)
+                .unwrap_or_else(PoisonError::into_inner);
+            if timeout.timed_out() {
+                engine.log(
+                    LogLevel::Warning,
+                    CATEGORY,
+                    format!(
+                        "gave up waiting for {} platform answer(s)",
+                        self.pending.get()
+                    ),
+                );
+                return;
+            }
+        }
+    }
+
+    pub fn clipboard(&self) -> Rc<dyn ClipboardService> {
+        Rc::clone(&self.clipboard.borrow())
+    }
+
+    pub fn set_clipboard(&self, service: Rc<dyn ClipboardService>) {
+        *self.clipboard.borrow_mut() = service;
+    }
+
+    pub fn dialogs(&self) -> Rc<dyn DialogService> {
+        Rc::clone(&self.dialogs.borrow())
+    }
+
+    pub fn set_dialogs(&self, service: Rc<dyn DialogService>) {
+        *self.dialogs.borrow_mut() = service;
+    }
+
+    pub fn permissions(&self) -> Rc<dyn PermissionService> {
+        Rc::clone(&self.permissions.borrow())
+    }
+
+    /// The system's guard over the camera, the microphone and the rest.
+    /// Objects made before it was installed keep the status they read.
+    pub fn set_permissions(&self, service: Rc<dyn PermissionService>) {
+        *self.permissions.borrow_mut() = service;
+    }
+
+    pub fn set_fetcher(&self, fetcher: Arc<dyn Fetcher>) {
+        *self.fetcher.borrow_mut() = fetcher;
+    }
+
+    /// Where the user's directories are.
+    pub fn env(&self) -> Rc<PathEnv> {
+        Rc::clone(&self.env.borrow())
+    }
+
+    pub fn set_env(&self, env: PathEnv) {
+        *self.env.borrow_mut() = Rc::new(env);
+    }
+
+    /// `Qt.platform.pluginName`: the window system the application shows
+    /// its windows with. A host with windows says which.
+    pub fn plugin_name(&self) -> Atom {
+        self.plugin_name.borrow().clone()
+    }
+
+    pub fn set_plugin_name(&self, name: &str) {
+        *self.plugin_name.borrow_mut() = Atom::from(name);
+    }
+
+    /// Names the application for where its settings and data go, for a
+    /// host that knows them before any QML sets `Qt.application`.
+    pub fn set_application(&self, organization: &str, name: &str) {
+        *self.application.borrow_mut() = Some((organization.to_owned(), name.to_owned()));
+    }
+
+    /// The organization and the application, as the host or
+    /// `Qt.application` gives them; the program's name when neither does.
+    pub fn application(&self, engine: &Engine) -> (String, String) {
+        if let Some(names) = self.application.borrow().clone() {
+            return names;
+        }
+        let read = |what: &str| {
+            let src = format!(
+                "(typeof Qt === 'object' && Qt.application && Qt.application.{what}) || ''"
+            );
+            engine
+                .untrack(|| engine.eval_js(&src))
+                .map(|v| v.to_js_string().to_string())
+                .unwrap_or_default()
+        };
+        let organization = read("organization");
+        let mut name = read("name");
+        if name.is_empty() {
+            name = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "ljos".to_owned());
+        }
+        (organization, name)
+    }
+
+    /// Who hears of drags from other applications: the drag-and-drop of
+    /// `ljos_quick` installs itself here. It returns whether a target took
+    /// the drop.
+    pub fn set_drop_handler(&self, handler: impl Fn(&Engine, &ExternalDrag) -> bool + 'static) {
+        *self.drop_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
+    pub(crate) fn drop_handler(&self) -> Option<DropHandler> {
+        self.drop_handler.borrow().clone()
+    }
+
+    /// Gives `url` these bytes instead of what a file or the network has:
+    /// for resources compiled into a binary, and for harnesses.
+    pub fn register_resource(&self, url: &str, bytes: impl Into<Rc<[u8]>>) {
+        self.resources
+            .borrow_mut()
+            .insert(url.to_owned(), bytes.into());
+    }
+
+    /// The bytes registered for `url`, if any.
+    pub fn resource(&self, url: &str) -> Option<Rc<[u8]>> {
+        self.resources.borrow().get(url).cloned()
+    }
+
+    /// Fetches `url` on a thread of its own; `done` runs on the Engine
+    /// thread with the bytes or why there are none.
+    pub fn fetch(
+        &self,
+        url: &str,
+        done: impl FnOnce(&Engine, Result<Vec<u8>, FetchError>) + 'static,
+    ) {
+        let id = self.next_fetch.get();
+        self.next_fetch.set(id + 1);
+        self.fetches.borrow_mut().insert(id, Box::new(done));
+        let reply = self.expect();
+        let fetcher = Arc::clone(&self.fetcher.borrow());
+        let url = url.to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("ljos-fetch".to_owned())
+            .spawn(move || {
+                let result = fetcher.fetch(&url);
+                reply.send(move |e| {
+                    let done = Platform::of(e).fetches.borrow_mut().remove(&id);
+                    if let Some(done) = done {
+                        done(e, result);
+                    }
+                });
+            });
+        if let Err(err) = spawned {
+            // The Reply went down with the closure, which counts it.
+            let failed = FetchError::Failed(format!("no thread to fetch with: {err}"));
+            if let Some(done) = self.fetches.borrow_mut().remove(&id) {
+                self.fail_later(done, failed);
+            }
+        }
+    }
+
+    fn fail_later(&self, done: FetchDone, error: FetchError) {
+        // Not now: whoever asked is still in the middle of asking.
+        let id = self.next_fetch.get();
+        self.next_fetch.set(id + 1);
+        self.fetches.borrow_mut().insert(id, done);
+        self.expect().send(move |e| {
+            let done = Platform::of(e).fetches.borrow_mut().remove(&id);
+            if let Some(done) = done {
+                done(e, Err(error));
+            }
+        });
+    }
+}
+
+/// The nearest object `obj` is declared in, itself first, that is an
+/// `Item`: what a drawn dialog shows over.
+pub(crate) fn item_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
+    let mut at = Some(obj);
+    while let Some(o) = at {
+        if engine.meta_of(o).is_some_and(|m| m.inherits_name("Item")) {
+            return Some(o);
+        }
+        at = engine.owner(o);
+    }
+    None
+}

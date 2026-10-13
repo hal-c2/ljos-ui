@@ -11,6 +11,9 @@ publish.workspace = true
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_engine = { path = "../ljos_engine" }
+# The clipboard, remote fonts and the modules of the platform (QtCore,
+# QtQuick.Dialogs).
+ljos_platform = { path = "../ljos_platform" }
 ljos_reactive = { path = "../ljos_reactive" }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }

@@ -58,6 +58,42 @@ pub(crate) fn font_context(system_fonts: bool) -> FontContext {
     }
 }
 
+/// One face a registered font file added: what `FontLoader.font` reports.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegisteredFace {
+    pub family: String,
+    /// CSS weight, 1 to 1000 (400 regular, 700 bold).
+    pub weight: f32,
+    pub italic: bool,
+}
+
+/// Register a font file and return each face it adds.
+pub(crate) fn register_faces(
+    fcx: &mut FontContext,
+    bytes: Vec<u8>,
+) -> Result<Vec<RegisteredFace>, FontError> {
+    let added = fcx
+        .collection
+        .register_fonts(Blob::new(std::sync::Arc::new(bytes)), None);
+    let mut faces = Vec::new();
+    for (id, infos) in &added {
+        let Some(family) = fcx.collection.family_name(*id).map(str::to_owned) else {
+            continue;
+        };
+        for info in infos {
+            faces.push(RegisteredFace {
+                family: family.clone(),
+                weight: info.weight().value(),
+                italic: !matches!(info.style(), parley::fontique::FontStyle::Normal),
+            });
+        }
+    }
+    if faces.is_empty() {
+        return Err(FontError::NoFont);
+    }
+    Ok(faces)
+}
+
 /// Register a font file and return the family names it adds.
 pub(crate) fn register(fcx: &mut FontContext, bytes: Vec<u8>) -> Result<Vec<String>, FontError> {
     let added = fcx

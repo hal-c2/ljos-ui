@@ -1,0 +1,51 @@
+[package]
+name = "ljos_platform"
+description = "Ljós platform services behind traits (clipboard, dialogs, settings, standard paths, remote resources, drops from other applications), their fakes, and the QML modules QtCore and QtQuick.Dialogs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[features]
+# The services of a desktop: the system clipboard (arboard) and native file
+# and message dialogs (rfd). Without it every service is the in-process one,
+# which is what tests and headless hosts want.
+native = ["dep:arboard", "dep:rfd", "dep:futures"]
+
+[dependencies]
+ljos_engine = { path = "../ljos_engine" }
+ljos_ir = { path = "../ljos_ir" }
+ljos_reactive = { path = "../ljos_reactive" }
+ljos_runtime = { path = "../ljos_runtime" }
+serde_json.workspace = true
+thiserror.workspace = true
+# Not in the workspace pins: only the shell turns them on.
+arboard = { version = "3.6.1", optional = true, features = ["wayland-data-control"] }
+rfd = { version = "0.17.2", optional = true }
+futures = { workspace = true, optional = true }
+
+[build-dependencies]
+# The fallback dialogs' QML is compiled when this crate is built; the crate
+# never links the compiler or the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_ir = { path = "../ljos_ir" }
+qt_types = { path = "../qt_types" }
+
+[dev-dependencies]
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+tempfile.workspace = true
+# tests/drawn_dialogs.rs audits the drawn dialogs in a scene of the Basic
+# style. Only the integration tests use these: the unit tests would link a
+# second copy of this crate through ljos_quick.
+ljos_a11y = { path = "../ljos_a11y" }
+ljos_controls = { path = "../ljos_controls" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_test = { path = "../ljos_test" }
+
+[lints]
+workspace = true

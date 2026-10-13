@@ -15,6 +15,9 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
 ljos_host = { path = "../ljos_host" }
+# The desktop's own clipboard and dialogs, which only the shell's loop
+# installs; the other hosts keep the in-process ones.
+ljos_platform = { path = "../ljos_platform", features = ["native"] }
 egui.workspace = true
 # The loop is the shell's own (ARCHITECTURE.md §7.3): winit through
 # ljos_host, egui's input translation and its wgpu painter. Not in the
