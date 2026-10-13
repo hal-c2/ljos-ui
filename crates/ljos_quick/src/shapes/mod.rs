@@ -19,9 +19,10 @@ mod shape_path;
 mod svg;
 
 pub use gradient::{ConicalGradient, LinearGradient, RadialGradient, ShapeGradient};
+pub(crate) use path::geometry as path_geometry;
 pub use path::{
-    Path, PathAngleArc, PathArc, PathCubic, PathCurve, PathLine, PathMove, PathMultiline,
-    PathPolyline, PathQuad, PathRectangle, PathSvg,
+    Path, PathAngleArc, PathArc, PathAttribute, PathCubic, PathCurve, PathLine, PathMove,
+    PathMultiline, PathPercent, PathPolyline, PathQuad, PathRectangle, PathSvg,
 };
 pub(crate) use shape::takes_pointer;
 pub use shape::{Shape, ShapePaint};
@@ -38,5 +39,6 @@ pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
         Path, PathMove, PathLine, PathQuad, PathCubic, PathArc, PathAngleArc,
         PathCurve, PathSvg, PathPolyline, PathMultiline, PathRectangle,
+        PathAttribute, PathPercent,
     ]));
 }

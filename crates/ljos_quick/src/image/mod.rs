@@ -34,7 +34,7 @@ use ljos_render::{
 
 use crate::enums::{EnumTable, align};
 use crate::item::{Item, is_a, write_computed};
-use store::Waiter;
+pub(crate) use store::Waiter;
 
 /// Log category of what the store has to say that Qt has no words for.
 pub(crate) const CATEGORY: &str = "ljos.image";
@@ -611,6 +611,7 @@ pub(crate) fn delivered(
             }
             bump(e, item);
         }
+        Waiter::Canvas { item } => crate::canvas::image_arrived(e, item, key, result),
     }
 }
 

@@ -19,6 +19,7 @@ mod changes;
 mod current;
 mod models;
 mod pass;
+pub mod path_view;
 mod position;
 mod state;
 
@@ -38,6 +39,7 @@ use crate::item::{is_a, write_computed};
 pub use models::{
     DelegateModel, ObjectModel, drive_delegate_model, object_model_changed, object_model_rows,
 };
+pub use path_view::{PathView, PathViewAttached};
 pub(crate) use state::ViewState;
 pub use state::position_mode;
 
@@ -745,6 +747,7 @@ fn tell_attached(e: &Engine, item: ObjectId, att: ObjectId) {
 /// Registers the views and what makes them take keys.
 pub(crate) fn register(engine: &Engine) {
     models::register(engine);
+    path_view::register(engine);
     for meta in [
         ListView::static_meta(),
         GridView::static_meta(),

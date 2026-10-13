@@ -58,6 +58,8 @@ pub(crate) enum Waiter {
     /// A Ready item whose pixels had been dropped and that is shown again:
     /// it only needs to paint.
     Reshow { item: ObjectId },
+    /// A `Canvas` that called `loadImage`: it says `imageLoaded`.
+    Canvas { item: ObjectId },
 }
 
 type Slot = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
@@ -380,7 +382,9 @@ impl ImageStore {
     pub(crate) fn forget(&self, item: ObjectId) {
         for waiters in self.state.borrow_mut().jobs.values_mut() {
             waiters.retain(|w| match w {
-                Waiter::Load { item: i, .. } | Waiter::Reshow { item: i } => *i != item,
+                Waiter::Load { item: i, .. }
+                | Waiter::Reshow { item: i }
+                | Waiter::Canvas { item: i } => *i != item,
             });
         }
     }
@@ -466,7 +470,7 @@ impl ImageStore {
             }
             let caches = waiters.iter().any(|w| match w {
                 Waiter::Load { cache, .. } => *cache,
-                Waiter::Reshow { .. } => true,
+                Waiter::Reshow { .. } | Waiter::Canvas { .. } => true,
             });
             // Kept even when every waiter has gone: the work is done, and
             // the picture is the first to go if room is needed.

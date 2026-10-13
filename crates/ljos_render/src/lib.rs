@@ -8,6 +8,7 @@
 //!   meshes. It is the only place in this crate that names egui.
 
 mod backend;
+mod canvas;
 mod compose;
 mod display_list;
 mod glyph;
@@ -25,6 +26,7 @@ mod b0_shape;
 mod glyph_atlas;
 
 pub use backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage};
+pub use canvas::{CanvasPaint, CanvasPainter, CanvasShadow, DrawState};
 pub use compose::{
     ClipEntry, ClipId, ComposeStats, FrameSnapshot, PaintItem, hit_test, is_axis_aligned,
 };

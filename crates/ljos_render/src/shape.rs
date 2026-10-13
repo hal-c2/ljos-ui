@@ -71,7 +71,7 @@ pub(crate) fn resolve(brush: &Brush) -> Resolved<'_> {
 
 /// What `brush` paints with, and the transform from the gradient's own
 /// space to the node's when it has one. `None` paints nothing.
-fn paint_of(brush: &Brush) -> Option<(PaintType, Option<Affine>)> {
+pub(crate) fn paint_of(brush: &Brush) -> Option<(PaintType, Option<Affine>)> {
     let g = match resolve(brush) {
         Resolved::Nothing => return None,
         Resolved::Solid(c) => return Some((PaintType::Solid(alpha_color(c)), None)),

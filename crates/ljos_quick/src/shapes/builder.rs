@@ -7,8 +7,8 @@
 //! is a line.
 
 use ljos_render::kurbo::{
-    Arc, BezPath, CubicBez, ParamCurve, ParamCurveArclen, ParamCurveExtrema, PathEl, Point,
-    QuadBez, Rect, Shape, SvgArc, Vec2,
+    Arc, BezPath, CubicBez, Line, ParamCurve, ParamCurveArclen, ParamCurveExtrema, PathEl, PathSeg,
+    Point, QuadBez, Rect, Shape, SvgArc, Vec2,
 };
 
 /// How far the cubic curves an arc is made of may lie from it. Small next
@@ -46,6 +46,12 @@ impl Builder {
 
     pub fn finish(self) -> BezPath {
         self.path
+    }
+
+    /// How many elements the path has so far: where something that is not
+    /// drawn (a `PathAttribute`) comes in it.
+    pub fn len(&self) -> usize {
+        self.path.elements().len()
     }
 
     pub fn move_to(&mut self, p: Point) {
@@ -321,6 +327,32 @@ pub(crate) fn point_at(path: &BezPath, part: f64) -> Point {
         left -= len;
     }
     last.end()
+}
+
+/// How long `path` is up to the end of each of its elements, by length
+/// as [`point_at`] measures it.
+pub(crate) fn lengths(path: &BezPath) -> Vec<f64> {
+    const ACCURACY: f64 = 1e-6;
+    let mut out = Vec::with_capacity(path.elements().len());
+    let (mut total, mut last, mut start) = (0.0, Point::ZERO, Point::ZERO);
+    for el in path.elements() {
+        let seg = match *el {
+            PathEl::MoveTo(p) => {
+                (start, last) = (p, p);
+                None
+            }
+            PathEl::LineTo(p) => Some(PathSeg::Line(Line::new(last, p))),
+            PathEl::QuadTo(c, p) => Some(PathSeg::Quad(QuadBez::new(last, c, p))),
+            PathEl::CurveTo(a, b, p) => Some(PathSeg::Cubic(CubicBez::new(last, a, b, p))),
+            PathEl::ClosePath => Some(PathSeg::Line(Line::new(last, start))),
+        };
+        if let Some(seg) = seg {
+            total += seg.arclen(ACCURACY);
+            last = seg.end();
+        }
+        out.push(total);
+    }
+    out
 }
 
 /// Whether `path` encloses `p`, every part of it closed by a line and a

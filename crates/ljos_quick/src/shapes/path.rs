@@ -18,7 +18,7 @@ use ljos_engine::{
 };
 use ljos_render::kurbo::{Affine, BezPath, Point, Rect, Vec2};
 
-use super::builder::{Builder, bounds_of, point_at};
+use super::builder::{Builder, bounds_of, lengths, point_at};
 use super::svg::{self, SvgEl};
 use crate::enums::EnumTable;
 use crate::item::{is_unset, is_unset_tracked, num};
@@ -33,6 +33,9 @@ pub(crate) struct PathGeometry {
     pub bounds: Rect,
     /// Whether the path ends where it starts.
     pub closed: bool,
+    /// The `PathAttribute`s and `PathPercent`s, in order, each with how
+    /// far along the path it stands: they are not drawn.
+    pub marks: Vec<(ObjectId, f64)>,
 }
 
 /// `Path` (QtQuick): an outline made of elements, from `startX`, `startY`.
@@ -186,6 +189,32 @@ pub(crate) fn geometry(engine: &Engine, path: ObjectId) -> Option<Rc<PathGeometr
 pub struct PathElement {
     #[qml(base)]
     pub object: QtObject,
+}
+
+/// `PathAttribute`: a value named `name` that the items of a `PathView`
+/// read through the view's attached object, `value` where the attribute
+/// stands, in between the values on either side by length along the path.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "PathAttribute", extends = PathElement)]
+pub struct PathAttribute {
+    #[qml(base)]
+    pub element: PathElement,
+    #[qml(notify)]
+    pub name: Atom,
+    #[qml(notify)]
+    pub value: f64,
+}
+
+/// `PathPercent`: how much of a `PathView`'s items the path up to here
+/// holds, between 0 and 1. The items are spread evenly between two of
+/// them, however long the path is in between.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "PathPercent", extends = PathElement)]
+pub struct PathPercent {
+    #[qml(base)]
+    pub element: PathElement,
+    #[qml(notify)]
+    pub value: f64,
 }
 
 /// What the elements that go somewhere share: where to, from the path's
@@ -535,6 +564,9 @@ enum Kind {
     Polyline,
     Multiline,
     Rectangle,
+    /// A `PathAttribute` or a `PathPercent`: says something of a place on
+    /// the path and draws nothing.
+    Mark,
 }
 
 impl Kind {
@@ -563,6 +595,8 @@ impl Kind {
             Kind::Multiline
         } else if is(PathRectangle::static_meta()) {
             Kind::Rectangle
+        } else if is(PathAttribute::static_meta()) || is(PathPercent::static_meta()) {
+            Kind::Mark
         } else {
             return None;
         })
@@ -636,6 +670,8 @@ const CURVE_PULL: f64 = 0.167;
 struct Laid {
     builder: Builder,
     spans: Vec<(Point, Point)>,
+    /// How many elements the outline had after each element.
+    ends: Vec<usize>,
     warnings: Vec<String>,
 }
 
@@ -650,6 +686,7 @@ fn lay(
 ) -> Laid {
     let mut b = Builder::new(start);
     let mut spans: Vec<(Point, Point)> = Vec::with_capacity(elements.len());
+    let mut ends = Vec::with_capacity(elements.len());
     let mut warnings = Vec::new();
     let n = |el, p: ljos_engine::Prop<f64>| num(engine, el, p.index);
     for (i, &(el, kind)) in elements.iter().enumerate() {
@@ -787,6 +824,8 @@ fn lay(
                     b.polyline(&line);
                 }
             }
+            // Left out before the elements are laid.
+            Kind::Mark => {}
             Kind::Rectangle => {
                 let at = target(engine, el, from);
                 let inset = n(el, PathRectangle::STROKE_ADJUSTMENT) / 2.0;
@@ -828,10 +867,12 @@ fn lay(
             }
         }
         spans.push((from, b.cur));
+        ends.push(b.len());
     }
     Laid {
         builder: b,
         spans,
+        ends,
         warnings,
     }
 }
@@ -841,11 +882,16 @@ fn build(engine: &Engine, path: ObjectId) -> PathGeometry {
         num(engine, path, Path::START_X.index),
         num(engine, path, Path::START_Y.index),
     );
-    let elements: Vec<(ObjectId, Kind)> =
-        crate::tree::list(engine, path, Path::PATH_ELEMENTS.index)
-            .into_iter()
-            .filter_map(|el| Some((el, Kind::of(engine, el)?)))
-            .collect();
+    let mut elements: Vec<(ObjectId, Kind)> = Vec::new();
+    // Each mark with how many drawn elements come before it.
+    let mut marks: Vec<(ObjectId, usize)> = Vec::new();
+    for el in crate::tree::list(engine, path, Path::PATH_ELEMENTS.index) {
+        match Kind::of(engine, el) {
+            Some(Kind::Mark) => marks.push((el, elements.len())),
+            Some(kind) => elements.push((el, kind)),
+            None => {}
+        }
+    }
     let mut laid = lay(engine, start, &elements, None);
     // Curves that come back to where the path started are a ring: the
     // first bends as if the last came before it, and the last as if the
@@ -862,6 +908,7 @@ fn build(engine: &Engine, path: ObjectId) -> PathGeometry {
         engine.log(LogLevel::Warning, "qml", warning.clone());
     }
     let closed = !elements.is_empty() && laid.builder.cur == start;
+    let ends = std::mem::take(&mut laid.ends);
     let mut outline = laid.builder.finish();
     let scale = match engine.read(path, Path::SCALE.index) {
         Value::Size(s) => (s.width, s.height),
@@ -870,9 +917,24 @@ fn build(engine: &Engine, path: ObjectId) -> PathGeometry {
     if scale != (1.0, 1.0) && scale.0.is_finite() && scale.1.is_finite() {
         outline.apply_affine(Affine::scale_non_uniform(scale.0, scale.1));
     }
+    let lengths = lengths(&outline);
+    let marks = marks
+        .into_iter()
+        .map(|(el, before)| {
+            // The outline starts with a move, which is no way along.
+            let count = before.checked_sub(1).map_or(1, |i| ends[i]);
+            let at = count
+                .checked_sub(1)
+                .and_then(|i| lengths.get(i))
+                .copied()
+                .unwrap_or(0.0);
+            (el, at)
+        })
+        .collect();
     PathGeometry {
         bounds: bounds_of(&outline),
         path: Arc::new(outline),
         closed,
+        marks,
     }
 }
