@@ -544,6 +544,14 @@ fn table() -> &'static Table {
 /// `crates/ljos_cli/tests/own_types.rs` (see the crate's documentation).
 const OWN: &str = include_str!("ljos.txt");
 
+/// Ljós's own description of its types, as committed, whatever Qt's table
+/// says of the same modules. [`module`] and the lookups answer from Qt's
+/// description where there is one, so a tool that asks what *Ljós* has
+/// (`ljos check --port`, `api_status`) reads this text itself.
+pub fn own_text() -> &'static str {
+    OWN
+}
+
 /// The classes of the types the front end knows by what they are, in each
 /// table: Qt's class, and the one of Ljós's own description.
 pub mod class {

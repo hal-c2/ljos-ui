@@ -388,9 +388,7 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         }
         let (kind, origin) =
             found.map_or((None, None), |found| (Some(found.kind), Some(found.origin)));
-        let is_template = kind
-            .as_ref()
-            .is_some_and(|kind| self.special(kind) == Some(Special::Component));
+        let is_template = kind.as_ref().is_some_and(|kind| self.is_template(kind));
         let id = object_id(object);
         if let Some(id) = id
             && self.tree.id_in(context, id).is_some()
@@ -420,6 +418,24 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
 
     fn special(&self, kind: &Kind<O::Type>) -> Option<Special> {
         self.types.oracle.special(self.types.base(kind)?)
+    }
+
+    /// Whether what is written in an object of `kind` is a template. Only
+    /// `Component` itself is one: a type the runtime derives from it (a
+    /// `DelegateChooser`) is a component where one is expected, but what
+    /// is written in it are objects (its `DelegateChoice`s). An oracle
+    /// without QtQml's `Component` is taken at its word for every type.
+    fn is_template(&self, kind: &Kind<O::Type>) -> bool {
+        if self.special(kind) != Some(Special::Component) {
+            return false;
+        }
+        let Kind::Builtin(ty) = kind else {
+            return true;
+        };
+        self.types
+            .oracle
+            .module_type("QtQml", "Component")
+            .is_none_or(|component| component == *ty)
     }
 
     fn declarations(&mut self, object: &QmlObject<'a>, index: usize) {
@@ -755,7 +771,14 @@ pub fn object_id<'a>(object: &QmlObject<'a>) -> Option<&'a str> {
 
 /// `font { ... }`: an object whose "type" is a lowercase property name.
 pub fn is_group(object: &QmlObject<'_>) -> bool {
-    object.on.is_none() && object.type_name.parts[0].starts_with(|c: char| c.is_ascii_lowercase())
+    // The last name decides: `Drag.hotSpot { }` is a group of what is
+    // attached, `Controls.Button { }` an object of a qualified type.
+    object.on.is_none()
+        && object
+            .type_name
+            .parts
+            .last()
+            .is_some_and(|p| p.starts_with(|c: char| c.is_ascii_lowercase()))
 }
 
 /// A value that is the same every time it is read.

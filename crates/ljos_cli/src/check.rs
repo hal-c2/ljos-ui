@@ -24,6 +24,7 @@ use ljos_compiler::{
 
 mod lint;
 mod members;
+mod port;
 
 #[derive(Args)]
 pub struct Check {
@@ -52,6 +53,23 @@ pub struct Check {
     /// technology, and `qsTr` of what is not written out.
     #[arg(long)]
     no_lint: bool,
+    /// Instead of compiling: report the Qt Quick types and members the
+    /// projects use that Ljós lacks, by module, most used first.
+    #[arg(long)]
+    port: bool,
+    /// With `--port`: print JSON rather than text.
+    #[arg(long, requires = "port")]
+    json: bool,
+    /// With `--port`: exit with an error if anything is missing.
+    #[arg(long, requires = "port")]
+    deny_missing: bool,
+    /// With `--port`: weigh against this API ledger's rows first (the tables
+    /// of types answer where it has none). Without it the tables alone do.
+    #[arg(long, requires = "port", value_name = "FILE")]
+    ledger: Option<PathBuf>,
+    /// With `--port`: list at most this many missing items per module.
+    #[arg(long, requires = "port", value_name = "N")]
+    limit: Option<usize>,
 }
 
 /// What a run found.
@@ -69,6 +87,9 @@ pub struct Checked {
 
 impl Check {
     pub fn run(self) -> anyhow::Result<()> {
+        if self.port {
+            return port::run(&self);
+        }
         let mut checked = Checked {
             lint: !self.no_lint,
             ..Checked::default()

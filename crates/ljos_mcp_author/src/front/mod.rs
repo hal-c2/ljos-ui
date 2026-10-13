@@ -52,6 +52,7 @@ mod facts;
 mod lint;
 mod load;
 mod lookup;
+mod usage;
 
 use std::{
     collections::BTreeSet,
@@ -59,6 +60,8 @@ use std::{
 };
 
 use ljos_mcp_core::SurfaceError;
+
+pub use usage::{ApiUse, Resolution, Usage};
 
 use crate::{Diagnostic, FrontEnd, ModuleInfo, Severity, TypeInfo};
 
@@ -75,6 +78,13 @@ impl QmlFrontEnd {
     /// (`qmldir`, `CMakeLists.txt`) and type keys are relative to it.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+
+    /// Every type and member of a module that the `.qml` files below the
+    /// root use (`ljos check --port`). Whether Ljós has them is for
+    /// [`api::status`](crate::api::status) to say.
+    pub fn api_uses(&self) -> Usage {
+        usage::collect(&self.root)
     }
 
     fn analyse(&self, files: &[PathBuf], lint: bool) -> Vec<Diagnostic> {

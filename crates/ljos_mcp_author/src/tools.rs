@@ -7,7 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, docs, features, format, runs, tiers,
+    Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, docs, features, format, runs,
+    tiers,
 };
 
 const PAGE: usize = 100;
@@ -246,15 +247,30 @@ pub(crate) fn registry(
             {
                 let project = project.clone();
                 typed(move |_: &CallCtx, a: ApiArgs| {
-                    let ledger = load_ledger(&project)?;
-                    let rows: Vec<LedgerRow> =
+                    // A ledger that is not there is an empty one: the
+                    // tables of types answer all the same.
+                    let ledger = match load_ledger(&project) {
+                        Ok(ledger) => ledger,
+                        Err(e) if e.code == ljos_mcp_core::ErrorCode::NotFound => Ledger::default(),
+                        Err(e) => return Err(e),
+                    };
+                    let mut rows: Vec<LedgerRow> =
                         ledger.lookup(&a.query).into_iter().cloned().collect();
+                    if rows.is_empty()
+                        && let Some((module, ty, member)) = api::split_query(&a.query)
+                    {
+                        rows.extend(api::status(Some(&ledger), &module, &ty, member.as_deref()));
+                    }
                     if rows.is_empty() {
-                        return Err(SurfaceError::not_found(format!(
-                            "`{}` is not in the ledger; use Module.Type or Module.Type.member",
+                        let mut message = format!(
+                            "`{}` is not in the ledger or in Ljós's type table; use Module.Type or Module.Type.member",
                             a.query
-                        ))
-                        .with_details(serde_json::json!({ "modules": ledger.modules() })));
+                        );
+                        if !qt_types::has_qt_table() {
+                            message.push_str(&format!(" ({})", qt_types::WITHOUT_QT_TABLE));
+                        }
+                        return Err(SurfaceError::not_found(message)
+                            .with_details(serde_json::json!({ "modules": api::modules() })));
                     }
                     let (rows, next_cursor) = page(rows, a.cursor.as_deref(), PAGE, BUDGET)?;
                     Ok(ApiOut { query: a.query, rows, next_cursor })

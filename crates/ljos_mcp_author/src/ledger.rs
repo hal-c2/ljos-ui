@@ -143,6 +143,15 @@ impl Ledger {
         self.rows.iter().filter(|r| r.key() == query).collect()
     }
 
+    /// The one row for the type (`member` None) or for that member, which
+    /// [`lookup`](Self::lookup) cannot give: it answers a bare type with its
+    /// members too.
+    pub fn row(&self, module: &str, type_name: &str, member: Option<&str>) -> Option<&LedgerRow> {
+        self.rows.iter().find(|r| {
+            r.module == module && r.type_name == type_name && r.member.as_deref() == member
+        })
+    }
+
     pub fn modules(&self) -> Vec<&str> {
         let mut m: Vec<&str> = self.rows.iter().map(|r| r.module.as_str()).collect();
         m.sort_unstable();
