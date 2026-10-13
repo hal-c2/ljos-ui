@@ -178,6 +178,8 @@ ljos-ui/
 │   ├── ljos_egui/              QmlView widget, egui input/output conversion, EguiSink
 │   ├── ljos_host/              PlatformHost, WinitHost, AndroidHost, (IosHost),
 │   │                           PlatformTextInput impls, clipboard, prefs backends
+│   ├── ljos_platform/          system services behind traits (clipboard, dialogs,
+│   │                           settings, fetch, permissions), QtCore, QtQuick.Dialogs
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit/wgpu loop (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
@@ -516,6 +518,8 @@ Source: 05 §3.3.
 
 As built: `ljos_quick` holds the engine in a thread-local, since an Engine is `!Send` and there is one per app. Items emit glyph runs, not pixels: R draws the outlines directly and the atlas lives in the B0 backend, the only one that needs textures. `Gradient` and `GradientStop` fill a Rectangle vertically or with `Gradient.Horizontal` on both backends (B0 by vertex colours, with extra vertices at the stops); presets by name are not there yet.
 
+**As built: drawing by script and transforms (M2).** `Canvas` paints in its item's polish through a 2D context into pixels that the scene shows as an image; it paints when asked (`requestPaint`, `markDirty`, a change of size) and an idle canvas asks for no frame. `Rotation`, `Scale`, `Translate` and `Matrix4x4` transform items, and `Flipable` shows its front or back by the side its transform faces. A view that is not drawn gives back what it can rebuild (`QmlView::trim`): image textures, the glyph atlas and decoded pictures nothing shows.
+
 **Version pin.** Parley must share skrifa 0.44 and harfrust 0.12 with egui 0.36's epaint, so the font stack is not duplicated. Report 05 pins Parley 0.11.1 for this. Report 02 says 0.12.0 also matches. The scaffold verifies with `cargo tree -d` and picks the newest version that does not duplicate. Because egui tracks the latest release (D9), each egui bump re-runs this check. A temporary duplicate is allowed but tracked in CI.
 
 **Off-screen discipline**
@@ -550,7 +554,8 @@ Caret and selection geometry come from Parley's `Cursor`/`Selection`. Parley's `
 - **Links.** A link reports its address (`linkActivated`, `linkHovered`, `linkAt`) and the toolkit opens nothing. A `Text` takes the pointer only for a press that lands on a link. Links are reached with Tab and are nodes of the accessibility tree. A `RichText` or Markdown link is `#0000ff` whatever `linkColor` says, as Qt documents; `linkColor` applies to `StyledText`.
 - **`SelectionScope`** (module `Ljos`) gives the `Text` items below it one selection in one space of UTF-16 offsets, a line break between members. Delegates a view has not made are not members.
 - **Highlighting.** `TextEdit.textDocument` takes spans or a function that makes them (`highlight`, `clearHighlights`, ours); a span changes colours and underline only, never the text, the line breaks or the undo log.
-- **Not built:** editing rich text in `TextEdit` and `TextArea` (`getFormattedText` answers plain text); inline images are decoded synchronously; block and table-cell backgrounds; links in a `Label` are not activated by the pointer.
+- **Editing (M2).** A `TextEdit` with rich text keeps a `RichText` beside its `TextModel` (`ljos_text::rich::editing`, `ljos_quick::text_input::rich`): every edit reaches the model first, and the new characters take their format the way Qt 6.11 gives it, as measured with qml6. Undo takes formats back too. `text` and `getFormattedText` write the document out as Qt's HTML or Markdown.
+- **Not built:** inline images are decoded synchronously; block and table-cell backgrounds; links in a `Label` are not activated by the pointer.
 
 ---
 
@@ -599,6 +604,7 @@ Freezing stops *work*, not *meaning* (04 §3.5).
 - **Frozen subtrees** are hidden from accessibility (unless they are the active route) and are not interactive.
 - **Transitions and predictive back** may keep at most two cached page snapshots.
 - **Property test:** with and without freezing, observers see the same final values and the same set of signals (presence, not count).
+- **As built (M2).** `Engine::set_frozen` freezes an object and what it owns: effects are parked in the graph and run once on thaw against the latest values, while bindings still answer reads; a timer that came due fires once on thaw; animations stand still and catch up. `StackView` freezes the pages it covers. The static analysis of where freezing is allowed, the exemptions, SwipeView, Loader and delegates are not built.
 
 ### 8.4 Virtualised views
 
@@ -613,7 +619,8 @@ Freezing stops *work*, not *meaning* (04 §3.5).
 - **The pass** starts from the anchor (the first row in sight after the last pass, and where it was), lays rows out in both directions until the window around what is shown is full, and gives back every delegate outside it. `cacheBuffer` defaults to 320 px, as on Qt. Rows never measured count as long as the average of those that were, so `contentHeight` of a long list is an estimate that improves as the view moves, as it is on Qt.
 - **Changes.** Rows that arrive before the anchor push its number up and leave its place alone: the content grows upwards (the origin moves) and nothing in sight jumps. The anchor is a row and an offset, not yet a model key.
 - **Also built:** sections, header and footer, `currentIndex` with keys and the highlight, `positionViewAtIndex` and its siblings, `indexAt` and `itemAt`, snap modes, `reuseItems` with `pooled` and `reused`, `ObjectModel` and `DelegateModel`. `Menu`, `ComboBox` and the other controls with rows use a real `ListView`.
-- **Not built:** `move` and `displaced` transitions (stored only; `populate`, `add` and `remove` run one item at a time and there is no `ViewTransition` attached data); `highlightRangeMode` and `preferredHighlightBegin`/`End`; `section.labelPositioning`; `DelegateModel` groups, `parts` and `rootIndex`; the larger cache while an assistive technology is attached; the `Ljos.ListView.incubationBudgetMs` setting.
+- **Not built:** `move` and `displaced` transitions (stored only; `populate`, `add` and `remove` run one item at a time and there is no `ViewTransition` attached data); `highlightRangeMode` and `preferredHighlightBegin`/`End`; `section.labelPositioning`; `DelegateModel` groups, `parts` and `rootIndex`; the larger cache while an assistive technology is attached; the `Ljos.ListView.incubationBudgetMs` setting; `DelegateChooser` (its scenarios are in the ledger, tagged `@backlog`).
+- **`PathView` (M2)** lays its delegates along a `Path`, with `pathItemCount`, the preferred highlight range, snapping, a drag that flicks and `PathAttribute` values.
 
 ### 8.5 Memory budgets
 
@@ -712,6 +719,8 @@ Source: 04 §3.1–3.2, §3.8–3.10.
 
 AccessKit on Android requires GameActivity. With native-activity it fails to compile (09 §2.3).
 
+**As built: system services (M2).** `ljos_platform` puts each service of the system behind a trait with an in-process stand-in that tests use: the clipboard (text, HTML, an image, the primary selection), the system's dialogs and `QtQuick.Dialogs` (drawn with QtQuick.Controls where the system shows none), `QtCore`'s `Settings` (written by a thread of its own) and `StandardPaths`, remote resources fetched off the Engine thread, drags from other applications, and `QtCore`'s permissions. `ljos_shell` gives the desktop ones (feature `native`). `FontLoader` and `SystemPalette` are in `ljos_quick`.
+
 **As built (M2, desktop).** `ljos_host` has `PlatformHost`, the events and `WinitHost` on winit 0.30.13. The application behind a host is a `HostApp`: it is handed every event with a `HostControl`, through which it opens and changes windows, asks to be woken at a time and ends the loop. The loop wakes by itself never or at one time; a `Waker` wakes it from another thread. The crate knows nothing of what draws into a window. `AndroidHost` is M3.
 
 ### 10.2 App core versus UI host
@@ -766,7 +775,8 @@ Sources: 02 §3.1.6; 05 §3.2.
   - Focus and key dispatch start as the `focus` and `keys` modules of `ljos_quick`, free of egui; `ljos_input` is split out when a second crate needs them (section 4, "start small").
   - A scene starts active. The host calls `set_window_active` when the window loses or gains the keyboard.
   - egui sees one focusable widget per `QmlView`. Unaccepted Tab and arrow keys go back to egui; assistive technology follows focus inside the view through AccessKit's `active_descendant`.
-- **Scrolling as built.** `Flickable` lives in `ljos_quick::flickable` and asks a `ScrollPhysics` what the content does when nothing holds it. The only physics so far is `Immediate`: content follows the finger and the wheel and stops when they stop, and `returnToBounds()` jumps. Flings, overshoot and rebound come with the platform physics in M2 (section 10.3).
+- **Scrolling as built.** `Flickable` lives in `ljos_quick::flickable` and asks a `ScrollPhysics` what the content does when nothing holds it. Content follows the finger and the wheel; when they let go, `flickable::fling` follows the curve the physics gives (a fling, overshoot, rebound, a wheel that glides), frame by frame, and asks for no frame once everything rests. A `rebound` transition is run on a hidden item the content follows.
+- **Pointer handlers as built (M2).** `DragHandler`, `HoverHandler`, `PinchHandler` and `PointHandler` join `TapHandler` and `WheelHandler` (`ljos_quick::handlers`): a handler takes a passive grab at a press and asks for the exclusive one when its gesture begins, as `grabPermissions` allow. Every drag starts past one threshold, the system's start-drag distance. `Drag`, `DropArea` and `MouseArea.drag` move and drop items within a scene, and a drag from another application reaches a `DropArea` through `ljos_platform::ExternalDrag`. Not built: a `PointerDevice` type (properties declared with its enums stay plain numbers).
 - **Wheel and hover as built.** A wheel event is offered to the items under the pointer, topmost first; for each, its `WheelHandler`s come before the item itself (a `MouseArea` with a `wheel` handler, or a `Flickable` that can move), and the first that keeps the event ends the round. A pointer that comes into a `hoverEnabled` MouseArea gives `entered` and `positionChanged`. `TapHandler.point` is there; `WheelHandler.margin` is stored and not acted on.
 - **Key dispatch** runs `ShortcutOverride`, then `Shortcut` (context-aware, with `activatedAmbiguously`), then `Keys` (`priority`, `forwardTo`), bubbling up. `StandardKey` maps to platform-specific key sequences.
 - **Text input** goes through two traits. `TextInputClient` is implemented by TextInput and TextEdit: `surrounding`, `replace`, `set_selection`, `cursor_rect`, `hints`. `PlatformTextInput` has one implementation per platform:
@@ -865,6 +875,7 @@ Source: 01 §2.5, §3.6; 08.
 - **As built.** A style is a directory of QML files compiled to IR by the crate's `build.rs` and registered as a component library, so a shipped app still links no parser. Style parts are deferred: a style gives each part (`background`, `contentItem`, `indicator`, `handle`, `popup`) as a `Component` and the control makes it when it completes, unless the application gave its own by then, so a replaced part is never made (a test counts creations). `Window` and `ApplicationWindow` are platform windows under the shell and items of the scene without one (section 6.4).
 - **Popups as built.** A scene has a second top-level item, the layer (`ljos_quick::layer`), drawn over the root item and asked first by the pointer. `ljos_controls` puts one overlay per window there and each popup's item inside it, so nothing in the content clips a popup and a root that is a positioner does not lay it out. A closed popup's item stays in the overlay, hidden. Popups have no `enter`/`exit` transitions yet, a `Menu` and a `ComboBox` popup do not scroll, and `ToolTip` has one shared instance per window.
 - **Polish as built (M1).** `focusPolicy` and `activeFocusOnTab` say one thing between them (the Tab bit), and the Basic style draws `visualFocus` on every control that takes the keyboard. Buttons and menu items have `icon.*` and `display`; an icon is tinted with the text colour unless `icon.color` is given, and `icon.name` shows nothing because there is no icon theme. `palette.*` is inherited down the item tree and into popups, the style reads the palette instead of literal colours, and a dark palette follows `Qt.styleHints.colorScheme`. The accessibility audit runs over the style in light and dark (`crates/ljos_controls/tests/audit.rs`); the Basic placeholder colour is Qt's value and stays below 4.5:1 for parity (3.04:1 light, 3.95:1 dark), so an application that needs AA sets `palette.placeholderText`. `ComboBox` is editable, `MenuBar` with `MenuBarItem` exists (not yet a full `Container`), and `ApplicationWindow.menuBar` sits above the header. A menu or combo popup shows its rows in a `ListView`, as Qt's does. A popup runs its `enter` and `exit` transitions through `Transition` (section 6.2), with `aboutToShow`, `opened`, `aboutToHide` and `closed` at the moments Qt 6.11 shows; reduced motion finishes them at once.
+- **More controls as built (M2).** The value controls (`Slider`, `RangeSlider`, `Dial`, `ProgressBar`, `BusyIndicator`, `DelayButton`, `RoundButton`, `DoubleSpinBox`, `PageIndicator`, `ToolSeparator`), the check, radio and switch delegates, `ActionGroup` and `Action.shortcut`. Navigation: `Container`, `TabBar` and `TabButton`, `SwipeView`, `StackView` (whose covered pages are frozen, section 8.3), `SplitView` and `Drawer`, which the pointer drags in from the edge of its window and out again.
 - **Basic style first.** It is the neutral base that other styles and custom controls build on. Real apps lean on it (HAL-C2 imports `QtQuick.Controls.Basic` 87 times and `QtQuick.Controls` twice).
 - **Material** follows for Android, after M3. Material attached properties are accepted as no-ops until then.
 - **Fusion and the native macOS style** are deferred.
@@ -921,6 +932,7 @@ Source: 05 §3.1.
   - The audit has eight coded checks (`a11y-unnamed-interactive`, `a11y-unnamed-image`, `a11y-duplicate-name`, `a11y-target-size`, `a11y-tab-trap`, `a11y-tab-unreachable`, `a11y-contrast`, `a11y-set-size`). It presses nothing and measures contrast from the last frame. `ljos test` does not run it on every mounted component yet. Known finding: the Basic style's placeholder text is 3.04:1 on white, which is Qt's palette value.
   - `ljos check` runs the static lints by default (`--no-lint` leaves them out); a finding is a warning.
   - Controls take keyboard focus by `focusPolicy`, and the Basic style draws `visualFocus` on the button-like controls.
+- **As built: live regions (M2).** A text whose role is a status bar, a notification or an alert tells an assistive technology each new thing it says, a status politely and an alert at once, and so does `Accessible.announce`. A control that is partly checked reports a mixed state.
 
 ---
 
@@ -983,6 +995,7 @@ Many QML apps are a thin QML view over native controllers. The QML reads state f
   As built: `ljos test <files or dirs> [-import <dir>] [--filter name] [--json file]` finds `tst_*.qml`, runs each file in a fresh engine and prints QtTest's plain-text lines; its exit status is the number of failed tests, as Qt's is. Input goes through the scene's pointer, wheel and key paths, and every wait advances the virtual clock, so a suite is deterministic and as fast as the machine. `mise run qttest:parity` runs the crate's own suites on `ljos test` and on Qt's runner and compares the result lines. Not implemented: `failOnWarning`, `ignoreWarning`, benchmarks, and touch points told apart by id.
 - **External acceptance suites** (section 18.4): an app's own `.feature` files run against Ljós through an allowlist and a ratchet.
 - **A migration guide and `ljos check --port`,** which reports, from the API ledger, which types and members an app uses that Ljós does not yet support. The MCP tool `api_status` exposes the same data (section 19).
+  As built: `ljos check --port [--json] [--deny-missing] [--ledger <file>] [--limit n]` reads what a project uses with the authoring server's front end and asks the same function as `api_status` what Ljós has of it, so the two never disagree. The tables of types are the source of truth; the ledger is read only when `--ledger` names one. No scenario pins it yet, and the migration guide is not written.
 
 **What stays in the app's repository:** its native controllers (rewritten in Rust or bridged), any test doubles and fake servers, and its integration crate. Ljós's repository holds no app-specific code.
 
