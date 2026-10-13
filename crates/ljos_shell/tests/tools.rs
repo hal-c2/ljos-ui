@@ -63,6 +63,7 @@ fn opened(
     let (tx, woke) = mpsc::channel();
     let h = Harness::builder()
         .with_size(Vec2::new(480.0, 320.0))
+        .with_max_steps(8)
         .build_eframe(move |cc| {
             // What a real window's event loop sleeps on.
             cc.egui_ctx.set_request_repaint_callback(move |_| {
