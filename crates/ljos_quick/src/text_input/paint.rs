@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_engine::{Engine, ObjectId, Rect, Value};
-use ljos_render::{Decorations, DisplayListBuilder, GlyphRun, Rgba, kurbo};
+use ljos_render::{Decorations, DisplayListBuilder, GlyphRun, ImageHandle, Rgba, kurbo};
 use ljos_text::{EditLayout, EditLine};
 
 use super::base::{TextEditor, state_of};
@@ -35,6 +35,11 @@ pub struct EditorPaint {
     cursor: Option<Rect>,
     /// How the lines a program highlighted are painted.
     highlighted: Option<Lines>,
+    /// The colour of each run of rich text, by a layout run's tag less
+    /// one.
+    run_colors: Option<Arc<Vec<Option<Rgba>>>>,
+    /// The pictures of rich text's images, where they are drawn.
+    images: Vec<(ImageHandle, kurbo::Rect)>,
 }
 
 fn color(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> Rgba {
@@ -70,7 +75,9 @@ impl EditorPaint {
         // Before the state is borrowed: this may ask a program's
         // highlighter for the spans of a text that changed.
         let highlighted = highlight::lines(&st);
+        let run_colors = super::rich::run_colors(&mut st.borrow_mut());
         let s = st.borrow();
+        let images = super::rich::placed_images(&s);
         let selection = s.model.selection();
         EditorPaint {
             layout: s.layout.clone(),
@@ -82,7 +89,18 @@ impl EditorPaint {
             preedit: s.shown.preedit_bytes(),
             cursor: (cursor_visible && s.blink_on && !has_delegate).then_some(s.cursor_rect),
             highlighted,
+            run_colors,
+            images,
         }
+    }
+
+    /// The colour a run of the layout is drawn in.
+    fn run_color(&self, tag: u32) -> Rgba {
+        let index = (tag as usize).wrapping_sub(1);
+        self.run_colors
+            .as_ref()
+            .and_then(|c| c.get(index).copied().flatten())
+            .unwrap_or(self.color)
     }
 
     fn line_x(&self, line: usize) -> f64 {
@@ -129,7 +147,7 @@ impl EditorPaint {
                     self.glyphs(
                         &run.run.glyphs,
                         &run.glyph_bytes,
-                        self.color,
+                        self.run_color(run.run.tag),
                         run.run.decorations,
                         touches,
                         origin,
@@ -156,6 +174,9 @@ impl EditorPaint {
                     color.unwrap_or(self.color),
                 );
             }
+        }
+        for (image, rect) in &self.images {
+            out.image(image.clone(), *rect);
         }
         // The composition is marked with a line under it, in the colour of
         // the text.

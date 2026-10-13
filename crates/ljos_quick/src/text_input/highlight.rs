@@ -22,7 +22,9 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos_engine::{Color, Cx, Engine, EngineError, ObjectId, QmlObject, Value, qml_impl};
+use ljos_engine::{
+    Atom, Color, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl,
+};
 use ljos_render::{Decorations, GlyphRun, Rgba};
 use ljos_text::{EditLayout, EditLine, utf16_to_byte};
 
@@ -431,19 +433,38 @@ pub fn highlights(engine: &Engine, item: ObjectId) -> Vec<HighlightSpan> {
 }
 
 /// `TextEdit.textDocument` (doc.qt.io, `qml-qtquick-textdocument.html`):
-/// the text of a `TextEdit` as something a program holds on to. Of what
-/// Qt's has, `modified`; `source`, `status`, `save` and `saveAs` are not
-/// implemented. `highlight` and `clearHighlights` are ours.
+/// the text of a `TextEdit` as something a program holds on to: whether it
+/// is modified, and the file it is read from and saved to
+/// ([`super::files`]). `highlight` and `clearHighlights` are ours.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "QtQuick", name = "TextDocument", uncreatable)]
+#[qml(
+    module = "QtQuick",
+    name = "TextDocument",
+    uncreatable,
+    enums = super::files::document_enums
+)]
 pub struct TextDocument {
     /// Whether the text differs from what it was when it was assigned or
     /// when a program last wrote `false` here. Undoing back to that text
     /// makes it `false` again.
     #[qml(notify)]
     pub modified: bool,
+    /// The file the text is read from; writing it reads the file.
+    #[qml(notify)]
+    pub source: Url,
+    /// [`super::files::status`]: whether the file is being read or saved,
+    /// was, or could not be.
+    #[qml(notify, readonly, enumeration = "Status")]
+    pub status: i32,
+    /// Why the last read or save failed; empty when it did not.
+    #[qml(notify, readonly)]
+    pub error_string: Atom,
     #[qml(skip)]
     pub(crate) edit: Option<ObjectId>,
+    /// Counts the reads and saves, so that the answer to one that was
+    /// overtaken is dropped.
+    #[qml(skip)]
+    pub(crate) generation: u64,
 }
 
 fn color_of(v: &Value) -> Option<Color> {
@@ -493,6 +514,20 @@ impl TextDocument {
     fn clear_highlights(cx: &Cx) {
         set_highlights(cx.engine, cx.this, Vec::new());
     }
+
+    /// `save()`: writes the text to `source`, in the background.
+    #[qml(invokable)]
+    fn save(cx: &Cx) {
+        super::files::save(cx.engine, cx.this, None);
+    }
+
+    /// `saveAs(url)`: writes the text to `url`, which becomes `source`
+    /// once it is written.
+    #[qml(invokable, name = "saveAs")]
+    fn save_as(cx: &Cx, url: Value) {
+        let url = url.to_js_string();
+        super::files::save(cx.engine, cx.this, Some(url.as_str()));
+    }
 }
 
 /// Makes the document of a `TextEdit` that completes.
@@ -503,8 +538,8 @@ pub(crate) fn init_document(
 ) -> Result<(), EngineError> {
     let doc = engine.create_native(
         TextDocument {
-            modified: false,
             edit: Some(edit),
+            ..TextDocument::default()
         },
         Some(edit),
     )?;
@@ -522,12 +557,25 @@ pub(crate) fn init_document(
                 // What is typed next does not join what led to the text
                 // that was saved.
                 s.run = None;
+                if !wanted {
+                    super::rich::saved(&mut s);
+                }
             }
             changed
         };
         if changed {
             sync_modified(e, &st);
         }
+    })?;
+    // A program names a file: it is read into the editor.
+    engine.watch(doc, TextDocument::SOURCE.index, move |e, v| {
+        let Some(st) = state_of(e, edit) else { return };
+        let url = v.to_js_string();
+        if st.borrow().doc_source == url.as_str() {
+            // The editor said it itself, after `saveAs`.
+            return;
+        }
+        super::files::load(e, doc, edit, &st, url.as_str());
     })?;
     Ok(())
 }

@@ -1,17 +1,21 @@
 //! Builds [`EditLayout`]s: the lines of [`TextEngine::layout`] with a place
 //! for every character.
 
-use parley::PositionedLayoutItem;
+use std::ops::Range;
+
+use parley::{BaseDirection, PositionedLayoutItem};
 
 use super::{
-    BreakClass, RawLine, Shape, TextEngine, Vertical, break_lines, ceil64, extract, reported_width,
-    snapped,
+    BreakClass, OwnedRanged, RawLine, Shape, TextEngine, Vertical, break_lines, ceil64, extract,
+    key_hash, reported_width, shape, snapped, snapped_width,
 };
+use crate::direction::in_right_to_left_block;
 use crate::edit::{CaretCluster, EditLayout, EditLine, EditParams, EditRun};
-use crate::style::{Ranged, TextStyle, WrapMode};
+use crate::style::{InlineObject, Ranged, StyleSpan, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
 /// byte each glyph's character starts at.
+#[derive(Clone)]
 pub(super) struct LineCarets {
     pub(super) clusters: Vec<CaretCluster>,
     pub(super) glyph_bytes: Vec<Vec<usize>>,
@@ -104,7 +108,157 @@ pub(super) fn carets(shape: &Shape, text: &str) -> Vec<LineCarets> {
     out
 }
 
+/// A paragraph of edited text (its line break included) laid out on its
+/// own, with bytes counted from its start and lines from the top.
+pub(super) struct ParagraphEntry {
+    text: Box<str>,
+    style: TextStyle,
+    ranged: OwnedRanged,
+    class: BreakClass,
+    max_advance: Option<u32>,
+    lines: Vec<(RawLine, LineCarets)>,
+    natural: f32,
+}
+
+/// Where the paragraphs of `text` are, each with its line break, when they
+/// can be laid out one by one: there are several, and nothing in the text
+/// reads right to left. The whole text has one direction, which the first
+/// letter of all of it decides; a paragraph on its own would decide by its
+/// own first letter, so a text that has any letter that may differ is laid
+/// out whole.
+fn paragraphs(text: &str) -> Option<Vec<Range<usize>>> {
+    let breaks = text.bytes().filter(|b| *b == b'\n').count();
+    if breaks == 0 || (breaks == 1 && text.ends_with('\n')) {
+        return None;
+    }
+    let mixed = !text.is_ascii()
+        && text.chars().any(|c| {
+            in_right_to_left_block(c)
+                || matches!(c, '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        });
+    if mixed {
+        return None;
+    }
+    let mut cuts = Vec::with_capacity(breaks + 1);
+    let mut start = 0;
+    for (i, _) in text.match_indices('\n') {
+        cuts.push(start..i + 1);
+        start = i + 1;
+    }
+    // A text that ends with a line break has no paragraph after it: the
+    // cursor's line there is added for the whole text.
+    if start < text.len() {
+        cuts.push(start..text.len());
+    }
+    Some(cuts)
+}
+
+/// The spans and objects of `ranged` inside `cut`, counted from its start.
+fn within(ranged: &Ranged<'_>, cut: Range<usize>) -> (Vec<StyleSpan>, Vec<InlineObject>) {
+    // Spans are sorted and do not overlap: the first that ends inside the
+    // cut is found by halving.
+    let first = ranged.spans.partition_point(|s| s.range.end <= cut.start);
+    let spans = ranged.spans[first..]
+        .iter()
+        .take_while(|s| s.range.start < cut.end)
+        .map(|s| StyleSpan {
+            range: s.range.start.max(cut.start) - cut.start..s.range.end.min(cut.end) - cut.start,
+            ..s.clone()
+        })
+        .filter(|s| !s.range.is_empty())
+        .collect();
+    let objects = ranged
+        .objects
+        .iter()
+        .filter(|o| cut.contains(&o.index))
+        .map(|o| InlineObject {
+            index: o.index - cut.start,
+            ..*o
+        })
+        .collect();
+    (spans, objects)
+}
+
+/// A line of a paragraph that starts at byte `at`, in the bytes of the
+/// whole text.
+fn moved(mut line: RawLine, mut places: LineCarets, at: usize) -> (RawLine, LineCarets) {
+    if at == 0 {
+        return (line, places);
+    }
+    let shift = |r: &mut Range<usize>| *r = r.start + at..r.end + at;
+    shift(&mut line.range);
+    for c in &mut line.clusters {
+        shift(&mut c.range);
+    }
+    for c in &mut places.clusters {
+        shift(&mut c.range);
+    }
+    for b in places.glyph_bytes.iter_mut().flatten() {
+        *b += at;
+    }
+    (line, places)
+}
+
 impl TextEngine {
+    /// The lines of one paragraph (see [`paragraphs`]) and its width when
+    /// nothing wraps; kept while recent frames use them.
+    fn paragraph(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        class: BreakClass,
+        max_advance: Option<f32>,
+        fallback: Vertical,
+    ) -> (Vec<(RawLine, LineCarets)>, f32) {
+        let max_bits = max_advance.map(f32::to_bits);
+        let key = key_hash(
+            text,
+            style,
+            (class, ranged.spans, ranged.objects, ranged.strut, max_bits),
+        );
+        let frame = self.frame;
+        if let Some(e) = self.paragraphs.get_mut(&key, frame)
+            && &*e.text == text
+            && e.style == *style
+            && e.class == class
+            && e.max_advance == max_bits
+            && e.ranged.matches(ranged)
+        {
+            return (e.lines.clone(), e.natural);
+        }
+        let mut shape = shape(
+            &mut self.fcx,
+            &mut self.lcx,
+            &self.families,
+            text,
+            style,
+            ranged,
+            class,
+            BaseDirection::Auto,
+        );
+        break_lines(&mut shape, None, false);
+        let natural = snapped_width(&shape);
+        // As in `build_layout`: a text that fits as Qt counts it is not
+        // broken because the shaper's advances are a touch wider.
+        let max = max_advance.filter(|w| natural > *w);
+        break_lines(&mut shape, max, false);
+        let lines = extract(&shape, fallback, None, ranged.objects);
+        let places = carets(&shape, text);
+        let lines: Vec<_> = lines.into_iter().zip(places).collect();
+        let entry = ParagraphEntry {
+            text: text.into(),
+            style: style.clone(),
+            ranged: OwnedRanged::of(ranged),
+            class,
+            max_advance: max_bits,
+            lines: lines.clone(),
+            natural,
+        };
+        self.paragraphs.insert(key, entry, frame);
+        (lines, natural)
+    }
+
     /// Lay out `text` for editing. Not cached as a whole (the item keeps the
     /// result while nothing changes); the shaping behind it is.
     pub fn edit_layout(
@@ -138,10 +292,40 @@ impl TextEngine {
         let wraps = wrap != WrapMode::NoWrap;
         let max_advance = width.filter(|_| wraps).map(|w| w as f32);
 
+        let class = BreakClass::of(wrap);
         let (mut raw, natural, rtl): (Vec<(RawLine, LineCarets)>, f32, bool) = if text.is_empty() {
             (Vec::new(), 0.0, false)
+        } else if let Some(cuts) = paragraphs(text) {
+            // Each paragraph on its own, so a key typed in one lays out that
+            // one again and not the whole document.
+            let mut raw = Vec::new();
+            let mut natural = 0.0_f32;
+            let count = cuts.len();
+            for (i, cut) in cuts.into_iter().enumerate() {
+                let (spans, objects) = within(ranged, cut.clone());
+                let part = Ranged {
+                    spans: &spans,
+                    objects: &objects,
+                    strut: ranged.strut,
+                };
+                let (at, len) = (cut.start, cut.len());
+                let (mut lines, width) =
+                    self.paragraph(&text[cut], style, &part, class, max_advance, fallback);
+                natural = natural.max(width);
+                // The empty line after a paragraph's break is the next
+                // paragraph's first.
+                if i + 1 < count && lines.last().is_some_and(|(l, _)| l.range.start == len) {
+                    lines.pop();
+                }
+                raw.extend(
+                    lines
+                        .into_iter()
+                        .map(|(line, places)| moved(line, places, at)),
+                );
+            }
+            (raw, natural, false)
         } else {
-            let entry = self.shaped(text, style, ranged, BreakClass::of(wrap));
+            let entry = self.shaped(text, style, ranged, class);
             // As in `build_layout`: a text that fits as Qt counts it is not
             // broken because the shaper's advances are a touch wider.
             let max_advance = max_advance.filter(|w| entry.natural_width > *w);

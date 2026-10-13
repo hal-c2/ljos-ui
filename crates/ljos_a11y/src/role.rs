@@ -7,6 +7,8 @@
 
 use accesskit::Role as Ak;
 
+use crate::tree::Politeness;
+
 macro_rules! roles {
     ($($name:ident = $value:literal => $ak:expr,)*) => {
         /// A `QAccessible::Role`, the value of `Accessible.role`.
@@ -303,6 +305,19 @@ impl Role {
             self,
             Role::Graphic | Role::Chart | Role::Animation | Role::Canvas
         )
+    }
+
+    /// Whether what a node of this role says is said again when it
+    /// changes, without the user going to it, and how urgently: a status
+    /// bar or a notification politely, an alert at once. These are the
+    /// roles whose AccessKit counterparts are live regions on every
+    /// platform (report 05 §2.4); Qt's own bridge says nothing of them.
+    pub fn live(self) -> Option<Politeness> {
+        match self {
+            Role::StatusBar | Role::Notification => Some(Politeness::Polite),
+            Role::AlertMessage => Some(Politeness::Assertive),
+            _ => None,
+        }
     }
 }
 

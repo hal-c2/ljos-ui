@@ -8,7 +8,8 @@ use std::sync::Arc;
 use ljos_engine::{Engine, EngineError, Font, ObjectId, Rect, Value};
 use ljos_render::kurbo;
 use ljos_text::{
-    EditLayout, EditParams, TextModel, TextStyle, WrapMode, byte_to_utf16, utf16_len, utf16_to_byte,
+    EditLayout, EditParams, Ranged, TextModel, TextStyle, WrapMode, byte_to_utf16, utf16_len,
+    utf16_to_byte,
 };
 
 use super::base::{SharedState, TextEditor, bump};
@@ -18,6 +19,7 @@ use super::{cursor_position, echo_mode};
 use crate::enums::{align, wrap_mode};
 use crate::item::{Item, num, size_follows_implicit, write_computed};
 use crate::text::{read_style, text_engine};
+use ljos_text::rich::HAlign;
 
 /// How the text is put on screen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -296,6 +298,12 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     {
         shown.text = drawn;
     }
+    // An image's character is laid out as nothing; its box takes the room.
+    if s.rich.is_some()
+        && let std::borrow::Cow::Owned(text) = ljos_text::rich::RichText::shown(&shown.text)
+    {
+        shown.text = text;
+    }
     let fresh = s.layout.is_some()
         && s.shown.text == shown.text
         && s.laid.as_ref() == Some(&(inputs.style.clone(), params));
@@ -305,9 +313,32 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     }
     s.shown = shown;
     if !fresh {
-        let layout = text_engine()
-            .borrow_mut()
-            .edit_layout(&s.shown.text, &inputs.style, &params);
+        let layout = match &s.rich {
+            Some(r) => {
+                // The composition stands at the cursor and is set as the
+                // text before it.
+                let (at, extra) = (s.model.cursor_byte(), s.preedit.len());
+                let shift = |b: usize| if b >= at { b + extra } else { b };
+                let spans = r.doc.style_spans(&inputs.style, shift);
+                let objects = r
+                    .doc
+                    .objects(shift, |im| super::rich::image_size(&r.images, im));
+                let ranged = Ranged {
+                    spans: &spans,
+                    objects: &objects,
+                    strut: false,
+                };
+                text_engine().borrow_mut().edit_layout_ranged(
+                    &s.shown.text,
+                    &inputs.style,
+                    &ranged,
+                    &params,
+                )
+            }
+            None => text_engine()
+                .borrow_mut()
+                .edit_layout(&s.shown.text, &inputs.style, &params),
+        };
         s.layout = Some(Rc::new(layout));
         s.laid = Some((inputs.style.clone(), params));
     }
@@ -372,10 +403,35 @@ pub(crate) fn relayout(
         } else {
             inputs.width - left - right
         };
+        // A paragraph of rich text may have an alignment of its own.
+        let held = st.borrow();
+        let aligns = super::rich::block_aligns(&held);
+        let shown = &held.shown.text;
+        let (mut block, mut counted) = (0, 0);
         geo.line_x = layout
             .lines
             .iter()
-            .map(|line| left + horizontal_offset(inputs.h_align, avail - line.width))
+            .map(|line| {
+                let h_align = match &aligns {
+                    Some(aligns) => {
+                        let upto = line.range.start.min(shown.len());
+                        block += shown.as_bytes()[counted.min(upto)..upto]
+                            .iter()
+                            .filter(|b| **b == b'\n')
+                            .count();
+                        counted = counted.max(upto);
+                        match aligns.get(block).copied().flatten() {
+                            Some(HAlign::Left) => align::LEFT,
+                            Some(HAlign::Right) => align::RIGHT,
+                            Some(HAlign::Center) => align::H_CENTER,
+                            Some(HAlign::Justify) => align::JUSTIFY,
+                            None => inputs.h_align,
+                        }
+                    }
+                    None => inputs.h_align,
+                };
+                left + horizontal_offset(h_align, avail - line.width)
+            })
             .collect();
     } else {
         // A field is a whole number of pixels wide, as in Qt.

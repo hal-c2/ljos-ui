@@ -176,7 +176,7 @@ pub struct DocLink {
 }
 
 /// The size of an image nobody knows the size of.
-const PLACEHOLDER: f32 = 16.0;
+pub(crate) const PLACEHOLDER: f32 = 16.0;
 /// No image is laid out larger than this, whatever the document asks for.
 const MAX_IMAGE: f32 = 16_384.0;
 

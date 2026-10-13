@@ -20,11 +20,15 @@
 //! string the application is told about; an image is a source string the
 //! caller may or may not resolve; raw HTML inside Markdown is shown as the
 //! text it is; `style`, `script` and unknown tags of `RichText` are dropped,
-//! and of a `style` attribute only colours and lines are read.
+//! and of a `style` attribute only colours, lines and the font are read.
+//!
+//! [`RichText`] is the other side: a rich text a user edits, character by
+//! character with the format of each, written back out as HTML or Markdown.
 //! Malformed input never panics (see `tests/rich_fuzz.rs`).
 
 mod auto;
 mod doc;
+mod editing;
 mod entity;
 mod flow;
 mod html;
@@ -41,6 +45,9 @@ pub use auto::might_be_rich;
 pub use doc::{
     BlockLayout, DocLink, DocMetrics, DocParams, DocStats, HAlign, Part, PlacedImage, PlacedLine,
     RichDoc, View, default_image_size,
+};
+pub use editing::{
+    BlockFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH, RichText,
 };
 pub use select::SelectionScope;
 
@@ -107,6 +114,14 @@ pub struct Inline {
     pub decoration_color: Option<Arc<str>>,
     /// The address of the link this text belongs to. Never followed here.
     pub link: Option<Arc<str>>,
+    /// A family the document named (`font-family`), the first of a list.
+    pub family: Option<Arc<str>>,
+    /// A size in pixels the document gave (`font-size: 20px`); `scale`
+    /// still applies on top of it.
+    pub pixel_size: Option<f32>,
+    /// `pixel_size` was given in points (`font-size: 20pt`), and is
+    /// written back in them, as Qt keeps the unit a size came in.
+    pub in_points: bool,
 }
 
 impl Default for Inline {
@@ -124,6 +139,9 @@ impl Default for Inline {
             background: None,
             decoration_color: None,
             link: None,
+            family: None,
+            pixel_size: None,
+            in_points: false,
         }
     }
 }
@@ -142,12 +160,15 @@ impl Inline {
         StyleSpan {
             range,
             tag,
-            pixel_size: base.pixel_size * self.scale,
+            pixel_size: self.pixel_size.unwrap_or(base.pixel_size) * self.scale,
             weight: if self.bold { 700.0 } else { base.weight },
             italic: base.italic || self.italic,
             underline: self.underline || (inherits && (base.underline || self.link.is_some())),
             strikeout: self.strike || (inherits && base.strikeout),
-            family: self.mono.then(|| Arc::from(MONOSPACE)),
+            family: match &self.family {
+                Some(family) => Some(Arc::clone(family)),
+                None => self.mono.then(|| Arc::from(MONOSPACE)),
+            },
         }
     }
 }
@@ -163,12 +184,15 @@ impl Hash for Inline {
                 self.overline,
                 self.undecorated,
                 self.mono,
+                self.in_points,
             ],
             self.scale.to_bits(),
             &self.color,
             &self.background,
             &self.decoration_color,
             &self.link,
+            &self.family,
+            self.pixel_size.map(f32::to_bits),
         )
             .hash(state);
     }

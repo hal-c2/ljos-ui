@@ -264,6 +264,9 @@ pub(crate) struct ObjectExt {
     /// The model this object is to a view (`model: obj`), for types that
     /// are one.
     pub(crate) model: Option<Rc<dyn crate::model::ItemModel>>,
+    /// Values made when the property is next read
+    /// ([`Engine::make_on_read`]).
+    pub(crate) made_on_read: Vec<(PropIndex, crate::made_on_read::Maker)>,
 }
 
 /// See [`ObjectExt::write_hook`].

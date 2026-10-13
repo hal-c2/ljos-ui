@@ -1615,7 +1615,7 @@ impl<'p, 'a> Gen<'p, 'a> {
                     "Boolean" => Builtin::Boolean,
                     "isNaN" => Builtin::IsNaN,
                     "isFinite" => Builtin::IsFinite,
-                    "__ljos_vt" | "__ljos_vl" => {
+                    "__ljos_vt" | "__ljos_vl" | "__ljos_vp" | "__ljos_at" => {
                         return Err(Reason::new("write to a member of a value"));
                     }
                     "__ljos_att" => return Err(Reason::new("attached object of a value")),
@@ -1959,6 +1959,8 @@ fn is_known_global(name: &str) -> bool {
             | "arguments"
             | "__ljos_vt"
             | "__ljos_vl"
+            | "__ljos_vp"
+            | "__ljos_at"
             | "__ljos_att"
             | "__ljos_single"
     )

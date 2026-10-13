@@ -90,6 +90,12 @@ pub(crate) struct State {
     pub layout_epoch: Option<NodeId>,
     /// Counts what changes the picture without changing a property.
     pub paint_epoch: Option<NodeId>,
+    /// Counts changes of a rich text, which `text` may not show yet: what
+    /// follows the characters reads it instead of `text`.
+    pub rich_epoch: Option<NodeId>,
+    /// The editor's own subscription to `text`, which does not count as
+    /// someone reading it.
+    pub text_watch: Option<NodeId>,
     pub run: Option<Run>,
     /// The column Up and Down keep to, and the cursor position it was
     /// taken at: it holds only while the cursor is still there.
@@ -101,18 +107,37 @@ pub(crate) struct State {
     pub document: Option<ObjectId>,
     /// The colours a program gave stretches of the text.
     pub highlights: super::highlight::Highlights,
+    /// The formats of a `TextEdit`'s rich text; `None` for plain text.
+    pub rich: Option<super::rich::RichEdit>,
+    /// `cursorSelection` of a `TextEdit`, and what it last showed.
+    pub selection: Option<ObjectId>,
+    pub selection_shown: Option<super::selection::Shown>,
+    /// The `source` of the document a file was last read from or saved
+    /// to by the editor itself.
+    pub doc_source: String,
 }
 
 /// The base of `TextInput` and `TextEdit`. Not a QML type of its own.
 /// The alignment of a text nobody aligned: right-to-left text is aligned
 /// right.
 fn natural_alignment(engine: &Engine, obj: ObjectId, _p: ljos_engine::PropIndex) -> Value {
-    let text = engine.read(obj, TextEditor::TEXT.index).to_js_string();
-    Value::Int(if reads_right_to_left(text.as_str()) {
-        align::RIGHT
-    } else {
-        align::LEFT
-    })
+    // Rich text reads as its characters, not as its markup, and follows
+    // its changes without reading `text`, which is made only when read.
+    let (rich, epoch) = state_of(engine, obj)
+        .and_then(|st| {
+            let s = st.try_borrow().ok()?;
+            let rich = s.rich.as_ref().map(|_| reads_right_to_left(s.model.text()));
+            Some((rich, s.rich_epoch))
+        })
+        .unwrap_or_default();
+    if let Some(n) = epoch {
+        let _ = engine.graph().get(n);
+    }
+    let rtl = rich.unwrap_or_else(|| {
+        let text = engine.read(obj, TextEditor::TEXT.index).to_js_string();
+        reads_right_to_left(text.as_str())
+    });
+    Value::Int(if rtl { align::RIGHT } else { align::LEFT })
 }
 
 /// What a side's padding is while it has no value of its own.
@@ -267,10 +292,22 @@ impl TextEditor {
             st: Rc::new(RefCell::new(State {
                 multi,
                 blink_on: true,
+                model: new_model(multi),
                 ..State::default()
             })),
         }
     }
+}
+
+/// The model of a new editor. The model starts at TextInput's
+/// `maximumLength`, which a TextEdit does not have: its text is as long as
+/// it is (features/text-input/text-edit-length.feature).
+fn new_model(multi: bool) -> TextModel {
+    let mut model = TextModel::new();
+    if multi {
+        model.set_max_length(usize::MAX);
+    }
+    model
 }
 
 impl Default for TextEditor {
@@ -378,7 +415,13 @@ impl TextEditor {
         };
         let s = st.borrow();
         let at = |p: i32| usize::try_from(p).unwrap_or(0);
-        s.model.slice(at(start), at(end)).to_owned()
+        let text = s.model.slice(at(start), at(end));
+        if s.rich.is_some() {
+            // Paragraphs of rich text are apart by U+2029, as in Qt.
+            ljos_text::rich::RichText::plain_of(text)
+        } else {
+            text.to_owned()
+        }
     }
 
     /// `moveCursorSelection(position, mode)`: the cursor goes to
@@ -523,9 +566,10 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     let text = engine
         .untrack(|| engine.read(obj, TextEditor::TEXT.index))
         .to_js_string();
+    let (format, font) = super::rich::inputs(engine, obj, multi, text.as_str());
     {
         let mut s = st.borrow_mut();
-        s.model.set_text(text.as_str());
+        super::rich::assign(&mut s, format, text.as_str(), &font);
         if multi {
             s.model.move_to(0, false);
         }
@@ -534,11 +578,12 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
         st.borrow_mut().model.move_to(pos, false);
     }
 
-    engine.watch(obj, TextEditor::TEXT.index, move |e, _| {
+    let watch = engine.watch(obj, TextEditor::TEXT.index, move |e, _| {
         if let Some(st) = state_of(e, obj) {
             reconcile(e, obj, &st);
         }
     })?;
+    st.borrow_mut().text_watch = Some(watch);
     engine.watch(obj, TextEditor::CURSOR_POSITION.index, move |e, _| {
         if let Some(st) = state_of(e, obj) {
             reconcile(e, obj, &st);
@@ -573,6 +618,10 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     if let Some(scope) = engine.object_scope(obj) {
         let n = engine.graph().property(scope, Value::Int(0))?;
         st.borrow_mut().paint_epoch = Some(n);
+        if multi {
+            let n = engine.graph().property(scope, Value::Int(0))?;
+            st.borrow_mut().rich_epoch = Some(n);
+        }
     }
 
     publish(engine, obj, &st)?;
@@ -601,24 +650,39 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
             return;
         }
     }
+    // A rich text whose `text` is still to be made was not written by a
+    // program since (a write takes the making away): there is nothing to
+    // take in, and reading it would write it out.
+    let unwritten = engine.is_made_on_read(obj, TextEditor::TEXT.index);
     let (text, cursor) = if engine.graph().is_tracking() {
         // A binding is being evaluated and called a method of the editor
         // (`cursorPosition: positionAt(x, y)`). It may be the binding of
         // one of these two, and reading that would be a binding loop: what
         // was last written is taken, and the watches bring the rest.
         match engine.with(obj, |t: &TextEditor| (t.text.clone(), t.cursor_position)) {
-            Ok((text, cursor)) => (Value::String(text).to_js_string(), cursor),
+            Ok((text, cursor)) => (
+                (!unwritten).then(|| Value::String(text).to_js_string()),
+                cursor,
+            ),
             Err(_) => return,
         }
     } else {
         engine.untrack(|| {
             (
-                engine.read(obj, TextEditor::TEXT.index).to_js_string(),
+                (!unwritten).then(|| engine.read(obj, TextEditor::TEXT.index).to_js_string()),
                 engine
                     .read(obj, TextEditor::CURSOR_POSITION.index)
                     .to_number() as i32,
             )
         })
+    };
+    let text = text.unwrap_or_default();
+    let differs = !unwritten && super::rich::differs(&st.borrow(), text.as_str());
+    let (format, font) = if differs {
+        let multi = st.borrow().multi;
+        super::rich::inputs(engine, obj, multi, text.as_str())
+    } else {
+        (None, std::sync::Arc::default())
     };
     let changed = {
         let mut s = st.borrow_mut();
@@ -627,8 +691,8 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
         // cursor, and that is not the program writing `cursorPosition`.
         let cursor_written = usize::try_from(cursor) != Ok(s.model.cursor());
         let mut changed = false;
-        if s.model.text() != text.as_str() {
-            s.model.set_text(text.as_str());
+        if differs {
+            super::rich::assign(s, format, text.as_str(), &font);
             if s.multi {
                 s.model.move_to(0, false);
             }
@@ -660,14 +724,19 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
 /// and shows the cursor.
 pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Result<(), EngineError> {
     let read_only = flag(engine, obj, TextEditor::READ_ONLY.index);
-    let (text, cursor, selection, selected, len, undo, redo, preedit, multi) = {
+    super::rich::refresh(engine, obj, st);
+    let text = text_to_publish(engine, obj, st)?;
+    let (cursor, selection, selected, len, undo, redo, preedit, multi) = {
         let s = st.borrow();
         let m = &s.model;
+        let selected = match &s.rich {
+            Some(_) => ljos_text::rich::RichText::plain_of(m.selected_text()),
+            None => m.selected_text().to_owned(),
+        };
         (
-            m.text().to_owned(),
             m.cursor() as i32,
             m.selection(),
-            m.selected_text().to_owned(),
+            selected,
             m.len() as i32,
             m.can_undo() && !read_only,
             m.can_redo() && !read_only,
@@ -679,9 +748,11 @@ pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Resul
     let r = engine.batch(|| -> Result<(), EngineError> {
         // `text` and `cursorPosition` may be bound; what the user does to
         // them leaves the binding in place, as in Qt.
-        let now = engine.untrack(|| engine.read(obj, TextEditor::TEXT.index));
-        if now.to_js_string().as_str() != text {
-            engine.write_derived(obj, TextEditor::TEXT.index, Value::from(text.as_str()))?;
+        if let Some(text) = text {
+            let now = engine.untrack(|| engine.read(obj, TextEditor::TEXT.index));
+            if now.to_js_string().as_str() != text {
+                engine.write_derived(obj, TextEditor::TEXT.index, Value::from(text.as_str()))?;
+            }
         }
         let now = engine.untrack(|| engine.read(obj, TextEditor::CURSOR_POSITION.index));
         if now.to_number() as i32 != cursor {
@@ -716,8 +787,48 @@ pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Resul
     });
     st.borrow_mut().syncing = false;
     super::highlight::sync_modified(engine, st);
+    super::selection::sync(engine, obj, st);
     show_cursor(engine, st);
     r
+}
+
+/// What `text` is given now; `None`: it stays as it is. A rich text that
+/// changed is written out at once only while something besides the editor
+/// observes or binds `text`; otherwise it is made when `text` is next read,
+/// so that typing does not write out the whole document on every key.
+fn text_to_publish(
+    engine: &Engine,
+    obj: ObjectId,
+    st: &SharedState,
+) -> Result<Option<String>, EngineError> {
+    let (changed, epoch, own) = {
+        let s = st.borrow();
+        let Some(r) = s.rich.as_ref() else {
+            return Ok(Some(s.model.text().to_owned()));
+        };
+        (r.dirty, s.rich_epoch, s.text_watch)
+    };
+    if !changed {
+        return Ok(None);
+    }
+    if let Some(n) = epoch {
+        let g = engine.graph();
+        let v = g.get_untracked(n).to_number() as i32;
+        g.set(n, Value::Int(v.wrapping_add(1)));
+    }
+    let p = TextEditor::TEXT.index;
+    let observed =
+        engine.is_bound(obj, p) || engine.observers_of(obj, p).iter().any(|n| Some(*n) != own);
+    if observed {
+        return Ok(Some(super::rich::written_out(engine, obj, st)));
+    }
+    engine.make_on_read(obj, p, move |e| match state_of(e, obj) {
+        Some(st) => Value::from(super::rich::written_out(e, obj, &st).as_str()),
+        None => e
+            .with(obj, |t: &TextEditor| Value::String(t.text.clone()))
+            .unwrap_or_default(),
+    })?;
+    Ok(None)
 }
 
 /// Drops the layout and makes it again: the fonts changed.

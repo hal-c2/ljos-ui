@@ -132,11 +132,13 @@ Item {
         panic!("face is a font");
     };
     assert_eq!((face.weight, face.pixel_size), (700, 30));
-    // A variable holds the value; changing it changes the variable.
+    // A variable read from a property keeps where it was read from, as in
+    // Qt 6 (features/language/value-types-in-variables.feature): changing
+    // it writes the property too.
     let out = h.engine.invoke_by_name(root, "local", &[]).unwrap();
     assert_eq!(
         out.to_js_string().as_str(),
-        "QRectF(100, 12, 7, 6) QPointF(1, 9) QRectF(5, 12, 7, 6)"
+        "QRectF(100, 12, 7, 6) QPointF(1, 9) QRectF(100, 12, 7, 6)"
     );
     assert!(h.warnings().is_empty(), "{:?}", h.warnings());
 }

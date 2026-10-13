@@ -690,6 +690,35 @@ pub(crate) fn paint(
     }
 }
 
+// ------------------------------------------------- for an editor's text
+
+/// The picture of an image `source` names in the rich text of `obj`, found
+/// the way a `Text` finds its own: relative to `base` and the document the
+/// item was declared in, and only where a document may reach.
+pub(crate) fn editor_image(
+    engine: &Engine,
+    obj: ObjectId,
+    base: &str,
+    source: &str,
+) -> Option<ImageHandle> {
+    let document = engine.document_url(obj).unwrap_or(Atom::EMPTY);
+    let store = ImageStore::of(engine);
+    let key = ImageKey {
+        url: address(document.as_str(), base, source),
+        request: Request::default(),
+    };
+    match store.cached(&key) {
+        Some(image) => Some(image),
+        None if may_load(&store, &key.url) => store.load_now(&key, true).ok(),
+        None => None,
+    }
+}
+
+/// A colour as rich text writes it, for an editor's rich text.
+pub(crate) fn editor_css_color(text: &str) -> Option<Color> {
+    css_color(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -54,7 +54,7 @@ mod style;
 pub use direction::reads_right_to_left;
 pub use edit::{Caret, CaretCluster, EditLayout, EditLine, EditParams, EditRun};
 pub use engine::{CacheStats, TextEngine};
-pub use fonts::{BUNDLED_FAMILY, FontError};
+pub use fonts::{BUNDLED_FAMILY, FontError, RegisteredFace};
 pub use layout::{FontMetrics, Line, LineRun, PlacedBox, TextBounds, TextLayout};
 pub use model::{
     Checkpoint, DEFAULT_MAX_LENGTH, TextModel, byte_to_utf16, utf16_len, utf16_to_byte,

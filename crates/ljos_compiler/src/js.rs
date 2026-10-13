@@ -12,11 +12,12 @@ use std::collections::{BTreeSet, HashMap};
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, AssignmentTargetPropertyIdentifier, CallExpression, ChainExpression, Expression,
-    IdentifierReference, NewExpression, ObjectProperty, Program, SimpleAssignmentTarget, Statement,
-    StaticMemberExpression, StringLiteral, TSAsExpression, TSNonNullExpression,
-    TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion, TSTypeParameterDeclaration,
-    TSTypeParameterInstantiation, TaggedTemplateExpression, UnaryExpression,
+    Argument, AssignmentTargetPropertyIdentifier, BindingPattern, CallExpression, ChainExpression,
+    Expression, IdentifierReference, NewExpression, ObjectProperty, Program,
+    SimpleAssignmentTarget, Statement, StaticMemberExpression, StringLiteral, TSAsExpression,
+    TSNonNullExpression, TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion,
+    TSTypeParameterDeclaration, TSTypeParameterInstantiation, TaggedTemplateExpression,
+    UnaryExpression, VariableDeclaration, VariableDeclarationKind,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
@@ -96,8 +97,31 @@ pub(crate) enum ValueSource {
     },
     /// A name nothing in the script declares, by where it starts.
     Free(u32),
-    /// A variable or a parameter of the script's that it can assign to.
-    Local { span: Span, name: String },
+    /// A variable or a parameter of the script's. A `const` whose members
+    /// are written is declared `let`, so that it can be given the changed
+    /// value.
+    Local {
+        span: Span,
+        name: String,
+        /// Which variable, for [`Place::symbol`].
+        symbol: u32,
+    },
+}
+
+/// `p = spot` of `const p = spot`: a variable whose members the script
+/// writes, given a value read from somewhere. In Qt the variable names
+/// that place, and a write to one of its members goes back there, so the
+/// compiler keeps the place beside the variable. Only a variable declared
+/// once and never assigned again has one.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Place {
+    pub symbol: u32,
+    pub name: String,
+    /// From the variable's name to where its value starts (`p = `).
+    pub binding: Span,
+    /// Where the value is read from: [`ValueSource::Member`],
+    /// [`ValueSource::Element`] or [`ValueSource::Free`].
+    pub source: ValueSource,
 }
 
 /// A literal argument of a call, as far as a translation needs one.
@@ -143,6 +167,18 @@ pub(crate) struct Analysis {
     pub function_params: Vec<String>,
     /// What the script writes members of, in order of appearance.
     pub member_writes: Vec<ValueSource>,
+    /// The variables in `member_writes` whose value was read from a place.
+    pub places: Vec<Place>,
+}
+
+/// `p = <init>` of a declaration, for [`Place`].
+struct Declarator {
+    symbol: oxc_syntax::symbol::SymbolId,
+    /// The `const` the declaration starts with.
+    constant: Option<Span>,
+    binding_start: u32,
+    /// Where the value is read from, and where the value starts.
+    init: Option<(ValueSource, u32)>,
 }
 
 /// The names of the functions a translatable string is marked with.
@@ -192,9 +228,11 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
         optional: 0,
         asked: Vec::new(),
         constructed: Vec::new(),
+        declarators: Vec::new(),
         analysis: Analysis::default(),
     };
     reader.visit_program(program);
+    reader.hold_written_locals();
     let mut analysis = reader.analysis;
     analysis.is_function_value = form == Form::Expression && is_function_value(program);
     if form == Form::Function
@@ -297,6 +335,8 @@ struct Reader<'s, 'r> {
     asked: Vec<u32>,
     /// Where the names start that a `new` makes one of.
     constructed: Vec<u32>,
+    /// Every declaration of a single name, in order of appearance.
+    declarators: Vec<Declarator>,
     analysis: Analysis,
 }
 
@@ -409,16 +449,15 @@ impl Reader<'_, '_> {
                     None => ValueSource::Free(id.span.start - self.offset),
                     Some(symbol) => {
                         let flags = self.scoping.symbol_flags(symbol);
-                        // A `const` cannot be given the changed value, nor
-                        // can a function or a class be one.
-                        if flags.is_const_variable()
-                            || !(flags.is_variable() || flags.is_catch_variable())
-                        {
+                        // A function or a class cannot be given the changed
+                        // value. A `const` can once it is declared `let`.
+                        if !(flags.is_variable() || flags.is_catch_variable()) {
                             return;
                         }
                         ValueSource::Local {
                             span: self.local(id.span),
                             name: id.name.to_string(),
+                            symbol: symbol.index() as u32,
                         }
                     }
                 }
@@ -426,6 +465,100 @@ impl Reader<'_, '_> {
             _ => return,
         };
         self.analysis.member_writes.push(source);
+    }
+
+    /// Where a variable's first value is read from, when that is somewhere a
+    /// changed value can be written back to: `object.name`, `object[key]`
+    /// or a name nothing in the script declares.
+    fn place_of(&self, init: &Expression<'_>) -> Option<ValueSource> {
+        if init.span().start < self.offset {
+            return None;
+        }
+        let end = init.span().end - self.offset;
+        let source = match init {
+            Expression::StaticMemberExpression(member)
+                if !member.optional
+                    && !matches!(member.object, Expression::Super(_))
+                    && !member
+                        .property
+                        .name
+                        .starts_with(|c: char| c.is_ascii_uppercase()) =>
+            {
+                ValueSource::Member {
+                    object: self.local(member.object.span()),
+                    name: member.property.name.to_string(),
+                    end,
+                }
+            }
+            Expression::ComputedMemberExpression(member)
+                if !member.optional && !matches!(member.object, Expression::Super(_)) =>
+            {
+                ValueSource::Element {
+                    object: self.local(member.object.span()),
+                    key: self.local(member.expression.span()),
+                    end,
+                }
+            }
+            Expression::Identifier(id) => {
+                let reference = id.reference_id.get()?;
+                if self.scoping.get_reference(reference).symbol_id().is_some() {
+                    return None;
+                }
+                ValueSource::Free(id.span.start - self.offset)
+            }
+            _ => return None,
+        };
+        Some(source)
+    }
+
+    /// After the visit: a `const` whose members are written becomes `let`,
+    /// and a variable declared once with a value read from a place, and
+    /// never assigned again, keeps that place.
+    fn hold_written_locals(&mut self) {
+        let mut seen: Vec<u32> = Vec::new();
+        let mut constants: Vec<Span> = Vec::new();
+        for write in &self.analysis.member_writes {
+            let ValueSource::Local { symbol, name, .. } = write else {
+                continue;
+            };
+            if seen.contains(symbol) {
+                continue;
+            }
+            seen.push(*symbol);
+            let declared: Vec<&Declarator> = self
+                .declarators
+                .iter()
+                .filter(|d| d.symbol.index() as u32 == *symbol)
+                .collect();
+            for d in &declared {
+                if let Some(span) = d.constant
+                    && !constants.contains(&span)
+                {
+                    constants.push(span);
+                }
+            }
+            let [only] = declared[..] else {
+                continue;
+            };
+            let assigned = self
+                .scoping
+                .get_resolved_references(only.symbol)
+                .any(|r| r.is_write());
+            if let (false, Some((source, start))) = (assigned, &only.init) {
+                self.analysis.places.push(Place {
+                    symbol: *symbol,
+                    name: name.clone(),
+                    binding: Span::new(only.binding_start, *start),
+                    source: source.clone(),
+                });
+            }
+        }
+        for span in constants {
+            self.analysis.edits.push(Edit {
+                span,
+                text: "let".to_owned(),
+            });
+        }
     }
 
     /// `object.Name`, where it is a value the script reads.
@@ -498,6 +631,32 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
             });
             at += len as usize;
         }
+    }
+
+    fn visit_variable_declaration(&mut self, it: &VariableDeclaration<'a>) {
+        if it.span.start >= self.offset {
+            let constant = (it.kind == VariableDeclarationKind::Const)
+                .then(|| self.local(Span::new(it.span.start, it.span.start + 5)));
+            for d in &it.declarations {
+                let BindingPattern::BindingIdentifier(id) = &d.id else {
+                    continue;
+                };
+                let Some(symbol) = id.symbol_id.get() else {
+                    continue;
+                };
+                let init = d.init.as_ref().and_then(|init| {
+                    let source = self.place_of(init)?;
+                    Some((source, init.span().start - self.offset))
+                });
+                self.declarators.push(Declarator {
+                    symbol,
+                    constant,
+                    binding_start: id.span.start - self.offset,
+                    init,
+                });
+            }
+        }
+        walk::walk_variable_declaration(self, it);
     }
 
     fn visit_object_property(&mut self, it: &ObjectProperty<'a>) {
@@ -838,7 +997,7 @@ mod tests {
                     format!("{}[{}]{}", at(object), at(key), end - key.end)
                 }
                 ValueSource::Free(start) => format!("free {}", &text[*start as usize..][..1]),
-                ValueSource::Local { span, name } => format!("local {} {name}", at(span)),
+                ValueSource::Local { span, name, .. } => format!("local {} {name}", at(span)),
             })
             .collect();
         assert_eq!(
@@ -850,7 +1009,46 @@ mod tests {
                 "free d",
                 "local v v",
                 "local m m",
+                "local c c",
                 "local v v"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_written_constant_is_let_and_keeps_where_it_was_read() {
+        let text = "{ const p = a.b, q = c[k], r = d; let s = e.f; s = 1; \
+                    const t = g; const u = h.i; var w = 1; \
+                    p.x = 1; q.x = 2; r.x = 3; s.x = 4; t.x = 5; w.x = 6 }";
+        let analysis = analyze(text, Form::Statement, &[]).unwrap();
+        let edited = apply(text, &analysis.edits);
+        // `const u` has no member written and stays as it is.
+        assert!(edited.starts_with("{ let p = a.b"), "{edited}");
+        assert!(edited.contains("let t = g; const u"), "{edited}");
+        let at = |span: Span| &text[span.start as usize..span.end as usize];
+        let places: Vec<String> = analysis
+            .places
+            .iter()
+            .map(|place| {
+                let from = match &place.source {
+                    ValueSource::Member { object, name, .. } => format!("{}.{name}", at(*object)),
+                    ValueSource::Element { object, key, .. } => {
+                        format!("{}[{}]", at(*object), at(*key))
+                    }
+                    ValueSource::Free(start) => format!("free {}", &text[*start as usize..][..1]),
+                    ValueSource::Local { .. } => "local".to_owned(),
+                };
+                format!("{}|{}|{from}", place.name, at(place.binding))
+            })
+            .collect();
+        // `s` is assigned again and `w` was given no value read from a place.
+        assert_eq!(
+            places,
+            [
+                "p|p = |a.b",
+                "q|q = |c[k]",
+                "r|r = |free d",
+                "t|t = |free g"
             ]
         );
     }

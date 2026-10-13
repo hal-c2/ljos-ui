@@ -77,7 +77,16 @@ fn describe(e: &Engine, obj: ObjectId, data: &mut NodeData) {
     };
     let multi = st.borrow().multi;
     let position = |p| usize::try_from(e.read(obj, p).to_number() as i64).unwrap_or(0);
+    // Read tracked even when rich: the node follows every edit.
     let text = e.read(obj, TextEditor::TEXT.index).to_js_string();
+    // A rich editor's `text` is its markup, which a screen reader would
+    // read out tag by tag: the node holds the characters, whose places
+    // are the editor's own.
+    let rich_chars = {
+        let s = st.borrow();
+        s.rich.is_some().then(|| s.model.text().to_owned())
+    };
+    let text = rich_chars.map_or(text, |chars| chars.as_str().into());
     let start = position(TextEditor::SELECTION_START.index);
     let end = position(TextEditor::SELECTION_END.index);
     let cursor = position(TextEditor::CURSOR_POSITION.index);

@@ -63,6 +63,11 @@ impl Flow {
         ctx.any
     }
 
+    /// The innermost box, while nothing was made inside it.
+    pub(crate) fn innermost_mut(&mut self) -> Option<&mut Ctx> {
+        self.ctxs.last_mut().filter(|c| !c.any)
+    }
+
     /// Whether the innermost box has a block yet.
     pub(crate) fn any(&self) -> bool {
         self.ctxs.last().is_some_and(|c| c.any)

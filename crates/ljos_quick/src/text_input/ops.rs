@@ -125,6 +125,7 @@ pub(crate) fn edit(
         if !joins {
             s.model.break_undo();
         }
+        super::rich::before_edit(s, how.start, !joins);
         (f(&mut s.model), point)
     };
     let changed = match (validator, undo_point) {
@@ -141,6 +142,7 @@ pub(crate) fn edit(
     };
     {
         let mut s = st.borrow_mut();
+        super::rich::after_edit(&mut s);
         if changed {
             let end = how.end.unwrap_or_else(|| s.model.cursor());
             s.run = Some(Run {
@@ -227,17 +229,24 @@ pub(crate) fn program_insert(engine: &Engine, obj: ObjectId, pos: i32, text: &st
         return;
     };
     let single = !st.borrow().multi;
+    // Rich text is inserted as the editor reads its text: `insert(0,
+    // "<b>x</b>")` inserts a bold "x".
+    let fragment = super::rich::fragment(&st, text);
+    let text = fragment.as_ref().map_or(text, |f| f.text()).to_owned();
     let how = How {
         kind: EditKind::Program,
         user: false,
         emits: true,
         start: Some(pos),
-        end: Some(pos + utf16_len(text)),
+        end: Some(pos + utf16_len(&text)),
         // A field's program edits in a row are one step; in a TextEdit
         // only insertions that follow each other are.
         anywhere: single,
     };
-    edit(engine, obj, how, |m| m.insert(pos, text));
+    if let (Some(fragment), Some(r)) = (fragment.clone(), st.borrow_mut().rich.as_mut()) {
+        r.pending = Some(fragment);
+    }
+    edit(engine, obj, how, |m| m.insert(pos, &text));
 }
 
 /// `remove(start, end)` from a program, positions in either order and cut
@@ -303,7 +312,15 @@ pub(crate) fn copy(engine: &Engine, obj: ObjectId) -> bool {
     if text.is_empty() {
         return false;
     }
+    let html = super::rich::copied_html(&mut st.borrow_mut());
     Clipboard::of(engine).copy(engine, &text);
+    // The HTML goes beside the characters, to the service only: a host
+    // that hands copies on is handed the characters.
+    if let Some(html) = html {
+        ljos_platform::Platform::of(engine)
+            .clipboard()
+            .set_html(&html, &text);
+    }
     true
 }
 
@@ -320,17 +337,38 @@ pub(crate) fn paste(engine: &Engine, obj: ObjectId) -> bool {
     if read_only(engine, obj) {
         return false;
     }
-    let text = Clipboard::of(engine).text();
+    let Some(st) = ready(engine, obj) else {
+        return false;
+    };
+    // Rich text pastes the HTML on the clipboard with its formats; what
+    // has only characters takes the format where it goes.
+    let rich = st.borrow().rich.is_some();
+    let fragment = rich
+        .then(|| ljos_platform::Platform::of(engine).clipboard().html())
+        .flatten()
+        .and_then(|html| super::rich::pasted(&st, &html));
+    let text = match &fragment {
+        Some(f) => f.text().to_owned(),
+        None => Clipboard::of(engine).text(),
+    };
     if text.is_empty() {
         return false;
     }
     begin_editing(engine, obj);
+    if let (Some(fragment), Some(r)) = (fragment, st.borrow_mut().rich.as_mut()) {
+        r.pending = Some(fragment);
+    }
     edit(engine, obj, How::user(EditKind::Other), |m| {
         m.replace_selection(&text)
     })
 }
 
-fn history(engine: &Engine, obj: ObjectId, f: impl FnOnce(&mut TextModel) -> bool) -> bool {
+fn history(
+    engine: &Engine,
+    obj: ObjectId,
+    undo: bool,
+    f: impl FnOnce(&mut TextModel) -> bool,
+) -> bool {
     if read_only(engine, obj) {
         return false;
     }
@@ -341,7 +379,11 @@ fn history(engine: &Engine, obj: ObjectId, f: impl FnOnce(&mut TextModel) -> boo
         let mut s = st.borrow_mut();
         s.run = None;
         s.sticky = None;
-        f(&mut s.model)
+        let changed = f(&mut s.model);
+        if changed {
+            super::rich::history_swap(&mut s, undo);
+        }
+        changed
     };
     check(engine, "undo", publish(engine, obj, &st));
     if changed && !st.borrow().multi {
@@ -355,9 +397,9 @@ fn history(engine: &Engine, obj: ObjectId, f: impl FnOnce(&mut TextModel) -> boo
 }
 
 pub(crate) fn undo(engine: &Engine, obj: ObjectId) -> bool {
-    history(engine, obj, TextModel::undo)
+    history(engine, obj, true, TextModel::undo)
 }
 
 pub(crate) fn redo(engine: &Engine, obj: ObjectId) -> bool {
-    history(engine, obj, TextModel::redo)
+    history(engine, obj, false, TextModel::redo)
 }

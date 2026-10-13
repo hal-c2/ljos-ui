@@ -12,7 +12,10 @@
 //! write, so `area.x = 5` is compiled as a write through
 //! `__ljos_vt(object, "area")`: that asks the value for itself with one
 //! member changed (`__ljos_with`) and assigns the result where the value
-//! was read from. For a property that is the write-back Qt does.
+//! was read from. For a property that is the write-back Qt does. A variable
+//! whose members are written and whose value was read from a place keeps
+//! that place beside it (`__ljos_at`), and a write to a member goes back
+//! there too (`__ljos_vp`), as it does in Qt.
 //!
 //! Text is made here the way [`crate::value_types`] makes it in Rust; the
 //! two must give the same.
@@ -152,7 +155,8 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
 }
 
 /// Defines `__ljos_faces` (one `{ make, proto, fields }` per kind, and `qt`:
-/// the constructors that go on `Qt`), `__ljos_vt` and `__ljos_vl`.
+/// the constructors that go on `Qt`), `__ljos_vt`, `__ljos_vl`, `__ljos_at`
+/// and `__ljos_vp`.
 const FACES: &str = r##"
 (function () {
   "use strict";
@@ -446,6 +450,25 @@ const FACES: &str = r##"
   // The same for a variable, which only its own script can assign to.
   g.__ljos_vl = function (now, put) {
     return isValue(now) ? standIn(now, put) : now;
+  };
+  // `const p = object.name`, where the script writes a member of `p`: in Qt
+  // `p` names the place, so a write starts from what is there now and goes
+  // back there as well as to the variable. `v` is what the variable was
+  // last given; were it given something else, the place is not its own.
+  g.__ljos_at = function (object, name) {
+    return { object, name, v: object[name] };
+  };
+  g.__ljos_vp = function (now, at, put) {
+    if (!isValue(now)) return now;
+    if (at === null || at === undefined || at.v !== now) return standIn(now, put);
+    const there = at.object[at.name];
+    return standIn(isValue(there) ? there : now, (next) => {
+      at.object[at.name] = next;
+      // What the place made of it, as a property may change what it is given.
+      const back = at.object[at.name];
+      at.v = isValue(back) ? back : next;
+      put(at.v);
+    });
   };
 })();
 "##;

@@ -32,6 +32,8 @@ const KEEP_FRAMES: u64 = 30;
 /// Upper bounds, for a frame that lays out a great many different strings.
 const MAX_LAYOUTS: usize = 2048;
 const MAX_SHAPES: usize = 1024;
+/// Paragraphs of edited text laid out on their own ([`edit`]).
+const MAX_PARAGRAPHS: usize = 4096;
 const MAX_STYLES: usize = 256;
 /// Font sizes beyond this are a mistake in a binding, not a design.
 const MAX_FONT_SIZE: f32 = 4096.0;
@@ -178,6 +180,7 @@ impl Vertical {
     }
 }
 
+#[derive(Clone)]
 struct RawRun {
     font: FontData,
     font_size: f32,
@@ -200,6 +203,7 @@ struct RawRun {
 }
 
 /// An inline object where Parley put it on its line.
+#[derive(Clone)]
 struct RawBox {
     id: u64,
     /// From the line's left edge.
@@ -210,6 +214,7 @@ struct RawBox {
 }
 
 /// A line as Parley broke it, before it has a place in the layout.
+#[derive(Clone)]
 struct RawLine {
     range: Range<usize>,
     width: f32,
@@ -288,6 +293,7 @@ pub struct TextEngine {
     families: Families,
     shapes: FrameCache<u64, ShapedEntry>,
     layouts: FrameCache<u64, LayoutEntry>,
+    paragraphs: FrameCache<u64, edit::ParagraphEntry>,
     styles: HashMap<TextStyle, StyleMetrics>,
     frame: u64,
     keep_frames: u64,
@@ -813,6 +819,7 @@ impl TextEngine {
             },
             shapes: FrameCache::new(MAX_SHAPES),
             layouts: FrameCache::new(MAX_LAYOUTS),
+            paragraphs: FrameCache::new(MAX_PARAGRAPHS),
             styles: HashMap::new(),
             frame: 0,
             keep_frames: KEEP_FRAMES,
@@ -840,6 +847,32 @@ impl TextEngine {
         }
     }
 
+    /// [`TextEngine::register_font`], saying what each face of the file is
+    /// (for `FontLoader.font`).
+    pub fn register_font_faces(
+        &mut self,
+        bytes: Vec<u8>,
+    ) -> Result<Vec<fonts::RegisteredFace>, FontError> {
+        let faces = fonts::register_faces(&mut self.fcx, bytes)?;
+        self.fonts_changed();
+        Ok(faces)
+    }
+
+    /// Every family a style can name, sorted, once each: the bundled ones,
+    /// the registered ones and the system's where the engine reads them
+    /// (`Qt.fontFamilies()`).
+    pub fn family_names(&mut self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .fcx
+            .collection
+            .family_names()
+            .map(str::to_owned)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
     /// True when a family of this name can be used.
     pub fn has_family(&mut self, name: &str) -> bool {
         self.fcx.collection.family_id(name).is_some()
@@ -860,6 +893,7 @@ impl TextEngine {
     pub fn clear_caches(&mut self) {
         self.shapes.clear();
         self.layouts.clear();
+        self.paragraphs.clear();
         self.styles.clear();
     }
 
@@ -876,6 +910,7 @@ impl TextEngine {
         self.frame += 1;
         self.shapes.trim(self.frame, self.keep_frames);
         self.layouts.trim(self.frame, self.keep_frames);
+        self.paragraphs.trim(self.frame, self.keep_frames);
         if self.styles.len() > MAX_STYLES {
             self.styles.clear();
         }

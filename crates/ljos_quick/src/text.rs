@@ -16,6 +16,7 @@ mod rich;
 mod scope;
 
 pub use rich::RichHandle;
+pub(crate) use rich::{editor_css_color, editor_image};
 pub use scope::SelectionScope;
 
 use std::cell::RefCell;

@@ -29,7 +29,7 @@ pub fn reads_right_to_left(text: &str) -> bool {
 /// The blocks Unicode sets aside for right-to-left scripts. Unassigned code
 /// points in them are right-to-left by default too, so the ranges are whole
 /// blocks rather than lists of letters.
-fn in_right_to_left_block(c: char) -> bool {
+pub(crate) fn in_right_to_left_block(c: char) -> bool {
     matches!(
         u32::from(c),
         // Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic and the

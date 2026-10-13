@@ -1,7 +1,8 @@
 //! The pointer in an editor: a press puts the cursor where it lands and
-//! takes focus, a drag selects, a double click selects a word.
+//! takes focus, a drag selects, a double click selects a word. A press
+//! released on the link of rich text it landed on activates the link.
 
-use ljos_engine::{Engine, ObjectId};
+use ljos_engine::{Engine, ObjectId, Value};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
@@ -54,6 +55,11 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
         ev.time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL && (at - p).hypot() <= DRAG_THRESHOLD
     });
     let pos = at_point(&st, at);
+    // A link of rich text is activated where the press is released.
+    let link = super::rich::link_at(&st, at);
+    if let Some(r) = st.borrow_mut().rich.as_mut() {
+        r.pressed = link;
+    }
     let extends = selects && ev.modifiers.contains(Modifiers::SHIFT);
     ops::act(engine, obj, |st| {
         let mut s = st.borrow_mut();
@@ -111,8 +117,20 @@ pub(super) fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurb
     });
 }
 
-pub(super) fn release(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, _at: kurbo::Point) {
+pub(super) fn release(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurbo::Point) {
+    let pressed = super::base::state_of(engine, obj)
+        .and_then(|st| st.borrow_mut().rich.as_mut().and_then(|r| r.pressed.take()));
     cancel(engine, obj);
+    let Some(link) = pressed else { return };
+    let Some(st) = super::base::state_of(engine, obj) else {
+        return;
+    };
+    if super::rich::link_at(&st, at).as_deref() == Some(&*link) {
+        let link = Value::String(ljos_engine::Atom::from(&*link));
+        if let Err(err) = engine.emit_by_name(obj, "linkActivated", &[link]) {
+            super::base::check(engine, "linkActivated", Err(err));
+        }
+    }
 }
 
 pub(super) fn cancel(engine: &Engine, obj: ObjectId) {
@@ -120,5 +138,8 @@ pub(super) fn cancel(engine: &Engine, obj: ObjectId) {
         let mut s = st.borrow_mut();
         s.pointer.anchor = None;
         s.pointer.words = false;
+        if let Some(r) = s.rich.as_mut() {
+            r.pressed = None;
+        }
     }
 }

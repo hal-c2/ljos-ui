@@ -1293,7 +1293,13 @@ impl Engine {
             .type_meta(&inst.file, &at.ty)
             .and_then(|m| self.attached_object(id, &m));
         match att {
-            Ok(att) => self.apply_members(inst, att, &at.members, &[], id),
+            Ok(att) => {
+                let (rest, fields) = self.value_fields_of(att, &at.members);
+                self.apply_members(inst, att, &rest, &[], id);
+                for (path, m) in fields {
+                    self.apply_value_members(inst, att, &m, &path);
+                }
+            }
             Err(e) => self.warn(format!(
                 "{}{}: {e}",
                 self.location_of(id).unwrap_or_default(),
@@ -1424,30 +1430,67 @@ impl Engine {
         }
     }
 
-    /// `font.pixelSize: 24; font.bold: flag`: members of a value-type
-    /// property (`font`, `point`, `size`, `rect`) rather than of a group.
-    /// Literals are folded into the value; with any binding, one binding
-    /// on the whole property recomputes every bound member. Returns false
-    /// when `path` is not a value-type property.
-    fn apply_value_members(
+    /// What is attached is written with its whole path (`hotSpot.x` of
+    /// `Drag.hotSpot.x: 10`): the members that are fields of a value-type
+    /// property of `att`, by the path of that property, and the rest.
+    fn value_fields_of(
         &self,
-        inst: &Rc<Instance>,
-        obj: ObjectId,
+        att: ObjectId,
         m: &Members,
-        path: &[String],
-    ) -> bool {
-        let [name] = path else { return false };
-        let Ok(prop) = self.property_index(obj, name) else {
-            return false;
+    ) -> (Members, Vec<(Vec<String>, Members)>) {
+        let mut rest = Members {
+            handlers: m.handlers.clone(),
+            objects: m.objects.clone(),
+            ..Members::default()
         };
-        let Some(ty) = self.meta_of(obj).and_then(|mm| {
-            mm.property(prop)
+        // The path of the value `name` is a field of, and the field.
+        let field_of = |name: &str| -> Option<(Vec<String>, String)> {
+            let (through, leaf) = name.rsplit_once('.')?;
+            let path: Vec<String> = through.split('.').map(str::to_owned).collect();
+            self.value_target(att, &path)?;
+            Some((path, leaf.to_owned()))
+        };
+        fn of(fields: &mut Vec<(Vec<String>, Members)>, path: Vec<String>) -> &mut Members {
+            let at = match fields.iter().position(|(p, _)| *p == path) {
+                Some(at) => at,
+                None => {
+                    fields.push((path, Members::default()));
+                    fields.len() - 1
+                }
+            };
+            &mut fields[at].1
+        }
+        let mut fields = Vec::new();
+        for a in &m.assignments {
+            match field_of(&a.name) {
+                Some((path, name)) => of(&mut fields, path)
+                    .assignments
+                    .push(ljos_ir::Assignment { name, ..a.clone() }),
+                None => rest.assignments.push(a.clone()),
+            }
+        }
+        for pb in &m.bindings {
+            match field_of(&pb.name) {
+                Some((path, name)) => of(&mut fields, path)
+                    .bindings
+                    .push(PropertyBinding { name, ..pb.clone() }),
+                None => rest.bindings.push(pb.clone()),
+            }
+        }
+        (rest, fields)
+    }
+
+    /// The value-type property `path` leads to from `obj` (`font`, or
+    /// `textureSize` of `layer.textureSize`), and its type.
+    fn value_target(&self, obj: ObjectId, path: &[String]) -> Option<(Target, TypeTag)> {
+        let (name, through) = path.split_last()?;
+        let t = self.member_target(obj, through, name).ok()?;
+        let ty = self.meta_of(t.obj).and_then(|mm| {
+            mm.property(t.prop)
                 .filter(|p| !p.flags.contains(PropertyFlags::GROUP))
                 .map(|p| p.ty.clone())
-        }) else {
-            return false;
-        };
-        if !matches!(
+        })?;
+        matches!(
             ty,
             TypeTag::Font
                 | TypeTag::Point
@@ -1457,9 +1500,27 @@ impl Engine {
                 | TypeTag::Vector3d
                 | TypeTag::Vector4d
                 | TypeTag::Quaternion
-        ) {
+        )
+        .then_some((t, ty))
+    }
+
+    /// `font.pixelSize: 24; font.bold: flag`: members of a value-type
+    /// property (`font`, `point`, `size`, `rect`) rather than of a group.
+    /// Literals are folded into the value; with any binding, one binding
+    /// on the whole property recomputes every bound member. Returns false
+    /// when `path` does not lead to a value-type property.
+    fn apply_value_members(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        m: &Members,
+        path: &[String],
+    ) -> bool {
+        let Some((Target { obj, prop }, ty)) = self.value_target(obj, path) else {
             return false;
-        }
+        };
+        let name = path.join(".");
+        let name = name.as_str();
         let mut base = self.untrack(|| self.read(obj, prop));
         for a in &m.assignments {
             let v = self.literal_value(inst, &a.value);

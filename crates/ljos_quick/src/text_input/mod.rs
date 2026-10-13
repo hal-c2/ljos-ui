@@ -18,14 +18,19 @@
 //! layout: [`set_highlights`], [`set_highlighter`] and, from QML, the
 //! `textDocument` of a `TextEdit`.
 //!
-//! Not implemented: `inputMask`, rich text (`textFormat` is kept, the text
-//! is always plain), wrapping in a `TextInput`, and the `Qt.inputMethod`
-//! object.
+//! A `TextEdit` with `textFormat: RichText` or `MarkdownText` edits text
+//! with formats ([`rich`]): typing takes the format of the text before it,
+//! undo takes formats back, `cursorSelection` ([`TextSelection`]) formats
+//! the selection, and its `textDocument` reads and saves files ([`files`]).
+//!
+//! Not implemented: `inputMask`, rich text in a `TextInput`, wrapping in a
+//! `TextInput`, and the `Qt.inputMethod` object.
 
 mod a11y;
 mod base;
 mod clipboard;
 mod edit;
+mod files;
 mod highlight;
 mod ime;
 mod input;
@@ -34,6 +39,8 @@ mod layout;
 mod ops;
 mod paint;
 mod pointer;
+mod rich;
+mod selection;
 mod validator;
 
 use std::rc::Rc;
@@ -42,7 +49,7 @@ use ljos_engine::{Engine, MetaRef, QmlType, Version};
 
 use crate::enums::{EnumTable, align, wrap_mode};
 use crate::keys::{KeyItem, register_key_item, register_text_input_client};
-use crate::pointer_item::{PointerItem, register_pointer_item};
+use crate::pointer_item::{PointerItem, register_hover_move, register_pointer_item};
 
 pub use a11y::AccessibleTextAction;
 pub use base::TextEditor;
@@ -56,6 +63,7 @@ pub use input::TextInput;
 pub use ops::accept_text;
 pub use ops::last_edit_typed;
 pub use paint::EditorPaint;
+pub use selection::TextSelection;
 pub use validator::{
     DoubleValidator, IntValidator, RegularExpressionValidator, Validation, validate,
 };
@@ -82,7 +90,7 @@ pub mod cursor_position {
     pub const ON_CHARACTER: i32 = 1;
 }
 
-/// `TextEdit.textFormat`. Only `PLAIN_TEXT` is implemented.
+/// `TextEdit.textFormat`.
 pub mod text_format {
     pub const PLAIN_TEXT: i32 = 0;
     pub const RICH_TEXT: i32 = 1;
@@ -203,7 +211,8 @@ pub fn pointer_hooks() -> PointerItem {
         moved: pointer::moved,
         release: pointer::release,
         cancel: pointer::cancel,
-        hover: |_, _, _| {},
+        // Over rich text, `hoveredLink` follows the pointer.
+        hover: rich::hover,
     }
 }
 
@@ -244,6 +253,7 @@ pub(crate) fn register(engine: &Engine) {
         // Not created from QML, and known by name all the same: what
         // `textDocument` gives has members a file is checked against.
         TextDocument::static_meta(),
+        TextSelection::static_meta(),
         IntValidator::static_meta(),
         DoubleValidator::static_meta(),
         RegularExpressionValidator::static_meta(),
@@ -253,6 +263,11 @@ pub(crate) fn register(engine: &Engine) {
     let meta = || MetaRef::Static(TextEditor::static_meta());
     register_key_item(engine, meta(), key_hooks());
     register_pointer_item(engine, meta(), pointer_hooks());
+    register_hover_move(
+        engine,
+        MetaRef::Static(TextEdit::static_meta()),
+        rich::hover_moved,
+    );
     register_text_input_client(engine, meta(), Rc::new(ime::Client));
     a11y::register(engine);
 }

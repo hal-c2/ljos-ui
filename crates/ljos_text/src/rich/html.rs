@@ -24,9 +24,12 @@
 //! `overline`, `line-through`, each added to what the text already has, and
 //! `none`, which takes all of them away) and `text-decoration-color`. A
 //! value is kept as written: nothing in it is resolved here, so a `url()`
-//! is only a colour nobody can read. Every other property is left out,
-//! and so is the background of a block or a table cell, which Qt paints
-//! across the block.
+//! is only a colour nobody can read. The font properties an editor writes
+//! when it saves rich text are read too, so that what it wrote reads back:
+//! `font-weight`, `font-style`, `font-size` (pixels, points or a keyword)
+//! and the first family of `font-family`. Every other property is left
+//! out, and so is the background of a block or a table cell, which Qt
+//! paints across the block.
 
 use std::sync::Arc;
 
@@ -50,6 +53,10 @@ struct Open {
     boxed: bool,
     /// White space inside is kept.
     pre: bool,
+    /// An editor wrote it as an empty paragraph
+    /// (`-qt-paragraph-type:empty`): its `<br />` is the paragraph's own
+    /// line, not a break in it.
+    empty: bool,
     /// It makes a block even when nothing is in it (`<p></p>` is a line).
     always: bool,
     /// A `ul` or `ol`: its bullets and how many items it has so far.
@@ -286,6 +293,7 @@ impl Parser<'_> {
             style: self.style(),
             boxed: false,
             pre: self.pre(),
+            empty: false,
             always: false,
             list: None,
         };
@@ -369,6 +377,12 @@ impl Parser<'_> {
             && let Some(open) = self.open.last_mut()
         {
             apply_style(open, css);
+            if open.boxed {
+                open.empty = css.contains("-qt-paragraph-type:empty");
+                if let Some(ctx) = self.flow.innermost_mut() {
+                    apply_box_style(ctx, css);
+                }
+            }
         }
     }
 
@@ -418,6 +432,7 @@ impl Parser<'_> {
                     o.style.link = href.map(Arc::from);
                 });
             }
+            "br" if self.open.last().is_some_and(|o| o.empty) => {}
             "br" => self.line_break(),
             "img" => self.image(attrs),
             // Structure without a look of its own, and tags that stand alone.
@@ -727,6 +742,37 @@ fn apply_style(open: &mut Open, css: &str) {
                 }
             }
             "text-decoration-color" => style.decoration_color = Some(Arc::from(value)),
+            // What an editor writes when it saves its text, so that the
+            // text reads back as it was written.
+            "font-weight" => match value.to_ascii_lowercase().as_str() {
+                "bold" | "bolder" => style.bold = true,
+                "normal" | "lighter" => style.bold = false,
+                number => {
+                    if let Ok(weight) = number.parse::<f32>() {
+                        style.bold = weight >= 600.0;
+                    }
+                }
+            },
+            "font-style" => match value.to_ascii_lowercase().as_str() {
+                "italic" | "oblique" => style.italic = true,
+                "normal" => style.italic = false,
+                _ => {}
+            },
+            "font-size" => {
+                if let Some(scale) = size_keyword(value) {
+                    style.scale = scale;
+                } else if let Some(px) = css_pixels(value) {
+                    style.pixel_size = Some(px);
+                    style.in_points = value.trim().to_ascii_lowercase().ends_with("pt");
+                }
+            }
+            "font-family" => {
+                let first = value.split(',').next().unwrap_or_default();
+                let family = first.trim().trim_matches(['\'', '"']).trim();
+                if !family.is_empty() {
+                    style.family = Some(Arc::from(family));
+                }
+            }
             "text-decoration" => {
                 let words = value.split(|c: char| c.is_ascii_whitespace() || c == ',');
                 for word in words {
@@ -747,6 +793,82 @@ fn apply_style(open: &mut Open, css: &str) {
             _ => {}
         }
     }
+}
+
+/// The margins of a box (`margin-top` and its kin, in pixels), which an
+/// editor writes for every paragraph. The `margin` shorthand is not read.
+fn apply_box_style(ctx: &mut Ctx, css: &str) {
+    let css = without_comments(css);
+    for declaration in css.split(';') {
+        let Some((name, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case("-qt-list-indent") {
+            if let Ok(levels) = value.trim().parse::<u8>() {
+                ctx.indent = 40.0 * f32::from(levels.min(50));
+            }
+            continue;
+        }
+        let Some(px) = value
+            .trim()
+            .strip_suffix("px")
+            .and_then(|n| n.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.0, 2000.0))
+        else {
+            continue;
+        };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "margin-top" => ctx.margin_top = px,
+            "margin-bottom" => ctx.margin_bottom = px,
+            "margin-left" => ctx.indent = px,
+            "margin-right" => ctx.indent_right = px,
+            _ => {}
+        }
+    }
+}
+
+/// The scale of a `font-size` keyword: the steps of `<font size>`.
+pub(crate) fn size_keyword(value: &str) -> Option<f32> {
+    let step = match value.to_ascii_lowercase().as_str() {
+        "xx-small" | "x-small" => 0,
+        "small" => 1,
+        "medium" => 2,
+        "large" => 3,
+        "x-large" => 4,
+        "xx-large" => 5,
+        "xxx-large" => 6,
+        _ => return None,
+    };
+    FONT_SCALE.get(step).copied()
+}
+
+/// The keyword of a scale [`size_keyword`] reads, where there is one.
+pub(crate) fn scale_keyword(scale: f32) -> Option<&'static str> {
+    const NAMES: [&str; 7] = [
+        "x-small",
+        "small",
+        "medium",
+        "large",
+        "x-large",
+        "xx-large",
+        "xxx-large",
+    ];
+    let i = FONT_SCALE.iter().position(|s| (s - scale).abs() < 1e-4)?;
+    NAMES.get(i).copied()
+}
+
+/// A length of `px` or `pt` (a point is four thirds of a pixel), within
+/// sizes a font can have.
+fn css_pixels(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    let (number, factor) = if let Some(n) = value.strip_suffix("px") {
+        (n, 1.0)
+    } else {
+        (value.strip_suffix("pt")?, 4.0 / 3.0)
+    };
+    let px = number.trim().parse::<f32>().ok()? * factor;
+    (px.is_finite() && px > 0.0).then(|| px.min(1000.0))
 }
 
 /// `css` without its `/* comments */`. One that never ends takes the rest.

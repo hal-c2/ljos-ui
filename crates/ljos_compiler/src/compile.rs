@@ -1396,6 +1396,72 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 }
             }
         }
+        // `const p = a.b` of a `p` whose members are written: the variable
+        // keeps where its value was read from beside it, unless an edit
+        // already made runs across where the place is cut.
+        let mut placed: HashSet<u32> = HashSet::new();
+        for place in &analysis.places {
+            let crosses = |at: u32| {
+                edits
+                    .iter()
+                    .any(|edit| edit.span.start < at && edit.span.end > at)
+            };
+            let held = format!("{}{HELD}", place.name);
+            let rest = format!(", {} = {held}.v", place.name);
+            let made = match &place.source {
+                js::ValueSource::Member { object, name, end } if !crosses(object.end) => vec![
+                    js::Edit {
+                        span: Span::new(place.binding.start, object.start),
+                        text: format!("{held} = {PLACE}("),
+                    },
+                    js::Edit {
+                        span: Span::new(object.end, *end),
+                        text: format!(", {name:?}){rest}"),
+                    },
+                ],
+                js::ValueSource::Element { object, key, end }
+                    if !crosses(object.end) && !crosses(key.start) && !crosses(key.end) =>
+                {
+                    vec![
+                        js::Edit {
+                            span: Span::new(place.binding.start, object.start),
+                            text: format!("{held} = {PLACE}("),
+                        },
+                        js::Edit {
+                            span: Span::new(object.end, key.start),
+                            text: ", ".into(),
+                        },
+                        js::Edit {
+                            span: Span::new(key.end, *end),
+                            text: format!("){rest}"),
+                        },
+                    ]
+                }
+                js::ValueSource::Free(start) => {
+                    // A name read through the object that has it; one the
+                    // engine passes in by value has no place to go back to.
+                    let found = analysis.free.iter().find(|free| free.span.start == *start);
+                    let through = found.and_then(|free| {
+                        let plan = plans.get(&(free.name.clone(), free.chain.clone()))?;
+                        plan.replace.is_none().then_some(())?;
+                        Some((free, plan.rewrite.clone()?))
+                    });
+                    match through {
+                        // Covers the edit made for the name itself.
+                        Some((free, through)) => vec![js::Edit {
+                            span: Span::new(place.binding.start, free.span.end),
+                            text: format!("{held} = {PLACE}({through}, {:?}){rest}", free.name),
+                        }],
+                        None => Vec::new(),
+                    }
+                }
+                _ => Vec::new(),
+            };
+            if !made.is_empty() {
+                edits.extend(made);
+                placed.insert(place.symbol);
+            }
+        }
         // Before the edits for attached objects: where both start at the same
         // place, this one is the outer call.
         for write in &analysis.member_writes {
@@ -1424,9 +1490,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         text: ")".into(),
                     });
                 }
-                js::ValueSource::Local { span, name } => edits.push(js::Edit {
+                js::ValueSource::Local { span, name, symbol } => edits.push(js::Edit {
                     span: *span,
-                    text: value_in(name),
+                    text: if placed.contains(symbol) {
+                        format!("{VALUE_HELD}({name}, {name}{HELD}, ($v) => {name} = $v)")
+                    } else {
+                        value_in(name)
+                    },
                 }),
                 js::ValueSource::Free(_) => {}
             }
@@ -2059,6 +2129,17 @@ const VALUE_AT: &str = "__ljos_vt";
 
 /// The same for a variable: `(value, put)`, where `put` assigns to it.
 const VALUE_IN: &str = "__ljos_vl";
+
+/// The same for a variable that keeps where its value was read from:
+/// `(value, place, put)`. The changed value is written to the place too.
+const VALUE_HELD: &str = "__ljos_vp";
+
+/// `(object, name)`: the place a variable's value is read from, with the
+/// value it read (`.v`).
+const PLACE: &str = "__ljos_at";
+
+/// What the variable that keeps a variable's place is named after it.
+const HELD: &str = "$ljos";
 
 /// A variable, for a write to one of its members. It has to start with a
 /// name: QML is mostly written without semicolons, and a line that starts

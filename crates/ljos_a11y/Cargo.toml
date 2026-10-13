@@ -11,5 +11,17 @@ publish.workspace = true
 [dependencies]
 accesskit.workspace = true
 
+[dev-dependencies]
+# Live regions are audited as a scene has them, in a light and a dark
+# scheme; the crate itself stays free of the scene and the engine.
+ljos_compiler = { path = "../ljos_compiler" }
+ljos_controls = { path = "../ljos_controls" }
+ljos_engine = { path = "../ljos_engine" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_runtime = { path = "../ljos_runtime" }
+ljos_test = { path = "../ljos_test" }
+qml_front = { path = "../qml_front" }
+
 [lints]
 workspace = true

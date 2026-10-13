@@ -249,6 +249,14 @@ impl NodeData {
             || self.qt_role.actionable()
     }
 
+    /// Whether a change of the node's name is said without the user going
+    /// to it: as [`NodeData::live`] says, or else as its role has it
+    /// ([`Role::live`]), so a status text an author gave a role is a live
+    /// region without more.
+    pub fn politeness(&self) -> Option<Politeness> {
+        self.live.or_else(|| self.qt_role.live())
+    }
+
     /// Writes the data onto an AccessKit node. The children and the bounds
     /// are the caller's: a host that embeds the tree in its own has its
     /// own coordinates and its own child lists.
@@ -319,7 +327,7 @@ impl NodeData {
         if let Some(of) = self.size_of_set {
             node.set_size_of_set(of);
         }
-        if let Some(p) = self.live {
+        if let Some(p) = self.politeness() {
             node.set_live(p.live());
             // The whole message is said, not the part that differs from
             // the one before.
@@ -1439,6 +1447,50 @@ mod tests {
         assert_eq!(t.children(NodeKey::ROOT), &[D, A, said]);
         // Saying the same list again changes nothing.
         assert!(!t.set_children(NodeKey::ROOT, &[D, A]));
+    }
+
+    #[test]
+    fn a_status_text_is_a_live_region_by_its_role() {
+        for (role, ak, want) in [
+            (Role::StatusBar, AkRole::Status, Live::Polite),
+            (Role::Notification, AkRole::Status, Live::Polite),
+            (Role::AlertMessage, AkRole::Alert, Live::Assertive),
+        ] {
+            let data = NodeData {
+                qt_role: role,
+                name: "Saved".into(),
+                ..NodeData::new(ak)
+            };
+            let node = applied(&data);
+            assert_eq!(node.live(), Some(want), "{role:?}");
+            assert!(node.is_live_atomic());
+        }
+        // Said as the author has it, over what the role would.
+        let data = NodeData {
+            qt_role: Role::StatusBar,
+            live: Some(Politeness::Assertive),
+            ..NodeData::new(AkRole::Status)
+        };
+        assert_eq!(applied(&data).live(), Some(Live::Assertive));
+        assert_eq!(Role::StaticText.live(), None);
+    }
+
+    #[test]
+    fn a_new_name_of_a_live_node_is_a_change_of_that_node() {
+        let mut t = Tree::new();
+        let status = |name: &str| NodeData {
+            qt_role: Role::StatusBar,
+            name: name.into(),
+            ..NodeData::new(AkRole::Status)
+        };
+        t.upsert(A, status("Saving"));
+        t.set_children(NodeKey::ROOT, &[A]);
+        let _ = t.take_changes();
+        assert!(t.upsert(A, status("Saved")));
+        assert_eq!(t.take_changes().changed, vec![A]);
+        let node = t.accesskit_node(A).unwrap();
+        assert_eq!(node.label(), Some("Saved"));
+        assert_eq!(node.live(), Some(Live::Polite));
     }
 
     #[test]

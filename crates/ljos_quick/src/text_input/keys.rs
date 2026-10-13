@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use ljos_engine::{Engine, ObjectId, Value};
+use ljos_text::reads_right_to_left;
 
 use super::base::{EditKind, SharedState, State, check, publish};
 use super::echo_mode;
@@ -239,10 +240,23 @@ fn rtl_at(s: &State) -> bool {
         .map_or(layout.rtl, |c| c.rtl)
 }
 
+/// Whether the paragraph the cursor is in reads right to left.
+fn paragraph_rtl(s: &State) -> bool {
+    let text = s.model.text();
+    let at = s.model.cursor_byte().min(text.len());
+    let breaks = |c: char| c == '\n' || c == '\u{2029}';
+    let start = text[..at].rfind(breaks).map_or(0, |i| i + 1);
+    let end = text[at..].find(breaks).map_or(text.len(), |i| at + i);
+    reads_right_to_left(&text[start..end])
+}
+
 fn motion(s: &State, motion: Motion, select: bool, echo: i32) -> Plan {
     let model = &s.model;
     let (cursor, len) = (model.cursor(), model.len());
-    let rtl = rtl_at(s);
+    // A TextEdit walks the text in the order it is written, the way its
+    // paragraph reads; a TextInput walks it the way it shows, character
+    // by character (see features/text-input/bidi-edit.feature).
+    let rtl = if s.multi { paragraph_rtl(s) } else { rtl_at(s) };
     let to = |pos: usize| Plan::Move {
         pos,
         select,
