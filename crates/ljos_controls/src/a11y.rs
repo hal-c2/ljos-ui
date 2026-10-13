@@ -112,10 +112,16 @@ fn describe_button(e: &Engine, obj: ObjectId, data: &mut NodeData) {
         AccessibleAttached::CHECKED.index,
         flag(e, obj, AbstractButton::CHECKED.index),
     );
+    let state = if is_a::<CheckBox>(e, obj) {
+        Some(CheckBox::CHECK_STATE.index)
+    } else if is_a::<crate::delegates::CheckDelegate>(e, obj) {
+        Some(crate::delegates::CheckDelegate::CHECK_STATE.index)
+    } else {
+        None
+    };
     let mixed = own(
         AccessibleAttached::CHECK_STATE_MIXED.index,
-        is_a::<CheckBox>(e, obj)
-            && e.read(obj, CheckBox::CHECK_STATE.index).to_number() as i32 == PARTIALLY_CHECKED,
+        state.is_some_and(|p| e.read(obj, p).to_number() as i32 == PARTIALLY_CHECKED),
     );
     data.toggled = (checkable || checked || mixed).then_some(if mixed {
         Toggled::Mixed

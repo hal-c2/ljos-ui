@@ -1,0 +1,58 @@
+// The Basic style of Ljós, written from the Qt Quick Controls documentation
+// and from the sizes and colours a running Qt reports (CLEAN_ROOM.md).
+import QtQuick
+import QtQuick.Templates as T
+
+T.Slider {
+    id: control
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitHandleWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitHandleHeight + topPadding + bottomPadding)
+
+    padding: 6
+
+    // A round handle whose middle travels the track inside the padding.
+    handle: Component {
+        Rectangle {
+            x: control.leftPadding + (control.horizontal
+                                      ? control.visualPosition * (control.availableWidth - width)
+                                      : (control.availableWidth - width) / 2)
+            y: control.topPadding + (control.horizontal
+                                     ? (control.availableHeight - height) / 2
+                                     : control.visualPosition * (control.availableHeight - height))
+            implicitWidth: 28
+            implicitHeight: 28
+            radius: width / 2
+            color: control.pressed ? control.palette.light : control.palette.window
+            border.width: control.visualFocus ? 2 : 1
+            border.color: control.visualFocus ? control.palette.highlight
+                                              : control.enabled ? control.palette.mid
+                                                                : control.palette.midlight
+        }
+    }
+
+    // A thin track along the middle, filled from the start to the value.
+    background: Component {
+        Rectangle {
+            x: control.leftPadding + (control.horizontal ? 0 : (control.availableWidth - width) / 2)
+            y: control.topPadding + (control.horizontal ? (control.availableHeight - height) / 2 : 0)
+            implicitWidth: control.horizontal ? 200 : 6
+            implicitHeight: control.horizontal ? 6 : 200
+            width: control.horizontal ? control.availableWidth : implicitWidth
+            height: control.horizontal ? implicitHeight : control.availableHeight
+            radius: 3
+            color: control.palette.midlight
+            scale: control.horizontal && control.mirrored ? -1 : 1
+
+            Rectangle {
+                y: control.horizontal ? 0 : control.visualPosition * parent.height
+                width: control.horizontal ? control.position * parent.width : 6
+                height: control.horizontal ? 6 : control.position * parent.height
+                radius: 3
+                color: control.palette.dark
+            }
+        }
+    }
+}

@@ -1,0 +1,25 @@
+// The Basic style of Ljós, written from the Qt Quick Controls documentation
+// and from the sizes and colours a running Qt reports (CLEAN_ROOM.md).
+import QtQuick
+import QtQuick.Templates as T
+
+T.ToolSeparator {
+    id: control
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding)
+
+    // More room across the line than along it.
+    horizontalPadding: vertical ? 6 : 2
+    verticalPadding: vertical ? 2 : 6
+
+    contentItem: Component {
+        Rectangle {
+            implicitWidth: control.vertical ? 1 : 30
+            implicitHeight: control.vertical ? 30 : 1
+            color: control.palette.mid
+        }
+    }
+}

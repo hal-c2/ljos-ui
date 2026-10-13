@@ -24,8 +24,8 @@ use ljos_engine::{
 };
 use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::{
-    DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, Item, KeyEvent, PointerEvent, PointerItem, child_items,
-    contains_point, is_item, register_pointer_item,
+    DOUBLE_CLICK_INTERVAL, Item, KeyEvent, PointerEvent, PointerItem, child_items, contains_point,
+    is_item, register_pointer_item,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
@@ -351,6 +351,9 @@ fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     if is_a::<Switch>(engine, obj) {
         init_switch(engine, obj)?;
     }
+    if let Some(role) = crate::value_controls::button_role(engine, obj) {
+        return crate::a11y::defaults(engine, obj, role, Some(AbstractButton::TEXT.index));
+    }
     crate::a11y::button_defaults(engine, obj)
 }
 
@@ -386,7 +389,7 @@ fn checked_changed(engine: &Engine, obj: ObjectId, on: bool) {
 
 /// Whether a click must leave a checked button checked: one of an
 /// exclusive set is unchecked by checking another.
-fn stays_checked(engine: &Engine, obj: ObjectId) -> bool {
+pub(crate) fn stays_checked(engine: &Engine, obj: ObjectId) -> bool {
     let group = state_of(engine, obj).and_then(|s| s.group.get());
     match group.filter(|g| engine.is_alive(*g)) {
         Some(g) => group::is_exclusive(engine, g),
@@ -402,6 +405,8 @@ fn trigger(engine: &Engine, obj: ObjectId) {
     if action.is_none() && engine.untrack(|| flag(engine, obj, AbstractButton::CHECKABLE.index)) {
         if is_a::<CheckBox>(engine, obj) {
             advance_check_box(engine, obj);
+        } else if crate::value_controls::click(engine, obj) {
+            // A delay button or a check delegate has its own way.
         } else {
             let on = engine.untrack(|| flag(engine, obj, AbstractButton::CHECKED.index));
             if !(on && stays_checked(engine, obj)) {
@@ -614,7 +619,9 @@ fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurbo::Point) {
     if !st.held.get() {
         return;
     }
-    if is_a::<Switch>(engine, obj) && drag_switch(engine, obj, &st, at) {
+    if let Some(p) = switch_position(engine, obj)
+        && drag_switch(engine, obj, &st, p, at)
+    {
         return;
     }
     // Leaving the button lets go of it; coming back takes it again.
@@ -656,8 +663,9 @@ fn cancel(engine: &Engine, obj: ObjectId) {
         return;
     }
     stop_timer(engine, &st);
-    if let Some(layer) = st.drag.take() {
-        let p = Switch::POSITION.index;
+    if let Some(layer) = st.drag.take()
+        && let Some(p) = switch_position(engine, obj)
+    {
         let _ = engine.remove_override(obj, p, layer, RestoreMode::BindingOrValue);
     }
     if engine.untrack(|| flag(engine, obj, AbstractButton::PRESSED.index)) {
@@ -1010,12 +1018,31 @@ fn init_switch(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     })
 }
 
+/// The `position` of a switch or a switch delegate: what dragging its
+/// handle moves.
+fn switch_position(engine: &Engine, obj: ObjectId) -> Option<PropIndex> {
+    if is_a::<Switch>(engine, obj) {
+        Some(Switch::POSITION.index)
+    } else if is_a::<crate::delegates::SwitchDelegate>(engine, obj) {
+        Some(crate::delegates::SwitchDelegate::POSITION.index)
+    } else {
+        None
+    }
+}
+
 /// Moves the handle with the pointer once it has gone far enough to be a
 /// drag. True while dragging: the press then stays with the switch
 /// wherever the pointer is.
-fn drag_switch(engine: &Engine, obj: ObjectId, st: &ButtonState, at: kurbo::Point) -> bool {
+fn drag_switch(
+    engine: &Engine,
+    obj: ObjectId,
+    st: &ButtonState,
+    p: PropIndex,
+    at: kurbo::Point,
+) -> bool {
     let (x0, _) = st.press_at.get();
-    if st.drag.get().is_none() && (at.x - x0).abs() <= DRAG_THRESHOLD {
+    let starting = st.drag.get().is_none();
+    if starting && (at.x - x0).abs() <= ljos_quick::start_drag_distance(engine) {
         return false;
     }
     let Some(indicator) = engine.untrack(|| object(engine, obj, AbstractButton::INDICATOR.index))
@@ -1032,9 +1059,15 @@ fn drag_switch(engine: &Engine, obj: ObjectId, st: &ButtonState, at: kurbo::Poin
     if iw <= 0.0 {
         return false;
     }
+    // A drag begins on the indicator, or once the pointer comes across it:
+    // a press on the text that wanders off is still a click (qml6, read
+    // with QtTest).
+    let across = |x: f64| (ix..=ix + iw).contains(&x);
+    if starting && !across(x0) && !across(at.x) {
+        return false;
+    }
     let visual = ((at.x - ix) / iw).clamp(0.0, 1.0);
     let pos = Value::Real(if mirrored { 1.0 - visual } else { visual });
-    let p = Switch::POSITION.index;
     let r = match st.drag.get() {
         Some(layer) => engine.write_internal(obj, p, pos, WriteKind::Override(layer)),
         None => engine
@@ -1047,10 +1080,13 @@ fn drag_switch(engine: &Engine, obj: ObjectId, st: &ButtonState, at: kurbo::Poin
     true
 }
 
-/// The end of a drag: the switch is on if the handle is past the middle.
+/// The end of a drag: the switch is on if the handle is past the middle;
+/// exactly halfway is not (qml6, read with QtTest).
 fn drop_switch(engine: &Engine, obj: ObjectId, layer: OverrideId) {
-    let p = Switch::POSITION.index;
-    let on = engine.untrack(|| num(engine, obj, p)) >= 0.5;
+    let Some(p) = switch_position(engine, obj) else {
+        return;
+    };
+    let on = engine.untrack(|| num(engine, obj, p)) > 0.5;
     let was = engine.untrack(|| flag(engine, obj, AbstractButton::CHECKED.index));
     let _ = engine.remove_override(obj, p, layer, RestoreMode::BindingOrValue);
     if on != was {

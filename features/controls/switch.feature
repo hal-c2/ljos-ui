@@ -147,3 +147,28 @@ Feature: Switch
       And the user moves the pointer to 20, 20
       And the user moves the pointer to 0, 20
       Then the property "position" of "s" is 0
+
+    # Read from Qt 6.11.2 with QtTest: halfway is not past the middle.
+    Scenario: Let go at the middle, it stays off
+      When the user presses the pointer at 12, 20
+      And the user moves the pointer to 30, 20
+      And the user moves the pointer to 37, 20
+      Then the property "position" of "s" is 0.5
+      When the user releases the pointer at 37, 20
+      Then the property "checked" of "s" is false
+      And the property "log" of "s" is "pressed released clicked "
+
+    # Read from Qt 6.11.2 with QtTest: a drag moves the handle only once
+    # it started on the indicator or has come to it.
+    Scenario: A drag that starts on the text moves the handle once it reaches it
+      When the property "width" of "s" is set to 200
+      And the property "text" of "s" is set to "Wifi"
+      And the user presses the pointer at 150, 20
+      And the user moves the pointer to 120, 20
+      And the user moves the pointer to 80, 20
+      Then the property "position" of "s" is 0
+      When the user moves the pointer to 48, 20
+      Then the property "position" of "s" is 0.75
+      When the user releases the pointer at 48, 20
+      Then the property "checked" of "s" is true
+      And the property "log" of "s" is "pressed toggled released clicked "
