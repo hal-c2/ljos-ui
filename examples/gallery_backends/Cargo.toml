@@ -1,0 +1,20 @@
+[package]
+name = "ljos_gallery_backends"
+description = "Native backends of qtdoc gallery examples, registered for the gallery renderer; each is an ordinary application module written against the ljos facade"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos = { path = "../../crates/ljos" }
+# The ColorPalette client example's own backend.
+ljos_example_colorpalette = { path = "../colorpalette" }
+# A generic Qt module one example uses (`QtQml.XmlListModel`, rssnews):
+# its own crate, here only as a registration.
+ljos_xml = { path = "../../crates/ljos_xml" }
+
+[lints]
+workspace = true

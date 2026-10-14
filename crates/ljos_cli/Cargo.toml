@@ -25,6 +25,10 @@ ljos_i18n = { path = "../ljos_i18n" }
 ljos_engine = { path = "../ljos_engine" }
 ljos_shell = { path = "../ljos_shell", features = ["dev", "mcp"] }
 # `ljos render`: a picture of a project without a window, on the R backend.
+# With `--example`, the native backends of a gallery example.
+ljos_gallery_backends = { path = "../../examples/gallery_backends" }
+# The engine-backed type oracle for `--example` compiles.
+ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
 ljos_controls = { path = "../ljos_controls" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_render = { path = "../ljos_render", default-features = false }

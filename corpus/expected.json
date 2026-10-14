@@ -2,12 +2,18 @@
   "examples": {
     "android-splashscreen": {},
     "clocks": {
-      "pixels": 0.83,
-      "content": 0.63
+      "pixels": 0.93,
+      "content": 0.86
     },
+    "coffee": {},
+    "fx-material-showroom": {},
     "hangman": {
       "pixels": 0.99,
       "content": 0.99
+    },
+    "rssnews": {
+      "pixels": 0.8,
+      "content": 0.57
     },
     "snippet-alias-application": {
       "pixels": 0.98,

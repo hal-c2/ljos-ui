@@ -76,6 +76,15 @@ pub struct Run {
     /// none coming.
     #[arg(long)]
     top: bool,
+    /// A gallery example id (of `corpus/examples.json`) whose native
+    /// backends to register on the Engine before the project is compiled
+    /// and loaded, as `ljos render --example` does, so that an example
+    /// whose types are not QML can be run whole. Without it, nothing is
+    /// registered. With `--watch` the types are registered too, but a
+    /// save is recompiled against the table of types alone, which does
+    /// not know them.
+    #[arg(long, value_name = "ID")]
+    example: Option<String>,
 }
 
 /// What `--mcp` may grant. `fs` and `run` belong to the authoring server
@@ -175,12 +184,17 @@ fn entry(file: &Path) -> anyhow::Result<(PathBuf, String)> {
 }
 
 /// Compiles the project once, for a run that does not watch. Errors are
-/// the compiler's, one a line.
-fn compile(dir: &Path) -> anyhow::Result<MapSource> {
+/// the compiler's, one a line. With an example, its registered backends
+/// are types of the project too (see `ljos render --example`).
+fn compile(dir: &Path, example: Option<&str>) -> anyhow::Result<MapSource> {
     let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
     let mut source = MapSource::new().with_base_url(base);
     let mut errors = Vec::new();
-    for r in ljos_compiler::compile_project(dir).with_context(|| format!("{}", dir.display()))? {
+    let files = match example {
+        Some(id) => ljos_compiler::compile_project_with(dir, crate::render::oracle_for_example(id)),
+        None => ljos_compiler::compile_project(dir),
+    };
+    for r in files.with_context(|| format!("{}", dir.display()))? {
         match r.result {
             Ok(c) => {
                 for d in &c.diagnostics {
@@ -281,9 +295,11 @@ impl Run {
                 None => None,
             },
         };
+        let example = self.example.clone();
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             ljos_shell::run::<()>(config, move |setup| {
+                crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 setup.on_reload(|report| eprintln!("ljos: {}", describe(report)));
                 let root = setup.watch(&main)?;
@@ -296,8 +312,9 @@ impl Run {
                 Ok(root)
             })?;
         } else {
-            let source = compile(&dir)?;
+            let source = compile(&dir, example.as_deref())?;
             ljos_shell::run::<()>(config, move |setup| {
+                crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 let engine = setup.engine();
                 engine.set_component_source(source);
@@ -329,6 +346,15 @@ mod tests {
         Line::try_parse_from([&["ljos-run"], args].concat())
             .map(|l| l.run)
             .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn an_example_is_named_or_absent() {
+        assert_eq!(line(&["Main.qml"]).unwrap().example, None);
+        assert_eq!(
+            line(&["Main.qml", "--example", "rssnews"]).unwrap().example,
+            Some("rssnews".to_owned())
+        );
     }
 
     #[test]
@@ -449,10 +475,12 @@ mod tests {
             "import QtQuick\nItem {\n  width: 20 +\n}\n",
         )
         .unwrap();
-        let e = compile(dir.path()).unwrap_err().to_string();
+        let e = compile(dir.path(), None).unwrap_err().to_string();
         assert!(e.contains("Main.qml: "), "{e}");
         std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
-        assert!(compile(dir.path()).is_ok());
+        assert!(compile(dir.path(), None).is_ok());
+        // An example without a backend compiles as before.
+        assert!(compile(dir.path(), Some("no-such-example")).is_ok());
     }
 
     #[test]

@@ -1,0 +1,78 @@
+//! The native backends of qtdoc gallery examples, by example id.
+//!
+//! Several examples in the gallery corpus (`corpus/examples.json`)
+//! register their own types from C++ when run under Qt. Those backends
+//! are reimplemented here in Rust, each as an ordinary application
+//! module written against the public `ljos` facade alone, from the
+//! interface the example's QML uses (CLEAN_ROOM.md: the C++ is never
+//! read). A host that renders gallery examples — the gallery renderer
+//! today — asks [`register`] for an example's backends by its manifest
+//! id and registers them on its Engine like any other module.
+//!
+//! A generic Qt module used by an example (for instance
+//! `QtQml.XmlListModel`) is not an example backend: it lives in its own
+//! crate and appears here only as a registration.
+
+use ljos::Engine;
+
+/// Registers the backends of the example `id` (a `corpus/examples.json`
+/// id) on `engine`. An example without a backend registers nothing.
+pub fn register(engine: &Engine, id: &str) {
+    match id {
+        // The ColorPalette client's own types (RestService and its
+        // resources), in the module its QML files are types of.
+        "colorpaletteclient" => ljos_example_colorpalette::register(engine),
+        // No types of its own: the generic `QtQml.XmlListModel` module
+        // its feed is read with.
+        "rssnews" => ljos_xml::register(engine),
+        _ => {}
+    }
+}
+
+/// The example ids that have a backend, for a host that wants to say
+/// which examples it can run whole.
+pub fn supported() -> &'static [&'static str] {
+    &["colorpaletteclient", "rssnews"]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_supported_example_registers_its_types() {
+        let engine = ljos::engine();
+        register(&engine, "colorpaletteclient");
+        assert!(engine.has_module("ColorPalette"));
+        assert!(engine.lookup_type("ColorPalette", "RestService").is_some());
+
+        let engine = ljos::engine();
+        register(&engine, "rssnews");
+        assert!(engine.has_module("QtQml.XmlListModel"));
+        assert!(
+            engine
+                .lookup_type("QtQml.XmlListModel", "XmlListModel")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn an_example_without_a_backend_registers_nothing() {
+        let engine = ljos::engine();
+        let before = engine.type_dump();
+        register(&engine, "no-such-example");
+        register(&engine, "clocks");
+        assert_eq!(engine.type_dump(), before);
+        assert!(!supported().contains(&"no-such-example"));
+    }
+
+    #[test]
+    fn every_supported_id_registers() {
+        for id in supported() {
+            let engine = ljos::engine();
+            let before = engine.type_dump();
+            register(&engine, id);
+            assert_ne!(engine.type_dump(), before, "{id} registered nothing");
+        }
+    }
+}

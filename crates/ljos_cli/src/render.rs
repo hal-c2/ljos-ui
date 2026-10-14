@@ -19,11 +19,13 @@ use std::{
 
 use anyhow::Context as _;
 use clap::Args;
-use ljos_compiler::{Severity, compile_project};
+use ljos::dev::{EngineOracle, EngineType};
+use ljos_compiler::{Severity, compile_project_with};
 use ljos_engine::{Engine, LogLevel, MapSource};
 use ljos_quick::QuickScene;
 use ljos_render::{FrameView, RasterConfig, Rgba, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
+use qml_front::TypeOracle;
 use serde_json::{Value, json};
 
 /// Frames a scene may need to come to rest before something is wrong with
@@ -47,6 +49,14 @@ pub struct Render {
     /// Where the PNG goes.
     #[arg(long)]
     out: PathBuf,
+    /// A gallery example id (of `corpus/examples.json`) whose native
+    /// backends to register on the Engine before the project is compiled
+    /// and loaded, as the example's own program registers its types when
+    /// run under Qt. Without it, nothing is registered: a plain render
+    /// of a user project is unaffected. `mise run gallery` passes the id
+    /// `qml-compare` gives it (`QML_COMPARE_ID`).
+    #[arg(long, value_name = "ID")]
+    example: Option<String>,
 }
 
 fn parse_size(text: &str) -> Result<(u32, u32), String> {
@@ -130,11 +140,19 @@ impl Render {
             .strip_suffix(".qml")
             .unwrap_or(&self.entry)
             .to_owned();
-        let source = compile(&dir, &key, notes)?;
 
+        // The Engine first: with `--example`, the backends are registered
+        // before the project is compiled, so that the compiler knows the
+        // example's own types (a native type is in no table of types) and
+        // not only the runtime does.
         let engine = Engine::new();
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
+        register_example(&engine, self.example.as_deref());
+        let source = match &self.example {
+            Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
+            None => compile(&dir, &key, notes, EngineOracle::table_only())?,
+        };
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
         let said = Said::default();
@@ -179,14 +197,40 @@ impl Render {
     }
 }
 
-/// Compiles every file under `dir`, and keeps those that compiled. A file
-/// with a mistake is told of; only one the entry needs stops the run.
-fn compile(dir: &Path, entry: &str, notes: &mut Notes) -> anyhow::Result<MapSource> {
+/// Registers the backends of the gallery example `example` on `engine`;
+/// without an example, nothing. Shared with `ljos run --example`.
+pub(crate) fn register_example(engine: &Engine, example: Option<&str>) {
+    if let Some(id) = example {
+        ljos_gallery_backends::register(engine, id);
+    }
+}
+
+/// The compiler's knowledge of an example's types: the table of types as
+/// usual, and the native types registered for the example on top of it.
+/// Shared with `ljos run --example`, which compiles before its shell
+/// Engine exists.
+pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
+    let engine = Engine::new();
+    ljos_quick::register(&engine);
+    ljos_controls::register(&engine);
+    register_example(&engine, Some(id));
+    EngineOracle::from_engine(&engine)
+}
+
+/// Compiles every file under `dir` against `oracle`, and keeps those that
+/// compiled. A file with a mistake is told of; only one the entry needs
+/// stops the run.
+fn compile<O: TypeOracle<Type = EngineType>>(
+    dir: &Path,
+    entry: &str,
+    notes: &mut Notes,
+    oracle: O,
+) -> anyhow::Result<MapSource> {
     let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
     let mut source = MapSource::new().with_base_url(base);
     let mut entry_error = None;
     let mut seen = false;
-    for r in compile_project(dir).with_context(|| format!("{}", dir.display()))? {
+    for r in compile_project_with(dir, oracle).with_context(|| format!("{}", dir.display()))? {
         notes.files += 1;
         let errors: Vec<String> = match r.result {
             Ok(c) => {
@@ -325,6 +369,7 @@ mod tests {
             size: (40, 30),
             settle: 100,
             out: out.clone(),
+            example: None,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
@@ -393,6 +438,92 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Main.qml is not in")
+        );
+    }
+
+    #[derive(clap::Parser)]
+    struct Line {
+        #[command(flatten)]
+        render: Render,
+    }
+
+    fn line(args: &[&str]) -> Render {
+        use clap::Parser as _;
+        Line::try_parse_from([&["ljos-render"], args].concat())
+            .map(|l| l.render)
+            .unwrap()
+    }
+
+    #[test]
+    fn no_example_is_the_default_and_an_id_is_named() {
+        assert_eq!(line(&["proj", "--out", "p.png"]).example, None);
+        assert_eq!(
+            line(&["proj", "--out", "p.png", "--example", "rssnews"]).example,
+            Some("rssnews".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_example_without_a_backend_renders_as_before() {
+        let dir = project(&[(
+            "Main.qml",
+            "import QtQuick\nRectangle { width: 20; height: 10; color: \"red\" }\n",
+        )]);
+        let out = dir.path().join("out.png");
+        let r = Render {
+            dir: dir.path().to_owned(),
+            entry: "Main.qml".to_owned(),
+            size: (40, 30),
+            settle: 100,
+            out: out.clone(),
+            example: Some("no-such-example".to_owned()),
+        };
+        let mut notes = Notes::default();
+        r.render(&mut notes).unwrap();
+        assert!(notes.entry_compiles);
+        assert!(out.exists());
+        // And nothing was registered for it.
+        assert!(!ljos_gallery_backends::supported().contains(&"no-such-example"));
+    }
+
+    /// A backend type of the kind a gallery example registers: in no
+    /// table of types, known only from its description.
+    #[derive(Debug, Default, ljos_engine::QmlObject)]
+    #[qml(module = "Backends", name = "Gauge")]
+    pub struct Gauge {
+        #[qml(notify)]
+        pub level: i32,
+    }
+
+    #[test]
+    fn a_registered_native_type_compiles_only_with_its_oracle() {
+        let dir = project(&[(
+            "Main.qml",
+            "import QtQuick\nimport Backends\nItem {\n  Gauge { id: g; level: 3 }\n  property int seen: g.level\n}\n",
+        )]);
+        // The table of types does not know it: the entry does not compile.
+        let mut notes = Notes::default();
+        let plain = compile(dir.path(), "Main", &mut notes, EngineOracle::table_only());
+        assert!(plain.is_err(), "compiled without the backend");
+        assert!(!notes.entry_compiles);
+
+        // Registered on an Engine, its description is enough.
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        engine.register_module(ljos_engine::module!("Backends" 1.0 => [Gauge]));
+        let mut notes = Notes::default();
+        compile(
+            dir.path(),
+            "Main",
+            &mut notes,
+            EngineOracle::from_engine(&engine),
+        )
+        .unwrap();
+        assert!(notes.entry_compiles);
+        assert!(
+            notes.compile_errors.is_empty(),
+            "{:?}",
+            notes.compile_errors
         );
     }
 
