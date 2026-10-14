@@ -184,8 +184,7 @@ Feature: CheckBox
       And the user touches 20, 20
       Then the property "checkState" of "c" is 2
 
-  # TODO(js): calling a function held in a property from the button.
-  @backlog @qt-parity @api-QtQuick.Controls.CheckBox.nextCheckState
+  @qt-parity @api-QtQuick.Controls.CheckBox.nextCheckState
   Rule: The application can say which state comes next
 
     Scenario: nextCheckState decides what a click does

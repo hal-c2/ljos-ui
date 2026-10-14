@@ -27,8 +27,6 @@ fn checkable_row(exclusive: bool) -> ItemDelegate {
 // --------------------------------------------------------- CheckDelegate
 
 /// `CheckDelegate`.
-///
-/// TODO(js): `nextCheckState` is stored and not called, as on `CheckBox`.
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick.Templates", name = "CheckDelegate", extends = ItemDelegate)]
 pub struct CheckDelegate {
@@ -106,6 +104,18 @@ fn set_check_state(engine: &Engine, obj: ObjectId, s: i32) -> Result<(), EngineE
 pub(crate) fn advance(engine: &Engine, obj: ObjectId) {
     let s = engine.untrack(|| num(engine, obj, CheckDelegate::CHECK_STATE.index)) as i32;
     let tristate = engine.untrack(|| flag(engine, obj, CheckDelegate::TRISTATE.index));
+    if let f @ Value::Js(_) =
+        engine.untrack(|| engine.read(obj, CheckDelegate::NEXT_CHECK_STATE.index))
+    {
+        if let Some(v) = engine.call_js(&f, &[]) {
+            let next = (v.to_number() as i32).clamp(0, 2);
+            check(engine, "checkState", set_check_state(engine, obj, next));
+            if !tristate && next != s {
+                check(engine, "toggled", engine.emit_by_name(obj, "toggled", &[]));
+            }
+        }
+        return;
+    }
     if tristate {
         check(
             engine,

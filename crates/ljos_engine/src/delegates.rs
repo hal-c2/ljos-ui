@@ -362,11 +362,20 @@ impl Shared {
     }
 
     fn create_row(s: &Rc<Shared>, engine: &Engine, id: u64) {
-        let (component, asynchronous) = {
+        let (component, asynchronous, index, model) = {
             let st = s.state.borrow();
-            (st.component, st.asynchronous)
+            (
+                st.component,
+                st.asynchronous,
+                st.position(id),
+                st.model.clone(),
+            )
         };
-        let Some(component) = component else {
+        let (Some(component), Some(index), Some(model)) = (component, index, model) else {
+            return;
+        };
+        let Some(component) = crate::chooser::resolve_delegate(engine, component, &model, index)
+        else {
             return;
         };
         let for_setup = s.clone();
@@ -507,13 +516,57 @@ impl Shared {
                 first,
                 count,
                 roles,
-            } => s.refresh(engine, *first, *count, roles),
+            } => {
+                let remake = s.state.borrow().component.is_some_and(|c| {
+                    crate::chooser::is_chooser(engine, c)
+                        && crate::chooser::role_affected(engine, c, roles)
+                });
+                if remake {
+                    Shared::remake_rows(s, engine, *first, *count);
+                } else {
+                    s.refresh(engine, *first, *count, roles);
+                }
+            }
             ModelChange::RolesChanged => s.reshape(engine),
             ModelChange::ModelReset => engine.batch(|| {
                 s.remove_all(engine);
                 Shared::populate(s, engine);
             }),
         }
+    }
+
+    /// Destroys and recreates the delegates of `count` rows from `first`
+    /// in place (for a [`DelegateChooser`] whose role changed).
+    fn remake_rows(s: &Rc<Shared>, engine: &Engine, first: usize, count: usize) {
+        engine.batch(|| {
+            let end = {
+                let st = s.state.borrow();
+                first.saturating_add(count).min(st.rows.len())
+            };
+            for i in first.min(end)..end {
+                let (old, id) = {
+                    let mut st = s.state.borrow_mut();
+                    if i >= st.rows.len() {
+                        break;
+                    }
+                    let id = st.next_id;
+                    st.next_id += 1;
+                    st.later.set(None);
+                    let old = std::mem::replace(
+                        &mut st.rows[i],
+                        Row {
+                            id,
+                            data: None,
+                            object: None,
+                            pending: None,
+                        },
+                    );
+                    (old, id)
+                };
+                s.dispose(engine, i, old);
+                Shared::create_row(s, engine, id);
+            }
+        });
     }
 
     /// Tells the rows in `from..to` where they are now.
@@ -1047,9 +1100,11 @@ impl ViewDelegates {
             DelegateSource::Component(c) => component.or(c)?,
             DelegateSource::Rows => return s.adopt(engine, &model, index),
         };
+        let is_chooser = crate::chooser::is_chooser(engine, component);
+        let component = crate::chooser::resolve_delegate(engine, component, &model, index)?;
         // A row that is an object shows that object's own properties: a
         // delegate made for another row cannot be pointed at it.
-        if model.row_object(index).is_none() {
+        if !is_chooser && model.row_object(index).is_none() {
             let reused = {
                 let mut st = s.state.borrow_mut();
                 st.pool.pop().map(|mut h| {
@@ -1139,8 +1194,12 @@ impl ViewDelegates {
             let Some(i) = st.live.iter().position(|h| h.object == Some(object)) else {
                 return false;
             };
+            let chooser = st
+                .component
+                .is_some_and(|c| crate::chooser::is_chooser(engine, c));
             let mut h = st.live.swap_remove(i);
-            let poolable = reuse && !h.own && h.data.as_ref().is_some_and(|d| !d.aliased);
+            let poolable =
+                reuse && !chooser && !h.own && h.data.as_ref().is_some_and(|d| !d.aliased);
             if poolable {
                 h.index = None;
                 st.pool.push(h);
@@ -1369,6 +1428,7 @@ impl ViewShared {
             return;
         }
         let mut gone: Vec<(usize, ObjectId)> = Vec::new();
+        let mut chooser_remade = false;
         engine.batch(|| match change {
             ModelChange::RowsAboutToBeInserted { .. }
             | ModelChange::RowsAboutToBeRemoved { .. } => {}
@@ -1438,22 +1498,57 @@ impl ViewShared {
                 count,
                 roles,
             } => {
-                let (model, rows): (_, Vec<(usize, RowObject)>) = {
+                let end = first.saturating_add(*count);
+                let remake = {
                     let st = s.state.borrow();
-                    let Some(model) = st.model.clone() else {
-                        return;
-                    };
-                    let end = first.saturating_add(*count);
-                    let rows = st
-                        .live
-                        .iter()
-                        .filter_map(|h| Some((h.index?, h.data.clone()?)))
-                        .filter(|(i, _)| i >= first && *i < end)
-                        .collect();
-                    (model, rows)
+                    let comp = st.model.as_ref().and_then(|m| match m.delegate_source() {
+                        DelegateSource::View => st.component,
+                        DelegateSource::Component(c) => st.component.or(c),
+                        DelegateSource::Rows => None,
+                    });
+                    comp.is_some_and(|c| {
+                        crate::chooser::is_chooser(engine, c)
+                            && crate::chooser::role_affected(engine, c, roles)
+                    })
                 };
-                for (i, d) in rows {
-                    refresh_row(engine, &model, i, &d, roles);
+                if remake {
+                    let removed: Vec<Held> = {
+                        let mut st = s.state.borrow_mut();
+                        let mut out = Vec::new();
+                        let mut i = 0;
+                        while i < st.live.len() {
+                            if st.live[i]
+                                .index
+                                .is_some_and(|idx| idx >= *first && idx < end)
+                            {
+                                out.push(st.live.swap_remove(i));
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        out
+                    };
+                    for h in removed {
+                        s.destroy(engine, h);
+                    }
+                    chooser_remade = true;
+                } else {
+                    let (model, rows): (_, Vec<(usize, RowObject)>) = {
+                        let st = s.state.borrow();
+                        let Some(model) = st.model.clone() else {
+                            return;
+                        };
+                        let rows = st
+                            .live
+                            .iter()
+                            .filter_map(|h| Some((h.index?, h.data.clone()?)))
+                            .filter(|(i, _)| i >= first && *i < end)
+                            .collect();
+                        (model, rows)
+                    };
+                    for (i, d) in rows {
+                        refresh_row(engine, &model, i, &d, roles);
+                    }
                 }
             }
             ModelChange::RolesChanged => {
@@ -1491,5 +1586,8 @@ impl ViewShared {
             ModelChange::ModelReset => s.destroy_all(engine),
         });
         s.host.changed(engine, change, &gone);
+        if chooser_remade {
+            s.host.ready(engine, 0, s.owner);
+        }
     }
 }

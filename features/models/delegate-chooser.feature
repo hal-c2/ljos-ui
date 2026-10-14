@@ -3,7 +3,7 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-models-delegatechoice.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
-@qt-parity @backlog
+@qt-parity
 Feature: DelegateChooser
   A DelegateChooser is a delegate that picks one for each row: the delegate of the first DelegateChoice that matches the row.
 

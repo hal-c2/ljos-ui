@@ -876,9 +876,6 @@ impl Default for RadioButton {
 // ------------------------------------------------------------- CheckBox
 
 /// `CheckBox`.
-///
-/// TODO(js): `nextCheckState` is stored and not called; the engine has no
-/// way yet to call a function a property holds from native code.
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick.Templates", name = "CheckBox", extends = AbstractButton)]
 pub struct CheckBox {
@@ -951,6 +948,17 @@ fn set_check_state(engine: &Engine, obj: ObjectId, s: i32) -> Result<(), EngineE
 fn advance_check_box(engine: &Engine, obj: ObjectId) {
     let s = engine.untrack(|| num(engine, obj, CheckBox::CHECK_STATE.index)) as i32;
     let tristate = engine.untrack(|| flag(engine, obj, CheckBox::TRISTATE.index));
+    if let f @ Value::Js(_) = engine.untrack(|| engine.read(obj, CheckBox::NEXT_CHECK_STATE.index))
+    {
+        if let Some(v) = engine.call_js(&f, &[]) {
+            let next = (v.to_number() as i32).clamp(0, 2);
+            check(engine, "checkState", set_check_state(engine, obj, next));
+            if !tristate && next != s {
+                emit(engine, obj, "toggled");
+            }
+        }
+        return;
+    }
     if tristate {
         check(
             engine,

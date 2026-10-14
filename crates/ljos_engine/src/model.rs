@@ -942,6 +942,9 @@ impl Engine {
         if let Some(state) = self.list_model_state(obj) {
             return Some(state);
         }
+        if let Some(state) = self.sort_filter_state(obj) {
+            return Some(state);
+        }
         let store = self.inner.store.borrow();
         store.objects.get(obj)?.ext.as_ref()?.model.clone()
     }

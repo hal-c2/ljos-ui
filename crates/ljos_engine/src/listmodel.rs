@@ -443,10 +443,13 @@ impl ListState {
             let Some((i, v)) = self.resolve(engine, &name, v, source) else {
                 continue;
             };
+            // A write of the value the role already has is still a
+            // change Qt tells its views of (measured on Qt 6.11: a
+            // DelegateChooser remakes the row's delegate), so there is
+            // no same-value shortcut here. Bindings do not re-run for
+            // it: the row objects' writes cut off at equality.
             let old = self.value(row, i);
-            if old.strict_equals(&v) {
-                continue;
-            }
+            let new_obj = v.as_object();
             let mut values = match self.rows.borrow_mut().get_mut(row) {
                 Some(r) => std::mem::take(&mut r.values),
                 None => return false,
@@ -456,6 +459,7 @@ impl ListState {
                 r.values = values;
             }
             if let Value::Object(o) = old
+                && Some(o) != new_obj
                 && engine.owner(o) == self.me.get()
                 && is_list_model(engine, o)
             {
