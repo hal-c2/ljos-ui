@@ -23,6 +23,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Instant;
 
 use ljos_reactive::{
     Diagnostic, Graph, NodeId, Options, OverrideId, OverrideValue, Provenance, RestoreMode,
@@ -114,6 +115,9 @@ pub(crate) struct Inner {
     /// Faults on their way to a boundary, and the boundaries (fault.rs,
     /// boundary.rs).
     pub(crate) faults: crate::fault::FaultState,
+    /// The slow native call watchdog (slow.rs): its budget and the calls
+    /// that ran over it. Untouched beyond one branch while off.
+    pub(crate) slow: crate::slow::SlowState,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -253,6 +257,7 @@ impl Engine {
             reload: Default::default(),
             tier1: Default::default(),
             faults: Default::default(),
+            slow: Default::default(),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {
@@ -1806,14 +1811,17 @@ impl Engine {
             })
     }
 
-    /// Calls a native method. Arguments are coerced by the thunk.
+    /// Calls a native method. Arguments are coerced by the thunk. With a
+    /// slow-call budget set, the watchdog times the thunk call and names
+    /// one that ran over budget (slow.rs); a script method is not timed.
     pub fn invoke(
         &self,
         obj: ObjectId,
         method: MethodIndex,
         args: &[Value],
     ) -> Result<Value, EngineError> {
-        let thunk = {
+        let budget = self.inner.slow.budget();
+        let (thunk, slow_names) = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
             let m = h
@@ -1823,7 +1831,11 @@ impl Engine {
                     ty: h.meta.name.to_string(),
                     name: format!("#{}", method.0),
                 })?;
-            match m.thunk {
+            // The names a slow call is recorded under; taken only while
+            // the watchdog is on, so a disabled watchdog costs nothing here.
+            let slow_names = (budget.is_some() && m.thunk.is_some())
+                .then(|| (h.meta.name.clone(), m.name.clone()));
+            let thunk = match m.thunk {
                 Some(t) => Ok(t),
                 None => Err(h
                     .ext
@@ -1831,7 +1843,8 @@ impl Engine {
                     .and_then(|e| e.methods.iter().find(|(i, _)| *i == method))
                     .map(|(_, f)| f.clone())
                     .ok_or_else(|| EngineError::NotNative(m.name.to_string()))?),
-            }
+            };
+            (thunk, slow_names)
         };
         let thunk = match thunk {
             Ok(t) => t,
@@ -1844,7 +1857,19 @@ impl Engine {
         self.inner.faults.propagate.set(false);
         // Native code reads lists, not a script's arrays.
         let args = self.plain_args(args);
-        self.guarded_result(obj, || thunk(&Cx::new(self, obj), &args))
+        // Only the thunk call below is timed, not the lookup or the
+        // argument conversion above. This is `Instant`, not the engine
+        // Clock: the virtual clock does not move during a call, and the
+        // watchdog measures the machine, deliberately.
+        let started = budget.map(|_| Instant::now());
+        let result = self.guarded_result(obj, || thunk(&Cx::new(self, obj), &args));
+        if let (Some(budget), Some(started), Some((ty, name))) = (budget, started, slow_names) {
+            let took = started.elapsed();
+            if took > budget {
+                self.record_slow_call(ty, name, took, budget);
+            }
+        }
+        result
     }
 
     /// Gives the QML-declared method `method` of `obj` its body.

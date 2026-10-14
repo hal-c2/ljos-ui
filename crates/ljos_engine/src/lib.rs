@@ -83,6 +83,7 @@ mod reset;
 mod script_arrays;
 mod script_owned;
 mod signal;
+mod slow;
 mod sort_filter;
 mod types;
 mod value;
@@ -138,6 +139,7 @@ pub use registry::{
     TypeEntry, Version,
 };
 pub use signal::Handler;
+pub use slow::SlowCall;
 pub use sort_filter::{
     FilterBase, RoleFilter, RoleSorter, SortFilterProxyModel, SorterBase, StringSorter, ValueFilter,
 };
