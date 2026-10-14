@@ -364,6 +364,16 @@ pub(crate) fn size_follows_implicit(engine: &Engine, obj: ObjectId, horizontal: 
     !(set(a.fill) || (set(near) && set(far)))
 }
 
+/// A control that lays a part out gives it its size: from now on the part
+/// is a given size on both axes, so a text in it wraps to that width
+/// where it would have wrapped to nothing while it followed its own
+/// implicit size. The value stays whatever the control's layer says.
+pub(crate) fn give_size(engine: &Engine, obj: ObjectId) {
+    let _ = engine.with_mut(obj, |i: &mut Item| {
+        i.follows_implicit = [Weak::new(), Weak::new()];
+    });
+}
+
 /// `width = undefined` and `height = undefined`: the size follows the
 /// implicit size again, as Qt documents.
 const SIZE_RESET: Reset = Reset::Custom {

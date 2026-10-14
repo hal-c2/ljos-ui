@@ -190,6 +190,15 @@ impl Render {
         scene
             .set_root(&engine, root)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        // A root window that leaves its size unsaid is as large as the
+        // picture, as the shell gives it the size of its platform window;
+        // without this its content item is empty and so is whatever is
+        // sized from it (a popup's `parent.width`).
+        let unsaid = |name| engine.read_by_name(root, name).to_number() <= 0.0;
+        if unsaid("width") || unsaid("height") {
+            let size = [f64::from(width), f64::from(height)];
+            ljos_controls::WindowSystem::of(&engine).resized(&engine, root, size);
+        }
 
         let mut run = Run {
             engine: &engine,
@@ -413,6 +422,22 @@ mod tests {
         let at = |x: usize, y: usize| &image.data[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
         assert_eq!(at(5, 5), [255, 0, 0, 255]);
         assert_eq!(at(30, 20), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn a_root_window_that_leaves_its_size_unsaid_is_as_large_as_the_picture() {
+        // A popup sized and centred from its parent is where a window
+        // that has a size puts it; the window's content item is empty
+        // unless the picture's size is told to the window.
+        let dir = project(&[(
+            "Main.qml",
+            "import QtQuick\nimport QtQuick.Controls.Basic\nApplicationWindow {\n  visible: true\n  Rectangle { x: 0; y: 0; width: parent.width; height: parent.height; color: \"red\" }\n}\n",
+        )]);
+        let (result, _, out) = render(dir.path(), "Main.qml");
+        result.unwrap();
+        let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
+        let at = |x: usize, y: usize| &image.data[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
+        assert_eq!(at(35, 25), [255, 0, 0, 255]);
     }
 
     #[test]

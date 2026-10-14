@@ -108,7 +108,7 @@ pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use pointer_item::{
-    HoverMove, PointerItem, contains_point, follows_implicit_size, is_mirrored,
+    HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored,
     register_hover_move, register_pointer_item,
 };
 pub use pointer_item::{PointerCondition, register_pointer_condition};

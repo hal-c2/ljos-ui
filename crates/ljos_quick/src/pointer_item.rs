@@ -208,6 +208,12 @@ pub fn follows_implicit_size(engine: &Engine, obj: ObjectId, horizontal: bool) -
     crate::item::size_follows_implicit(engine, obj, horizontal)
 }
 
+/// A control gives the part it lays out its size: the part is a given size
+/// on both axes from now on, so a text in it wraps to that width.
+pub fn give_size(engine: &Engine, obj: ObjectId) {
+    crate::item::give_size(engine, obj);
+}
+
 /// Whether `LayoutMirroring` mirrors the item (tracked).
 pub fn is_mirrored(engine: &Engine, obj: ObjectId) -> bool {
     crate::mirroring::mirrored(engine, obj)

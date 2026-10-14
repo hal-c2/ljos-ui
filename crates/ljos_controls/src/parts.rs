@@ -20,7 +20,7 @@ use ljos_engine::{
     Component, Engine, EngineError, ObjectId, OverrideContent, OverrideId, PropIndex, RestoreMode,
     Value, WriteKind,
 };
-use ljos_quick::{Item, follows_implicit_size, is_item, set_parent_item};
+use ljos_quick::{Item, follows_implicit_size, give_size, is_item, set_parent_item};
 
 use crate::style::is_style_url;
 use crate::util::{check, is_a, is_unset, num, object, warn};
@@ -125,6 +125,7 @@ fn adopt(
             }
         }
         PartKind::Content(rect) => {
+            give_size(engine, part);
             for (i, prop) in [
                 Item::X.index,
                 Item::Y.index,

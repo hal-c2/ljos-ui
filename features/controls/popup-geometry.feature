@@ -365,3 +365,32 @@ Feature: Popup sizing and positioning
     Scenario: The parent of a popup declared in a popup is its content item
       Then the property "parent.width" of "inner" is 176
       And the property "parent.x" of "inner" is 12
+
+  Rule: A text in a popup wraps to the width the popup gives it
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 400; height: 300
+          Popup {
+            objectName: "p"
+            padding: 20
+            anchors.centerIn: parent
+            width: parent.width / 2
+            contentItem: Text {
+              objectName: "t"
+              wrapMode: Text.WordWrap
+              font.pointSize: 15
+              text: "This device cannot grant the right to write system settings."
+            }
+          }
+        }
+        """
+
+    @api-QtQuick.Controls.Popup.contentItem
+    Scenario: A wrapped text is as wide as the room inside the padding
+      Then the property "contentItem.width" of "p" is 160
+      And the property "contentItem.lineCount" of "p" is 4
