@@ -3409,6 +3409,7 @@ module QtQuick.Layouts
 	ColumnLayout QtQuick.Layouts.ColumnLayout
 	GridLayout QtQuick.Layouts.GridLayout
 	Layout QtQuick.Layouts.Layout
+	LayoutItemProxy QtQuick.Layouts.LayoutItemProxy
 	RowLayout QtQuick.Layouts.RowLayout
 	StackLayout QtQuick.Layouts.StackLayout
 	type QtQuick.Layouts.ColumnLayout ColumnLayout
@@ -3442,6 +3443,10 @@ module QtQuick.Layouts
 		prototype QtQuick.Item named
 		attached QtQuick.Layouts.LayoutAttached
 		is uncreatable
+	type QtQuick.Layouts.LayoutItemProxy LayoutItemProxy
+		prototype QtQuick.Item named
+		prop target QtQuick.Item named pointer
+		signal targetChanged
 	type QtQuick.Layouts.RowLayout RowLayout
 		prototype QtQuick.Layouts.Layout named
 		prop spacing QtQml.real named

@@ -20,6 +20,9 @@
 
 mod distribute;
 mod place;
+mod proxy;
+
+pub use proxy::LayoutItemProxy;
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -249,6 +252,8 @@ pub struct LayoutAttached {
     pub horizontal_stretch_factor: i32,
     #[qml(notify)]
     pub vertical_stretch_factor: i32,
+    #[qml(skip)]
+    proxy: proxy::ProxyAttachedState,
 }
 
 impl Default for LayoutAttached {
@@ -274,6 +279,7 @@ impl Default for LayoutAttached {
             bottom_margin: 0.0,
             horizontal_stretch_factor: -1,
             vertical_stretch_factor: -1,
+            proxy: proxy::ProxyAttachedState::default(),
         }
     }
 }
@@ -324,6 +330,9 @@ impl Default for Attached {
 /// Reads everything a child said. Inside an effect this is also what makes
 /// the layout follow each of the properties.
 fn read_attached(e: &Engine, child: ObjectId) -> Attached {
+    if is_a::<LayoutItemProxy>(e, child) {
+        return proxy::read_proxy_attached(e, child);
+    }
     let Some(a) = e.existing_attached_object(child, &attacher()) else {
         return Attached::default();
     };
@@ -492,13 +501,15 @@ pub(crate) fn managed(engine: &Engine, obj: ObjectId) -> bool {
 /// makes the layout measure again.
 pub(crate) fn register(engine: &Engine) {
     engine.on_attached_created(|e, item, att| {
-        if is_a::<LayoutAttached>(e, att)
-            && let Some(parent) = e.untrack(|| e.visual_parent(item))
-            && kind(e, parent).is_some()
-        {
-            // Not worth a warning: the layout then sees the object the
-            // next time anything else changes.
-            let _ = e.notify(parent, Item::CHILDREN.index);
+        if is_a::<LayoutAttached>(e, att) {
+            proxy::setup_proxy_attached(e, item, att);
+            if let Some(parent) = e.untrack(|| e.visual_parent(item))
+                && kind(e, parent).is_some()
+            {
+                // Not worth a warning: the layout then sees the object the
+                // next time anything else changes.
+                let _ = e.notify(parent, Item::CHILDREN.index);
+            }
         }
         true
     });
@@ -921,6 +932,7 @@ fn arrange(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             for (p, v) in props.into_iter().zip(g) {
                 write_placed(e, *c, p, Value::Real(*v))?;
             }
+            proxy::sync_placed_proxy(e, *c, g[2], g[3])?;
         }
         if plan.kind == Kind::Stack && visible {
             for (i, c) in plan.cells.iter().enumerate() {

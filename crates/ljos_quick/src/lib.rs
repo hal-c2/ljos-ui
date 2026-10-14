@@ -98,7 +98,8 @@ pub use layer::{
     tab_scope, window_item, window_of,
 };
 pub use layouts::{
-    ColumnLayout, GridLayout, Layout, LayoutAttached, RowLayout, StackLayout, layout_runs,
+    ColumnLayout, GridLayout, Layout, LayoutAttached, LayoutItemProxy, RowLayout, StackLayout,
+    layout_runs,
 };
 pub use loader::Loader;
 #[allow(deprecated)]
@@ -174,7 +175,7 @@ pub fn register(engine: &Engine) {
     // A file that imports `QtQuick` has `Timer` and `QtObject` too.
     engine.register_import("QtQuick", "QtQml");
     engine.register_module(ljos_engine::module!("QtQuick.Layouts" 1.15 => [
-        Layout, RowLayout, ColumnLayout, GridLayout, StackLayout,
+        Layout, RowLayout, ColumnLayout, GridLayout, StackLayout, LayoutItemProxy,
     ]));
     mirroring::register(engine);
     positioners::register(engine);
