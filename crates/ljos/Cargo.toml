@@ -19,9 +19,11 @@ ljos_platform = { path = "../ljos_platform" }
 # Only with `shell`: the desktop loop an application runs in. Without it
 # the facade is the runtime alone (headless hosts, tests, other shells).
 ljos_shell = { path = "../ljos_shell", optional = true }
-# With `shell`: the UiHandle type the shell's setup hands out, named here
-# so an application needs no second Ljós dependency to hold one.
-ljos_runtime = { path = "../ljos_runtime", optional = true }
+# Unconditional: the compute pool behind `task::spawn`, and with `shell`
+# the UiHandle type the shell's setup hands out, named here so an
+# application needs no second Ljós dependency to hold one. Default
+# features only: its tokio `tasks` feature stays off.
+ljos_runtime = { path = "../ljos_runtime" }
 # Only with `dev-qml`: compiles QML directories at start-up, which links
 # the parser. A shipped application leaves it off and embeds compiled IR
 # (ARCHITECTURE.md principle 5).
@@ -40,7 +42,7 @@ ljos = { path = ".", features = ["dev-qml"] }
 
 [features]
 default = ["shell"]
-shell = ["dep:ljos_shell", "dep:ljos_runtime"]
+shell = ["dep:ljos_shell"]
 # Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
 # directory of QML at start-up. Never in a shipped application.
 dev-qml = ["dep:ljos_compiler", "dep:qml_front"]

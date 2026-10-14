@@ -69,18 +69,22 @@
 /// Rust-owned rows, and the platform services (fetch, settings, dialogs)
 /// a type may ask the host for.
 pub mod prelude {
+    pub use crate::task::Task;
     pub use ljos_engine::{
         Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, LogEntry, LogLevel,
         ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList, QmlListModel, QmlObject,
         QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Url, Value, list_model,
         qml_impl,
     };
-    pub use ljos_platform::{FetchError, Fetcher, Platform, is_remote, url_path};
+    pub use ljos_platform::{
+        FetchError, Fetcher, Method, Platform, Request, Response, is_remote, url_path,
+    };
 }
 
 mod app;
 #[cfg(feature = "dev-qml")]
 pub mod dev;
+pub mod task;
 
 pub use app::{App, create_root};
 /// The engine crate itself, for the paths the `QmlObject` derive and
