@@ -12,6 +12,7 @@ use crate::delegates::{CheckDelegate, RadioDelegate, SwitchDelegate};
 use crate::dial::Dial;
 use crate::page_indicator::PageIndicator;
 use crate::slider::{RangeSlider, Slider};
+use crate::tumbler::Tumbler;
 use crate::util::is_a;
 
 pub(crate) fn register(engine: &Engine) {
@@ -22,6 +23,7 @@ pub(crate) fn register(engine: &Engine) {
         BusyIndicator::static_meta(),
         ToolSeparator::static_meta(),
         Dial::static_meta(),
+        Tumbler::static_meta(),
         DelayButton::static_meta(),
         RoundButton::static_meta(),
         PageIndicator::static_meta(),
@@ -47,6 +49,7 @@ pub(crate) fn register(engine: &Engine) {
     crate::slider::register(engine);
     crate::bars::register(engine);
     crate::dial::register(engine);
+    crate::tumbler::register(engine);
     crate::page_indicator::register(engine);
 }
 

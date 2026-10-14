@@ -3024,6 +3024,7 @@ module QtQuick.Controls
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 
 module QtQuick.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
@@ -3082,6 +3083,7 @@ module QtQuick.Controls.Basic
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	type QtQuick/Controls/Basic/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
 	type QtQuick/Controls/Basic/BusyIndicator.qml BusyIndicator
@@ -3180,6 +3182,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.ToolSeparator named
 	type QtQuick/Controls/Basic/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named
+	type QtQuick/Controls/Basic/Tumbler.qml Tumbler
+		prototype QtQuick.Templates.Tumbler named
 
 module QtQuick.Controls.Fusion
 	AbstractButton QtQuick.Templates.AbstractButton
@@ -3239,6 +3243,7 @@ module QtQuick.Controls.Fusion
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	type QtQuick/Controls/Fusion/Button.qml Button
 		prototype QtQuick.Templates.Button named
 	type QtQuick/Controls/Fusion/CheckBox.qml CheckBox
@@ -3319,6 +3324,7 @@ module QtQuick.Controls.Material
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	type QtQuick/Controls/Material/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
 	type QtQuick/Controls/Material/Button.qml Button
@@ -3460,6 +3466,7 @@ module QtQuick.Controls.Universal
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	Universal QtQuick.Controls.Universal.Universal
 	type QtQuick/Controls/Universal/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
@@ -4180,6 +4187,7 @@ module QtQuick.Templates
 	ToolButton QtQuick.Templates.ToolButton
 	ToolSeparator QtQuick.Templates.ToolSeparator
 	ToolTip QtQuick.Templates.ToolTip
+	Tumbler QtQuick.Templates.Tumbler
 	type QtQuick.Templates.AbstractButton AbstractButton
 		prototype QtQuick.Templates.Control named
 		enum Display IconOnly=0 TextOnly=1 TextBesideIcon=2 TextUnderIcon=3
@@ -5272,6 +5280,29 @@ module QtQuick.Templates
 		signal timeoutChanged
 		method show
 		method hide
+	type QtQuick.Templates.Tumbler Tumbler
+		prototype QtQuick.Templates.Control named
+		attached QtQuick.Templates.TumblerAttached
+		enum PositionMode Beginning=0 Center=1 End=2 Visible=3 Contain=4 SnapPosition=5
+		prop model QtQml.var named
+		prop count QtQml.int named readonly
+		prop currentIndex QtQml.int named
+		prop currentItem QtQml.QtObject named pointer readonly
+		prop delegate QtQml.Component named pointer
+		prop visibleItemCount QtQml.int named
+		prop wrap QtQml.bool named reset
+		prop moving QtQml.bool named readonly
+		prop flickDeceleration QtQml.real named reset
+		signal modelChanged
+		signal countChanged
+		signal currentIndexChanged
+		signal currentItemChanged
+		signal delegateChanged
+		signal visibleItemCountChanged
+		signal wrapChanged
+		signal movingChanged
+		signal flickDecelerationChanged
+		method positionViewAtIndex
 	type QtQuick.Templates.ButtonIcon ButtonIcon
 		is uncreatable
 		prop name QtQml.string named
@@ -5481,6 +5512,12 @@ module QtQuick.Templates
 		signal toolTipChanged
 		method show
 		method hide
+	type QtQuick.Templates.TumblerAttached TumblerAttached
+		is uncreatable
+		prop tumbler QtQml.QtObject named pointer readonly
+		prop displacement QtQml.real named readonly
+		signal tumblerChanged
+		signal displacementChanged
 
 module QtQuick.Window
 	import QtQuick

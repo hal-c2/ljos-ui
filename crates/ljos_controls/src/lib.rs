@@ -55,6 +55,7 @@ mod text_control;
 mod text_field;
 mod ticker;
 mod tooltip;
+mod tumbler;
 mod util;
 mod value_controls;
 mod window;
@@ -93,6 +94,7 @@ pub use tab_bar::{TabBar, TabBarAttached, TabButton};
 pub use text_area::TextArea;
 pub use text_field::TextField;
 pub use tooltip::{ToolTip, ToolTipAttached};
+pub use tumbler::{Tumbler, TumblerAttached};
 pub use util::CATEGORY;
 pub use window::{
     Application, ApplicationState, ApplicationWindow, CloseEvent, FRAMELESS, KIND_MASK, Modality,
