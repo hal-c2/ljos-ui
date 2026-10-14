@@ -184,43 +184,117 @@ and the spelling before treating them as gaps.
 
 ## 6. Bridging native state from Rust
 
-Ljós has no `QQmlPropertyMap` equivalent. The supported ways to expose
-Rust state to QML are native types and native list models, from
-`ljos_engine`.
-
-A native type is a Rust struct with `#[derive(QmlObject)]` (this is the
-engine's own documented example):
+Write the native side against the `ljos` facade alone —
+`ljos::prelude` for the types, `ljos::App` to run — not against the
+engine crates behind it. What the prelude does not re-export may
+change without notice. One line belongs at the root of a crate that
+derives native types while depending on the facade alone, so the
+paths the derive generates resolve:
 
 ```rust
-use ljos_engine::{Engine, QmlObject, qml_impl};
+pub use ljos::ljos_engine;
+```
+
+Every code block in this section is compiled on every test run: the
+`Counter` is the doctest on the `ljos` crate's front page, and the
+rest is `crates/ljos/examples/counter.rs` and the `App` doctests.
+
+A native type is a Rust struct with `#[derive(QmlObject)]`. Fields
+are properties (`#[qml(notify)]` gives the change signal), and a
+`#[qml_impl]` block adds signals and invokable methods:
+
+```rust
+use ljos::prelude::*;
 
 #[derive(Default, QmlObject)]
 #[qml(module = "Example", name = "Counter")]
 pub struct Counter {
     #[qml(notify)]
-    count: i32,
+    pub count: i32,
 }
 
 #[qml_impl]
 impl Counter {
+    #[qml(signal)]
+    fn bumped();
+
     #[qml(invokable)]
-    fn increment(cx: &ljos_engine::Cx) -> Result<(), ljos_engine::EngineError> {
+    fn increment(cx: &Cx) -> Result<(), EngineError> {
         let n = cx.get(Counter::COUNT)?;
         cx.set(Counter::COUNT, n + 1)
     }
 }
 
-let engine = Engine::new();
-engine.register_module(ljos_engine::module!("Example" 1.0 => [Counter]));
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("Example" 1.0 => [Counter]));
+}
+
+let engine = ljos::engine();
+register(&engine);
+let counter = engine.create_by_name("Example", "Counter", None).unwrap();
+engine.invoke_by_name(counter, "increment", &[]).unwrap();
+assert_eq!(engine.get(counter, Counter::COUNT), Ok(1));
 ```
 
-An object created from such a type can be put in scope by name with
-`Engine::set_context_property(engine.root_context(), name, value)`,
-the counterpart of Qt's `setContextProperty`.
+`register` is the one seam a native module sits at: a host calls it
+on its Engine, and nothing else about the module needs to be
+public. Methods read and write through the `Cx` they are handed and
+the typed handles the derive generates (`Counter::COUNT`), which is
+also how Rust code outside reads a property back
+(`engine.get(obj, Counter::COUNT)`).
+
+An application runs through the `App` builder, which registers each
+module, hands the Engine its compiled components and creates the
+root. Components are compiled ahead of time (a `build.rs`, as the
+toolkit's own styles do), so a shipped application links no QML
+parser; compiling a directory at start-up exists for development
+behind the non-default `dev-qml` feature (`App::qml_dir`,
+`ljos::dev::compile_dir`) and is never in a shipped binary:
+
+```rust
+ljos::App::new("Hello")
+    .size(640.0, 420.0)
+    .register(my_module::register)
+    .source(components())
+    .root("Main")
+    .run()
+    .unwrap();
+```
+
+What the builder does not cover stays reachable: `App::run_with`
+runs the same start and then hands over the shell's full `Setup`
+(the Engine, the `UiHandle` worker threads post through, the
+message handler), and `ljos::run(config, setup)` is that shell loop
+without the builder. `App::build` makes the Engine and root
+headlessly, which is how an application tests its own start.
+
+State the QML reads before it has items of its own goes in by name,
+the counterpart of `setContextProperty` — directly with
+`engine.set_context_property(engine.root_context(), name, value)`,
+or through the builder, where the value is made after the modules
+are registered so it can be an object of a native type:
+
+```rust
+let app = ljos::App::new("Hello")
+    .register(backend::register)
+    .context_property("backend", |engine| {
+        Value::Object(engine.create_by_name("Example", "Backend", None).unwrap())
+    });
+```
+
+One limit to know: an application's native types are known to the
+engine at run time but do not reach the compiler's table of types
+yet, so QML cannot `import` them today — it uses created objects
+(context properties, list models) instead. For the same reason
+`check --port` will not know them from a table; give the ones your
+QML uses `supported` ledger rows (section 3). Where the shape is
+not known ahead of time at all, `PropertyMap` (in the prelude) is
+the `QQmlPropertyMap` counterpart: per-key reactive properties on
+an object Rust creates.
 
 For list data — Qt's `QAbstractListModel` role — implement
-`ljos_engine::QmlListModel` (roles plus the row-signal set) and attach
-it to an object with `Engine::set_list_model`, which returns the
+`QmlListModel` (roles plus the row-signal set) and attach it to an
+object with `Engine::set_list_model`, which returns the
 `ModelSignals` the model reports its changes with
 (`rows_about_to_be_inserted`, `rows_inserted`, `rows_removed`,
 `rows_moved`, `data_changed`, `roles_changed`, `model_reset`):
@@ -228,8 +302,9 @@ it to an object with `Engine::set_list_model`, which returns the
 ```rust
 use std::cell::RefCell;
 use std::rc::Rc;
-use ljos_engine::{Atom, QmlListModel, QtObject, Value};
+use ljos::prelude::*;
 
+#[derive(Debug, Default)]
 struct Titles {
     rows: RefCell<Vec<String>>,
 }
@@ -251,25 +326,36 @@ impl QmlListModel for Titles {
     }
 }
 
+let titles = Rc::new(Titles::default());
 let holder = engine.create_native(QtObject::default(), None).unwrap();
 let signals = engine
-    .set_list_model(holder, Rc::new(Titles { rows: RefCell::new(vec![]) }))
+    .set_list_model(holder, Rc::clone(&titles) as Rc<dyn QmlListModel>)
     .unwrap();
+let at = titles.rows.borrow().len();
+signals.rows_about_to_be_inserted(&engine, at, 1);
+titles.rows.borrow_mut().push("First".to_owned());
+signals.rows_inserted(&engine, at, 1);
 ```
 
-Giving `holder` as the `model` of a `ListView`, `GridView`, `Repeater`
-or `Instantiator` then shows its rows; after changing the rows, say so
-through `signals` (for example `signals.rows_inserted(&engine, first,
-count)`) and the views follow. `QmlListModel::set_data` defaults to
+Giving `holder` as the `model` of a `ListView`, `GridView`,
+`Repeater` or `Instantiator` then shows its rows, and the views
+follow what `signals` reports. `QmlListModel::set_data` defaults to
 refusing writes from delegates, and `row_key` defaults to the row's
-position — override it with a stable key if rows move. The lower-level
-`ItemModel` trait and `Engine::set_object_model` are what views read
-through; `set_list_model` adapts a `QmlListModel` to them.
+position — override it with a stable key if rows move. The
+lower-level `ItemModel` trait and `Engine::set_object_model` are
+what views read through; `set_list_model` adapts a `QmlListModel`
+to them.
 
-Native types the application registers are known to the engine at run
-time; they do not reach the compiler's table of types yet, so
-`check --port` will not know them from a table — give the ones your
-QML imports `supported` ledger rows (section 3).
+Network access is a host service: `Platform::of(engine).fetch(url,
+done)` (`Platform`, `Fetcher` and `FetchError` are in the prelude)
+fetches on a thread of its own and runs `done` on the Engine thread
+— say, for an XML feed behind a list model. An application run
+through `App` or `ljos::run` already has the desktop shell's
+HTTPS fetcher (redirects followed, a 30 s limit on the whole fetch,
+replies capped at 16 MiB, failures as `FetchError::Failed` naming
+the status or cause). A headless host — a test, a renderer —
+installs its own with `set_fetcher`, or keeps the default under
+which every fetch fails with `FetchError::NoNetwork`.
 
 ## 7. Running and testing the port
 
@@ -280,13 +366,18 @@ QML imports `supported` ledger rows (section 3).
   applies every save to the running application. `--mcp[=<CAPS>]`
   serves the running application to MCP clients (capabilities
   `inspect`, `input`, `mutate`, `eval`, each granted by name;
-  `--mcp` alone means `inspect`).
+  `--mcp` alone means `inspect`). This runs QML on its own; an
+  application with native types runs its own binary through
+  `ljos::App` (section 6), whose `run_with` keeps the same shell
+  setup `ljos run` builds on.
 - `ljos test [PATHS]...` runs the `TestCase`s of `tst_*.qml` files on a
   virtual clock, printing results as Qt's QML test runner does; the
   exit status is the number of failed tests. `--filter <NAME>` runs
   only a named case, function or data tag (it may be given more than
   once), and `--import <DIR>` adds a directory of modules only the
-  tests import.
+  tests import. Native types are tested in Rust through the same
+  interface QML uses them through: `ljos::App::build` headlessly,
+  or `ljos::engine()` with the module's `register` called on it.
 - `ljos mcp --project .` serves the authoring MCP server on stdio,
   read-only by default; its `api_status` tool gives the per-type answer
   behind every `check --port` verdict.
