@@ -8,7 +8,9 @@
 //!
 //! The ledger is not read unless `--ledger` names one: it is a seed that grows
 //! by hand, and a row in it that says a type is still in progress would flag
-//! every use of it. The tables of types are the default source of truth.
+//! every use of the type itself (a row names one type or one member exactly;
+//! it says nothing about the other). The tables of types are the default
+//! source of truth.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -396,5 +398,384 @@ fn plural(n: usize, word: &str) -> String {
         word.to_owned()
     } else {
         format!("{word}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ledger(text: &str) -> Ledger {
+        Ledger::parse(text).unwrap()
+    }
+
+    #[test]
+    fn no_ledger_type_and_member_ljos_has_are_have() {
+        assert_eq!(verdict(None, "QtQuick", "Rectangle", None), Verdict::Have);
+        assert_eq!(
+            verdict(None, "QtQuick", "Rectangle", Some("color")),
+            Verdict::Have
+        );
+    }
+
+    /// Only with Qt's table can a type Ljós lacks be had at all; the name
+    /// is found from the tables rather than fixed, as in `api`'s own tests,
+    /// so implementing the type does not break the test.
+    #[test]
+    fn no_ledger_type_only_qt_has_is_missing() {
+        if !qt_types::test_has_qt_table("no_ledger_type_only_qt_has_is_missing") {
+            return;
+        }
+        let missing = qt_types::modules()
+            .into_iter()
+            .filter(|m| !qt_types::module(m).is_some_and(|m| m.is_own))
+            .flat_map(|m| {
+                qt_types::native_types(m)
+                    .into_iter()
+                    .flatten()
+                    .map(move |t| (m, t))
+            })
+            .find(|(m, t)| {
+                api::derive(m, t, None).is_some_and(|r| r.status == ApiStatus::Unsupported)
+            });
+        let Some((module, name)) = missing else {
+            return; // Ljós has everything of Qt's: nothing to find.
+        };
+        assert_eq!(
+            verdict(None, module, name, None),
+            Verdict::Missing(api::NOT_IN_TABLE.to_owned()),
+            "{module}.{name}"
+        );
+    }
+
+    /// A name no table has: with Qt's table it is a slip or the app's own;
+    /// without one it is counted missing with the table's absence said.
+    #[test]
+    fn no_ledger_name_neither_table_has_follows_the_qt_table() {
+        for v in [
+            verdict(None, "QtQuick", "ZzNoSuchType", None),
+            verdict(None, "QtQuick", "Rectangle", Some("zzNoSuchMember")),
+        ] {
+            if api::has_qt_table() {
+                assert_eq!(
+                    v,
+                    Verdict::Unknown(
+                        "in neither Ljós's table nor Qt's: a slip, or a name the app declares"
+                            .to_owned()
+                    )
+                );
+            } else {
+                assert_eq!(
+                    v,
+                    Verdict::Missing(format!(
+                        "{} (this build has no Qt table to confirm it)",
+                        api::NOT_IN_TABLE
+                    ))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ledger_supported_and_partial_are_have() {
+        let l = ledger(
+            "[[row]]\nmodule='QtQuick'\ntype='Wobble'\nkind='type'\nstatus='supported'\n\
+             [[row]]\nmodule='QtQuick'\ntype='Rectangle'\nmember='color'\nkind='property'\n\
+             status='partial'\n",
+        );
+        // The tables have no `Wobble` at all: the row alone makes it have.
+        assert_eq!(verdict(Some(&l), "QtQuick", "Wobble", None), Verdict::Have);
+        assert_eq!(
+            verdict(Some(&l), "QtQuick", "Rectangle", Some("color")),
+            Verdict::Have
+        );
+    }
+
+    #[test]
+    fn ledger_dropped_and_unsupported_are_missing_with_the_reason() {
+        let l = ledger(
+            "[[row]]\nmodule='QtQuick'\ntype='Rectangle'\nmember='color'\nkind='property'\n\
+             status='dropped'\nreason='use the palette'\nscenarios=['@api-rect-color']\n\
+             [[row]]\nmodule='QtQuick.Controls'\ntype='Calendar'\nkind='type'\n\
+             status='unsupported'\nreason='no calendar yet'\n",
+        );
+        assert_eq!(
+            verdict(Some(&l), "QtQuick", "Rectangle", Some("color")),
+            Verdict::Missing("use the palette".to_owned())
+        );
+        assert_eq!(
+            verdict(Some(&l), "QtQuick.Controls", "Calendar", None),
+            Verdict::Missing("no calendar yet".to_owned())
+        );
+    }
+
+    /// A ledger row is exact (`api::status` asks `Ledger::row`): a type
+    /// row says nothing of the type's members and a member row nothing of
+    /// the type or its other members; where there is no row the tables
+    /// answer. So a dropped member leaves its type `Have`, and a dropped
+    /// type leaves a member Ljós has `Have` unless the member has a row.
+    #[test]
+    fn ledger_rows_are_exact_neither_inherits() {
+        let member_only = ledger(
+            "[[row]]\nmodule='QtQuick'\ntype='Rectangle'\nmember='color'\nkind='property'\n\
+             status='dropped'\nreason='use the palette'\n",
+        );
+        assert_eq!(
+            verdict(Some(&member_only), "QtQuick", "Rectangle", Some("color")),
+            Verdict::Missing("use the palette".to_owned())
+        );
+        assert_eq!(
+            verdict(Some(&member_only), "QtQuick", "Rectangle", None),
+            Verdict::Have
+        );
+        assert_eq!(
+            verdict(Some(&member_only), "QtQuick", "Rectangle", Some("radius")),
+            Verdict::Have
+        );
+
+        let type_and_member = ledger(
+            "[[row]]\nmodule='QtQuick'\ntype='Rectangle'\nkind='type'\nstatus='dropped'\n\
+             reason='the type goes'\n\
+             [[row]]\nmodule='QtQuick'\ntype='Rectangle'\nmember='color'\nkind='property'\n\
+             status='supported'\n",
+        );
+        assert_eq!(
+            verdict(Some(&type_and_member), "QtQuick", "Rectangle", None),
+            Verdict::Missing("the type goes".to_owned())
+        );
+        // The member's own row answers a use of the member, not the type row.
+        assert_eq!(
+            verdict(
+                Some(&type_and_member),
+                "QtQuick",
+                "Rectangle",
+                Some("color")
+            ),
+            Verdict::Have
+        );
+        // No row for `radius`: the tables answer, the type row does not taint it.
+        assert_eq!(
+            verdict(
+                Some(&type_and_member),
+                "QtQuick",
+                "Rectangle",
+                Some("radius")
+            ),
+            Verdict::Have
+        );
+    }
+
+    fn item(kind: MemberKind, uses: usize, files: &[&str], verdict: Verdict) -> Item {
+        Item {
+            kind,
+            uses,
+            files: files.iter().map(|f| (*f).to_owned()).collect(),
+            verdict,
+        }
+    }
+
+    fn sample_report() -> Report {
+        let key = |m: &str, t: &str, member: Option<&str>| -> Key {
+            (m.to_owned(), t.to_owned(), member.map(str::to_owned))
+        };
+        Report {
+            files: 3,
+            unparsed: vec!["Bad.qml".to_owned()],
+            items: [
+                (
+                    key("QtQuick", "Rectangle", None),
+                    item(MemberKind::Type, 2, &["a.qml"], Verdict::Have),
+                ),
+                (
+                    key("QtQuick", "Text", Some("renderType")),
+                    item(
+                        MemberKind::Property,
+                        3,
+                        &["a.qml", "b.qml"],
+                        Verdict::Missing("not in Ljós's type table".to_owned()),
+                    ),
+                ),
+                (
+                    key("QtQuick.Controls", "Calendar", None),
+                    item(
+                        MemberKind::Type,
+                        5,
+                        &["b.qml"],
+                        Verdict::Missing("no calendar".to_owned()),
+                    ),
+                ),
+                (
+                    key("QtQuick.Controls", "MonthGrid", None),
+                    item(
+                        MemberKind::Type,
+                        4,
+                        &["b.qml"],
+                        Verdict::Missing("no month grid".to_owned()),
+                    ),
+                ),
+                (
+                    key("QtQuick.Controls", "DayOfWeekRow", None),
+                    item(
+                        MemberKind::Type,
+                        1,
+                        &["c.qml"],
+                        Verdict::Missing("no day row".to_owned()),
+                    ),
+                ),
+                (
+                    key("QtQuick.Controls", "Button", Some("text")),
+                    item(
+                        MemberKind::Property,
+                        1,
+                        &["c.qml"],
+                        Verdict::Unknown("unplaced slip".to_owned()),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    #[test]
+    fn text_counts_module_rows_and_order() {
+        let report = sample_report();
+        let text = report.text(None);
+        assert!(
+            text.starts_with("3 files, 16 uses of 4 types and 2 members\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 files did not parse, so what they use is not counted:\n  Bad.qml\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Ljós has 1, lacks 4, cannot place 1\n"),
+            "{text}"
+        );
+        // Per-module rows: the module with the most missing uses is first.
+        let rows = report.modules();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].module, "QtQuick.Controls");
+        assert_eq!(
+            (
+                rows[0].have,
+                rows[0].missing,
+                rows[0].unknown,
+                rows[0].missing_uses
+            ),
+            (0, 3, 1, 10)
+        );
+        assert_eq!(rows[1].module, "QtQuick");
+        assert_eq!(
+            (
+                rows[1].have,
+                rows[1].missing,
+                rows[1].unknown,
+                rows[1].missing_uses
+            ),
+            (1, 1, 0, 3)
+        );
+        // Detail: most used first, with its reason and file count.
+        let cal = text.find("Calendar").unwrap();
+        let month = text.find("MonthGrid").unwrap();
+        let day = text.find("DayOfWeekRow").unwrap();
+        assert!(cal < month && month < day, "{text}");
+        assert!(text.contains("5 uses in 1 file  no calendar"), "{text}");
+        assert!(
+            text.contains("Text.renderType") && text.contains("3 uses in 2 files"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nunknown\n") && text.contains("Button.text"),
+            "{text}"
+        );
+        // What Ljós has is counted, never listed.
+        assert!(!text.contains("Rectangle"), "{text}");
+        assert!(!text.contains("... and"), "{text}");
+    }
+
+    #[test]
+    fn text_limit_truncates_per_module() {
+        let report = sample_report();
+        let one = report.text(Some(1));
+        assert!(one.contains("Calendar"), "{one}");
+        assert!(!one.contains("MonthGrid"), "{one}");
+        assert!(one.contains("  ... and 2 more\n"), "{one}");
+        // The one missing item of the other module still shows.
+        assert!(one.contains("Text.renderType"), "{one}");
+
+        let two = report.text(Some(2));
+        assert!(
+            two.contains("MonthGrid") && !two.contains("DayOfWeekRow"),
+            "{two}"
+        );
+        assert!(two.contains("  ... and 1 more\n"), "{two}");
+    }
+
+    #[test]
+    fn json_shape() {
+        let v = sample_report().to_json();
+        assert_eq!(v["files"], json!(3));
+        assert_eq!(v["unparsed"], json!(["Bad.qml"]));
+        assert_eq!(v["supported"], json!(1));
+        assert_eq!(v["missing"], json!(4));
+        assert_eq!(v["unknown"], json!(1));
+        assert_eq!(v["uses"], json!(16));
+        let modules = v["modules"].as_array().unwrap();
+        assert_eq!(modules.len(), 2);
+        let controls = &modules[0];
+        assert_eq!(controls["module"], json!("QtQuick.Controls"));
+        assert_eq!(controls["supported"], json!(0));
+        assert_eq!(controls["missing"], json!(3));
+        assert_eq!(controls["unknown"], json!(1));
+        assert_eq!(controls["missing_uses"], json!(10));
+        let missing = controls["missing_items"].as_array().unwrap();
+        assert_eq!(missing.len(), 3);
+        assert_eq!(
+            missing[0],
+            json!({
+                "type": "Calendar",
+                "member": null,
+                "kind": "type",
+                "uses": 5,
+                "files": 1,
+                "in": ["b.qml"],
+                "reason": "no calendar",
+            })
+        );
+        let unknown = controls["unknown_items"].as_array().unwrap();
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0]["type"], json!("Button"));
+        assert_eq!(unknown[0]["member"], json!("text"));
+        assert_eq!(unknown[0]["kind"], json!("property"));
+        assert_eq!(unknown[0]["reason"], json!("unplaced slip"));
+
+        let quick = &modules[1];
+        assert_eq!(quick["module"], json!("QtQuick"));
+        let qmissing = quick["missing_items"].as_array().unwrap();
+        assert_eq!(qmissing.len(), 1);
+        assert_eq!(qmissing[0]["type"], json!("Text"));
+        assert_eq!(qmissing[0]["member"], json!("renderType"));
+        assert_eq!(qmissing[0]["files"], json!(2));
+        assert_eq!(qmissing[0]["in"], json!(["a.qml", "b.qml"]));
+        // Supported items appear in the counts only, in no list.
+        assert!(!v.to_string().contains("Rectangle"), "{v}");
+    }
+
+    #[test]
+    fn empty_report() {
+        let report = Report::default();
+        let text = report.text(None);
+        assert!(
+            text.starts_with(
+                "0 files, 0 uses of 0 types and 0 members\nLjós has 0, lacks 0, cannot place 0\n"
+            ),
+            "{text}"
+        );
+        let v = report.to_json();
+        assert_eq!(v["files"], json!(0));
+        assert_eq!(v["modules"], json!([]));
+        assert_eq!(v["uses"], json!(0));
     }
 }

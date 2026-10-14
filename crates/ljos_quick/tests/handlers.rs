@@ -5,6 +5,7 @@
 mod common;
 
 use common::*;
+use ljos_platform::{ExternalDrag, external_drag};
 use ljos_quick::{
     DragData, PinchGesture, PinchPhase, PlatformDrag, PlatformDragKind, platform_drag,
 };
@@ -164,6 +165,88 @@ fn files_are_not_offered_to_an_area_that_wants_text() {
     platform_drag(&e, &drag, &PlatformDragKind::Move(p));
     assert_eq!(platform_drag(&e, &drag, &PlatformDragKind::Drop(p)), 0);
     assert_eq!(log(&e, root), "");
+}
+
+/// The platform seam (`ljos_platform::external_drag`): DropArea installs
+/// itself as the drop handler, so a host's file drags reach it with the
+/// same log the platform drags above give.
+#[test]
+fn external_file_drags_reach_the_drop_area() {
+    let e = engine();
+    let root = load(&e, DROP);
+    let area = find(&e, root, "files");
+    let paths = || {
+        vec![
+            std::path::PathBuf::from("/data/a.txt"),
+            std::path::PathBuf::from("/data/b c.png"),
+        ]
+    };
+
+    // Came in where the host knows, moved, and was let go where it was
+    // last seen (the drop itself carries no position).
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Entered {
+            files: paths(),
+            at: Some((10.0, 20.0)),
+        }
+    ));
+    assert_eq!(log(&e, root), "entered(10,20 true true 1) ");
+    assert_eq!(
+        get(&e, area, "containsDrag"),
+        ljos_engine::Value::Bool(true)
+    );
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Moved { at: (30.0, 20.0) }
+    ));
+    assert!(external_drag(
+        &e,
+        &ExternalDrag::Dropped {
+            files: paths(),
+            at: None,
+        }
+    ));
+    assert_eq!(
+        log(&e, root),
+        "entered(10,20 true true 1) pos(30,20) \
+         dropped(2 file:///data/a.txt text/uri-list) "
+    );
+    assert_eq!(
+        get(&e, area, "containsDrag"),
+        ljos_engine::Value::Bool(false)
+    );
+
+    // A drag that comes in without a position is heard when it moves,
+    // and leaving the window leaves the area.
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Entered {
+            files: paths(),
+            at: None,
+        }
+    ));
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Moved { at: (10.0, 10.0) }
+    ));
+    assert!(!external_drag(&e, &ExternalDrag::Left));
+    assert_eq!(
+        log(&e, root),
+        "entered(10,20 true true 1) pos(30,20) \
+         dropped(2 file:///data/a.txt text/uri-list) \
+         entered(10,10 true true 1) exited "
+    );
+
+    // A drop the host reports only at the end, over an area that wants
+    // text, is not taken.
+    assert!(!external_drag(
+        &e,
+        &ExternalDrag::Dropped {
+            files: paths(),
+            at: Some((150.0, 10.0)),
+        }
+    ));
 }
 
 #[test]

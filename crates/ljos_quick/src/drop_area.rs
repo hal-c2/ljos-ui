@@ -683,7 +683,78 @@ pub fn platform_drag(engine: &Engine, drag: &PlatformDrag, kind: &PlatformDragKi
     }
 }
 
-/// Registers `DropArea` and `DragEvent` with module `QtQuick`.
+/// Registers `DropArea` and `DragEvent` with module `QtQuick`, and
+/// installs the drag-and-drop of the items as the platform's handler of
+/// drags from other applications (`ljos_platform::drop`): a host turns its
+/// window system's file events into `ExternalDrag`s, and they reach the
+/// `DropArea`s as a [`platform_drag`], the same seam the egui view feeds
+/// from its own file events. Each of the two paths is the only one for
+/// its host; neither calls the other.
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [DropArea, DragEvent]));
+
+    // One drag at a time, as the egui view keeps one: the files it
+    // carries are said once (when it comes in, or only when it is let
+    // go), so the drag and where it was last seen are kept here for the
+    // events that have neither.
+    let current: RefCell<Option<PlatformDrag>> = RefCell::new(None);
+    let last: Cell<Option<kurbo::Point>> = Cell::new(None);
+    ljos_platform::Platform::of(engine).set_drop_handler(move |engine, drag| {
+        use ljos_platform::ExternalDrag;
+        let point = |at: (f64, f64)| kurbo::Point::new(at.0, at.1);
+        match drag {
+            ExternalDrag::Entered { files, at } => {
+                // Cloned out: no borrow is held while the areas are told.
+                let drag = current
+                    .borrow_mut()
+                    .get_or_insert_with(|| {
+                        PlatformDrag::new(DragData::files(files.iter().cloned()))
+                    })
+                    .clone();
+                // Where it is is not always known when it comes in; the
+                // areas hear of it when a position is.
+                if let Some(at) = at {
+                    let pos = point(*at);
+                    last.set(Some(pos));
+                    platform_drag(engine, &drag, &PlatformDragKind::Move(pos));
+                }
+                false
+            }
+            ExternalDrag::Moved { at } => {
+                let Some(drag) = current.borrow().clone() else {
+                    return false; // A move of a drag that never came in.
+                };
+                let pos = point(*at);
+                last.set(Some(pos));
+                platform_drag(engine, &drag, &PlatformDragKind::Move(pos));
+                false
+            }
+            ExternalDrag::Left => {
+                last.set(None);
+                if let Some(drag) = current.borrow_mut().take() {
+                    platform_drag(engine, &drag, &PlatformDragKind::Leave);
+                }
+                false
+            }
+            ExternalDrag::Dropped { files, at } => {
+                // Let go where it was last seen when the drop itself has
+                // no position, as the egui view drops them.
+                let drag = current
+                    .borrow_mut()
+                    .take()
+                    .unwrap_or_else(|| PlatformDrag::new(DragData::files(files.iter().cloned())));
+                let at = at.map(point).or_else(|| last.take());
+                last.set(None);
+                match at {
+                    Some(pos) => {
+                        platform_drag(engine, &drag, &PlatformDragKind::Drop(pos)) != IGNORE_ACTION
+                    }
+                    None => {
+                        platform_drag(engine, &drag, &PlatformDragKind::Leave);
+                        false
+                    }
+                }
+            }
+        }
+    });
 }
