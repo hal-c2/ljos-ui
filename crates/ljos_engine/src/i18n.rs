@@ -206,15 +206,19 @@ impl Engine {
 
     /// The members of `Locale` that M1 has (ARCHITECTURE.md §15): the name,
     /// the signs numbers are written with, and the direction.
-    fn locale_object(&self, name: Option<&str>) -> JsValue {
+    fn locale_info(&self, name: Option<&str>) -> LocaleInfo {
         let state = self.i18n();
-        let info = match name {
+        match name {
             Some(name) => LocaleInfo::new(name),
             None => {
                 self.i18n_track(&state.locale);
                 state.i18n.borrow().locale().clone()
             }
-        };
+        }
+    }
+
+    fn locale_object(&self, name: Option<&str>) -> JsValue {
+        let info = self.locale_info(name);
         let s = |v: String| JsValue::String(v);
         JsValue::Map(vec![
             ("name".into(), s(info.name().to_owned())),
@@ -223,6 +227,11 @@ impl Engine {
             ("zeroDigit".into(), s(info.zero_digit())),
             ("negativeSign".into(), s(info.negative_sign())),
             ("positiveSign".into(), s("+".to_owned())),
+            // `Qt.DayOfWeek`: Sunday is 0.
+            (
+                "firstDayOfWeek".into(),
+                JsValue::Number(f64::from(info.first_day_of_week() % 7)),
+            ),
             (
                 "textDirection".into(),
                 JsValue::Number(f64::from(u8::from(info.is_right_to_left()))),
@@ -246,7 +255,7 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 8] = [
+        let functions: [(&str, HostFn); 9] = [
             (
                 "__ljos_tr",
                 host(|e, a| {
@@ -324,6 +333,34 @@ impl Engine {
                     }))
                 }),
             ),
+            (
+                "__ljos_localeName",
+                // (locale, month?, index, width): a day (1 is Monday) or a
+                // month (0 is January) written by the locale.
+                host(|e, a| {
+                    let name = match a.first() {
+                        Some(JsValue::String(name)) => Some(name.as_str()),
+                        _ => None,
+                    };
+                    let info = e.locale_info(name);
+                    let number = |v: Option<&JsValue>| match v {
+                        Some(JsValue::Number(n)) if n.is_finite() => *n as i64,
+                        _ => -1,
+                    };
+                    let width = match number(a.get(3)) {
+                        0 => ljos_i18n::calendar::NameWidth::Long,
+                        2 => ljos_i18n::calendar::NameWidth::Narrow,
+                        _ => ljos_i18n::calendar::NameWidth::Short,
+                    };
+                    let index = u8::try_from(number(a.get(2))).unwrap_or(u8::MAX);
+                    let text = if matches!(a.get(1), Some(JsValue::Bool(true))) {
+                        info.month_name(index, width)
+                    } else {
+                        info.day_name(index, width)
+                    };
+                    Ok(JsValue::String(text))
+                }),
+            ),
         ];
         let err = |e: JsFault| EngineError::Js(e.to_string());
         for (name, f) in functions {
@@ -343,6 +380,7 @@ const PRELUDE: &str = r##"
   const tr = g.__ljos_tr, trId = g.__ljos_trId, fill = g.__ljos_arg, plainNumber = g.__ljos_argNumber;
   const uiLanguage = g.__ljos_uiLanguage, setUiLanguage = g.__ljos_setUiLanguage;
   const rightToLeft = g.__ljos_rightToLeft, hostLocale = g.__ljos_locale;
+  const localeName = g.__ljos_localeName;
   const hostLog = g.__ljos_log;
   const define = (o, k, value) => Object.defineProperty(o, k, { value, writable: true, configurable: true });
 
@@ -406,7 +444,15 @@ const PRELUDE: &str = r##"
   });
   define(Qt, "locale", function locale(name) {
     if (arguments.length > 1) throw new Error("Too many arguments");
-    return Object.freeze(hostLocale(name));
+    const o = hostLocale(name);
+    // Qt's Locale.LongFormat, ShortFormat and NarrowFormat are 0, 1 and 2.
+    const day = (d, format) => localeName(name, false, d, format === undefined ? 0 : format);
+    const month = (m, format) => localeName(name, true, m, format === undefined ? 0 : format);
+    define(o, "dayName", day);
+    define(o, "standaloneDayName", day);
+    define(o, "monthName", month);
+    define(o, "standaloneMonthName", month);
+    return Object.freeze(o);
   });
   if (Qt.application === undefined) define(Qt, "application", {});
   Object.defineProperty(Qt.application, "layoutDirection", {

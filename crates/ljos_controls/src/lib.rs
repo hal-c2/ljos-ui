@@ -21,6 +21,7 @@ mod action;
 mod action_group;
 mod bars;
 mod button;
+mod calendar;
 mod combobox;
 mod container;
 mod containers;
@@ -68,6 +69,7 @@ pub use action::Action;
 pub use action_group::{ActionGroup, ActionGroupAttached};
 pub use bars::{BusyIndicator, ProgressBar, ToolSeparator};
 pub use button::{AbstractButton, Button, CheckBox, Icon, RadioButton, Switch, ToolButton};
+pub use calendar::{Calendar, CalendarModel, DayOfWeekRow, MonthGrid, WeekNumberColumn};
 pub use combobox::{ComboBox, ItemDelegate};
 pub use container::Container;
 pub use containers::{Frame, GroupBox, Page, Pane, ToolBar};
@@ -188,6 +190,7 @@ pub fn register(engine: &Engine) {
     spin_box::register(engine);
     value_controls::register(engine);
     container::register(engine);
+    calendar::register_all(engine);
 
     let (libraries, undecoded) = StyleLibrary::embedded();
     let mut styles = std::collections::HashMap::new();
@@ -219,6 +222,8 @@ pub fn register(engine: &Engine) {
             Action::static_meta(),
             ButtonGroup::static_meta(),
             Overlay::static_meta(),
+            Calendar::static_meta(),
+            CalendarModel::static_meta(),
         ] {
             engine.register_type(uri, Version::new(2, 15), MetaRef::Static(meta));
         }

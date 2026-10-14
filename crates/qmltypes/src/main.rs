@@ -438,7 +438,7 @@ fn files(sources: &BTreeMap<String, Source>, modules: &mut Modules) {
 
 /// The class a QML type of module `own` called `name` is built on: the type of
 /// that name in a module the qmldir depends on or imports, in the order it
-/// names them.
+/// names them, or `Abstract` and that name.
 fn base(modules: &Modules, own: &str, qmldir: &Qmldir, name: &str) -> Option<String> {
     let imports = qmldir
         .imports
@@ -449,7 +449,11 @@ fn base(modules: &Modules, own: &str, qmldir: &Qmldir, name: &str) -> Option<Str
         .iter()
         .chain(imports.map(|import| &import.module));
     uris.filter(|uri| *uri != own)
-        .find_map(|uri| export(modules, uri, name))
+        .find_map(|uri| {
+            // Templates export the calendar types as `AbstractMonthGrid`
+            // and so on, which their styles' files drop the prefix of.
+            export(modules, uri, name).or_else(|| export(modules, uri, &format!("Abstract{name}")))
+        })
         .map(str::to_string)
 }
 

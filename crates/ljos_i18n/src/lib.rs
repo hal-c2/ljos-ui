@@ -8,6 +8,7 @@
 //! - [`arg`][]: `String.prototype.arg`.
 
 pub mod arg;
+pub mod calendar;
 pub mod catalog;
 pub mod i18n;
 pub mod ljl;

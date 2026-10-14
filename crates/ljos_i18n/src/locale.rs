@@ -120,6 +120,12 @@ impl LocaleInfo {
         }
     }
 
+    /// The parsed locale; `None` is the `C` locale.
+    #[must_use]
+    pub(crate) fn icu(&self) -> Option<&Locale> {
+        self.locale.as_ref()
+    }
+
     /// `language_TERRITORY`, or `C`.
     #[must_use]
     pub fn name(&self) -> &str {

@@ -2975,11 +2975,14 @@ module QtQuick.Controls
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Calendar QtQuick.Controls.Calendar
+	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
@@ -2995,6 +2998,7 @@ module QtQuick.Controls
 	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
 	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
@@ -3025,6 +3029,20 @@ module QtQuick.Controls
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
+	type QtQuick.Controls.Calendar Calendar
+		is uncreatable
+		enum Month January=0 February=1 March=2 April=3 May=4 June=5 July=6 August=7 September=8 October=9 November=10 December=11
+	type QtQuick.Controls.CalendarModel CalendarModel
+		prop from QtQml.var named
+		prop to QtQml.var named
+		prop count QtQml.int named readonly
+		signal fromChanged
+		signal toChanged
+		signal countChanged
+		method monthAt
+		method yearAt
+		method indexOf
 
 module QtQuick.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
@@ -3034,11 +3052,14 @@ module QtQuick.Controls.Basic
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Calendar QtQuick.Controls.Calendar
+	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
@@ -3054,6 +3075,7 @@ module QtQuick.Controls.Basic
 	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
 	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
@@ -3084,6 +3106,7 @@ module QtQuick.Controls.Basic
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Basic/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
 	type QtQuick/Controls/Basic/BusyIndicator.qml BusyIndicator
@@ -3098,6 +3121,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.ComboBox named
 	type QtQuick/Controls/Basic/Control.qml Control
 		prototype QtQuick.Templates.Control named
+	type QtQuick/Controls/Basic/DayOfWeekRow.qml DayOfWeekRow
+		prototype QtQuick.Templates.AbstractDayOfWeekRow named
 	type QtQuick/Controls/Basic/DelayButton.qml DelayButton
 		prototype QtQuick.Templates.DelayButton named
 	type QtQuick/Controls/Basic/Dial.qml Dial
@@ -3128,6 +3153,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.MenuItem named
 	type QtQuick/Controls/Basic/MenuSeparator.qml MenuSeparator
 		prototype QtQuick.Templates.MenuSeparator named
+	type QtQuick/Controls/Basic/MonthGrid.qml MonthGrid
+		prototype QtQuick.Templates.AbstractMonthGrid named
 	type QtQuick/Controls/Basic/Page.qml Page
 		prototype QtQuick.Templates.Page named
 	type QtQuick/Controls/Basic/PageIndicator.qml PageIndicator
@@ -3184,6 +3211,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.ToolTip named
 	type QtQuick/Controls/Basic/Tumbler.qml Tumbler
 		prototype QtQuick.Templates.Tumbler named
+	type QtQuick/Controls/Basic/WeekNumberColumn.qml WeekNumberColumn
+		prototype QtQuick.Templates.AbstractWeekNumberColumn named
 
 module QtQuick.Controls.Fusion
 	AbstractButton QtQuick.Templates.AbstractButton
@@ -3193,11 +3222,14 @@ module QtQuick.Controls.Fusion
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Fusion/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Calendar QtQuick.Controls.Calendar
+	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Fusion/CheckBox.qml
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
@@ -3214,6 +3246,7 @@ module QtQuick.Controls.Fusion
 	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
 	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
@@ -3244,6 +3277,7 @@ module QtQuick.Controls.Fusion
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Fusion/Button.qml Button
 		prototype QtQuick.Templates.Button named
 	type QtQuick/Controls/Fusion/CheckBox.qml CheckBox
@@ -3274,11 +3308,14 @@ module QtQuick.Controls.Material
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Material/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Calendar QtQuick.Controls.Calendar
+	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Material/CheckBox.qml
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Material/Dialog.qml
@@ -3295,6 +3332,7 @@ module QtQuick.Controls.Material
 	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
 	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
@@ -3325,6 +3363,7 @@ module QtQuick.Controls.Material
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Material/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
 	type QtQuick/Controls/Material/Button.qml Button
@@ -3417,11 +3456,14 @@ module QtQuick.Controls.Universal
 	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Universal/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	Calendar QtQuick.Controls.Calendar
+	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick/Controls/Universal/CheckBox.qml
 	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Container QtQuick.Templates.Container
 	Control QtQuick/Controls/Basic/Control.qml
+	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dial QtQuick/Controls/Basic/Dial.qml
 	Dialog QtQuick/Controls/Universal/Dialog.qml
@@ -3437,6 +3479,7 @@ module QtQuick.Controls.Universal
 	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
 	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
@@ -3468,6 +3511,7 @@ module QtQuick.Controls.Universal
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	Universal QtQuick.Controls.Universal.Universal
+	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Universal/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
 	type QtQuick/Controls/Universal/Button.qml Button
@@ -4132,12 +4176,16 @@ module QtQuick.Shapes
 
 module QtQuick.Templates
 	AbstractButton QtQuick.Templates.AbstractButton
+	AbstractDayOfWeekRow QtQuick.Templates.AbstractDayOfWeekRow
+	AbstractMonthGrid QtQuick.Templates.AbstractMonthGrid
+	AbstractWeekNumberColumn QtQuick.Templates.AbstractWeekNumberColumn
 	Action QtQuick.Templates.Action
 	ActionGroup QtQuick.Templates.ActionGroup
 	ApplicationWindow QtQuick.Templates.ApplicationWindow
 	BusyIndicator QtQuick.Templates.BusyIndicator
 	Button QtQuick.Templates.Button
 	ButtonGroup QtQuick.Templates.ButtonGroup
+	CalendarModel QtQuick.Controls.CalendarModel
 	CheckBox QtQuick.Templates.CheckBox
 	CheckDelegate QtQuick.Templates.CheckDelegate
 	ComboBox QtQuick.Templates.ComboBox
@@ -4233,6 +4281,38 @@ module QtQuick.Templates
 		signal pressAndHold
 		method toggle
 		method click
+	type QtQuick.Templates.AbstractDayOfWeekRow AbstractDayOfWeekRow
+		prototype QtQuick.Templates.Control named
+		prop source QtQml.var named
+		prop delegate QtQml.Component named pointer
+		signal sourceChanged
+		signal delegateChanged
+	type QtQuick.Templates.AbstractMonthGrid AbstractMonthGrid
+		prototype QtQuick.Templates.Control named
+		prop month QtQml.int named
+		prop year QtQml.int named
+		prop source QtQml.var named
+		prop title QtQml.string named
+		prop delegate QtQml.Component named pointer
+		signal monthChanged
+		signal yearChanged
+		signal sourceChanged
+		signal titleChanged
+		signal delegateChanged
+		signal clicked date
+		signal pressed date
+		signal released date
+		signal pressAndHold date
+	type QtQuick.Templates.AbstractWeekNumberColumn AbstractWeekNumberColumn
+		prototype QtQuick.Templates.Control named
+		prop month QtQml.int named
+		prop year QtQml.int named
+		prop source QtQml.var named
+		prop delegate QtQml.Component named pointer
+		signal monthChanged
+		signal yearChanged
+		signal sourceChanged
+		signal delegateChanged
 	type QtQuick.Templates.Action Action
 		prototype QtQml.QtObject named
 		prop text QtQml.string named

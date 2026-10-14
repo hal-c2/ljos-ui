@@ -980,6 +980,30 @@ fn what_qt_says_of_a_type_ljos_has() {
 /// file on Qt and not here.
 const NOT_YET: &[(&str, &str)] = &[
     (
+        "QtQuick.Templates: Calendar",
+        "Qt's Templates make it a creatable type; here it is the enum holder of QtQuick.Controls alone",
+    ),
+    (
+        "QtQuick.Controls.Calendar",
+        "a singleton to Qt; here a type that only holds the enum, which is all a file reads of it",
+    ),
+    (
+        "QtQuick.Controls.Basic.Calendar",
+        "a singleton to Qt; here a type that only holds the enum, which is all a file reads of it",
+    ),
+    (
+        "QtQuick.Controls.Fusion.Calendar",
+        "a singleton to Qt; here a type that only holds the enum, which is all a file reads of it",
+    ),
+    (
+        "QtQuick.Controls.Material.Calendar",
+        "a singleton to Qt; here a type that only holds the enum, which is all a file reads of it",
+    ),
+    (
+        "QtQuick.Controls.Universal.Calendar",
+        "a singleton to Qt; here a type that only holds the enum, which is all a file reads of it",
+    ),
+    (
         "QtQuick.PointerDevice.uniqueId",
         "a string here; Qt's pointingDeviceUniqueId value type is not a Ljós value yet",
     ),
