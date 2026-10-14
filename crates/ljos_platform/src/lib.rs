@@ -45,7 +45,7 @@ pub use dialogs::{
 };
 pub use drop::{ExternalDrag, external_drag};
 pub use fakes::FakeDialogs;
-pub use fetch::{FetchError, Fetcher, NoNetwork, is_remote};
+pub use fetch::{FetchError, Fetcher, Method, NoNetwork, Request, Response, is_remote};
 pub use paths::{Location, PathEnv, StandardPaths, file_url, url_path};
 pub use permissions::{
     BluetoothPermission, CalendarPermission, CameraPermission, ContactsPermission, FakePermissions,

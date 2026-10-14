@@ -18,7 +18,7 @@ use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
 use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
 use crate::drop::ExternalDrag;
-use crate::fetch::{FetchError, Fetcher, NoNetwork};
+use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
 use crate::paths::PathEnv;
 use crate::permissions::{PermissionService, UngatedPermissions};
 
@@ -143,11 +143,16 @@ pub struct Platform {
     application: RefCell<Option<(String, String)>>,
     drop_handler: RefCell<Option<DropHandler>>,
     fetches: RefCell<HashMap<u64, FetchDone>>,
+    // A parallel map to `fetches`, not one map of an enum: a request's
+    // answer is a Response where a fetch's is bytes, and each delivery
+    // stays statically typed instead of matching away a wrong variant.
+    requests: RefCell<HashMap<u64, RequestDone>>,
     next_fetch: Cell<u64>,
     resources: RefCell<HashMap<String, Rc<[u8]>>>,
 }
 
 type FetchDone = Box<dyn FnOnce(&Engine, Result<Vec<u8>, FetchError>)>;
+type RequestDone = Box<dyn FnOnce(&Engine, Result<Response, FetchError>)>;
 
 impl std::fmt::Debug for Platform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -180,6 +185,7 @@ impl Default for Platform {
             application: RefCell::new(None),
             drop_handler: RefCell::new(None),
             fetches: RefCell::new(HashMap::new()),
+            requests: RefCell::new(HashMap::new()),
             next_fetch: Cell::new(0),
             resources: RefCell::new(HashMap::new()),
         }
@@ -433,6 +439,53 @@ impl Platform {
         }
     }
 
+    /// Sends `request` on a thread of its own; `done` runs on the Engine
+    /// thread with the response or why there is none. [`Platform::fetch`]
+    /// for a plain read; this where the method, headers, body or status
+    /// matter.
+    pub fn request(
+        &self,
+        request: Request,
+        done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
+    ) {
+        let id = self.next_fetch.get();
+        self.next_fetch.set(id + 1);
+        self.requests.borrow_mut().insert(id, Box::new(done));
+        let reply = self.expect();
+        let fetcher = Arc::clone(&self.fetcher.borrow());
+        let spawned = std::thread::Builder::new()
+            .name("ljos-request".to_owned())
+            .spawn(move || {
+                let result = fetcher.request(&request);
+                reply.send(move |e| {
+                    let done = Platform::of(e).requests.borrow_mut().remove(&id);
+                    if let Some(done) = done {
+                        done(e, result);
+                    }
+                });
+            });
+        if let Err(err) = spawned {
+            // The Reply went down with the closure, which counts it.
+            let failed = FetchError::Failed(format!("no thread to fetch with: {err}"));
+            if let Some(done) = self.requests.borrow_mut().remove(&id) {
+                self.fail_request_later(done, failed);
+            }
+        }
+    }
+
+    fn fail_request_later(&self, done: RequestDone, error: FetchError) {
+        // Not now: whoever asked is still in the middle of asking.
+        let id = self.next_fetch.get();
+        self.next_fetch.set(id + 1);
+        self.requests.borrow_mut().insert(id, done);
+        self.expect().send(move |e| {
+            let done = Platform::of(e).requests.borrow_mut().remove(&id);
+            if let Some(done) = done {
+                done(e, Err(error));
+            }
+        });
+    }
+
     fn fail_later(&self, done: FetchDone, error: FetchError) {
         // Not now: whoever asked is still in the middle of asking.
         let id = self.next_fetch.get();
@@ -458,4 +511,71 @@ pub(crate) fn item_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
         at = engine.owner(o);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+    use crate::fetch::Method;
+
+    /// Echoes what it was asked, as a 201, without a network.
+    struct Echo;
+
+    impl Fetcher for Echo {
+        fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+            Ok(url.as_bytes().to_vec())
+        }
+
+        fn request(&self, request: &Request) -> Result<Response, FetchError> {
+            Ok(Response {
+                status: 201,
+                headers: vec![("x-method".to_owned(), request.method.to_string())],
+                body: request.body.clone(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_request_is_delivered_on_the_engine_thread() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        platform.set_fetcher(Arc::new(Echo));
+        type Delivered = Rc<RefCell<Option<Result<Response, FetchError>>>>;
+        let got: Delivered = Rc::new(RefCell::new(None));
+        let put = Rc::clone(&got);
+        platform.request(
+            Request::new(Method::Post, "http://127.0.0.1/x").json("{}"),
+            move |_, result| *put.borrow_mut() = Some(result),
+        );
+        platform.finish(&engine);
+        let response = got.borrow().as_ref().unwrap().as_ref().unwrap().clone();
+        assert_eq!(response.status, 201);
+        assert!(response.ok());
+        assert_eq!(response.header("X-Method"), Some("POST"));
+        assert_eq!(response.text(), "{}");
+        assert_eq!(platform.pending(), 0);
+    }
+
+    #[test]
+    fn a_failed_request_is_delivered_too() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        // The default fetcher is NoNetwork.
+        type Delivered = Rc<RefCell<Option<Result<Response, FetchError>>>>;
+        let got: Delivered = Rc::new(RefCell::new(None));
+        let put = Rc::clone(&got);
+        platform.request(
+            Request::new(Method::Delete, "http://127.0.0.1/x"),
+            move |_, result| {
+                *put.borrow_mut() = Some(result);
+            },
+        );
+        platform.finish(&engine);
+        assert_eq!(
+            got.borrow().as_ref().unwrap().as_ref().unwrap_err(),
+            &FetchError::NoNetwork("http://127.0.0.1/x".to_owned())
+        );
+    }
 }

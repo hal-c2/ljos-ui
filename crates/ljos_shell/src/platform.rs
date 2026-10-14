@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ljos_engine::Engine;
-use ljos_platform::{FetchError, Fetcher, Platform};
+use ljos_platform::{FetchError, Fetcher, Platform, Request, Response};
 
 /// Gives a desktop application the system's services. Only the shell's
 /// own loop does this: an application shown in another host (eframe, a
@@ -110,6 +110,76 @@ impl Fetcher for HttpFetcher {
         }
         Ok(bytes)
     }
+
+    fn request(&self, request: &Request) -> Result<Response, FetchError> {
+        let url = &request.url;
+        let method = request.method;
+        let failed = |why: String| FetchError::Failed(format!("{method} {url} failed: {why}"));
+        let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
+        if !matches!(scheme.as_deref(), Some("http" | "https")) {
+            return Err(FetchError::Failed(format!(
+                "cannot fetch {url}: only http and https URLs can be fetched"
+            )));
+        }
+        if request.body.len() as u64 > self.max_bytes {
+            return Err(failed(format!(
+                "the request body is larger than {} bytes",
+                self.max_bytes
+            )));
+        }
+        // The agent already runs with http_status_as_error(false), so a
+        // 4xx/5xx arrives here as a response: status is the caller's
+        // data, and only transport failures are errors.
+        let mut builder = ureq::http::Request::builder()
+            .method(method.to_string().as_str())
+            .uri(url.as_str());
+        for (name, value) in &request.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        // An empty body stays no body at all, so a plain GET or DELETE
+        // does not grow a Content-Length it never had.
+        let response = if request.body.is_empty() {
+            let built = builder.body(()).map_err(|e| failed(e.to_string()))?;
+            self.agent.run(built)
+        } else {
+            let built = builder
+                .body(request.body.as_slice())
+                .map_err(|e| failed(e.to_string()))?;
+            self.agent.run(built)
+        }
+        .map_err(|e| failed(e.to_string()))?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_owned(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect();
+        // One byte past the cap is read, to tell a reply of exactly
+        // the cap from a larger one cut at it.
+        let mut bytes = Vec::new();
+        response
+            .into_body()
+            .into_reader()
+            .take(self.max_bytes + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| failed(e.to_string()))?;
+        if bytes.len() as u64 > self.max_bytes {
+            return Err(failed(format!(
+                "the reply is larger than {} bytes",
+                self.max_bytes
+            )));
+        }
+        Ok(Response {
+            status,
+            headers,
+            body: bytes,
+        })
+    }
 }
 
 /// What Qt calls the window system: the name of its platform plugin.
@@ -169,6 +239,58 @@ mod tests {
                 Ok(_) => seen.push(byte[0]),
             }
         }
+    }
+
+    /// Reads one whole request, head and body, as text.
+    fn read_whole_request(stream: &mut TcpStream) -> String {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut seen = Vec::new();
+        let mut byte = [0u8; 1];
+        while !seen.ends_with(b"\r\n\r\n") {
+            match stream.read(&mut byte) {
+                Ok(0) | Err(_) => return String::from_utf8_lossy(&seen).into_owned(),
+                Ok(_) => seen.push(byte[0]),
+            }
+        }
+        let head = String::from_utf8_lossy(&seen).into_owned();
+        let length = head
+            .lines()
+            .find_map(|l| {
+                let (name, value) = l.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        let mut body = vec![0u8; length];
+        let mut read = 0;
+        while read < length {
+            match stream.read(&mut body[read..]) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => read += n,
+            }
+        }
+        format!("{head}{}", String::from_utf8_lossy(&body[..read]))
+    }
+
+    /// Like [`serve`], and keeps every request it was sent.
+    fn serve_capturing(
+        responses: Vec<String>,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/first", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let keep = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for response in responses {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let request = read_whole_request(&mut stream);
+                keep.lock().unwrap().push(request);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (url, seen)
     }
 
     fn ok(body: &str) -> String {
@@ -254,6 +376,78 @@ mod tests {
         let err = fetcher.fetch(&url).err().unwrap().to_string();
         assert!(err.contains("failed"), "{err}");
         assert!(err.contains(&url), "{err}");
+    }
+
+    #[test]
+    fn a_post_sends_its_body_and_headers_and_the_created_status_comes_back() {
+        use ljos_platform::Method;
+
+        let (url, seen) = serve_capturing(vec![
+            "HTTP/1.1 201 Created\r\nContent-Length: 7\r\nX-Made: yes\r\nConnection: close\r\n\r\ncreated"
+                .to_owned(),
+        ]);
+        let response = HttpFetcher::new()
+            .request(&Request::new(Method::Post, url).json("{\"a\":1}"))
+            .unwrap();
+        assert_eq!(response.status, 201);
+        assert!(response.ok());
+        assert_eq!(response.text(), "created");
+        assert_eq!(response.header("x-made"), Some("yes"));
+
+        let sent = seen.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        let sent = &sent[0];
+        assert!(sent.starts_with("POST /first"), "{sent}");
+        let lower = sent.to_ascii_lowercase();
+        assert!(lower.contains("content-type: application/json"), "{sent}");
+        let body = sent.split("\r\n\r\n").nth(1).unwrap_or("");
+        assert_eq!(body, "{\"a\":1}");
+    }
+
+    #[test]
+    fn a_status_via_request_is_a_response_not_an_error() {
+        let url = serve(vec![
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        ]);
+        let response = HttpFetcher::new().request(&Request::get(&url)).unwrap();
+        assert_eq!(response.status, 404);
+        assert!(!response.ok());
+    }
+
+    #[test]
+    fn put_and_delete_travel() {
+        use ljos_platform::Method;
+
+        let (url, seen) = serve_capturing(vec![ok("put"), ok("gone")]);
+        let fetcher = HttpFetcher::new();
+        let put = fetcher
+            .request(&Request::new(Method::Put, &url).body(b"payload".to_vec()))
+            .unwrap();
+        assert_eq!(put.text(), "put");
+        let deleted = fetcher
+            .request(&Request::new(Method::Delete, &url))
+            .unwrap();
+        assert_eq!(deleted.text(), "gone");
+
+        let sent = seen.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].starts_with("PUT /first"), "{}", sent[0]);
+        assert_eq!(sent[0].split("\r\n\r\n").nth(1).unwrap_or(""), "payload");
+        assert!(sent[1].starts_with("DELETE /first"), "{}", sent[1]);
+    }
+
+    #[test]
+    fn a_request_body_larger_than_the_cap_is_refused_before_it_travels() {
+        use ljos_platform::Method;
+
+        let fetcher = HttpFetcher::with_limits(Duration::from_secs(5), 4, 10);
+        let err = fetcher
+            .request(&Request::new(Method::Post, "http://127.0.0.1:9/x").body(b"12345".to_vec()))
+            .unwrap_err();
+        assert!(
+            matches!(&err, FetchError::Failed(why) if why.contains("request body is larger than 4 bytes")),
+            "{err}"
+        );
     }
 
     /// The path an application takes: `Platform::fetch` runs this
