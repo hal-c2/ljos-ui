@@ -23,7 +23,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 
 **Non-goals (for now)**
 
-- QtQuick3D, Particles, Qt3D, WebEngine, QtLocation, QtGraphs, ShaderEffect with custom shaders, and Qt.labs modules. These appear in the qtdoc corpus (08) but not in HAL-C2. In the API ledger they are `dropped` with a reason.
+- QtQuick3D, Qt3D, WebEngine, QtLocation, QtGraphs, ShaderEffect with custom shaders, and Qt.labs modules. These appear in the qtdoc corpus (08) but not in HAL-C2. In the API ledger they are `dropped` with a reason. QtQuick.Particles was on this list; the part the corpus uses first (systems, emitters, image particles, a seeded simulation) is built (`features/items/particles.feature`), and affectors, trails and sprite particles are not yet.
 - Source compatibility with C++ `QObject` code. Native types are written in Rust (section 5.5).
 - A JS debugger in v1. quickjs-ng has no debugger API (03 §4.2). Logging, stack traces with QML file and line, and the dev overlays come first.
 - Non-QtQuick QML dialects, such as HAL-C2's TUI dialect (`import OpenTUI`) (D6).
@@ -397,7 +397,7 @@ Creation is a resumable state machine, the `Incubator`. Its phases:
 
 This keeps models and singletons shared without proxies (01 §4.8, 03 §3.1, 07 P1-27).
 
-**As built (M2).** A `Window` says what it wants (title, size, visibility, modality, flags, transient parent) and a host that owns platform windows reads that as a `WindowSpec` and tells the window what the platform made of it (`ljos_controls::window::system`). Without a host a window is an item of the scene it was put in and showing, sizing and activating happen there, so a test without a display behaves the same. `Application`, `Qt.application` and `Screen` report what the host says; without one there is a single 800 by 800 screen and the application is active. Not built: window-scoped singletons, attached `Screen.*` per window, and a `closing` handler refusing `Qt.quit()`.
+**As built (M2).** A `Window` says what it wants (title, size, visibility, modality, flags, transient parent) and a host that owns platform windows reads that as a `WindowSpec` and tells the window what the platform made of it (`ljos_controls::window::system`). Without a host a window is an item of the scene it was put in and showing, sizing and activating happen there, so a test without a display behaves the same. `Application`, `Qt.application` and `Screen` report what the host says; without one there is a single 800 by 800 screen and the application is active. `ljos render` is such a host for its root: a root window that leaves its size unsaid gets the size of the picture, as a platform window would give it. Not built: window-scoped singletons, attached `Screen.*` per window, `Screen.primaryOrientation`, `WindowContainer`, and a `closing` handler refusing `Qt.quit()`.
 
 ---
 
