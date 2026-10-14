@@ -554,6 +554,56 @@ fn object_exists(w: &mut LjosWorld, object: String, which: String) -> StepResult
     })
 }
 
+#[when(regex = r#"^the object "([^"]+)" is destroyed$"#)]
+fn object_destroyed(w: &mut LjosWorld, object: String) -> StepResult {
+    w.each(|b| {
+        if b.call(&object, "destroy", &[]).is_err() {
+            b.bind(&object, "visible", "(destroy(), false)")?;
+        }
+        b.advance(16)?;
+        if b.exists(&object)? {
+            Err(BackendError::Failed(format!(
+                "object {object:?} was not destroyed"
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[then(regex = r#"^the signal "([^"]+)" of "([^"]+)" has fired once$"#)]
+fn signal_fired_once(w: &mut LjosWorld, signal: String, object: String) -> StepResult {
+    let candidates = [
+        format!("{signal}Count"),
+        format!("{signal}Fired"),
+        format!("{signal}_count"),
+        format!("{signal}_fired"),
+        signal.clone(),
+    ];
+    w.each(|b| {
+        let mut count = None;
+        for prop in &candidates {
+            if let Ok(v) = b.get(&object, prop)
+                && let Some(n) = v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
+            {
+                count = Some(n);
+                break;
+            }
+        }
+        if count == Some(1) {
+            Ok(())
+        } else if let Some(n) = count {
+            Err(BackendError::Failed(format!(
+                "signal {signal:?} of {object:?} has fired {n} times, expected 1"
+            )))
+        } else {
+            Err(BackendError::Failed(format!(
+                "cannot determine if signal {signal:?} of {object:?} fired (checked properties: {candidates:?})"
+            )))
+        }
+    })
+}
+
 fn log_matches(w: &mut LjosWorld, pattern: &str, level: LogLevel, want: bool) -> StepResult {
     let re = Regex::new(pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
     w.each(|b| {
@@ -1545,6 +1595,21 @@ fn agent_calls_on_with(w: &mut LjosWorld, tool: String, role: String, name: Stri
     let args =
         serde_json::from_str(&args).map_err(|e| format!("the arguments are not JSON: {e}"))?;
     inspector_ask(w, Ask::CallOn { tool, role, name, args })
+}
+
+#[rustfmt::skip]
+#[given(regex = r#"^the agent has clicked the reference of the "([^"]+)" named "([^"]*)"$"#)]
+#[when(regex = r#"^the agent clicks the reference of the "([^"]+)" named "([^"]*)"$"#)]
+fn agent_clicks_reference(w: &mut LjosWorld, role: String, name: String) -> StepResult {
+    inspector_ask(
+        w,
+        Ask::CallOn {
+            tool: "app_click".to_owned(),
+            role,
+            name,
+            args: serde_json::json!({}),
+        },
+    )
 }
 
 #[rustfmt::skip]

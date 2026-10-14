@@ -27,10 +27,17 @@ Feature: Inspector snapshot
             width: 80; height: 30
             Accessible.role: Accessible.Button
             Accessible.name: "Save"
+            signal clicked()
+            property int clickedCount: 0
+            onClicked: clickedCount += 1
+            MouseArea {
+              anchors.fill: parent
+              onClicked: parent.clicked()
+            }
           }
         }
         """
-      And the inspector is connected
+      And the inspector is connected with the capabilities "inspect, input"
 
     Scenario: The snapshot lists named controls with a reference each
       When the agent requests a snapshot
@@ -50,14 +57,12 @@ Feature: Inspector snapshot
       And the agent requests a snapshot
       Then the snapshot contains "- button \"Save\" [e2] obj=save"
 
-    @backlog
     Scenario: A reference to a destroyed item is reported as stale
       Given the agent has requested a snapshot
       When the object "save" is destroyed
       And the agent clicks the reference of the "button" named "Save"
       Then the agent is told the reference is stale
 
-    @backlog
     Scenario: Input goes through the real input path
       Given the agent has requested a snapshot
       When the agent clicks the reference of the "button" named "Save"
