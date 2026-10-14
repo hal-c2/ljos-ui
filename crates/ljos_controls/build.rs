@@ -1,4 +1,4 @@
-//! Compiles the Basic style (`qml/`) to IR and packs it into one file that
+//! Compiles the built-in styles (`qml/`) to IR and packs them into one file that
 //! `src/style.rs` embeds, so the crate ships no QML text and never links the
 //! compiler (ARCHITECTURE.md principle 5).
 //!
@@ -68,13 +68,13 @@ fn main() {
         let writing = own_table && env::var_os(WRITE).is_some_and(|value| value == "write");
         assert!(
             writing,
-            "the Basic style does not compile (see the warnings){}",
+            "the built-in styles do not compile (see the warnings){}",
             if own_table { STALE } else { "" }
         );
         // Asked for only here, so that no other build is made again for it.
         println!("cargo:rerun-if-env-changed={WRITE}");
         println!(
-            "cargo:warning=ljos_controls: the Basic style does not compile against Ljós's table \
+            "cargo:warning=ljos_controls: the built-in styles do not compile against Ljós's table \
              of types as committed, which is being written again: this build has no style. Run \
              the same command once more."
         );

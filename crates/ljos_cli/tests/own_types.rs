@@ -1013,6 +1013,18 @@ const NOT_YET: &[(&str, &str)] = &[
         "attached only: no default property",
     ),
     (
+        "QtQuick.Controls.Fusion.Overlay",
+        "attached only: no default property",
+    ),
+    (
+        "QtQuick.Controls.Material.Overlay",
+        "attached only: no default property",
+    ),
+    (
+        "QtQuick.Controls.Universal.Overlay",
+        "attached only: no default property",
+    ),
+    (
         "QtQuick.Shortcut.sequences",
         "one sequence here, a list to Qt",
     ),
@@ -1027,6 +1039,18 @@ const NOT_YET: &[(&str, &str)] = &[
     ),
     (
         "QtQuick.Controls.Basic.TextArea",
+        "`TextArea.flickable` is not there",
+    ),
+    (
+        "QtQuick.Controls.Fusion.TextArea",
+        "`TextArea.flickable` is not there",
+    ),
+    (
+        "QtQuick.Controls.Material.TextArea",
+        "`TextArea.flickable` is not there",
+    ),
+    (
+        "QtQuick.Controls.Universal.TextArea",
         "`TextArea.flickable` is not there",
     ),
     // `ObjectModel.index` on an item, and the rest of what Qt's models

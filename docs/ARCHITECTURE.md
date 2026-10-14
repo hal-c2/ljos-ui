@@ -880,8 +880,8 @@ Source: 01 §2.5, §3.6; 08.
 - **Polish as built (M1).** `focusPolicy` and `activeFocusOnTab` say one thing between them (the Tab bit), and the Basic style draws `visualFocus` on every control that takes the keyboard. Buttons and menu items have `icon.*` and `display`; an icon is tinted with the text colour unless `icon.color` is given, and `icon.name` shows nothing because there is no icon theme. `palette.*` is inherited down the item tree and into popups, the style reads the palette instead of literal colours, and a dark palette follows `Qt.styleHints.colorScheme`. The accessibility audit runs over the style in light and dark (`crates/ljos_controls/tests/audit.rs`); the Basic placeholder colour is Qt's value and stays below 4.5:1 for parity (3.04:1 light, 3.95:1 dark), so an application that needs AA sets `palette.placeholderText`. `ComboBox` is editable, `MenuBar` with `MenuBarItem` exists (not yet a full `Container`), and `ApplicationWindow.menuBar` sits above the header. A menu or combo popup shows its rows in a `ListView`, as Qt's does. A popup runs its `enter` and `exit` transitions through `Transition` (section 6.2), with `aboutToShow`, `opened`, `aboutToHide` and `closed` at the moments Qt 6.11 shows; reduced motion finishes them at once.
 - **More controls as built (M2).** The value controls (`Slider`, `RangeSlider`, `Dial`, `ProgressBar`, `BusyIndicator`, `DelayButton`, `RoundButton`, `DoubleSpinBox`, `PageIndicator`, `ToolSeparator`), the check, radio and switch delegates, `ActionGroup` and `Action.shortcut`. Navigation: `Container`, `TabBar` and `TabButton`, `SwipeView`, `StackView` (whose covered pages are frozen, section 8.3), `SplitView` and `Drawer`, which the pointer drags in from the edge of its window and out again.
 - **Basic style first.** It is the neutral base that other styles and custom controls build on. Real apps lean on it (HAL-C2 imports `QtQuick.Controls.Basic` 87 times and `QtQuick.Controls` twice).
-- **Material** follows for Android, after M3. Material attached properties are accepted as no-ops until then.
-- **Fusion and the native macOS style** are deferred.
+- **Material, Fusion and Universal as built.** Each is a directory beside Basic that holds only the controls it draws differently: Button, CheckBox, Switch, Slider, TextField, RoundButton and Pane in all three, plus ApplicationWindow, Dialog, Label, Popup (and ToolBar in Material) where the style changes the window and text colours. Every other control in `QtQuick.Controls.Material` and the others is Basic's file, so all controls import from every style. The attached `Material` and `Universal` types (`theme`, `accent`, `primary`, `foreground`, `background`) inherit down the item tree, follow the theme and reset to the inherited value; their derived colours and `color()` come from values a running Qt 6.11 reports. `Fusion` is a singleton of the few colours its controls share. These are Basic shapes in each style's sizes and colours, not the full design systems: Material's `variant` and `shade()` are missing, and a change to a style's attached properties updates every attached object of that style.
+- **The native macOS and Windows styles** are deferred.
 - **Phase 1 types** (the most used across the qtdoc corpus and HAL-C2):
   - Control, AbstractButton, Button, Label, TextField, TextArea, CheckBox, Switch, SpinBox, ComboBox, ToolTip;
   - Popup, Dialog, Menu/MenuItem;
@@ -1494,7 +1494,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 - A render thread, only if profiling triggers it.
 - iOS: host, `UITextInput` and accesskit_ios.
 - RTL and mirroring, and ICU4X locale formatting.
-- Material style.
+- Material as a full design system (the M2 style is its sizes and colours on Basic's shapes).
 - Sandboxed plugin tier, if D5 requires one.
 - MCP: recording, the tasks extension, and the `Ljos.Mcp` decision.
 

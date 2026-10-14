@@ -100,12 +100,18 @@ pub use window::{
     WindowSpec, WindowSystem,
 };
 
-use style::{BASIC, StyleLibrary};
+use style::{BASIC, FUSION, MATERIAL, StyleLibrary, UNIVERSAL};
 
 /// The modules the style's types are registered in. Qt picks the style
-/// behind `QtQuick.Controls` when the application starts; here there is
-/// one.
-const CONTROLS: [&str; 2] = ["QtQuick.Controls", "QtQuick.Controls.Basic"];
+/// behind `QtQuick.Controls` when the application starts; here that URI
+/// uses Basic, and explicit style imports use their own libraries.
+const CONTROLS: [&str; 5] = [
+    "QtQuick.Controls",
+    "QtQuick.Controls.Basic",
+    "QtQuick.Controls.Material",
+    "QtQuick.Controls.Fusion",
+    "QtQuick.Controls.Universal",
+];
 
 /// Set once the modules are in an engine.
 #[derive(Default)]
@@ -181,20 +187,30 @@ pub fn register(engine: &Engine) {
     value_controls::register(engine);
     container::register(engine);
 
-    let (library, undecoded) = StyleLibrary::embedded();
-    let names = library.type_names();
-    engine.add_component_library(library);
-    for bad in undecoded {
-        util::warn(engine, format!("the Basic style: {bad}"));
+    let (libraries, undecoded) = StyleLibrary::embedded();
+    let mut styles = std::collections::HashMap::new();
+    for (directory, library) in libraries {
+        styles.insert(directory, library.type_names());
+        engine.add_component_library(library);
     }
-    if names.is_empty() {
+    for bad in undecoded {
+        util::warn(engine, format!("the built-in styles: {bad}"));
+    }
+    if styles.get(BASIC).is_none_or(Vec::is_empty) {
         util::warn(
             engine,
             "QtQuick.Controls has no types: the Basic style was not compiled when ljos_controls \
              was built (its build script says why)",
         );
     }
+    style::register(engine);
     for uri in CONTROLS {
+        let directory = match uri {
+            "QtQuick.Controls.Material" => MATERIAL,
+            "QtQuick.Controls.Fusion" => FUSION,
+            "QtQuick.Controls.Universal" => UNIVERSAL,
+            _ => BASIC,
+        };
         // Types that have no look of their own are the templates.
         for meta in [
             AbstractButton::static_meta(),
@@ -204,8 +220,14 @@ pub fn register(engine: &Engine) {
         ] {
             engine.register_type(uri, Version::new(2, 15), MetaRef::Static(meta));
         }
-        for name in &names {
-            let key = format!("{BASIC}/{name}");
+        // A style holds only the controls it draws differently; the rest
+        // are Basic's.
+        let own = styles.get(directory).cloned().unwrap_or_default();
+        let basic = styles.get(BASIC).cloned().unwrap_or_default();
+        let extra = own.iter().filter(|n| !basic.contains(n));
+        for name in basic.iter().chain(extra) {
+            let from = if own.contains(name) { directory } else { BASIC };
+            let key = format!("{from}/{name}");
             if let Err(err) = engine.register_qml_type(uri, Version::new(2, 15), &key) {
                 util::warn(engine, format!("{uri}.{name}: {err}"));
             }

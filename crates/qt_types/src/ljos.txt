@@ -3181,6 +3181,375 @@ module QtQuick.Controls.Basic
 	type QtQuick/Controls/Basic/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named
 
+module QtQuick.Controls.Fusion
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
+	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
+	Button QtQuick/Controls/Fusion/Button.qml
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	CheckBox QtQuick/Controls/Fusion/CheckBox.qml
+	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Container QtQuick.Templates.Container
+	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	Dial QtQuick/Controls/Basic/Dial.qml
+	Dialog QtQuick/Controls/Basic/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
+	Drawer QtQuick/Controls/Basic/Drawer.qml
+	Frame QtQuick/Controls/Basic/Frame.qml
+	Fusion QtQuick.Controls.Fusion.Fusion
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label QtQuick/Controls/Basic/Label.qml
+	Menu QtQuick/Controls/Basic/Menu.qml
+	MenuBar QtQuick/Controls/Basic/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Basic/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick/Controls/Basic/Page.qml
+	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
+	Pane QtQuick/Controls/Fusion/Pane.qml
+	Popup QtQuick/Controls/Basic/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
+	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RoundButton QtQuick/Controls/Fusion/RoundButton.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider QtQuick/Controls/Fusion/Slider.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick/Controls/Basic/SplitView.qml
+	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
+	Switch QtQuick/Controls/Fusion/Switch.qml
+	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Fusion/TextField.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	type QtQuick/Controls/Fusion/Button.qml Button
+		prototype QtQuick.Templates.Button named
+	type QtQuick/Controls/Fusion/CheckBox.qml CheckBox
+		prototype QtQuick.Templates.CheckBox named
+	type QtQuick.Controls.Fusion.Fusion Fusion
+		is singleton
+		prop highContrast QtQml.bool named readonly
+		prop lightShade QtQuick.color named readonly
+		prop darkShade QtQuick.color named readonly
+		prop topShadow QtQuick.color named readonly
+		prop innerContrastLine QtQuick.color named readonly
+	type QtQuick/Controls/Fusion/Pane.qml Pane
+		prototype QtQuick.Templates.Pane named
+	type QtQuick/Controls/Fusion/RoundButton.qml RoundButton
+		prototype QtQuick.Templates.RoundButton named
+	type QtQuick/Controls/Fusion/Slider.qml Slider
+		prototype QtQuick.Templates.Slider named
+	type QtQuick/Controls/Fusion/Switch.qml Switch
+		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Fusion/TextField.qml TextField
+		prototype QtQuick.Templates.TextField named
+
+module QtQuick.Controls.Material
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
+	ApplicationWindow QtQuick/Controls/Material/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
+	Button QtQuick/Controls/Material/Button.qml
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	CheckBox QtQuick/Controls/Material/CheckBox.qml
+	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Container QtQuick.Templates.Container
+	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	Dial QtQuick/Controls/Basic/Dial.qml
+	Dialog QtQuick/Controls/Material/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
+	Drawer QtQuick/Controls/Basic/Drawer.qml
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label QtQuick/Controls/Material/Label.qml
+	Material QtQuick.Controls.Material.Material
+	Menu QtQuick/Controls/Basic/Menu.qml
+	MenuBar QtQuick/Controls/Basic/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Basic/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick/Controls/Basic/Page.qml
+	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
+	Pane QtQuick/Controls/Material/Pane.qml
+	Popup QtQuick/Controls/Material/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
+	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RoundButton QtQuick/Controls/Material/RoundButton.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider QtQuick/Controls/Material/Slider.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick/Controls/Basic/SplitView.qml
+	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
+	Switch QtQuick/Controls/Material/Switch.qml
+	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Material/TextField.qml
+	ToolBar QtQuick/Controls/Material/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	type QtQuick/Controls/Material/ApplicationWindow.qml ApplicationWindow
+		prototype QtQuick.Templates.ApplicationWindow named
+	type QtQuick/Controls/Material/Button.qml Button
+		prototype QtQuick.Templates.Button named
+	type QtQuick/Controls/Material/CheckBox.qml CheckBox
+		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Material/Dialog.qml Dialog
+		prototype QtQuick.Templates.Dialog named
+	type QtQuick/Controls/Material/Label.qml Label
+		prototype QtQuick.Templates.Label named
+	type QtQuick.Controls.Material.Material Material
+		attached QtQuick.Controls.Material.MaterialAttached
+		is uncreatable
+		enum Theme Light=0 Dark=1 System=2
+		enum Variant Normal=0 Dense=1
+		enum Color Red=0 Pink=1 Purple=2 DeepPurple=3 Indigo=4 Blue=5 LightBlue=6 Cyan=7 Teal=8 Green=9 LightGreen=10 Lime=11 Yellow=12 Amber=13 Orange=14 DeepOrange=15 Brown=16 Grey=17 BlueGrey=18
+		enum Shade Shade50=0 Shade100=1 Shade200=2 Shade300=3 Shade400=4 Shade500=5 Shade600=6 Shade700=7 Shade800=8 Shade900=9 ShadeA100=10 ShadeA200=11 ShadeA400=12 ShadeA700=13
+		enum RoundedScale NotRounded=0 ExtraSmallScale=4 SmallScale=8 MediumScale=12 LargeScale=16 ExtraLargeScale=28 FullScale=255
+		enum ContainerStyle Filled=0 Outlined=1
+	type QtQuick/Controls/Material/Pane.qml Pane
+		prototype QtQuick.Templates.Pane named
+	type QtQuick/Controls/Material/Popup.qml Popup
+		prototype QtQuick.Templates.Popup named
+	type QtQuick/Controls/Material/RoundButton.qml RoundButton
+		prototype QtQuick.Templates.RoundButton named
+	type QtQuick/Controls/Material/Slider.qml Slider
+		prototype QtQuick.Templates.Slider named
+	type QtQuick/Controls/Material/Switch.qml Switch
+		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Material/TextField.qml TextField
+		prototype QtQuick.Templates.TextField named
+	type QtQuick/Controls/Material/ToolBar.qml ToolBar
+		prototype QtQuick.Templates.ToolBar named
+	type QtQuick.Controls.Material.MaterialAttached MaterialAttached
+		is uncreatable
+		enum Theme Light=0 Dark=1 System=2
+		enum Variant Normal=0 Dense=1
+		enum Color Red=0 Pink=1 Purple=2 DeepPurple=3 Indigo=4 Blue=5 LightBlue=6 Cyan=7 Teal=8 Green=9 LightGreen=10 Lime=11 Yellow=12 Amber=13 Orange=14 DeepOrange=15 Brown=16 Grey=17 BlueGrey=18
+		enum Shade Shade50=0 Shade100=1 Shade200=2 Shade300=3 Shade400=4 Shade500=5 Shade600=6 Shade700=7 Shade800=8 Shade900=9 ShadeA100=10 ShadeA200=11 ShadeA400=12 ShadeA700=13
+		enum RoundedScale NotRounded=0 ExtraSmallScale=4 SmallScale=8 MediumScale=12 LargeScale=16 ExtraLargeScale=28 FullScale=255
+		enum ContainerStyle Filled=0 Outlined=1
+		prop theme Theme reset
+		prop primary QtQml.var named reset
+		prop accent QtQml.var named reset
+		prop foreground QtQml.var named reset
+		prop background QtQml.var named reset
+		prop elevation QtQml.int named reset
+		prop roundedScale RoundedScale reset
+		prop containerStyle ContainerStyle reset
+		prop primaryColor QtQuick.color named readonly
+		prop accentColor QtQuick.color named readonly
+		prop backgroundColor QtQuick.color named readonly
+		prop primaryTextColor QtQuick.color named readonly
+		prop secondaryTextColor QtQuick.color named readonly
+		prop hintTextColor QtQuick.color named readonly
+		prop dividerColor QtQuick.color named readonly
+		prop frameColor QtQuick.color named readonly
+		prop dialogColor QtQuick.color named readonly
+		prop toolBarColor QtQuick.color named readonly
+		prop touchTarget QtQml.int named readonly
+		prop buttonHeight QtQml.int named readonly
+		prop delegateHeight QtQml.int named readonly
+		prop textFieldHeight QtQml.int named readonly
+		signal themeChanged
+		signal primaryChanged
+		signal accentChanged
+		signal foregroundChanged
+		signal backgroundChanged
+		signal elevationChanged
+		signal roundedScaleChanged
+		signal containerStyleChanged
+		signal primaryColorChanged
+		signal accentColorChanged
+		signal backgroundColorChanged
+		signal primaryTextColorChanged
+		signal secondaryTextColorChanged
+		signal hintTextColorChanged
+		signal dividerColorChanged
+		signal frameColorChanged
+		signal dialogColorChanged
+		signal toolBarColorChanged
+		method color
+		method buttonColor
+
+module QtQuick.Controls.Universal
+	AbstractButton QtQuick.Templates.AbstractButton
+	Action QtQuick.Templates.Action
+	ActionGroup QtQuick.Templates.ActionGroup
+	ApplicationWindow QtQuick/Controls/Universal/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
+	Button QtQuick/Controls/Universal/Button.qml
+	ButtonGroup QtQuick.Templates.ButtonGroup
+	CheckBox QtQuick/Controls/Universal/CheckBox.qml
+	CheckDelegate QtQuick/Controls/Basic/CheckDelegate.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Container QtQuick.Templates.Container
+	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
+	Dial QtQuick/Controls/Basic/Dial.qml
+	Dialog QtQuick/Controls/Universal/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
+	Drawer QtQuick/Controls/Basic/Drawer.qml
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label QtQuick/Controls/Universal/Label.qml
+	Menu QtQuick/Controls/Basic/Menu.qml
+	MenuBar QtQuick/Controls/Basic/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Basic/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Overlay QtQuick.Templates.Overlay
+	Page QtQuick/Controls/Basic/Page.qml
+	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
+	Pane QtQuick/Controls/Universal/Pane.qml
+	Popup QtQuick/Controls/Universal/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
+	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
+	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
+	RoundButton QtQuick/Controls/Universal/RoundButton.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider QtQuick/Controls/Universal/Slider.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SplitHandle QtQuick.Templates.SplitHandle
+	SplitView QtQuick/Controls/Basic/SplitView.qml
+	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
+	Switch QtQuick/Controls/Universal/Switch.qml
+	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Universal/TextField.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	Universal QtQuick.Controls.Universal.Universal
+	type QtQuick/Controls/Universal/ApplicationWindow.qml ApplicationWindow
+		prototype QtQuick.Templates.ApplicationWindow named
+	type QtQuick/Controls/Universal/Button.qml Button
+		prototype QtQuick.Templates.Button named
+	type QtQuick/Controls/Universal/CheckBox.qml CheckBox
+		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Universal/Dialog.qml Dialog
+		prototype QtQuick.Templates.Dialog named
+	type QtQuick/Controls/Universal/Label.qml Label
+		prototype QtQuick.Templates.Label named
+	type QtQuick/Controls/Universal/Pane.qml Pane
+		prototype QtQuick.Templates.Pane named
+	type QtQuick/Controls/Universal/Popup.qml Popup
+		prototype QtQuick.Templates.Popup named
+	type QtQuick/Controls/Universal/RoundButton.qml RoundButton
+		prototype QtQuick.Templates.RoundButton named
+	type QtQuick/Controls/Universal/Slider.qml Slider
+		prototype QtQuick.Templates.Slider named
+	type QtQuick/Controls/Universal/Switch.qml Switch
+		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Universal/TextField.qml TextField
+		prototype QtQuick.Templates.TextField named
+	type QtQuick.Controls.Universal.Universal Universal
+		attached QtQuick.Controls.Universal.UniversalAttached
+		is uncreatable
+		enum Theme Light=0 Dark=1 System=2
+		enum Color Lime=0 Green=1 Emerald=2 Teal=3 Cyan=4 Cobalt=5 Indigo=6 Violet=7 Pink=8 Magenta=9 Crimson=10 Red=11 Orange=12 Amber=13 Yellow=14 Brown=15 Olive=16 Steel=17 Mauve=18 Taupe=19
+	type QtQuick.Controls.Universal.UniversalAttached UniversalAttached
+		is uncreatable
+		enum Theme Light=0 Dark=1 System=2
+		enum Color Lime=0 Green=1 Emerald=2 Teal=3 Cyan=4 Cobalt=5 Indigo=6 Violet=7 Pink=8 Magenta=9 Crimson=10 Red=11 Orange=12 Amber=13 Yellow=14 Brown=15 Olive=16 Steel=17 Mauve=18 Taupe=19
+		prop theme Theme reset
+		prop accent QtQml.var named reset
+		prop foreground QtQml.var named reset
+		prop background QtQml.var named reset
+		prop altHighColor QtQuick.color named readonly
+		prop altLowColor QtQuick.color named readonly
+		prop altMediumColor QtQuick.color named readonly
+		prop altMediumHighColor QtQuick.color named readonly
+		prop altMediumLowColor QtQuick.color named readonly
+		prop baseHighColor QtQuick.color named readonly
+		prop baseLowColor QtQuick.color named readonly
+		prop baseMediumColor QtQuick.color named readonly
+		prop baseMediumHighColor QtQuick.color named readonly
+		prop baseMediumLowColor QtQuick.color named readonly
+		prop chromeAltLowColor QtQuick.color named readonly
+		prop chromeBlackHighColor QtQuick.color named readonly
+		prop chromeBlackLowColor QtQuick.color named readonly
+		prop chromeBlackMediumLowColor QtQuick.color named readonly
+		prop chromeBlackMediumColor QtQuick.color named readonly
+		prop chromeDisabledHighColor QtQuick.color named readonly
+		prop chromeDisabledLowColor QtQuick.color named readonly
+		prop chromeHighColor QtQuick.color named readonly
+		prop chromeLowColor QtQuick.color named readonly
+		prop chromeMediumColor QtQuick.color named readonly
+		prop chromeMediumLowColor QtQuick.color named readonly
+		prop chromeWhiteColor QtQuick.color named readonly
+		prop listLowColor QtQuick.color named readonly
+		prop listMediumColor QtQuick.color named readonly
+		signal themeChanged
+		signal accentChanged
+		signal foregroundChanged
+		signal backgroundChanged
+		signal altHighColorChanged
+		signal altLowColorChanged
+		signal altMediumColorChanged
+		signal altMediumHighColorChanged
+		signal altMediumLowColorChanged
+		signal baseHighColorChanged
+		signal baseLowColorChanged
+		signal baseMediumColorChanged
+		signal baseMediumHighColorChanged
+		signal baseMediumLowColorChanged
+		signal chromeAltLowColorChanged
+		signal chromeBlackHighColorChanged
+		signal chromeBlackLowColorChanged
+		signal chromeBlackMediumLowColorChanged
+		signal chromeBlackMediumColorChanged
+		signal chromeDisabledHighColorChanged
+		signal chromeDisabledLowColorChanged
+		signal chromeHighColorChanged
+		signal chromeLowColorChanged
+		signal chromeMediumColorChanged
+		signal chromeMediumLowColorChanged
+		signal chromeWhiteColorChanged
+		signal listLowColorChanged
+		signal listMediumColorChanged
+		method color
+
 module QtQuick.Controls.impl
 	IconImage QtQuick.Controls.impl.IconImage
 	IconLabel QtQuick.Controls.impl.IconLabel
