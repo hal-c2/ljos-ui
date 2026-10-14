@@ -1,14 +1,20 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-effects-multieffect.html
+#   https://doc.qt.io/qt-6/qml-qt5compat-graphicaleffects-brightnesscontrast.html
 # Verified on Qt 6.11.2 (qml6, offscreen). Qt's software scene graph,
 # which the Qt backend uses, draws no MultiEffect at all (measured:
 # every effect pixel is the background), so what Ljós paints is pinned
 # on Ljós only, from the mask model the documentation describes.
+# The documentation gives ranges, defaults and padding rules but describes
+# the colour adjustments, blur and shadow qualitatively; the exact numbers
+# below follow the standard formulations named in
+# crates/ljos_quick/src/effects.rs, worked by hand in each comment.
 
 Feature: MultiEffect
-  A MultiEffect draws its source item with post-processing applied.
-  Ljós renders the mask and the unmodified source; blur, shadow and
-  the colour adjustments are kept as properties and not painted yet.
+  A MultiEffect draws its source item with post-processing applied:
+  colour adjustments (brightness, contrast, saturation, colorization),
+  alpha masking, separable Gaussian blur, and drop shadow inside an
+  automatically or manually padded rectangle.
 
   Background:
     Given a 40 by 40 image file "red.png" filled with "#ff0000"
@@ -71,9 +77,37 @@ Feature: MultiEffect
         | maskThresholdMax       | 1         |
         | maskSpreadAtMin        | 0         |
         | maskSpreadAtMax        | 0         |
-        | autoPaddingEnabled     | true      |
-        | implicitWidth          | 0         |
-        | implicitHeight         | 0         |
+        | autoPaddingEnabled     | true             |
+        | paddingRect.x          | 0                |
+        | paddingRect.y          | 0                |
+        | paddingRect.width      | 0                |
+        | paddingRect.height     | 0                |
+        | itemRect.x             | 0                |
+        | itemRect.y             | 0                |
+        | itemRect.width         | 40               |
+        | itemRect.height        | 40               |
+        | hasProxySource         | false            |
+        | fragmentShader         | "multieffect_c0" |
+        | vertexShader           | "multieffect_c"  |
+        | implicitWidth          | 0                |
+        | implicitHeight         | 0                |
+
+    Scenario: itemRect grows with blur, shadow, blurMultiplier and paddingRect
+      When the property "blurEnabled" of "fx" is set to true
+      Then the property "itemRect.x" of "fx" is -32
+      And the property "itemRect.y" of "fx" is -32
+      And the property "itemRect.width" of "fx" is 104
+      And the property "itemRect.height" of "fx" is 104
+      When the property "blurMultiplier" of "fx" is set to 0.5
+      Then the property "itemRect.x" of "fx" is -48
+      And the property "itemRect.width" of "fx" is 136
+      When the property "autoPaddingEnabled" of "fx" is set to false
+      And the property "paddingRect" of "fx" is bound to "Qt.rect(5, 10, 15, 20)"
+      Then the property "itemRect.x" of "fx" is -5
+      And the property "itemRect.y" of "fx" is -10
+      And the property "itemRect.width" of "fx" is 60
+      And the property "itemRect.height" of "fx" is 70
+
 
   @ljos-only
   Rule: What it paints
@@ -119,3 +153,213 @@ Feature: MultiEffect
         """
       When 200 milliseconds pass
       Then the pixel at 20, 20 of the window is "#000000"
+
+    # Formula (documented range [-1, 1]; additive shift chosen):
+    #   c' = clamp(c + brightness, 0, 1) for c in (r, g, b).
+    # Source #ff0000 = (1, 0, 0):
+    #   brightness = -0.5 -> (0.5, 0, 0) -> round(0.5 * 255) = 128 = #800000
+    #   brightness = +0.5 -> (1.0, 0.5, 0.5) -> (255, 128, 128) = #ff8080
+    Scenario: Brightness shifts each colour channel linearly
+      When 200 milliseconds pass
+      And the property "brightness" of "fx" is set to -0.5
+      Then the pixel at 20, 20 of the window is "#800000"
+      When the property "brightness" of "fx" is set to 0.5
+      Then the pixel at 20, 20 of the window is "#ff8080"
+
+    # Formula (BrightnessContrast docs: linear decrease, non-linear increase;
+    # the 1 / (1 - contrast) curve is the one Ljós picks):
+    #   k = 1 + contrast           for contrast <= 0 (linear decrease)
+    #   k = 1 / (1 - contrast)     for contrast > 0  (non-linear increase)
+    #   c' = clamp((c - 0.5) * k + 0.5, 0, 1)
+    # Source #ff0000 = (1, 0, 0):
+    #   contrast = -0.5 (k = 0.5):
+    #     r' = (1 - 0.5)*0.5 + 0.5 = 0.75 -> round(0.75 * 255) = 191 = 0xbf
+    #     g' = b' = (0 - 0.5)*0.5 + 0.5 = 0.25 -> round(0.25 * 255) = 64 = 0x40
+    #     -> #bf4040
+    #   contrast = -1.0 (k = 0):
+    #     r' = g' = b' = 0.5 -> round(0.5 * 255) = 128 = 0x80 -> #808080
+    #   brightness = -0.375 then contrast = +0.5 (k = 1 / (1 - 0.5) = 2):
+    #     after brightness: r = 1 - 0.375 = 0.625, g = b = 0
+    #     after contrast:   r' = (0.625 - 0.5)*2 + 0.5 = 0.75 -> 191 = 0xbf
+    #                       g' = b' = clamp((0 - 0.5)*2 + 0.5, 0, 1) = 0 -> 0x00
+    #     -> #bf0000 (also verifies brightness is applied before contrast).
+    Scenario: Contrast scales channels around the midpoint
+      When 200 milliseconds pass
+      And the property "contrast" of "fx" is set to -0.5
+      Then the pixel at 20, 20 of the window is "#bf4040"
+      When the property "contrast" of "fx" is set to -1
+      Then the pixel at 20, 20 of the window is "#808080"
+      When the property "brightness" of "fx" is set to -0.375
+      And the property "contrast" of "fx" is set to 0.5
+      Then the pixel at 20, 20 of the window is "#bf0000"
+
+    # Formula (documented: -1 is "totally desaturated", no upper bound;
+    # chroma scaling around Rec. 709 luma chosen):
+    #   Y  = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    #   c' = clamp(Y + (c - Y) * (1 + saturation), 0, 1)
+    # Source #ff0000 = (1, 0, 0) -> Y = 0.2126:
+    #   saturation = -1.0 (full desaturation):
+    #     r' = g' = b' = 0.2126 -> round(0.2126 * 255) = round(54.213) = 54 = 0x36
+    #     -> #363636
+    #   saturation = -0.5:
+    #     r' = 0.2126 + (1 - 0.2126)*0.5 = 0.6063 -> round(154.6065) = 155 = 0x9b
+    #     g' = b' = 0.2126 * 0.5 = 0.1063 -> round(27.1065) = 27 = 0x1b
+    #     -> #9b1b1b
+    #   brightness = 0.2 then saturation = 1.0 (factor = 2):
+    #     after brightness: (r, g, b) = (1.0, 0.2, 0.2)
+    #     Y = 0.2126*1.0 + 0.7152*0.2 + 0.0722*0.2 = 0.37008
+    #     g' = b' = 0.37008 + (0.2 - 0.37008)*2 = 0.02992 -> round(7.63) = 8 = 0x08
+    #     r' = clamp(0.37008 + (1.0 - 0.37008)*2, 0, 1) = 1.0 -> 255 = 0xff
+    #     -> #ff0808
+    Scenario: Saturation scales chroma around Rec. 709 luminance
+      When 200 milliseconds pass
+      And the property "saturation" of "fx" is set to -1
+      Then the pixel at 20, 20 of the window is "#363636"
+      When the property "saturation" of "fx" is set to -0.5
+      Then the pixel at 20, 20 of the window is "#9b1b1b"
+      When the property "brightness" of "fx" is set to 0.2
+      And the property "saturation" of "fx" is set to 1
+      Then the pixel at 20, 20 of the window is "#ff0808"
+
+    # Formula (documented range [0, 1] towards an RGBA colour; linear
+    # blend weighted by the colour's alpha chosen):
+    #   t  = clamp(colorization, 0, 1) * colorizationColor.a
+    #   c' = c + (colorizationColor.c - c) * t
+    # Source #ff0000 = (1, 0, 0):
+    #   colorization = 0.5, colorizationColor = "#0000ff" (0, 0, 1, 1):
+    #     r' = 1 + (0 - 1)*0.5 = 0.5 -> 128 = 0x80
+    #     g' = 0
+    #     b' = 0 + (1 - 0)*0.5 = 0.5 -> 128 = 0x80
+    #     -> #800080
+    #   colorization = 1.0, colorizationColor = "#00ff00" (0, 1, 0, 1):
+    #     (r', g', b') = (0, 1, 0) -> #00ff00
+    #   On `maskedHalf` (alpha = 128/255):
+    #     colorization = 1.0, colorizationColor = "#00ff00" -> premultiplied #008000.
+    Scenario: Colorization blends towards colorizationColor and preserves mask alpha
+      When 200 milliseconds pass
+      And the property "colorizationColor" of "fx" is set to "#0000ff"
+      And the property "colorization" of "fx" is set to 0.5
+      Then the pixel at 20, 20 of the window is "#800080"
+      When the property "colorizationColor" of "fx" is set to "#00ff00"
+      And the property "colorization" of "fx" is set to 1
+      Then the pixel at 20, 20 of the window is "#00ff00"
+      When the property "colorizationColor" of "maskedHalf" is set to "#00ff00"
+      And the property "colorization" of "maskedHalf" is set to 1
+      Then the pixel at 70, 20 of the window is "#008000"
+
+    # Separable 1D Gaussian blur on a 5x5 #ff0000 source at (40..45, 40..45),
+    # centre at (42, 42):
+    #   R = blur * blurMax * (1 + blurMultiplier) = 0.5 * 4 * 1 = 2, sigma = R / 2 = 1.
+    #   Unnormalized weights w(k) = exp(-k^2 / (2*sigma^2)) for k in -2..=2:
+    #     w(0) = 1, w(+-1) = exp(-0.5) = 0.606531, w(+-2) = exp(-2) = 0.135335
+    #     sum S = 2.483732 -> normalized w_hat = [0.054489, 0.244201, 0.402620, 0.244201, 0.054489]
+    #   Centre (42, 42): full 5x5 kernel lies inside the 5x5 source -> sum = 1.0 -> #ff0000.
+    #   Inner cardinal edge centres (40, 42), (44, 42), (42, 40), (42, 44):
+    #     1.0 * (w_hat(0) + w_hat(1) + w_hat(2)) = 0.701310 -> round(178.83) = 179 = #b30000.
+    #   Outer cardinal neighbours (39, 42), (45, 42), (42, 39), (42, 45) (in auto-padded area):
+    #     1.0 * (w_hat(1) + w_hat(2)) = 0.298690 -> round(76.17) = 76 = #4c0000.
+    #   3px outside at (37, 42): outside support r = 2 -> #000000;
+    #   setting blurMultiplier = 1 doubles R to 4 (sigma = 2) so at (37, 42):
+    #     w_x = (w(3)+w(4))/S = 0.093913, w_y = (w(0)+2w(1)+2w(2))/S = 0.812174
+    #     w_x * w_y * 255 = 19.45 -> 19 = 0x13 -> #130000.
+    Scenario: Blur spreads a small sharp source symmetrically while keeping its centre brightest
+      When 200 milliseconds pass
+      And the property "x" of "fx" is set to 40
+      And the property "y" of "fx" is set to 40
+      And the property "width" of "fx" is set to 5
+      And the property "height" of "fx" is set to 5
+      And the property "blurEnabled" of "fx" is set to true
+      And the property "blur" of "fx" is set to 0.5
+      And the property "blurMax" of "fx" is set to 4
+      Then the pixel at 42, 42 of the window is "#ff0000"
+      And the pixel at 40, 42 of the window is "#b30000"
+      And the pixel at 44, 42 of the window is "#b30000"
+      And the pixel at 42, 40 of the window is "#b30000"
+      And the pixel at 42, 44 of the window is "#b30000"
+      And the pixel at 39, 42 of the window is "#4c0000"
+      And the pixel at 45, 42 of the window is "#4c0000"
+      And the pixel at 42, 39 of the window is "#4c0000"
+      And the pixel at 42, 45 of the window is "#4c0000"
+      And the pixel at 37, 42 of the window is "#000000"
+      When the property "blurMultiplier" of "fx" is set to 1
+      Then the pixel at 37, 42 of the window is "#130000"
+
+    # Shadow at (+10, +8) under a 40x40 #ff0000 source at (20, 20):
+    #   Source covers (20..60, 20..60); shadow covers (30..70, 28..68).
+    #   Inside source at (35, 35): opaque #ff0000 covers the shadow -> #ff0000.
+    #   Right overhang at (65, 45) and bottom overhang at (45, 64):
+    #     shadowColor = "#00ff00", shadowOpacity = 1.0, shadowBlur = 0 -> #00ff00.
+    #   With shadowOpacity = 0.5:
+    #     alpha = 0.5 -> round(0.5 * 255) = 128 = 0x80 -> #008000.
+    Scenario: Shadow is drawn under the source at its offset, colour and opacity
+      When 200 milliseconds pass
+      And the property "x" of "fx" is set to 20
+      And the property "y" of "fx" is set to 20
+      And the property "shadowEnabled" of "fx" is set to true
+      And the property "shadowBlur" of "fx" is set to 0
+      And the property "shadowColor" of "fx" is set to "#00ff00"
+      And the property "shadowHorizontalOffset" of "fx" is set to 10
+      And the property "shadowVerticalOffset" of "fx" is set to 8
+      Then the pixel at 35, 35 of the window is "#ff0000"
+      And the pixel at 65, 45 of the window is "#00ff00"
+      And the pixel at 45, 64 of the window is "#00ff00"
+      And the pixel at 15, 35 of the window is "#000000"
+      When the property "shadowOpacity" of "fx" is set to 0.5
+      Then the pixel at 65, 45 of the window is "#008000"
+
+    # 1. Masked source (`maskedHalf` at x: 50, y: 0, 40x40):
+    #    mask `half.png` gives source alpha = 128/255.
+    #    With shadowEnabled = true, shadowBlur = 0, shadowColor = "#00ff00",
+    #    shadowHorizontalOffset = 10:
+    #    Right overhang at (95, 20) has only the shadow with alpha = 128/255 -> #008000.
+    #    Overlap at (65, 20) composites premultiplied fg (128, 0, 0, 128) over
+    #    shadow (0, 128, 0, 128):
+    #      r = 128 = 0x80, g = round(128 * (1 - 128/255)) = round(63.75) = 64 = 0x40
+    #      -> #804000.
+    # 2. Shadow scale (`fx` at x: 20, y: 20, 40x40, centre (40, 40)):
+    #    shadowScale = 1.5 expands 40x40 shadow to 60x60 around (40, 40) -> (10..70, 10..70),
+    #    so all 4 outer sides (15, 40), (65, 40), (40, 15), (40, 65) show #00ff00.
+    Scenario: Shadow uses the masked source alpha and scales around the item centre
+      When 200 milliseconds pass
+      And the property "shadowEnabled" of "maskedHalf" is set to true
+      And the property "shadowBlur" of "maskedHalf" is set to 0
+      And the property "shadowColor" of "maskedHalf" is set to "#00ff00"
+      And the property "shadowHorizontalOffset" of "maskedHalf" is set to 10
+      Then the pixel at 95, 20 of the window is "#008000"
+      And the pixel at 65, 20 of the window is "#804000"
+      When the property "x" of "fx" is set to 20
+      And the property "y" of "fx" is set to 20
+      And the property "shadowEnabled" of "fx" is set to true
+      And the property "shadowBlur" of "fx" is set to 0
+      And the property "shadowColor" of "fx" is set to "#00ff00"
+      And the property "shadowScale" of "fx" is set to 1.5
+      Then the pixel at 15, 40 of the window is "#00ff00"
+      And the pixel at 65, 40 of the window is "#00ff00"
+      And the pixel at 40, 15 of the window is "#00ff00"
+      And the pixel at 40, 65 of the window is "#00ff00"
+
+    # With `fx` at (20, 20) of size 40x40 (covering 20..60, 20..60) and a shadow
+    # offset by (+10, 0) (reaching x = 60..70):
+    #   1. autoPaddingEnabled = false and paddingRect = 0,0,0x0:
+    #      the canvas is not padded beyond 20..60, so (65, 40) is #000000.
+    #   2. paddingRect = Qt.rect(0, 0, 15, 0) (adds 15px on the right):
+    #      the canvas now reaches x = 20..75, so (65, 40) paints #00ff00.
+    #   3. Resetting paddingRect to Qt.rect(0, 0, 0, 0) and enabling
+    #      autoPaddingEnabled = true expands all sides by blurMax (32px),
+    #      so (65, 40) still paints #00ff00.
+    Scenario: Padding rectangle and autoPaddingEnabled control painted bounds outside the item
+      When 200 milliseconds pass
+      And the property "x" of "fx" is set to 20
+      And the property "y" of "fx" is set to 20
+      And the property "autoPaddingEnabled" of "fx" is set to false
+      And the property "shadowEnabled" of "fx" is set to true
+      And the property "shadowBlur" of "fx" is set to 0
+      And the property "shadowColor" of "fx" is set to "#00ff00"
+      And the property "shadowHorizontalOffset" of "fx" is set to 10
+      Then the pixel at 65, 40 of the window is "#000000"
+      When the property "paddingRect" of "fx" is bound to "Qt.rect(0, 0, 15, 0)"
+      Then the pixel at 65, 40 of the window is "#00ff00"
+      When the property "paddingRect" of "fx" is bound to "Qt.rect(0, 0, 0, 0)"
+      And the property "autoPaddingEnabled" of "fx" is set to true
+      Then the pixel at 65, 40 of the window is "#00ff00"
+
