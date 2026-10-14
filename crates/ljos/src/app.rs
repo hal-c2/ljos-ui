@@ -31,7 +31,11 @@
 //! ahead of time (a `build.rs`, as the toolkit's own styles do), so
 //! it links no QML parser. Compiling a directory of `.qml` files at
 //! start-up is development-only: it is behind the non-default
-//! `dev-qml` feature as [`crate::dev::compile_dir`].
+//! `dev-qml` feature as [`crate::dev::compile_dir`]. On the builder,
+//! [`App::qml_dir`] compiles against the application's own native
+//! types too — the ones [`App::register`] collected before the
+//! `qml_dir` call — so the QML may `import` the application's
+//! modules; the bare `compile_dir` knows the table of types alone.
 //!
 //! Neither the builder nor its parameters name an egui type; the
 //! shell's loop, and its 0 % CPU idle, stay the shell's business.
@@ -143,13 +147,33 @@ impl<M> App<M> {
 
     /// Compiles the QML directory `dir` now (development only, the
     /// `dev-qml` feature) and makes `root` its root component.
+    ///
+    /// The compile knows the application's own native types, not
+    /// only the table of types, so the QML may `import` a module
+    /// the application registers and create objects of its types —
+    /// with no oracle named by the user. [`register`](App::register)
+    /// calls must come before this call for their types to be
+    /// importable: the types are snapshotted when `qml_dir` runs
+    /// (on a throwaway Engine holding the standard modules and
+    /// every module collected so far, so a module's `register`
+    /// function runs once for the snapshot and again on the real
+    /// Engine). A module registered afterwards is, to this
+    /// compile, an unknown type and fails as compile errors do.
     #[cfg(feature = "dev-qml")]
     pub fn qml_dir(
         mut self,
         dir: impl AsRef<std::path::Path>,
         root: impl Into<String>,
     ) -> Result<Self, String> {
-        self.source = Some(crate::dev::compile_dir(dir.as_ref())?);
+        // The same throwaway snapshot the BDD backend and the
+        // gallery's `--example` compile against: the standard
+        // registrations the final Engine gets (`crate::engine`),
+        // plus every module this builder has collected so far.
+        let snapshot = crate::engine();
+        for module in &self.modules {
+            module(&snapshot);
+        }
+        self.source = Some(crate::dev::compile_dir_with(dir.as_ref(), &snapshot)?);
         self.root = Some(root.into());
         Ok(self)
     }

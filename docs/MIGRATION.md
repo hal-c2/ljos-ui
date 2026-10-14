@@ -282,12 +282,18 @@ let app = ljos::App::new("Hello")
     });
 ```
 
-One limit to know: an application's native types are known to the
-engine at run time but do not reach the compiler's table of types
-yet, so QML cannot `import` them today — it uses created objects
-(context properties, list models) instead. For the same reason
-`check --port` will not know them from a table; give the ones your
-QML uses `supported` ledger rows (section 3). Where the shape is
+An application's native types do not reach the compiler's table of
+types, but QML compiled through the application can `import` them:
+`App::qml_dir` (behind the development-only `dev-qml` feature)
+compiles against a snapshot of the modules `register`ed before the
+`qml_dir` call, so `.register(m).qml_dir(dir, root)` just works when
+the QML in `dir` imports `m`'s module — and the same snapshot is
+available directly as `ljos::dev::compile_dir_with(dir, &engine)`.
+The table-only tools still do not know them: `ljos::dev::compile_dir`
+fails on such an import as an unknown type, and `check --port` will
+not know them from a table; give the ones your QML uses `supported`
+ledger rows (section 3). Created objects (context properties, list
+models) remain the other way across. Where the shape is
 not known ahead of time at all, `PropertyMap` (in the prelude) is
 the `QQmlPropertyMap` counterpart: per-key reactive properties on
 an object Rust creates.

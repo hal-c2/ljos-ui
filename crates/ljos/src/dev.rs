@@ -14,14 +14,32 @@ use std::path::Path;
 use ljos_engine::{Engine, MapSource, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeTag};
 use qml_front::{Property as FrontProperty, QtType, QtTypeOracle, Special, TypeOracle};
 
-/// Compiles every file under `dir` into a component source, printing
-/// the diagnostics as a developer at a terminal expects and failing
-/// with them, one a line, if any file has an error.
+/// Compiles every file under `dir` into a component source, against
+/// the table of types alone: an application's native types are not
+/// in the table (ARCHITECTURE.md D1), so a file that imports one
+/// fails here as an unknown type. Printing the diagnostics as a
+/// developer at a terminal expects and failing with them, one a
+/// line, if any file has an error.
 pub fn compile_dir(dir: &Path) -> Result<MapSource, String> {
+    compile_dir_with_oracle(dir, QtTypeOracle)
+}
+
+/// Compiles every file under `dir` into a component source, against
+/// the table of types plus the native types registered on `engine`
+/// that the table does not describe ([`EngineOracle::from_engine`]:
+/// a type the table knows stays the table's, natives fill the
+/// gaps). A file may `import` the application's own module and
+/// create objects of its types. Same diagnostics and failure as
+/// [`compile_dir`].
+pub fn compile_dir_with(dir: &Path, engine: &Engine) -> Result<MapSource, String> {
+    compile_dir_with_oracle(dir, EngineOracle::from_engine(engine))
+}
+
+fn compile_dir_with_oracle<O: TypeOracle>(dir: &Path, oracle: O) -> Result<MapSource, String> {
     let mut source = MapSource::new();
     let mut errors = Vec::new();
-    let files =
-        ljos_compiler::compile_project(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let files = ljos_compiler::compile_project_with(dir, oracle)
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
     for r in files {
         match r.result {
             Ok(c) => {

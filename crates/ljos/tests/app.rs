@@ -4,11 +4,12 @@
 //! pattern is `crates/ljos_controls/tests/navigation.rs`'s; compiling
 //! in a test links the parser in the test only, never in the facade.
 //!
-//! The QML reaches the native type through a context property, not
-//! an import: an application's native types do not reach the
-//! compiler's table of types yet (ARCHITECTURE.md §4, as built), so
-//! `import Example` is a compile error today, while a created
-//! object in scope is the supported bridge (`docs/MIGRATION.md` §6).
+//! The QML here reaches the native type through a context property,
+//! because this file's `compile` helper compiles against the table
+//! of types alone, which an application's natives do not reach
+//! (ARCHITECTURE.md D1). Compiling through `App::qml_dir` instead
+//! snapshots the registered natives, so the QML may `import` them —
+//! that path is `native_import.rs` (and `docs/MIGRATION.md` §6).
 
 // The derive's generated `::ljos_engine::…` paths, resolved as an
 // application crate depending on the facade alone resolves them.
