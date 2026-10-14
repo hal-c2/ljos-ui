@@ -24,6 +24,7 @@ use crate::incubator::Template;
 use crate::meta::MetaRef;
 use crate::object::{ObjectFlags, QmlType};
 use crate::signal::Handler;
+use crate::types::Url;
 use crate::value::Value;
 use crate::{QmlObject, WriteKind, qml_impl};
 
@@ -58,7 +59,7 @@ pub struct Component {
     #[qml(notify, readonly, enumeration = "Status")]
     pub status: i32,
     #[qml(readonly)]
-    pub url: Atom,
+    pub url: Url,
     #[qml(skip)]
     pub(crate) template: Option<Rc<Template>>,
     /// Why there is no template: what `errorString()` says.
@@ -461,7 +462,22 @@ pub(crate) fn register(engine: &Engine) {
         QtObject, Component, Connections, Timer, crate::instantiator::Instantiator
     ]));
     engine.register_module(crate::module!("QtQml.Models" 2.0 => [
-        crate::listmodel::ListModel, crate::listmodel::ListElement
+        crate::listmodel::ListModel,
+        crate::listmodel::ListElement,
+        crate::instantiator::Instantiator,
+        crate::chooser::DelegateChooser,
+        crate::chooser::DelegateChoice,
+        crate::sort_filter::SortFilterProxyModel,
+        crate::sort_filter::FilterBase,
+        crate::sort_filter::RoleFilter,
+        crate::sort_filter::ValueFilter,
+        crate::sort_filter::SorterBase,
+        crate::sort_filter::RoleSorter,
+        crate::sort_filter::StringSorter
+    ]));
+    engine.register_module(crate::module!("Qt.labs.qmlmodels" 1.0 => [
+        crate::chooser::DelegateChooser,
+        crate::chooser::DelegateChoice
     ]));
     // A file that imports `QtQml` has the models too.
     engine.register_import("QtQml", "QtQml.Models");
@@ -916,6 +932,21 @@ impl Engine {
         let args: Vec<JsValue> = args.iter().map(|a| self.to_js(a)).collect();
         self.run_js("call", |s| {
             let out = s.call_ref(&r, &JsValue::Undefined, &args)?;
+            Ok(self.js_to_value(s, out, &crate::TypeTag::Var))
+        })
+    }
+
+    /// Calls a JS function a property holds with `this` bound to `this`
+    /// (`CheckBox.nextCheckState`).
+    pub fn call_value(&self, this: ObjectId, func: &Value, args: &[Value]) -> Option<Value> {
+        let Value::Js(h) = func else {
+            return None;
+        };
+        let r = h.0.clone();
+        let this_js = JsValue::Object(crate::js::obj_to_u64(this));
+        let js_args: Vec<JsValue> = args.iter().map(|a| self.to_js(a)).collect();
+        self.run_js("callback", |s| {
+            let out = s.call_ref(&r, &this_js, &js_args)?;
             Ok(self.js_to_value(s, out, &crate::TypeTag::Var))
         })
     }

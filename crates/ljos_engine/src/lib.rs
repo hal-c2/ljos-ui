@@ -43,6 +43,7 @@ extern crate self as ljos_engine;
 mod atom;
 mod boundary;
 mod builtins;
+mod chooser;
 mod color_names;
 mod context;
 mod cx;
@@ -72,6 +73,7 @@ mod meta;
 mod model;
 mod number;
 mod object;
+mod property_map;
 mod qml_types;
 mod qt_enums;
 mod qt_keys;
@@ -81,6 +83,7 @@ mod reset;
 mod script_arrays;
 mod script_owned;
 mod signal;
+mod sort_filter;
 mod types;
 mod value;
 mod value_faces;
@@ -89,6 +92,7 @@ mod value_types;
 pub use atom::Atom;
 pub use boundary::{APPLICATION_PROC, Boundary, BoundaryConfig, SubtreeSnapshot};
 pub use builtins::QtObject;
+pub use chooser::{DelegateChoice, DelegateChooser};
 pub use context::Context;
 pub use cx::Cx;
 pub use delegates::{DelegateHost, Delegates, RemovalOrder};
@@ -127,15 +131,21 @@ pub use object::{
     ObjectFlags, QmlObject, QmlType, ScriptMethod, downcast_chain, downcast_chain_mut, find_native,
     find_native_mut,
 };
+pub use property_map::PropertyMap;
 pub use qtqml::{Component, ComponentAttached, Connections, Timer};
 pub use registry::{
     MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, Registry, SignalEntry, TypeDump,
     TypeEntry, Version,
 };
 pub use signal::Handler;
+pub use sort_filter::{
+    FilterBase, RoleFilter, RoleSorter, SortFilterProxyModel, SorterBase, StringSorter, ValueFilter,
+};
 pub use types::{ConvertError, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Value};
-pub use value_types::{Quaternion, Vector2d, Vector3d, Vector4d, general as number_to_general};
+pub use value_types::{
+    IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, general as number_to_general,
+};
 
 pub use ljos_macros::{QmlObject, qml_impl, qml_singleton};
 pub use ljos_reactive::{NodeId, OverrideId, Provenance, RestoreMode, ScopeId, WriteKind};

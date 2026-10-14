@@ -66,9 +66,6 @@ Feature: Singleton types written in QML
         """
       Then the property "missing" of "root" is true
 
-    # Ljós gives every object a `parent`, null where there is none; Qt
-    # gives one to items only.
-    @backlog
     Scenario: It has no parent to read
       Given the QML:
         """qml

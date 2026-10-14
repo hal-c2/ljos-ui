@@ -68,6 +68,10 @@ module Ljos
 		signal fileChanged
 		signal lineChanged
 
+module Qt.labs.qmlmodels
+	DelegateChoice QtQml.Models.DelegateChoice
+	DelegateChooser QtQml.Models.DelegateChooser
+
 module QtCore
 	BluetoothPermission QtCore.BluetoothPermission
 	CalendarPermission QtCore.CalendarPermission
@@ -286,7 +290,7 @@ module QtQml
 		enum Status Null=0 Ready=1 Loading=2 Error=3
 		enum CompilationMode PreferSynchronous=0 Asynchronous=1
 		prop status Status readonly
-		prop url QtQml.string named readonly
+		prop url QtQml.url named readonly
 		signal statusChanged
 		method createObject
 		method incubateObject
@@ -343,19 +347,94 @@ module QtQml
 		signal destruction
 
 module QtQml.Models
+	DelegateChoice QtQml.Models.DelegateChoice
+	DelegateChooser QtQml.Models.DelegateChooser
 	DelegateModel QtQml.Models.DelegateModel
+	DelegateModelGroup QtQml.Models.DelegateModelGroup
+	FilterBase QtQml.Models.FilterBase
+	Instantiator QtQml.Instantiator
 	ListElement QtQml.Models.ListElement
 	ListModel QtQml.Models.ListModel
 	ObjectModel QtQml.Models.ObjectModel
+	RoleFilter QtQml.Models.RoleFilter
+	RoleSorter QtQml.Models.RoleSorter
+	SortFilterProxyModel QtQml.Models.SortFilterProxyModel
+	SorterBase QtQml.Models.SorterBase
+	StringSorter QtQml.Models.StringSorter
+	ValueFilter QtQml.Models.ValueFilter
+	type QtQml.Models.DelegateChoice DelegateChoice
+		prototype QtQml.QtObject named
+		default delegate
+		prop roleValue QtQml.var named
+		prop row QtQml.int named
+		prop index QtQml.int named
+		prop column QtQml.int named
+		prop delegate QtQml.Component named pointer
+		signal roleValueChanged
+		signal rowChanged
+		signal indexChanged
+		signal columnChanged
+		signal delegateChanged
+		signal changed
+	type QtQml.Models.DelegateChooser DelegateChooser
+		prototype QtQml.Component named
+		default choices
+		prop role QtQml.string named
+		prop choices QtQml.var named list readonly
+		signal roleChanged
 	type QtQml.Models.DelegateModel DelegateModel
 		prototype QtQml.QtObject named
+		attached QtQml.Models.DelegateModelAttached
 		default delegate
 		prop model QtQml.var named
 		prop delegate QtQml.Component named pointer
 		prop count QtQml.int named readonly
+		prop items QtQml.QtObject named pointer readonly
+		prop persistedItems QtQml.QtObject named pointer readonly
+		prop groups QtQml.var named list
+		prop filterOnGroup QtQml.string named reset
+		prop parts QtQml.QtObject named pointer readonly
+		prop rootIndex QtQml.var named
 		signal modelChanged
 		signal delegateChanged
 		signal countChanged
+		signal itemsChanged
+		signal persistedItemsChanged
+		signal filterOnGroupChanged
+		signal partsChanged
+		signal rootIndexChanged
+		signal filterGroupChanged
+		signal defaultGroupsChanged
+		method modelIndex
+		method parentModelIndex
+	type QtQml.Models.DelegateModelGroup DelegateModelGroup
+		prototype QtQml.QtObject named
+		prop count QtQml.int named readonly
+		prop name QtQml.string named
+		prop includeByDefault QtQml.bool named
+		signal countChanged
+		signal nameChanged
+		signal includeByDefaultChanged
+		signal changed removed inserted
+		signal defaultIncludeChanged
+		method addGroups
+		method removeGroups
+		method setGroups
+		method remove
+		method move
+		method insert
+	type QtQml.Models.FilterBase FilterBase
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop enabled QtQml.bool named
+		prop inverted QtQml.bool named
+		prop column QtQml.int named
+		signal enabledChanged
+		signal invertedChanged
+		signal columnChanged
+		signal invalidateModel
+		signal invalidateCache filter
+		method invalidate
 	type QtQml.Models.ListElement ListElement
 		prototype QtQml.QtObject named
 		is parser
@@ -385,6 +464,80 @@ module QtQml.Models
 		method move
 		method remove
 		method clear
+	type QtQml.Models.RoleFilter RoleFilter
+		prototype QtQml.Models.FilterBase named
+		is uncreatable
+		prop roleName QtQml.string named
+		signal roleNameChanged
+	type QtQml.Models.RoleSorter RoleSorter
+		prototype QtQml.Models.SorterBase named
+		prop roleName QtQml.string named
+		signal roleNameChanged
+	type QtQml.Models.SortFilterProxyModel SortFilterProxyModel
+		prototype QtQml.QtObject named
+		prop model QtQml.var named
+		prop sourceModel QtQml.var named
+		prop filters QtQml.var named list readonly
+		prop sorters QtQml.var named list readonly
+		prop dynamicSortFilter QtQml.bool named
+		prop recursiveFiltering QtQml.bool named
+		prop autoAcceptChildRows QtQml.bool named
+		signal modelChanged
+		signal sourceModelChanged
+		signal filtersChanged
+		signal sortersChanged
+		signal dynamicSortFilterChanged
+		signal recursiveFilteringChanged
+		signal autoAcceptChildRowsChanged
+		signal primarySorterChanged
+		method invalidate
+		method invalidateSorter
+		method setPrimarySorter
+		method rowCount
+	type QtQml.Models.SorterBase SorterBase
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop enabled QtQml.bool named
+		prop sortOrder Qt::SortOrder
+		prop priority QtQml.int named
+		prop column QtQml.int named
+		signal enabledChanged
+		signal sortOrderChanged
+		signal priorityChanged
+		signal columnChanged
+		signal invalidateModel
+		signal invalidateCache filter
+		method invalidate
+	type QtQml.Models.StringSorter StringSorter
+		prototype QtQml.Models.RoleSorter named
+		prop caseSensitivity Qt::CaseSensitivity
+		prop ignorePunctuation QtQml.bool named
+		prop locale QtQml.var named
+		prop numericMode QtQml.bool named
+		signal caseSensitivityChanged
+		signal ignorePunctuationChanged
+		signal localeChanged
+		signal numericModeChanged
+	type QtQml.Models.ValueFilter ValueFilter
+		prototype QtQml.Models.RoleFilter named
+		prop value QtQml.var named reset
+		signal valueChanged
+	type QtQml.Models.DelegateModelAttached DelegateModelAttached
+		is uncreatable
+		prop model QtQml.QtObject named pointer readonly
+		prop groups QtQml.var named
+		prop isUnresolved QtQml.bool named readonly
+		prop inItems QtQml.bool named
+		prop inPersistedItems QtQml.bool named
+		prop itemsIndex QtQml.int named readonly
+		prop persistedItemsIndex QtQml.int named readonly
+		signal modelChanged
+		signal groupsChanged
+		signal isUnresolvedChanged
+		signal inItemsChanged
+		signal inPersistedItemsChanged
+		signal itemsIndexChanged
+		signal persistedItemsIndexChanged
 
 module QtQuick
 	import QtQml
@@ -452,6 +605,7 @@ module QtQuick
 	PauseAnimation QtQuick.PauseAnimation
 	PinchHandler QtQuick.PinchHandler
 	PointHandler QtQuick.PointHandler
+	PointerDevice QtQuick.PointerDevice
 	PointerHandler QtQuick.PointerHandler
 	Positioner QtQuick.Positioner
 	PropertyAction QtQuick.PropertyAction
@@ -486,6 +640,7 @@ module QtQuick
 	Transition QtQuick.Transition
 	Translate QtQuick.Translate
 	ViewSection QtQuick.ViewSection
+	ViewTransition QtQuick.ViewTransition
 	WheelEvent QtQuick.WheelEvent
 	WheelHandler QtQuick.WheelHandler
 	Window QtQuick.Window
@@ -1222,6 +1377,7 @@ module QtQuick
 		prop acceptedButtons Qt::MouseButtons
 		prop preventStealing QtQml.bool named
 		prop drag QtQuick.Drag pointer readonly
+		prop cursorShape Qt::CursorShape reset
 		signal hoverEnabledChanged
 		signal containsMouseChanged
 		signal pressedChanged
@@ -1230,6 +1386,7 @@ module QtQuick
 		signal mouseYChanged
 		signal acceptedButtonsChanged
 		signal preventStealingChanged
+		signal cursorShapeChanged
 		signal pressed mouse
 		signal released mouse
 		signal clicked mouse
@@ -1533,10 +1690,38 @@ module QtQuick
 		prop translation QtQuick.vector2d named readonly
 		signal pointChanged
 		signal translationChanged
+	type QtQuick.PointerDevice PointerDevice
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		enum PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		enum GrabTransition GrabPassive=1 UngrabPassive=2 CancelGrabPassive=3 OverrideGrabPassive=4 GrabExclusive=16 UngrabExclusive=32 CancelGrabExclusive=48
+		enum CapabilityFlag None=0 Position=1 Area=2 Pressure=4 Velocity=8 NormalizedPosition=32 MouseEmulation=64 PixelScroll=128 Scroll=256 Hover=512 Rotation=1024 XTilt=2048 YTilt=4096 TangentialPressure=8192 ZPosition=16384 All=2147483647
+		flags Capabilities None=0 Position=1 Area=2 Pressure=4 Velocity=8 NormalizedPosition=32 MouseEmulation=64 PixelScroll=128 Scroll=256 Hover=512 Rotation=1024 XTilt=2048 YTilt=4096 TangentialPressure=8192 ZPosition=16384 All=2147483647
+		prop deviceType DeviceType readonly
+		prop pointerType PointerType readonly
+		prop capabilities Capabilities readonly
+		prop maximumPoints QtQml.int named readonly
+		prop buttonCount QtQml.int named readonly
+		prop uniqueId QtQml.string named readonly
+		prop name QtQml.string named readonly
+		signal deviceTypeChanged
+		signal pointerTypeChanged
+		signal capabilitiesChanged
+		signal maximumPointsChanged
+		signal buttonCountChanged
+		signal uniqueIdChanged
+		signal nameChanged
 	type QtQuick.PointerHandler PointerHandler
 		prototype QtQml.QtObject named
 		is uncreatable
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
 		prop enabled QtQml.bool named
 		prop active QtQml.bool named readonly
 		prop target QtQml.QtObject named pointer
@@ -1545,8 +1730,8 @@ module QtQuick
 		prop margin QtQml.real named
 		prop dragThreshold QtQml.int named reset
 		prop cursorShape Qt::CursorShape reset
-		prop acceptedDevices QtQml.int named
-		prop acceptedPointerTypes QtQml.int named
+		prop acceptedDevices DeviceTypes
+		prop acceptedPointerTypes PointerTypes
 		prop acceptedButtons Qt::MouseButtons
 		prop acceptedModifiers Qt::KeyboardModifiers
 		signal enabledChanged
@@ -1604,10 +1789,18 @@ module QtQuick
 		prototype QtQuick.Item named
 		prop color QtQuick.color named
 		prop radius QtQml.real named
+		prop topLeftRadius QtQml.real named reset
+		prop topRightRadius QtQml.real named reset
+		prop bottomLeftRadius QtQml.real named reset
+		prop bottomRightRadius QtQml.real named reset
 		prop border QtQuick.RectangleBorder pointer readonly
 		prop gradient QtQml.var named reset
 		signal colorChanged
 		signal radiusChanged
+		signal topLeftRadiusChanged
+		signal topRightRadiusChanged
+		signal bottomLeftRadiusChanged
+		signal bottomRightRadiusChanged
 	type QtQuick.RegularExpressionValidator RegularExpressionValidator
 		prototype QtQml.QtObject named
 		prop regularExpression QtQml.var named
@@ -1831,6 +2024,10 @@ module QtQuick
 		prototype QtQml.QtObject named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
 		prop enabled QtQml.bool named
 		prop pressed QtQml.bool named readonly
 		prop tapCount QtQml.int named readonly
@@ -1842,8 +2039,8 @@ module QtQuick
 		prop margin QtQml.real named
 		prop dragThreshold QtQml.int named reset
 		prop grabPermissions GrabPermissions
-		prop acceptedDevices QtQml.int named
-		prop acceptedPointerTypes QtQml.int named
+		prop acceptedDevices DeviceTypes
+		prop acceptedPointerTypes PointerTypes
 		prop acceptedModifiers Qt::KeyboardModifiers
 		prop cursorShape Qt::CursorShape reset
 		prop longPressThreshold QtQml.real named reset
@@ -1893,6 +2090,11 @@ module QtQuick
 		prop textFormat TextFormat
 		prop linkColor QtQuick.color named
 		prop hoveredLink QtQml.string named readonly
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
 		signal textChanged
 		signal colorChanged
 		signal fontChanged
@@ -1912,6 +2114,11 @@ module QtQuick
 		signal textFormatChanged
 		signal linkColorChanged
 		signal hoveredLinkChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal topPaddingChanged
+		signal rightPaddingChanged
+		signal bottomPaddingChanged
 		signal linkActivated link
 		signal linkHovered link
 		method linkAt
@@ -2042,6 +2249,9 @@ module QtQuick
 		signal criteriaChanged
 		signal delegateChanged
 		signal labelPositioningChanged
+	type QtQuick.ViewTransition ViewTransition
+		attached QtQuick.ViewTransitionAttached
+		is uncreatable
 	type QtQuick.WheelEvent WheelEvent
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -2694,6 +2904,18 @@ module QtQuick
 		method positionAt
 		method positionToRectangle
 		method isRightToLeft
+	type QtQuick.ViewTransitionAttached ViewTransitionAttached
+		is uncreatable
+		prop item QtQml.QtObject named pointer readonly
+		prop index QtQml.int named readonly
+		prop destination QtQml.point named readonly
+		prop targetItems QtQml.var named readonly
+		prop targetIndexes QtQml.var named readonly
+		signal itemChanged
+		signal indexChanged
+		signal destinationChanged
+		signal targetItemsChanged
+		signal targetIndexesChanged
 	type QtQuick.WindowAttached WindowAttached
 		is uncreatable
 		prop activeFocusItem QtQml.QtObject named pointer readonly

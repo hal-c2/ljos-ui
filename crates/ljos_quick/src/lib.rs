@@ -138,9 +138,12 @@ pub use text_input::{
 };
 pub use tree::{add_data, child_items, resources, set_parent_item, sync_parent};
 pub use views::{
-    DelegateModel, ObjectModel, drive_delegate_model, object_model_changed, object_model_rows,
+    DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,
+    object_model_changed, object_model_rows,
 };
-pub use views::{GridView, ItemView, ListView, ViewAttached, ViewSection};
+pub use views::{
+    GridView, ItemView, ListView, ViewAttached, ViewSection, ViewTransition, ViewTransitionAttached,
+};
 pub use views::{PathView, PathViewAttached, path_view};
 pub use views::{view_index_of, view_item_at};
 pub use wheel_handler::WheelHandler;

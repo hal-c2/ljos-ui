@@ -980,12 +980,8 @@ fn what_qt_says_of_a_type_ljos_has() {
 /// file on Qt and not here.
 const NOT_YET: &[(&str, &str)] = &[
     (
-        "QtQml.Component.url",
-        "a string here and a url to Qt: nothing resolves it against a file yet",
-    ),
-    (
-        "QtQml.Models: Instantiator",
-        "registered in QtQml alone; Qt has it in QtQml.Models as well",
+        "QtQuick.PointerDevice.uniqueId",
+        "a string here; Qt's pointingDeviceUniqueId value type is not a Ljós value yet",
     ),
     (
         "QtQml: Easing",
@@ -1033,12 +1029,8 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.Controls.Basic.TextArea",
         "`TextArea.flickable` is not there",
     ),
-    // `ObjectModel.index` and `DelegateModel.itemsIndex` on a row, and the
-    // rest of what Qt's models attach to the items they make.
-    (
-        "QtQml.Models.DelegateModel",
-        "attaches nothing to its rows yet",
-    ),
+    // `ObjectModel.index` on an item, and the rest of what Qt's models
+    // attach to the items they make.
     (
         "QtQml.Models.ObjectModel",
         "attaches nothing to its items yet",

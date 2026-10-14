@@ -30,7 +30,7 @@ use crate::loader::{LoadedFile, join_url};
 use crate::meta::MetaRef;
 use crate::object::QmlType;
 use crate::qtqml::Component;
-use crate::types::TypeTag;
+use crate::types::{TypeTag, Url};
 use crate::value::Value;
 
 /// The function of a compiled module the runtime calls with the module's
@@ -272,7 +272,7 @@ impl Engine {
             owner,
         )?;
         self.with_mut::<Component, _>(c, |comp| {
-            comp.url = Atom::new(&full);
+            comp.url = Url(Atom::new(&full));
             comp.error = Atom::new(&error);
         })?;
         self.write_internal(

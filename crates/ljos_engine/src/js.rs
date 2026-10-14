@@ -177,7 +177,19 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
             }
         }
     }
-    if !seen.contains_key("parent") {
+    let is_item = {
+        let mut cur = Some(meta);
+        let mut found = false;
+        while let Some(m) = cur {
+            if m.name == "Item" {
+                found = true;
+                break;
+            }
+            cur = m.base.as_ref();
+        }
+        found
+    };
+    if !seen.contains_key("parent") && is_item {
         props.push(PropDef {
             name: "parent".into(),
             id: PARENT_ID,
@@ -682,6 +694,7 @@ impl Engine {
             Value::String(s) | Value::Url(s) => JsValue::String(s.to_string()),
             Value::Color(c) => JsValue::Color([c.r, c.g, c.b, c.a]),
             Value::Point(_)
+            | Value::IntPoint(_)
             | Value::Size(_)
             | Value::Rect(_)
             | Value::Font(_)

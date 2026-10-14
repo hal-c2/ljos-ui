@@ -40,7 +40,7 @@ use crate::loader::LoadedFile;
 use crate::meta::{MetaBuilder, MetaRef, PropertyFlags};
 use crate::object::{BindingLoc, Location, QmlType};
 use crate::qtqml::{Component, Connections};
-use crate::types::TypeTag;
+use crate::types::{TypeTag, Url};
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
 
@@ -2184,7 +2184,7 @@ impl Engine {
         let url = template.file.url.clone();
         let _ = self.with_mut::<Component, _>(c, |comp| {
             comp.template = Some(Rc::new(template));
-            comp.url = url;
+            comp.url = Url(url);
         });
         let _ = self.write_internal(
             c,
