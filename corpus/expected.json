@@ -16,10 +16,18 @@
       "pixels": 0.99,
       "content": 0.99
     },
+    "maroon": {
+      "pixels": 0.94,
+      "content": 0.94
+    },
     "qtjennydemo": {},
     "rssnews": {
       "pixels": 0.8,
       "content": 0.57
+    },
+    "samegame": {
+      "pixels": 0.98,
+      "content": 0.96
     },
     "snippet-alias-application": {
       "pixels": 0.98,
