@@ -3046,11 +3046,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_focusscopewidget"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "ljos_ir",
+]
+
+[[package]]
+name = "ljos_example_qtjennydemo"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ljos_gallery_backends"
 version = "0.0.0"
 dependencies = [
  "ljos",
  "ljos_example_colorpalette",
+ "ljos_example_focusscopewidget",
+ "ljos_example_qtjennydemo",
  "ljos_xml",
 ]
 

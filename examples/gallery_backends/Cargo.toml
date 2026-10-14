@@ -12,6 +12,10 @@ publish.workspace = true
 ljos = { path = "../../crates/ljos" }
 # The ColorPalette client example's own backend.
 ljos_example_colorpalette = { path = "../colorpalette" }
+# The qtjennydemo example's `BackEnd`.
+ljos_example_qtjennydemo = { path = "../qtjennydemo" }
+# The focus snippet's `MyFocusScopeWidget`.
+ljos_example_focusscopewidget = { path = "../focusscopewidget" }
 # A generic Qt module one example uses (`QtQml.XmlListModel`, rssnews):
 # its own crate, here only as a registration.
 ljos_xml = { path = "../../crates/ljos_xml" }

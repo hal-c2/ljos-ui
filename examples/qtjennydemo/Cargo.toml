@@ -1,0 +1,20 @@
+[package]
+name = "ljos_example_qtjennydemo"
+description = "Rust backend of the qtdoc qtjennydemo example (BackEnd), written against the ljos facade from the interface its QML uses; on a desktop it answers as a device with none of the Android services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos = { path = "../../crates/ljos" }
+thiserror.workspace = true
+
+[dev-dependencies]
+ljos = { path = "../../crates/ljos", features = ["dev-qml"] }
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+
+[lints]
+workspace = true

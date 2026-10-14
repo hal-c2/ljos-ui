@@ -1,0 +1,27 @@
+[package]
+name = "ljos_example_focusscopewidget"
+description = "The MyFocusScopeWidget type of the qtdoc focus snippet: the one component its qmldir names and the corpus does not carry, written in QML from the focus documentation and compiled to IR when this crate is built"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+ljos = { path = "../../crates/ljos" }
+# The compiled widget is embedded as IR and read back at registration.
+ljos_ir = { path = "../../crates/ljos_ir" }
+
+[build-dependencies]
+# The widget's QML is compiled when this crate is built; the crate itself
+# never links the compiler or the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+
+[dev-dependencies]
+ljos = { path = "../../crates/ljos", features = ["dev-qml"] }
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+
+[lints]
+workspace = true

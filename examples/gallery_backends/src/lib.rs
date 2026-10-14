@@ -25,6 +25,12 @@ pub fn register(engine: &Engine, id: &str) {
         // No types of its own: the generic `QtQml.XmlListModel` module
         // its feed is read with.
         "rssnews" => ljos_xml::register(engine),
+        // `BackEnd`, answering as a device with none of the Android
+        // services the demo is about.
+        "qtjennydemo" => ljos_example_qtjennydemo::register(engine),
+        // The snippet's widget, which its qmldir names and the
+        // corpus does not carry.
+        "snippet-focus-scope-widget" => ljos_example_focusscopewidget::register(engine),
         _ => {}
     }
 }
@@ -32,7 +38,12 @@ pub fn register(engine: &Engine, id: &str) {
 /// The example ids that have a backend, for a host that wants to say
 /// which examples it can run whole.
 pub fn supported() -> &'static [&'static str] {
-    &["colorpaletteclient", "rssnews"]
+    &[
+        "colorpaletteclient",
+        "rssnews",
+        "qtjennydemo",
+        "snippet-focus-scope-widget",
+    ]
 }
 
 #[cfg(test)]
@@ -45,6 +56,19 @@ mod tests {
         register(&engine, "colorpaletteclient");
         assert!(engine.has_module("ColorPalette"));
         assert!(engine.lookup_type("ColorPalette", "RestService").is_some());
+
+        let engine = ljos::engine();
+        register(&engine, "qtjennydemo");
+        assert!(engine.has_module("qtjenny_consumer"));
+        assert!(engine.lookup_type("qtjenny_consumer", "BackEnd").is_some());
+
+        let engine = ljos::engine();
+        register(&engine, "snippet-focus-scope-widget");
+        assert!(
+            engine
+                .lookup_type("QtQuick", "MyFocusScopeWidget")
+                .is_some()
+        );
 
         let engine = ljos::engine();
         register(&engine, "rssnews");
