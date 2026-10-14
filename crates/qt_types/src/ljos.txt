@@ -3873,6 +3873,162 @@ module QtQuick.Layouts
 		signal horizontalStretchFactorChanged
 		signal verticalStretchFactorChanged
 
+module QtQuick.Particles
+	Age QtQuick.Particles.Age
+	AngleDirection QtQuick.Particles.AngleDirection
+	EllipseShape QtQuick.Particles.EllipseShape
+	Emitter QtQuick.Particles.Emitter
+	ImageParticle QtQuick.Particles.ImageParticle
+	MaskShape QtQuick.Particles.MaskShape
+	NullVector QtQuick.Particles.NullVector
+	ParticleAffector QtQuick.Particles.ParticleAffector
+	ParticleExtruder QtQuick.Particles.ParticleExtruder
+	ParticlePainter QtQuick.Particles.ParticlePainter
+	ParticleSystem QtQuick.Particles.ParticleSystem
+	PointDirection QtQuick.Particles.PointDirection
+	TargetDirection QtQuick.Particles.TargetDirection
+	Wander QtQuick.Particles.Wander
+	type QtQuick.Particles.Age Age
+		prototype QtQuick.Particles.ParticleAffector named
+		prop lifeLeft QtQml.int named
+		prop advancePosition QtQml.bool named
+		signal lifeLeftChanged
+		signal advancePositionChanged
+	type QtQuick.Particles.AngleDirection AngleDirection
+		prototype QtQuick.Particles.NullVector named
+		prop angle QtQml.real named
+		prop magnitude QtQml.real named
+		prop angleVariation QtQml.real named
+		prop magnitudeVariation QtQml.real named
+		signal angleChanged
+		signal magnitudeChanged
+		signal angleVariationChanged
+		signal magnitudeVariationChanged
+	type QtQuick.Particles.EllipseShape EllipseShape
+		prototype QtQuick.Particles.ParticleExtruder named
+		prop fill QtQml.bool named
+		signal fillChanged
+	type QtQuick.Particles.Emitter Emitter
+		prototype QtQuick.Item named
+		enum Lifetime InfiniteLife=1073741823
+		prop system QtQuick.Particles.ParticleSystem named pointer
+		prop group QtQml.string named
+		prop shape QtQuick.Particles.ParticleExtruder named pointer
+		prop startTime QtQml.int named
+		prop emitRate QtQml.real named
+		prop lifeSpan QtQml.int named
+		prop lifeSpanVariation QtQml.int named
+		prop maximumEmitted QtQml.int named
+		prop size QtQml.real named
+		prop endSize QtQml.real named
+		prop sizeVariation QtQml.real named
+		prop velocity QtQuick.Particles.NullVector named pointer
+		prop acceleration QtQuick.Particles.NullVector named pointer
+		signal systemChanged
+		signal groupChanged
+		signal shapeChanged
+		signal startTimeChanged
+		signal emitRateChanged
+		signal lifeSpanChanged
+		signal lifeSpanVariationChanged
+		signal maximumEmittedChanged
+		signal sizeChanged
+		signal endSizeChanged
+		signal sizeVariationChanged
+		signal velocityChanged
+		signal accelerationChanged
+		method burst
+		method pulse
+	type QtQuick.Particles.ImageParticle ImageParticle
+		prototype QtQuick.Particles.ParticlePainter named
+		enum EntryEffect None=0 Fade=1 Scale=2
+		prop source QtQml.url named
+		prop color QtQuick.color named reset
+		prop colorVariation QtQml.real named reset
+		prop alpha QtQml.real named reset
+		prop alphaVariation QtQml.real named reset
+		prop entryEffect EntryEffect
+		signal sourceChanged
+		signal colorChanged
+		signal colorVariationChanged
+		signal alphaChanged
+		signal alphaVariationChanged
+		signal entryEffectChanged
+	type QtQuick.Particles.MaskShape MaskShape
+		prototype QtQuick.Particles.ParticleExtruder named
+		prop source QtQml.url named
+		signal sourceChanged
+	type QtQuick.Particles.NullVector NullVector
+		prototype QtQml.QtObject named
+		is uncreatable
+	type QtQuick.Particles.ParticleAffector ParticleAffector
+		prototype QtQuick.Item named
+		is uncreatable
+		prop system QtQuick.Particles.ParticleSystem named pointer
+		prop groups QtQml.var named list
+		signal systemChanged
+		signal groupsChanged
+	type QtQuick.Particles.ParticleExtruder ParticleExtruder
+		prototype QtQml.QtObject named
+		is uncreatable
+	type QtQuick.Particles.ParticlePainter ParticlePainter
+		prototype QtQuick.Item named
+		is uncreatable
+		prop system QtQuick.Particles.ParticleSystem named pointer
+		prop groups QtQml.var named list
+		signal systemChanged
+		signal groupsChanged
+	type QtQuick.Particles.ParticleSystem ParticleSystem
+		prototype QtQuick.Item named
+		prop running QtQml.bool named
+		prop paused QtQml.bool named
+		prop empty QtQml.bool named readonly
+		signal runningChanged
+		signal pausedChanged
+		signal emptyChanged
+		signal systemInitialized
+		method start
+		method stop
+		method restart
+		method pause
+		method resume
+		method reset
+	type QtQuick.Particles.PointDirection PointDirection
+		prototype QtQuick.Particles.NullVector named
+		prop x QtQml.real named
+		prop y QtQml.real named
+		prop xVariation QtQml.real named
+		prop yVariation QtQml.real named
+		signal xChanged
+		signal yChanged
+		signal xVariationChanged
+		signal yVariationChanged
+	type QtQuick.Particles.TargetDirection TargetDirection
+		prototype QtQuick.Particles.NullVector named
+		prop targetX QtQml.real named
+		prop targetY QtQml.real named
+		prop targetVariation QtQml.real named
+		prop proportionalMagnitude QtQml.bool named
+		prop magnitude QtQml.real named
+		prop magnitudeVariation QtQml.real named
+		signal targetXChanged
+		signal targetYChanged
+		signal targetVariationChanged
+		signal proportionalMagnitudeChanged
+		signal magnitudeChanged
+		signal magnitudeVariationChanged
+	type QtQuick.Particles.Wander Wander
+		prototype QtQuick.Particles.ParticleAffector named
+		enum AffectableParameters Position=0 Velocity=1 Acceleration=2
+		prop pace QtQml.real named
+		prop xVariance QtQml.real named
+		prop yVariance QtQml.real named
+		prop affectedParameter AffectableParameters
+		signal paceChanged
+		signal xVarianceChanged
+		signal yVarianceChanged
+		signal affectedParameterChanged
+
 module QtQuick.Shapes
 	ConicalGradient QtQuick.Shapes.ConicalGradient
 	LinearGradient QtQuick.Shapes.LinearGradient

@@ -53,6 +53,9 @@ fn qt_reset(ty: QtType, name: &str) -> Option<bool> {
 /// group. Assigning `undefined` to one is refused. Take a line out when
 /// the property gets its reset.
 const NOT_YET: &[&str] = &[
+    // The particles' own rotation is not built, so `Item.rotation` turns
+    // the whole painter instead.
+    "ImageParticle.rotation",
     // A role is taken back; the whole group at once needs a group that
     // can be assigned to, which the engine does not have.
     "*.palette",

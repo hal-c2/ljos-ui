@@ -35,6 +35,7 @@ mod log;
 mod metrics;
 mod mirroring;
 mod mouse_drag;
+mod particles;
 mod pointer_item;
 mod positioners;
 mod rectangle;
@@ -210,6 +211,7 @@ pub fn register(engine: &Engine) {
     flipable::register(engine);
     canvas::register(engine);
     effects::register(engine);
+    particles::register(engine);
     handlers::register(engine);
     drag::register(engine);
     drop_area::register(engine);
