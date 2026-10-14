@@ -1,16 +1,22 @@
 {
   "examples": {
     "android-splashscreen": {},
+    "calqlatr": {
+      "pixels": 0.66,
+      "content": 0.08
+    },
     "clocks": {
-      "pixels": 0.93,
-      "content": 0.86
+      "pixels": 0.99,
+      "content": 0.99
     },
     "coffee": {},
+    "colorpaletteclient": {},
     "fx-material-showroom": {},
     "hangman": {
       "pixels": 0.99,
       "content": 0.99
     },
+    "qtjennydemo": {},
     "rssnews": {
       "pixels": 0.8,
       "content": 0.57
@@ -35,6 +41,7 @@
       "pixels": 1.0,
       "content": 1.0
     },
+    "snippet-focus-scope-widget": {},
     "snippet-focus-scopes": {
       "pixels": 0.99,
       "content": 0.98
@@ -86,6 +93,10 @@
     "snippet-vertical-positioner-transition": {
       "pixels": 1.0,
       "content": 1.0
+    },
+    "thermostat": {
+      "pixels": 0.98,
+      "content": 0.95
     }
   }
 }
