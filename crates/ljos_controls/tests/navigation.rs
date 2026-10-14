@@ -365,3 +365,77 @@ fn a_covered_page_costs_no_frame_work() {
     frame(&mut s, 30);
     assert_ne!(number(&e, model, "phase"), phase, "the animation goes on");
 }
+
+const SWIPE_PAGES: &str = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    id: root; width: 300; height: 200
+    property int pulse: 0
+    SwipeView {
+        id: view; objectName: "view"; anchors.fill: parent
+        Item {
+            objectName: "first"
+            property int ticks: 0
+            Timer { interval: 100; repeat: true; running: true; onTriggered: parent.ticks++ }
+        }
+        Item {
+            objectName: "second"
+            property int ticks: 0
+            property int seenPulse: root.pulse
+            property int changes: 0
+            onSeenPulseChanged: changes++
+            Timer { interval: 100; repeat: true; running: true; onTriggered: parent.ticks++ }
+        }
+    }
+    function takeSecond() { return view.takeItem(1) }
+}
+"#;
+
+/// ARCHITECTURE.md §8.3: a SwipeView page that is not current is frozen
+/// while the view rests. Its timer does not fire and its watches are
+/// parked; made current, it catches up once. A page taken out thaws.
+#[test]
+fn a_non_current_swipe_page_is_frozen_until_made_current() {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let root = load(&e, &[("Main", SWIPE_PAGES)]);
+    let mut s = QuickScene::new(kurbo::Size::new(300.0, 200.0));
+    s.set_root(&e, root).unwrap();
+    let frame = |s: &mut QuickScene, ms: u64| {
+        clock.advance(Duration::from_millis(ms));
+        s.frame(&e, clock.now())
+    };
+    let view = find(&e, root, "view");
+    let first = find(&e, root, "first");
+    let second = find(&e, root, "second");
+
+    frame(&mut s, 0);
+    assert!(!e.is_frozen(first), "the current page is awake");
+    assert!(e.is_frozen(second), "a non-current page is frozen");
+
+    e.write_by_name(root, "pulse", Value::Int(1)).unwrap();
+    e.write_by_name(root, "pulse", Value::Int(2)).unwrap();
+    frame(&mut s, 250);
+    assert_eq!(number(&e, first, "ticks"), 2.0);
+    assert_eq!(number(&e, second, "ticks"), 0.0);
+    assert_eq!(number(&e, second, "changes"), 0.0);
+    // A lazy binding still answers reads with the latest value.
+    assert_eq!(number(&e, second, "seenPulse"), 2.0);
+
+    e.write_by_name(view, "currentIndex", Value::Int(1))
+        .unwrap();
+    frame(&mut s, 0);
+    assert!(e.is_frozen(first), "the previous page is now frozen");
+    assert!(!e.is_frozen(second), "the new current page is thawed");
+    assert_eq!(number(&e, second, "ticks"), 1.0, "the missed tick, once");
+    assert_eq!(number(&e, second, "changes"), 1.0, "the watch, coalesced");
+
+    e.write_by_name(view, "currentIndex", Value::Int(0))
+        .unwrap();
+    frame(&mut s, 0);
+    assert!(e.is_frozen(second));
+    call(&e, root, "takeSecond");
+    assert!(!e.is_frozen(second), "a taken page is thawed");
+}

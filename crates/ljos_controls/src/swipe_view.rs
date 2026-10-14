@@ -245,6 +245,7 @@ fn release(e: &Engine, item: ObjectId, held: Held) {
     if !e.is_alive(item) {
         return;
     }
+    check(e, "SwipeView", e.set_frozen(item, false));
     for (prop, layer) in [
         (Item::WIDTH.index, held.width),
         (Item::HEIGHT.index, held.height),
@@ -271,13 +272,57 @@ fn release(e: &Engine, item: ObjectId, held: Held) {
     }
 }
 
+/// Whether the content view is being dragged or moving between items.
+fn is_moving(e: &Engine, me: ObjectId) -> bool {
+    let Some(ci) = e
+        .untrack(|| object(e, me, Control::CONTENT_ITEM.index))
+        .filter(|c| is_a::<ItemView>(e, *c))
+    else {
+        return false;
+    };
+    e.untrack(|| {
+        e.read(ci, Flickable::MOVING.index).to_boolean()
+            || e.read(ci, Flickable::DRAGGING.index).to_boolean()
+    })
+}
+
+/// Freezes pages that are not the current one while the view is at rest,
+/// and thaws them while the view is moving (ARCHITECTURE.md §8.3).
+fn sync_frozen(e: &Engine, me: ObjectId) {
+    if !is_a::<SwipeView>(e, me) {
+        return;
+    }
+    let cur = container::current_index(e, me);
+    let moving = is_moving(e, me);
+    let items = container::items(e, me);
+    for (i, &item) in items.iter().enumerate() {
+        if moving || i as i32 == cur {
+            check(e, "SwipeView", e.set_frozen(item, false));
+        }
+    }
+    if !moving {
+        for (i, item) in items.into_iter().enumerate() {
+            if i as i32 != cur {
+                check(e, "SwipeView", e.set_frozen(item, true));
+            }
+        }
+    }
+}
+
 /// What each item reads of `SwipeView.` follows the current index.
 pub(crate) fn current_changed(e: &Engine, me: ObjectId) {
     if !is_a::<SwipeView>(e, me) {
         return;
     }
     let cur = container::current_index(e, me);
-    for (i, item) in container::items(e, me).into_iter().enumerate() {
+    let moving = is_moving(e, me);
+    let items = container::items(e, me);
+    for (i, &item) in items.iter().enumerate() {
+        if moving || i as i32 == cur {
+            check(e, "SwipeView", e.set_frozen(item, false));
+        }
+    }
+    for (i, item) in items.into_iter().enumerate() {
         let i = i as i32;
         let r = e.attached_object(item, &attacher()).and_then(|att| {
             set_computed(e, att, SwipeViewAttached::INDEX.index, Value::Int(i))?;
@@ -302,6 +347,9 @@ pub(crate) fn current_changed(e: &Engine, me: ObjectId) {
             )
         });
         check(e, "SwipeView", r);
+        if !moving && i != cur {
+            check(e, "SwipeView", e.set_frozen(item, true));
+        }
     }
 }
 
@@ -322,12 +370,12 @@ fn follow(e: &Engine, me: ObjectId) {
     else {
         return;
     };
-    let r = e
-        .connect_by_name(ci, "dragEnded", move |e, _| let_go(e, me, ci))
-        .and_then(|a| {
-            let b = e.connect_by_name(ci, "movementEnded", move |e, _| rested(e, me, ci))?;
-            Ok(vec![a, b])
-        });
+    let r = (|| -> Result<Vec<ConnectionId>, EngineError> {
+        let a = e.connect_by_name(ci, "movementStarted", move |e, _| sync_frozen(e, me))?;
+        let b = e.connect_by_name(ci, "dragEnded", move |e, _| let_go(e, me, ci))?;
+        let c = e.connect_by_name(ci, "movementEnded", move |e, _| rested(e, me, ci))?;
+        Ok(vec![a, b, c])
+    })();
     match r {
         Ok(conns) => *st.view.borrow_mut() = Some((ci, conns)),
         Err(err) => check(e, "SwipeView", Err(err)),
@@ -400,6 +448,7 @@ fn rested(e: &Engine, me: ObjectId, view: ObjectId) {
         // The view snapped to the nearest item, which need not be this one.
         go_to(e, view, at);
     }
+    sync_frozen(e, me);
 }
 
 /// Moves the view to the item at `index`.

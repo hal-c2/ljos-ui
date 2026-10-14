@@ -284,17 +284,16 @@ Feature: Resetting a property with undefined
         | Rectangle | radius: 4; antialiasing: false             | antialiasing         | false  | true       |
         | Item      | antialiasing: true                         | antialiasing         | true   | false      |
         | TextInput | passwordMaskDelay: 300                     | passwordMaskDelay    | 300    | 0          |
-
-      # Properties that are not there yet: the paddings of a Text, the corner
-      # radii of a Rectangle and the cursor shape of a MouseArea.
-      @backlog
-      Examples:
-        | type      | given                                      | property             | before | after      |
         | Text      | padding: 4; leftPadding: 10                | leftPadding          | 10     | 4          |
         | Text      | padding: 4; bottomPadding: 10              | bottomPadding        | 10     | 4          |
         | Text      | padding: 4                                 | padding              | 4      | 0          |
         | Rectangle | radius: 4; topLeftRadius: 9                | topLeftRadius        | 9      | 4          |
         | Rectangle | radius: 4; bottomRightRadius: 9            | bottomRightRadius    | 9      | 4          |
+
+      # Properties that are not there yet: the cursor shape of a MouseArea.
+      @backlog
+      Examples:
+        | type      | given                                      | property             | before | after      |
         | MouseArea | cursorShape: Qt.PointingHandCursor         | cursorShape          | 13     | 0          |
 
     Scenario: A side padding that was taken back follows the padding from then on
@@ -405,11 +404,6 @@ Feature: Resetting a property with undefined
         | Text      | text            | "hi"   | QString | "hi"      |
         | Loader    | source          | ""     | QUrl    | ""        |
         | Grid      | spacing         | 5      | double  | 5         |
-
-      # An Item has no states yet.
-      @backlog
-      Examples:
-        | type      | property        | given  | class   | kept      |
         | Item      | state           | "on"   | QString | "on"      |
 
     Scenario: A font is not taken back whole

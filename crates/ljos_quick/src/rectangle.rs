@@ -18,6 +18,14 @@ pub struct Rectangle {
     pub color: Color,
     #[qml(notify)]
     pub radius: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    pub top_left_radius: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    pub top_right_radius: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    pub bottom_left_radius: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_radius))]
+    pub bottom_right_radius: f64,
     #[qml(group)]
     pub border: RectangleBorder,
     /// A `Gradient` to fill the rectangle with instead of `color`, or
@@ -28,12 +36,20 @@ pub struct Rectangle {
     pub gradient: Value,
 }
 
+fn all_radius(engine: &Engine, obj: ObjectId, _corner: ljos_engine::PropIndex) -> Value {
+    engine.read(obj, Rectangle::RADIUS.index)
+}
+
 impl Default for Rectangle {
     fn default() -> Self {
         Self {
             item: Item::default(),
             color: Color::WHITE,
             radius: 0.0,
+            top_left_radius: 0.0,
+            top_right_radius: 0.0,
+            bottom_left_radius: 0.0,
+            bottom_right_radius: 0.0,
             border: RectangleBorder::default(),
             gradient: Value::Undefined,
         }
@@ -47,9 +63,30 @@ impl Rectangle {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let obj = cx.this;
+        for corner in [
+            Rectangle::TOP_LEFT_RADIUS.index,
+            Rectangle::TOP_RIGHT_RADIUS.index,
+            Rectangle::BOTTOM_LEFT_RADIUS.index,
+            Rectangle::BOTTOM_RIGHT_RADIUS.index,
+        ] {
+            if is_unset(cx.engine, obj, corner) {
+                cx.engine
+                    .bind(obj, corner, move |e| e.read(obj, Rectangle::RADIUS.index))?;
+            }
+        }
         if is_unset(cx.engine, obj, Item::ANTIALIASING.index) {
             cx.engine.bind(obj, Item::ANTIALIASING.index, move |e| {
-                Value::Bool(e.read(obj, Rectangle::RADIUS.index).to_number() > 0.0)
+                Value::Bool(
+                    [
+                        Rectangle::RADIUS.index,
+                        Rectangle::TOP_LEFT_RADIUS.index,
+                        Rectangle::TOP_RIGHT_RADIUS.index,
+                        Rectangle::BOTTOM_LEFT_RADIUS.index,
+                        Rectangle::BOTTOM_RIGHT_RADIUS.index,
+                    ]
+                    .into_iter()
+                    .any(|r| e.read(obj, r).to_number() > 0.0),
+                )
             })?;
         }
         // What is not a gradient is refused when it is assigned, as Qt
@@ -121,6 +158,8 @@ impl Default for RectangleBorder {
 pub struct RectanglePaint {
     pub color: Color,
     pub radius: f64,
+    /// Corner radii in `(top-left, top-right, bottom-right, bottom-left)` order.
+    pub radii: [f64; 4],
     pub border_width: f64,
     pub border_color: Color,
     pub antialiasing: bool,
@@ -144,6 +183,16 @@ impl RectanglePaint {
                 Some(ljos_engine::Provenance::Default) | None
             )
         };
+        let corner = |p: ljos_engine::PropIndex| {
+            let v = engine.read(obj, p).to_number();
+            if assigned(p) { v } else { radius }
+        };
+        let radii = [
+            corner(Rectangle::TOP_LEFT_RADIUS.index),
+            corner(Rectangle::TOP_RIGHT_RADIUS.index),
+            corner(Rectangle::BOTTOM_RIGHT_RADIUS.index),
+            corner(Rectangle::BOTTOM_LEFT_RADIUS.index),
+        ];
         let assigned_name = |name| engine.property_index(obj, name).is_ok_and(&assigned);
         // Qt reads `border.width` as 1 by default but draws no border until
         // the author assigns its width or colour (checked on qml6).
@@ -152,7 +201,7 @@ impl RectanglePaint {
         let antialiasing = if assigned(Item::ANTIALIASING.index) {
             engine.read(obj, Item::ANTIALIASING.index).to_boolean()
         } else {
-            radius > 0.0
+            radius > 0.0 || radii.iter().any(|r| *r > 0.0)
         };
         RectanglePaint {
             color: match engine.read(obj, Rectangle::COLOR.index) {
@@ -160,6 +209,7 @@ impl RectanglePaint {
                 _ => Color::TRANSPARENT,
             },
             radius,
+            radii,
             border_width: if has_border { num("border.width") } else { 0.0 },
             border_color: color("border.color"),
             antialiasing,
@@ -171,7 +221,8 @@ impl RectanglePaint {
     pub fn paint(&self, size: kurbo::Size, out: &mut DisplayListBuilder) {
         let rect = kurbo::Rect::from_origin_size((0.0, 0.0), size);
         // Qt clamps the radius to half the shorter side.
-        let r = self.radius.clamp(0.0, size.width.min(size.height) / 2.0) as f32;
+        let half = size.width.min(size.height) / 2.0;
+        let radii = self.radii.map(|r| r.clamp(0.0, half) as f32);
         let border = (self.border_width > 0.0 && self.border_color.a > 0).then(|| RenderBorder {
             width: self.border_width as f32,
             paint: Paint::Solid(to_rgba(self.border_color)),
@@ -186,7 +237,7 @@ impl RectanglePaint {
         }
         out.push(DrawOp::Rect {
             rect,
-            radii: [r; 4],
+            radii,
             fill,
             border,
             aa: self.antialiasing,

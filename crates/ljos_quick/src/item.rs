@@ -413,7 +413,17 @@ fn all_margins(engine: &Engine, obj: ObjectId, _side: PropIndex) -> Value {
 fn natural_antialiasing(engine: &Engine, obj: ObjectId, p: PropIndex) -> Value {
     use crate::rectangle::Rectangle;
     if is_a::<Rectangle>(engine, obj) {
-        return Value::Bool(engine.read(obj, Rectangle::RADIUS.index).to_number() > 0.0);
+        return Value::Bool(
+            [
+                Rectangle::RADIUS.index,
+                Rectangle::TOP_LEFT_RADIUS.index,
+                Rectangle::TOP_RIGHT_RADIUS.index,
+                Rectangle::BOTTOM_LEFT_RADIUS.index,
+                Rectangle::BOTTOM_RIGHT_RADIUS.index,
+            ]
+            .into_iter()
+            .any(|r| engine.read(obj, r).to_number() > 0.0),
+        );
     }
     engine.default_value(obj, p)
 }

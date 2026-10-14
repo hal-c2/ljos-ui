@@ -151,6 +151,16 @@ pub struct Text {
     /// The address of the link under the pointer, or empty.
     #[qml(notify, readonly)]
     pub hovered_link: Atom,
+    #[qml(notify, reset)]
+    pub padding: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
+    pub left_padding: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
+    pub top_padding: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
+    pub right_padding: f64,
+    #[qml(notify, reset = ljos_engine::Reset::Follow(all_padding))]
+    pub bottom_padding: f64,
     /// [`init_text`] ran.
     #[qml(skip)]
     initialised: bool,
@@ -209,6 +219,11 @@ impl Default for Text {
             // Qt's default, by running qml6.
             link_color: Color::from_rgba8(0, 0, 255, 255),
             hovered_link: Atom::EMPTY,
+            padding: 0.0,
+            left_padding: 0.0,
+            top_padding: 0.0,
+            right_padding: 0.0,
+            bottom_padding: 0.0,
             initialised: false,
             rich: None,
         }
@@ -276,6 +291,10 @@ fn document_address(engine: &Engine, obj: ObjectId, _base_url: PropIndex) -> Val
     Value::Url(engine.document_url(obj).unwrap_or(Atom::EMPTY))
 }
 
+fn all_padding(engine: &Engine, obj: ObjectId, _side: PropIndex) -> Value {
+    engine.read(obj, Text::PADDING.index)
+}
+
 /// What completing a `Text` does, for one built natively without completion
 /// (the scene calls it before the first layout). Idempotent.
 pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
@@ -284,6 +303,16 @@ pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineErro
         return Ok(());
     }
     engine.with_mut(obj, |t: &mut Text| t.initialised = true)?;
+    for side in [
+        Text::LEFT_PADDING.index,
+        Text::TOP_PADDING.index,
+        Text::RIGHT_PADDING.index,
+        Text::BOTTOM_PADDING.index,
+    ] {
+        if is_unset(engine, obj, side) {
+            engine.bind(obj, side, move |e| e.read(obj, Text::PADDING.index))?;
+        }
+    }
     // Right-to-left text is aligned right until an alignment is assigned;
     // assigning one replaces this binding, as Qt documents.
     if is_unset(engine, obj, Text::HORIZONTAL_ALIGNMENT.index) {
@@ -390,6 +419,8 @@ pub struct TextInputs {
     /// [`crate::enums::align`] flags.
     pub h_align: i32,
     pub v_align: i32,
+    /// `[left, top, right, bottom]` padding.
+    pub pad: [f64; 4],
     /// The constraints, with the item's own width and height where it has
     /// them and they matter.
     pub params: LayoutParams,
@@ -441,6 +472,13 @@ impl TextInputs {
         let elide = elide_mode(int(Text::ELIDE.index));
         let line_height = engine.read(obj, Text::LINE_HEIGHT.index).to_number();
         let max_lines = int(Text::MAXIMUM_LINE_COUNT.index);
+        let pad = [
+            Text::LEFT_PADDING.index,
+            Text::TOP_PADDING.index,
+            Text::RIGHT_PADDING.index,
+            Text::BOTTOM_PADDING.index,
+        ]
+        .map(|p| num(engine, obj, p));
         // Qt wraps and elides to a width the item was given, never to the
         // one it took from the text itself.
         let own = |horizontal: bool, p| {
@@ -448,12 +486,12 @@ impl TextInputs {
         };
         let constrained = wrap != WrapMode::NoWrap || elide != ElideMode::None;
         let width = if constrained {
-            own(true, Item::WIDTH.index)
+            own(true, Item::WIDTH.index).map(|w| (w - pad[0] - pad[2]).max(0.0))
         } else {
             None
         };
         let height = if elide == ElideMode::Right && width.is_some() {
-            own(false, Item::HEIGHT.index)
+            own(false, Item::HEIGHT.index).map(|h| (h - pad[1] - pad[3]).max(0.0))
         } else {
             None
         };
@@ -510,6 +548,7 @@ impl TextInputs {
             style: read_style(engine, obj, Text::FONT.index),
             h_align,
             v_align,
+            pad,
             params: LayoutParams {
                 width,
                 height,
@@ -532,7 +571,7 @@ impl TextInputs {
             align_height: if top {
                 0.0
             } else {
-                num(engine, obj, Item::HEIGHT.index)
+                (num(engine, obj, Item::HEIGHT.index) - pad[1] - pad[3]).max(0.0)
             },
         }
     }
@@ -609,16 +648,26 @@ pub(crate) fn polish(
     let t = engine.untrack(|| TextInputs::read(engine, obj));
     // Borrowed for the layout only: the writes below run bindings.
     let m = t.measure(&mut te.borrow_mut());
+    let [left, top, right, bottom] = t.pad;
     let shift = vertical_offset(t.v_align, t.align_height, m.content_height);
     engine.batch(|| {
         let put = |p: PropIndex, v: Value| write_computed(engine, obj, p, v);
-        put(Item::IMPLICIT_WIDTH.index, Value::Real(m.natural_width))?;
-        put(Item::IMPLICIT_HEIGHT.index, Value::Real(m.implicit_height))?;
+        put(
+            Item::IMPLICIT_WIDTH.index,
+            Value::Real(m.natural_width + left + right),
+        )?;
+        put(
+            Item::IMPLICIT_HEIGHT.index,
+            Value::Real(m.implicit_height + top + bottom),
+        )?;
         put(Text::CONTENT_WIDTH.index, Value::Real(m.content_width))?;
         put(Text::CONTENT_HEIGHT.index, Value::Real(m.content_height))?;
         put(Text::LINE_COUNT.index, Value::Int(m.line_count as i32))?;
         put(Text::TRUNCATED.index, Value::Bool(m.truncated))?;
-        put(Item::BASELINE_OFFSET.index, Value::Real(m.baseline + shift))
+        put(
+            Item::BASELINE_OFFSET.index,
+            Value::Real(top + m.baseline + shift),
+        )
     })
 }
 
@@ -639,10 +688,13 @@ pub(crate) fn paint(
     // The request polish made, so this is a cache hit unless the item was
     // off screen long enough for the layout to be dropped.
     let l = t.layout(te);
-    let top = vertical_offset(t.v_align, size.height, l.content_height);
+    let [pad_l, pad_t, pad_r, pad_b] = t.pad;
+    let avail_w = (size.width - pad_l - pad_r).max(0.0);
+    let avail_h = (size.height - pad_t - pad_b).max(0.0);
+    let top = pad_t + vertical_offset(t.v_align, avail_h, l.content_height);
     let color = to_rgba(t.color);
     for line in &l.lines {
-        let left = horizontal_offset(t.h_align, l.rtl, size.width, line);
+        let left = pad_l + horizontal_offset(t.h_align, l.rtl, avail_w, line);
         for run in &line.runs {
             out.glyphs(
                 Arc::clone(&run.glyphs),
