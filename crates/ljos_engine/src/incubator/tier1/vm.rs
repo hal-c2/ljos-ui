@@ -588,6 +588,11 @@ fn field(v: &Value, name: &str) -> Option<Value> {
             "y" => d(p.y),
             _ => None,
         },
+        Value::IntPoint(p) => match name {
+            "x" => d(f64::from(p.x)),
+            "y" => d(f64::from(p.y)),
+            _ => None,
+        },
         Value::Size(z) => match name {
             "width" => d(z.width),
             "height" => d(z.height),

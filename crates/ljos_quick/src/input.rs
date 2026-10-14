@@ -6,8 +6,8 @@
 //! [`crate::QuickScene::pointer_event`].
 
 use ljos_engine::{
-    Cx, Engine, EngineError, ObjectId, Point, PropIndex, QmlObject, QmlType, QmlValue, QtObject,
-    Value, WriteKind, qml_impl,
+    Cx, Engine, EngineError, IntPoint, ObjectId, Point, PropIndex, QmlObject, QmlType, QmlValue,
+    QtObject, Value, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
@@ -202,6 +202,12 @@ pub struct MouseArea {
     /// Moving an item by dragging the area (`crate::mouse_drag`).
     #[qml(group)]
     pub drag: crate::drag::Drag,
+    /// The shape the cursor takes over the area. Kept as Qt keeps it:
+    /// the arrow (0) until given, and `undefined` takes a given shape
+    /// back to it. Nothing here draws a cursor; the shape is what the
+    /// area holds, and disabling or hiding the area leaves it as it was.
+    #[qml(notify, reset, enumeration = "Qt.CursorShape")]
+    pub cursor_shape: i32,
 }
 
 impl Default for MouseArea {
@@ -217,6 +223,7 @@ impl Default for MouseArea {
             accepted_buttons: mouse_button::LEFT,
             prevent_stealing: false,
             drag: crate::drag::Drag::default(),
+            cursor_shape: 0,
         }
     }
 }
@@ -260,10 +267,11 @@ pub struct WheelEventObject {
     /// In eighths of a degree. A device that only scrolls by the pixel
     /// tells none; Ljós then says what a wheel would have turned to
     /// scroll as far, so that a handler that reads only this still works.
+    /// Whole numbers, as Qt's are: they print `QPoint(0, 120)`.
     #[qml(readonly)]
-    pub angle_delta: Point,
+    pub angle_delta: IntPoint,
     #[qml(readonly)]
-    pub pixel_delta: Point,
+    pub pixel_delta: IntPoint,
     #[qml(readonly, flags = "Qt.MouseButtons")]
     pub buttons: i32,
     #[qml(readonly, flags = "Qt.KeyboardModifiers")]
@@ -284,8 +292,8 @@ impl Default for WheelEventObject {
             object: QtObject::default(),
             x: 0.0,
             y: 0.0,
-            angle_delta: Point::default(),
-            pixel_delta: Point::default(),
+            angle_delta: IntPoint::default(),
+            pixel_delta: IntPoint::default(),
             buttons: mouse_button::NO_BUTTON,
             modifiers: 0,
             inverted: false,
@@ -370,9 +378,9 @@ pub struct TapHandler {
     pub drag_threshold: i32,
     #[qml(flags = "GrabPermissions")]
     pub grab_permissions: i32,
-    #[qml(notify)]
+    #[qml(notify, flags = "DeviceTypes")]
     pub accepted_devices: i32,
-    #[qml(notify)]
+    #[qml(notify, flags = "PointerTypes")]
     pub accepted_pointer_types: i32,
     #[qml(notify, flags = "Qt.KeyboardModifiers")]
     pub accepted_modifiers: i32,

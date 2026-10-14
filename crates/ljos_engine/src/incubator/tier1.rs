@@ -476,6 +476,7 @@ pub(super) fn normal(e: &Engine, v: Value) -> Value {
         | Value::Bool(_)
         | Value::String(_)
         | Value::Color(_)
+        | Value::IntPoint(_)
         | Value::Js(_) => v,
         // A number that is an integer goes to JavaScript as one, and an
         // integer zero has no sign.
@@ -589,6 +590,7 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
         (Value::Color(x), Value::Color(y)) => x == y,
         (Value::Object(x), Value::Object(y)) => x == y,
         (Value::Point(x), Value::Point(y)) => d(x.x, y.x) && d(x.y, y.y),
+        (Value::IntPoint(x), Value::IntPoint(y)) => x == y,
         (Value::Size(x), Value::Size(y)) => d(x.width, y.width) && d(x.height, y.height),
         (Value::Rect(x), Value::Rect(y)) => {
             d(x.x, y.x) && d(x.y, y.y) && d(x.width, y.width) && d(x.height, y.height)

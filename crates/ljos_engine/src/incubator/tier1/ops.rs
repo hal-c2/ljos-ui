@@ -232,6 +232,7 @@ fn type_of(v: &Value) -> Option<&'static str> {
         Value::Null
         | Value::Color(_)
         | Value::Point(_)
+        | Value::IntPoint(_)
         | Value::Size(_)
         | Value::Rect(_)
         | Value::Font(_)
@@ -271,6 +272,7 @@ fn kind(v: &Value) -> Kind<'_> {
         Value::Js(_) => Kind::Opaque,
         Value::Color(_)
         | Value::Point(_)
+        | Value::IntPoint(_)
         | Value::Size(_)
         | Value::Rect(_)
         | Value::Font(_)
@@ -338,6 +340,11 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Color(x), Value::Color(y)) => x == y,
         (Value::Point(x), Value::Point(y)) => d(x.x, y.x) && d(x.y, y.y),
+        (Value::IntPoint(x), Value::IntPoint(y)) => x == y,
+        // qml6: a wheel delta is `===` the same `Qt.point`.
+        (Value::IntPoint(x), Value::Point(y)) | (Value::Point(y), Value::IntPoint(x)) => {
+            d(f64::from(x.x), y.x) && d(f64::from(x.y), y.y)
+        }
         (Value::Size(x), Value::Size(y)) => d(x.width, y.width) && d(x.height, y.height),
         (Value::Rect(x), Value::Rect(y)) => {
             d(x.x, y.x) && d(x.y, y.y) && d(x.width, y.width) && d(x.height, y.height)

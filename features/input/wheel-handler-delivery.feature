@@ -416,9 +416,6 @@ Feature: Which wheel events a WheelHandler takes, and who else gets them
 
   Rule: The margin
 
-    # Ljós keeps `margin` and does nothing with it: the wheel is offered to
-    # the items under the pointer only.
-    @backlog
     Scenario: A handler with a margin takes the wheel that far outside its item
       Given the file "tst_margin.qml":
         """qml
@@ -447,4 +444,39 @@ Feature: Which wheel events a WheelHandler takes, and who else gets them
       Then the test report has the lines:
         """
         PASS   : Margin::test_margin()
+        """
+
+    Scenario: A handler with a margin keeps its item's place among the others
+      Given the file "tst_margin_order.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        Item {
+          id: root; width: 200; height: 200
+          property string log
+          MouseArea { anchors.fill: parent; onWheel: root.log += "under|" }
+          Item {
+            x: 50; y: 50; width: 100; height: 100
+            WheelHandler { margin: 20; onWheel: root.log += "margin|" }
+          }
+          Item {
+            x: 0; y: 80; width: 45; height: 40
+            WheelHandler { onWheel: root.log += "cover|" }
+          }
+          TestCase {
+            name: "MarginOrder"
+            when: windowShown
+            function test_order() {
+              mouseWheel(root, 40, 100, 0, 120)
+              compare(root.log, "cover|")
+              mouseWheel(root, 40, 60, 0, 120)
+              compare(root.log, "cover|margin|")
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : MarginOrder::test_order()
         """

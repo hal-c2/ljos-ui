@@ -2,10 +2,10 @@
 //! degrees, and adds the same to a property of a target.
 //!
 //! What it does with an event was observed on qml6
-//! (`features/input/wheel-handler*.feature`). Left out: `margin` is kept
-//! and not acted on, `invertible` is kept (no host tells of an inverted
-//! wheel), and `acceptedDevices`, `acceptedButtons`, `point`, `cursorShape`
-//! and the grab properties are not there.
+//! (`features/input/wheel-handler*.feature`). Left out: `invertible` is
+//! kept (no host tells of an inverted wheel), and `acceptedDevices`,
+//! `acceptedButtons`, `point`, `cursorShape` and the grab properties are
+//! not there.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -96,7 +96,9 @@ pub struct WheelHandler {
     /// Whether an event the handler took stays with it.
     #[qml(notify)]
     pub blocking: bool,
-    /// Kept; the handler gets the wheel over its item only.
+    /// How far outside its item the handler still takes the wheel. The
+    /// item keeps its place among the others there: what is over it at
+    /// the pointer is asked first, what is under it after (qml6).
     #[qml(notify)]
     pub margin: f64,
     #[qml(skip)]
@@ -148,14 +150,65 @@ impl WheelHandler {
             e.set_internal(h, WheelHandler::TARGET, parent)?;
         }
         rotation_assigned(e, h);
+        noted_margin(e, h);
         e.watch(h, WheelHandler::ROTATION.index, move |e, _| {
             rotation_assigned(e, h);
         })?;
         e.watch(h, WheelHandler::ROTATION_SCALE.index, move |e, _| {
             show_rotation(e, h);
         })?;
+        e.watch(h, WheelHandler::MARGIN.index, move |e, _| {
+            noted_margin(e, h);
+        })?;
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct Margins(std::cell::RefCell<Vec<ObjectId>>);
+
+fn noted_margin(engine: &Engine, h: ObjectId) {
+    let m = engine.extension::<Margins>();
+    let mut list = m.0.borrow_mut();
+    list.retain(|o| engine.is_alive(*o) && *o != h);
+    if real(engine, h, WheelHandler::MARGIN) > 0.0 {
+        list.push(h);
+    }
+}
+
+fn handler_item(engine: &Engine, h: ObjectId) -> Option<ObjectId> {
+    engine
+        .untrack(|| engine.read(h, WheelHandler::PARENT.index))
+        .as_object()
+        .or_else(|| engine.owner(h))
+        .filter(|o| is_item(engine, *o))
+}
+
+fn item_on(engine: &Engine, item: ObjectId) -> bool {
+    let on = if is_a::<MouseArea>(engine, item) {
+        mouse_area_enabled(engine, item)
+    } else {
+        item_enabled(engine, item)
+    };
+    if !on {
+        return false;
+    }
+    let mut cur = Some(item);
+    while let Some(o) = cur {
+        if is_item(engine, o) {
+            let vis = engine
+                .untrack(|| engine.read(o, crate::item::Item::VISIBLE.index))
+                .to_boolean();
+            let op = engine
+                .untrack(|| engine.read(o, crate::item::Item::OPACITY.index))
+                .to_number();
+            if !vis || op <= 0.0 {
+                return false;
+            }
+        }
+        cur = engine.untrack(|| engine.visual_parent(o));
+    }
+    true
 }
 
 fn state_of(engine: &Engine, h: ObjectId) -> Option<Rc<HandlerState>> {
@@ -205,6 +258,66 @@ pub(crate) enum Taken {
     Kept,
 }
 
+/// Where `item` is in the paint order: compared, the greater is drawn
+/// above. The same key `drop_area` builds, so a margin takes the place
+/// the item itself would take at the pointer.
+pub(crate) fn stack_key(engine: &Engine, item: ObjectId) -> Vec<(f64, usize)> {
+    let mut key = Vec::new();
+    let mut cur = item;
+    for _ in 0..4096 {
+        let Some(parent) = engine
+            .untrack(|| engine.visual_parent(cur))
+            .filter(|p| is_item(engine, *p))
+        else {
+            break;
+        };
+        let z = engine
+            .untrack(|| engine.read(cur, crate::item::Item::Z.index))
+            .to_number();
+        let index = crate::tree::child_items(engine, parent)
+            .iter()
+            .position(|c| *c == cur)
+            .unwrap_or(0);
+        key.push((z, index));
+        cur = parent;
+    }
+    key.reverse();
+    key
+}
+
+/// The items whose WheelHandler takes the wheel at `pos` only by its
+/// `margin`: the pointer is outside the item, no further than the
+/// margin. Topmost first, as [`crate::wheel::deliver`] asks them among
+/// the items that are under the pointer.
+pub(crate) fn margin_items(engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
+    let margins: Vec<ObjectId> = engine.extension::<Margins>().0.borrow().clone();
+    let mut items: Vec<ObjectId> = Vec::new();
+    for h in margins {
+        if !engine.is_alive(h) {
+            continue;
+        }
+        let Some(item) = handler_item(engine, h) else {
+            continue;
+        };
+        let margin = real(engine, h, WheelHandler::MARGIN);
+        if margin <= 0.0
+            || items.contains(&item)
+            || !item_on(engine, item)
+            || crate::handlers::reaches(engine, item, pos, 0.0)
+            || !crate::handlers::reaches(engine, item, pos, margin)
+        {
+            continue;
+        }
+        items.push(item);
+    }
+    items.sort_by(|a, b| {
+        stack_key(engine, *b)
+            .partial_cmp(&stack_key(engine, *a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    items
+}
+
 /// Offers `ev` to the WheelHandlers of `item`, the last declared first.
 /// Every one that the event fits gets it.
 pub(crate) fn offer(
@@ -218,15 +331,7 @@ pub(crate) fn offer(
         .filter(|h| is_a::<WheelHandler>(engine, *h))
         .rev()
         .collect();
-    if handlers.is_empty() {
-        return Taken::No;
-    }
-    let item_on = if is_a::<MouseArea>(engine, item) {
-        mouse_area_enabled(engine, item)
-    } else {
-        item_enabled(engine, item)
-    };
-    if !item_on {
+    if handlers.is_empty() || !item_on(engine, item) {
         return Taken::No;
     }
     let mut taken = Taken::No;

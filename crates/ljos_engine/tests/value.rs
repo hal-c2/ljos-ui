@@ -92,6 +92,9 @@ fn to_string() {
         "#ff0000"
     );
     assert_eq!(s(Value::point(1.0, 2.5)), "QPointF(1, 2.5)");
+    // A wheel delta is whole, and prints as qml6 prints it, in full.
+    assert_eq!(s(Value::int_point(0, 120)), "QPoint(0, 120)");
+    assert_eq!(s(Value::int_point(-1_234_567, 8)), "QPoint(-1234567, 8)");
 }
 
 #[test]
@@ -106,6 +109,9 @@ fn strict_equality() {
     assert!(Value::Null.strict_equals(&Value::Null));
     assert!(Value::Undefined.strict_equals(&Value::Undefined));
     assert!(Value::string("a").strict_equals(&Value::string("a")));
+    // qml6: `wheel.angleDelta === Qt.point(0, 120)` is true.
+    assert!(Value::int_point(0, 120).strict_equals(&Value::point(0.0, 120.0)));
+    assert!(!Value::int_point(0, 120).strict_equals(&Value::point(0.5, 120.0)));
     // Arrays compare by reference.
     let l = Value::list(vec![Value::Int(1)]);
     assert!(l.strict_equals(&l.clone()));

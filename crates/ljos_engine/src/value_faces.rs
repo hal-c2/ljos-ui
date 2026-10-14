@@ -36,8 +36,11 @@ const VECTOR3D: ValueKind = ValueKind::nth(4);
 const VECTOR4D: ValueKind = ValueKind::nth(5);
 const QUATERNION: ValueKind = ValueKind::nth(6);
 const FONT: ValueKind = ValueKind::nth(7);
+/// The wheel's whole-number point: last, so the kinds before it keep
+/// their numbers.
+const INT_POINT: ValueKind = ValueKind::nth(8);
 
-const ORDER: [(&str, ValueKind); 8] = [
+const ORDER: [(&str, ValueKind); 9] = [
     ("point", POINT),
     ("size", SIZE),
     ("rect", RECT),
@@ -46,6 +49,7 @@ const ORDER: [(&str, ValueKind); 8] = [
     ("vector4d", VECTOR4D),
     ("quaternion", QUATERNION),
     ("font", FONT),
+    ("intPoint", INT_POINT),
 ];
 
 /// Evaluates [`FACES`] and tells the host about each kind. Runs before the
@@ -76,6 +80,7 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
     let f = f64::from;
     Some(match v {
         Value::Point(p) => numbers(POINT, &[p.x, p.y]),
+        Value::IntPoint(p) => numbers(INT_POINT, &[f64::from(p.x), f64::from(p.y)]),
         Value::Size(s) => numbers(SIZE, &[s.width, s.height]),
         Value::Rect(r) => numbers(RECT, &[r.x, r.y, r.width, r.height]),
         Value::Vector2d(p) => numbers(VECTOR2D, &[f(p.x), f(p.y)]),
@@ -113,6 +118,7 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
     let b = |i: usize| matches!(fields.get(i), Some(JsValue::Bool(true)));
     match kind {
         POINT => Value::point(n(0), n(1)),
+        INT_POINT => Value::int_point(n(0) as i32, n(1) as i32),
         SIZE => Value::size(n(0), n(1)),
         RECT => Value::rect(n(0), n(1), n(2), n(3)),
         VECTOR2D => Value::Vector2d(Vector2d { x: s(0), y: s(1) }),
@@ -239,6 +245,10 @@ const FACES: &str = r##"
     kind(fields, fields.map(() => read), plain(fields), named(name, fields));
 
   const point = numeric("QPointF", ["x", "y"], double);
+  // A wheel delta: whole numbers, written in full, not `%g`.
+  const int32 = (v) => { v = Math.trunc(Number(v)); return v !== v ? 0 : v + 0; };
+  const intPoint = kind(["x", "y"], [int32, int32], plain(["x", "y"]),
+    (o) => "QPoint(" + o.x + ", " + o.y + ")");
   const size = numeric("QSizeF", ["width", "height"], double);
 
   const rectFields = ["x", "y", "width", "height"];
@@ -420,7 +430,7 @@ const FACES: &str = r##"
   };
 
   g.__ljos_faces = {
-    point, size, rect, vector2d, vector3d, vector4d, quaternion, font,
+    point, size, rect, vector2d, vector3d, vector4d, quaternion, font, intPoint,
     qt: {
       point: exactly(point), size: exactly(size), rect: exactly(rect),
       vector2d: exactly(vector2d), vector3d: exactly(vector3d), vector4d: exactly(vector4d),

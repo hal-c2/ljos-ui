@@ -10,6 +10,28 @@
 
 use crate::value::Font;
 
+/// A point of whole numbers (`QPoint` in Qt, where a `point` is
+/// `QPointF`). No QML property is declared with it; it is what a wheel
+/// event's deltas are (doc.qt.io/qt-6/qwheelevent.html has them as
+/// `QPoint`, and qml6 prints them `QPoint(0, 120)` where `Qt.point`
+/// prints `QPointF(0, 120)`), so it prints and reads as one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct IntPoint {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl IntPoint {
+    /// The whole point nearest to `(x, y)`, as Qt makes a `QPoint` of a
+    /// `QPointF`. Out-of-range values stop at the ends of `i32`.
+    pub fn rounded(x: f64, y: f64) -> Self {
+        Self {
+            x: x.round() as i32,
+            y: y.round() as i32,
+        }
+    }
+}
+
 /// `vector2d` value type. Single precision, as in Qt.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Vector2d {

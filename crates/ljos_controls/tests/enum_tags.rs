@@ -80,12 +80,14 @@ const FOREIGN: &[(&str, bool)] = &[
     ("QCalendarPermission::AccessMode", false),
     ("QContactsPermission::AccessMode", false),
     ("QBluetoothPermission::CommunicationModes", true),
+    ("QInputDevice::DeviceTypes", true),
+    ("QPointingDevice::PointerTypes", true),
 ];
 
 /// Enums of a type Ljós does not have yet (`PointerDevice`): what is
 /// declared with them stays a plain number, since no key could be looked
 /// up. Remove an entry when its type is registered.
-const NOT_YET: &[&str] = &["QInputDevice::DeviceTypes", "QPointingDevice::PointerTypes"];
+const NOT_YET: &[&str] = &[];
 
 /// Whether Qt declares a property of `owner` with an enum, and if so
 /// whether with flags.

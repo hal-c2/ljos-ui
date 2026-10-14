@@ -8,7 +8,7 @@
 //! keeps the event ends the round. An area with no `wheel` handler, a
 //! disabled one and a Flickable that cannot move let it go on.
 
-use ljos_engine::{Engine, ObjectId, Point, Value};
+use ljos_engine::{Engine, IntPoint, ObjectId, Value};
 use ljos_render::kurbo;
 
 use crate::flickable::wheel::wheel_angle;
@@ -18,29 +18,50 @@ use crate::wheel_handler::Taken;
 
 /// Offers `ev` to `hits`, the items under the pointer, topmost first,
 /// with `buttons` held. Whether one of them used it.
+///
+/// An item whose WheelHandler only reaches the pointer by its `margin`
+/// is asked where it would stand among the hits, as qml6 asks it: what
+/// covers it at the pointer comes first, what it covers after. Only its
+/// handlers are asked, not the item itself.
 pub(crate) fn deliver(
     engine: &Engine,
     hits: &[ObjectId],
     ev: &WheelEvent,
     buttons: MouseButtons,
 ) -> bool {
-    let mut used = false;
-    for obj in hits {
-        if !engine.is_alive(*obj) {
+    let mut order: Vec<(ObjectId, bool)> = hits.iter().map(|o| (*o, false)).collect();
+    for item in crate::wheel_handler::margin_items(engine, ev.pos) {
+        if hits.contains(&item) {
             continue;
         }
-        match crate::wheel_handler::offer(engine, *obj, ev, buttons) {
+        let key = crate::wheel_handler::stack_key(engine, item);
+        let at = order
+            .iter()
+            .position(|(o, _)| {
+                crate::wheel_handler::stack_key(engine, *o)
+                    .partial_cmp(&key)
+                    .is_some_and(|c| c == std::cmp::Ordering::Less)
+            })
+            .unwrap_or(order.len());
+        order.insert(at, (item, true));
+    }
+    let mut used = false;
+    for (obj, margin_only) in order {
+        if !engine.is_alive(obj) {
+            continue;
+        }
+        match crate::wheel_handler::offer(engine, obj, ev, buttons) {
             Taken::Kept => return true,
             Taken::Shared => used = true,
             Taken::No => {}
         }
-        if !engine.is_alive(*obj) {
+        if margin_only || !engine.is_alive(obj) {
             continue;
         }
-        let kept = if is_a::<MouseArea>(engine, *obj) {
-            area_wheel(engine, *obj, ev, buttons)
+        let kept = if is_a::<MouseArea>(engine, obj) {
+            area_wheel(engine, obj, ev, buttons)
         } else {
-            crate::flickable::wheel::offer(engine, *obj, ev)
+            crate::flickable::wheel::offer(engine, obj, ev)
         };
         if kept {
             return true;
@@ -72,7 +93,10 @@ pub(crate) fn emit_wheel(
     buttons: MouseButtons,
 ) -> bool {
     let at = engine.untrack(|| scene_transform(engine, item)).inverse() * ev.pos;
-    let point = |v: kurbo::Vec2| Point { x: v.x, y: v.y };
+    // Qt's deltas are whole numbers, so a fraction a device sent (or one
+    // made of pixels, above) is rounded in what a script reads; what
+    // scrolls keeps the fraction.
+    let point = |v: kurbo::Vec2| IntPoint::rounded(v.x, v.y);
     let native = WheelEventObject {
         x: at.x,
         y: at.y,

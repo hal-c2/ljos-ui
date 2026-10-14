@@ -36,7 +36,7 @@ use crate::atom::Atom;
 use crate::ids::ObjectId;
 use crate::number::to_int32;
 use crate::value::{Color, EnumValue, Font, Point, Rect, Size, Value};
-use crate::value_types::{Quaternion, Vector2d, Vector3d, Vector4d, area, extent, list};
+use crate::value_types::{IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, area, extent, list};
 
 /// The declared type of a property, signal parameter or method return.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -223,6 +223,7 @@ impl TypeTag {
             },
             TypeTag::Point => match v {
                 Value::Point(_) => v.clone(),
+                Value::IntPoint(p) => Value::point(f64::from(p.x), f64::from(p.y)),
                 Value::Vector2d(p) => Value::point(p.x.into(), p.y.into()),
                 Value::Null => self.default_value(),
                 Value::String(s) => match list(s) {
@@ -250,6 +251,7 @@ impl TypeTag {
             TypeTag::Vector2d => match v {
                 Value::Vector2d(_) => v.clone(),
                 Value::Point(p) => Value::vector2d(p.x as f32, p.y as f32),
+                Value::IntPoint(p) => Value::vector2d(p.x as f32, p.y as f32),
                 Value::Vector3d(p) => Value::vector2d(p.x, p.y),
                 Value::Vector4d(p) => Value::vector2d(p.x, p.y),
                 Value::String(s) => match list(s) {
@@ -323,6 +325,7 @@ pub(crate) fn describe(v: &Value) -> String {
         Value::String(_) => "QString".into(),
         Value::Color(_) => "QColor".into(),
         Value::Point(_) => "QPointF".into(),
+        Value::IntPoint(_) => "QPoint".into(),
         Value::Size(_) => "QSizeF".into(),
         Value::Rect(_) => "QRectF".into(),
         Value::Font(_) => "QFont".into(),
@@ -390,6 +393,25 @@ qml_value!(String, TypeTag::String, |s| Value::String(Atom::new(s)), Value::Stri
 qml_value!(Color, TypeTag::Color, |s| Value::Color(*s), Value::Color(c) => c);
 qml_value!(Url, TypeTag::Url, |s| Value::Url(s.0.clone()), Value::Url(u) => Url(u));
 qml_value!(Point, TypeTag::Point, |s| Value::Point(Arc::new(*s)), Value::Point(p) => *p);
+
+/// A wheel event's deltas: declared as `point`, held whole. Reading one
+/// back from a real point rounds it, as Qt makes a `QPoint` of a
+/// `QPointF`.
+impl QmlValue for IntPoint {
+    fn type_tag() -> TypeTag {
+        TypeTag::Point
+    }
+    fn to_value(&self) -> Value {
+        Value::IntPoint(*self)
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        Ok(match Self::type_tag().coerce(v)? {
+            Value::Point(p) => IntPoint::rounded(p.x, p.y),
+            Value::IntPoint(p) => p,
+            _ => unreachable!("coerce returns the tag's own variant"),
+        })
+    }
+}
 qml_value!(Size, TypeTag::Size, |s| Value::Size(Arc::new(*s)), Value::Size(p) => *p);
 qml_value!(Rect, TypeTag::Rect, |s| Value::Rect(Arc::new(*s)), Value::Rect(p) => *p);
 qml_value!(Font, TypeTag::Font, |s| Value::Font(Arc::new(s.clone())), Value::Font(f) => (*f).clone());

@@ -25,8 +25,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, MetaRef, ObjectId, Point, PropIndex, QmlObject, QmlType, QmlValue,
-    QtObject, Value, Vector2d, WriteKind, qml_impl,
+    Atom, Cx, Engine, EngineError, MetaRef, ObjectId, Point, PropIndex, QmlObject, QmlType,
+    QmlValue, QtObject, Value, Vector2d, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
 
@@ -65,6 +65,7 @@ pub mod grab_transition {
     pub const GRAB_PASSIVE: i32 = 0x01;
     pub const UNGRAB_PASSIVE: i32 = 0x02;
     pub const CANCEL_GRAB_PASSIVE: i32 = 0x03;
+    pub const OVERRIDE_GRAB_PASSIVE: i32 = 0x04;
     pub const GRAB_EXCLUSIVE: i32 = 0x10;
     pub const UNGRAB_EXCLUSIVE: i32 = 0x20;
     pub const CANCEL_GRAB_EXCLUSIVE: i32 = 0x30;
@@ -78,6 +79,101 @@ pub(crate) const ALL_DEVICES: i32 = 0x7FFF_FFFF;
 pub(crate) const ALL_POINTER_TYPES: i32 = 0x7FFF;
 
 pub(crate) type EnumTable = Vec<(&'static str, Vec<(&'static str, i64)>)>;
+
+fn device_type_keys() -> Vec<(&'static str, i64)> {
+    vec![
+        ("Unknown", 0x0),
+        ("UnknownDevice", 0x0),
+        ("Mouse", 0x1),
+        ("TouchScreen", 0x2),
+        ("TouchPad", 0x4),
+        ("Puck", 0x8),
+        ("Stylus", 0x10),
+        ("Airbrush", 0x20),
+        ("Keyboard", 0x1000),
+        ("AllDevices", 0x7FFF_FFFF),
+    ]
+}
+
+fn pointer_type_keys() -> Vec<(&'static str, i64)> {
+    vec![
+        ("Unknown", 0),
+        ("Generic", 0x1),
+        ("Finger", 0x2),
+        ("Pen", 0x4),
+        ("Eraser", 0x8),
+        ("Cursor", 0x10),
+        ("AllPointerTypes", 0x7FFF),
+    ]
+}
+
+fn pointer_device_enums() -> EnumTable {
+    use grab_transition as t;
+    let grab_transitions = vec![
+        ("GrabPassive", i64::from(t::GRAB_PASSIVE)),
+        ("UngrabPassive", i64::from(t::UNGRAB_PASSIVE)),
+        ("CancelGrabPassive", i64::from(t::CANCEL_GRAB_PASSIVE)),
+        ("OverrideGrabPassive", i64::from(t::OVERRIDE_GRAB_PASSIVE)),
+        ("GrabExclusive", i64::from(t::GRAB_EXCLUSIVE)),
+        ("UngrabExclusive", i64::from(t::UNGRAB_EXCLUSIVE)),
+        ("CancelGrabExclusive", i64::from(t::CANCEL_GRAB_EXCLUSIVE)),
+    ];
+    let capabilities = vec![
+        ("None", 0),
+        ("Position", 0x1),
+        ("Area", 0x2),
+        ("Pressure", 0x4),
+        ("Velocity", 0x8),
+        ("NormalizedPosition", 0x20),
+        ("MouseEmulation", 0x40),
+        ("PixelScroll", 0x80),
+        ("Scroll", 0x100),
+        ("Hover", 0x200),
+        ("Rotation", 0x400),
+        ("XTilt", 0x800),
+        ("YTilt", 0x1000),
+        ("TangentialPressure", 0x2000),
+        ("ZPosition", 0x4000),
+        ("All", 0x7FFF_FFFF),
+    ];
+    vec![
+        ("DeviceType", device_type_keys()),
+        ("DeviceTypes", device_type_keys()),
+        ("PointerType", pointer_type_keys()),
+        ("PointerTypes", pointer_type_keys()),
+        ("GrabTransition", grab_transitions),
+        ("CapabilityFlag", capabilities.clone()),
+        ("Capabilities", capabilities),
+    ]
+}
+
+/// `PointerDevice` (QtQuick).
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtQuick",
+    name = "PointerDevice",
+    extends = QtObject,
+    uncreatable,
+    enums = pointer_device_enums
+)]
+pub struct PointerDevice {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(notify, readonly, enumeration = "DeviceType")]
+    pub device_type: i32,
+    #[qml(notify, readonly, enumeration = "PointerType")]
+    pub pointer_type: i32,
+    #[qml(notify, readonly, flags = "Capabilities")]
+    pub capabilities: i32,
+    #[qml(notify, readonly)]
+    pub maximum_points: i32,
+    #[qml(notify, readonly)]
+    pub button_count: i32,
+    #[qml(notify, readonly)]
+    pub unique_id: Atom,
+    #[qml(notify, readonly)]
+    pub name: Atom,
+}
 
 pub(crate) fn grab_permission_enums() -> EnumTable {
     use grab_permission as g;
@@ -108,10 +204,16 @@ pub(crate) fn grab_permission_enums() -> EnumTable {
             g::APPROVES_TAKE_OVER_BY_ANYTHING,
         ),
     ];
-    vec![(
-        "GrabPermissions",
-        keys.iter().map(|(k, v)| (*k, i64::from(*v))).collect(),
-    )]
+    vec![
+        (
+            "GrabPermissions",
+            keys.iter().map(|(k, v)| (*k, i64::from(*v))).collect(),
+        ),
+        ("DeviceType", device_type_keys()),
+        ("DeviceTypes", device_type_keys()),
+        ("PointerType", pointer_type_keys()),
+        ("PointerTypes", pointer_type_keys()),
+    ]
 }
 
 /// What every pointer handler has: Qt's `PointerHandler` and
@@ -153,10 +255,10 @@ pub struct PointerHandler {
     #[qml(notify, reset, enumeration = "Qt.CursorShape")]
     pub cursor_shape: i32,
     /// Stored: every pointer of Ljós is accepted.
-    #[qml(notify)]
+    #[qml(notify, flags = "DeviceTypes")]
     pub accepted_devices: i32,
     /// Stored: every pointer of Ljós is accepted.
-    #[qml(notify)]
+    #[qml(notify, flags = "PointerTypes")]
     pub accepted_pointer_types: i32,
     #[qml(notify, flags = "Qt.MouseButtons")]
     pub accepted_buttons: i32,
@@ -779,7 +881,7 @@ pub(crate) fn hover(engine: &Engine, ev: &PointerEvent, hits: &[ObjectId]) {
 /// Registers the handlers' types with module `QtQuick`.
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
-        PointerHandler, DragHandler, HoverHandler, PointHandler, PinchHandler,
+        PointerDevice, PointerHandler, DragHandler, HoverHandler, PointHandler, PinchHandler,
     ]));
     for meta in [
         MetaRef::Static(DragHandler::static_meta()),

@@ -45,9 +45,6 @@ Feature: The wheel over a MouseArea
         PASS   : Turn::test_turn()
         """
 
-    # Ljós has one point type, of real numbers, so the deltas print as
-    # `QPointF(0, 120)`.
-    @backlog
     Scenario: The deltas are points of whole numbers
       Given the file "tst_whole.qml":
         """qml

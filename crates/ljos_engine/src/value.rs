@@ -31,7 +31,7 @@ use crate::atom::Atom;
 use crate::ids::ObjectId;
 use crate::number::{number_to_string, string_to_number};
 use crate::types::TypeTag;
-use crate::value_types::{Quaternion, Vector2d, Vector3d, Vector4d, font_text, named};
+use crate::value_types::{IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, font_text, named};
 
 /// A colour with 16 bits per channel, **not premultiplied**.
 ///
@@ -349,6 +349,10 @@ pub enum Value {
     String(Atom),
     Color(Color),
     Point(Arc<Point>),
+    /// A point of whole numbers: a wheel event's deltas. It compares
+    /// equal to the `Point` with the same numbers, as qml6 has
+    /// `wheel.angleDelta === Qt.point(0, 120)`, but prints as `QPoint`.
+    IntPoint(IntPoint),
     Size(Arc<Size>),
     Rect(Arc<Rect>),
     Font(Arc<Font>),
@@ -404,6 +408,10 @@ impl Value {
             TypeTag::Point => {
                 let mut p = match self {
                     Value::Point(p) => **p,
+                    Value::IntPoint(p) => Point {
+                        x: f64::from(p.x),
+                        y: f64::from(p.y),
+                    },
                     _ => Point::default(),
                 };
                 match name {
@@ -505,6 +513,10 @@ impl Value {
         Value::Point(Arc::new(Point { x, y }))
     }
 
+    pub fn int_point(x: i32, y: i32) -> Self {
+        Value::IntPoint(IntPoint { x, y })
+    }
+
     pub fn size(width: f64, height: f64) -> Self {
         Value::Size(Arc::new(Size { width, height }))
     }
@@ -572,6 +584,7 @@ impl Value {
             Value::Null
             | Value::Color(_)
             | Value::Point(_)
+            | Value::IntPoint(_)
             | Value::Size(_)
             | Value::Rect(_)
             | Value::Font(_)
@@ -614,6 +627,7 @@ impl Value {
             | Value::Quaternion(_)
             | Value::Object(_)
             | Value::List(_)
+            | Value::IntPoint(_)
             | Value::Js(_) => true,
         }
     }
@@ -644,6 +658,7 @@ impl Value {
             | Value::Vector4d(_)
             | Value::Quaternion(_)
             | Value::Object(_)
+            | Value::IntPoint(_)
             | Value::Js(_) => f64::NAN,
         }
     }
@@ -668,6 +683,7 @@ impl Value {
             Value::String(s) | Value::Url(s) => s.clone(),
             Value::Color(c) => Atom::from(c.to_string()),
             Value::Point(p) => Atom::from(named("QPointF", &[p.x, p.y])),
+            Value::IntPoint(p) => Atom::from(format!("QPoint({}, {})", p.x, p.y)),
             Value::Size(s) => Atom::from(named("QSizeF", &[s.width, s.height])),
             Value::Rect(r) => Atom::from(named("QRectF", &[r.x, r.y, r.width, r.height])),
             Value::Font(f) => Atom::from(font_text(f)),
@@ -723,6 +739,11 @@ impl Value {
             (Value::String(a), Value::String(b)) | (Value::Url(a), Value::Url(b)) => a == b,
             (Value::Color(a), Value::Color(b)) => a == b,
             (Value::Point(a), Value::Point(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Value::IntPoint(a), Value::IntPoint(b)) => a == b,
+            // qml6: `wheel.angleDelta === Qt.point(0, 120)` is true.
+            (Value::IntPoint(a), Value::Point(b)) | (Value::Point(b), Value::IntPoint(a)) => {
+                f64::from(a.x) == b.x && f64::from(a.y) == b.y
+            }
             (Value::Size(a), Value::Size(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Rect(a), Value::Rect(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Font(a), Value::Font(b)) => Arc::ptr_eq(a, b) || a == b,
@@ -757,6 +778,7 @@ impl fmt::Debug for Value {
             Value::String(s) => write!(f, "{s:?}"),
             Value::Color(c) => write!(f, "{c:?}"),
             Value::Point(p) => write!(f, "{p:?}"),
+            Value::IntPoint(p) => write!(f, "{p:?}"),
             Value::Size(s) => write!(f, "{s:?}"),
             Value::Rect(r) => write!(f, "{r:?}"),
             Value::Font(x) => write!(f, "{x:?}"),
