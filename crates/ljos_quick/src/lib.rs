@@ -13,6 +13,7 @@ mod animation;
 mod canvas;
 mod drag;
 mod drop_area;
+mod effects;
 pub mod enums;
 mod error_boundary;
 pub mod flickable;
@@ -207,6 +208,7 @@ pub fn register(engine: &Engine) {
     transform::register(engine);
     flipable::register(engine);
     canvas::register(engine);
+    effects::register(engine);
     handlers::register(engine);
     drag::register(engine);
     drop_area::register(engine);

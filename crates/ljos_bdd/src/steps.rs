@@ -93,7 +93,7 @@ fn the_translation_file(w: &mut LjosWorld, name: String, step: &Step) -> StepRes
 
 // An image the QML can name by a relative URL. It is made here, in one
 // colour, so that no binary file has to live beside the scenarios.
-#[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+)" filled with "(#[0-9a-fA-F]{6})"$"#)]
+#[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+)" filled with "(#[0-9a-fA-F]+)"$"#)]
 fn an_image_file(
     w: &mut LjosWorld,
     width: u32,

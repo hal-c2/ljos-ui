@@ -89,6 +89,8 @@ enum Kind {
     Shape,
     /// A `Canvas`: paints in its polish, shows the picture.
     Canvas,
+    /// A `MultiEffect`: paints its source with its mask applied.
+    Effect,
 }
 
 impl Kind {
@@ -111,6 +113,8 @@ impl Kind {
             Kind::Shape
         } else if is_a::<crate::canvas::Canvas>(engine, obj) {
             Kind::Canvas
+        } else if is_a::<crate::effects::MultiEffect>(engine, obj) {
+            Kind::Effect
         } else {
             Kind::Item
         }
@@ -119,7 +123,13 @@ impl Kind {
     fn paints(self) -> bool {
         matches!(
             self,
-            Kind::Rectangle | Kind::Text | Kind::Image | Kind::Editor | Kind::Shape | Kind::Canvas
+            Kind::Rectangle
+                | Kind::Text
+                | Kind::Image
+                | Kind::Editor
+                | Kind::Shape
+                | Kind::Canvas
+                | Kind::Effect
         )
     }
 
@@ -177,6 +187,7 @@ enum Paint {
     Editor(crate::text_input::EditorPaint),
     Shape(crate::shapes::ShapePaint),
     Canvas(crate::canvas::CanvasPicture),
+    Effect(crate::effects::EffectPaint),
 }
 
 /// Dirty state written by effects and drained by `frame`.
@@ -276,6 +287,9 @@ pub struct QuickScene {
     entries: HashMap<ObjectId, Entry>,
     by_node: HashMap<NodeId, ObjectId>,
     paint: HashMap<ObjectId, Paint>,
+    /// Items hidden in the tree because a `MultiEffect` draws them (its
+    /// `source` and `maskSource`): restored when no effect uses them.
+    suppressed: HashSet<ObjectId>,
     root: Option<ObjectId>,
     /// The layer above the root item (`crate::layer`), once one was made.
     layer: Option<ObjectId>,
@@ -337,6 +351,7 @@ impl QuickScene {
             entries: HashMap::new(),
             by_node: HashMap::new(),
             paint: HashMap::new(),
+            suppressed: HashSet::new(),
             root: None,
             layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
@@ -625,6 +640,7 @@ impl QuickScene {
         self.reconcile(engine);
         self.apply_geometry();
         self.apply_content();
+        self.suppress_effect_sources(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
         let mut snap = self.tree.compose(self.viewport, self.frame);
         let mut synced = self.snapshot.clone();
@@ -638,6 +654,7 @@ impl QuickScene {
                 break;
             }
             self.apply_content();
+            self.suppress_effect_sources(engine);
             snap = self.tree.compose(self.viewport, self.frame);
         }
         let changed = !self
@@ -799,7 +816,9 @@ impl QuickScene {
                     // Only after the fonts changed (`refresh_text`).
                     Kind::Editor => crate::text_input::refresh(engine, obj),
                     Kind::Canvas => crate::canvas::polish(engine, obj),
-                    Kind::Item | Kind::Rectangle | Kind::Image | Kind::Shape => Ok(()),
+                    Kind::Item | Kind::Rectangle | Kind::Image | Kind::Shape | Kind::Effect => {
+                        Ok(())
+                    }
                 };
                 if let Err(e) = r {
                     engine.log(
@@ -1065,8 +1084,47 @@ impl QuickScene {
                 Paint::Editor(p) => p.paint(cx.size, b),
                 Paint::Shape(s) => s.paint(cx.size, b),
                 Paint::Canvas(c) => c.paint(cx.size, b),
+                Paint::Effect(p) => p.paint(cx.size, b),
             }
         });
+    }
+
+    /// Hides the items a `MultiEffect` draws (its `source` and
+    /// `maskSource`) in the render tree, and shows again the ones no
+    /// effect uses any more. The items keep their own `visible`; only
+    /// their tree node is hidden, as Qt renders them only as textures.
+    fn suppress_effect_sources(&mut self, engine: &Engine) {
+        if !self.entries.values().any(|e| e.kind == Kind::Effect) && self.suppressed.is_empty() {
+            return;
+        }
+        let mut want: HashSet<ObjectId> = HashSet::new();
+        for (obj, e) in &self.entries {
+            if e.kind != Kind::Effect {
+                continue;
+            }
+            for p in [
+                crate::effects::MultiEffect::SOURCE.index,
+                crate::effects::MultiEffect::MASK_SOURCE.index,
+            ] {
+                if let Value::Object(src) = engine.read(*obj, p) {
+                    want.insert(src);
+                }
+            }
+        }
+        for obj in std::mem::take(&mut self.suppressed) {
+            if !want.contains(&obj)
+                && let Some(e) = self.entries.get(&obj)
+            {
+                let visible = engine.read(obj, Item::VISIBLE.index).to_boolean();
+                self.tree.set_visible(e.node, visible);
+            }
+        }
+        for obj in &want {
+            if let Some(e) = self.entries.get(obj) {
+                self.tree.set_visible(e.node, false);
+            }
+        }
+        self.suppressed = want;
     }
 
     /// Installs paint effects for painting items in `snap` and drops them
@@ -1715,7 +1773,9 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             TextInputs::read(e, obj);
         }
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
-        Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor | Kind::Shape => return,
+        Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor | Kind::Shape | Kind::Effect => {
+            return;
+        }
     }
     mark(shared, |s| {
         s.polish.insert(obj);
@@ -1733,6 +1793,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),
+        Kind::Effect => Paint::Effect(crate::effects::EffectPaint::read(e, obj)),
         _ => return,
     };
     mark(shared, |s| {
