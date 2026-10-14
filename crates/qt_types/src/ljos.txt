@@ -3339,6 +3339,72 @@ module QtQuick.Dialogs
 		method reject
 		method done
 
+module QtQuick.Effects
+	MultiEffect QtQuick.Effects.MultiEffect
+	type QtQuick.Effects.MultiEffect MultiEffect
+		prototype QtQuick.Item named
+		prop source QtQml.QtObject named pointer
+		prop autoPaddingEnabled QtQml.bool named
+		prop paddingRect QtQml.rect named
+		prop brightness QtQml.real named
+		prop contrast QtQml.real named
+		prop saturation QtQml.real named
+		prop colorization QtQml.real named
+		prop colorizationColor QtQuick.color named
+		prop blurEnabled QtQml.bool named
+		prop blur QtQml.real named
+		prop blurMax QtQml.int named
+		prop blurMultiplier QtQml.real named
+		prop shadowEnabled QtQml.bool named
+		prop shadowOpacity QtQml.real named
+		prop shadowBlur QtQml.real named
+		prop shadowHorizontalOffset QtQml.real named
+		prop shadowVerticalOffset QtQml.real named
+		prop shadowColor QtQuick.color named
+		prop shadowScale QtQml.real named
+		prop maskEnabled QtQml.bool named
+		prop maskSource QtQml.QtObject named pointer
+		prop maskThresholdMin QtQml.real named
+		prop maskSpreadAtMin QtQml.real named
+		prop maskThresholdMax QtQml.real named
+		prop maskSpreadAtMax QtQml.real named
+		prop maskInverted QtQml.bool named
+		prop itemRect QtQml.rect named readonly
+		prop fragmentShader QtQml.string named readonly
+		prop vertexShader QtQml.string named readonly
+		prop hasProxySource QtQml.bool named readonly
+		signal sourceChanged
+		signal autoPaddingEnabledChanged
+		signal paddingRectChanged
+		signal brightnessChanged
+		signal contrastChanged
+		signal saturationChanged
+		signal colorizationChanged
+		signal colorizationColorChanged
+		signal blurEnabledChanged
+		signal blurChanged
+		signal blurMaxChanged
+		signal blurMultiplierChanged
+		signal shadowEnabledChanged
+		signal shadowOpacityChanged
+		signal shadowBlurChanged
+		signal shadowHorizontalOffsetChanged
+		signal shadowVerticalOffsetChanged
+		signal shadowColorChanged
+		signal shadowScaleChanged
+		signal maskEnabledChanged
+		signal maskSourceChanged
+		signal maskThresholdMinChanged
+		signal maskSpreadAtMinChanged
+		signal maskThresholdMaxChanged
+		signal maskSpreadAtMaxChanged
+		signal maskInvertedChanged
+		signal itemRectChanged
+		signal fragmentShaderChanged
+		signal vertexShaderChanged
+		signal hasProxySourceChanged
+		signal shaderChanged
+
 module QtQuick.Layouts
 	ColumnLayout QtQuick.Layouts.ColumnLayout
 	GridLayout QtQuick.Layouts.GridLayout

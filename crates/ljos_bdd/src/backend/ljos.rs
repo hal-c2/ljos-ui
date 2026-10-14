@@ -19,7 +19,6 @@ use ljos_engine::{Engine, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
-use qml_front::QtTypeOracle;
 use serde_json::{Map, Number, Value, json};
 
 use super::{
@@ -261,6 +260,8 @@ impl LjosBackend {
         engine.set_eager_bindings(true);
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
+        // An opt-in module a scenario may import (QtQml.XmlListModel).
+        ljos_xml::register(&engine);
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
         let log: Rc<RefCell<Vec<LogEntry>>> = Rc::default();
@@ -323,8 +324,29 @@ fn level(l: ljos_engine::LogLevel) -> LogLevel {
 /// Compiles every file against every other, as `qml6` sees one directory.
 /// A file with errors fails the whole load, as `Qt.createComponent` would
 /// for the file that uses it.
+/// The oracle every compile in a scenario uses: the table plus the types
+/// a BDD engine registers itself (ljos_xml is in no table), snapshotted
+/// once per thread.
+pub(super) fn oracle() -> ljos::dev::EngineOracle {
+    thread_local! {
+        static ORACLE: std::cell::RefCell<Option<ljos::dev::EngineOracle>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    ORACLE.with(|cell| {
+        cell.borrow_mut()
+            .get_or_insert_with(|| {
+                let snapshot = Engine::new();
+                ljos_quick::register(&snapshot);
+                ljos_controls::register(&snapshot);
+                ljos_xml::register(&snapshot);
+                ljos::dev::EngineOracle::from_engine(&snapshot)
+            })
+            .clone()
+    })
+}
+
 fn compile(files: &BTreeMap<String, String>) -> Result<MapSource> {
-    let mut project = Project::new(QtTypeOracle);
+    let mut project = Project::new(oracle());
     for (name, source) in files {
         if qmldir_of(name).is_none() {
             project.add(key_of(name), source.as_str());

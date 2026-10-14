@@ -9,13 +9,12 @@ use std::collections::BTreeMap;
 use ljos_dev::{Build, Debounce, Reloader, component_source, fault_of};
 use ljos_engine::{ReloadError, ReloadFault};
 use ljos_runtime::{Clock as _, Time};
-use qml_front::QtTypeOracle;
 
 use super::{Live, Result, compile, failed, key_of};
 
 /// What a scenario that reloads has beside the live engine.
 pub(super) struct Rig {
-    reloader: Reloader<QtTypeOracle>,
+    reloader: Reloader<ljos::dev::EngineOracle>,
     quiet: Debounce<Time>,
     /// Whether the files have compiled once: from then on a change is a
     /// patch.
@@ -30,7 +29,7 @@ impl Rig {
     pub(super) fn install(live: &mut Live) {
         ljos_dev::prepare(&live.engine);
         live.reloads = Some(Self {
-            reloader: Reloader::in_memory(QtTypeOracle),
+            reloader: Reloader::in_memory(super::oracle()),
             quiet: Debounce::new(),
             started: false,
             count: 0,

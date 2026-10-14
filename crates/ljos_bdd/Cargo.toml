@@ -46,9 +46,13 @@ ljos_mcp_core = { path = "../ljos_mcp_core", features = ["client", "inspect", "h
 # The directory of a served inspector's token file.
 tempfile.workspace = true
 ljos_engine = { path = "../ljos_engine" }
+# The engine-backed type oracle so app-registered types (ljos_xml) type-check.
+ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
 # `.ts` catalogues of scenarios, read as a development build reads them.
 ljos_i18n = { path = "../ljos_i18n" }
 ljos_quick = { path = "../ljos_quick" }
+# An opt-in module scenarios may import (QtQml.XmlListModel).
+ljos_xml = { path = "../ljos_xml" }
 # The system a scenario runs on: its files and its dialogs, answered by
 # the scenario.
 ljos_platform = { path = "../ljos_platform" }

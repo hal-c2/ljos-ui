@@ -5,12 +5,11 @@ use std::collections::BTreeMap;
 
 use ljos_compiler::Project;
 use ljos_engine::QmlTextCompiler;
-use qml_front::QtTypeOracle;
 
 use super::{key_of, qmldir_of};
 
 pub(super) fn compiler(files: &BTreeMap<String, String>) -> QmlTextCompiler {
-    let mut project = Project::new(QtTypeOracle);
+    let mut project = Project::new(super::oracle());
     for (name, source) in files {
         if qmldir_of(name).is_none() {
             project.add(key_of(name), source.as_str());
