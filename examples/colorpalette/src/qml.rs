@@ -8,10 +8,13 @@
 //! survey that found them is in this crate's report. Members are
 //! thin: a property mirrors core state, a method builds a core
 //! [`Request`](crate::rest::Request) and hands it to the transport
-//! seam. The seam is `Platform::fetch` where the request is a GET;
-//! where it is not, the core says so ([`RestError::UnsupportedMethod`])
-//! and the type logs it and changes nothing — no raw socket, no
-//! second HTTP client, and no pretending the write happened.
+//! seam. The seam is `Platform::request`: a core request converts
+//! with [`Request::to_platform`](crate::rest::Request::to_platform)
+//! and travels whole, whatever its method, and the reply — any
+//! HTTP status, or the transport's refusal — comes back to the
+//! core to judge. What goes wrong is logged the way fetch errors
+//! have always been logged here, and nothing pretends a failed
+//! write or login happened.
 
 use std::cell::RefCell;
 
@@ -158,8 +161,7 @@ impl PaginatedResource {
     }
 
     /// Adds a row (`add({name, color, pantone_value})`,
-    /// ColorView.qml:23-25). A POST: over today's seam the core's
-    /// refusal is logged and nothing changes.
+    /// ColorView.qml:23-25): a POST of the row to the server.
     #[qml(invokable)]
     fn add(cx: &Cx, row: Value) -> Result<(), EngineError> {
         let row = value_to_json(cx.engine, &row);
@@ -193,23 +195,48 @@ fn sync_path(e: &Engine, me: ObjectId) {
     });
 }
 
-/// Builds a write request (`add`, `update`, `remove`) and offers
-/// it to the seam. None of them is a GET, so today this only ever
-/// logs the core's refusal; it exists so the methods above stay
-/// one line each and the day the seam carries a method and a
-/// body, the sending lands here.
-fn send(e: &Engine, me: ObjectId, build: impl FnOnce(&Paginated, &BaseUrl) -> Request) {
-    let offered = base_of(e, me).and_then(|base| {
-        e.with(me, |r: &PaginatedResource| build(&r.core.borrow(), &base))
-            .map_err(|err| RestError::Network(err.to_string()))
-    });
-    if let Err(err) = offered.and_then(|r| r.get_url().map(|_| ())) {
-        e.log(LogLevel::Warning, CATEGORY, format!("not sent: {err}"));
+/// What a reply that carries nothing back for the core still has
+/// to say: a refusal, from the transport or from the server, is
+/// logged the way fetch errors always have been here, and an
+/// agreed write is silent — the QML re-reads the rows when it
+/// asks for the page again.
+fn log_refusal(e: &Engine, got: &Result<Response, FetchError>) {
+    let refused = match got {
+        Ok(response) if response.ok() => None,
+        Ok(response) => Some(RestError::HttpStatus(response.status)),
+        Err(err) => Some(RestError::Network(err.to_string())),
+    };
+    if let Some(err) = refused {
+        e.log(LogLevel::Warning, CATEGORY, format!("{err}"));
     }
 }
 
-/// The one place a request leaves the core today: a GET for one
-/// page, over `Platform::fetch`.
+/// Builds a write request (`add`, `update`, `remove`) and sends
+/// it over the seam, so the methods above stay one line each. A
+/// request that cannot even be built — no server picked yet —
+/// is logged and nothing is sent.
+fn send(e: &Engine, me: ObjectId, build: impl FnOnce(&Paginated, &BaseUrl) -> Request) {
+    let built = base_of(e, me).and_then(|base| {
+        e.with(me, |r: &PaginatedResource| build(&r.core.borrow(), &base))
+            .map_err(|err| RestError::Network(err.to_string()))
+    });
+    let request = match built {
+        Ok(request) => request.to_platform(),
+        Err(err) => {
+            e.log(LogLevel::Warning, CATEGORY, format!("not sent: {err}"));
+            return;
+        }
+    };
+    Platform::of(e).request(request, move |e, got| {
+        if e.is_alive(me) {
+            log_refusal(e, &got);
+        }
+    });
+}
+
+/// Asks for one page over the seam: a GET today as it always was,
+/// now one request among the rest, with the reply's status judged
+/// before its bytes are read as a page.
 fn fetch_page(e: &Engine, me: ObjectId, asked: i32) {
     let asked = asked.max(1);
     let built = base_of(e, me).and_then(|base| {
@@ -218,8 +245,8 @@ fn fetch_page(e: &Engine, me: ObjectId, asked: i32) {
         })
         .map_err(|err| RestError::Network(err.to_string()))
     });
-    let url = match built.and_then(|r| r.get_url().map(|u: &str| u.to_owned())) {
-        Ok(url) => url,
+    let request = match built {
+        Ok(request) => request.to_platform(),
         Err(err) => {
             e.log(LogLevel::Warning, CATEGORY, format!("{err}"));
             return;
@@ -231,20 +258,16 @@ fn fetch_page(e: &Engine, me: ObjectId, asked: i32) {
     }) else {
         return;
     };
-    Platform::of(e).fetch(&url, move |e, got| {
+    Platform::of(e).request(request, move |e, got| {
         let current = e
             .with(me, |r: &PaginatedResource| r.generation == generation)
             .unwrap_or(false);
         if !current || !e.is_alive(me) {
             return;
         }
-        match got {
-            Ok(bytes) => page_fetched(e, me, asked, &bytes),
-            Err(err) => e.log(
-                LogLevel::Warning,
-                CATEGORY,
-                format!("{}", RestError::Network(err.to_string())),
-            ),
+        match &got {
+            Ok(response) if response.ok() => page_fetched(e, me, asked, &response.body),
+            _ => log_refusal(e, &got),
         }
     });
 }
@@ -301,50 +324,80 @@ pub struct BasicLogin {
 #[qml_impl]
 impl BasicLogin {
     /// Logs in with the credentials as given
-    /// (`login({email, password, id})`, UserMenu.qml:99-101).
-    /// Login is a POST with a JSON body, which the platform's
-    /// GET-bytes seam cannot express: today the core's refusal
-    /// is logged and the session stays logged out. When a
-    /// request-shaped seam exists, its reply lands in
-    /// [`Session::apply_login_reply`] through `session_moved`
-    /// and nothing else here changes.
+    /// (`login({email, password, id})`, UserMenu.qml:99-101): a
+    /// POST with the credentials as its JSON body. The session
+    /// moves only when the reply lands in
+    /// [`Session::apply_login_reply`], which is where a non-2xx
+    /// answer is turned away — it can never set `loggedIn` — and
+    /// the refusal reaches the log in the core's words.
     #[qml(invokable)]
     fn login(cx: &Cx, credentials: Value) -> Result<(), EngineError> {
-        let credentials = value_to_json(cx.engine, &credentials);
-        let login_path = cx.get(BasicLogin::LOGIN_PATH)?;
-        let built = base_of(cx.engine, cx.this)
-            .map(|base| Session::default().request_login(&base, &login_path, credentials));
-        match built.and_then(|(request, _pending)| request.get_url().map(|u: &str| u.to_owned())) {
-            // Unreachable while login is a POST; kept so the day
-            // the seam grows, this arms instead of being written.
-            Ok(_) => {}
-            Err(err) => cx.engine.log(
-                LogLevel::Warning,
-                CATEGORY,
-                format!("login not sent: {err}"),
-            ),
-        }
+        let (e, me) = (cx.engine, cx.this);
+        let credentials = value_to_json(e, &credentials);
+        let login_path: String = cx.get(BasicLogin::LOGIN_PATH)?;
+        let built = base_of(e, me).and_then(|base| {
+            cx.with::<BasicLogin, _>(|l| {
+                l.session
+                    .borrow()
+                    .request_login(&base, &login_path, credentials)
+            })
+            .map_err(|err| RestError::Network(err.to_string()))
+        });
+        let (request, pending) = match built {
+            Ok(built) => built,
+            Err(err) => {
+                e.log(
+                    LogLevel::Warning,
+                    CATEGORY,
+                    format!("login not sent: {err}"),
+                );
+                return Ok(());
+            }
+        };
+        Platform::of(e).request(request.to_platform(), move |e, got| {
+            if !e.is_alive(me) {
+                return;
+            }
+            let applied = e.with_mut(me, |l: &mut BasicLogin| {
+                l.session
+                    .borrow_mut()
+                    .apply_login_reply(pending, got.as_ref())
+            });
+            match applied {
+                Ok(Ok(())) => session_moved(&Cx::new(e, me)),
+                Ok(Err(err)) => e.log(LogLevel::Warning, CATEGORY, format!("{err}")),
+                Err(_) => {}
+            }
+        });
         Ok(())
     }
 
-    /// Logs out (UserMenu.qml:96). The local session ends at
-    /// once — that much needs no transport — and the request
-    /// the core builds for the server meets the same seam as
-    /// login's does, and is logged the same way.
+    /// Logs out (UserMenu.qml:96). The request goes to the server
+    /// over the same seam as login's and its refusal is logged
+    /// the same way, but the local session ends at once, before
+    /// any answer: whoever was logged in no longer is, even if
+    /// the request is never built, never travels, or is refused.
     #[qml(invokable)]
     fn logout(cx: &Cx) -> Result<(), EngineError> {
-        let logout_path = cx.get(BasicLogin::LOGOUT_PATH)?;
-        if let Err(err) = base_of(cx.engine, cx.this).and_then(|base| {
-            Session::default()
-                .request_logout(&base, &logout_path)
-                .get_url()
-                .map(|_| ())
-        }) {
-            cx.engine.log(
+        let (e, me) = (cx.engine, cx.this);
+        let logout_path: String = cx.get(BasicLogin::LOGOUT_PATH)?;
+        let built = base_of(e, me).and_then(|base| {
+            cx.with::<BasicLogin, _>(|l| l.session.borrow().request_logout(&base, &logout_path))
+                .map_err(|err| RestError::Network(err.to_string()))
+        });
+        match built {
+            Ok(request) => {
+                Platform::of(e).request(request.to_platform(), move |e, got| {
+                    if e.is_alive(me) {
+                        log_refusal(e, &got);
+                    }
+                });
+            }
+            Err(err) => e.log(
                 LogLevel::Warning,
                 CATEGORY,
                 format!("logout not sent: {err}"),
-            );
+            ),
         }
         let _ = cx.with_mut::<BasicLogin, _>(|l| l.session.borrow_mut().apply_logout());
         session_moved(cx);

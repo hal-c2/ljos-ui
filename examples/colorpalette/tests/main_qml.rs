@@ -28,6 +28,7 @@
 //!   creation in the first test starts succeeding and takes over.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use ljos::prelude::*;
 use ljos_compiler::{Project, Severity, compile_file};
@@ -231,4 +232,280 @@ fn the_first_screen_creates_with_the_backend_wired_as_main_wires_it() {
         "nothing visible in the first screen's tree"
     );
     assert_backend(&e, &[backend, screen]);
+}
+
+// ---------------------------------------------------------------------
+// The requests, end to end: the same Backend wiring, with a fake
+// server installed on the Platform as its Fetcher. The fake answers
+// canned pages and login replies and records everything it was sent,
+// so the tests assert both what the QML reads afterwards and what
+// actually travelled. Delivery is explicit — `Platform::finish` runs
+// the answers that have come back — so there is no timing in them.
+
+/// What the fake server does with a login.
+#[derive(Clone, Copy)]
+enum LoginReply {
+    /// 200 with a token only: nobody named, so the credentials'
+    /// `email` is who the session is for (the core's convention).
+    Token,
+    /// 401: the server refused.
+    Unauthorized,
+    /// No answer at all: the transport failed.
+    Transport,
+}
+
+/// One request as the fake saw it.
+#[derive(Debug)]
+struct Seen {
+    method: Method,
+    url: String,
+    body: Vec<u8>,
+}
+
+#[derive(Default)]
+struct FakeServer {
+    seen: Mutex<Vec<Seen>>,
+    login: Mutex<Option<LoginReply>>,
+}
+
+const COLOR_PAGE: &str = r##"{
+    "page": 1, "total_pages": 2,
+    "data": [
+        {"id": 1, "name": "cerulean", "color": "#98B2D1", "pantone_value": "15-4020"},
+        {"id": 2, "name": "fuchsia rose", "color": "#C74375", "pantone_value": "17-2031"}
+    ]
+}"##;
+
+fn canned(status: u16, body: &str) -> Response {
+    Response {
+        status,
+        headers: Vec::new(),
+        body: body.as_bytes().to_vec(),
+    }
+}
+
+impl Fetcher for FakeServer {
+    // The trait asks `fetch` of every fetcher; this one is a
+    // request-shaped fake, so a bytes fetch is its GET.
+    fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError> {
+        self.request(&Request::get(url)).map(|r| r.body)
+    }
+
+    fn request(&self, request: &Request) -> Result<Response, FetchError> {
+        self.seen.lock().unwrap().push(Seen {
+            method: request.method,
+            url: request.url.clone(),
+            body: request.body.clone(),
+        });
+        let url = &request.url;
+        if url.ends_with("/login") {
+            return match self.login.lock().unwrap().unwrap_or(LoginReply::Token) {
+                LoginReply::Token => Ok(canned(200, r#"{"token": "abc"}"#)),
+                LoginReply::Unauthorized => Ok(canned(401, r#"{"error": "nope"}"#)),
+                LoginReply::Transport => Err(FetchError::Failed("could not connect".to_owned())),
+            };
+        }
+        Ok(match request.method {
+            Method::Get if url.contains("/unknown?page=") => canned(200, COLOR_PAGE),
+            Method::Get => canned(404, "{}"),
+            Method::Post => canned(201, "{}"),
+            Method::Put | Method::Patch | Method::Delete => canned(200, "{}"),
+        })
+    }
+}
+
+impl FakeServer {
+    /// The requests for `url`, in the order they arrived.
+    fn sent_to(&self, url: &str) -> Vec<(Method, serde_json::Value)> {
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.url == url)
+            .map(|s| {
+                let body = if s.body.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::from_slice(&s.body).unwrap()
+                };
+                (s.method, body)
+            })
+            .collect()
+    }
+}
+
+/// The `BasicLogin` of a wiring, found by the path Main.qml writes.
+fn login(e: &Engine, roots: &[ObjectId]) -> ObjectId {
+    roots
+        .iter()
+        .flat_map(|&r| walk(e, r))
+        .find(|&o| e.read_by_name(o, "loginPath").to_js_string().as_str() == "login")
+        .expect("no BasicLogin")
+}
+
+/// A script-shaped object (`{email: …, id: 1}`) as the QML hands one
+/// to `login` and `add`.
+fn object(e: &Engine, owner: ObjectId, fields: Vec<(&str, Value)>) -> Value {
+    let map = PropertyMap::new(e, Some(owner)).expect("property map");
+    for (key, value) in fields {
+        map.insert(e, key, value);
+    }
+    Value::Object(map.object())
+}
+
+/// The Backend wiring on an engine whose Platform talks to `server`,
+/// pointed at the address every assertion below expects.
+fn served_backend(server: &Arc<FakeServer>) -> (Engine, ObjectId) {
+    let e = engine();
+    Platform::of(&e).set_fetcher(server.clone());
+    let backend = e
+        .create_from_url("ColorPalette/Backend", None, Vec::new())
+        .unwrap_or_else(|err| panic!("Backend: {err}"));
+    e.write_by_name(backend, "url", Value::from("https://reqres.in/api"))
+        .expect("url");
+    (e, backend)
+}
+
+fn deliver(e: &Engine) {
+    Platform::of(e).finish(e);
+}
+
+#[test]
+fn login_and_writes_travel_over_the_request_seam() {
+    if !corpus_present("login_and_writes_travel_over_the_request_seam") {
+        return;
+    }
+    let server = Arc::new(FakeServer::default());
+    let (e, backend) = served_backend(&server);
+    let colors = resource(&e, &[backend], "unknown");
+    let session = login(&e, &[backend]);
+
+    // A page load: a GET for page 1, and the rows land where the
+    // QML binds them.
+    e.invoke_by_name(colors, "refreshCurrentPage", &[])
+        .expect("refreshCurrentPage");
+    deliver(&e);
+    assert_eq!(
+        server.sent_to("https://reqres.in/api/unknown?page=1"),
+        [(Method::Get, serde_json::Value::Null)]
+    );
+    match e.read_by_name(colors, "data") {
+        Value::List(rows) => assert_eq!(rows.len(), 2),
+        other => panic!("data is {other:?}, not a list"),
+    }
+    assert_eq!(e.read_by_name(colors, "page").to_number(), 1.0);
+    assert_eq!(e.read_by_name(colors, "pages").to_number(), 2.0);
+
+    // Login: a POST of the credentials exactly as UserMenu.qml
+    // builds them. Nothing moves until the reply is delivered;
+    // then the credentials' email is the user, the reply having
+    // named nobody (a token only).
+    let credentials = object(
+        &e,
+        session,
+        vec![
+            ("email", Value::from("ada@example.org")),
+            ("password", Value::from("apassword")),
+            ("id", Value::Int(1)),
+        ],
+    );
+    e.invoke_by_name(session, "login", &[credentials])
+        .expect("login");
+    assert!(!e.read_by_name(session, "loggedIn").to_boolean());
+    deliver(&e);
+    assert!(e.read_by_name(session, "loggedIn").to_boolean());
+    assert_eq!(
+        e.read_by_name(session, "user").to_js_string().as_str(),
+        "ada@example.org"
+    );
+    assert_eq!(
+        server.sent_to("https://reqres.in/api/login"),
+        [(
+            Method::Post,
+            serde_json::json!({"email": "ada@example.org", "password": "apassword", "id": 1})
+        )]
+    );
+
+    // The three writes, each with the row ColorView.qml builds.
+    let row = || {
+        object(
+            &e,
+            colors,
+            vec![
+                ("name", Value::from("new")),
+                ("color", Value::from("#41cd52")),
+                ("pantone_value", Value::from("PMS 802C")),
+            ],
+        )
+    };
+    let sent = serde_json::json!({"name": "new", "color": "#41cd52", "pantone_value": "PMS 802C"});
+
+    e.invoke_by_name(colors, "add", &[row()]).expect("add");
+    deliver(&e);
+    assert_eq!(
+        server.sent_to("https://reqres.in/api/unknown"),
+        [(Method::Post, sent.clone())]
+    );
+
+    e.invoke_by_name(colors, "update", &[row(), Value::Int(7)])
+        .expect("update");
+    deliver(&e);
+    e.invoke_by_name(colors, "remove", &[Value::Int(7)])
+        .expect("remove");
+    deliver(&e);
+    assert_eq!(
+        server.sent_to("https://reqres.in/api/unknown/7"),
+        [
+            (Method::Put, sent),
+            (Method::Delete, serde_json::Value::Null)
+        ]
+    );
+
+    // Logout ends the local session at once, before its request
+    // is answered; the request still travels.
+    e.invoke_by_name(session, "logout", &[]).expect("logout");
+    assert!(!e.read_by_name(session, "loggedIn").to_boolean());
+    assert_eq!(e.read_by_name(session, "user").to_js_string().as_str(), "");
+    deliver(&e);
+    assert_eq!(
+        server.sent_to("https://reqres.in/api/logout"),
+        [(Method::Post, serde_json::Value::Null)]
+    );
+}
+
+#[test]
+fn a_refused_or_unreachable_login_never_logs_in() {
+    if !corpus_present("a_refused_or_unreachable_login_never_logs_in") {
+        return;
+    }
+    let server = Arc::new(FakeServer::default());
+    let (e, backend) = served_backend(&server);
+    let session = login(&e, &[backend]);
+    let attempt = |e: &Engine| {
+        let credentials = object(
+            e,
+            session,
+            vec![
+                ("email", Value::from("ada@example.org")),
+                ("password", Value::from("apassword")),
+                ("id", Value::Int(1)),
+            ],
+        );
+        e.invoke_by_name(session, "login", &[credentials])
+            .expect("login");
+        deliver(e);
+        assert!(!e.read_by_name(session, "loggedIn").to_boolean());
+        assert_eq!(e.read_by_name(session, "user").to_js_string().as_str(), "");
+    };
+
+    // The server answered and refused (401): a non-2xx login must
+    // not set loggedIn.
+    *server.login.lock().unwrap() = Some(LoginReply::Unauthorized);
+    attempt(&e);
+
+    // The request never travelled at all: the same.
+    *server.login.lock().unwrap() = Some(LoginReply::Transport);
+    attempt(&e);
+
+    assert_eq!(server.sent_to("https://reqres.in/api/login").len(), 2);
 }

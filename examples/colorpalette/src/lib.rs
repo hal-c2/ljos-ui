@@ -18,10 +18,13 @@
 //! ljos_example_colorpalette::register(&engine);
 //! ```
 //!
-//! One gap is deliberate and named in [`rest`]: the platform's
-//! fetch seam carries GET-for-bytes only, so page loads travel
-//! and writes (login included) are built, refused by the core in
-//! so many words, and logged — never faked.
+//! Every request the core builds travels over the platform's
+//! request seam (`Platform::request`, reached through
+//! [`rest::Request::to_platform`]): page loads and refreshes,
+//! row writes, and login and logout. A reply's status is judged
+//! by the core before anything the QML reads moves, so a refused
+//! login never reads as logged in; refusals are logged, never
+//! faked.
 
 // The `QmlObject` derive and `qml_impl` name everything they
 // generate through `::ljos_engine`, which only resolves in a

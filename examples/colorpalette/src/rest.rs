@@ -2,24 +2,29 @@
 //!
 //! Everything here is plain values: a request is built, a reply is
 //! decoded, a state machine moves. Nothing here knows how a request
-//! would travel — that is the platform's business, and today the
-//! platform's fetch seam (`Platform::fetch`) can only express a GET
-//! for bytes, so [`Request::get_url`] is where the core hands over
-//! what the seam can carry and names what it cannot. A future
-//! request-shaped seam (method, headers, body, status) plugs in at
-//! exactly that point and nowhere else changes.
+//! travels — that is the platform's business. [`Request::to_platform`]
+//! is where a core request becomes the platform's request value
+//! (method, URL, a JSON body with its content type), which
+//! `Platform::request` carries for every method this client builds;
+//! replies come back the same way, and [`Session::apply_login_reply`]
+//! is where a login reply is judged, so who is logged in is decided
+//! in code a unit test can drive.
 //!
 //! The shapes are what the example's QML reads: a page reply is an
 //! object whose `data` is the row array (the QML binds
 //! `resource.data` as a model and reads `data[i].email` etc.), and
 //! the row fields are whatever the server sent — the resource type
 //! is used for both users and colors, so rows stay JSON values and
-//! only the envelope is typed. Two things no QML file can show are
+//! only the envelope is typed. The things no QML file can show are
 //! marked where they stand: how the page number reaches the server
-//! (`?page=N` is the convention chosen) and the envelope field that
+//! (`?page=N` is the convention chosen), the envelope field that
 //! carries the page count (`total_pages`, with a fallback when a
-//! server does not send it).
+//! server does not send it), and the user a login reply names
+//! (see [`Session::apply_login_reply`]).
 
+use ljos::prelude::{
+    FetchError, Method as PlatformMethod, Request as PlatformRequest, Response as PlatformResponse,
+};
 use serde::Deserialize;
 use serde_json::Value as Json;
 
@@ -32,13 +37,13 @@ pub enum RestError {
     /// The reply was not the JSON shape the QML needs.
     #[error("reply is not a page of data: {0}")]
     BadReply(#[from] serde_json::Error),
-    /// The platform said the fetch failed, in its own words.
+    /// The platform said the request failed, in its own words.
     #[error("{0}")]
     Network(String),
-    /// The platform's fetch seam carries GET requests only; this
-    /// request needs a method, a body, and a status back.
-    #[error("{0} requests cannot travel over the GET-only fetch seam yet")]
-    UnsupportedMethod(Method),
+    /// The request travelled and the server refused it: any answer
+    /// outside 2xx is a failure the caller can say in one line.
+    #[error("the server answered HTTP {0}")]
+    HttpStatus(u16),
 }
 
 /// An HTTP method, as far as this client needs them.
@@ -104,15 +109,24 @@ pub struct Request {
 }
 
 impl Request {
-    /// The URL, when the platform's GET-bytes seam can carry this
-    /// request as it stands; the precise refusal when it cannot.
-    /// This is the whole seam gap in one place: a non-GET request
-    /// needs the method, a JSON body with its content type, and
-    /// the reply's status, and `Platform::fetch` carries none.
-    pub fn get_url(&self) -> Result<&str, RestError> {
-        match self.method {
-            Method::Get => Ok(&self.url),
-            other => Err(RestError::UnsupportedMethod(other)),
+    /// This request as the platform's request value, ready for
+    /// `Platform::request`: the method and the URL as they stand,
+    /// and the JSON body, when there is one, through the seam's
+    /// JSON builder so it travels with its content type. The core
+    /// keeps its own [`Method`] and [`Request`] because a request
+    /// as a core value is this crate's shape; this is the one
+    /// place the two vocabularies meet.
+    pub fn to_platform(&self) -> PlatformRequest {
+        let method = match self.method {
+            Method::Get => PlatformMethod::Get,
+            Method::Post => PlatformMethod::Post,
+            Method::Put => PlatformMethod::Put,
+            Method::Delete => PlatformMethod::Delete,
+        };
+        let request = PlatformRequest::new(method, self.url.as_str());
+        match &self.body {
+            Some(body) => request.json(&body.to_string()),
+            None => request,
         }
     }
 
@@ -269,13 +283,39 @@ impl Session {
         )
     }
 
-    /// The server agreed (a reply arrived and decoding the session
-    /// from it needs nothing the QML shows beyond that): the
-    /// pending user is the user. Without an `email` in the
-    /// credentials there is nobody to be, and the session stays
-    /// logged out.
-    pub fn apply_login_reply(&mut self, pending: Option<String>) {
-        self.user = pending;
+    /// Judges the reply to the login [`Request`] — the whole rule
+    /// behind what the QML reads as `loggedIn` and `user`:
+    ///
+    /// - A 2xx answer logs in. Who as follows the core's fallback
+    ///   style (the page envelope's `total_pages` is read the same
+    ///   way): the reply's own user fields win when it sends them —
+    ///   an `email`, at the top of the reply object or under its
+    ///   `user` — and the `email` the credentials carried
+    ///   (`pending`) stands when the reply names nobody, as a
+    ///   reply carrying only a token does. A reply body that is
+    ///   not a JSON object names nobody either; the 2xx still
+    ///   counts. With neither, there is nobody to be and the
+    ///   session stays logged out.
+    /// - Any other answer, and a request that never travelled,
+    ///   leaves the session exactly as it was and says why, so the
+    ///   caller can log the failure in one line. The QML only
+    ///   offers login while logged out, so in that flow a failed
+    ///   login is simply still logged out, and a non-2xx reply can
+    ///   never set `loggedIn`.
+    pub fn apply_login_reply(
+        &mut self,
+        pending: Option<String>,
+        reply: Result<&PlatformResponse, &FetchError>,
+    ) -> Result<(), RestError> {
+        let response = match reply {
+            Ok(response) => response,
+            Err(err) => return Err(RestError::Network(err.to_string())),
+        };
+        if !response.ok() {
+            return Err(RestError::HttpStatus(response.status));
+        }
+        self.user = reply_user(&response.body).or(pending);
+        Ok(())
     }
 
     pub fn request_logout(&self, base: &BaseUrl, logout_path: &str) -> Request {
@@ -289,6 +329,25 @@ impl Session {
     }
 }
 
+/// The user a login reply's body names, in the reply's own fields:
+/// an `email` at the top, an `email` under `user`, or `user` itself
+/// as a string. Nothing readable there — missing fields, an empty
+/// body, a body that is not a JSON object — names nobody, and the
+/// caller falls back to the credentials' `email`.
+fn reply_user(body: &[u8]) -> Option<String> {
+    let json: Json = serde_json::from_slice(body).ok()?;
+    json.get("email")
+        .and_then(Json::as_str)
+        .or_else(|| {
+            json.get("user")
+                .and_then(|user| user.get("email"))
+                .and_then(Json::as_str)
+        })
+        .or_else(|| json.get("user").and_then(Json::as_str))
+        .filter(|user| !user.is_empty())
+        .map(str::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -298,6 +357,29 @@ mod tests {
     fn base() -> BaseUrl {
         // The public test server ServerSelection.qml offers.
         BaseUrl::new("https://reqres.in/api").unwrap()
+    }
+
+    /// The JSON content type is part of the conversion's contract,
+    /// however the seam capitalises the header's name.
+    fn assert_json(request: &PlatformRequest, body: &Json) {
+        assert_eq!(request.body, body.to_string().into_bytes(), "{request:?}");
+        let content_type = request
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+            .map(|(_, value)| value.as_str());
+        assert!(
+            matches!(content_type, Some(value) if value.contains("application/json")),
+            "{request:?}"
+        );
+    }
+
+    fn reply(status: u16, body: &str) -> PlatformResponse {
+        PlatformResponse {
+            status,
+            headers: Vec::new(),
+            body: body.as_bytes().to_vec(),
+        }
     }
 
     #[test]
@@ -327,10 +409,12 @@ mod tests {
         let request = colors.request_page(&base(), 2);
         assert_eq!(request.method, Method::Get);
         assert_eq!(request.body, None);
-        assert_eq!(
-            request.get_url().unwrap(),
-            "https://reqres.in/api/unknown?page=2"
-        );
+        assert_eq!(request.url, "https://reqres.in/api/unknown?page=2");
+
+        let platform = request.to_platform();
+        assert_eq!(platform.method, PlatformMethod::Get);
+        assert_eq!(platform.url, "https://reqres.in/api/unknown?page=2");
+        assert!(platform.body.is_empty(), "{platform:?}");
         // Page numbers under 1 mean the first page.
         assert_eq!(
             colors.request_page(&base(), 0).url,
@@ -450,18 +534,32 @@ mod tests {
     }
 
     #[test]
-    fn the_get_only_seam_refuses_every_write_by_name() {
+    fn write_requests_convert_to_the_platform_seam() {
         let colors = Paginated::new("unknown");
-        for (request, method) in [
-            (colors.request_add(&base(), json!({})), Method::Post),
-            (colors.request_update(&base(), json!({}), 1), Method::Put),
-            (colors.request_remove(&base(), 1), Method::Delete),
-        ] {
-            assert!(
-                matches!(request.get_url(), Err(RestError::UnsupportedMethod(m)) if m == method),
-                "{request:?}"
-            );
-        }
+        let row = json!({"name": "new", "color": "#41cd52", "pantone_value": "PMS 802C"});
+
+        let add = colors.request_add(&base(), row.clone()).to_platform();
+        assert_eq!(
+            (add.method, add.url.as_str()),
+            (PlatformMethod::Post, "https://reqres.in/api/unknown")
+        );
+        assert_json(&add, &row);
+
+        let update = colors.request_update(&base(), row.clone(), 7).to_platform();
+        assert_eq!(
+            (update.method, update.url.as_str()),
+            (PlatformMethod::Put, "https://reqres.in/api/unknown/7")
+        );
+        assert_json(&update, &row);
+
+        // A removal has no row to send: no body, whatever the
+        // platform request otherwise carries.
+        let remove = colors.request_remove(&base(), 7).to_platform();
+        assert_eq!(
+            (remove.method, remove.url.as_str()),
+            (PlatformMethod::Delete, "https://reqres.in/api/unknown/7")
+        );
+        assert!(remove.body.is_empty(), "{remove:?}");
     }
 
     #[test]
@@ -476,13 +574,20 @@ mod tests {
             (request.method, request.url.as_str()),
             (Method::Post, "https://reqres.in/api/login")
         );
-        assert_eq!(request.body, Some(credentials));
-        assert!(matches!(
-            request.get_url(),
-            Err(RestError::UnsupportedMethod(Method::Post))
-        ));
+        assert_eq!(request.body, Some(credentials.clone()));
 
-        session.apply_login_reply(pending);
+        let platform = request.to_platform();
+        assert_eq!(
+            (platform.method, platform.url.as_str()),
+            (PlatformMethod::Post, "https://reqres.in/api/login")
+        );
+        assert_json(&platform, &credentials);
+
+        // A 2xx reply that names nobody (a token only) logs the
+        // credentials' `email` in: the pending user is the user.
+        session
+            .apply_login_reply(pending, Ok(&reply(200, r#"{"token": "abc"}"#)))
+            .unwrap();
         assert!(session.logged_in());
         assert_eq!(session.user(), "ada@example.org");
 
@@ -498,7 +603,73 @@ mod tests {
         let (_request, pending) =
             session.request_login(&base(), "login", json!({"password": "apassword"}));
         assert_eq!(pending, None);
-        session.apply_login_reply(pending);
+        // Even agreed to, with a reply naming nobody either: the
+        // 2xx is not an error, and nobody is logged in.
+        session
+            .apply_login_reply(pending, Ok(&reply(200, r#"{"token": "abc"}"#)))
+            .unwrap();
         assert!(!session.logged_in());
+    }
+
+    #[test]
+    fn a_login_replys_own_user_fields_win() {
+        let mut session = Session::default();
+        let pending = Some("ada@example.org".to_owned());
+        session
+            .apply_login_reply(
+                pending.clone(),
+                Ok(&reply(200, r#"{"email": "reply@example.org"}"#)),
+            )
+            .unwrap();
+        assert!(session.logged_in());
+        assert_eq!(session.user(), "reply@example.org");
+
+        let mut nested = Session::default();
+        nested
+            .apply_login_reply(
+                pending,
+                Ok(&reply(201, r#"{"user": {"email": "nested@example.org"}}"#)),
+            )
+            .unwrap();
+        assert_eq!(nested.user(), "nested@example.org");
+
+        // And a reply can name the user the credentials could not.
+        let mut unnamed = Session::default();
+        unnamed
+            .apply_login_reply(None, Ok(&reply(200, r#"{"user": "named@example.org"}"#)))
+            .unwrap();
+        assert_eq!(unnamed.user(), "named@example.org");
+    }
+
+    #[test]
+    fn a_refused_login_stays_logged_out_and_says_why() {
+        let mut session = Session::default();
+        let refused = session.apply_login_reply(
+            Some("ada@example.org".to_owned()),
+            Ok(&reply(401, r#"{"error": "nope"}"#)),
+        );
+        assert!(
+            matches!(&refused, Err(RestError::HttpStatus(401))),
+            "{refused:?}"
+        );
+        // The refusal is sayable in the one line a log gets, and a
+        // non-2xx reply never sets the user, reply fields or not.
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "the server answered HTTP 401"
+        );
+        assert!(!session.logged_in() && session.user().is_empty());
+    }
+
+    #[test]
+    fn a_login_that_never_travelled_stays_logged_out() {
+        let mut session = Session::default();
+        let failed = FetchError::Failed("could not connect".to_owned());
+        let outcome = session.apply_login_reply(Some("ada@example.org".to_owned()), Err(&failed));
+        assert!(
+            matches!(&outcome, Err(RestError::Network(why)) if why.contains("could not connect")),
+            "{outcome:?}"
+        );
+        assert!(!session.logged_in() && session.user().is_empty());
     }
 }
