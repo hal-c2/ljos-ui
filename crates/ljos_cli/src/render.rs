@@ -57,6 +57,17 @@ pub struct Render {
     /// `qml-compare` gives it (`QML_COMPARE_ID`).
     #[arg(long, value_name = "ID")]
     example: Option<String>,
+    /// Pins the wall clock a script's `Date` sees to this RFC 3339 time
+    /// (`2026-10-11T17:57:09Z`); it then moves with the settle time. The
+    /// gallery passes the time the Qt picture was captured at, so a clock
+    /// example is the same picture on every run.
+    #[arg(long, value_parser = parse_now, value_name = "RFC3339")]
+    now: Option<f64>,
+}
+
+fn parse_now(text: &str) -> Result<f64, String> {
+    ljos_runtime::parse_rfc3339_ms(text)
+        .ok_or_else(|| format!("{text:?} is not an RFC 3339 time such as 2026-10-11T17:57:09Z"))
 }
 
 fn parse_size(text: &str) -> Result<(u32, u32), String> {
@@ -155,6 +166,7 @@ impl Render {
         };
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
+        engine.set_wall_clock_origin(self.now);
         let said = Said::default();
         let sink = said.clone();
         engine.set_log_handler(move |entry| {
@@ -370,6 +382,7 @@ mod tests {
             settle: 100,
             out: out.clone(),
             example: None,
+            now: None,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
@@ -464,6 +477,39 @@ mod tests {
     }
 
     #[test]
+    fn now_is_an_rfc3339_time_or_nothing() {
+        assert_eq!(line(&["proj", "--out", "p.png"]).now, None);
+        assert_eq!(
+            line(&["proj", "--out", "p.png", "--now", "2026-10-11T17:57:09Z"]).now,
+            Some(1_791_741_429_000.0)
+        );
+        use clap::Parser as _;
+        assert!(Line::try_parse_from(["r", "p", "--out", "o", "--now", "noon"]).is_err());
+    }
+
+    #[test]
+    fn a_pinned_clock_is_what_the_script_reads() {
+        let dir = project(&[(
+            "Main.qml",
+            "import QtQuick\nRectangle { width: 20; height: 10\n  color: new Date().getUTCFullYear() === 2026 ? \"green\" : \"red\" }\n",
+        )]);
+        let out = dir.path().join("out.png");
+        let r = Render {
+            dir: dir.path().to_owned(),
+            entry: "Main.qml".to_owned(),
+            size: (40, 30),
+            settle: 100,
+            out: out.clone(),
+            example: None,
+            now: Some(1_791_741_429_000.0),
+        };
+        r.render(&mut Notes::default()).unwrap();
+        let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
+        // "green" is #008000; "red" would have a full red channel.
+        assert_eq!(&image.data[..4], [0, 128, 0, 255]);
+    }
+
+    #[test]
     fn an_example_without_a_backend_renders_as_before() {
         let dir = project(&[(
             "Main.qml",
@@ -477,6 +523,7 @@ mod tests {
             settle: 100,
             out: out.clone(),
             example: Some("no-such-example".to_owned()),
+            now: None,
         };
         let mut notes = Notes::default();
         r.render(&mut notes).unwrap();

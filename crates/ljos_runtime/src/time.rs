@@ -163,6 +163,62 @@ impl Clock for VirtualClock {
     }
 }
 
+/// Milliseconds since the UNIX epoch of an RFC 3339 timestamp
+/// (`2026-10-11T17:57:09Z`, `2026-10-11T19:57:09.250+02:00`). `None` for
+/// anything else. Hand-rolled so that pinning a wall clock needs no date
+/// crate in a runtime.
+pub fn parse_rfc3339_ms(text: &str) -> Option<f64> {
+    let b = text.trim().as_bytes();
+    let num = |from: usize, len: usize| -> Option<i64> {
+        let d = b.get(from..from + len)?;
+        d.iter()
+            .all(u8::is_ascii_digit)
+            .then(|| d.iter().fold(0i64, |n, c| n * 10 + i64::from(c - b'0')))
+    };
+    let sep = |at: usize, ok: &[u8]| b.get(at).is_some_and(|c| ok.contains(c));
+    if !(sep(4, b"-") && sep(7, b"-") && sep(10, b"Tt ") && sep(13, b":") && sep(16, b":")) {
+        return None;
+    }
+    let (y, mo, d) = (num(0, 4)?, num(5, 2)?, num(8, 2)?);
+    let (h, mi, s) = (num(11, 2)?, num(14, 2)?, num(17, 2)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
+        return None;
+    }
+    let mut at = 19;
+    let mut frac_ms = 0.0;
+    if sep(at, b".") {
+        let start = at + 1;
+        let mut end = start;
+        while b.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if end == start {
+            return None;
+        }
+        let digits = std::str::from_utf8(&b[start..end]).ok()?;
+        frac_ms = format!("0.{digits}").parse::<f64>().ok()? * 1000.0;
+        at = end;
+    }
+    let offset_min = match b.get(at)? {
+        b'Z' | b'z' if at + 1 == b.len() => 0,
+        sign @ (b'+' | b'-') if at + 6 == b.len() && sep(at + 3, b":") => {
+            let m = num(at + 1, 2)? * 60 + num(at + 4, 2)?;
+            if *sign == b'-' { -m } else { m }
+        }
+        _ => return None,
+    };
+    // Days from civil (proleptic Gregorian), valid for any year.
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (mo + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + h * 3600 + mi * 60 + s - offset_min * 60;
+    Some(secs as f64 * 1000.0 + frac_ms)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +273,25 @@ mod tests {
         let t0 = c.now();
         std::thread::sleep(Duration::from_millis(2));
         assert!(c.now() - t0 >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn rfc3339_gives_unix_milliseconds() {
+        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:00Z"), Some(0.0));
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-11T17:57:09Z"),
+            Some(1_791_741_429_000.0)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-11T19:57:09.250+02:00"),
+            Some(1_791_741_429_250.0)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2000-02-29T00:00:00Z"),
+            Some(951_782_400_000.0)
+        );
+        assert_eq!(parse_rfc3339_ms("yesterday"), None);
+        assert_eq!(parse_rfc3339_ms("2026-10-11T17:57:09"), None);
+        assert_eq!(parse_rfc3339_ms("2026-13-11T17:57:09Z"), None);
     }
 }

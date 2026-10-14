@@ -141,6 +141,13 @@ fn the_user_file(w: &mut LjosWorld, path: String, step: &Step) -> StepResult {
     w.each(|b| b.user_file(&path, &text))
 }
 
+#[given(regex = r#"^the system clock reads "([^"]+)"$"#)]
+fn wall_clock_reads(w: &mut LjosWorld, time: String) -> StepResult {
+    let ms = ljos_runtime::parse_rfc3339_ms(&time)
+        .ok_or_else(|| format!("{time:?} is not an RFC 3339 time such as 2026-10-11T17:57:09Z"))?;
+    w.each(|b| b.wall_clock(ms))
+}
+
 #[given("the system cannot take its dialogs away")]
 fn dialogs_stay(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.system_dialogs_stay())

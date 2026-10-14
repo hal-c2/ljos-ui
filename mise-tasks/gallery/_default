@@ -28,7 +28,7 @@ done
 # The shell wrapper keeps one slow or stuck example from stopping the run.
 # --example registers the example's native backends (examples/gallery_backends)
 # on the render Engine; an example without one registers nothing.
-renderer="timeout -k 5 120 '$target/debug/ljos' render \"\$QML_COMPARE_DIR\" --entry \"\$QML_COMPARE_ENTRY\" --size \"\${QML_COMPARE_WIDTH}x\${QML_COMPARE_HEIGHT}\" --settle \"\$QML_COMPARE_SETTLE_MS\" --out {out} --example \"\$QML_COMPARE_ID\""
+renderer="timeout -k 5 120 '$target/debug/ljos' render \"\$QML_COMPARE_DIR\" --entry \"\$QML_COMPARE_ENTRY\" --size \"\${QML_COMPARE_WIDTH}x\${QML_COMPARE_HEIGHT}\" --settle \"\$QML_COMPARE_SETTLE_MS\" --out {out} --example \"\$QML_COMPARE_ID\" \${QML_COMPARE_CAPTURED_AT:+--now \"\$QML_COMPARE_CAPTURED_AT\"}"
 
 exec "$target/debug/qml-compare" run \
   --manifest "$root/corpus/examples.json" \

@@ -335,6 +335,12 @@ pub trait Backend: fmt::Debug {
     fn answer_system_dialog(&mut self, _answer: SystemDialogAnswer) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))
     }
+    /// The wall clock a script's `Date` reads is `epoch_ms` (milliseconds
+    /// since the UNIX epoch) when the application starts, and moves with
+    /// application time.
+    fn wall_clock(&mut self, _epoch_ms: f64) -> Result<()> {
+        Err(BackendError::NotImplemented("a pinned wall clock"))
+    }
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))

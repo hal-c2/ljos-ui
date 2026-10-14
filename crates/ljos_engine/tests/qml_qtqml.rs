@@ -310,3 +310,47 @@ Item {
     assert_eq!(h.get(plain, "panel"), Value::Bool(false));
     assert!(h.warnings().is_empty());
 }
+
+const WALL_CLOCK_QML: &str = r#"import QtQuick
+Item {
+  property double now: Date.now()
+  property double made: new Date().getTime()
+  property double fixed: new Date(2020, 0, 2).getTime()
+  property double parsed: Date.parse("2020-01-02T00:00:00Z")
+  property bool isDate: new Date() instanceof Date
+}
+"#;
+
+#[test]
+fn a_pinned_wall_clock_is_what_date_reads_and_moves_with_the_clock() {
+    let h = engine();
+    h.engine.set_wall_clock_origin(Some(1_791_741_429_000.0));
+    assert_eq!(h.engine.wall_clock_ms(), Some(1_791_741_429_000.0));
+    let root = h.load(WALL_CLOCK_QML);
+    assert_eq!(h.num(root, "now"), 1_791_741_429_000.0);
+    assert_eq!(h.num(root, "made"), 1_791_741_429_000.0);
+    assert_eq!(h.get(root, "isDate"), Value::Bool(true));
+    h.pass_ms(1500);
+    assert_eq!(h.engine.wall_clock_ms(), Some(1_791_741_430_500.0));
+    // Dates made from arguments are not the clock's business.
+    let unpinned = engine();
+    let plain = unpinned.load(WALL_CLOCK_QML);
+    assert_eq!(h.num(root, "fixed"), unpinned.num(plain, "fixed"));
+    assert_eq!(h.num(root, "parsed"), 1_577_923_200_000.0);
+}
+
+#[test]
+fn an_unpinned_wall_clock_is_the_systems() {
+    let h = engine();
+    assert_eq!(h.engine.wall_clock_ms(), None);
+    let root = h.load(WALL_CLOCK_QML);
+    let system = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        * 1000.0;
+    assert!((h.num(root, "now") - system).abs() < 60_000.0);
+    h.engine.set_wall_clock_origin(Some(0.0));
+    h.engine.set_wall_clock_origin(None);
+    assert_eq!(h.engine.wall_clock_ms(), None);
+}

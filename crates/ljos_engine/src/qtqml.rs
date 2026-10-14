@@ -434,6 +434,9 @@ pub(crate) struct TimerState {
     calls: Vec<(JsRef, Vec<JsValue>)>,
     quit: bool,
     wake: Option<Rc<dyn Fn()>>,
+    /// The pinned wall clock: a UNIX epoch in milliseconds and the value
+    /// of `clock` when it was pinned.
+    wall: Option<(f64, Time)>,
 }
 
 impl Default for TimerState {
@@ -449,6 +452,7 @@ impl Default for TimerState {
             calls: Vec::new(),
             quit: false,
             wake: None,
+            wall: None,
         }
     }
 }
@@ -566,6 +570,23 @@ impl Engine {
 
     pub fn now(&self) -> Time {
         self.clock().now()
+    }
+
+    /// Pins what JS `Date` and `Date.now()` see: `epoch_ms` (a UNIX epoch,
+    /// in milliseconds) is "now" at this call, and time then moves with
+    /// the engine's clock, so a virtual clock keeps replays and tests
+    /// deterministic. `None` gives back the system's wall clock.
+    pub fn set_wall_clock_origin(&self, epoch_ms: Option<f64>) {
+        let at = self.now();
+        self.inner.timers.borrow_mut().wall = epoch_ms.map(|ms| (ms, at));
+    }
+
+    /// The pinned wall clock now, in milliseconds since the UNIX epoch;
+    /// `None` while it is not pinned.
+    pub fn wall_clock_ms(&self) -> Option<f64> {
+        let now = self.now();
+        let (origin, at) = self.inner.timers.borrow().wall?;
+        Some(origin + now.saturating_since(at).as_secs_f64() * 1000.0)
     }
 
     /// The clock set by [`Engine::set_clock`], for budgets that must run

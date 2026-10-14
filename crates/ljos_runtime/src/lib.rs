@@ -51,4 +51,4 @@ pub use supervisor::{
     ChildId, Directive, ExitReason, Intensity, IntensityTracker, IntensityVerdict, Restart,
     Strategy, Supervisor, SupervisorError,
 };
-pub use time::{Clock, SystemClock, Time, VirtualClock};
+pub use time::{Clock, SystemClock, Time, VirtualClock, parse_rfc3339_ms};

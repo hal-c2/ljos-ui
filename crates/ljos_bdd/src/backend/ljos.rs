@@ -187,6 +187,9 @@ pub struct LjosBackend {
     inspector: Option<inspect::Rig>,
     /// The scenario's file system and the system's dialogs.
     platform: platform::Rig,
+    /// The wall clock the scenario pinned, in milliseconds since the UNIX
+    /// epoch; given before anything was loaded.
+    wall_clock: Option<f64>,
 }
 
 impl std::fmt::Debug for LjosBackend {
@@ -922,6 +925,7 @@ impl Backend for LjosBackend {
                 apply_setting(&live.engine, setting);
             }
             self.platform.install(&live.engine)?;
+            live.engine.set_wall_clock_origin(self.wall_clock);
             let images = ljos_quick::ImageStore::of(&live.engine);
             for (url, bytes) in self.resources.drain(..) {
                 ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
@@ -1132,6 +1136,14 @@ impl Backend for LjosBackend {
         let live = self.live()?;
         ljos_platform::Platform::of(&live.engine).finish(&live.engine);
         live.settle()
+    }
+
+    fn wall_clock(&mut self, epoch_ms: f64) -> Result<()> {
+        self.wall_clock = Some(epoch_ms);
+        if let Some(live) = &self.live {
+            live.engine.set_wall_clock_origin(Some(epoch_ms));
+        }
+        Ok(())
     }
 
     fn system_dialogs_stay(&mut self) -> Result<()> {

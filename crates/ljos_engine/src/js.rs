@@ -916,7 +916,17 @@ impl Engine {
                 _ => JsValue::Undefined,
             })
         });
+        // The pinned wall clock, or `undefined` for the system's.
+        let w = Rc::downgrade(&self.inner);
+        let wall_now: HostFn = Rc::new(move |_scope, _args| {
+            Ok(w.upgrade()
+                .and_then(|inner| Engine::from_inner(inner).wall_clock_ms())
+                .map_or(JsValue::Undefined, JsValue::Number))
+        });
         let err = |e: JsFault| EngineError::Js(e.to_string());
+        js.host
+            .set_global_function("__ljos_wallNow", wall_now)
+            .map_err(err)?;
         js.host
             .set_global_function("__ljos_attached", attached)
             .map_err(err)?;
@@ -1087,6 +1097,34 @@ const PRELUDE: &str = r##"
   };
   Object.defineProperty(g, "console", { value: console, writable: true, configurable: true });
   Object.defineProperty(g, "print", { value: console.log, writable: true, configurable: true });
+
+  // `new Date()`, `Date()` and `Date.now()` read the host's wall clock
+  // when it is pinned; everything else about Date is the engine's own.
+  // A Proxy keeps `instanceof Date`, the statics and the prototype.
+  const wallNow = g.__ljos_wallNow;
+  const RealDate = g.Date;
+  g.Date = new Proxy(RealDate, {
+    construct(target, args, newTarget) {
+      if (args.length === 0) {
+        const ms = wallNow();
+        if (ms !== undefined) return Reflect.construct(target, [ms], newTarget);
+      }
+      return Reflect.construct(target, args, newTarget);
+    },
+    apply(target, thisArg, args) {
+      const ms = wallNow();
+      return ms === undefined ? target() : new target(ms).toString();
+    },
+    get(target, key, receiver) {
+      if (key === "now") {
+        return function now() {
+          const ms = wallNow();
+          return ms === undefined ? target.now() : Math.floor(ms);
+        };
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
 
   // A grouped property (`rect.border`): accessors over the flat
   // `border.width` names.
