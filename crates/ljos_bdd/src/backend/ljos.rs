@@ -65,6 +65,17 @@ const MAX_SETTLE_FRAMES: usize = 64;
 /// Timer firings per `advance` before a zero-interval repeating timer is
 /// reported instead of hanging the run.
 const MAX_TIMER_STEPS: usize = 100_000;
+/// The time one call into JS may take, as a wall clock measures it. A
+/// frame-driven host interrupts a dispatch after 100 ms, but a scenario
+/// must mean the same whatever the machine's speed (the clock is virtual
+/// and image decodes are held for the same reason), and a handler that
+/// does its work in a loop — a Canvas paint reading its pixels back
+/// takes most of that budget on a fast machine in a debug build — would
+/// otherwise be stopped mid-handler on a slow runner, leaving the
+/// properties it had not reached at their defaults. Five seconds is far
+/// past any handler that means to finish and still ends one that never
+/// would, at the price of those few scenarios taking that long.
+const JS_BUDGET: Duration = Duration::from_secs(5);
 
 /// The modifier keys in the order a chord presses them.
 const MODIFIER_KEYS: [(Modifiers, i32); 4] = [
@@ -266,6 +277,10 @@ impl LjosBackend {
         let driver = engine
             .create_from_url(DRIVER, None, Vec::new())
             .map_err(|e| failed(format!("the test driver does not load: {e}")))?;
+        // The budget is the JS host's, which the driver has started by now.
+        engine
+            .set_js_dispatch_budget(JS_BUDGET, JS_BUDGET)
+            .map_err(|e| failed(format!("the JS budget is not set: {e}")))?;
         let mut scene = QuickScene::new(kurbo::Size::new(VIEWPORT, VIEWPORT));
         let sink = log.clone();
         scene.log().set_handler(move |e| {
@@ -1387,6 +1402,31 @@ Item {
     Item { objectName: "kid"; width: parent.width / 2 }
 }
 "#;
+
+    #[test]
+    fn a_heavy_handler_finishes_whatever_the_machines_speed() {
+        // A handler that does a quarter of a second of wall-clock work in
+        // one dispatch (a Canvas paint that reads its pixels back in a
+        // loop does more, in a debug build) must run to its last line:
+        // the budget of a frame-driven host would stop it mid-handler on
+        // a slow machine and the scenario's later properties would keep
+        // their defaults.
+        let mut b = loaded(
+            r#"import QtQuick
+Item {
+    objectName: "root"
+    property bool done: false
+    function work() {
+        var until = Date.now() + 250
+        while (Date.now() < until) { }
+        done = true
+    }
+}
+"#,
+        );
+        b.call("root", "work", &[]).unwrap();
+        assert_eq!(b.get("root", "done").unwrap(), json!(true));
+    }
 
     #[test]
     fn nothing_works_before_a_load() {
