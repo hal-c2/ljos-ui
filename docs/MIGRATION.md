@@ -355,7 +355,22 @@ HTTPS fetcher (redirects followed, a 30 s limit on the whole fetch,
 replies capped at 16 MiB, failures as `FetchError::Failed` naming
 the status or cause). A headless host — a test, a renderer —
 installs its own with `set_fetcher`, or keeps the default under
-which every fetch fails with `FetchError::NoNetwork`.
+which every fetch fails with `FetchError::NoNetwork`. For more than a
+read, `Platform::request` carries a whole `Request` (method, headers,
+body; `Request::new(Method::Post, url).json(body)` in the prelude as `Method`,
+`Request` and `Response`) and answers with the reply's status as data —
+a 404 is a `Response`, only transport failures are `Err`.
+
+Heavy work of your own follows the same shape: `ljos::task::spawn`
+runs a closure on the bounded compute pool and runs its `done` with the
+value on the Engine thread, so nothing heavy ever runs where QML lives.
+Cancelling the returned `Task` before the work starts keeps it from
+running; cancelling later discards the result. And because a native
+method called from QML still runs on the UI thread, a development host
+can set `Engine::set_slow_call_budget` to have every native call that
+runs over it recorded and named in the log (`slow native call:
+Type.method took N ms`), which is how a freeze gets a name instead of
+a mystery.
 
 ## 7. Running and testing the port
 
