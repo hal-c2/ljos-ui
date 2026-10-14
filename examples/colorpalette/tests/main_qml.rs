@@ -37,6 +37,25 @@ fn example_dir() -> PathBuf {
         .join("../../corpus/qtdoc/examples/demos/colorpaletteclient")
 }
 
+/// The corpus is a submodule the check job does not check out; without
+/// it a test says on the terminal that it was skipped and why, and
+/// passes (the convention of `crates/ljos_compiler/tests/corpus.rs`).
+fn corpus_present(test: &str) -> bool {
+    let dir = example_dir();
+    if dir.is_dir() {
+        return true;
+    }
+    use std::io::Write as _;
+    // To the stream itself: the harness swallows what a passing test
+    // prints.
+    let _ = writeln!(
+        std::io::stderr(),
+        "SKIPPED {test}: no corpus at {} (`git submodule update --init corpus/qtdoc`)",
+        dir.display()
+    );
+    false
+}
+
 /// Compiles the whole example (plus the in-memory `Backend`
 /// wiring file below) and returns an Engine holding the compiled
 /// files and this crate's types.
@@ -164,6 +183,9 @@ fn assert_backend(e: &Engine, roots: &[ObjectId]) {
 
 #[test]
 fn main_qml_creates_or_stops_only_at_the_missing_effects_module() {
+    if !corpus_present("main_qml_creates_or_stops_only_at_the_missing_effects_module") {
+        return;
+    }
     let e = engine();
     match e.create_from_url("ColorPalette/Main", None, Vec::new()) {
         Ok(root) => assert_backend(&e, &[root]),
@@ -177,6 +199,9 @@ fn main_qml_creates_or_stops_only_at_the_missing_effects_module() {
 
 #[test]
 fn the_first_screen_creates_with_the_backend_wired_as_main_wires_it() {
+    if !corpus_present("the_first_screen_creates_with_the_backend_wired_as_main_wires_it") {
+        return;
+    }
     let e = engine();
     let backend = e
         .create_from_url("ColorPalette/Backend", None, Vec::new())
