@@ -22,6 +22,7 @@ Ljós is a general-purpose Rust UI toolkit that runs QML (Qt Quick + Qt Quick Co
 | QML tests (`tst_*.qml`) | `mise run qttest` |
 | External suite | `mise run features:acceptance <suite>` |
 | qtdoc gallery | `mise run gallery` (after `mise run gallery:reference`) |
+| Run one corpus example | `mise run gallery:run <id>` (no id lists them) |
 | MCP authoring server | `mise run mcp` (also configured in `.mcp.json`) |
 
 ## Conventions

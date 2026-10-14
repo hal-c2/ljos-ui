@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#MISE description="Run one qtdoc corpus example in a Ljós window: gallery:run <id> [ljos run args…]; no id lists the examples (* = rendered in the last gallery run)"
+set -euo pipefail
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+manifest="$root/corpus/examples.json"
+target="${CARGO_TARGET_DIR:-$root/target}"
+report="${GALLERY_DIR:-$target/gallery}/report.json"
+
+if [ ! -d "$root/corpus/qtdoc" ]; then
+  echo "no corpus at corpus/qtdoc (\`git submodule update --init corpus/qtdoc\`)" >&2
+  exit 1
+fi
+
+# id <tab> dir <tab> entry <tab> WxH <tab> renders(yes/no/?) per example.
+rows="$(python3 - "$manifest" "$report" <<'EOF'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+renders = {}
+try:
+    for e in json.load(open(sys.argv[2])):
+        renders[e["id"]] = "yes" if e.get("renders") else "no"
+except OSError:
+    pass
+for e in manifest["examples"]:
+    w = e.get("window") or {}
+    size = f"{w.get('width', 800)}x{w.get('height', 600)}"
+    print("\t".join([e["id"], e["dir"], e["entry"], size, renders.get(e["id"], "?")]))
+EOF
+)"
+
+list() {
+  while IFS=$'\t' read -r id _ _ _ renders; do
+    mark=" "; [ "$renders" = yes ] && mark="*"
+    printf '%s %s\n' "$mark" "$id"
+  done <<< "$rows"
+  echo "(* rendered in the last \`mise run gallery\`; run one with: mise run gallery:run <id> [--watch|--top|--mcp…])" >&2
+}
+
+if [ $# -eq 0 ] || [ "$1" = --list ]; then
+  list
+  exit 0
+fi
+
+id="$1"; shift
+row=""
+while IFS=$'\t' read -r rid dir entry size renders; do
+  if [ "$rid" = "$id" ]; then row="$dir	$entry	$size	$renders"; break; fi
+done <<< "$rows"
+if [ -z "$row" ]; then
+  echo "no example '$id' in corpus/examples.json; the examples are:" >&2
+  list >&2
+  exit 1
+fi
+IFS=$'\t' read -r dir entry size renders <<< "$row"
+if [ "$renders" = no ]; then
+  echo "note: '$id' did not render in the last gallery run; trying anyway" >&2
+fi
+
+cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+exec "$target/debug/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
+  --size "$size" --example "$id" "$@"
