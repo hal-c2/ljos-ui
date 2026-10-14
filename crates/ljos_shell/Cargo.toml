@@ -26,6 +26,10 @@ egui-winit = { version = "0.36.2", features = ["accesskit"] }
 egui-wgpu = { version = "0.36.2", features = ["winit", "wayland", "x11"] }
 # Surface creation is asynchronous in wgpu and immediate on the desktop.
 pollster = "1.0.1"
+# The desktop's HTTP fetcher (platform.rs): a small blocking client on
+# rustls, called on the fetcher's own thread, so no async runtime and
+# nothing on the Engine thread ever waits. Not in the workspace pins.
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 thiserror.workspace = true
 # Only with `eframe`: for a host that has an eframe application of its own
 # and shows a `ShellApp` in it.
@@ -50,6 +54,9 @@ mcp = ["dev", "ljos_dev/mcp"]
 [dev-dependencies]
 # The tests drive a `ShellApp` in kittest's eframe harness.
 ljos_shell = { path = ".", features = ["eframe"] }
+# The demo_qml example starts through the facade's App builder, as an
+# application does (a dev-only cycle: the facade's shell is this crate).
+ljos = { path = "../ljos" }
 # Only the demo_qml example compiles QML; the shell itself never links the
 # compiler.
 ljos_compiler = { path = "../ljos_compiler" }

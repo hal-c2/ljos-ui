@@ -1,11 +1,49 @@
 [package]
 name = "ljos"
-description = "Ljós UI: a QML runtime in Rust. Facade crate re-exporting the public API."
+description = "Ljós UI: a QML runtime in Rust. The facade an application is written against."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+# The facade names no engine internal: it re-exports the curated surface
+# an application writes native types against, and registers the standard
+# modules (QtQml, QtQuick, QtQuick.Controls) on an Engine it makes.
+ljos_engine = { path = "../ljos_engine" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_controls = { path = "../ljos_controls" }
+ljos_platform = { path = "../ljos_platform" }
+# Only with `shell`: the desktop loop an application runs in. Without it
+# the facade is the runtime alone (headless hosts, tests, other shells).
+ljos_shell = { path = "../ljos_shell", optional = true }
+# With `shell`: the UiHandle type the shell's setup hands out, named here
+# so an application needs no second Ljós dependency to hold one.
+ljos_runtime = { path = "../ljos_runtime", optional = true }
+# Only with `dev-qml`: compiles QML directories at start-up, which links
+# the parser. A shipped application leaves it off and embeds compiled IR
+# (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler", optional = true }
+# Only with `dev-qml`, for `dev::EngineOracle`: the compiler's oracle
+# interface the engine-backed oracle implements.
+qml_front = { path = "../qml_front", optional = true }
+
+[dev-dependencies]
+# Tests compile QML strings and, for `dev::compile_dir`, a directory.
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+tempfile.workspace = true
+# So the tests see the facade as an application with dev-qml does.
+ljos = { path = ".", features = ["dev-qml"] }
+
+[features]
+default = ["shell"]
+shell = ["dep:ljos_shell", "dep:ljos_runtime"]
+# Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
+# directory of QML at start-up. Never in a shipped application.
+dev-qml = ["dep:ljos_compiler", "dep:qml_front"]
 
 [lints]
 workspace = true

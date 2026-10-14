@@ -1,13 +1,13 @@
 //! The same kind of window as `demo`, written in QML: the files under a
-//! directory are compiled with `ljos_compiler` at start-up and the Engine
-//! creates the root from the IR.
+//! directory are compiled with `ljos_compiler` at start-up and shown
+//! through the facade's `App` builder, as an application starts. (A
+//! shipped application embeds the compiled IR instead of compiling
+//! here, and hands it to the same builder as its source.)
 //!
 //! `cargo run -p ljos_shell --example demo_qml [DIR] [KEY]`
 //! (defaults: this example's `qml/` directory and `Main`).
 
 use std::path::PathBuf;
-
-use ljos_shell::{ShellConfig, run};
 
 #[path = "shared/demo_qml.rs"]
 mod demo_qml;
@@ -20,13 +20,10 @@ fn main() -> anyhow::Result<()> {
     let key = args.next().unwrap_or_else(|| "Main".to_owned());
     let source = demo_qml::compile(&dir)?;
 
-    let config = ShellConfig::new(format!("Ljós — {key}.qml")).with_size(640.0, 420.0);
-    run::<()>(config, move |setup| {
-        let engine = setup.engine();
-        engine.set_component_source(source);
-        Ok(engine
-            .create_from_url(&key, None, Vec::new())
-            .map_err(|e| e.to_string())?)
-    })?;
+    ljos::App::new(format!("Ljós — {key}.qml"))
+        .size(640.0, 420.0)
+        .source(source)
+        .root(key)
+        .run()?;
     Ok(())
 }
