@@ -992,15 +992,95 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         st.heading.set(longest);
     }
 
-    // Where everything is.
+    // Where everything is. A row that another place was put at by the
+    // last pass and that the model's last word moved or pushed aside is
+    // taken there by its transition instead, which is started below
+    // while the item is still where it was.
     let pos_p = pos_prop(g.main);
     let cross_p = pos_prop(1 - g.main);
+    let dest_of = |row: usize, o: ObjectId, pos: f64, size: f64| -> [f64; 2] {
+        let mut dest = [0.0; 2];
+        dest[g.main] = g.in_content(pos, size);
+        dest[1 - g.main] = if g.grid {
+            g.cross_of(row % g.per_line)
+        } else {
+            rd(e, o, cross_p)
+        };
+        dest
+    };
+    let mut vt_start: Vec<(ObjectId, ObjectId, i32, [f64; 2])> = Vec::new();
+    if over.is_none()
+        && let Some(op) = st.pending.borrow_mut().take()
+    {
+        let mut targets = super::state::Targets {
+            indexes: op.target_indexes.clone(),
+            items: op.target_items.clone(),
+        };
+        if targets.items.is_empty() {
+            targets.items = items
+                .iter()
+                .filter(|(row, ..)| d.key_at(*row).is_some_and(|k| op.target_keys.contains(&k)))
+                .map(|(_, o, ..)| *o)
+                .collect();
+        }
+        let targets = std::rc::Rc::new(targets);
+        for &(row, o, pos, size) in &items {
+            let Some(key) = d.key_at(row) else { continue };
+            let was = st
+                .last_places
+                .borrow()
+                .get(&key)
+                .filter(|(of, _)| *of == o)
+                .map(|(_, at)| *at);
+            let Some(was) = was else { continue };
+            let dest = dest_of(row, o, pos, size);
+            if dest == was {
+                continue;
+            }
+            let target = op.target_keys.contains(&key);
+            if let Some(t) = super::view_transition::transition_for(e, view, op.kind, target) {
+                vt_start.push((t, o, row as i32, dest));
+            }
+        }
+        if !vt_start.is_empty() {
+            // Kept for the writes below: which items are not to be put.
+            st.vt_places.borrow_mut().extend(
+                vt_start
+                    .iter()
+                    .map(|(_, o, _, dest)| (*o, [Some(dest[X]), Some(dest[Y])])),
+            );
+            // The same targets for every run the change starts.
+            for (t, o, index, dest) in &vt_start {
+                super::view_transition::start(
+                    e,
+                    view,
+                    Some(*t),
+                    *o,
+                    *index,
+                    *dest,
+                    targets.clone(),
+                );
+            }
+        }
+    }
+    let running_to: HashMap<ObjectId, [Option<f64>; 2]> = st.vt_places.borrow().clone();
     e.batch(|| {
         for &(row, o, pos, size) in &items {
-            let at = Value::Real(g.in_content(pos, size));
-            warn(e, "place", write_placed(e, o, pos_p, at));
-            if g.grid {
-                let across = Value::Real(g.cross_of(row % g.per_line));
+            let dest = dest_of(row, o, pos, size);
+            // An item on its way to this very place is left to its
+            // transition; one on its way somewhere else is put here.
+            let on_way = running_to.get(&o);
+            let holds =
+                |axis: usize| on_way.is_some_and(|to| to[axis].is_some_and(|to| to == dest[axis]));
+            if on_way.is_some() && ![X, Y].iter().any(|a| holds(*a)) {
+                super::view_transition::forget(e, view, o);
+            }
+            if !holds(g.main) {
+                let at = Value::Real(dest[g.main]);
+                warn(e, "place", write_placed(e, o, pos_p, at));
+            }
+            if g.grid && !holds(1 - g.main) {
+                let across = Value::Real(dest[1 - g.main]);
                 warn(e, "place", write_placed(e, o, cross_p, across));
             }
         }
@@ -1081,6 +1161,13 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     let first_shown = slots.iter().find(|s| s.end() > v_now).map(|s| s.line);
     *st.slots.borrow_mut() = slots.into_iter().collect();
     *st.placed.borrow_mut() = items.clone();
+    *st.last_places.borrow_mut() = items
+        .iter()
+        .filter_map(|(row, o, pos, size)| {
+            d.key_at(*row)
+                .map(|k| (k, (*o, dest_of(*row, *o, *pos, *size))))
+        })
+        .collect();
     if avg_before == 0.0 && avg > 0.0 && crate::system_prefs::screen_reader_active(e) {
         // The larger cache is so many rows, and now a row has a length.
         st.dirty.set(true);
@@ -1088,10 +1175,13 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
 
     // What the view says about its rows.
     current::sync(e, view, st, &g, content, current.and(current_span));
-    for &(_, o, ..) in &items {
+    for &(row, o, ..) in &items {
         if let Some(att) = attached_of(e, view, o) {
             tell(e, view, st, &d, sections.as_mut(), o, att);
         }
+        // A delegate of a DelegateModel: the entry it stands for is the
+        // row it was placed at, also after a use again for another row.
+        super::delegate_groups::retell_for_row(e, o, row);
     }
     if !g.grid {
         let name = match sections.as_mut() {

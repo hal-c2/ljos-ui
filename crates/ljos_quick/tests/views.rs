@@ -371,6 +371,120 @@ ListView {
 }
 
 #[test]
+fn a_delegate_model_filtered_on_a_group_shows_only_its_members() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+import QtQml.Models
+Item {
+  width: 200; height: 300
+  function pick() { dm.items.addGroups(1, 1, ["selected"]); dm.items.addGroups(3, 1, ["selected"]) }
+  function filter() { dm.filterOnGroup = "selected" }
+  ListModel { id: lm
+    ListElement { name: "a" } ListElement { name: "b" } ListElement { name: "c" } ListElement { name: "d" } }
+  DelegateModel {
+    id: dm; objectName: "dm"; model: lm
+    groups: [DelegateModelGroup { id: sel; objectName: "sel"; name: "selected" }]
+    delegate: Item {
+      required property string name
+      objectName: "r" + name; width: 200; height: 20
+      property var grp: DelegateModel.groups
+    }
+  }
+  ListView { objectName: "list"; anchors.fill: parent; model: dm }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    let (list, dm, sel) = (
+        find(&e, root, "list"),
+        find(&e, root, "dm"),
+        find(&e, root, "sel"),
+    );
+    assert_eq!(num(&e, list, "count"), 4.0);
+    assert_eq!(
+        num(&e, get(&e, dm, "items").as_object().unwrap(), "count"),
+        4.0
+    );
+    assert_eq!(
+        num(
+            &e,
+            get(&e, dm, "persistedItems").as_object().unwrap(),
+            "count"
+        ),
+        0.0
+    );
+    e.invoke_by_name(root, "pick", &[]).unwrap();
+    settle(&mut s, &e, 1000);
+    assert_eq!(num(&e, sel, "count"), 2.0);
+    let grp = match get(&e, row(&e, list, "rb"), "grp") {
+        Value::List(items) => items
+            .iter()
+            .map(|v| v.to_js_string().to_string())
+            .collect::<Vec<_>>(),
+        v @ Value::Js(_) => {
+            let n = e
+                .js_member(&v, "length")
+                .map_or(0, |l| l.to_number() as usize);
+            (0..n)
+                .filter_map(|i| e.js_member(&v, &i.to_string()))
+                .map(|v| v.to_js_string().to_string())
+                .collect()
+        }
+        v => panic!("grp is {v:?}"),
+    };
+    assert_eq!(grp, ["items", "selected"]);
+    e.invoke_by_name(root, "filter", &[]).unwrap();
+    settle(&mut s, &e, 2000);
+    assert_eq!(num(&e, list, "count"), 2.0);
+    assert_eq!(num(&e, list, "contentHeight"), 40.0);
+    assert_eq!(num(&e, row(&e, list, "rb"), "y"), 0.0);
+    assert_eq!(num(&e, row(&e, list, "rd"), "y"), 20.0);
+    assert!(!rows(&e, list).contains(&"ra".to_string()));
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
+
+#[test]
+fn a_move_transition_moves_rows_and_then_the_view_is_idle() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+ListView {
+  width: 200; height: 300
+  model: lm
+  function shift() { lm.move(0, 2, 1) }
+  ListModel { id: lm
+    ListElement { name: "a" } ListElement { name: "b" } ListElement { name: "c" } }
+  move: Transition { NumberAnimation { properties: "x,y"; duration: 160 } }
+  displaced: Transition { NumberAnimation { properties: "x,y"; duration: 160 } }
+  delegate: Item {
+    required property string name
+    objectName: "r" + name; width: 200; height: 20
+  }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    let a = row(&e, root, "ra");
+    e.invoke_by_name(root, "shift", &[]).unwrap();
+    // Part of the way there: the moved row is between where it was and
+    // its new place, and the view asks for frames until it is there.
+    for i in 0..4 {
+        s.frame(&e, Time::from_millis(1000 + i * 16));
+    }
+    let y = num(&e, a, "y");
+    assert!((2.0..38.0).contains(&y), "{y}");
+    settle(&mut s, &e, 1100);
+    assert_eq!(num(&e, a, "y"), 40.0);
+    let out = s.frame(&e, Time::from_millis(5000));
+    assert_eq!(out.next_wake, None);
+    assert!(!out.changed);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
+
+#[test]
 fn a_view_that_is_idle_asks_for_no_frame() {
     let e = engine();
     let root = load(&e, HUNDRED_THOUSAND);

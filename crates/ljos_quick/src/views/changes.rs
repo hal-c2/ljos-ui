@@ -8,7 +8,7 @@
 
 use ljos_engine::{Engine, LogLevel, ModelChange, ObjectId, Value, ViewHost};
 
-use super::state::ViewState;
+use super::state::{OpKind, PendingOp, Targets, ViewState};
 use super::{
     ItemView, Part, ViewAttached, attached_of, enrol, pass, put, stack, state_of, strike,
     type_name, warn,
@@ -88,6 +88,7 @@ impl ViewHost for Host {
         for t in stopped {
             stop_transition(e, t);
         }
+        super::view_transition::forget(e, view, object);
     }
 
     fn changed(&self, e: &Engine, change: &ModelChange, gone: &[(usize, ObjectId)]) {
@@ -120,6 +121,7 @@ impl ViewHost for Host {
                 if laid_out && current >= first as i64 {
                     set_current(e, view, &st, current + count as i64);
                 }
+                let mut keys = Vec::new();
                 let mut added = st.added.borrow_mut();
                 for row in first..first.saturating_add(count) {
                     if added.len() >= MAX_ADDED {
@@ -127,9 +129,18 @@ impl ViewHost for Host {
                     }
                     if let Some(k) = d.key_at(row) {
                         added.insert(k);
+                        keys.push(k);
                     }
                 }
                 drop(added);
+                *st.pending.borrow_mut() = Some(PendingOp {
+                    kind: OpKind::Add,
+                    target_keys: keys.into_iter().collect(),
+                    target_indexes: (first..first.saturating_add(count))
+                        .map(|i| i as i32)
+                        .collect(),
+                    target_items: Vec::new(),
+                });
                 st.places.borrow_mut().clear();
             }
             ModelChange::RowsRemoved { first, count } => {
@@ -148,6 +159,12 @@ impl ViewHost for Host {
                 } else if laid_out && current >= first as i64 {
                     set_current(e, view, &st, (first as i64).min(rows - 1));
                 }
+                *st.pending.borrow_mut() = Some(PendingOp {
+                    kind: OpKind::Remove,
+                    target_keys: Default::default(),
+                    target_indexes: gone.iter().map(|(i, _)| *i as i32).collect(),
+                    target_items: gone.iter().map(|(_, o)| *o).collect(),
+                });
                 st.places.borrow_mut().clear();
             }
             ModelChange::RowsMoved { from, to, count } => {
@@ -169,6 +186,14 @@ impl ViewHost for Host {
                     };
                     set_current(e, view, &st, now);
                 }
+                *st.pending.borrow_mut() = Some(PendingOp {
+                    kind: OpKind::Move,
+                    target_keys: (to as usize..(to + count) as usize)
+                        .filter_map(|row| d.key_at(row))
+                        .collect(),
+                    target_indexes: (to..to + count).map(|i| i as i32).collect(),
+                    target_items: Vec::new(),
+                });
                 st.places.borrow_mut().clear();
             }
             ModelChange::DataChanged { .. } => {
@@ -290,6 +315,31 @@ pub(crate) fn animate(
     };
     if st.running.borrow().iter().any(|r| r.0 == t) {
         return false;
+    }
+    // This run, too, is a view transition: it is told the item and the
+    // place the view has put it in, so that a transition may read its
+    // `ViewTransition`. Rows that arrive or go together are told one at
+    // a time here, which is as much as one run of a transition can hold.
+    {
+        let index = st
+            .delegates()
+            .and_then(|d| d.index_of(item))
+            .map_or(-1, |i| i as i32);
+        let at = [
+            pass::rd(e, item, crate::item::Item::X.index),
+            pass::rd(e, item, crate::item::Item::Y.index),
+        ];
+        super::view_transition::tell(
+            e,
+            t,
+            item,
+            index,
+            at,
+            &std::rc::Rc::new(Targets {
+                indexes: vec![index],
+                items: vec![item],
+            }),
+        );
     }
     st.running.borrow_mut().push((t, item));
     run_transition(e, t, item, move |e| {

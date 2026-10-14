@@ -17,11 +17,13 @@
 
 mod changes;
 mod current;
+pub(crate) mod delegate_groups;
 mod models;
 mod pass;
 pub mod path_view;
 mod position;
 mod state;
+pub(crate) mod view_transition;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -37,11 +39,13 @@ use crate::flickable::{self, Flickable};
 use crate::item::{is_a, write_computed};
 
 pub use models::{
-    DelegateModel, ObjectModel, drive_delegate_model, object_model_changed, object_model_rows,
+    DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,
+    object_model_changed, object_model_rows,
 };
 pub use path_view::{PathView, PathViewAttached};
 pub(crate) use state::ViewState;
 pub use state::position_mode;
+pub use view_transition::{ViewTransition, ViewTransitionAttached};
 
 /// The log category of what a view could not do.
 pub const CATEGORY: &str = "qt.quick.itemview";
@@ -178,8 +182,7 @@ fn section_enums() -> EnumTable {
 /// What `ListView` and `GridView` share. Not a QML type of its own.
 ///
 /// Kept and read back, with no effect yet: `highlightRangeMode` and the
-/// preferred highlight range, and the transitions for rows that are moved
-/// or pushed aside (`move`, `displaced` and the three that narrow it).
+/// preferred highlight range.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -752,6 +755,7 @@ pub(crate) fn register(engine: &Engine) {
         ListView::static_meta(),
         GridView::static_meta(),
         ViewSection::static_meta(),
+        view_transition::ViewTransition::static_meta(),
     ] {
         engine.register_type("QtQuick", Version::new(2, 15), MetaRef::Static(meta));
     }

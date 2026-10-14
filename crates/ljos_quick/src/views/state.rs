@@ -3,6 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use ljos_engine::{NodeId, ObjectId, OverrideId, PropIndex, RowKey, ViewDelegates};
 
@@ -181,6 +182,41 @@ pub(crate) fn average(slots: &[Slot]) -> Option<f64> {
 /// of (`None`: the view's own plain item).
 pub(crate) type Extra = Option<(Option<ObjectId>, ObjectId)>;
 
+/// What changed in the model since the last pass, for the transitions a
+/// pass starts because of it: which rows the change is about, which the
+/// rows pushed aside by it are not.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingOp {
+    pub kind: OpKind,
+    /// The rows the change is about, by key: the ones that arrived or
+    /// moved. Of a removal there are none left to key.
+    pub target_keys: HashSet<RowKey>,
+    /// Their indexes as `ViewTransition.targetIndexes` reads them: where
+    /// they are after an insertion or a move, where they were before a
+    /// removal.
+    pub target_indexes: Vec<i32>,
+    /// Their delegates, when there are any: of a removal, the ones that
+    /// are leaving; of the rest, the pass fills this in.
+    pub target_items: Vec<ObjectId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpKind {
+    Add,
+    Remove,
+    Move,
+}
+
+/// The target rows of the change the transitions of one pass are run
+/// for, in the form every one of them is told the same way.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Targets {
+    pub indexes: Vec<i32>,
+    pub items: Vec<ObjectId>,
+}
+
+pub(crate) type SharedTargets = Rc<Targets>;
+
 pub(crate) struct ViewState {
     pub grid: Cell<bool>,
     pub delegates: RefCell<Option<ViewDelegates>>,
@@ -241,6 +277,19 @@ pub(crate) struct ViewState {
     pub hidden: RefCell<HashMap<ObjectId, OverrideId>>,
     /// Transitions that are running, and on which item.
     pub running: RefCell<Vec<(ObjectId, ObjectId)>>,
+    /// The change of rows the last word from the model was about, until
+    /// the pass that follows it has run its transitions.
+    pub pending: RefCell<Option<PendingOp>>,
+    /// Where each row's delegate was put by the last pass, in content
+    /// coordinates by the row's key: what a row pushed aside moves from.
+    pub last_places: RefCell<HashMap<RowKey, (ObjectId, [f64; 2])>>,
+    /// The delegates a move or displaced transition is on the way to
+    /// their place with, and where that place is per axis: a pass does
+    /// not put them there before the transition does.
+    pub vt_places: RefCell<HashMap<ObjectId, [Option<f64>; 2]>>,
+    /// How many items each such transition is running on, for its
+    /// `running`.
+    pub vt_counts: RefCell<HashMap<ObjectId, usize>>,
     /// The animations that move the highlight, and where each is going.
     pub movers: [Cell<Option<ObjectId>>; 2],
     pub mover_to: Cell<[Option<f64>; 2]>,
@@ -283,6 +332,10 @@ impl Default for ViewState {
             leaving: RefCell::default(),
             hidden: RefCell::default(),
             running: RefCell::default(),
+            pending: RefCell::default(),
+            last_places: RefCell::default(),
+            vt_places: RefCell::default(),
+            vt_counts: RefCell::default(),
             movers: [Cell::new(None), Cell::new(None)],
             mover_to: Cell::new([None; 2]),
         }
@@ -312,6 +365,8 @@ impl ViewState {
         self.slots.borrow_mut().clear();
         self.placed.borrow_mut().clear();
         self.added.borrow_mut().clear();
+        self.last_places.borrow_mut().clear();
+        *self.pending.borrow_mut() = None;
         self.avg.set(0.0);
     }
 
