@@ -18,6 +18,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use ljos_i18n::datetime::{Fields, Part};
 use ljos_i18n::{I18n, LocaleInfo, Messages};
 use ljos_ir::{Translatable, TranslationKind};
 use ljos_js::{HostError, HostFn, JsFault, JsValue};
@@ -49,6 +50,37 @@ fn string(v: Option<&JsValue>) -> &str {
     match v {
         Some(JsValue::String(s)) => s,
         _ => "",
+    }
+}
+
+/// The locale a host call names: a name, or the application's locale when
+/// it names none.
+fn locale_arg(v: Option<&JsValue>) -> Option<&str> {
+    match v {
+        Some(JsValue::String(name)) => Some(name),
+        _ => None,
+    }
+}
+
+fn number(v: Option<&JsValue>) -> f64 {
+    match v {
+        Some(JsValue::Number(n)) => *n,
+        _ => f64::NAN,
+    }
+}
+
+/// `Locale.LongFormat` is the long width; `ShortFormat`, `NarrowFormat`
+/// and anything else is the short one, as a locale's formats have no
+/// narrow kind.
+fn long_format(v: Option<&JsValue>) -> bool {
+    number(v) == 0.0
+}
+
+fn part(v: Option<&JsValue>) -> Part {
+    match number(v) {
+        0.0 => Part::Date,
+        1.0 => Part::Time,
+        _ => Part::DateTime,
     }
 }
 
@@ -220,7 +252,18 @@ impl Engine {
     fn locale_object(&self, name: Option<&str>) -> JsValue {
         let info = self.locale_info(name);
         let s = |v: String| JsValue::String(v);
+        let (am, pm) = info.am_pm();
+        let n = |v: u8| JsValue::Number(f64::from(v));
         JsValue::Map(vec![
+            ("amText".into(), s(am)),
+            ("pmText".into(), s(pm)),
+            ("measurementSystem".into(), n(info.measurement_system())),
+            (
+                "weekDays".into(),
+                JsValue::Array(info.week_days().into_iter().map(n).collect()),
+            ),
+            ("percent".into(), s("%".to_owned())),
+            ("exponential".into(), s("e".to_owned())),
             ("name".into(), s(info.name().to_owned())),
             ("decimalPoint".into(), s(info.decimal_point())),
             ("groupSeparator".into(), s(info.group_separator())),
@@ -255,7 +298,7 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 9] = [
+        let functions: [(&str, HostFn); 13] = [
             (
                 "__ljos_tr",
                 host(|e, a| {
@@ -335,30 +378,122 @@ impl Engine {
             ),
             (
                 "__ljos_localeName",
-                // (locale, month?, index, width): a day (1 is Monday) or a
-                // month (0 is January) written by the locale.
+                // (locale, month?, index, width, standalone?): a day (0 is
+                // Sunday, as `Locale.dayName` counts) or a month (0 is
+                // January) written by the locale.
                 host(|e, a| {
-                    let name = match a.first() {
-                        Some(JsValue::String(name)) => Some(name.as_str()),
-                        _ => None,
-                    };
-                    let info = e.locale_info(name);
-                    let number = |v: Option<&JsValue>| match v {
-                        Some(JsValue::Number(n)) if n.is_finite() => *n as i64,
-                        _ => -1,
-                    };
+                    let info = e.locale_info(locale_arg(a.first()));
+                    let index = number(a.get(2));
+                    let index = if index.is_finite() { index as i64 } else { -1 };
                     let width = match number(a.get(3)) {
-                        0 => ljos_i18n::calendar::NameWidth::Long,
-                        2 => ljos_i18n::calendar::NameWidth::Narrow,
+                        0.0 => ljos_i18n::calendar::NameWidth::Long,
+                        2.0 => ljos_i18n::calendar::NameWidth::Narrow,
                         _ => ljos_i18n::calendar::NameWidth::Short,
                     };
-                    let index = u8::try_from(number(a.get(2))).unwrap_or(u8::MAX);
+                    let standalone = matches!(a.get(4), Some(JsValue::Bool(true)));
                     let text = if matches!(a.get(1), Some(JsValue::Bool(true))) {
-                        info.month_name(index, width)
+                        let month = u8::try_from(index).unwrap_or(u8::MAX);
+                        if standalone {
+                            info.standalone_month_name(month, width)
+                        } else {
+                            info.month_name(month, width)
+                        }
                     } else {
-                        info.day_name(index, width)
+                        // `Qt::DayOfWeek` numbers Sunday 7.
+                        let day = match index {
+                            0 => 7,
+                            d => u8::try_from(d).unwrap_or(u8::MAX),
+                        };
+                        if standalone {
+                            info.standalone_day_name(day, width)
+                        } else {
+                            info.day_name(day, width)
+                        }
                     };
                     Ok(JsValue::String(text))
+                }),
+            ),
+            (
+                "__ljos_localeFormat",
+                // (locale, part, format): `Locale.dateFormat` and its family.
+                host(|e, a| {
+                    let info = e.locale_info(locale_arg(a.first()));
+                    let long = long_format(a.get(2));
+                    Ok(JsValue::String(match part(a.get(1)) {
+                        Part::Date => info.date_format(long),
+                        Part::Time => info.time_format(long),
+                        Part::DateTime => info.date_time_format(long),
+                    }))
+                }),
+            ),
+            (
+                "__ljos_formatDate",
+                // (locale, pattern, part, year, month, day, hour, minute,
+                // second, millisecond, offset): local fields, as the
+                // script's `Date` has them.
+                host(|e, a| {
+                    let info = e.locale_info(locale_arg(a.first()));
+                    let field = |i: usize| number(a.get(i));
+                    let fields = Fields {
+                        year: field(3) as i32,
+                        month: field(4) as u32,
+                        day: field(5) as u32,
+                        hour: field(6) as u32,
+                        minute: field(7) as u32,
+                        second: field(8) as u32,
+                        millisecond: field(9) as u32,
+                        offset: field(10) as i32,
+                    };
+                    Ok(JsValue::String(info.format_date_time(
+                        string(a.get(1)),
+                        &fields,
+                        part(a.get(2)),
+                    )))
+                }),
+            ),
+            (
+                "__ljos_parseDate",
+                // (locale, pattern, text, part): the fields read, the
+                // offset null when the text named no zone; null when the
+                // text does not fit.
+                host(|e, a| {
+                    let info = e.locale_info(locale_arg(a.first()));
+                    let Some(p) =
+                        info.parse_date_time(string(a.get(1)), string(a.get(2)), part(a.get(3)))
+                    else {
+                        return Ok(JsValue::Null);
+                    };
+                    let f = p.fields;
+                    let n = |v: f64| JsValue::Number(v);
+                    Ok(JsValue::Array(vec![
+                        n(f64::from(f.year)),
+                        n(f64::from(f.month)),
+                        n(f64::from(f.day)),
+                        n(f64::from(f.hour)),
+                        n(f64::from(f.minute)),
+                        n(f64::from(f.second)),
+                        n(f64::from(f.millisecond)),
+                        p.offset.map_or(JsValue::Null, |o| n(f64::from(o))),
+                    ]))
+                }),
+            ),
+            (
+                "__ljos_formatNumber",
+                // (locale, value, format, precision)
+                host(|e, a| {
+                    let info = e.locale_info(locale_arg(a.first()));
+                    let format = string(a.get(2)).chars().next().unwrap_or('g');
+                    let precision = number(a.get(3));
+                    let precision = if precision.is_finite() && precision >= 0.0 {
+                        precision as usize
+                    } else {
+                        6
+                    };
+                    Ok(JsValue::String(info.format_double(
+                        number(a.get(1)),
+                        format,
+                        precision.min(99),
+                    )))
                 }),
             ),
         ];
@@ -442,18 +577,131 @@ const PRELUDE: &str = r##"
     set(v) { setUiLanguage(String(v)); },
     enumerable: true, configurable: true,
   });
+  const localeFormat = g.__ljos_localeFormat, formatDate = g.__ljos_formatDate;
+  const parseDate = g.__ljos_parseDate, formatNumber = g.__ljos_formatNumber;
+  // What makes an object a locale, and the name it was made for
+  // (undefined for the application's, which follows it when it changes).
+  const LOCALE = Symbol("Locale");
+  const isLocale = (v) => v !== null && typeof v === "object" && LOCALE in v;
+  const nameOf = (l) => l[LOCALE];
+  // Locale.LongFormat is 0; the formats of a date default to it.
+  const LONG = 0, SHORT = 1;
+  const DATE = 0, TIME = 1, BOTH = 2;
+
   define(Qt, "locale", function locale(name) {
     if (arguments.length > 1) throw new Error("Too many arguments");
     const o = hostLocale(name);
-    // Qt's Locale.LongFormat, ShortFormat and NarrowFormat are 0, 1 and 2.
-    const day = (d, format) => localeName(name, false, d, format === undefined ? 0 : format);
-    const month = (m, format) => localeName(name, true, m, format === undefined ? 0 : format);
-    define(o, "dayName", day);
-    define(o, "standaloneDayName", day);
-    define(o, "monthName", month);
-    define(o, "standaloneMonthName", month);
+    const width = (format) => format === undefined ? LONG : format;
+    define(o, "dayName", (d, f) => localeName(name, false, d, width(f), false));
+    define(o, "standaloneDayName", (d, f) => localeName(name, false, d, width(f), true));
+    define(o, "monthName", (m, f) => localeName(name, true, m, width(f), false));
+    define(o, "standaloneMonthName", (m, f) => localeName(name, true, m, width(f), true));
+    define(o, "dateFormat", (f) => localeFormat(name, DATE, width(f)));
+    define(o, "timeFormat", (f) => localeFormat(name, TIME, width(f)));
+    define(o, "dateTimeFormat", (f) => localeFormat(name, BOTH, width(f)));
+    define(o, LOCALE, name);
     return Object.freeze(o);
   });
+
+  const write = (d, name, pattern, part) => formatDate(name, pattern, part,
+    d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(),
+    d.getSeconds(), d.getMilliseconds(), -d.getTimezoneOffset() * 60);
+
+  // Date.prototype.toLocaleDateString and its family, as Qt has them: a
+  // locale and a Locale.FormatType or a format string; a locale alone is
+  // its long format; nothing at all the application's long format, and
+  // anything that is not a locale its short one.
+  const toLocale = (part) => function (locale, format) {
+    if (isNaN(this.getTime())) return "";
+    if (arguments.length === 0) return write(this, undefined, localeFormat(undefined, part, LONG), part);
+    if (!isLocale(locale)) return write(this, undefined, localeFormat(undefined, part, SHORT), part);
+    const name = nameOf(locale);
+    const pattern = typeof format === "string" ? format
+      : localeFormat(name, part, typeof format === "number" ? format : LONG);
+    return write(this, name, pattern, part);
+  };
+  define(Date.prototype, "toLocaleDateString", toLocale(DATE));
+  define(Date.prototype, "toLocaleTimeString", toLocale(TIME));
+  define(Date.prototype, "toLocaleString", toLocale(BOTH));
+
+  // Date.fromLocaleDateString and its family. What does not fit the format
+  // is an Invalid Date, as in Qt.
+  const fromLocale = (part, fn) => function (locale, text, format) {
+    if (arguments.length === 0 || (!isLocale(locale) && typeof locale !== "string"))
+      throw new Error("Locale: Date." + fn + "(): Invalid arguments");
+    if (!isLocale(locale)) return new Date(NaN);
+    const name = nameOf(locale);
+    const pattern = typeof format === "string" ? format
+      : localeFormat(name, part, typeof format === "number" ? format : LONG);
+    const read = parseDate(name, pattern, String(text), part);
+    if (read === null) return new Date(NaN);
+    let [year, month, day, hours, minutes, seconds, ms, offset] = read;
+    if (part === TIME) {
+      const today = new Date();
+      year = today.getFullYear(); month = today.getMonth() + 1; day = today.getDate();
+    }
+    // setFullYear, because the Date constructor reads 0 to 99 as 1900 to 1999.
+    const out = new Date(0);
+    if (offset === null) {
+      out.setFullYear(year, month - 1, day);
+      out.setHours(hours, minutes, seconds, ms);
+      return out;
+    }
+    out.setUTCFullYear(year, month - 1, day);
+    out.setUTCHours(hours, minutes, seconds, ms);
+    return new Date(out.getTime() - offset * 1000);
+  };
+  define(Date, "fromLocaleDateString", fromLocale(DATE, "fromLocaleDateString"));
+  define(Date, "fromLocaleTimeString", fromLocale(TIME, "fromLocaleTimeString"));
+  define(Date, "fromLocaleString", fromLocale(BOTH, "fromLocaleString"));
+
+  // Qt.formatDateTime and its family: a Qt.DateFormat, a format string, or
+  // a locale and a Locale.FormatType; nothing is the application's short
+  // format. The Qt.DateFormat forms are written in English whatever the
+  // locale.
+  const NAMED = {
+    0: ["ddd MMM d yyyy", "HH:mm:ss", "ddd MMM d HH:mm:ss yyyy"],
+    1: ["yyyy-MM-dd", "HH:mm:ss", "yyyy-MM-ddTHH:mm:ss"],
+    8: ["dd MMM yyyy", "HH:mm:ss", "dd MMM yyyy HH:mm:ss tt"],
+    9: ["yyyy-MM-dd", "HH:mm:ss.zzz", "yyyy-MM-ddTHH:mm:ss.zzz"],
+  };
+  const qtFormat = (part) => function (date, format, type) {
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return "";
+    if (format === undefined) return write(d, undefined, localeFormat(undefined, part, SHORT), part);
+    if (typeof format === "string") return write(d, undefined, format, part);
+    if (isLocale(format)) {
+      const name = nameOf(format);
+      return write(d, name, localeFormat(name, part, typeof type === "number" ? type : SHORT), part);
+    }
+    const named = NAMED[format];
+    return named === undefined ? "" : write(d, "C", named[part], part);
+  };
+  define(Qt, "formatDate", qtFormat(DATE));
+  define(Qt, "formatTime", qtFormat(TIME));
+  define(Qt, "formatDateTime", qtFormat(BOTH));
+
+  // Number.prototype.toLocaleString(locale, format, precision): `f` with
+  // two decimals unless told otherwise. Without arguments it is `%g` in
+  // the application's locale; with something that is not a locale, the
+  // number as JS writes it.
+  const numberValue = (n) => Number.prototype.valueOf.call(n);
+  const toLocaleNumber = function (locale, format, precision) {
+    const v = numberValue(this);
+    if (arguments.length === 0) return formatNumber(undefined, v, "g", 6);
+    if (!isLocale(locale)) return String(v);
+    return formatNumber(nameOf(locale), v, typeof format === "string" && format !== "" ? format : "f",
+      typeof precision === "number" ? precision : 2);
+  };
+  define(Number.prototype, "toLocaleString", toLocaleNumber);
+  // The currency symbol goes before the amount. Without a symbol it is
+  // empty: Ljós has no locale's currency yet.
+  define(Number.prototype, "toLocaleCurrencyString", function (locale, symbol) {
+    if (arguments.length === 0 || !isLocale(locale)) return toLocaleNumber.call(this);
+    const amount = formatNumber(nameOf(locale), numberValue(this), "f", 2);
+    return (typeof symbol === "string" ? symbol : "") + amount;
+  });
+
   if (Qt.application === undefined) define(Qt, "application", {});
   Object.defineProperty(Qt.application, "layoutDirection", {
     get() { return rightToLeft() ? Qt.RightToLeft : Qt.LeftToRight; },

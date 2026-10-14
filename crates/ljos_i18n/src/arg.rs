@@ -96,11 +96,9 @@ pub fn number(value: f64) -> String {
 
 /// C's `%g` with `digits` significant digits.
 fn general(value: f64, digits: usize) -> String {
-    // Rust's `{:e}` rounds to the wanted digits and names the exponent that
-    // results, which is the exponent `%g` chooses its notation by.
-    let scientific = format!("{value:.*e}", digits - 1);
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let exponent: i32 = exponent.parse().unwrap_or(0);
+    // The exponent of the number rounded to the wanted digits is the one
+    // `%g` chooses its notation by.
+    let (mantissa, exponent) = scientific(value, digits - 1);
     let trim = |s: &str| -> String {
         if s.contains('.') {
             s.trim_end_matches('0').trim_end_matches('.').to_owned()
@@ -110,13 +108,111 @@ fn general(value: f64, digits: usize) -> String {
     };
     let wanted = i32::try_from(digits).unwrap_or(i32::MAX);
     if exponent < -4 || exponent >= wanted {
-        let mut out = trim(mantissa);
+        let mut out = trim(&mantissa);
         let sign = if exponent < 0 { '-' } else { '+' };
         let _ = write!(out, "e{sign}{:02}", exponent.unsigned_abs());
         out
     } else {
         let decimals = usize::try_from(wanted - 1 - exponent).unwrap_or(0);
-        trim(&format!("{value:.decimals$}"))
+        trim(&fixed(value, decimals))
+    }
+}
+
+/// Digits past the ones kept, enough that a tie is seen as one: Rust
+/// writes a float's exact decimal expansion, rounded only this far out.
+const GUARD: usize = 30;
+
+/// `value` with `decimals` digits after the point, a tie rounded away from
+/// zero as Qt rounds it (`1234.5` to no decimals is `1235`), where Rust
+/// rounds a tie to even.
+fn fixed(value: f64, decimals: usize) -> String {
+    let exact = format!("{:.*}", decimals + GUARD, value.abs());
+    let (whole, fraction) = exact.split_once('.').unwrap_or((&exact, ""));
+    let mut digits: Vec<u8> = whole
+        .bytes()
+        .chain(fraction.bytes().take(decimals))
+        .collect();
+    let up = fraction
+        .as_bytes()
+        .get(decimals)
+        .is_some_and(|d| *d >= b'5');
+    if up && carry(&mut digits) {
+        digits.insert(0, b'1');
+    }
+    let point = digits.len() - decimals;
+    let mut out = String::new();
+    if value.is_sign_negative() && digits.iter().any(|d| *d != b'0') {
+        out.push('-');
+    }
+    out.push_str(std::str::from_utf8(&digits[..point]).unwrap_or("0"));
+    if decimals > 0 {
+        out.push('.');
+        out.push_str(std::str::from_utf8(&digits[point..]).unwrap_or(""));
+    }
+    out
+}
+
+/// `value` as a mantissa with `decimals` digits after the point and its
+/// exponent, a tie rounded away from zero.
+fn scientific(value: f64, decimals: usize) -> (String, i32) {
+    let exact = format!("{:.*e}", decimals + GUARD, value.abs());
+    let (mantissa, exponent) = exact.split_once('e').unwrap_or((&exact, "0"));
+    let mut exponent: i32 = exponent.parse().unwrap_or(0);
+    let all: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).collect();
+    let mut digits = all[..=decimals.min(all.len() - 1)].to_vec();
+    let up = all.get(decimals + 1).is_some_and(|d| *d >= b'5');
+    if up && carry(&mut digits) {
+        // 9.99 rounded up is 10.0, written 1.00 with the next exponent.
+        digits.insert(0, b'1');
+        digits.pop();
+        exponent += 1;
+    }
+    let mut out = String::new();
+    if value.is_sign_negative() && value != 0.0 {
+        out.push('-');
+    }
+    out.push(char::from(digits[0]));
+    if decimals > 0 {
+        out.push('.');
+        out.push_str(std::str::from_utf8(&digits[1..]).unwrap_or(""));
+    }
+    (out, exponent)
+}
+
+/// Adds one to the last of `digits`; true when it carried out of the first.
+fn carry(digits: &mut [u8]) -> bool {
+    for d in digits.iter_mut().rev() {
+        if *d == b'9' {
+            *d = b'0';
+        } else {
+            *d += 1;
+            return false;
+        }
+    }
+    true
+}
+
+/// C's `printf` with the conversion `format` (`f`, `e`, `E`, `g` or `G`;
+/// anything else is `g`) and `precision`, as `Number.toLocaleString`
+/// takes them: `nan` and `inf` as they are, the exponent with a sign and at
+/// least two digits.
+#[must_use]
+pub fn printf(value: f64, format: char, precision: usize) -> String {
+    if value.is_nan() {
+        return "nan".to_owned();
+    }
+    if value.is_infinite() {
+        return if value < 0.0 { "-inf" } else { "inf" }.to_owned();
+    }
+    let value = value + 0.0;
+    match format.to_ascii_lowercase() {
+        'f' => fixed(value, precision),
+        'e' => {
+            let (mantissa, exponent) = scientific(value, precision);
+            let sign = if exponent < 0 { '-' } else { '+' };
+            format!("{mantissa}e{sign}{:02}", exponent.unsigned_abs())
+        }
+        _ => general(value, precision.max(1)),
     }
 }
 
@@ -138,6 +234,19 @@ mod tests {
         assert_eq!(arg("%2 of %1", "a", "a").as_deref(), Some("%2 of a"));
         assert_eq!(arg("%3 %7 %3", "a", "a").as_deref(), Some("a %7 a"));
         assert_eq!(arg("%0 %1", "a", "a").as_deref(), Some("a %1"));
+    }
+
+    #[test]
+    fn printf_conversions() {
+        assert_eq!(printf(1234.5, 'f', 2), "1234.50");
+        assert_eq!(printf(1234.5, 'f', 0), "1235");
+        assert_eq!(printf(-0.5, 'f', 0), "-1");
+        assert_eq!(printf(9.996, 'e', 2), "1.00e+01");
+        assert_eq!(printf(999_999.5, 'g', 6), "1e+06");
+        assert_eq!(printf(1234.5, 'e', 2), "1.23e+03");
+        assert_eq!(printf(1234.567, 'g', 2), "1.2e+03");
+        assert_eq!(printf(1.5, 'g', 2), "1.5");
+        assert_eq!(printf(0.000_12, 'e', 1), "1.2e-04");
     }
 
     #[test]

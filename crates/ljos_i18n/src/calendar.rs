@@ -46,7 +46,7 @@ const ENGLISH_MONTHS: [&str; 12] = [
     "December",
 ];
 
-fn weekday_number(w: Weekday) -> u8 {
+pub(crate) fn weekday_number(w: Weekday) -> u8 {
     match w {
         Weekday::Monday => 1,
         Weekday::Tuesday => 2,
@@ -73,6 +73,17 @@ impl LocaleInfo {
     /// string for a day that is not 1 to 7.
     #[must_use]
     pub fn day_name(&self, day: u8, width: NameWidth) -> String {
+        self.day_name_in(day, width, false)
+    }
+
+    /// The name of a day on its own, as a column header has it, where a
+    /// language writes it differently inside a date (German "Fr" and "Fr.").
+    #[must_use]
+    pub fn standalone_day_name(&self, day: u8, width: NameWidth) -> String {
+        self.day_name_in(day, width, true)
+    }
+
+    fn day_name_in(&self, day: u8, width: NameWidth, standalone: bool) -> String {
         if !(1..=7).contains(&day) {
             return String::new();
         }
@@ -81,13 +92,18 @@ impl LocaleInfo {
             return match width {
                 NameWidth::Long => full.to_owned(),
                 NameWidth::Short => full[..3].to_owned(),
+                // Qt's C locale: a number inside a date, a letter on its own.
+                NameWidth::Narrow if standalone => full[..1].to_owned(),
                 NameWidth::Narrow => day.to_string(),
             };
         };
-        let pattern = match width {
-            NameWidth::Long => "EEEE",
-            NameWidth::Short => "EEE",
-            NameWidth::Narrow => "EEEEE",
+        let pattern = match (width, standalone) {
+            (NameWidth::Long, false) => "EEEE",
+            (NameWidth::Short, false) => "EEE",
+            (NameWidth::Narrow, false) => "EEEEE",
+            (NameWidth::Long, true) => "cccc",
+            (NameWidth::Short, true) => "ccc",
+            (NameWidth::Narrow, true) => "ccccc",
         };
         // 1 January 2024 was a Monday.
         format_date(locale, pattern, 2024, 1, i32::from(day)).unwrap_or_default()
@@ -117,6 +133,7 @@ impl LocaleInfo {
             return match width {
                 NameWidth::Long => full.to_owned(),
                 NameWidth::Short => full[..3].to_owned(),
+                NameWidth::Narrow if standalone => full[..1].to_owned(),
                 NameWidth::Narrow => (month + 1).to_string(),
             };
         };

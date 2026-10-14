@@ -152,6 +152,7 @@ module QtQml
 	Component QtQml.Component
 	Connections QtQml.Connections
 	Instantiator QtQml.Instantiator
+	Locale QtQml.Locale
 	Qt QtQml.Qt
 	QtObject QtQml.QtObject
 	Timer QtQml.Timer
@@ -322,6 +323,13 @@ module QtQml
 		signal objectAdded index object
 		signal objectRemoved index object
 		method objectAt
+	type QtQml.Locale Locale
+		is uncreatable
+		enum FormatType LongFormat=0 ShortFormat=1 NarrowFormat=2
+		enum DayOfWeek Sunday=0 Monday=1 Tuesday=2 Wednesday=3 Thursday=4 Friday=5 Saturday=6
+		enum MeasurementSystem MetricSystem=0 ImperialUSSystem=1 ImperialUKSystem=2 ImperialSystem=1
+		enum CurrencySymbolFormat CurrencyIsoCode=0 CurrencySymbol=1 CurrencyDisplayName=2
+		enum NumberOption DefaultNumberOptions=0 OmitGroupSeparator=1 RejectGroupSeparator=2 OmitLeadingZeroInExponent=4 RejectLeadingZeroInExponent=8 IncludeTrailingZeroesAfterDot=16 RejectTrailingZeroesAfterDot=32
 	type QtQml.QtObject QtObject
 		prop objectName QtQml.string named
 		signal objectNameChanged

@@ -10,6 +10,7 @@
 pub mod arg;
 pub mod calendar;
 pub mod catalog;
+pub mod datetime;
 pub mod i18n;
 pub mod ljl;
 pub mod locale;

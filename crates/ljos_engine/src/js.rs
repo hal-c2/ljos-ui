@@ -1228,38 +1228,6 @@ const PRELUDE: &str = r##"
       default: return hostColor(v, p, q, a);
     }
   }
-  const pad = (n, w) => String(n).padStart(w, "0");
-  const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
-    "August", "September", "October", "November", "December"];
-  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const formatDateTime = (d, f) => {
-    if (!(d instanceof Date)) d = new Date(d);
-    if (f === undefined || typeof f !== "string") return d.toString();
-    return f.replace(/yyyy|yy|MMMM|MMM|MM|M|dddd|ddd|dd|d|hh|h|HH|H|mm|m|ss|s|zzz|AP|ap|'[^']*'/g, (t) => {
-      switch (t) {
-        case "yyyy": return pad(d.getFullYear(), 4);
-        case "yy": return pad(d.getFullYear() % 100, 2);
-        case "MMMM": return MONTHS[d.getMonth()];
-        case "MMM": return MONTHS[d.getMonth()].slice(0, 3);
-        case "MM": return pad(d.getMonth() + 1, 2);
-        case "M": return String(d.getMonth() + 1);
-        case "dddd": return DAYS[d.getDay()];
-        case "ddd": return DAYS[d.getDay()].slice(0, 3);
-        case "dd": return pad(d.getDate(), 2);
-        case "d": return String(d.getDate());
-        case "HH": case "hh": return pad(d.getHours(), 2);
-        case "H": case "h": return String(d.getHours());
-        case "mm": return pad(d.getMinutes(), 2);
-        case "m": return String(d.getMinutes());
-        case "ss": return pad(d.getSeconds(), 2);
-        case "s": return String(d.getSeconds());
-        case "zzz": return pad(d.getMilliseconds(), 3);
-        case "AP": return d.getHours() < 12 ? "AM" : "PM";
-        case "ap": return d.getHours() < 12 ? "am" : "pm";
-        default: return t.slice(1, -1);
-      }
-    });
-  };
   const Qt = {
     rgba, hsla, hsva,
     rgb: (r, gr, b) => hostColor(to16(r), to16(gr), to16(b), 65535),
@@ -1271,9 +1239,8 @@ const PRELUDE: &str = r##"
     },
     callLater(f) { g.__ljos_callLater(f, Array.prototype.slice.call(arguments, 1)); },
     quit() { g.__ljos_quit(); },
-    formatDateTime,
-    formatDate: (d, f) => formatDateTime(d, f === undefined ? "yyyy-MM-dd" : f),
-    formatTime: (d, f) => formatDateTime(d, f === undefined ? "HH:mm:ss" : f),
+    // formatDateTime, formatDate and formatTime write with a locale's
+    // formats, so the localisation prelude (i18n.rs) defines them.
     isQtObject: (o) => o !== null && typeof o === "object" && typeof o.destroy === "function",
     // The colours Qt names are numbers in QML, not colours.
     color0: 0, color1: 1, black: 2, white: 3, darkGray: 4, gray: 5, lightGray: 6, red: 7,

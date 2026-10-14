@@ -43,6 +43,66 @@ fn component_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     ]
 }
 
+/// `Locale` (QtQml): the names of what a locale's members take and give,
+/// `Locale.ShortFormat`, `Locale.Monday`
+/// (doc.qt.io/qt-6/qml-qtqml-locale.html). A locale itself is the value
+/// `Qt.locale()` returns, never an object of this type. The numbers are
+/// what Qt 6.11.2 answers for the keys; `Language`, `Script` and
+/// `Territory`, hundreds of names each, are not here.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQml", name = "Locale", uncreatable, enums = locale_enums)]
+pub struct LocaleEnums {}
+
+fn locale_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "FormatType",
+            vec![("LongFormat", 0), ("ShortFormat", 1), ("NarrowFormat", 2)],
+        ),
+        (
+            "DayOfWeek",
+            vec![
+                ("Sunday", 0),
+                ("Monday", 1),
+                ("Tuesday", 2),
+                ("Wednesday", 3),
+                ("Thursday", 4),
+                ("Friday", 5),
+                ("Saturday", 6),
+            ],
+        ),
+        (
+            "MeasurementSystem",
+            vec![
+                ("MetricSystem", 0),
+                ("ImperialUSSystem", 1),
+                ("ImperialUKSystem", 2),
+                ("ImperialSystem", 1),
+            ],
+        ),
+        (
+            "CurrencySymbolFormat",
+            vec![
+                ("CurrencyIsoCode", 0),
+                ("CurrencySymbol", 1),
+                ("CurrencyDisplayName", 2),
+            ],
+        ),
+        (
+            "NumberOption",
+            vec![
+                ("DefaultNumberOptions", 0),
+                ("OmitGroupSeparator", 1),
+                ("RejectGroupSeparator", 2),
+                ("OmitLeadingZeroInExponent", 4),
+                ("RejectLeadingZeroInExponent", 8),
+                ("IncludeTrailingZeroesAfterDot", 16),
+                ("RejectTrailingZeroesAfterDot", 32),
+            ],
+        ),
+    ]
+}
+
 /// `Component`: a template objects are made from (`Component { … }`, an
 /// inline `component`, a property of type `Component`).
 #[derive(Default, QmlObject)]
@@ -463,7 +523,7 @@ const MAX_CATCH_UP: u32 = 100;
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(crate::module!("QtQml" 2.0 => [
-        QtObject, Component, Connections, Timer, crate::instantiator::Instantiator
+        QtObject, Component, Connections, Timer, crate::instantiator::Instantiator, LocaleEnums
     ]));
     engine.register_module(crate::module!("QtQml.Models" 2.0 => [
         crate::listmodel::ListModel,

@@ -194,6 +194,19 @@ impl LocaleInfo {
         out.unwrap_or_else(|| ascii.to_owned())
     }
 
+    /// `Number.toLocaleString(locale, format, precision)`: C's `printf`
+    /// conversion in the locale's digits and separators, the exponent's
+    /// letter in the case `format` has.
+    #[must_use]
+    pub fn format_double(&self, value: f64, format: char, precision: usize) -> String {
+        let text = self.localize_number(&crate::arg::printf(value, format, precision));
+        if format.is_ascii_uppercase() {
+            text.to_uppercase()
+        } else {
+            text
+        }
+    }
+
     /// An integer with the locale's digits and grouping.
     #[must_use]
     pub fn format_integer(&self, n: i64) -> String {
