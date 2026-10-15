@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ljos_engine::{
-    Atom, Color, Cx, Engine, EngineError, Font, LogLevel, ObjectId, QmlList, QmlObject, QtObject,
-    Url, Value, qml_impl,
+    Atom, Color, Cx, Engine, EngineError, Font, LogLevel, ObjectId, QmlList, QmlObject, QmlType,
+    QtObject, Url, Value, qml_impl,
 };
 
 pub use service::{
@@ -205,6 +205,8 @@ pub struct FileDialog {
     pub options: i32,
     #[qml(notify, reset = ljos_engine::Reset::Default)]
     pub name_filters: Vec<Value>,
+    #[qml(group)]
+    pub selected_name_filter: FileNameFilter,
     #[qml(notify, reset = ljos_engine::Reset::Default)]
     pub default_suffix: Atom,
     #[qml(notify, reset = ljos_engine::Reset::Default)]
@@ -225,6 +227,7 @@ impl Default for FileDialog {
             current_folder: current_folder(),
             options: 0,
             name_filters: vec![Value::from("All Files (*)")],
+            selected_name_filter: FileNameFilter::default(),
             default_suffix: Atom::EMPTY,
             accept_label: Atom::EMPTY,
             reject_label: Atom::EMPTY,
@@ -232,8 +235,103 @@ impl Default for FileDialog {
     }
 }
 
+/// The `selectedNameFilter` group of [`FileDialog`]: which of the
+/// `nameFilters` is in force, by `index`, and what that filter says.
+#[derive(Debug, QmlObject)]
+#[qml(name = "FileNameFilter", uncreatable)]
+pub struct FileNameFilter {
+    /// -1 until one is chosen.
+    #[qml(notify)]
+    pub index: i32,
+    /// The filter's own text before its parentheses (`Images` of
+    /// `Images (*.png *.jpg)`); the whole text when it has none.
+    #[qml(notify, readonly)]
+    pub name: Atom,
+    /// The extensions its patterns name: `png` and `jpg`; a pattern of
+    /// just `*` stands as it is.
+    #[qml(notify, readonly)]
+    pub extensions: Vec<Value>,
+    /// The patterns themselves: `*.png` and `*.jpg`.
+    #[qml(notify, readonly)]
+    pub globs: Vec<Value>,
+}
+
+impl Default for FileNameFilter {
+    fn default() -> Self {
+        FileNameFilter {
+            index: -1,
+            name: Atom::EMPTY,
+            extensions: Vec::new(),
+            globs: Vec::new(),
+        }
+    }
+}
+
+/// The filter `index` picks among `filters`: one beyond the list falls
+/// back to the first, as Qt's own index does (it reads 0 there; here it
+/// keeps what it was given, so a binding on it stays a binding); none
+/// when there is no list or no index.
+fn selected_filter(filters: &[Value], index: i32) -> Option<&Value> {
+    if index < 0 {
+        return None;
+    }
+    filters.get(index as usize).or_else(|| filters.first())
+}
+
 #[qml_impl]
-impl FileDialog {}
+impl FileDialog {
+    #[qml(on_complete)]
+    fn name_filter_completed(cx: &Cx) -> Result<(), EngineError> {
+        let (e, me) = (cx.engine, cx.this);
+        let meta = FileDialog::static_meta();
+        let prop = |name: &str| meta.property_index(name);
+        let (Some(name), Some(extensions), Some(globs), Some(index)) = (
+            prop("selectedNameFilter.name"),
+            prop("selectedNameFilter.extensions"),
+            prop("selectedNameFilter.globs"),
+            prop("selectedNameFilter.index"),
+        ) else {
+            return Ok(());
+        };
+        // What the chosen filter parses to, or nothing. Read through the
+        // reactive graph: a new index or new filters re-run all three.
+        let chosen = move |e: &Engine| -> Option<(NameFilter, bool)> {
+            let index = e.read(me, index).to_number() as i32;
+            let Value::List(filters) = e.read(me, FileDialog::NAME_FILTERS.index) else {
+                return None;
+            };
+            let text = selected_filter(&filters, index)?.to_js_string().to_string();
+            let parsed = NameFilter::parse(&text);
+            let parenthesised = text.trim_end().ends_with(')') && text.contains('(');
+            Some((parsed, parenthesised))
+        };
+        e.bind_initial(me, name, move |e| match chosen(e) {
+            Some((f, _)) => Value::from(f.name.as_str()),
+            None => Value::String(Atom::EMPTY),
+        })?;
+        e.bind_initial(me, globs, move |e| match chosen(e) {
+            Some((f, true)) => {
+                Value::list(f.patterns.iter().map(|p| Value::from(p.as_str())).collect())
+            }
+            _ => Value::list(Vec::new()),
+        })?;
+        e.bind_initial(me, extensions, move |e| match chosen(e) {
+            Some((f, true)) => Value::list(
+                f.patterns
+                    .iter()
+                    .filter_map(|p| match p.strip_prefix("*.") {
+                        Some(ext) => Some(ext),
+                        None if p == "*" => Some("*"),
+                        None => None,
+                    })
+                    .map(Value::from)
+                    .collect(),
+            ),
+            _ => Value::list(Vec::new()),
+        })?;
+        Ok(())
+    }
+}
 
 fn folder_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![file_options()]

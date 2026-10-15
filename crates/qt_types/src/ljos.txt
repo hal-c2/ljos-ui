@@ -3167,6 +3167,7 @@ module QtQuick
 		prop logicalPixelDensity QtQml.real named readonly
 		prop orientation Qt::ScreenOrientation readonly
 		prop primaryOrientation Qt::ScreenOrientation readonly
+		prop orientationUpdateMask Qt::ScreenOrientation
 		signal nameChanged
 		signal manufacturerChanged
 		signal modelChanged
@@ -3182,6 +3183,7 @@ module QtQuick
 		signal logicalPixelDensityChanged
 		signal orientationChanged
 		signal primaryOrientationChanged
+		signal orientationUpdateMaskChanged
 		method angleBetween
 	type QtQuick.TextEditorBase TextEditorBase
 		prototype QtQuick.Item named
@@ -4081,6 +4083,7 @@ module QtQuick.Dialogs
 		prop currentFolder QtQml.url named
 		prop options FileDialogOption reset
 		prop nameFilters QtQml.var named list reset
+		prop selectedNameFilter QtQuick.Dialogs.FileNameFilter pointer readonly
 		prop defaultSuffix QtQml.string named reset
 		prop acceptLabel QtQml.string named reset
 		prop rejectLabel QtQml.string named reset
@@ -4159,6 +4162,16 @@ module QtQuick.Dialogs
 		method accept
 		method reject
 		method done
+	type QtQuick.Dialogs.FileNameFilter FileNameFilter
+		is uncreatable
+		prop index QtQml.int named
+		prop name QtQml.string named readonly
+		prop extensions QtQml.var named list readonly
+		prop globs QtQml.var named list readonly
+		signal indexChanged
+		signal nameChanged
+		signal extensionsChanged
+		signal globsChanged
 
 module QtQuick.Effects
 	MultiEffect QtQuick.Effects.MultiEffect
