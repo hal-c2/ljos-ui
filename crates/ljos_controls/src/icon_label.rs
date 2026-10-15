@@ -3,10 +3,14 @@
 //!
 //! Qt names both types in its type table and documents neither; what
 //! they do here is what a button with an icon shows on `qml6` (Qt
-//! 6.11.2), pinned by `features/controls/button-icon.feature`:
+//! 6.11.2), pinned by `features/controls/button-icon.feature` and
+//! `button-icon-svg.feature`:
 //!
-//! - the picture is as large as its file and no larger than
-//!   `icon.width` by `icon.height`, keeping its shape;
+//! - the picture is made at `icon.width` by `icon.height` (its
+//!   `sourceSize`): a picture is as large as its file and no larger,
+//!   keeping its shape, and an SVG drawing is stretched to exactly that;
+//! - a picture with less room in the label than that is drawn smaller to
+//!   fit, keeping its shape, though the label still asks for its size;
 //! - it is drawn in one colour: `icon.color` when the button was given
 //!   one (`"transparent"` shows the picture as it is), the colour of the
 //!   text otherwise;
@@ -140,6 +144,9 @@ impl Default for IconLabel {
 struct Made {
     image: Cell<Option<ObjectId>>,
     text: Cell<Option<ObjectId>>,
+    /// The `sourceSize` last given to `image`, so that it is given only
+    /// when it changes: giving it loads the picture again.
+    asked: Cell<Option<(ObjectId, (f64, f64))>>,
 }
 
 #[qml_impl]
@@ -309,6 +316,18 @@ fn show(engine: &Engine, label: ObjectId, made: &Made) -> Result<(), EngineError
             IconImage::NAME.index,
             Value::String(icon.name.clone()),
         )?;
+        // The picture is made at the icon's size, before it is loaded so
+        // that it loads once: a drawing exactly at it, a picture no larger.
+        let ask = (icon.limit.0.max(0.0), icon.limit.1.max(0.0));
+        if made.asked.get() != Some((image, ask)) {
+            made.asked.set(Some((image, ask)));
+            set_computed(
+                engine,
+                image,
+                ImageBase::SOURCE_SIZE.index,
+                Value::size(ask.0, ask.1),
+            )?;
+        }
         let source = Value::Url(Atom::from(icon.source.as_str()));
         set_computed(engine, image, ImageBase::SOURCE.index, source)?;
         let natural = (
@@ -430,6 +449,17 @@ impl Layout {
     fn place(&self, size: (f64, f64)) -> (Option<[f64; 4]>, Option<[f64; 4]>) {
         let [l, t, r, b] = self.padding;
         let room = ((size.0 - l - r).max(0.0), (size.1 - t - b).max(0.0));
+        // A picture with less room than its size is made smaller to fit,
+        // keeping its shape; the label still asks for its whole size.
+        let this = Layout {
+            icon: self.icon.map(|i| fitted(i, room)),
+            ..*self
+        };
+        this.arrange(room)
+    }
+
+    fn arrange(&self, room: (f64, f64)) -> (Option<[f64; 4]>, Option<[f64; 4]>) {
+        let [l, t, ..] = self.padding;
         let content = self.content();
         let (cw, ch) = (content.0.min(room.0), content.1.min(room.1));
         let (left, right) = if self.mirrored {
@@ -515,6 +545,19 @@ mod tests {
         assert_eq!(fitted((48.0, 48.0), (0.0, 0.0)), (48.0, 48.0));
         assert_eq!(fitted((48.0, 48.0), (12.0, 24.0)), (12.0, 12.0));
         assert_eq!(fitted((0.0, 0.0), (24.0, 24.0)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_picture_with_too_little_room_is_made_smaller_to_fit() {
+        let l = Layout {
+            icon: Some((38.0, 38.0)),
+            text: None,
+            padding: [8.0, 6.0, 8.0, 6.0],
+            ..beside((0.0, 0.0), TEXT)
+        };
+        assert_eq!(l.implicit(), (54.0, 50.0));
+        let (icon, _) = l.place((48.0, 38.0));
+        assert_eq!(icon, Some([11.0, 6.0, 26.0, 26.0]));
     }
 
     #[test]
