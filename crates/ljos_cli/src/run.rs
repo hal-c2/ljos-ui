@@ -333,6 +333,8 @@ impl Run {
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             ljos_shell::run::<()>(config, move |setup| {
+                // The application's databases where Qt keeps them.
+                ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 setup.on_reload(|report| eprintln!("ljos: {}", describe(report)));
@@ -348,6 +350,8 @@ impl Run {
         } else {
             let source = compile(&dir, example.as_deref())?;
             ljos_shell::run::<()>(config, move |setup| {
+                // The application's databases where Qt keeps them.
+                ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 let engine = setup.engine();

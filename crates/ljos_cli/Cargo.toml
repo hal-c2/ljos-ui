@@ -30,6 +30,8 @@ ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 # The engine-backed type oracle for `--example` compiles.
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
 ljos_controls = { path = "../ljos_controls" }
+# QtQuick.LocalStorage, which `ljos render` and `ljos run` offer.
+ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_media = { path = "../ljos_media" }
 ljos_render = { path = "../ljos_render", default-features = false }

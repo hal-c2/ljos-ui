@@ -1,0 +1,23 @@
+[package]
+name = "ljos_localstorage"
+description = "The QtQuick.LocalStorage module for Ljós: SQLite databases a QML application opens by name, as an opt-in crate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The engine directly, as ljos_platform is written: the derive and
+# `qml_impl` name their paths through `::ljos_engine`.
+ljos_engine = { path = "../ljos_engine" }
+# Where the application's own data lives, and the names it goes by.
+ljos_platform = { path = "../ljos_platform" }
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

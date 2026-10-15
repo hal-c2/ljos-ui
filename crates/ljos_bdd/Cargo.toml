@@ -55,6 +55,8 @@ ljos_quick = { path = "../ljos_quick" }
 # Opt-in modules scenarios may import (QtQml.XmlListModel, QtMultimedia).
 ljos_xml = { path = "../ljos_xml" }
 ljos_media = { path = "../ljos_media" }
+# QtQuick.LocalStorage keeps its databases in the scenario's home.
+ljos_localstorage = { path = "../ljos_localstorage" }
 # The system a scenario runs on: its files and its dialogs, answered by
 # the scenario, and a network that reaches the scenario's web server.
 ljos_platform = { path = "../ljos_platform", features = ["http"] }

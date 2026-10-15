@@ -79,6 +79,10 @@ icu_calendar = "2.3"
 icu_datetime = "2.3"
 writeable = "0.6"
 quick-xml = "0.42"
+# QtQuick.LocalStorage (ljos_localstorage). SQLite itself is compiled in,
+# so an application needs no system library and gets the same SQLite
+# everywhere.
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 
 # Development tools
 # File events from the kernel (inotify, FSEvents, ReadDirectoryChangesW): nothing polls.

@@ -77,6 +77,7 @@ fn engine() -> Engine {
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
     ljos_media::register(&engine);
+    ljos_localstorage::register(&engine);
     ljos_test::qttest::register(&engine);
     engine
 }

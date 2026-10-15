@@ -4288,6 +4288,12 @@ module QtQuick.Layouts
 		signal horizontalStretchFactorChanged
 		signal verticalStretchFactorChanged
 
+module QtQuick.LocalStorage
+	LocalStorage QtQuick.LocalStorage.LocalStorage
+	type QtQuick.LocalStorage.LocalStorage LocalStorage
+		is singleton
+		method openDatabaseSync
+
 module QtQuick.Particles
 	Age QtQuick.Particles.Age
 	AngleDirection QtQuick.Particles.AngleDirection

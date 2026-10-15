@@ -163,6 +163,9 @@ impl Render {
         // The render's clock is virtual: sound on a device would play at
         // the wrong pace.
         ljos_media::use_null_audio(&engine);
+        // A picture leaves no file behind: databases stay in memory.
+        ljos_localstorage::register(&engine);
+        ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
         register_example(&engine, self.example.as_deref());
         let source = match &self.example {
             Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
@@ -281,6 +284,7 @@ pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
     ljos_media::register(&engine);
+    ljos_localstorage::register(&engine);
     register_example(&engine, Some(id));
     EngineOracle::from_engine(&engine)
 }

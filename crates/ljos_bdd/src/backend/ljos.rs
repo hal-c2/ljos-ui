@@ -271,10 +271,12 @@ impl LjosBackend {
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
         // Opt-in modules a scenario may import (QtQml.XmlListModel,
-        // QtMultimedia). Sound goes nowhere: the clock is virtual.
+        // QtMultimedia, QtQuick.LocalStorage). Sound goes nowhere: the clock
+        // is virtual.
         ljos_xml::register(&engine);
         ljos_media::register(&engine);
         ljos_media::use_null_audio(&engine);
+        ljos_localstorage::register(&engine);
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
         let log: Rc<RefCell<Vec<LogEntry>>> = Rc::default();
@@ -353,6 +355,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_controls::register(&snapshot);
                 ljos_xml::register(&snapshot);
                 ljos_media::register(&snapshot);
+                ljos_localstorage::register(&snapshot);
                 ljos::dev::EngineOracle::from_engine(&snapshot)
             })
             .clone()
