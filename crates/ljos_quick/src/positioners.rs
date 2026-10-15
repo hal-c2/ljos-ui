@@ -58,6 +58,17 @@ pub struct Row {
     /// object made later is told.
     #[qml(skip)]
     placed: Vec<ObjectId>,
+    /// The transitions a positioner runs for its children: `populate` for
+    /// those it has when it is first laid out, `add` for one that joins the
+    /// layout later (made, or made visible), `move` for one the layout moves.
+    #[qml(notify)]
+    pub populate: Option<ObjectId>,
+    #[qml(notify)]
+    pub add: Option<ObjectId>,
+    #[qml(notify, rename = "move")]
+    pub move_transition: Option<ObjectId>,
+    #[qml(skip)]
+    memory: Memory,
     #[qml(skip)]
     across: Across,
 }
@@ -86,6 +97,17 @@ pub struct Column {
     /// object made later is told.
     #[qml(skip)]
     placed: Vec<ObjectId>,
+    /// The transitions a positioner runs for its children: `populate` for
+    /// those it has when it is first laid out, `add` for one that joins the
+    /// layout later (made, or made visible), `move` for one the layout moves.
+    #[qml(notify)]
+    pub populate: Option<ObjectId>,
+    #[qml(notify)]
+    pub add: Option<ObjectId>,
+    #[qml(notify, rename = "move")]
+    pub move_transition: Option<ObjectId>,
+    #[qml(skip)]
+    memory: Memory,
     #[qml(skip)]
     across: Across,
 }
@@ -144,6 +166,17 @@ pub struct Grid {
     /// object made later is told.
     #[qml(skip)]
     placed: Vec<ObjectId>,
+    /// The transitions a positioner runs for its children: `populate` for
+    /// those it has when it is first laid out, `add` for one that joins the
+    /// layout later (made, or made visible), `move` for one the layout moves.
+    #[qml(notify)]
+    pub populate: Option<ObjectId>,
+    #[qml(notify)]
+    pub add: Option<ObjectId>,
+    #[qml(notify, rename = "move")]
+    pub move_transition: Option<ObjectId>,
+    #[qml(skip)]
+    memory: Memory,
 }
 
 impl Default for Grid {
@@ -168,6 +201,10 @@ impl Default for Grid {
             bottom_padding: 0.0,
             hidden: Hidden::default(),
             placed: Vec::new(),
+            populate: None,
+            add: None,
+            move_transition: None,
+            memory: Memory::default(),
         }
     }
 }
@@ -204,6 +241,17 @@ pub struct Flow {
     /// object made later is told.
     #[qml(skip)]
     placed: Vec<ObjectId>,
+    /// The transitions a positioner runs for its children: `populate` for
+    /// those it has when it is first laid out, `add` for one that joins the
+    /// layout later (made, or made visible), `move` for one the layout moves.
+    #[qml(notify)]
+    pub populate: Option<ObjectId>,
+    #[qml(notify)]
+    pub add: Option<ObjectId>,
+    #[qml(notify, rename = "move")]
+    pub move_transition: Option<ObjectId>,
+    #[qml(skip)]
+    memory: Memory,
 }
 
 /// `Positioner` (QtQuick): only ever used attached, by a child of a
@@ -414,6 +462,60 @@ fn swap_across(engine: &Engine, obj: ObjectId, which: Which, with: &mut Across) 
         Which::Column => engine.with_mut(obj, |p: &mut Column| std::mem::swap(&mut p.across, with)),
         Which::Grid | Which::Flow => Ok(()),
     };
+}
+
+/// What a positioner remembers of its last layout, so that it knows which
+/// children arrived and which moved.
+#[derive(Debug, Default)]
+struct Memory {
+    /// Where each child was put, as the layout last wrote it.
+    at: HashMap<ObjectId, [f64; 2]>,
+    /// The first layout was done.
+    populated: bool,
+    /// Children a transition is moving, and the place it takes them to.
+    going: HashMap<ObjectId, [f64; 2]>,
+}
+
+fn with_memory<R>(
+    engine: &Engine,
+    obj: ObjectId,
+    which: Which,
+    f: impl FnOnce(&mut Memory) -> R,
+) -> Option<R> {
+    match which {
+        Which::Row => engine.with_mut(obj, |p: &mut Row| f(&mut p.memory)),
+        Which::Column => engine.with_mut(obj, |p: &mut Column| f(&mut p.memory)),
+        Which::Grid => engine.with_mut(obj, |p: &mut Grid| f(&mut p.memory)),
+        Which::Flow => engine.with_mut(obj, |p: &mut Flow| f(&mut p.memory)),
+    }
+    .ok()
+}
+
+/// `[populate, add, move]` as the positioner has them.
+fn transitions_of(engine: &Engine, obj: ObjectId, which: Which) -> [Option<ObjectId>; 3] {
+    let read = |p: PropIndex| engine.read(obj, p).as_object();
+    match which {
+        Which::Row => [
+            read(Row::POPULATE.index),
+            read(Row::ADD.index),
+            read(Row::MOVE_TRANSITION.index),
+        ],
+        Which::Column => [
+            read(Column::POPULATE.index),
+            read(Column::ADD.index),
+            read(Column::MOVE_TRANSITION.index),
+        ],
+        Which::Grid => [
+            read(Grid::POPULATE.index),
+            read(Grid::ADD.index),
+            read(Grid::MOVE_TRANSITION.index),
+        ],
+        Which::Flow => [
+            read(Flow::POPULATE.index),
+            read(Flow::ADD.index),
+            read(Flow::MOVE_TRANSITION.index),
+        ],
+    }
 }
 
 /// Runs `f` on the list of children the positioner last positioned.
@@ -725,6 +827,11 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
         })
         .filter(|k| k.w > 0.0 && k.h > 0.0)
         .collect();
+    if let Some(conflict) = anchor_conflict(engine, which, &kids) {
+        // Qt does nothing at all then, size included.
+        engine.log(LogLevel::Warning, crate::anchors::CATEGORY, conflict);
+        return Ok(());
+    }
     let (content, placed) = match which {
         Which::Row => line(&kids, spacing, true),
         Which::Column => line(&kids, spacing, false),
@@ -752,6 +859,9 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
         } else {
             0.0
         };
+        let moves = transitions_of(engine, obj, which);
+        // Taken out while the transitions run, and put back after.
+        let mut memory = with_memory(engine, obj, which, std::mem::take);
         for k in &placed {
             let x = if rtl {
                 width - pad.right - k.x - k.w
@@ -759,11 +869,23 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
                 pad.left + k.x
             };
             let y = pad.top + k.y;
+            if let Some(mem) = memory.as_mut()
+                && let Some(index) = placed.iter().position(|p| p.id == k.id)
+                && arrive(engine, obj, which, mem, &moves, k.id, index, [x, y])
+            {
+                continue;
+            }
             match which {
                 Which::Row => write_placed(engine, k.id, Item::X.index, Value::Real(x))?,
                 Which::Column => write_placed(engine, k.id, Item::Y.index, Value::Real(y))?,
                 Which::Grid | Which::Flow => set_pos(engine, k.id, x, y)?,
             }
+        }
+        if let Some(mem) = memory.take() {
+            let mut mem = mem;
+            mem.populated = true;
+            mem.at.retain(|id, _| placed.iter().any(|p| p.id == *id));
+            with_memory(engine, obj, which, |m| *m = mem);
         }
         let across = match which {
             Which::Row => Some((Item::Y.index, pad.top)),
@@ -782,6 +904,44 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
             last.extend(placed.iter().map(|k| k.id));
         });
         tell(engine, &children, &placed)
+    })
+}
+
+/// A child that is anchored along an axis the positioner places it on
+/// makes the positioner give up: the warning Qt gives for it, or `None`.
+fn anchor_conflict(engine: &Engine, which: Which, kids: &[Kid]) -> Option<String> {
+    let a = crate::item::AnchorProps::get();
+    let set =
+        |c: ObjectId, p: PropIndex| !matches!(engine.read(c, p), Value::Undefined | Value::Null);
+    let (name, what) = match which {
+        Which::Row => (
+            "Row",
+            "left, right, horizontalCenter, fill or centerIn anchors",
+        ),
+        Which::Column => (
+            "Column",
+            "top, bottom, verticalCenter, fill or centerIn anchors",
+        ),
+        Which::Grid => ("Grid", "anchors"),
+        Which::Flow => ("Flow", "anchors"),
+    };
+    let vertical = [a.top, a.bottom, a.vertical_center];
+    let horizontal = [a.left, a.right, a.horizontal_center];
+    let along: &[PropIndex] = match which {
+        Which::Row => &horizontal,
+        Which::Column => &vertical,
+        Which::Grid | Which::Flow => &[],
+    };
+    let any = kids.iter().any(|k| {
+        set(k.id, a.fill)
+            || set(k.id, a.center_in)
+            || along.iter().any(|p| set(k.id, *p))
+            || (along.is_empty() && horizontal.iter().chain(&vertical).any(|p| set(k.id, *p)))
+    });
+    any.then(|| {
+        format!(
+            "QML {name}: Cannot specify {what} for items inside {name}. {name} will not function."
+        )
     })
 }
 
@@ -970,6 +1130,81 @@ fn wrap(
         (longest, across + thick)
     };
     (content, placed)
+}
+
+/// Sees to a child that is placed at `dest`: runs the transition that is
+/// for it, if there is one. True when the child is then the transition's
+/// to move (or it is already doing so), and the layout leaves it alone.
+#[allow(clippy::too_many_arguments)]
+fn arrive(
+    engine: &Engine,
+    obj: ObjectId,
+    which: Which,
+    mem: &mut Memory,
+    [populate, add, moved]: &[Option<ObjectId>; 3],
+    item: ObjectId,
+    index: usize,
+    dest: [f64; 2],
+) -> bool {
+    // The axis the layout writes of a row or a column is the one that is
+    // compared; the other is the item's own.
+    let cross = |axis: usize| {
+        num(
+            engine,
+            item,
+            if axis == 0 {
+                Item::X.index
+            } else {
+                Item::Y.index
+            },
+        )
+    };
+    let dest = match which {
+        Which::Row => [dest[0], cross(1)],
+        Which::Column => [cross(0), dest[1]],
+        Which::Grid | Which::Flow => dest,
+    };
+    let before = mem.at.insert(item, dest);
+    if crate::animation::driver::has_run(engine, item) {
+        if mem.going.get(&item) == Some(&dest) {
+            return true;
+        }
+        crate::views::view_transition::forget(engine, obj, item);
+        mem.going.remove(&item);
+    }
+    let differs = |a: [f64; 2]| match which {
+        Which::Row => a[0] != dest[0],
+        Which::Column => a[1] != dest[1],
+        Which::Grid | Which::Flow => a != dest,
+    };
+    let t = if !mem.populated {
+        *populate
+    } else {
+        match before {
+            None => *add,
+            Some(b) if differs(b) => *moved,
+            Some(_) => None,
+        }
+    };
+    let Some(t) = t else { return false };
+    let targets = std::rc::Rc::new(crate::views::state::Targets {
+        indexes: vec![index as i32],
+        items: vec![item],
+    });
+    let going = crate::views::view_transition::start(
+        engine,
+        obj,
+        Some(t),
+        item,
+        index as i32,
+        dest,
+        targets,
+    );
+    if going.iter().any(|g| *g) {
+        mem.going.insert(item, dest);
+    }
+    // Written by `start` for the axes that are not moving.
+    true
 }
 
 fn set_pos(engine: &Engine, c: ObjectId, x: f64, y: f64) -> Result<(), EngineError> {

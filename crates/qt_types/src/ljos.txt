@@ -894,6 +894,14 @@ module QtQuick
 		prop capitalization QtQml.int named
 		prop hintingPreference QtQml.int named
 		prop scaleWithSystem QtQml.bool named
+		prop styleName QtQml.string named
+		prop overline QtQml.bool named
+		prop kerning QtQml.bool named
+		prop preferShaping QtQml.bool named
+		prop contextFontMerging QtQml.bool named
+		prop preferTypoLineMetrics QtQml.bool named
+		prop features QtQml.var named
+		prop variableAxes QtQml.var named
 	type QtQuick.vector2d vector2d
 		is value
 		prop x QtQml.real named
@@ -1065,12 +1073,18 @@ module QtQuick
 		prop rightPadding QtQml.real named reset
 		prop topPadding QtQml.real named reset
 		prop bottomPadding QtQml.real named reset
+		prop populate QtQml.QtObject named pointer
+		prop add QtQml.QtObject named pointer
+		prop move QtQml.QtObject named pointer
 		signal spacingChanged
 		signal paddingChanged
 		signal leftPaddingChanged
 		signal rightPaddingChanged
 		signal topPaddingChanged
 		signal bottomPaddingChanged
+		signal populateChanged
+		signal addChanged
+		signal moveChanged
 	type QtQuick.DoubleValidator DoubleValidator
 		prototype QtQml.QtObject named
 		enum Notation StandardNotation=0 ScientificNotation=1
@@ -1288,6 +1302,9 @@ module QtQuick
 		prop rightPadding QtQml.real named reset
 		prop topPadding QtQml.real named reset
 		prop bottomPadding QtQml.real named reset
+		prop populate QtQml.QtObject named pointer
+		prop add QtQml.QtObject named pointer
+		prop move QtQml.QtObject named pointer
 		signal flowChanged
 		signal layoutDirectionChanged
 		signal effectiveLayoutDirectionChanged
@@ -1297,6 +1314,9 @@ module QtQuick
 		signal rightPaddingChanged
 		signal topPaddingChanged
 		signal bottomPaddingChanged
+		signal populateChanged
+		signal addChanged
+		signal moveChanged
 	type QtQuick.FocusScope FocusScope
 		prototype QtQuick.Item named
 	type QtQuick.Font Font
@@ -1385,6 +1405,9 @@ module QtQuick
 		prop rightPadding QtQml.real named reset
 		prop topPadding QtQml.real named reset
 		prop bottomPadding QtQml.real named reset
+		prop populate QtQml.QtObject named pointer
+		prop add QtQml.QtObject named pointer
+		prop move QtQml.QtObject named pointer
 		signal rowsChanged
 		signal columnsChanged
 		signal spacingChanged
@@ -1401,6 +1424,9 @@ module QtQuick
 		signal rightPaddingChanged
 		signal topPaddingChanged
 		signal bottomPaddingChanged
+		signal populateChanged
+		signal addChanged
+		signal moveChanged
 	type QtQuick.GridView GridView
 		prototype QtQuick.ItemView
 		attached QtQuick.ItemViewAttached
@@ -1480,6 +1506,7 @@ module QtQuick
 		prop childrenRect QtQml.rect named readonly
 		prop baselineOffset QtQml.real named
 		prop antialiasing QtQml.bool named reset
+		prop smooth QtQml.bool named
 		prop anchors QtQuick.Anchors pointer readonly
 		prop left QtQml.var named readonly
 		prop right QtQml.var named readonly
@@ -1516,6 +1543,7 @@ module QtQuick
 		signal childrenRectChanged
 		signal baselineOffsetChanged
 		signal antialiasingChanged
+		signal smoothChanged
 		signal leftChanged
 		signal rightChanged
 		signal topChanged
@@ -2084,6 +2112,9 @@ module QtQuick
 		prop bottomPadding QtQml.real named reset
 		prop layoutDirection Qt::LayoutDirection
 		prop effectiveLayoutDirection Qt::LayoutDirection readonly
+		prop populate QtQml.QtObject named pointer
+		prop add QtQml.QtObject named pointer
+		prop move QtQml.QtObject named pointer
 		signal spacingChanged
 		signal paddingChanged
 		signal leftPaddingChanged
@@ -2092,6 +2123,9 @@ module QtQuick
 		signal bottomPaddingChanged
 		signal layoutDirectionChanged
 		signal effectiveLayoutDirectionChanged
+		signal populateChanged
+		signal addChanged
+		signal moveChanged
 	type QtQuick.SafeArea SafeArea
 		attached QtQuick.SafeAreaAttached
 		is uncreatable
@@ -2371,10 +2405,13 @@ module QtQuick
 		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
 		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
 		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
+		enum TextStyle Normal=0 Outline=1 Raised=2 Sunken=3
 		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3 StyledText=4
 		prop text QtQml.string named
 		prop color QtQuick.color named
 		prop font QtQuick.font named
+		prop style TextStyle
+		prop styleColor QtQuick.color named
 		prop horizontalAlignment HAlignment reset
 		prop effectiveHorizontalAlignment HAlignment readonly
 		prop verticalAlignment VAlignment
@@ -2400,6 +2437,8 @@ module QtQuick
 		signal textChanged
 		signal colorChanged
 		signal fontChanged
+		signal styleChanged
+		signal styleColorChanged
 		signal horizontalAlignmentChanged
 		signal effectiveHorizontalAlignmentChanged
 		signal verticalAlignmentChanged
@@ -2767,7 +2806,6 @@ module QtQuick
 		prop cache QtQml.bool named
 		prop sourceSize QtQml.size named reset
 		prop mirror QtQml.bool named
-		prop smooth QtQml.bool named
 		signal sourceChanged
 		signal statusChanged
 		signal progressChanged
@@ -2775,7 +2813,6 @@ module QtQuick
 		signal cacheChanged
 		signal sourceSizeChanged
 		signal mirrorChanged
-		signal smoothChanged
 	type QtQuick.BorderImageBorder BorderImageBorder
 		is uncreatable
 		prop left QtQml.int named

@@ -22,7 +22,7 @@ mod models;
 mod pass;
 pub mod path_view;
 mod position;
-mod state;
+pub(crate) mod state;
 pub(crate) mod view_transition;
 
 use std::cell::RefCell;
