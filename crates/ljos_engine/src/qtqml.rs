@@ -476,6 +476,8 @@ enum Pending {
     /// `triggeredOnStart`: Qt posts it, so it fires on the next turn.
     Start(ObjectId),
     Destroy(ObjectId),
+    /// A native deadline ([`Engine::call_at`]).
+    Call(Box<dyn FnOnce(&Engine)>),
 }
 
 /// The engine's timer service.
@@ -708,6 +710,7 @@ impl Engine {
                 Pending::Destroy(o) => {
                     self.destroy(o);
                 }
+                Pending::Call(f) => f(self),
                 Pending::Start(o) => {
                     self.inner.timers.borrow_mut().by_start.remove(&o);
                     let running = self.with::<Timer, _>(o, |t| t.running).unwrap_or(false);
@@ -778,6 +781,29 @@ impl Engine {
             _ => {
                 self.destroy(obj);
             }
+        }
+    }
+
+    /// Runs `f` once when the engine's clock reaches `at`, from
+    /// [`Engine::advance_timers`]. For native deadlines that must not poll,
+    /// such as a media clock's next frame or the end of a stream.
+    pub fn call_at(&self, at: Time, f: impl FnOnce(&Engine) + 'static) -> TimerId {
+        let id = {
+            let mut st = self.inner.timers.borrow_mut();
+            let id = st.sched.add_timer(at, TimerKind::Timer);
+            st.pending.insert(id, Pending::Call(Box::new(f)));
+            id
+        };
+        self.wake_host();
+        id
+    }
+
+    /// Drops a [`Engine::call_at`] that has not run yet.
+    pub fn cancel_call(&self, id: TimerId) {
+        let mut st = self.inner.timers.borrow_mut();
+        if matches!(st.pending.get(&id), Some(Pending::Call(_))) {
+            st.pending.remove(&id);
+            st.sched.cancel(id);
         }
     }
 
