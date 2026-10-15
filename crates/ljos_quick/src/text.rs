@@ -27,7 +27,7 @@ use ljos_engine::{
     Atom, Color, Cx, Engine, EngineError, Font, ObjectId, PropIndex, QmlObject, Reset, Url, Value,
     qml_impl,
 };
-use ljos_render::{DisplayListBuilder, kurbo};
+use ljos_render::{Decorations, DisplayListBuilder, kurbo};
 use ljos_text::rich::{DocMetrics, TextFormat, might_be_rich};
 use ljos_text::{
     ElideMode, LayoutParams, Line, LineHeight, Ranged, TextEngine, TextLayout, TextStyle, WrapMode,
@@ -84,7 +84,7 @@ pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
 /// and Return activates the one it is on; the links are children of the
 /// `Text` in the accessibility tree.
 ///
-/// Not implemented: `style` and `fontSizeMode`. `renderType` is kept and
+/// Not implemented: `fontSizeMode`. `renderType` is kept and
 /// not applied; there is one way of drawing text.
 /// `font.capitalization` applies to plain text only; small capitals are a
 /// small letter's capital at seven tenths of the size, as Qt draws them.
@@ -104,6 +104,12 @@ pub struct Text {
     pub color: Color,
     #[qml(notify)]
     pub font: Font,
+    /// `Text.Normal` (0), `Outline`, `Raised` or `Sunken`: a second copy of
+    /// the text in `styleColor`, one pixel off, drawn behind it.
+    #[qml(notify, enumeration = "TextStyle")]
+    pub style: i32,
+    #[qml(notify)]
+    pub style_color: Color,
     /// [`crate::enums::align`] `LEFT`, `RIGHT`, `H_CENTER` or `JUSTIFY`.
     /// Until it is assigned it follows the direction of the text.
     #[qml(
@@ -189,6 +195,13 @@ fn text_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
         .collect(),
     ));
     table.push((
+        "TextStyle",
+        [("Normal", 0), ("Outline", 1), ("Raised", 2), ("Sunken", 3)]
+            .into_iter()
+            .map(|(k, v)| (k, i64::from(v)))
+            .collect(),
+    ));
+    table.push((
         "TextFormat",
         [
             ("PlainText", text_format::PLAIN_TEXT),
@@ -215,6 +228,8 @@ impl Default for Text {
             text: Atom::EMPTY,
             color: Color::BLACK,
             font: Font::default(),
+            style: 0,
+            style_color: Color::BLACK,
             horizontal_alignment: align::LEFT,
             effective_horizontal_alignment: align::LEFT,
             vertical_alignment: align::TOP,
@@ -431,6 +446,11 @@ fn wrap(v: i32) -> WrapMode {
 pub struct TextInputs {
     pub text: Atom,
     pub color: Color,
+    /// `Text.style` and `Text.styleColor`.
+    pub text_style: i32,
+    pub style_color: Color,
+    /// `font.overline`, drawn as a line above each run.
+    pub overline: bool,
     pub style: TextStyle,
     /// [`crate::enums::align`] flags.
     pub h_align: i32,
@@ -555,6 +575,12 @@ impl TextInputs {
             text,
             small_caps,
             color: color(Text::COLOR.index, Color::BLACK),
+            overline: matches!(
+                engine.read(obj, Text::FONT.index),
+                Value::Font(f) if f.overline
+            ),
+            text_style: int(Text::STYLE.index),
+            style_color: color(Text::STYLE_COLOR.index, Color::BLACK),
             link_color: color(Text::LINK_COLOR.index, Color::BLACK),
             format,
             epoch: document.as_ref().map_or(0, |(_, epoch)| *epoch),
@@ -621,6 +647,26 @@ impl TextInputs {
             baseline: l.baseline,
             rtl: l.rtl,
         }
+    }
+}
+
+/// Where the copies of the text in `styleColor` go for a `Text.style`:
+/// `Outline` is one pixel in each direction, `Raised` one pixel down and
+/// `Sunken` one pixel up. Painted before the text, so it covers them.
+pub(crate) fn style_offsets(text_style: i32) -> &'static [kurbo::Vec2] {
+    const OUTLINE: [kurbo::Vec2; 4] = [
+        kurbo::Vec2::new(0.0, -1.0),
+        kurbo::Vec2::new(0.0, 1.0),
+        kurbo::Vec2::new(-1.0, 0.0),
+        kurbo::Vec2::new(1.0, 0.0),
+    ];
+    const RAISED: [kurbo::Vec2; 1] = [kurbo::Vec2::new(0.0, 1.0)];
+    const SUNKEN: [kurbo::Vec2; 1] = [kurbo::Vec2::new(0.0, -1.0)];
+    match text_style {
+        1 => &OUTLINE,
+        2 => &RAISED,
+        3 => &SUNKEN,
+        _ => &[],
     }
 }
 
@@ -709,15 +755,27 @@ pub(crate) fn paint(
     let avail_h = (size.height - pad_t - pad_b).max(0.0);
     let top = pad_t + vertical_offset(t.v_align, avail_h, l.content_height);
     let color = to_rgba(t.color);
+    let shadow = to_rgba(t.style_color);
     for line in &l.lines {
         let left = pad_l + horizontal_offset(t.h_align, l.rtl, avail_w, line);
         for run in &line.runs {
+            for by in style_offsets(t.text_style) {
+                out.glyphs(
+                    Arc::clone(&run.glyphs),
+                    kurbo::Vec2::new(left, top) + *by,
+                    shadow,
+                    Decorations::default(),
+                );
+            }
             out.glyphs(
                 Arc::clone(&run.glyphs),
                 kurbo::Vec2::new(left, top),
                 color,
                 run.decorations,
             );
+            if t.overline {
+                out.fill_rect(run.overline + kurbo::Vec2::new(left, top), color);
+            }
         }
     }
 }

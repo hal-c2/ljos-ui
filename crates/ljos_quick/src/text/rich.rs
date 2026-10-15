@@ -639,6 +639,14 @@ pub(crate) fn paint(
             // A glyph run's bars are painted in its own colour, so lines of
             // another colour are rectangles of their own.
             let own = look.lines == look.color;
+            for by in crate::text::style_offsets(t.text_style) {
+                out.glyphs(
+                    Arc::clone(&run.glyphs),
+                    origin + *by,
+                    to_rgba(t.style_color),
+                    Decorations::default(),
+                );
+            }
             out.glyphs(
                 Arc::clone(&run.glyphs),
                 origin,
