@@ -69,6 +69,16 @@ class Inspector:
             out.insert(0, "TOOL ERROR")
         return "\n".join(out)
 
+    def ended(self):
+        """Whether the app's process is gone, waiting a little for it to finish ending."""
+        for _ in range(20):
+            try:
+                os.kill(self.pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.25)
+        return False
+
     def new_logs(self):
         """The lines logged since the last call, without the paging note."""
         text = self.call("app_logs", {} if self.since is None else {"since": self.since})
@@ -147,9 +157,21 @@ def drive(out, eid):
             ref, name = todo[0]
             seen.add(name or ref)
             clicks += 1
-            res = app.call("app_click", {"target": ref})
-            w(f"== click {name!r} [{ref}]" + (" TOOL ERROR" if res.startswith("TOOL ERROR") else ""),
-              *app.new_logs())
+            try:
+                res = app.call("app_click", {"target": ref})
+                logs = app.new_logs()
+            except (OSError, urllib.error.URLError, ValueError):
+                # A control may end the app (a power button calling Qt.quit()): that is
+                # no hang, so it is told apart from an app that stopped answering.
+                if not app.ended():
+                    raise
+                status = p.wait(timeout=10)
+                w(f"== click {name!r} [{ref}]: the app ended (exit status {status}); see stderr.log")
+                return {"id": eid, "started": True, "clicks": clicks, "said": said,
+                        "why": [f"the app ended after clicking {name or ref!r} (exit status {status})"]}
+            refused = re.search(r'"code":"(\w+)"', res) if res.startswith("TOOL ERROR") else None
+            w(f"== click {name!r} [{ref}]" + (f" TOOL ERROR {refused.group(1) if refused else ''}".rstrip()
+                                                if res.startswith("TOOL ERROR") else ""), *logs)
         if clicks < 3:
             grid_clicks(app, w, d)
         app.call("app_screenshot", {}, os.path.join(d, "end.png"))
@@ -163,12 +185,29 @@ def drive(out, eid):
             time.sleep(1)
 
 
+def stderr_warnings(out, eid):
+    """Ljós's own warnings on stderr (the JS budget's, for one), which the inspector's log does
+    not carry; without the time stamp and the time taken, so repeats count as one line."""
+    try:
+        text = open(os.path.join(out, eid, "stderr.log"), errors="replace").read()
+    except OSError:
+        return []
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    lines = []
+    for l in text.splitlines():
+        m = re.match(r"\S+\s+WARN\s+(ljos\w*::.*)", l)
+        if m:
+            lines.append("stderr: " + re.sub(r"\s*elapsed=\S+", "", m.group(1)).replace(CORPUS, ""))
+    return lines
+
+
 def main():
     out, ids = sys.argv[1], sys.argv[2:]
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "summary.txt"), "w") as s:
         for eid in ids:
             r = drive(out, eid)
+            r.setdefault("said", []).extend(stderr_warnings(out, eid))
             if not r["started"]:
                 head = f"{eid}: did not start"
             else:
