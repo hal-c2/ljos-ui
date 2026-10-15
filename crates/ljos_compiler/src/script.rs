@@ -20,6 +20,9 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
         line.starts_with(".pragma") && line.split_whitespace().any(|word| word == "library")
     });
     let names = declared(&text);
+    // Declared after the names are taken: what a script imports is its
+    // own, not a member of the name it is imported as.
+    let text = with_modules(source, &text);
     // Read and written through, so that a `var` the script changes is what
     // the importer reads next.
     let members: Vec<String> = names
@@ -37,6 +40,37 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
         library,
         source,
     }
+}
+
+/// `text` with each `.import Module as Name` line of `source` (blank in
+/// `text`) declaring `Name`: the module's types, each read as a script
+/// reads a type, by its enums. On the line it was, so lines stay put.
+fn with_modules(source: &str, text: &str) -> String {
+    source
+        .split_inclusive('\n')
+        .zip(text.split_inclusive('\n'))
+        .map(|(line, blank)| {
+            let words: Vec<&str> = line
+                .trim_start()
+                .strip_prefix(".import")
+                .map(|rest| rest.split_whitespace().collect())
+                .unwrap_or_default();
+            let (module, alias) = match words.as_slice() {
+                [module, "as", alias] | [module, _, "as", alias] => (*module, *alias),
+                _ => return blank.to_string(),
+            };
+            let named = |w: &str| {
+                !w.is_empty()
+                    && w.split('.')
+                        .all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'))
+            };
+            if module.starts_with('"') || !named(module) || !named(alias) || alias.contains('.') {
+                return blank.to_string();
+            }
+            let end = if line.ends_with('\n') { "\n" } else { "" };
+            format!("const {alias} = __ljos_module(\"{module}\");{end}")
+        })
+        .collect()
 }
 
 /// The names a script declares at its top level, in order.

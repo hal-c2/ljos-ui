@@ -144,3 +144,47 @@ Feature: JavaScript files imported by name
       Then the property "hidden" of "root" is 5
       And the property "total" of "root" is 0
       And the property "declared" of "root" is 5
+
+  Rule: A script can import a module under a name
+
+    Background:
+      Given the file "status.js":
+        """
+        .pragma library
+        .import QtQuick as QQ
+        function errorStatus() { return QQ.Component.Error }
+        function alignment() { return QQ.Text.AlignHCenter }
+        function unknown() { return typeof QQ.Nothing }
+        """
+      And the file "plain.js":
+        """
+        .import QtQuick as Q
+        function ready() { return Q.Component.Ready }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "status.js" as Status
+        import "plain.js" as Plain
+        Item {
+          objectName: "root"
+          property int error: Status.errorStatus()
+          property int alignment: Status.alignment()
+          property string unknown: Status.unknown()
+          property string alias: typeof Status.QQ
+          property int ready: Plain.ready()
+        }
+        """
+
+    Scenario Outline: The module's types are read through the name
+      Then the property "<property>" of "root" is <value>
+
+      Examples:
+        | property  | value       |
+        | error     | 3           |
+        | alignment | 4           |
+        | unknown   | "undefined" |
+        | ready     | 1           |
+
+    Scenario: The name is the script's own, not a member of it
+      Then the property "alias" of "root" is "undefined"

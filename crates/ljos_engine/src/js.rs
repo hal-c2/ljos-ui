@@ -923,7 +923,36 @@ impl Engine {
                 .and_then(|inner| Engine::from_inner(inner).wall_clock_ms())
                 .map_or(JsValue::Undefined, JsValue::Number))
         });
+        // A type of a module a script imports under a name
+        // (`.import QtQuick as QQ`): its enums, or nothing.
+        let w = Rc::downgrade(&self.inner);
+        let type_of: HostFn = Rc::new(move |_scope, args| {
+            let (Some(inner), [JsValue::String(module), JsValue::String(name)]) =
+                (w.upgrade(), args)
+            else {
+                return Ok(JsValue::Undefined);
+            };
+            let engine = Engine::from_inner(inner);
+            // `QtQuick` sees `QtQml`.
+            Ok(engine
+                .lookup_type(module, name)
+                .or_else(|| engine.lookup_type("QtQml", name))
+                .map_or(JsValue::Undefined, |m| {
+                    crate::incubator::singletons::enum_keys(&m)
+                }))
+        });
         let err = |e: JsFault| EngineError::Js(e.to_string());
+        js.host
+            .set_global_function("__ljos_type", type_of)
+            .map_err(err)?;
+        js.host
+            .eval_script(
+                "modules",
+                "globalThis.__ljos_module = (module) => new Proxy({}, {\n\
+                   get: (_, name) => typeof name === 'string' ? __ljos_type(module, name) : undefined\n\
+                 });",
+            )
+            .map_err(err)?;
         js.host
             .set_global_function("__ljos_wallNow", wall_now)
             .map_err(err)?;
