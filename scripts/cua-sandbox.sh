@@ -6,6 +6,7 @@
 #   cua-sandbox.sh start [<ljos run args>]   (re)launch `ljos run` there
 #   cua-sandbox.sh exec <command…>           run any command there (mise run gallery:run <id> …)
 #   cua-sandbox.sh call <tool> [<json>]      a cua-driver tool, on the app start launched
+#   cua-sandbox.sh env                       print the sandbox's sockets as KEY=VALUE lines
 #   cua-sandbox.sh stop
 #
 # start and exec bring up what is not running. call fills in the app's pid, a shared session
@@ -185,6 +186,23 @@ exec_in() {
   exec "${sandbox_env[@]}" "$@"
 }
 
+# What a program outside the sandbox needs to reach it: the compositor's Wayland and IPC
+# sockets, the X display and the bus. `mise run bench` starts its applications from the
+# user's session (systemd-run needs the user's service manager) and hands them these.
+print_env() {
+  up
+  local wayland sock
+  for wayland in "$run"/wayland-*; do
+    [[ -S $wayland ]] && break
+  done
+  for sock in "$run"/sway-ipc.*.sock; do
+    [[ -S $sock ]] && break
+  done
+  [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
+  printf '%s\n' "WAYLAND_DISPLAY=$wayland" "SWAYSOCK=$sock" "DISPLAY=$(< "$home/display")" \
+    "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run"
+}
+
 # Adds "key":value to the json object unless it has the key or the tool does not take it.
 with() {
   [[ $json == *"\"$1\""* || $schema != *"\"$1\""* ]] && return
@@ -227,5 +245,6 @@ case ${1:-} in
     shift
     exec_in "$@"
     ;;
-  *) die "usage: cua-sandbox.sh start|exec|call|stop" ;;
+  env) print_env ;;
+  *) die "usage: cua-sandbox.sh start|exec|call|env|stop" ;;
 esac
