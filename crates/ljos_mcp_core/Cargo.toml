@@ -27,6 +27,7 @@ http = [
     "dep:bytes",
     "dep:getrandom",
     "dep:constant_time_eq",
+    "dep:libc",
 ]
 # A client in the same process, for tests and for hosts that drive a
 # surface themselves (§19.2: "host the inspector in-process").
@@ -48,6 +49,9 @@ http-body-util = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true }
 constant_time_eq = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "server", "macros", "transport-io", "transport-worker"] }

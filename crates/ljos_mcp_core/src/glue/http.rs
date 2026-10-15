@@ -288,7 +288,7 @@ impl HttpServer {
                                     }
                                     // As a shell reports a process that
                                     // a signal ended.
-                                    std::process::exit(code);
+                                    end(code);
                                 }
                             },
                             None => serving.await,
@@ -521,9 +521,25 @@ impl Ends {
     }
 }
 
+/// Ends the process the way the signal would have, without running exit
+/// handlers or library destructors. They would run on this thread while
+/// the window's thread still draws with what they free: the GL driver's
+/// destructors did that and crashed the process on its way out.
+#[cfg(unix)]
+fn end(code: i32) -> ! {
+    // SAFETY: `_exit` takes every thread down at once and reads nothing
+    // of the process's state.
+    unsafe { libc::_exit(code) }
+}
+
 /// Where there are no such signals the server has nothing to wait for.
 #[cfg(not(unix))]
 struct Ends;
+
+#[cfg(not(unix))]
+fn end(code: i32) -> ! {
+    std::process::exit(code)
+}
 
 #[cfg(not(unix))]
 impl Ends {
