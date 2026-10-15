@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use ljos_mcp_author::{AuthorServer, Project, QmlFrontEnd};
 use ljos_mcp_core::CapSet;
 
+mod bench;
 mod check;
 mod fmt;
 mod i18n;
@@ -61,6 +62,14 @@ enum Command {
     /// Lay QML files out the one way the formatter knows: `--check` says
     /// which files are not laid out, `--diff` shows what would change.
     Fmt(fmt::Fmt),
+    /// Measure QML applications on Ljós and on Qt inside a limit on
+    /// memory and CPU (a systemd scope); writes `report.json` and
+    /// `report.md`. Exits with 2 when an application was not inside the
+    /// limit asked for.
+    Bench(bench::Bench),
+    /// What `ljos bench` starts an application through.
+    #[command(hide = true)]
+    BenchGate(bench::Gate),
 }
 
 fn main() -> ExitCode {
@@ -130,5 +139,11 @@ fn run() -> anyhow::Result<()> {
             0 => Ok(()),
             status => std::process::exit(status),
         },
+        Command::Bench(bench) => match bench.run()? {
+            0 => Ok(()),
+            status => std::process::exit(status),
+        },
+        // Returns only when the application could not be started.
+        Command::BenchGate(gate) => Err(gate.run()),
     }
 }

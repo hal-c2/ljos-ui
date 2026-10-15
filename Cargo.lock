@@ -3432,12 +3432,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_bench"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "wayland-client",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "ljos_cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
  "ljos",
+ "ljos_bench",
  "ljos_compiler",
  "ljos_controls",
  "ljos_engine",
