@@ -121,7 +121,7 @@ impl App {
         self.woke.recv_timeout(time).is_err()
     }
 
-    fn find(&self, name: &str) -> ObjectId {
+    fn try_find(&self, name: &str) -> Option<ObjectId> {
         fn below(e: &Engine, obj: ObjectId, name: &str) -> Option<ObjectId> {
             if e.read_by_name(obj, "objectName").to_js_string().as_ref() == name {
                 return Some(obj);
@@ -129,7 +129,12 @@ impl App {
             e.children(obj).into_iter().find_map(|c| below(e, c, name))
         }
         let root = self.scene.root().expect("something is shown");
-        below(&self.engine, root, name).unwrap_or_else(|| panic!("no object named {name}"))
+        below(&self.engine, root, name)
+    }
+
+    fn find(&self, name: &str) -> ObjectId {
+        self.try_find(name)
+            .unwrap_or_else(|| panic!("no object named {name}"))
     }
 
     fn num(&self, name: &str, property: &str) -> f64 {
@@ -325,7 +330,12 @@ fn a_file_in_a_new_directory_is_seen() {
                 "Knob { objectName: \"knob\" }\n  Rectangle {",
             ),
     );
-    let reports = app.wait();
+    // On a loaded machine the two saves can be two reloads, the first
+    // without the knob; the last one has it.
+    let mut reports = app.wait();
+    while app.try_find("knob").is_none() {
+        reports = app.wait();
+    }
     reloaded(&reports);
     assert_eq!(app.num("knob", "width"), 7.0);
 
