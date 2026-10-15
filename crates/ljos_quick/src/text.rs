@@ -84,7 +84,8 @@ pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
 /// and Return activates the one it is on; the links are children of the
 /// `Text` in the accessibility tree.
 ///
-/// Not implemented: `style`, `fontSizeMode`, padding and `renderType`.
+/// Not implemented: `style` and `fontSizeMode`. `renderType` is kept and
+/// not applied; there is one way of drawing text.
 /// `font.capitalization` applies to plain text only; small capitals are a
 /// small letter's capital at seven tenths of the size, as Qt draws them.
 #[derive(Debug, QmlObject)]
@@ -130,6 +131,9 @@ pub struct Text {
     /// [`crate::enums::line_height_mode`].
     #[qml(notify, enumeration = "LineHeightMode")]
     pub line_height_mode: i32,
+    /// Kept; there is one way of drawing text.
+    #[qml(notify, enumeration = "RenderType")]
+    pub render_type: i32,
     #[qml(notify, readonly)]
     pub content_width: f64,
     #[qml(notify, readonly)]
@@ -174,6 +178,17 @@ pub struct Text {
 fn text_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     let mut table = crate::enums::text_enums();
     table.push((
+        "RenderType",
+        [
+            ("QtRendering", 0),
+            ("NativeRendering", 1),
+            ("CurveRendering", 2),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, i64::from(v)))
+        .collect(),
+    ));
+    table.push((
         "TextFormat",
         [
             ("PlainText", text_format::PLAIN_TEXT),
@@ -209,6 +224,7 @@ impl Default for Text {
             maximum_line_count: i32::MAX,
             line_height: 1.0,
             line_height_mode: line_height_mode::PROPORTIONAL,
+            render_type: 0,
             content_width: 0.0,
             content_height: 0.0,
             // Empty text is still one line.

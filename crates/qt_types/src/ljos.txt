@@ -2079,6 +2079,7 @@ module QtQuick
 		enum TextElideMode ElideLeft=0 ElideRight=1 ElideMiddle=2 ElideNone=3
 		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
 		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
+		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
 		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3 StyledText=4
 		prop text QtQml.string named
 		prop color QtQuick.color named
@@ -2091,6 +2092,7 @@ module QtQuick
 		prop maximumLineCount QtQml.int named reset
 		prop lineHeight QtQml.real named
 		prop lineHeightMode LineHeightMode
+		prop renderType RenderType
 		prop contentWidth QtQml.real named readonly
 		prop contentHeight QtQml.real named readonly
 		prop lineCount QtQml.int named readonly
@@ -2115,6 +2117,7 @@ module QtQuick
 		signal maximumLineCountChanged
 		signal lineHeightChanged
 		signal lineHeightModeChanged
+		signal renderTypeChanged
 		signal contentWidthChanged
 		signal contentHeightChanged
 		signal lineCountChanged
