@@ -25,6 +25,12 @@ pub struct TextEdit {
     /// counted each.
     #[qml(notify, readonly)]
     pub line_count: i32,
+    /// The size the text takes, past the item where wrapping cannot keep
+    /// it inside: what `contentWidth` and `contentHeight` are.
+    #[qml(notify, readonly)]
+    pub painted_width: f64,
+    #[qml(notify, readonly)]
+    pub painted_height: f64,
     /// `PlainText`, `RichText`, `MarkdownText`, or `AutoText`, which reads
     /// a text that looks like markup as rich text.
     #[qml(notify, enumeration = "TextFormat")]
@@ -59,6 +65,8 @@ impl Default for TextEdit {
         Self {
             editor: TextEditor::new(true),
             line_count: 1,
+            painted_width: 0.0,
+            painted_height: 0.0,
             text_format: text_format::PLAIN_TEXT,
             tab_stop_distance: 80.0,
             text_margin: 0.0,

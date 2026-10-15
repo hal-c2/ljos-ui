@@ -510,6 +510,8 @@ pub(crate) fn relayout(
                 TextEdit::LINE_COUNT.index,
                 Value::Int(layout.lines.len() as i32),
             )?;
+            put(TextEdit::PAINTED_WIDTH.index, Value::Real(content_width))?;
+            put(TextEdit::PAINTED_HEIGHT.index, Value::Real(content_height))?;
         } else {
             put(
                 TextInput::DISPLAY_TEXT.index,

@@ -2163,6 +2163,8 @@ module QtQuick
 	type QtQuick.TextEdit TextEdit
 		prototype QtQuick.TextEditorBase
 		prop lineCount QtQml.int named readonly
+		prop paintedWidth QtQml.real named readonly
+		prop paintedHeight QtQml.real named readonly
 		prop textFormat TextFormat
 		prop tabStopDistance QtQml.real named
 		prop textMargin QtQml.real named
@@ -2172,6 +2174,8 @@ module QtQuick
 		prop textDocument QtQml.QtObject named pointer readonly
 		prop cursorSelection QtQuick.TextSelection named pointer readonly
 		signal lineCountChanged
+		signal paintedWidthChanged
+		signal paintedHeightChanged
 		signal textFormatChanged
 		signal tabStopDistanceChanged
 		signal textMarginChanged

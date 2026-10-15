@@ -52,6 +52,7 @@ Feature: TextEdit
         | canUndo             | false     |
         | canRedo             | false     |
         | contentWidth        | 0         |
+        | paintedWidth        | 0         |
         | implicitWidth       | 0         |
         | padding             | 0         |
         | cursorDelegate      | null      |
@@ -83,12 +84,20 @@ Feature: TextEdit
         | cursorPosition         | 0      |
         | contentWidth           | 105.75 |
         | contentHeight          | 32     |
+        | paintedWidth           | 105.75 |
+        | paintedHeight          | 32     |
         | implicitWidth          | 105.75 |
         | implicitHeight         | 32     |
         | cursorRectangle.x      | 0      |
         | cursorRectangle.y      | 0      |
         | cursorRectangle.width  | 1      |
         | cursorRectangle.height | 16     |
+
+    @api-QtQuick.TextEdit.paintedWidth @api-QtQuick.TextEdit.paintedHeight
+    Scenario: The painted size follows the text
+      When the property "text" of "edit" is set to "hello brave world"
+      Then the property "paintedWidth" of "edit" is 105.75
+      And the property "paintedHeight" of "edit" is 16
 
     Scenario Outline: The cursor at position <position> is at <x>, <y>
       When the property "cursorPosition" of "edit" is set to <position>
