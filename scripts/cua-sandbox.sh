@@ -104,6 +104,23 @@ start_sway() {
   stop_one registry
   mkdir -p "$run" && chmod 700 "$run"
   rm -f "$home/display" "$home/bus" "$home/sway.raw"
+  # The stock session bus listens in /tmp; this one's socket goes with the sandbox's others.
+  cat > "$home/bus.config" << EOF
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:dir=$run</listen>
+  <auth>EXTERNAL</auth>
+  <standard_session_servicedirs/>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
   cat > "$home/sway.config" << EOF
 output HEADLESS-1 resolution 1600x1000
 default_border none
@@ -115,7 +132,7 @@ EOF
   # shellcheck disable=SC2016 # expanded by the sandbox's shell
   (cd "$home" && exec env -u WAYLAND_DISPLAY -u DISPLAY -u SWAYSOCK -u DBUS_SESSION_BUS_ADDRESS \
     XDG_RUNTIME_DIR="$run" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
-    setsid dbus-run-session -- sh -c 'echo "$DBUS_SESSION_BUS_ADDRESS" > bus; echo $$ > sway.raw; exec sway -c sway.config' \
+    setsid dbus-run-session --config-file="$home/bus.config" -- sh -c 'echo "$DBUS_SESSION_BUS_ADDRESS" > bus; echo $$ > sway.raw; exec sway -c sway.config' \
     > "$home/sway.log" 2>&1) &
   wait_for 20 "sway (see $home/sway.log)" test -s "$home/sway.raw"
   track "$(< "$home/sway.raw")" sway
