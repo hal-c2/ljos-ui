@@ -123,13 +123,26 @@ impl Default for DoubleValidator {
 #[qml_impl]
 impl DoubleValidator {}
 
+/// A pattern made into something that judges texts.
+enum Matcher {
+    /// A regular pattern: one automaton gives every verdict.
+    Plain(Box<(DFA, Cache)>),
+    /// A pattern with look-around or back-references. `exact` says whether
+    /// a text is acceptable; `relaxed` matches at least what the pattern
+    /// does, so where it rules a text out no more typing helps.
+    Fancy {
+        exact: fancy_regex::Regex,
+        relaxed: Box<(DFA, Cache)>,
+    },
+}
+
 /// A compiled pattern, kept until the pattern changes.
 #[derive(Default)]
 struct Compiled {
     source: String,
     flags: String,
     /// `None`: the pattern does not compile, and everything is accepted.
-    dfa: Option<(DFA, Cache)>,
+    matcher: Option<Matcher>,
 }
 
 impl fmt::Debug for Compiled {
@@ -137,16 +150,19 @@ impl fmt::Debug for Compiled {
         f.debug_struct("Compiled")
             .field("source", &self.source)
             .field("flags", &self.flags)
-            .field("compiles", &self.dfa.is_some())
+            .field("compiles", &self.matcher.is_some())
             .finish()
     }
 }
 
 /// `RegularExpressionValidator` (QtQuick).
 ///
-/// The pattern is compiled by the `regex` crates, which take most of what
-/// JavaScript's syntax has but neither back-references nor look-around: a
-/// pattern with those is reported and accepts everything.
+/// A regular pattern runs as a DFA, which also says when a text can still
+/// become a match. Look-around and back-references need a backtracking
+/// matcher (`fancy-regex`), which says only whether the text matches; the
+/// pattern with those parts loosened runs as a DFA beside it to say when a
+/// text can never match. Where a look-ahead would decide only on text not
+/// yet typed, that leaves the text intermediate.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -342,7 +358,38 @@ pub fn validate_double(
 }
 
 /// Compiles a JavaScript pattern so that it has to match the whole text.
-fn compile(source: &str, flags: &str) -> Option<(DFA, Cache)> {
+fn compile(source: &str, flags: &str) -> Option<Matcher> {
+    if let Some((dfa, cache)) = automaton(source, flags) {
+        return Some(Matcher::Plain(Box::new((dfa, cache))));
+    }
+    let exact = fancy_regex::RegexBuilder::new(&format!(r"\A(?:{source})\z"))
+        .case_insensitive(flags.contains('i'))
+        .multi_line(flags.contains('m'))
+        .dot_matches_new_line(flags.contains('s'))
+        .build()
+        .ok()?;
+    // The flags go inline so that the tree carries them to every part.
+    let inline: String = flags
+        .chars()
+        .filter(|c| matches!(c, 'i' | 'm' | 's'))
+        .collect();
+    let flagged = if inline.is_empty() {
+        format!("(?:{source})")
+    } else {
+        format!("(?{inline})(?:{source})")
+    };
+    let tree = fancy_regex::Expr::parse_tree(&flagged).ok()?;
+    let mut loose = String::new();
+    relax(&tree.expr, &mut loose);
+    let relaxed = automaton(&loose, "")?;
+    Some(Matcher::Fancy {
+        exact,
+        relaxed: Box::new(relaxed),
+    })
+}
+
+/// The anchored automaton of a pattern the `regex` crates take.
+fn automaton(source: &str, flags: &str) -> Option<(DFA, Cache)> {
     let dfa = DFA::builder()
         .configure(DFA::config().match_kind(MatchKind::All))
         .syntax(
@@ -355,6 +402,86 @@ fn compile(source: &str, flags: &str) -> Option<(DFA, Cache)> {
         .ok()?;
     let cache = dfa.create_cache();
     Some((dfa, cache))
+}
+
+/// Writes `expr` as a pattern the automaton takes that matches at least
+/// what `expr` does: an assertion it cannot check always holds, and a
+/// back-reference, like anything else only backtracking can do, matches
+/// any text.
+fn relax(expr: &fancy_regex::Expr, buf: &mut String) {
+    use fancy_regex::{Assertion, Expr};
+    let group = |child: &Expr, buf: &mut String| {
+        buf.push_str("(?:");
+        relax(child, buf);
+        buf.push(')');
+    };
+    match expr {
+        Expr::Concat(children) => {
+            buf.push_str("(?:");
+            for child in children {
+                relax(child, buf);
+            }
+            buf.push(')');
+        }
+        Expr::Alt(children) => {
+            buf.push_str("(?:");
+            for (i, child) in children.iter().enumerate() {
+                if i > 0 {
+                    buf.push('|');
+                }
+                relax(child, buf);
+            }
+            buf.push(')');
+        }
+        Expr::Group(child) => group(child, buf),
+        Expr::AtomicGroup(child) => group(child, buf),
+        Expr::Repeat { child, lo, hi, .. } => {
+            group(child, buf);
+            if *hi == usize::MAX {
+                buf.push_str(&format!("{{{lo},}}"));
+            } else {
+                buf.push_str(&format!("{{{lo},{hi}}}"));
+            }
+        }
+        Expr::Assertion(
+            Assertion::StartText
+            | Assertion::EndText
+            | Assertion::StartLine { .. }
+            | Assertion::EndLine { .. },
+        )
+        | Expr::Empty
+        | Expr::Any { .. }
+        | Expr::Literal { .. }
+        | Expr::Delegate { .. } => {
+            buf.push_str("(?:");
+            expr.to_str(buf, 0);
+            buf.push(')');
+        }
+        Expr::LookAround(..) | Expr::Assertion(_) => {}
+        _ => buf.push_str("(?s:.*)"),
+    }
+}
+
+/// What a matcher says of `text`.
+fn judge(matcher: &mut Matcher, text: &str) -> Option<Validation> {
+    match matcher {
+        Matcher::Plain(plain) => {
+            let (dfa, cache) = &mut **plain;
+            run(dfa, cache, text)
+        }
+        Matcher::Fancy { exact, relaxed } => {
+            // Past its backtracking limit the matcher cannot tell; the text
+            // is then left as it is, neither accepted nor refused.
+            if exact.is_match(text).unwrap_or(false) {
+                return Some(Validation::Acceptable);
+            }
+            let (dfa, cache) = &mut **relaxed;
+            Some(match run(dfa, cache, text)? {
+                Validation::Invalid => Validation::Invalid,
+                _ => Validation::Intermediate,
+            })
+        }
+    }
 }
 
 /// Walks the text through the pattern's automaton: a dead state means no
@@ -407,8 +534,8 @@ fn validate_regex(engine: &Engine, validator: ObjectId, text: &str) -> Validatio
         .as_ref()
         .is_some_and(|c| c.source == source && c.flags == flags)
     {
-        let dfa = compile(&source, &flags);
-        if dfa.is_none() {
+        let matcher = compile(&source, &flags);
+        if matcher.is_none() {
             engine.log(
                 LogLevel::Warning,
                 CATEGORY,
@@ -418,10 +545,14 @@ fn validate_regex(engine: &Engine, validator: ObjectId, text: &str) -> Validatio
                 ),
             );
         }
-        *slot = Some(Compiled { source, flags, dfa });
+        *slot = Some(Compiled {
+            source,
+            flags,
+            matcher,
+        });
     }
-    match slot.as_mut().and_then(|c| c.dfa.as_mut()) {
-        Some((dfa, cache)) => run(dfa, cache, text).unwrap_or(Validation::Acceptable),
+    match slot.as_mut().and_then(|c| c.matcher.as_mut()) {
+        Some(matcher) => judge(matcher, text).unwrap_or(Validation::Acceptable),
         None => Validation::Acceptable,
     }
 }
@@ -521,8 +652,8 @@ mod tests {
     }
 
     fn regex(source: &str, flags: &str, text: &str) -> Validation {
-        let (dfa, mut cache) = compile(source, flags).expect("the pattern compiles");
-        run(&dfa, &mut cache, text).expect("the automaton runs")
+        let mut matcher = compile(source, flags).expect("the pattern compiles");
+        judge(&mut matcher, text).expect("the automaton runs")
     }
 
     #[test]
@@ -541,7 +672,38 @@ mod tests {
     }
 
     #[test]
-    fn a_pattern_the_engine_cannot_compile_is_none() {
-        assert!(compile(r"(a)\1", "").is_none());
+    fn a_regular_pattern_needs_no_backtracking() {
+        assert!(matches!(compile("[a-c]+x", ""), Some(Matcher::Plain(..))));
+        assert!(matches!(
+            compile(r"^(?!\s*$).+", ""),
+            Some(Matcher::Fancy { .. })
+        ));
+    }
+
+    #[test]
+    fn look_around_decides_acceptance_and_typing_can_still_be_refused() {
+        assert_eq!(regex(r"^(?!\s*$).+", "", "a"), Acceptable);
+        assert_eq!(regex(r"^(?!\s*$).+", "", "   "), Intermediate);
+        assert_eq!(regex(r"^(?!\s*$).+", "", " x "), Acceptable);
+        assert_eq!(regex(r"(?=.*[0-9])[a-z0-9]+", "", "ab"), Intermediate);
+        assert_eq!(regex(r"(?=.*[0-9])[a-z0-9]+", "", "ab1"), Acceptable);
+        assert_eq!(regex(r"(?=.*[0-9])[a-z0-9]+", "", "a!"), Invalid);
+        assert_eq!(regex(r"[a-z]+(?<=c)", "", "abc"), Acceptable);
+        assert_eq!(regex(r"[a-z]+(?<=c)", "", "ab"), Intermediate);
+        assert_eq!(regex(r"[a-z]+(?<=c)", "", "ab1"), Invalid);
+        assert_eq!(regex(r"(?=A)ab", "i", "AB"), Acceptable);
+        assert_eq!(regex(r"\bab\b", "", "ab"), Acceptable);
+    }
+
+    #[test]
+    fn a_back_reference_matches_what_its_group_did() {
+        assert_eq!(regex(r"(a+)-\1", "", "aa-aa"), Acceptable);
+        assert_eq!(regex(r"(a+)-\1", "", "aa-a"), Intermediate);
+        assert_eq!(regex(r"(a+)-\1", "", "b"), Invalid);
+    }
+
+    #[test]
+    fn a_pattern_neither_engine_takes_is_none() {
+        assert!(compile(r"(a", "").is_none());
     }
 }

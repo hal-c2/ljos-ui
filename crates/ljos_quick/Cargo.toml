@@ -27,6 +27,8 @@ slotmap.workspace = true
 # RegularExpressionValidator: a DFA says whether a text can still become a
 # match (Intermediate), which a backtracking matcher cannot.
 regex-automata.workspace = true
+# Decides acceptance of a pattern with look-around or back-references.
+fancy-regex.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 zune-jpeg.workspace = true

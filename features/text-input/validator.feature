@@ -239,6 +239,51 @@ Feature: Validators of a TextInput
         | /AB+/i    | abbc  | abb  | true       |
         | /[0-9]{3}/ | 12345 | 123 | true       |
 
+    Scenario Outline: Look-around in the pattern: "<typed>" where <pattern> is allowed
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 300; height: 200
+          TextInput {
+            objectName: "input"; focus: true
+            width: 200
+            validator: RegularExpressionValidator { regularExpression: <pattern> }
+          }
+        }
+        """
+      When the user types "<typed>"
+      Then the property "text" of "input" is "<text>"
+      And the property "acceptableInput" of "input" is <acceptable>
+
+      Examples:
+        | pattern                 | typed | text  | acceptable |
+        | /^(?!\\s*$).+/          | a     | a     | true       |
+        | /^(?!\\s*$).+/          | a b   | a b   | true       |
+        | /(?=.*[0-9])[a-z0-9]+/  | ab    | ab    | false      |
+        | /(?=.*[0-9])[a-z0-9]+/  | ab1   | ab1   | true       |
+        | /[a-z]+(?<!x)/          | abx   | abx   | false      |
+        | /[a-z]+(?<!x)/          | abxy  | abxy  | true       |
+        | /[a-z]+(?<=c)/          | ab    | ab    | false      |
+        | /[a-z]+(?<=c)/          | abc   | abc   | true       |
+        | /(a+)-\\1/              | aa-aa | aa-aa | true       |
+        | /(a+)-\\1/              | aa-a  | aa-a  | false      |
+
+    Scenario: A blank text is not acceptable to a pattern that refuses blanks
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 300; height: 200
+          TextInput {
+            objectName: "input"
+            validator: RegularExpressionValidator { regularExpression: /^(?!\s*$).+/ }
+            text: "   "
+          }
+        }
+        """
+      Then the property "acceptableInput" of "input" is false
+
     Scenario: A validator without a pattern accepts everything
       Given the QML:
         """qml

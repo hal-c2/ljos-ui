@@ -67,6 +67,9 @@ cpal = "0.18.2"
 unicode-segmentation = "1.13"
 # Validators need a partial match (Intermediate), which a backtracking matcher cannot give.
 regex-automata = "0.4.18"
+# Look-around and back-references in a validator's pattern, which the DFA
+# cannot take; it is built on the same regex-automata and regex-syntax.
+fancy-regex = "=0.19.2"
 
 # Localisation
 icu_plurals = "2.3"
