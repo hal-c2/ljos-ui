@@ -317,9 +317,20 @@ pub struct QuickScene {
     /// The engine's picture store, known from the first frame on, so that
     /// `needs_frame` sees decoded pictures waiting to be shown.
     images: Option<Rc<crate::image::ImageStore>>,
+    /// Tells this scene's display scale from another's in the picture
+    /// store, which makes drawings at the largest.
+    id: u64,
     /// The engine's platform, for the same reason: answers of dialogs,
     /// downloads and the settings writer wait there.
     platform: Option<Rc<ljos_platform::Platform>>,
+}
+
+impl Drop for QuickScene {
+    fn drop(&mut self) {
+        if let Some(images) = &self.images {
+            images.forget_scene(self.id);
+        }
+    }
 }
 
 impl std::fmt::Debug for QuickScene {
@@ -368,6 +379,10 @@ impl QuickScene {
             incubation_budget: INCUBATION_BUDGET,
             a11y,
             images: None,
+            id: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             platform: None,
         }
     }
@@ -602,6 +617,7 @@ impl QuickScene {
         // Pictures decoded in the background since the last frame.
         let images = crate::image::ImageStore::of(engine);
         images.deliver(engine);
+        images.show_at(engine, self.id, self.scale_factor);
         self.images = Some(images);
         // Answers of the platform's services (dialogs, downloads).
         let platform = ljos_platform::Platform::of(engine);
@@ -1789,7 +1805,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     let p = match kind {
         Kind::Rectangle => Paint::Rect(RectanglePaint::read(e, obj)),
         Kind::Text => Paint::Text(TextInputs::read(e, obj)),
-        Kind::Image => Paint::Image(crate::image::ImagePaint::read(e, obj)),
+        Kind::Image => Paint::Image(crate::image::ImagePaint::read_on_screen(e, obj)),
         Kind::Editor => Paint::Editor(crate::text_input::EditorPaint::read(e, obj)),
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),

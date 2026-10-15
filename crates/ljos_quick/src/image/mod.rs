@@ -11,6 +11,11 @@
 //! spot unless `asynchronous` is set; then it is read and decoded on the
 //! compute pool and arrives with a later frame. While a new source loads,
 //! the item keeps the size of the old picture.
+//!
+//! An SVG is a drawing rather than pixels: it is made at the size asked
+//! for (stretched when both sides are), and on screen at the display's
+//! scale as well, so that it is sharp there. The item's size, and every
+//! property that says it, stays in logical pixels.
 
 mod border;
 mod decode;
@@ -198,6 +203,12 @@ struct Run {
     reshowing: bool,
     /// The dropped pixels could not be loaded again; do not keep trying.
     lost: bool,
+    /// A drawing made at the display's scale (in thousandths), like `held`:
+    /// for good when `pinned`, otherwise until the next paint takes it.
+    sharp: Option<(u32, ImageHandle)>,
+    /// The scale a drawing is being made at in the background, or failed
+    /// to be made at: it is not asked for again.
+    sharpening: Option<u32>,
     /// A graph node that changes whenever the pixels do, so that the
     /// scene's paint effect and the painted size follow.
     epoch: Option<NodeId>,
@@ -409,6 +420,7 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
             height,
             cover: keeps_shape && (width > 0 || height > 0),
             clip,
+            scale: 0,
         }
     })
 }
@@ -470,6 +482,8 @@ fn reload(e: &Engine, me: ObjectId) {
         r.key = None;
         r.held = None;
         r.reshowing = false;
+        r.sharp = None;
+        r.sharpening = None;
     });
     // The size of the old picture stays until the new one is there.
     e.batch(|| {
@@ -503,6 +517,8 @@ fn finish(e: &Engine, me: ObjectId, key: ImageKey, image: ImageHandle, cache: bo
         r.pinned = !cache;
         r.reshowing = false;
         r.lost = false;
+        r.sharp = None;
+        r.sharpening = None;
         r.requested.is_some()
     }) == Some(true);
     let (w, h) = (f64::from(natural.0), f64::from(natural.1));
@@ -534,6 +550,8 @@ fn unload(e: &Engine, me: ObjectId, status: i32) {
         r.held = None;
         r.reshowing = false;
         r.lost = false;
+        r.sharp = None;
+        r.sharpening = None;
         r.requested.is_some()
     }) == Some(true);
     e.batch(|| {
@@ -611,6 +629,30 @@ pub(crate) fn delivered(
             }
             bump(e, item);
         }
+        Waiter::Sharpen { item } => {
+            if !e.is_alive(item) {
+                return;
+            }
+            let wanted = with_run(e, item, |r| {
+                let same = r.key.as_ref().is_some_and(|k| {
+                    k.url == key.url && k.request.at_scale(1.0) == key.request.at_scale(1.0)
+                });
+                if !same || r.sharpening != Some(key.request.scale) {
+                    return false;
+                }
+                if let Ok(image) = result {
+                    r.sharpening = None;
+                    if r.shown || r.pinned {
+                        r.sharp = Some((key.request.scale, image.clone()));
+                    }
+                }
+                true
+            }) == Some(true);
+            // A drawing that cannot be made sharper is shown as it was.
+            if wanted && result.is_ok() {
+                bump(e, item);
+            }
+        }
         Waiter::Canvas { item } => crate::canvas::image_arrived(e, item, key, result),
     }
 }
@@ -669,6 +711,66 @@ fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     }
 }
 
+/// The pixels of the drawing the item shows made at the display's scale,
+/// when that is not one and they are there or can be made on the spot. An
+/// asynchronous item has them made in the background and gets `None`
+/// meanwhile, to paint the drawing at one device pixel per logical pixel.
+/// Pictures that are not drawings are never made again.
+fn sharp_pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
+    let key = with_run(e, me, |r| r.key.clone()).flatten()?;
+    let store = ImageStore::of(e);
+    if !store.is_vector(&key.url) {
+        return None;
+    }
+    let want = ImageKey {
+        request: key.request.at_scale(store.device_scale(e)),
+        url: key.url,
+    };
+    let scale = want.request.scale;
+    if scale == 0 {
+        return None;
+    }
+    follow(e, me);
+    let (sharp, pinned, asked) = with_run(e, me, |r| {
+        r.shown = true;
+        let sharp = match &r.sharp {
+            Some((s, image)) if *s == scale => Some(image.clone()),
+            _ => None,
+        };
+        if !r.pinned && sharp.is_some() {
+            r.sharp = None;
+        }
+        (sharp, r.pinned, r.sharpening == Some(scale))
+    })?;
+    if sharp.is_some() {
+        return sharp;
+    }
+    if !pinned && let Some(image) = store.cached(&want) {
+        return Some(image);
+    }
+    if asked {
+        return None;
+    }
+    let asynchronous = e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean());
+    if asynchronous {
+        with_run(e, me, |r| r.sharpening = Some(scale));
+        store.request(want, Waiter::Sharpen { item: me });
+        return None;
+    }
+    match store.load_now(&want, !pinned) {
+        Ok(image) => {
+            if pinned {
+                with_run(e, me, |r| r.sharp = Some((scale, image.clone())));
+            }
+            Some(image)
+        }
+        Err(_) => {
+            with_run(e, me, |r| r.sharpening = Some(scale));
+            None
+        }
+    }
+}
+
 /// The scene stopped painting `me` (hidden, scrolled away): pixels kept
 /// for its next paint are let go.
 pub(crate) fn hidden(e: &Engine, me: ObjectId) {
@@ -676,6 +778,7 @@ pub(crate) fn hidden(e: &Engine, me: ObjectId) {
         r.shown = false;
         if !r.pinned {
             r.held = None;
+            r.sharp = None;
         }
     });
 }
@@ -725,6 +828,9 @@ fn update_painted(e: &Engine, me: ObjectId) {
 #[derive(Clone, Debug)]
 pub struct ImagePaint {
     image: Option<ImageHandle>,
+    /// The size of the picture in logical pixels, which is the size of
+    /// `image` unless it is a drawing made at the display's scale.
+    logical: (u32, u32),
     smooth: bool,
     shape: Shape,
 }
@@ -744,10 +850,33 @@ enum Shape {
 }
 
 impl ImagePaint {
-    /// Reads the paint properties and the pixels (tracked).
+    /// Reads the paint properties and the pixels (tracked), one device
+    /// pixel to the logical pixel: what a `Canvas` or an effect draws from.
     pub fn read(e: &Engine, obj: ObjectId) -> Self {
+        Self::read_at(e, obj, false)
+    }
+
+    /// As [`ImagePaint::read`], with a drawing made at the scale of the
+    /// display the scene paints on, so that it is as sharp there as it is
+    /// at one device pixel per logical pixel.
+    pub fn read_on_screen(e: &Engine, obj: ObjectId) -> Self {
+        Self::read_at(e, obj, true)
+    }
+
+    fn read_at(e: &Engine, obj: ObjectId, on_screen: bool) -> Self {
         let flag = |p: PropIndex| e.read(obj, p).to_boolean();
-        let image = pixels(e, obj).map(|image| tint::tinted(e, obj, image));
+        let sharp = (on_screen && is_a::<Image>(e, obj))
+            .then(|| sharp_pixels(e, obj))
+            .flatten();
+        let image = sharp
+            .or_else(|| pixels(e, obj))
+            .map(|image| tint::tinted(e, obj, image));
+        let logical = match &image {
+            Some(image) => with_run(e, obj, |r| r.natural)
+                .filter(|n| n.0 > 0 && n.1 > 0)
+                .unwrap_or((image.width(), image.height())),
+            None => (0, 0),
+        };
         let smooth = flag(ImageBase::SMOOTH.index);
         let mirror = flag(ImageBase::MIRROR.index);
         let shape = if is_a::<BorderImage>(e, obj) {
@@ -777,6 +906,7 @@ impl ImagePaint {
         };
         Self {
             image,
+            logical,
             smooth,
             shape,
         }
@@ -794,11 +924,21 @@ impl ImagePaint {
         }
         match &self.shape {
             Shape::Picture { fit, align, mirror } => {
-                let natural = kurbo::Size::new(f64::from(image.width()), f64::from(image.height()));
+                let natural =
+                    kurbo::Size::new(f64::from(self.logical.0), f64::from(self.logical.1));
                 if let Some(p) = place_image(natural, size, *fit, *align, *mirror) {
+                    // From logical pixels of the picture to its pixels.
+                    let kx = f64::from(image.width()) / natural.width;
+                    let ky = f64::from(image.height()) / natural.height;
+                    let src = kurbo::Rect::new(
+                        p.src.x0 * kx,
+                        p.src.y0 * ky,
+                        p.src.x1 * kx,
+                        p.src.y1 * ky,
+                    );
                     out.push(DrawOp::Image {
                         image: image.clone(),
-                        src: p.src,
+                        src,
                         dst: p.dst,
                         tile: p.tile,
                         mirror: *mirror,

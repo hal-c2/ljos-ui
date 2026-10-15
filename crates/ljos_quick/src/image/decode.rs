@@ -1,5 +1,5 @@
-//! From a URL to pixels: fetching the bytes, decoding PNG and JPEG, and
-//! scaling to the size an item asked for.
+//! From a URL to pixels: fetching the bytes, decoding PNG and JPEG or
+//! drawing an SVG, and scaling to the size an item asked for.
 //!
 //! Everything here is plain data in and out, with no engine in sight, so
 //! the same function runs on the UI thread for a synchronous Image and on
@@ -24,6 +24,41 @@ pub struct Request {
     /// `sourceClipRect` as `[x, y, width, height]`, in pixels of the
     /// scaled picture.
     pub clip: Option<[u32; 4]>,
+    /// Device pixels per logical pixel, in thousandths; 0 for one. Only a
+    /// drawing is made at it, so that it stays sharp on a dense display:
+    /// the pixels of a PNG or JPEG are what they are. Everything else in
+    /// the request, and the size the item reports, stays in logical pixels.
+    pub scale: u32,
+}
+
+impl Request {
+    /// The request at `scale` device pixels per logical pixel.
+    pub fn at_scale(self, scale: f32) -> Self {
+        let milli = (f64::from(scale) * 1000.0).round();
+        let scale = if milli.is_finite() && milli > 0.0 && milli != 1000.0 {
+            milli.min(f64::from(u32::MAX)) as u32
+        } else {
+            0
+        };
+        Self { scale, ..self }
+    }
+
+    /// Device pixels per logical pixel.
+    pub fn scale_factor(&self) -> f64 {
+        if self.scale == 0 {
+            1.0
+        } else {
+            f64::from(self.scale) / 1000.0
+        }
+    }
+}
+
+/// A decoded picture, and whether it was a drawing that can be made again
+/// at another size.
+#[derive(Clone, Debug)]
+pub(crate) struct Loaded {
+    pub image: ImageHandle,
+    pub vector: bool,
 }
 
 /// Why a picture could not be shown. `Display` is the text Qt 6.11 prints
@@ -99,17 +134,159 @@ pub(crate) fn locate(url: &str, registered: Option<Arc<[u8]>>) -> Result<Origin,
 }
 
 /// Reads and decodes `url`, then scales and clips it to `request`.
-pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<ImageHandle, LoadError> {
+pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loaded, LoadError> {
     let read;
     let bytes: &[u8] = match origin {
         Origin::Bytes(b) => b,
         Origin::File(path) => {
-            read = std::fs::read(path).map_err(|_| LoadError::CannotOpen(url.to_owned()))?;
+            read = read_file(path).ok_or_else(|| LoadError::CannotOpen(url.to_owned()))?;
             &read
         }
     };
+    if is_svg(bytes) {
+        let image = draw_svg(url, bytes, request)?;
+        return Ok(Loaded {
+            image,
+            vector: true,
+        });
+    }
     let full = decode(url, bytes)?;
-    fit_request(url, full, request)
+    let (w, h) = requested_size((full.width(), full.height()), request);
+    let scaled = if (w, h) == (full.width(), full.height()) {
+        full
+    } else {
+        full.resized(w, h).ok_or_else(|| too_large(url))?
+    };
+    let image = clip(url, scaled, request.clip, 1.0)?;
+    Ok(Loaded {
+        image,
+        vector: false,
+    })
+}
+
+/// The suffixes of the formats Qt reads, in the order it tries them on a
+/// name that has none (Qt 6.11.2 on qml6: alphabetical, so `jpeg` before
+/// `jpg` before `png`, and `svg` before `svgz`).
+pub(crate) const SUFFIXES: &[&str] = &[
+    "bmp", "gif", "jpeg", "jpg", "pbm", "pgm", "png", "ppm", "svg", "svgz", "xbm", "xpm",
+];
+
+/// Whether `name` (a path or URL) ends in a name without a suffix, which
+/// Qt then looks for with the suffix of each format it reads.
+pub(crate) fn has_no_suffix(name: &str) -> bool {
+    let last = name.rsplit('/').next().unwrap_or(name);
+    !last.is_empty() && !last.contains('.')
+}
+
+/// The bytes of the file at `path` or, when there is none and its name has
+/// no suffix, of the first file there is with one of [`SUFFIXES`] added.
+/// Only files count, and the suffix is matched as written: `logo.SVG` is
+/// not found for `logo`.
+fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
+    if let Ok(bytes) = std::fs::read(path) {
+        return Some(bytes);
+    }
+    if !has_no_suffix(&path.to_string_lossy()) || path.exists() {
+        return None;
+    }
+    SUFFIXES.iter().find_map(|suffix| {
+        let mut name = path.as_os_str().to_owned();
+        name.push(".");
+        name.push(suffix);
+        let candidate = std::path::PathBuf::from(name);
+        candidate
+            .is_file()
+            .then(|| std::fs::read(&candidate).ok())
+            .flatten()
+    })
+}
+
+fn too_large(url: &str) -> LoadError {
+    LoadError::decode(url, "the picture is too large")
+}
+
+/// Whether `bytes` are an SVG drawing, plain or gzipped (SVGZ): told by
+/// what they hold, as Qt tells every format, not by the file's name.
+fn is_svg(bytes: &[u8]) -> bool {
+    const GZIP: &[u8] = &[0x1f, 0x8b];
+    if bytes.starts_with(GZIP) {
+        return true;
+    }
+    let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    // The root element comes after the XML declaration, comments and a
+    // DOCTYPE; a kilobyte of those is plenty to look through.
+    let head = &text[..text.len().min(4096)];
+    let head = String::from_utf8_lossy(head);
+    let mut rest = head.trim_start();
+    loop {
+        if rest.starts_with("<svg") {
+            return true;
+        }
+        let skipped = if let Some(r) = rest.strip_prefix("<?") {
+            r.split_once("?>").map(|(_, r)| r)
+        } else if let Some(r) = rest.strip_prefix("<!--") {
+            r.split_once("-->").map(|(_, r)| r)
+        } else if let Some(r) = rest.strip_prefix("<!") {
+            // A DOCTYPE may hold an internal subset in brackets.
+            match (r.find('['), r.find('>')) {
+                (Some(open), Some(close)) if open < close => r.split_once("]>").map(|(_, r)| r),
+                _ => r.split_once('>').map(|(_, r)| r),
+            }
+        } else {
+            return false;
+        };
+        match skipped {
+            Some(r) => rest = r.trim_start(),
+            None => return false,
+        }
+    }
+}
+
+/// The size, in logical pixels, a drawing of `intrinsic` size is made at
+/// for `request` (Qt 6.11.2, measured on qml6). Unlike a picture, a
+/// drawing is enlarged as readily as it is shrunk, and with both sides
+/// asked and a fill mode that does not keep the shape it is stretched to
+/// exactly them.
+pub fn drawing_size(intrinsic: (f64, f64), request: Request) -> (u32, u32) {
+    let (iw, ih) = intrinsic;
+    let side = |n: f64| n.round().max(0.0) as u32;
+    if iw <= 0.0 || ih <= 0.0 {
+        return (side(iw), side(ih));
+    }
+    let (w, h) = (f64::from(request.width), f64::from(request.height));
+    let scale = match (request.width > 0, request.height > 0) {
+        (false, false) => return (side(iw), side(ih)),
+        (true, false) => w / iw,
+        (false, true) => h / ih,
+        (true, true) if request.cover => (w / iw).max(h / ih),
+        (true, true) => return (request.width, request.height),
+    };
+    (side(iw * scale).max(1), side(ih * scale).max(1))
+}
+
+/// Parses an SVG and draws it at the size `request` asks for, in device
+/// pixels.
+fn draw_svg(url: &str, bytes: &[u8], request: Request) -> Result<ImageHandle, LoadError> {
+    use resvg::{tiny_skia, usvg};
+    // Qt's words for a drawing it cannot read, whatever the reason.
+    let unreadable = || LoadError::decode(url, "Unable to read image data");
+    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(|_| unreadable())?;
+    let size = tree.size();
+    let intrinsic = (f64::from(size.width()), f64::from(size.height()));
+    let (lw, lh) = drawing_size(intrinsic, request);
+    let scale = request.scale_factor();
+    let device = |n: u32| (f64::from(n) * scale).round().max(1.0) as u32;
+    let (pw, ph) = (device(lw), device(lh));
+    let mut pixmap = tiny_skia::Pixmap::new(pw, ph).ok_or_else(|| too_large(url))?;
+    let transform = tiny_skia::Transform::from_scale(
+        (f64::from(pw) / intrinsic.0) as f32,
+        (f64::from(ph) / intrinsic.1) as f32,
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    // tiny-skia keeps premultiplied RGBA, as an `ImageHandle` does.
+    let image = ImageHandle::from_premultiplied(pw, ph, pixmap.take())
+        .map_err(|err| LoadError::decode(url, err.to_string()))?;
+    clip(url, image, request.clip, scale)
 }
 
 /// Decodes a PNG or JPEG, told apart by their first bytes as Qt does (the
@@ -200,18 +377,18 @@ pub fn requested_size(natural: (u32, u32), request: Request) -> (u32, u32) {
     (side(iw), side(ih))
 }
 
-/// Scales `full` to the requested size, then cuts out the requested part.
-fn fit_request(url: &str, full: ImageHandle, request: Request) -> Result<ImageHandle, LoadError> {
-    let too_large = || LoadError::decode(url, "the picture is too large");
-    let (w, h) = requested_size((full.width(), full.height()), request);
-    let scaled = if (w, h) == (full.width(), full.height()) {
-        full
-    } else {
-        full.resized(w, h).ok_or_else(too_large)?
-    };
-    let Some([x, y, cw, ch]) = request.clip else {
+/// Cuts the part `clip` names, in logical pixels, out of `scaled`, which
+/// has `scale` device pixels to the logical one.
+fn clip(
+    url: &str,
+    scaled: ImageHandle,
+    clip: Option<[u32; 4]>,
+    scale: f64,
+) -> Result<ImageHandle, LoadError> {
+    let Some(clip) = clip else {
         return Ok(scaled);
     };
+    let [x, y, cw, ch] = clip.map(|n| (f64::from(n) * scale).round() as u32);
     // The part of the clip that lies on the picture.
     let x = x.min(scaled.width());
     let y = y.min(scaled.height());
@@ -220,7 +397,7 @@ fn fit_request(url: &str, full: ImageHandle, request: Request) -> Result<ImageHa
     if cw == 0 || ch == 0 || (cw, ch) == (scaled.width(), scaled.height()) {
         return Ok(scaled);
     }
-    scaled.cropped(x, y, cw, ch).ok_or_else(too_large)
+    scaled.cropped(x, y, cw, ch).ok_or_else(|| too_large(url))
 }
 
 /// The bytes of a `data:` URL (RFC 2397): `data:[<type>][;base64],<data>`.
@@ -298,7 +475,87 @@ mod tests {
             height,
             cover,
             clip: None,
+            scale: 0,
         }
+    }
+
+    const WIDE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+        <rect width="40" height="20" fill="#ff0000"/>
+        <rect width="20" height="20" fill="#0000ff"/>
+    </svg>"##;
+
+    fn draw(bytes: &[u8], request: Request) -> Result<ImageHandle, LoadError> {
+        let loaded = load("file:///wide.svg", &Origin::Bytes(bytes.into()), request)?;
+        assert!(loaded.vector);
+        Ok(loaded.image)
+    }
+
+    #[test]
+    fn svg_is_known_by_its_content() {
+        assert!(is_svg(WIDE));
+        assert!(is_svg(
+            b"\xef\xbb\xbf<?xml version=\"1.0\"?>\n<!-- c -->\n<svg/>"
+        ));
+        assert!(is_svg(
+            b"<!DOCTYPE svg [<!ENTITY a \"b\">]><svg xmlns=\"http://www.w3.org/2000/svg\"/>"
+        ));
+        assert!(!is_svg(b"Dear reader,"));
+        assert!(!is_svg(b"<html><svg/></html>"));
+        assert!(!is_svg(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn a_drawing_is_made_at_the_size_asked_for() {
+        let natural = (40.0, 20.0);
+        assert_eq!(drawing_size(natural, ask(0, 0, false)), (40, 20));
+        assert_eq!(drawing_size(natural, ask(80, 0, false)), (80, 40));
+        assert_eq!(drawing_size(natural, ask(0, 5, false)), (10, 5));
+        assert_eq!(drawing_size(natural, ask(80, 80, false)), (80, 80));
+        assert_eq!(drawing_size(natural, ask(80, 80, true)), (160, 80));
+        assert_eq!(drawing_size(natural, ask(20, 30, true)), (60, 30));
+    }
+
+    #[test]
+    fn a_drawing_is_drawn_stretched_and_at_device_scale() {
+        let image = draw(WIDE, ask(80, 80, false)).unwrap();
+        assert_eq!((image.width(), image.height()), (80, 80));
+        assert_eq!(image.pixel(5, 75), [0, 0, 255, 255]);
+        assert_eq!(image.pixel(45, 5), [255, 0, 0, 255]);
+        let sharp = draw(WIDE, Request::default().at_scale(2.0)).unwrap();
+        assert_eq!((sharp.width(), sharp.height()), (80, 40));
+        assert_eq!(sharp.pixel(39, 20), [0, 0, 255, 255]);
+        assert_eq!(sharp.pixel(41, 20), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_drawings_clip_is_in_logical_pixels() {
+        let request = Request {
+            clip: Some([10, 0, 20, 10]),
+            ..ask(80, 0, false)
+        };
+        let image = draw(WIDE, request).unwrap();
+        assert_eq!((image.width(), image.height()), (20, 10));
+        let sharp = draw(WIDE, request.at_scale(1.5)).unwrap();
+        assert_eq!((sharp.width(), sharp.height()), (30, 15));
+    }
+
+    #[test]
+    fn a_broken_drawing_cannot_be_read() {
+        let err = draw(
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"><rect",
+            Request::default(),
+        );
+        assert_eq!(
+            err.unwrap_err().to_string(),
+            "Error decoding: file:///wide.svg: Unable to read image data"
+        );
+    }
+
+    #[test]
+    fn one_device_pixel_per_logical_pixel_is_no_scale() {
+        assert_eq!(Request::default().at_scale(1.0).scale, 0);
+        assert_eq!(Request::default().at_scale(2.0).scale, 2000);
+        assert_eq!(Request::default().at_scale(f32::NAN).scale, 0);
     }
 
     #[test]

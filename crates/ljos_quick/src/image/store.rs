@@ -13,13 +13,14 @@
 //! its picture has been dropped, and decodes again when it is shown.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-use ljos_engine::{Engine, ObjectId};
+use ljos_engine::{Engine, ObjectId, Value};
+use ljos_reactive::NodeId;
 use ljos_render::ImageHandle;
 use ljos_runtime::{
     ByteLru, ComputePool, DeviceClass, DrainBudget, Evictable, Lane, MemoryPressure, SystemClock,
@@ -58,6 +59,9 @@ pub(crate) enum Waiter {
     /// A Ready item whose pixels had been dropped and that is shown again:
     /// it only needs to paint.
     Reshow { item: ObjectId },
+    /// A Ready item showing a drawing that was made again at the display's
+    /// scale: it paints the sharper pixels.
+    Sharpen { item: ObjectId },
     /// A `Canvas` that called `loadImage`: it says `imageLoaded`.
     Canvas { item: ObjectId },
 }
@@ -74,7 +78,7 @@ fn run_once(slot: &Slot) {
 
 struct Done {
     key: ImageKey,
-    result: Result<ImageHandle, LoadError>,
+    result: Result<decode::Loaded, LoadError>,
 }
 
 /// What pool threads share with the store.
@@ -120,6 +124,14 @@ struct State {
     in_flight: usize,
     decodes: u64,
     held: bool,
+    /// The URLs whose last decode was a drawing, which is made again at
+    /// each display scale. Outlives the cache, which may drop the pixels.
+    vectors: HashSet<String>,
+    /// The scale each scene of the engine paints at, by scene.
+    scales: HashMap<u64, f32>,
+    /// A graph node holding the largest of `scales`, read by the paint of
+    /// an item that shows a drawing, so that it follows a change.
+    scale_node: Option<NodeId>,
 }
 
 /// The pictures of one engine. See the module documentation.
@@ -159,6 +171,9 @@ impl Default for ImageStore {
                 in_flight: 0,
                 decodes: 0,
                 held: false,
+                vectors: HashSet::new(),
+                scales: HashMap::new(),
+                scale_node: None,
             }),
             inbox,
             tx,
@@ -333,6 +348,75 @@ impl ImageStore {
         dropped.iter().map(|(_, image)| image.byte_len()).sum()
     }
 
+    /// Says that `scene` paints at `scale` device pixels per logical pixel.
+    /// Drawings are made at the largest scale any scene paints at; a change
+    /// makes the items that show them paint again.
+    pub fn show_at(&self, engine: &Engine, scene: u64, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let (node, largest) = {
+            let mut s = self.state.borrow_mut();
+            if s.scales.get(&scene) == Some(&scale) {
+                return;
+            }
+            s.scales.insert(scene, scale);
+            (s.scale_node, largest_scale(&s.scales))
+        };
+        if let Some(node) = node
+            && engine.graph().get_untracked(node).to_number() != f64::from(largest)
+        {
+            engine.graph().set(node, Value::Real(f64::from(largest)));
+        }
+    }
+
+    /// `scene` is gone: its scale no longer counts.
+    pub fn forget_scene(&self, scene: u64) {
+        self.state.borrow_mut().scales.remove(&scene);
+    }
+
+    /// The scale drawings are made at (tracked: a paint that reads it runs
+    /// again when it changes).
+    pub(crate) fn device_scale(&self, engine: &Engine) -> f32 {
+        let node = {
+            let s = self.state.borrow();
+            s.scale_node.ok_or_else(|| largest_scale(&s.scales))
+        };
+        let node = match node {
+            Ok(node) => node,
+            Err(largest) => {
+                let root = engine.graph().root();
+                let Ok(node) = engine
+                    .graph()
+                    .property(root, Value::Real(f64::from(largest)))
+                else {
+                    return largest;
+                };
+                self.state.borrow_mut().scale_node = Some(node);
+                node
+            }
+        };
+        engine.graph().get(node).to_number() as f32
+    }
+
+    /// Whether the last decode of `url` was a drawing.
+    pub(crate) fn is_vector(&self, url: &str) -> bool {
+        self.state.borrow().vectors.contains(url)
+    }
+
+    fn note(&self, url: &str, vector: bool) {
+        let mut s = self.state.borrow_mut();
+        if vector {
+            if !s.vectors.contains(url) {
+                s.vectors.insert(url.to_owned());
+            }
+        } else {
+            s.vectors.remove(url);
+        }
+    }
+
     /// The cached picture for `key`, which becomes the most recently used.
     pub(crate) fn cached(&self, key: &ImageKey) -> Option<ImageHandle> {
         self.state.borrow_mut().cache.get(key).cloned()
@@ -345,7 +429,8 @@ impl ImageStore {
             return Ok(image);
         }
         let origin = self.locate(key)?;
-        let image = decode::load(&key.url, &origin, key.request)?;
+        let decode::Loaded { image, vector } = decode::load(&key.url, &origin, key.request)?;
+        self.note(&key.url, vector);
         self.state.borrow_mut().decodes += 1;
         if cache {
             self.keep(key, &image);
@@ -384,13 +469,27 @@ impl ImageStore {
             waiters.retain(|w| match w {
                 Waiter::Load { item: i, .. }
                 | Waiter::Reshow { item: i }
+                | Waiter::Sharpen { item: i }
                 | Waiter::Canvas { item: i } => *i != item,
             });
         }
     }
 
     fn locate(&self, key: &ImageKey) -> Result<Origin, LoadError> {
-        let registered = self.state.borrow().resources.get(&key.url).cloned();
+        let registered = {
+            let s = self.state.borrow();
+            s.resources.get(&key.url).cloned().or_else(|| {
+                // A registered name without a suffix is looked for as a
+                // file's would be.
+                decode::has_no_suffix(&key.url)
+                    .then(|| {
+                        decode::SUFFIXES
+                            .iter()
+                            .find_map(|x| s.resources.get(&format!("{}.{x}", key.url)).cloned())
+                    })
+                    .flatten()
+            })
+        };
         decode::locate(&key.url, registered)
     }
 
@@ -468,9 +567,13 @@ impl ImageStore {
             if let Some(next) = next {
                 self.start(next);
             }
+            if let Ok(loaded) = &result {
+                self.note(&key.url, loaded.vector);
+            }
+            let result = result.map(|loaded| loaded.image);
             let caches = waiters.iter().any(|w| match w {
                 Waiter::Load { cache, .. } => *cache,
-                Waiter::Reshow { .. } | Waiter::Canvas { .. } => true,
+                Waiter::Reshow { .. } | Waiter::Sharpen { .. } | Waiter::Canvas { .. } => true,
             });
             // Kept even when every waiter has gone: the work is done, and
             // the picture is the first to go if room is needed.
@@ -499,4 +602,8 @@ impl Evictable for ImageStore {
     fn evict(&mut self, level: MemoryPressure) -> usize {
         self.trim(level)
     }
+}
+
+fn largest_scale(scales: &HashMap<u64, f32>) -> f32 {
+    scales.values().copied().fold(1.0, f32::max)
 }

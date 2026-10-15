@@ -29,6 +29,7 @@ regex-automata.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 zune-jpeg.workspace = true
+resvg.workspace = true
 
 [dev-dependencies]
 # Tests compile QML strings; the crate itself never links the parser.

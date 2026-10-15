@@ -46,6 +46,9 @@ skrifa = "0.44"
 
 # Images
 zune-jpeg = "0.5.15"
+# SVG: parsed by usvg and drawn by resvg (linebender), pure Rust. Without
+# text, so it brings no second font stack, and without its own raster decoders.
+resvg = { version = "0.48.1", default-features = false, features = ["svgz"] }
 # Test fixtures only: nothing shipped encodes JPEG.
 jpeg-encoder = "0.7.1"
 

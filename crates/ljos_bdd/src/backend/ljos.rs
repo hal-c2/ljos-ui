@@ -179,6 +179,8 @@ pub struct LjosBackend {
     catalogs: Vec<ljos_i18n::Catalog>,
     /// Picture files given before anything was loaded, by URL.
     resources: Vec<(String, Vec<u8>)>,
+    /// Text files given before anything was loaded, for the picture store.
+    image_texts: Vec<(String, Vec<u8>)>,
     /// Whether the scenario changes files while it runs.
     watching: bool,
     /// What the system prefers, said before anything was loaded.
@@ -931,6 +933,9 @@ impl Backend for LjosBackend {
                 ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
                 images.register_resource(url, bytes);
             }
+            for (url, bytes) in self.image_texts.drain(..) {
+                images.register_resource(url, bytes);
+            }
             self.live = Some(live);
             // An inspector connected before anything was loaded reads
             // this application's log from its first message.
@@ -1112,7 +1117,17 @@ impl Backend for LjosBackend {
     }
 
     fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
-        self.platform.write(name, text)
+        self.platform.write(name, text)?;
+        // A text file may be a picture too (an SVG). Only the picture store
+        // sees this copy: the platform's files stay writable.
+        let url = format!("file:///{name}");
+        match self.live.as_ref() {
+            Some(live) => {
+                ljos_quick::ImageStore::of(&live.engine).register_resource(url, text.as_bytes())
+            }
+            None => self.image_texts.push((url, text.as_bytes().to_vec())),
+        }
+        Ok(())
     }
 
     fn user_file(&mut self, path: &str, text: &str) -> Result<()> {

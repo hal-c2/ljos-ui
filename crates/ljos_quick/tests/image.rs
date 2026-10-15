@@ -1110,3 +1110,183 @@ Item {
         "0,1,2,3,4,5,6|1,2,4,32,64,128|0,1,2,3,0,3|0,1,2"
     );
 }
+
+// ---------------------------------------------------------------- drawings
+
+/// A 40×20 drawing: blue on the left half, red on the right.
+const WIDE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+  <rect width="40" height="20" fill="#ff0000"/>
+  <rect width="20" height="20" fill="#0000ff"/>
+</svg>"##;
+
+/// The `src` and `dst` of the first image op of `item`.
+fn placed(s: &QuickScene, item: ObjectId) -> (kurbo::Rect, kurbo::Rect) {
+    ops(s, item)
+        .into_iter()
+        .find_map(|op| match op {
+            DrawOp::Image { src, dst, .. } => Some((src, dst)),
+            _ => None,
+        })
+        .expect("an image op")
+}
+
+#[test]
+fn a_drawing_on_disk_is_found_without_its_suffix() {
+    let dir = std::env::temp_dir().join(format!("ljos-svg-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("logo.svg"), WIDE_SVG).unwrap();
+    std::fs::write(dir.join("logo.SVGZ"), "not looked at").unwrap();
+    // A directory is no picture, whatever its name.
+    std::fs::create_dir_all(dir.join("logo.png")).unwrap();
+    let e = engine();
+    let logo = make::<ljos_quick::Image>(&e, None);
+    let path = dir.join("logo").to_string_lossy().into_owned();
+    set(&e, logo, "source", Value::Url(path.as_str().into()));
+    assert_eq!(status(&e, logo), image_status::READY);
+    assert_eq!(implicit(&e, logo), (40.0, 20.0));
+    let missing = make::<ljos_quick::Image>(&e, None);
+    let gone = dir.join("missing").to_string_lossy().into_owned();
+    set(&e, missing, "source", Value::Url(gone.as_str().into()));
+    assert_eq!(status(&e, missing), image_status::ERROR);
+    assert_eq!(
+        warnings(&e)
+            .last()
+            .map(|w| w.ends_with(&format!("Cannot open: {gone}"))),
+        Some(true)
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_drawing_is_made_at_the_display_scale_and_placed_in_logical_pixels() {
+    let e = engine();
+    let store = ImageStore::of(&e);
+    store.register_resource("file:///wide.svg", WIDE_SVG.as_bytes());
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; source: "wide.svg" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    frame(&mut s, &e);
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (40, 20));
+
+    s.set_scale_factor(2.0);
+    frame(&mut s, &e);
+    let sharp = painted(&s, picture).unwrap();
+    assert_eq!((sharp.width(), sharp.height()), (80, 40));
+    assert_eq!(sharp.pixel(39, 20), BLUE);
+    assert_eq!(sharp.pixel(40, 20), RED);
+    // The item still says what it did, and paints over the same area.
+    assert_eq!(implicit(&e, picture), (40.0, 20.0));
+    assert_eq!(source_size(&e, picture), (40.0, 20.0));
+    let (src, dst) = placed(&s, picture);
+    assert_eq!(src, kurbo::Rect::new(0.0, 0.0, 80.0, 40.0));
+    assert_eq!(dst, kurbo::Rect::new(0.0, 0.0, 40.0, 20.0));
+
+    // Painting again for another reason draws nothing anew.
+    let decodes = store.decodes();
+    set(&e, picture, "mirror", Value::Bool(true));
+    frame(&mut s, &e);
+    assert_eq!(painted(&s, picture).unwrap().id(), sharp.id());
+    assert_eq!(store.decodes(), decodes);
+    // Back at one, the first drawing is still in the cache.
+    s.set_scale_factor(1.0);
+    frame(&mut s, &e);
+    assert_eq!(painted(&s, picture).unwrap().id(), image.id());
+    assert_eq!(store.decodes(), decodes);
+}
+
+#[test]
+fn a_picture_is_not_made_again_at_the_display_scale() {
+    let (e, store) = pictures();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; source: "red.png" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    s.set_scale_factor(2.0);
+    frame(&mut s, &e);
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (40, 20));
+    assert_eq!((store.decodes(), store.len()), (1, 1));
+}
+
+#[test]
+fn an_asynchronous_drawing_is_made_sharper_in_the_background() {
+    let e = engine();
+    let store = ImageStore::of(&e);
+    store.register_resource("file:///wide.svg", WIDE_SVG.as_bytes());
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; asynchronous: true; source: "wide.svg" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    store.finish(&e);
+    frame(&mut s, &e);
+    store.set_held(true);
+    s.set_scale_factor(2.0);
+    frame(&mut s, &e);
+    // Meanwhile the drawing at one device pixel per logical pixel.
+    assert_eq!(painted(&s, picture).unwrap().width(), 40);
+    assert_eq!(store.pending(), 1);
+    set(&e, picture, "mirror", Value::Bool(true));
+    frame(&mut s, &e);
+    assert_eq!(store.pending(), 1, "asked once");
+    store.finish(&e);
+    frame(&mut s, &e);
+    assert_eq!(painted(&s, picture).unwrap().width(), 80);
+    assert_eq!(
+        placed(&s, picture).1,
+        kurbo::Rect::new(0.0, 0.0, 40.0, 20.0)
+    );
+}
+
+#[test]
+fn a_drawing_that_does_not_cache_keeps_its_sharp_pixels() {
+    let e = engine();
+    let store = ImageStore::of(&e);
+    store.register_resource("file:///wide.svg", WIDE_SVG.as_bytes());
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; cache: false; source: "wide.svg" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    s.set_scale_factor(1.5);
+    frame(&mut s, &e);
+    let sharp = painted(&s, picture).unwrap();
+    assert_eq!((sharp.width(), sharp.height()), (60, 30));
+    let decodes = store.decodes();
+    set(&e, picture, "mirror", Value::Bool(true));
+    frame(&mut s, &e);
+    assert_eq!(painted(&s, picture).unwrap().id(), sharp.id());
+    assert_eq!(store.decodes(), decodes);
+}
