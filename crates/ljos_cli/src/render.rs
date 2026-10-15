@@ -21,7 +21,7 @@ use anyhow::Context as _;
 use clap::Args;
 use ljos::dev::{EngineOracle, EngineType};
 use ljos_compiler::{Severity, compile_project_with};
-use ljos_engine::{Engine, LogLevel, MapSource};
+use ljos_engine::{Engine, LogLevel, MapSource, QmlType};
 use ljos_quick::QuickScene;
 use ljos_render::{FrameView, RasterConfig, Rgba, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
@@ -208,7 +208,20 @@ impl Render {
         };
         run.settle()?;
         run.advance(self.settle)?;
-        let png = run.picture()?;
+        // The reference picture of a window is of its items: the window's
+        // own colour is not in it, and where no item paints the picture is
+        // transparent (corpus/harness/reference.qml). A window is a
+        // Rectangle underneath here, so its fill is taken away before the
+        // picture is.
+        let window = engine
+            .meta_of(root)
+            .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()));
+        if window {
+            engine
+                .write_by_name(root, "color", ljos_engine::Value::from("transparent"))
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        let png = run.picture(window)?;
         notes.said = said.0.borrow().clone();
         if let Some(parent) = self.out.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
@@ -353,12 +366,14 @@ impl Run<'_> {
         anyhow::bail!("timers fired more than {MAX_TIMER_STEPS} times in {ms} ms")
     }
 
-    /// A PNG of the scene on white, which is what the reference window is.
-    fn picture(&mut self) -> anyhow::Result<Vec<u8>> {
+    /// A PNG of the scene: on white, which is what the reference window
+    /// is, or on nothing for a window of the example's own.
+    fn picture(&mut self, window: bool) -> anyhow::Result<Vec<u8>> {
         self.settle()?;
         let out = self.scene.frame(self.engine, self.clock.now());
+        let backdrop = if window { 0.0 } else { 1.0 };
         let mut r = VelloCpuReference::new(RasterConfig {
-            background: Rgba::from_straight(1.0, 1.0, 1.0, 1.0),
+            background: Rgba::from_straight(backdrop, backdrop, backdrop, backdrop),
             ..RasterConfig::default()
         });
         let image = r
@@ -438,6 +453,20 @@ mod tests {
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
         let at = |x: usize, y: usize| &image.data[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
         assert_eq!(at(35, 25), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_window_is_pictured_without_its_colour() {
+        let dir = project(&[(
+            "Main.qml",
+            "import QtQuick\nWindow {\n  visible: true\n  color: \"blue\"\n  Rectangle { width: 20; height: 10; color: \"red\" }\n}\n",
+        )]);
+        let (result, _, out) = render(dir.path(), "Main.qml");
+        result.unwrap();
+        let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
+        let at = |x: usize, y: usize| &image.data[(y * 40 + x) * 4..(y * 40 + x) * 4 + 4];
+        assert_eq!(at(5, 5), [255, 0, 0, 255]);
+        assert_eq!(at(30, 20)[3], 0);
     }
 
     #[test]
