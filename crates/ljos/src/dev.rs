@@ -101,6 +101,9 @@ pub struct EngineOracle {
 struct NativeType {
     module: String,
     meta: MetaRef,
+    /// Registered as one object ([`Engine::register_singleton`]): a file
+    /// reads its members, it does not make one.
+    singleton: bool,
 }
 
 impl std::fmt::Debug for EngineOracle {
@@ -125,7 +128,12 @@ impl EngineOracle {
         let mut natives: Vec<NativeType> = Vec::new();
         let add = |natives: &mut Vec<NativeType>, module: String, meta: MetaRef| {
             if !natives.iter().any(|n| MetaRef::ptr_eq(&n.meta, &meta)) {
-                natives.push(NativeType { module, meta });
+                let singleton = engine.is_native_singleton(&module, meta.name.as_str());
+                natives.push(NativeType {
+                    module,
+                    meta,
+                    singleton,
+                });
             }
         };
         for module in engine.type_dump().modules {
@@ -221,10 +229,7 @@ impl TypeOracle for EngineOracle {
     fn is_singleton(&self, ty: EngineType) -> bool {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.is_singleton(ty),
-            // A type description does not say it is one object; a backend
-            // singleton is read as a type the file may not name bare,
-            // which the compile of its example will say.
-            EngineType::Native(_) => false,
+            EngineType::Native(i) => self.natives[i as usize].singleton,
         }
     }
 
