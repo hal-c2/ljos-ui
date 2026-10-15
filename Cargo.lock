@@ -3551,6 +3551,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_mediaplayer"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+]
+
+[[package]]
 name = "ljos_example_qtjennydemo"
 version = "0.0.0"
 dependencies = [
@@ -3566,6 +3574,7 @@ dependencies = [
  "ljos",
  "ljos_example_colorpalette",
  "ljos_example_focusscopewidget",
+ "ljos_example_mediaplayer",
  "ljos_example_qtjennydemo",
  "ljos_xml",
 ]

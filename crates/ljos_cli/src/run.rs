@@ -16,8 +16,15 @@ use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, S
 
 #[derive(Args)]
 pub struct Run {
-    /// The entry file, such as `ui/Main.qml`. Its directory is the project.
+    /// The entry file, such as `ui/Main.qml`. Its directory is the project,
+    /// unless `--project` names another.
     file: PathBuf,
+    /// The project's directory, when the entry is below it rather than in
+    /// it: a project whose entry is `MediaPlayer/Main.qml` and whose other
+    /// modules are directories beside it (`MediaControls/`), as Qt's
+    /// launcher adds the application's directory to the import path.
+    #[arg(long, value_name = "DIR", conflicts_with = "watch")]
+    project: Option<PathBuf>,
     /// Watch the project's files and apply every save to the running
     /// application, keeping its state.
     #[arg(long)]
@@ -167,6 +174,30 @@ fn parse_size(text: &str) -> Result<(f32, f32), String> {
     Ok((side(w)?, side(h)?))
 }
 
+/// The project's directory `project` and the key of the entry file in it.
+fn entry_in(file: &Path, project: &Path) -> anyhow::Result<(PathBuf, String)> {
+    let (_, name) = entry(file)?;
+    let path = file
+        .canonicalize()
+        .with_context(|| format!("{}", file.display()))?;
+    let dir = project
+        .canonicalize()
+        .with_context(|| format!("{}", project.display()))?;
+    let Ok(below) = path.parent().unwrap_or(&path).strip_prefix(&dir) else {
+        bail!("{} is not in {}", file.display(), project.display());
+    };
+    let mut key = String::new();
+    for part in below.components() {
+        let Some(part) = part.as_os_str().to_str() else {
+            bail!("{} is not a path a key can name", below.display());
+        };
+        key.push_str(part);
+        key.push('/');
+    }
+    key.push_str(&name);
+    Ok((dir, key))
+}
+
 /// The project's directory and the entry file's key in it.
 fn entry(file: &Path) -> anyhow::Result<(PathBuf, String)> {
     let path = file
@@ -268,7 +299,10 @@ fn socket_path(text: &str) -> Result<PathBuf, String> {
 
 impl Run {
     pub fn run(self) -> anyhow::Result<()> {
-        let (dir, key) = entry(&self.file)?;
+        let (dir, key) = match &self.project {
+            Some(project) => entry_in(&self.file, project)?,
+            None => entry(&self.file)?,
+        };
         let config = ShellConfig::new(format!("{key}.qml")).with_size(self.size.0, self.size.1);
         let tools = Tools {
             top: self.top,
@@ -319,7 +353,11 @@ impl Run {
                 let engine = setup.engine();
                 engine.set_component_source(source);
                 Ok(engine
-                    .create_from_url(&key, None, Vec::new())
+                    .create_from_url(
+                        &key,
+                        None,
+                        crate::render::example_properties(example.as_deref()),
+                    )
                     .map_err(|e| e.to_string())?)
             })?;
         }
@@ -465,6 +503,18 @@ mod tests {
         assert!(entry(&dir.path().join("notes.txt")).is_err());
         assert!(entry(&dir.path().join("Gone.qml")).is_err());
         assert!(entry(dir.path()).is_err());
+    }
+
+    #[test]
+    fn an_entry_below_the_project_is_keyed_by_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("App")).unwrap();
+        std::fs::write(dir.path().join("App/Main.qml"), "import QtQuick\nItem {}\n").unwrap();
+        let (root, key) = entry_in(&dir.path().join("App/Main.qml"), dir.path()).unwrap();
+        assert_eq!(root, dir.path().canonicalize().unwrap());
+        assert_eq!(key, "App/Main");
+        let other = tempfile::tempdir().unwrap();
+        assert!(entry_in(&dir.path().join("App/Main.qml"), other.path()).is_err());
     }
 
     #[test]

@@ -14,6 +14,7 @@
 //! crate and appears here only as a registration.
 
 use ljos::Engine;
+use ljos::prelude::Value;
 
 /// Registers the backends of the example `id` (a `corpus/examples.json`
 /// id) on `engine`. An example without a backend registers nothing.
@@ -31,7 +32,19 @@ pub fn register(engine: &Engine, id: &str) {
         // The snippet's widget, which its qmldir names and the
         // corpus does not carry.
         "snippet-focus-scope-widget" => ljos_example_focusscopewidget::register(engine),
+        // `FileNameProvider`; QtMultimedia itself is a standard module.
+        "mediaplayer" => ljos_example_mediaplayer::register(engine),
         _ => {}
+    }
+}
+
+/// The properties the launcher of the example `id` gives its root
+/// object (in Qt, `setInitialProperties`): those a root `required`
+/// property needs. An example whose launcher gives none has none.
+pub fn initial_properties(id: &str) -> Vec<(String, Value)> {
+    match id {
+        "mediaplayer" => ljos_example_mediaplayer::initial_properties(),
+        _ => Vec::new(),
     }
 }
 
@@ -43,6 +56,7 @@ pub fn supported() -> &'static [&'static str] {
         "rssnews",
         "qtjennydemo",
         "snippet-focus-scope-widget",
+        "mediaplayer",
     ]
 }
 
@@ -69,6 +83,16 @@ mod tests {
                 .lookup_type("QtQuick", "MyFocusScopeWidget")
                 .is_some()
         );
+
+        let engine = ljos::engine();
+        register(&engine, "mediaplayer");
+        assert!(
+            engine
+                .lookup_type("io.qt.filenameprovider", "FileNameProvider")
+                .is_some()
+        );
+        assert_eq!(initial_properties("mediaplayer").len(), 3);
+        assert!(initial_properties("clocks").is_empty());
 
         let engine = ljos::engine();
         register(&engine, "rssnews");

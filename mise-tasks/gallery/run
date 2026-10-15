@@ -56,6 +56,14 @@ if [ "$renders" = no ]; then
   echo "note: '$id' did not render in the last gallery run; trying anyway" >&2
 fi
 
+# The example's directory is its project, as it is for the gallery's
+# renderer: an entry below it (`MediaPlayer/Main.qml`) finds the modules
+# beside it. A watched run watches the entry's own directory.
+project=(--project "$root/corpus/qtdoc/$dir")
+for a in "$@"; do
+  [ "$a" = --watch ] && project=()
+done
+
 cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
 exec "$target/debug/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
-  --size "$size" --example "$id" "$@"
+  "${project[@]}" --size "$size" --example "$id" "$@"

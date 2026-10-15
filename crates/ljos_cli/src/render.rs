@@ -180,7 +180,7 @@ impl Render {
         });
         engine.set_component_source(source);
         let root = engine
-            .create_from_url(&key, None, Vec::new())
+            .create_from_url(&key, None, example_properties(self.example.as_deref()))
             .map_err(|e| anyhow::anyhow!("{e}"));
         notes.said.clear();
         let root = root.inspect_err(|_| notes.said = said.0.borrow().clone())?;
@@ -241,6 +241,14 @@ pub(crate) fn register_example(engine: &Engine, example: Option<&str>) {
     if let Some(id) = example {
         ljos_gallery_backends::register(engine, id);
     }
+}
+
+/// What the launcher of the gallery example `example` gives its root
+/// object; without an example, nothing. Shared with `ljos run --example`.
+pub(crate) fn example_properties(example: Option<&str>) -> Vec<(String, ljos_engine::Value)> {
+    example
+        .map(ljos_gallery_backends::initial_properties)
+        .unwrap_or_default()
 }
 
 /// The compiler's knowledge of an example's types: the table of types as

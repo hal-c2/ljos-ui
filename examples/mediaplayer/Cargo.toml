@@ -1,0 +1,19 @@
+[package]
+name = "ljos_example_mediaplayer"
+description = "Rust backend of the qtdoc mediaplayer demo (FileNameProvider, and the properties its launcher gives the window), written against the ljos facade from the interface its QML uses"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos = { path = "../../crates/ljos" }
+
+[dev-dependencies]
+ljos = { path = "../../crates/ljos", features = ["dev-qml"] }
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+
+[lints]
+workspace = true

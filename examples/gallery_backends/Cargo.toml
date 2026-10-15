@@ -16,6 +16,8 @@ ljos_example_colorpalette = { path = "../colorpalette" }
 ljos_example_qtjennydemo = { path = "../qtjennydemo" }
 # The focus snippet's `MyFocusScopeWidget`.
 ljos_example_focusscopewidget = { path = "../focusscopewidget" }
+# The mediaplayer demo's `FileNameProvider`.
+ljos_example_mediaplayer = { path = "../mediaplayer" }
 # A generic Qt module one example uses (`QtQml.XmlListModel`, rssnews):
 # its own crate, here only as a registration.
 ljos_xml = { path = "../../crates/ljos_xml" }
