@@ -190,6 +190,17 @@ fn the_media_file(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.resource(&name, &bytes))
 }
 
+// A sprite sheet of features/animation/sprites, beside the QML under its
+// own name.
+#[given(regex = r#"^the sprite sheet "([^"]+)"$"#)]
+fn the_sprite_sheet(w: &mut LjosWorld, name: String) -> StepResult {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../features/animation/sprites")
+        .join(&name);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    w.each(|b| b.resource(&name, &bytes))
+}
+
 // A file with a font's name and something else inside.
 #[given(regex = r#"^a file "([^"]+)" that is not a font$"#)]
 fn not_a_font(w: &mut LjosWorld, name: String) -> StepResult {

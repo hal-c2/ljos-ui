@@ -850,6 +850,8 @@ module QtQuick
 	Shortcut QtQuick.Shortcut
 	SmoothedAnimation QtQuick.SmoothedAnimation
 	SpringAnimation QtQuick.SpringAnimation
+	Sprite QtQuick.Sprite
+	SpriteSequence QtQuick.SpriteSequence
 	StandardKey QtQuick.StandardKey
 	State QtQuick.State
 	StateChangeScript QtQuick.StateChangeScript
@@ -2203,6 +2205,56 @@ module QtQuick
 		signal epsilonChanged
 		signal modulusChanged
 		signal velocityChanged
+	type QtQuick.Sprite Sprite
+		prototype QtQml.QtObject named
+		prop name QtQml.string named
+		prop source QtQml.url named
+		prop reverse QtQml.bool named
+		prop frameSync QtQml.bool named
+		prop frameCount QtQml.int named
+		prop frameHeight QtQml.int named
+		prop frameWidth QtQml.int named
+		prop frameX QtQml.int named
+		prop frameY QtQml.int named
+		prop frameRate QtQml.real named reset
+		prop frameRateVariation QtQml.real named
+		prop frameDuration QtQml.int named reset
+		prop frameDurationVariation QtQml.int named
+		prop duration QtQml.int named
+		prop durationVariation QtQml.int named
+		prop randomStart QtQml.bool named
+		prop to QtQml.var named
+		signal nameChanged
+		signal sourceChanged
+		signal reverseChanged
+		signal frameSyncChanged
+		signal frameCountChanged
+		signal frameHeightChanged
+		signal frameWidthChanged
+		signal frameXChanged
+		signal frameYChanged
+		signal frameRateChanged
+		signal frameRateVariationChanged
+		signal frameDurationChanged
+		signal frameDurationVariationChanged
+		signal durationChanged
+		signal durationVariationChanged
+		signal randomStartChanged
+		signal toChanged
+	type QtQuick.SpriteSequence SpriteSequence
+		prototype QtQuick.Item named
+		default sprites
+		prop sprites QtQml.var named list
+		prop running QtQml.bool named
+		prop interpolate QtQml.bool named
+		prop goalSprite QtQml.string named
+		prop currentSprite QtQml.string named readonly
+		signal runningChanged
+		signal interpolateChanged
+		signal goalSpriteChanged
+		signal currentSpriteChanged
+		method jumpTo
+		method setGoalSprite
 	type QtQuick.StandardKey StandardKey
 		is uncreatable
 		enum StandardKey UnknownKey=0 HelpContents=1 WhatsThis=2 Open=3 Close=4 Save=5 New=6 Delete=7 Cut=8 Copy=9 Paste=10 Undo=11 Redo=12 Back=13 Forward=14 Refresh=15 ZoomIn=16 ZoomOut=17 Print=18 AddTab=19 NextChild=20 PreviousChild=21 Find=22 FindNext=23 FindPrevious=24 Replace=25 SelectAll=26 Bold=27 Italic=28 Underline=29 MoveToNextChar=30 MoveToPreviousChar=31 MoveToNextWord=32 MoveToPreviousWord=33 MoveToNextLine=34 MoveToPreviousLine=35 MoveToNextPage=36 MoveToPreviousPage=37 MoveToStartOfLine=38 MoveToEndOfLine=39 MoveToStartOfBlock=40 MoveToEndOfBlock=41 MoveToStartOfDocument=42 MoveToEndOfDocument=43 SelectNextChar=44 SelectPreviousChar=45 SelectNextWord=46 SelectPreviousWord=47 SelectNextLine=48 SelectPreviousLine=49 SelectNextPage=50 SelectPreviousPage=51 SelectStartOfLine=52 SelectEndOfLine=53 SelectStartOfBlock=54 SelectEndOfBlock=55 SelectStartOfDocument=56 SelectEndOfDocument=57 DeleteStartOfWord=58 DeleteEndOfWord=59 DeleteEndOfLine=60 InsertParagraphSeparator=61 InsertLineSeparator=62 SaveAs=63 Preferences=64 Quit=65 FullScreen=66 Deselect=67 DeleteCompleteLine=68 Backspace=69 Cancel=70

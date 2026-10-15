@@ -44,6 +44,7 @@ mod repeater;
 mod safe_area;
 mod scene;
 mod shapes;
+mod sprites;
 mod states;
 mod system_palette;
 mod system_prefs;
@@ -218,6 +219,7 @@ pub fn register(engine: &Engine) {
     canvas::register(engine);
     effects::register(engine);
     particles::register(engine);
+    sprites::register(engine);
     handlers::register(engine);
     drag::register(engine);
     drop_area::register(engine);
