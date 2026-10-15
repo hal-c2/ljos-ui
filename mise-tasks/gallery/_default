@@ -13,6 +13,15 @@ report="${GALLERY_DIR:-$target/gallery}"
 mkdir -p "$report"
 "$(dirname "$0")/build"
 
+# What an example saves (Settings, LocalStorage) must not change the next run's picture: each
+# run starts from empty config, data and state directories, with the user's fonts.
+xdg="$report/xdg"
+rm -rf "$xdg"
+mkdir -p "$xdg/config" "$xdg/data" "$xdg/state"
+if [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig" ]; then ln -s "${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig" "$xdg/config/fontconfig"; fi
+if [ -d "${XDG_DATA_HOME:-$HOME/.local/share}/fonts" ]; then ln -s "${XDG_DATA_HOME:-$HOME/.local/share}/fonts" "$xdg/data/fonts"; fi
+export XDG_CONFIG_HOME="$xdg/config" XDG_DATA_HOME="$xdg/data" XDG_STATE_HOME="$xdg/state"
+
 extra=()
 top=10
 ids=()
