@@ -165,7 +165,8 @@ target.
 **Setup**
 
 - **Machine:** AMD Ryzen AI Max+ 395 (32 CPUs, 63 GiB), Linux 7.2.
-- **Builds:** Ljós at 419a04c (`--release`, thin LTO); Qt 6.11.2.
+- **Builds:** Ljós at 419a04c (`--release`, thin LTO); the `animations` app was measured again at
+  ecda6d6, after its fix. Qt 6.11.2.
 - **Apps:** 25: the five `bench/*.qml` apps and the 20 corpus examples that rendered.
 - **Load:** the one-minute load average was 3.5 to 143. Other work shared the machine, so the
   timings are noisy.
@@ -176,19 +177,21 @@ Each figure is the geometric mean of Ljós/Qt over the apps (below 1 is Ljós sm
 
 | | desktop | pi-zero |
 |---|---:|---:|
-| Time to first frame | ×2.05 | ×1.23 |
+| Time to first frame | ×2.05 | ×1.24 |
 | CPU time to first frame | ×1.27 | ×1.16 |
-| Peak memory while starting | ×0.67 | ×0.60 |
-| Settled memory | ×0.65 | ×0.60 |
-| Settled PSS | ×0.86 | ×0.85 |
+| Peak memory while starting | ×0.67 | ×0.61 |
+| Settled memory | ×0.65 | ×0.61 |
+| Settled PSS | ×0.87 | ×0.86 |
 
 - **Least memory under pi-zero.**
   - Ljós: 54–58 MiB for the small examples, 68–101 MiB for the larger ones.
   - Qt: 92–123 MiB.
   - One exception: rssnews needed 271 MiB on Ljós and 135 MiB on Qt. With 256M, both were
     OOM-killed. Ljós decodes the feed's pictures at full size.
-- **Idle CPU.** 0 on both runtimes for apps that do not animate. Apps that animate used more CPU on
-  Ljós.
+- **Idle CPU.** 0 on both runtimes for apps that do not animate.
+- **Animating.** Moving 200 rectangles (`bench/animations.qml`):
+  - desktop: Ljós used 91 % of a core, Qt 23 %;
+  - pi-zero: Ljós was held at its 20 % quota and showed 22 frames a second. Qt showed 62 on 9 %.
 - **CPU while clicked.**
   - For apps where clicks change nothing on screen, Ljós used 5–37 % of one core. Qt stayed near
     0.1 %.
