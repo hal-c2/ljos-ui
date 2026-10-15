@@ -44,6 +44,44 @@ use crate::item::{AnchorProps, Item, init_item, is_a, is_item, is_unset, scene_t
 #[derive(Default)]
 struct Groups {
     by_owner: RefCell<HashMap<ObjectId, Rc<Group>>>,
+    /// Owners whose states wait for [`start`]: a host of content, whose
+    /// declared children have no parent until it is complete.
+    deferred: RefCell<Vec<ObjectId>>,
+}
+
+/// Holds back the states of `owner` until [`start`]. The states are
+/// entered when the first of them is complete, which is before the items
+/// declared in a host have been given their parent, and a binding of one
+/// of them that reads `parent` would see none.
+pub(crate) fn defer(engine: &Engine, owner: ObjectId) {
+    let groups = engine.extension::<Groups>();
+    let mut deferred = groups.deferred.borrow_mut();
+    deferred.retain(|o| engine.is_alive(*o));
+    if !deferred.contains(&owner) && !groups.by_owner.borrow().contains_key(&owner) {
+        deferred.push(owner);
+    }
+}
+
+/// Gives a deferred owner its states.
+pub(crate) fn start(engine: &Engine, owner: ObjectId) {
+    let groups = engine.extension::<Groups>();
+    let was = {
+        let mut deferred = groups.deferred.borrow_mut();
+        let before = deferred.len();
+        deferred.retain(|o| *o != owner);
+        deferred.len() != before
+    };
+    if was {
+        attach(engine, owner);
+    }
+}
+
+pub(crate) fn is_deferred(engine: &Engine, owner: ObjectId) -> bool {
+    engine
+        .extension::<Groups>()
+        .deferred
+        .borrow()
+        .contains(&owner)
 }
 
 /// What a state put in place, to be taken away when it is left.
@@ -203,6 +241,14 @@ fn type_of(engine: &Engine, obj: ObjectId, prop: PropIndex) -> TypeTag {
         .meta_of(obj)
         .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
         .unwrap_or(TypeTag::Var)
+}
+
+/// The members of one value (`font`) that the changes of a state give.
+struct Part {
+    target: ObjectId,
+    prop: PropIndex,
+    ty: TypeTag,
+    members: Vec<(String, ForeignValue)>,
 }
 
 /// What one change of state gathers on its way.
@@ -519,6 +565,7 @@ impl Group {
         } else {
             RestoreMode::None
         };
+        let mut parts: Vec<Part> = Vec::new();
         for ForeignMember {
             object,
             name,
@@ -530,6 +577,35 @@ impl Group {
                 continue;
             };
             let Ok(prop) = engine.property_index(target, &name) else {
+                // `font.pixelSize`, `sourceSize.height`: one member of a
+                // value. Members of one value go in together, below.
+                if let Some((head, member)) = name.rsplit_once('.')
+                    && let Ok(whole) = engine.property_index(target, head)
+                {
+                    let ty = type_of(engine, target, whole);
+                    if Value::Undefined
+                        .with_member(&ty, member, &Value::Undefined)
+                        .is_some()
+                    {
+                        let slot = match parts
+                            .iter()
+                            .position(|p| p.target == target && p.prop == whole)
+                        {
+                            Some(i) => i,
+                            None => {
+                                parts.push(Part {
+                                    target,
+                                    prop: whole,
+                                    ty,
+                                    members: Vec::new(),
+                                });
+                                parts.len() - 1
+                            }
+                        };
+                        parts[slot].members.push((member.to_owned(), value));
+                        continue;
+                    }
+                }
                 engine.log(
                     LogLevel::Warning,
                     "qml",
@@ -565,6 +641,52 @@ impl Group {
                         last.clone()
                     }))
                 }
+            };
+            round.note(engine, target, prop, ChangeKind::Property);
+            self.push(engine, (target, prop), content, restore, Layer::Property);
+        }
+        for Part {
+            target,
+            prop,
+            ty,
+            members,
+        } in parts
+        {
+            if is_item(engine, target) {
+                let _ = init_item(engine, target);
+            }
+            let base = engine.untrack(|| engine.read(target, prop));
+            let given = move |e: &Engine, value: &ForeignValue| match value {
+                ForeignValue::Value(v) => Some(v.clone()),
+                ForeignValue::Binding(f) => f(e, &TypeTag::Var),
+            };
+            let content = if explicit
+                || members
+                    .iter()
+                    .all(|(_, v)| matches!(v, ForeignValue::Value(_)))
+            {
+                let mut now = base;
+                for (member, value) in &members {
+                    let v = engine.untrack(|| given(engine, value));
+                    if let Some(n) = v.and_then(|v| now.with_member(&ty, member, &v)) {
+                        now = n;
+                    }
+                }
+                OverrideContent::Value(now)
+            } else {
+                // One layer for the whole value: what the members read
+                // is followed, and the other members are what they were.
+                OverrideContent::Binding(Box::new(move |e| {
+                    let mut now = base.clone();
+                    for (member, value) in &members {
+                        if let Some(v) = given(e, value)
+                            && let Some(n) = now.with_member(&ty, member, &v)
+                        {
+                            now = n;
+                        }
+                    }
+                    now
+                }))
             };
             round.note(engine, target, prop, ChangeKind::Property);
             self.push(engine, (target, prop), content, restore, Layer::Property);
