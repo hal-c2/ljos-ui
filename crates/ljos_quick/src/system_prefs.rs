@@ -40,6 +40,57 @@ pub struct StyleHints {
     /// drag starts once the pointer is further than this along an axis.
     #[qml(notify, readonly)]
     pub start_drag_distance: i32,
+    /// What qml6 reads on a desktop; a host that knows better can write them.
+    #[qml(notify, readonly)]
+    pub cursor_flash_time: i32,
+    #[qml(notify, readonly)]
+    pub font_smoothing_gamma: f64,
+    #[qml(notify, readonly)]
+    pub keyboard_auto_repeat_rate: i32,
+    #[qml(notify, readonly)]
+    pub keyboard_auto_repeat_rate_f: f64,
+    #[qml(notify, readonly)]
+    pub keyboard_input_interval: i32,
+    #[qml(notify, readonly)]
+    pub mouse_double_click_interval: i32,
+    #[qml(notify, readonly)]
+    pub mouse_press_and_hold_interval: i32,
+    #[qml(notify, readonly)]
+    pub password_mask_character: String,
+    #[qml(notify, readonly)]
+    pub password_mask_delay: i32,
+    #[qml(notify, readonly)]
+    pub set_focus_on_touch_release: bool,
+    #[qml(notify, readonly)]
+    pub show_is_full_screen: bool,
+    #[qml(notify, readonly)]
+    pub show_is_maximized: bool,
+    #[qml(notify, readonly)]
+    pub start_drag_time: i32,
+    #[qml(notify, readonly)]
+    pub start_drag_velocity: i32,
+    #[qml(notify, readonly)]
+    pub use_rtl_extensions: bool,
+    #[qml(notify, readonly)]
+    pub tab_focus_behavior: i32,
+    #[qml(notify, readonly)]
+    pub single_click_activation: bool,
+    #[qml(notify, readonly)]
+    pub wheel_scroll_lines: i32,
+    #[qml(notify, readonly)]
+    pub mouse_double_click_distance: i32,
+    #[qml(notify, readonly)]
+    pub touch_double_tap_distance: i32,
+    #[qml(notify, readonly)]
+    pub menu_selection_wraps: bool,
+    #[qml(notify)]
+    pub show_shortcuts_in_context_menus: bool,
+    #[qml(notify)]
+    pub context_menu_trigger: i32,
+    #[qml(notify)]
+    pub use_hover_effects: bool,
+    #[qml(notify)]
+    pub mouse_quick_selection_threshold: i32,
 }
 
 /// `startDragDistance` until a host says otherwise: what qml6 reads on a
@@ -88,6 +139,11 @@ impl Default for State {
     }
 }
 
+/// `Qt.styleHints`, the object `Application.styleHints` is as well.
+pub fn style_hints(engine: &Engine) -> Option<ObjectId> {
+    objects(engine).map(|(h, _)| h)
+}
+
 fn state(engine: &Engine) -> Rc<State> {
     engine.extension::<State>()
 }
@@ -121,6 +177,31 @@ fn objects(engine: &Engine) -> Option<(ObjectId, ObjectId)> {
                 color_scheme: shown_scheme(&s).qt_value(),
                 accessibility: Some(a11y),
                 start_drag_distance: s.drag_distance.get(),
+                cursor_flash_time: 1200,
+                font_smoothing_gamma: 1.7,
+                keyboard_auto_repeat_rate: 30,
+                keyboard_auto_repeat_rate_f: 30.0,
+                keyboard_input_interval: 400,
+                mouse_double_click_interval: 400,
+                mouse_press_and_hold_interval: 500,
+                password_mask_character: "\u{2022}".to_string(),
+                password_mask_delay: 0,
+                set_focus_on_touch_release: false,
+                show_is_full_screen: false,
+                show_is_maximized: false,
+                start_drag_time: 500,
+                start_drag_velocity: 0,
+                use_rtl_extensions: false,
+                tab_focus_behavior: 255,
+                single_click_activation: false,
+                wheel_scroll_lines: 3,
+                mouse_double_click_distance: 5,
+                touch_double_tap_distance: 10,
+                menu_selection_wraps: true,
+                show_shortcuts_in_context_menus: true,
+                context_menu_trigger: 0,
+                use_hover_effects: true,
+                mouse_quick_selection_threshold: 10,
             },
             None,
         )

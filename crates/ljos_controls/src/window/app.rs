@@ -189,6 +189,9 @@ pub struct Application {
     /// What the program was started with; a host fills it.
     #[qml(notify)]
     pub arguments: Vec<Value>,
+    /// `Qt.styleHints`: the same object, made when the engine starts.
+    #[qml(readonly)]
+    pub style_hints: Option<ObjectId>,
 }
 
 impl Default for Application {
@@ -208,6 +211,7 @@ impl Default for Application {
             },
             screens: QmlList::default(),
             arguments: Vec::new(),
+            style_hints: None,
         }
     }
 }
@@ -229,6 +233,14 @@ pub(super) fn register(engine: &Engine) {
     // for whoever reads it first.
     if let Ok(app) = engine.singleton::<Application>() {
         WindowSystem::of(engine).adopt_application(engine, app);
+        if let Some(hints) = ljos_quick::style_hints(engine) {
+            let _ = engine.write_internal(
+                app,
+                Application::STYLE_HINTS.index,
+                Value::Object(hints),
+                WriteKind::Imperative,
+            );
+        }
         // The direction is the UI language's at every moment
         // (features/i18n/layout-direction.feature), and this object is
         // what `Qt.application` is from here on.
