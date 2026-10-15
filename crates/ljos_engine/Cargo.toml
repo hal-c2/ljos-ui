@@ -23,6 +23,7 @@ bitflags.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+url.workspace = true
 # A thin (8-byte) atomically counted string, which keeps `Value` at 16 bytes.
 arcstr.workspace = true
 

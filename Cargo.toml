@@ -104,6 +104,8 @@ http = "1.5"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 # The TLS errors ureq hands back, to say them as Qt does.
 rustls = { version = "0.23.46", default-features = false }
+# The JS `URL` global: WHATWG parsing and serialisation (ljos_engine).
+url = "2.5.8"
 http-body-util = "0.1.5"
 bytes = "1.12"
 getrandom = "0.4"

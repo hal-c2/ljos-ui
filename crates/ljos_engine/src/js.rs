@@ -772,6 +772,11 @@ impl Engine {
                         };
                         Value::Color(Color::from_rgba_f(num("r"), num("g"), num("b"), a))
                     }
+                    // A script's `URL` object: the address it holds.
+                    TypeTag::Url => match scope.get_field(&r, "href") {
+                        Ok(JsValue::String(s)) => Value::Url(s.into()),
+                        _ => Value::Js(JsHandle(r)),
+                    },
                     TypeTag::Font => {
                         let mut f = Font::default();
                         if let Ok(JsValue::String(s)) = scope.get_field(&r, "family") {
@@ -991,6 +996,8 @@ impl Engine {
         self.install_dynamic_globals(js)?;
         // What stands for a `list<T>` property: see list_faces.rs.
         self.install_list_globals(js)?;
+        // The `URL` and `URLSearchParams` globals: see url_global.rs.
+        crate::url_global::install(js)?;
         // The enums by name first: a key the older tables also have is
         // written again with the same number.
         let keys: Vec<String> = crate::qt_enums::QT_ENUMS
