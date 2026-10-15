@@ -3,12 +3,12 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-dialogs-filedialog.html#nameFilters-prop
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
-@qt-parity
 Feature: FileDialog.selectedNameFilter
   The selected name filter is one of the dialog's nameFilters, chosen by
   its index. It says that filter's name (the text before its parentheses),
   the extensions its patterns name and the patterns themselves.
 
+  @qt-parity
   Scenario: No filter is selected until an index is set
     Given the QML:
       """qml
@@ -25,6 +25,7 @@ Feature: FileDialog.selectedNameFilter
       """
     Then the property "text" of "d" is "-1|||"
 
+  @qt-parity
   Scenario Outline: An index set where the dialog is declared selects that filter
     Given the QML:
       """qml
@@ -50,6 +51,7 @@ Feature: FileDialog.selectedNameFilter
       | ["*.a", "plain"]                                 | 0     | 0\|*.a\|\|                          |
       | ["*.a", "plain"]                                 | 1     | 1\|plain\|\|                        |
 
+  @qt-parity
   Scenario: An index beyond the filters selects the first
     Given the QML:
       """qml

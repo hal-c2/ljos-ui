@@ -3,11 +3,11 @@
 #   https://doc.qt.io/qt-6/qtqml-javascript-hostenvironment.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
-@qt-parity
 Feature: The JS URL global
   `new URL(text)` parses an absolute URL (or one relative to a base) into
   its parts, and `searchParams` reads and edits its query.
 
+  @qt-parity
   Scenario Outline: The parts of an absolute URL
     Given the QML:
       """qml
@@ -62,6 +62,7 @@ Feature: The JS URL global
       """
     Then the property "got" of "root" is "https://example.com/a/c?q=1"
 
+  @qt-parity
   Scenario: Text that is no URL throws a TypeError
     Given the QML:
       """qml
@@ -76,6 +77,7 @@ Feature: The JS URL global
       """
     Then the property "got" of "root" is "TypeError"
 
+  @qt-parity
   Scenario: The search parameters are read
     Given the QML:
       """qml
@@ -115,6 +117,7 @@ Feature: The JS URL global
       """
     Then the property "got" of "root" is "b=9&c=x+y|?b=9&c=x+y|https://example.com/p?b=9&c=x+y"
 
+  @qt-parity
   Scenario: Assigning parts changes the href
     Given the QML:
       """qml
@@ -133,6 +136,7 @@ Feature: The JS URL global
       """
     Then the property "got" of "root" is "https://example.com/b%20c?k=v#h|https://example.com/b%20c?k=v#h|?k=v|#h"
 
+  @qt-parity
   Scenario: A URL sets a url property
     Given the QML:
       """qml

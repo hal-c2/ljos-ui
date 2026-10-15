@@ -2,14 +2,13 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-screen.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
-@qt-parity
 Feature: The attached Screen
   `Screen.` read in any object says what is known of the screen it is
   shown on: an item's is its window's screen, and an object outside a
   window has the primary screen. The offscreen platform has one screen of
   800 by 800 with 96 logical pixels to the inch.
 
-  @api-QtQuick.Screen.width @api-QtQuick.Screen.height @api-QtQuick.Screen.primaryOrientation @api-QtQuick.Screen.orientation @api-QtQuick.Screen.logicalPixelDensity @api-QtQuick.Screen.desktopAvailableWidth @api-QtQuick.Screen.desktopAvailableHeight @api-QtQuick.Screen.virtualX @api-QtQuick.Screen.virtualY @api-QtQuick.Screen.devicePixelRatio
+  @qt-parity @api-QtQuick.Screen.width @api-QtQuick.Screen.height @api-QtQuick.Screen.primaryOrientation @api-QtQuick.Screen.orientation @api-QtQuick.Screen.logicalPixelDensity @api-QtQuick.Screen.desktopAvailableWidth @api-QtQuick.Screen.desktopAvailableHeight @api-QtQuick.Screen.virtualX @api-QtQuick.Screen.virtualY @api-QtQuick.Screen.devicePixelRatio
   Scenario Outline: An object outside a window has the primary screen
     Given the QML:
       """qml
@@ -44,7 +43,7 @@ Feature: The attached Screen
       | y               | 0     |
       | ratio           | 1     |
 
-  @api-QtQuick.Screen.logicalPixelDensity
+  @qt-parity @api-QtQuick.Screen.logicalPixelDensity
   Scenario: The logical pixel density is 96 to the inch
     Given the QML:
       """qml
@@ -56,7 +55,7 @@ Feature: The attached Screen
       """
     Then the property "logical" of "root" is within 0.001 of 3.7795
 
-  @api-QtQuick.Screen.name @api-QtQuick.Screen.manufacturer @api-QtQuick.Screen.model @api-QtQuick.Screen.serialNumber @api-QtQuick.Screen.pixelDensity @api-QtQuick.Window.screen
+  @qt-parity @api-QtQuick.Screen.name @api-QtQuick.Screen.manufacturer @api-QtQuick.Screen.model @api-QtQuick.Screen.serialNumber @api-QtQuick.Screen.pixelDensity @api-QtQuick.Window.screen
   Scenario: An item has its window's screen
     Given the QML:
       """qml
@@ -88,7 +87,7 @@ Feature: The attached Screen
     Then the property "differs" of "inner" is ""
     And the property "known" of "inner" is true
 
-  @api-QtQuick.Screen.angleBetween
+  @qt-parity @api-QtQuick.Screen.angleBetween
   Scenario Outline: The angle between two orientations
     Given the QML:
       """qml
