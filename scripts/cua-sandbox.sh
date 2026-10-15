@@ -6,7 +6,7 @@
 #   cua-sandbox.sh start [<ljos run args>]   (re)launch `ljos run` there
 #   cua-sandbox.sh exec <command…>           run any command there (mise run gallery:run <id> …)
 #   cua-sandbox.sh call <tool> [<json>]      a cua-driver tool, on the app start launched
-#   cua-sandbox.sh env                       print the sandbox's sockets as KEY=VALUE lines
+#   cua-sandbox.sh env                       print the sandbox's sockets and directories as KEY=VALUE lines
 #   cua-sandbox.sh stop
 #
 # start and exec bring up what is not running. call fills in the app's pid, a shared session
@@ -187,7 +187,7 @@ exec_in() {
 }
 
 # What a program outside the sandbox needs to reach it: the compositor's Wayland and IPC
-# sockets, the X display and the bus. `mise run bench` starts its applications from the
+# sockets, the X display and the bus, and the directories its applications save into. `mise run bench` starts its applications from the
 # user's session (systemd-run needs the user's service manager) and hands them these.
 print_env() {
   up
@@ -200,7 +200,8 @@ print_env() {
   done
   [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
   printf '%s\n' "WAYLAND_DISPLAY=$wayland" "SWAYSOCK=$sock" "DISPLAY=$(< "$home/display")" \
-    "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run"
+    "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run" \
+    "XDG_CONFIG_HOME=$home/xdg/config" "XDG_DATA_HOME=$home/xdg/data" "XDG_STATE_HOME=$home/xdg/state"
 }
 
 # Adds "key":value to the json object unless it has the key or the tool does not take it.
