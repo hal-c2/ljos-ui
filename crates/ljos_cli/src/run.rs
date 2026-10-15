@@ -23,7 +23,7 @@ pub struct Run {
     /// it: a project whose entry is `MediaPlayer/Main.qml` and whose other
     /// modules are directories beside it (`MediaControls/`), as Qt's
     /// launcher adds the application's directory to the import path.
-    #[arg(long, value_name = "DIR", conflicts_with = "watch")]
+    #[arg(long, value_name = "DIR")]
     project: Option<PathBuf>,
     /// Watch the project's files and apply every save to the running
     /// application, keeping its state.
@@ -214,36 +214,20 @@ fn entry(file: &Path) -> anyhow::Result<(PathBuf, String)> {
     }
 }
 
-/// Compiles the project once, for a run that does not watch. Errors are
-/// the compiler's, one a line. With an example, its registered backends
-/// are types of the project too (see `ljos render --example`).
-fn compile(dir: &Path, example: Option<&str>) -> anyhow::Result<MapSource> {
-    let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
-    let mut source = MapSource::new().with_base_url(base);
-    let mut errors = Vec::new();
-    let files = match example {
-        Some(id) => ljos_compiler::compile_project_with(dir, crate::render::oracle_for_example(id)),
-        None => ljos_compiler::compile_project(dir),
-    };
-    for r in files.with_context(|| format!("{}", dir.display()))? {
-        match r.result {
-            Ok(c) => {
-                for d in &c.diagnostics {
-                    if d.severity == ljos_compiler::Severity::Error {
-                        errors.push(format!("{}.qml: {d}", r.key));
-                    } else {
-                        eprintln!("{}.qml: {d}", r.key);
-                    }
-                }
-                source.insert(r.key, c.file);
-            }
-            Err(ds) => errors.extend(ds.iter().map(|d| format!("{}.qml: {d}", r.key))),
-        }
+/// Compiles the project once, for a run that does not watch, as
+/// `ljos render` loads it: a file with a mistake is said to be one to
+/// whatever makes an object of it, so only the entry's own mistake stops
+/// the run. With an example, its registered backends are types of the
+/// project too (see `ljos render --example`).
+fn compile(dir: &Path, key: &str, example: Option<&str>) -> anyhow::Result<MapSource> {
+    let loaded = match example {
+        Some(id) => crate::render::load_project(dir, key, crate::render::oracle_for_example(id)),
+        None => crate::render::load_project(dir, key, ljos::dev::EngineOracle::table_only()),
+    }?;
+    for warning in &loaded.warnings {
+        eprintln!("{warning}");
     }
-    if !errors.is_empty() {
-        bail!("{} does not compile:\n{}", dir.display(), errors.join("\n"));
-    }
-    Ok(source)
+    loaded.into_source(dir, key)
 }
 
 /// One line for the developer's terminal about what the watcher brought.
@@ -332,13 +316,14 @@ impl Run {
         let example = self.example.clone();
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
+            let project = self.project.is_some().then(|| dir.clone());
             ljos_shell::run::<()>(config, move |setup| {
                 // The application's databases where Qt keeps them.
                 ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 setup.on_reload(|report| eprintln!("ljos: {}", describe(report)));
-                let root = setup.watch(&main)?;
+                let root = setup.watch_in(&main, project.as_deref())?;
                 // A project that does not compile opens all the same: the
                 // window says why, and so does the terminal.
                 if let Some(fault) = setup.engine().last_reload_error() {
@@ -348,7 +333,7 @@ impl Run {
                 Ok(root)
             })?;
         } else {
-            let source = compile(&dir, example.as_deref())?;
+            let source = compile(&dir, &key, example.as_deref())?;
             ljos_shell::run::<()>(config, move |setup| {
                 // The application's databases where Qt keeps them.
                 ljos_localstorage::register(setup.engine());
@@ -523,19 +508,41 @@ mod tests {
     }
 
     #[test]
-    fn a_project_with_a_mistake_says_where() {
+    fn a_project_with_a_mistake_in_its_entry_says_where() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("Main.qml"),
             "import QtQuick\nItem {\n  width: 20 +\n}\n",
         )
         .unwrap();
-        let e = compile(dir.path(), None).unwrap_err().to_string();
-        assert!(e.contains("Main.qml: "), "{e}");
+        let e = compile(dir.path(), "Main", None).unwrap_err().to_string();
+        assert!(e.contains("Main.qml:"), "{e}");
         std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
-        assert!(compile(dir.path(), None).is_ok());
+        assert!(compile(dir.path(), "Main", None).is_ok());
         // An example without a backend compiles as before.
-        assert!(compile(dir.path(), Some("no-such-example")).is_ok());
+        assert!(compile(dir.path(), "Main", Some("no-such-example")).is_ok());
+        assert!(compile(dir.path(), "Gone", None).is_err());
+    }
+
+    #[test]
+    fn a_file_with_a_mistake_that_nothing_makes_does_not_stop_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
+        std::fs::write(
+            dir.path().join("Broken.qml"),
+            "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
+        )
+        .unwrap();
+        let source = compile(dir.path(), "Main", None).unwrap();
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        engine.set_component_source(source);
+        assert!(engine.create_from_url("Main", None, Vec::new()).is_ok());
+        let e = engine
+            .create_from_url("Broken", None, Vec::new())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Broken.qml:3:"), "{e}");
     }
 
     #[test]

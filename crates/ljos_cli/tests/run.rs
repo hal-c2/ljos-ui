@@ -84,15 +84,15 @@ fn a_file_that_is_not_qml_is_refused_before_a_window_opens() {
 }
 
 #[test]
-fn a_project_with_a_mistake_is_refused_without_watch() {
+fn an_entry_with_a_mistake_is_refused_without_watch() {
     // With `--watch` it opens and shows the mistake; without, nobody
-    // would mend it under the window.
+    // would mend it under the window. A mistake in another file stops
+    // nothing until an object of that file is made.
     let dir = tempfile::tempdir().unwrap();
     let main = dir.path().join("Main.qml");
     std::fs::write(&main, "import QtQuick\nItem {\n  width: 20 +\n}\n").unwrap();
     let out = ljos(&["run", main.to_str().unwrap()]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("does not compile"), "{err}");
-    assert!(err.contains("Main.qml: "), "{err}");
+    assert!(err.contains("Main.qml:4:"), "{err}");
 }
