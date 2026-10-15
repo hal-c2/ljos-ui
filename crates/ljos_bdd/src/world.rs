@@ -22,6 +22,9 @@ pub struct LjosWorld {
     /// The authoring tools and the command line, for the scenarios that
     /// ask them and no running application.
     author: crate::author::Slot,
+    /// The scenario's web server, started by the first step that serves a
+    /// file or by QML that names it.
+    web: Option<crate::web::WebServer>,
 }
 
 impl LjosWorld {
@@ -32,6 +35,7 @@ impl LjosWorld {
             files: BTreeMap::new(),
             test_reports: Vec::new(),
             author: crate::author::Slot::default(),
+            web: None,
         }
     }
 
@@ -66,6 +70,19 @@ impl LjosWorld {
             None => self.files.remove(name),
         };
         self.each(|b| b.change_file(name, source))
+    }
+
+    /// The scenario's web server, started if it is not yet.
+    ///
+    /// # Errors
+    /// It cannot listen.
+    pub fn web(&mut self) -> Result<&crate::web::WebServer, String> {
+        if self.web.is_none() {
+            self.web = Some(crate::web::WebServer::start()?);
+        }
+        self.web
+            .as_ref()
+            .ok_or_else(|| "the scenario's web server did not start".to_owned())
     }
 
     /// Stage a source file for the next `load`.
@@ -145,18 +162,30 @@ impl LjosWorld {
         }
     }
 
-    fn files_for(&self, entry: &str) -> Result<Vec<QmlFile>, String> {
+    fn files_for(&mut self, entry: &str) -> Result<Vec<QmlFile>, String> {
         if !self.files.contains_key(entry) {
             return Err(format!(
                 "no file named {entry:?}; add it with `Given the file {entry:?}:`"
             ));
         }
+        let names_server = self
+            .files
+            .values()
+            .any(|s| s.contains(crate::web::PLACEHOLDER));
+        let address = if names_server {
+            Some(self.web()?.address())
+        } else {
+            None
+        };
         Ok(self
             .files
             .iter()
             .map(|(name, source)| QmlFile {
                 name: name.clone(),
-                source: source.clone(),
+                source: match &address {
+                    Some(a) => source.replace(crate::web::PLACEHOLDER, a),
+                    None => source.clone(),
+                },
             })
             .collect())
     }

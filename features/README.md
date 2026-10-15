@@ -128,6 +128,8 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the system setting "color scheme" is "dark"` | what the system says before the application starts: `"color scheme"` (`"light"`, `"dark"`), `"contrast"` (`"normal"`, `"high"`), `"reduced motion"` and `"screen reader"` (`true`, `false`), `"font scale"` (a number; `1` is the size the application was written for) (`@ljos-only`: the oracle cannot be given a system) |
 | `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
+| `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, and a name nobody served is 404 Not Found |
+| `Given the web server serves a file "X.png" that is not an image` | the same, with a file that is no image |
 | `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
 | `Given the HTML "html" was copied in another application` | the clipboard holds formatted text, as a rich text editor elsewhere copies it: the HTML (single quotes for attributes), and its characters as plain text; give it after the QML |
 | `Given the font file "X.ttf"` | make a font file of `features/text/fonts` available beside the QML files under its own name |

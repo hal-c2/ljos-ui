@@ -111,6 +111,28 @@ fn not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.resource(&name, &fixture::not_an_image()))
 }
 
+// The same, at `$SERVER/X.png` on the scenario's web server.
+#[given(
+    regex = r#"^the web server serves an? (\d+) by (\d+) image file "([^"]+)" filled with "(#[0-9a-fA-F]+)"$"#
+)]
+fn a_served_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    colour: String,
+) -> StepResult {
+    let bytes = fixture::image_file(&name, width, height, &colour)?;
+    w.web()?.serve(&name, bytes);
+    Ok(())
+}
+
+#[given(regex = r#"^the web server serves a file "([^"]+)" that is not an image$"#)]
+fn served_not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
+    w.web()?.serve(&name, fixture::not_an_image());
+    Ok(())
+}
+
 // A font file of features/text/fonts, beside the QML under its own name.
 #[given(regex = r#"^the font file "([^"]+)"$"#)]
 fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {

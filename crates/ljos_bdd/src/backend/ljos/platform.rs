@@ -5,9 +5,10 @@
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use ljos_engine::Engine;
-use ljos_platform::{FakeDialogs, FakePermissions, PathEnv, Platform};
+use ljos_platform::{FakeDialogs, FakePermissions, HttpFetcher, PathEnv, Platform};
 
 use super::{BackendError, Result, failed};
 use crate::backend::SystemDialogAnswer;
@@ -47,12 +48,15 @@ impl Rig {
         Ok(self.root()?.join(name.trim_start_matches('/')))
     }
 
-    /// Gives the engine the scenario's file system and dialogs. Answers
+    /// Gives the engine the scenario's file system, dialogs and network. Answers
     /// wait until time passes or the user acts, as on a slow system.
     pub(super) fn install(&mut self, engine: &Engine) -> Result<()> {
         let platform = Platform::of(engine);
         platform.set_env(PathEnv::sandbox(HOME, self.root()?));
         platform.set_dialogs(Rc::new(self.dialogs.clone()));
+        // A real network, as Qt has: a scenario reaches its own web server
+        // on the loopback interface, and nothing else it names answers.
+        platform.set_fetcher(Arc::new(HttpFetcher::new()));
         if let Some(asking) = &self.permissions {
             platform.set_permissions(Rc::new(asking.clone()));
         }

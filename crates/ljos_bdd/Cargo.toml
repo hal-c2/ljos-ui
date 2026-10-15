@@ -54,8 +54,8 @@ ljos_quick = { path = "../ljos_quick" }
 # An opt-in module scenarios may import (QtQml.XmlListModel).
 ljos_xml = { path = "../ljos_xml" }
 # The system a scenario runs on: its files and its dialogs, answered by
-# the scenario.
-ljos_platform = { path = "../ljos_platform" }
+# the scenario, and a network that reaches the scenario's web server.
+ljos_platform = { path = "../ljos_platform", features = ["http"] }
 ljos_runtime = { path = "../ljos_runtime" }
 # The characters of HTML another application copies, which it copies too.
 ljos_text = { path = "../ljos_text" }

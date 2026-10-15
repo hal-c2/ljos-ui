@@ -13,4 +13,5 @@ pub mod lint;
 pub mod runner;
 pub mod steps;
 pub mod value;
+pub mod web;
 pub mod world;
