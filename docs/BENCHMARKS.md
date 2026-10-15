@@ -157,6 +157,33 @@ The bench measures `ljos run` on a QML file, which parses and compiles the QML a
 Shipped apps load precompiled IR with no parser in the binary (ARCHITECTURE.md). There is no player
 binary for that yet, only the `App` API, so the numbers include the front end's cost.
 
+## Where the first frame's time goes
+
+Measured on `bench/rectangles.qml` (release build, the sandbox's headless sway on pixman), wall
+time from the start of the process:
+
+| Phase | Wall |
+|---|---:|
+| QML parsed and compiled | ~5 ms |
+| System fonts (fontconfig) | 20–70 ms |
+| Application built (engine, root object) | ~20 ms |
+| Graphics instance: Vulkan, then GL, in one wgpu instance | 300–700 ms |
+| First paint (llvmpipe) | 30–100 ms |
+
+The instance dominates. On pixman, Vulkan cannot present (its surface is lost), so wgpu draws with
+GL on llvmpipe; the Vulkan driver was loaded for nothing. EGL alone takes 100–265 ms.
+
+The shell starts the instance on a thread of its own as soon as the display is open, and the first
+window waits only for what is left of it. One instance per backend, each on its own thread, would
+wait for the slowest rather than for both, but in the sandbox the drivers started side by side
+crashed (SIGSEGV) or hung the process. What is left is the drivers' own start. Qt Quick asks for
+OpenGL only on Linux by default.
+
+On the machine measured, most of the instance's time was the Vulkan loader loading the NVIDIA
+driver, which was installed with no NVIDIA GPU in the machine. With `VK_DRIVER_FILES` naming only
+the Radeon driver, Ljós showed its first frame in 85–115 ms (Qt: 110–205 ms) instead of about
+550 ms. Pass it with `--app-env` to tell the machine's drivers apart from Ljós.
+
 ## An example run (2026-10-15)
 
 These numbers are from one run on one machine. They are an example of what the report shows, not a
