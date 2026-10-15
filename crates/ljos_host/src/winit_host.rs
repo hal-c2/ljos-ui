@@ -59,6 +59,12 @@ impl<U: From<Wake> + Send + 'static> WinitHost<U> {
     pub fn proxy(&self) -> EventLoopProxy<U> {
         self.event_loop.create_proxy()
     }
+
+    /// The display, for what is set up on it before the loop runs (a
+    /// graphics instance, on another thread).
+    pub fn display_handle(&self) -> winit::event_loop::OwnedDisplayHandle {
+        self.event_loop.owned_display_handle()
+    }
 }
 
 impl<U: From<Wake> + Send + 'static> PlatformHost for WinitHost<U> {

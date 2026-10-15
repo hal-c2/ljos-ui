@@ -35,7 +35,7 @@ use ljos_host::{
 use ljos_runtime::{MemoryPressure, SystemClock};
 
 use crate::repaint::RepaintSchedule;
-use crate::surface::{self, Gpu, Surface};
+use crate::surface::{self, Gpu, Starting, Surface};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, windows};
 
 /// The log category of what the shell has to say.
@@ -380,6 +380,9 @@ struct Desktop<M> {
     dirty: Rc<Cell<bool>>,
     /// The device of the first window that opened.
     gpu: Option<Gpu>,
+    /// The graphics instances made while the application starts, until
+    /// the first window takes one.
+    starting: Option<Starting>,
     /// Why the loop ended, when it was not asked to.
     failure: Rc<RefCell<Option<ShellError>>>,
     screens: Vec<Screen>,
@@ -417,6 +420,7 @@ impl<M: Send + 'static> Desktop<M> {
         proxy: Proxy,
         dirty: Rc<Cell<bool>>,
         failure: Rc<RefCell<Option<ShellError>>>,
+        starting: Starting,
     ) -> Self {
         Self {
             app,
@@ -426,6 +430,7 @@ impl<M: Send + 'static> Desktop<M> {
             proxy,
             dirty,
             gpu: None,
+            starting: Some(starting),
             failure,
             screens: Vec::new(),
             screens_stale: true,
@@ -724,6 +729,14 @@ impl<M: Send + 'static> Desktop<M> {
             return;
         };
         let display = host.event_loop().owned_display_handle();
+        if self.gpu.is_none() {
+            // Without a device from them, the painter makes its own and
+            // says why there is none.
+            self.gpu = self
+                .starting
+                .take()
+                .and_then(|starting| starting.device_for(&window));
+        }
         let gpu = self.gpu.clone();
         let slot = &mut self.slots[i];
         let painter = slot
@@ -1341,6 +1354,7 @@ impl<M: Send + 'static> Desktop<M> {
             slot.painter = None;
         }
         self.gpu = None;
+        self.starting = None;
     }
 }
 
@@ -1379,6 +1393,8 @@ pub(crate) fn run<M: Send + 'static>(
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
     let host = WinitHost::<ShellEvent>::new()?;
+    // The drivers start while the application is built.
+    let starting = Starting::start(host.display_handle());
     // Before `setup`: bindings may measure text while the root is being
     // built.
     if config.system_fonts {
@@ -1397,7 +1413,15 @@ pub(crate) fn run<M: Send + 'static>(
     };
     let app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
     let failure = Rc::new(RefCell::new(None));
-    let desktop = Desktop::new(app, config, ctx, proxy, dirty, Rc::clone(&failure));
+    let desktop = Desktop::new(
+        app,
+        config,
+        ctx,
+        proxy,
+        dirty,
+        Rc::clone(&failure),
+        starting,
+    );
     host.run(desktop)?;
     match failure.borrow_mut().take() {
         Some(error) => Err(error),

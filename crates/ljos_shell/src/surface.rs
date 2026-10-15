@@ -8,7 +8,7 @@
 //! once.
 
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
 use egui::ViewportId;
 use egui_wgpu::winit::Painter;
@@ -50,6 +50,100 @@ impl Gpu {
     }
 }
 
+/// The graphics instance being made while the application starts, on a
+/// thread of its own. Making it loads and starts the drivers, which takes
+/// longer than building most applications (hundreds of milliseconds for
+/// EGL on Mesa, more for Vulkan's loader and its layers); the first window
+/// only waits for what is left of it. One instance for every backend, as
+/// the painter makes it: drivers started side by side, an instance for
+/// each on a thread of its own, crashed and hung the process.
+pub(crate) struct Starting {
+    instance: mpsc::Receiver<wgpu::Instance>,
+    setup: WgpuSetupCreateNew,
+    /// Waited for when the application ends before its first window: a
+    /// process that ends while a driver is starting can hang in its exit.
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl std::fmt::Debug for Starting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Starting")
+            .field("backends", &self.setup.instance_descriptor.backends)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Starting {
+    /// Starts making the instance wgpu would be asked for.
+    pub(crate) fn start(display: OwnedDisplayHandle) -> Self {
+        let setup = create_new(display);
+        let (tx, instance) = mpsc::sync_channel(1);
+        let new = WgpuSetup::CreateNew(setup.clone());
+        // Without the thread the first window's painter makes the instance.
+        let thread = std::thread::Builder::new()
+            .name("ljos-gpu".into())
+            .spawn(move || {
+                let _ = tx.send(pollster::block_on(new.new_instance()));
+            })
+            .ok();
+        Self {
+            instance,
+            setup,
+            thread,
+        }
+    }
+
+    /// The device for `window`: the adapter wgpu ranks first among those
+    /// that can draw into it. `None` when the instance could not be made
+    /// or has none.
+    pub(crate) fn device_for(self, window: &Arc<Window>) -> Option<Gpu> {
+        let instance = self.instance.recv().ok()?;
+        let surface = instance.create_surface(Arc::clone(window)).ok()?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: self.setup.power_preference,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+            apply_limit_buckets: false,
+        }));
+        // The painter makes the window's own surface.
+        drop(surface);
+        let adapter = adapter.ok()?;
+        let descriptor = (self.setup.device_descriptor)(&adapter);
+        let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).ok()?;
+        Some(Gpu {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
+    }
+}
+
+/// How a device is asked for: every backend wgpu was built with (or those
+/// `WGPU_BACKEND` names), on the window system's display.
+fn create_new(display: OwnedDisplayHandle) -> WgpuSetupCreateNew {
+    let mut new = WgpuSetupCreateNew::from_display_handle(display);
+    // A debug build turns wgpu's validation on, and on GL that hands
+    // EGL a debug callback which wgpu-hal 30.0.1 lets read a null
+    // command name: Mesa reports a failed eglInitialize through it
+    // and the process segfaults as it starts. WGPU_VALIDATION=1
+    // still asks for it.
+    if std::env::var_os("WGPU_VALIDATION").is_none() {
+        new.instance_descriptor
+            .flags
+            .remove(wgpu::InstanceFlags::VALIDATION);
+    }
+    new
+}
+
 /// A painter for the windows of `ctx`. The first one (`gpu` is `None`)
 /// picks the device when it is given its window.
 pub(crate) fn painter(
@@ -64,20 +158,7 @@ pub(crate) fn painter(
             device: gpu.device.clone(),
             queue: gpu.queue.clone(),
         }),
-        None => {
-            let mut new = WgpuSetupCreateNew::from_display_handle(display);
-            // A debug build turns wgpu's validation on, and on GL that hands
-            // EGL a debug callback which wgpu-hal 30.0.1 lets read a null
-            // command name: Mesa reports a failed eglInitialize through it
-            // and the process segfaults as it starts. WGPU_VALIDATION=1
-            // still asks for it.
-            if std::env::var_os("WGPU_VALIDATION").is_none() {
-                new.instance_descriptor
-                    .flags
-                    .remove(wgpu::InstanceFlags::VALIDATION);
-            }
-            WgpuSetup::CreateNew(new)
-        }
+        None => WgpuSetup::CreateNew(create_new(display)),
     };
     let config = WgpuConfiguration {
         surface: SurfaceConfig {
