@@ -329,6 +329,23 @@ struct ShadowKey {
 pub struct EffectPaint {
     image: Option<ImageHandle>,
     pad: [f64; 4],
+    inputs: Option<Arc<EffectInputs>>,
+}
+
+/// What an effect was given besides its source's pixels.
+#[derive(Clone, Debug)]
+struct EffectInputs {
+    source: ObjectId,
+    mask_img: Option<ImageHandle>,
+    mask_params: Option<Mask>,
+    adjust: ColourAdjust,
+    col_c: Color,
+    fg_blur_radius: f64,
+    shadow: Option<ShadowParams>,
+    item_w: f64,
+    item_h: f64,
+    pad_px: [u32; 4],
+    pad: [f64; 4],
 }
 
 impl EffectPaint {
@@ -413,25 +430,77 @@ impl EffectPaint {
         } else {
             None
         };
-
-        let Some(source_img) = source_obj.and_then(|src| read_item_image(e, src)) else {
-            return Self {
-                image: None,
-                pad: [0.0; 4],
-            };
-        };
-
+        let source_img = source_obj.and_then(|src| read_item_image(e, src));
         let mask_img = if mask_enabled {
             let Some(m) = mask_obj.and_then(|m| read_item_image(e, m)) else {
-                return Self {
-                    image: None,
-                    pad: [0.0; 4],
-                };
+                return Self::none(None);
             };
             Some(m)
         } else {
             None
         };
+        let Some(source) = source_obj else {
+            return Self::none(None);
+        };
+        let inputs = Arc::new(EffectInputs {
+            source,
+            mask_img,
+            mask_params,
+            adjust,
+            col_c,
+            fg_blur_radius,
+            shadow,
+            item_w,
+            item_h,
+            pad_px,
+            pad,
+        });
+        match source_img {
+            Some(img) => Self::finish(e, &inputs, img),
+            // An item with nothing of its own to sample is drawn by the
+            // scene, from its subtree ([`EffectPaint::with_source`]).
+            None => Self::none(Some(inputs)),
+        }
+    }
+
+    fn none(inputs: Option<Arc<EffectInputs>>) -> Self {
+        Self {
+            image: None,
+            pad: [0.0; 4],
+            inputs,
+        }
+    }
+
+    /// The item it draws, when it has one.
+    pub(crate) fn source(&self) -> Option<ObjectId> {
+        self.inputs.as_ref().map(|i| i.source)
+    }
+
+    /// The same effect drawn from `source_img`, a picture of the source
+    /// item with all it shows: its children are part of what the effect
+    /// draws, as they are of the texture Qt renders the item into.
+    pub(crate) fn with_source(&self, e: &Engine, source_img: ImageHandle) -> Self {
+        match &self.inputs {
+            Some(inputs) => Self::finish(e, inputs, source_img),
+            None => self.clone(),
+        }
+    }
+
+    fn finish(e: &Engine, inputs: &Arc<EffectInputs>, source_img: ImageHandle) -> Self {
+        let EffectInputs {
+            mask_img,
+            mask_params,
+            adjust,
+            col_c,
+            fg_blur_radius,
+            shadow,
+            item_w,
+            item_h,
+            pad_px,
+            pad,
+            ..
+        } = (**inputs).clone();
+        let inputs = Some(Arc::clone(inputs));
 
         let has_spatial = fg_blur_radius > 0.0 || shadow.is_some() || pad_px.iter().any(|&p| p > 0);
 
@@ -440,6 +509,7 @@ impl EffectPaint {
             return Self {
                 image: Some(source_img),
                 pad: [0.0; 4],
+                inputs,
             };
         }
 
@@ -454,10 +524,7 @@ impl EffectPaint {
             source_img.height()
         };
         if target_w == 0 || target_h == 0 {
-            return Self {
-                image: None,
-                pad: [0.0; 4],
-            };
+            return Self::none(inputs);
         }
 
         let key = EffectKey {
@@ -499,6 +566,7 @@ impl EffectPaint {
             return Self {
                 image: Some(hit),
                 pad: if has_spatial { pad } else { [0.0; 4] },
+                inputs,
             };
         }
 
@@ -522,6 +590,7 @@ impl EffectPaint {
         Self {
             image: composed,
             pad: if has_spatial { pad } else { [0.0; 4] },
+            inputs,
         }
     }
 
@@ -555,6 +624,17 @@ fn obj_prop(e: &Engine, obj: ObjectId, prop: ljos_engine::PropIndex) -> Option<O
 
 /// Extracts an [`ImageHandle`] from a source or mask item (`Image`, `Canvas`,
 /// or `Rectangle`), tracking its reactive paint inputs.
+/// The pixels of a composed item and what it shows (from
+/// [`RenderTree::compose_subtree`]), one per logical pixel.
+pub(crate) fn picture(snap: &ljos_render::FrameSnapshot) -> Option<ImageHandle> {
+    if snap.viewport.width() < 1.0 || snap.viewport.height() < 1.0 {
+        return None;
+    }
+    let mut r = VelloCpuReference::new(RasterConfig::default());
+    let rgba = r.render(&ljos_render::FrameView::new(snap, 1.0)).ok()?;
+    ImageHandle::from_straight(rgba.width, rgba.height, rgba.data).ok()
+}
+
 fn read_item_image(e: &Engine, item: ObjectId) -> Option<ImageHandle> {
     if is_a::<crate::image::Image>(e, item) {
         return ImagePaint::read(e, item).image().cloned();

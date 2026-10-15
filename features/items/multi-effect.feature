@@ -116,9 +116,54 @@ Feature: MultiEffect
       When 200 milliseconds pass
       Then the pixel at 20, 20 of the window is "#ff0000"
 
-    Scenario: The source item is not drawn in its own place
+    # "MultiEffect type renders a new visual item alongside the source
+    # item ... both the items can be visible": hiding the source is up to
+    # the user (visible: false or opacity: 0).
+    Scenario: The source item is still drawn in its own place
       When 200 milliseconds pass
-      Then the pixel at 20, 70 of the window is "#000000"
+      Then the pixel at 20, 70 of the window is "#ff0000"
+
+    Scenario: The source's children are drawn with it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Effects
+        Rectangle {
+          width: 100; height: 60
+          color: "#000000"
+          Rectangle {
+            id: card
+            width: 40; height: 40; color: "#0000ff"
+            Rectangle { x: 10; y: 10; width: 20; height: 20; color: "#ff0000" }
+          }
+          MultiEffect { source: card; x: 50; width: 40; height: 40 }
+        }
+        """
+      When 200 milliseconds pass
+      Then the pixel at 70, 20 of the window is "#ff0000"
+      And the pixel at 55, 5 of the window is "#0000ff"
+
+    Scenario: A hidden source is drawn by its effect, children and all
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Effects
+        Rectangle {
+          width: 100; height: 60
+          color: "#000000"
+          Rectangle {
+            id: card
+            visible: false
+            width: 40; height: 40; color: "#0000ff"
+            Rectangle { x: 10; y: 10; width: 20; height: 20; color: "#ff0000" }
+          }
+          MultiEffect { source: card; x: 50; width: 40; height: 40 }
+        }
+        """
+      When 200 milliseconds pass
+      Then the pixel at 20, 20 of the window is "#000000"
+      And the pixel at 70, 20 of the window is "#ff0000"
+      And the pixel at 55, 5 of the window is "#0000ff"
 
     Scenario: A half-transparent mask halves the source
       When 200 milliseconds pass
@@ -140,8 +185,8 @@ Feature: MultiEffect
         Rectangle {
           width: 60; height: 60
           color: "#000000"
-          Image { id: red; source: "red.png" }
-          Image { id: half; source: "half.png" }
+          Image { id: red; source: "red.png"; visible: false }
+          Image { id: half; source: "half.png"; visible: false }
           MultiEffect {
             source: red
             maskSource: half

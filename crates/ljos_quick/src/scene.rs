@@ -150,6 +150,8 @@ struct Geom {
     w: f64,
     h: f64,
     visible: bool,
+    /// A `Flipable` face turned away.
+    faces_away: bool,
     opacity: f64,
     clip: bool,
     rotation: f64,
@@ -167,8 +169,8 @@ impl Geom {
             z: num(e, obj, Item::Z.index),
             w: num(e, obj, Item::WIDTH.index),
             h: num(e, obj, Item::HEIGHT.index),
-            visible: e.read(obj, Item::VISIBLE.index).to_boolean()
-                && !crate::flipable::faces_away(e, obj),
+            visible: e.read(obj, Item::VISIBLE.index).to_boolean(),
+            faces_away: crate::flipable::faces_away(e, obj),
             opacity: num(e, obj, Item::OPACITY.index),
             clip: e.read(obj, Item::CLIP.index).to_boolean(),
             rotation: num(e, obj, Item::ROTATION.index),
@@ -287,9 +289,11 @@ pub struct QuickScene {
     entries: HashMap<ObjectId, Entry>,
     by_node: HashMap<NodeId, ObjectId>,
     paint: HashMap<ObjectId, Paint>,
-    /// Items hidden in the tree because a `MultiEffect` draws them (its
-    /// `source` and `maskSource`): restored when no effect uses them.
-    suppressed: HashSet<ObjectId>,
+    /// Each `MultiEffect` as read, before it is given the picture of a
+    /// source with children, and a fingerprint of the picture it was given
+    /// with what it was made from (held, so no display list it names is
+    /// freed and its address taken by another).
+    effect_base: HashMap<ObjectId, (crate::effects::EffectPaint, Option<(u64, FrameSnapshot)>)>,
     root: Option<ObjectId>,
     /// The layer above the root item (`crate::layer`), once one was made.
     layer: Option<ObjectId>,
@@ -362,7 +366,7 @@ impl QuickScene {
             entries: HashMap::new(),
             by_node: HashMap::new(),
             paint: HashMap::new(),
-            suppressed: HashSet::new(),
+            effect_base: HashMap::new(),
             root: None,
             layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
@@ -656,7 +660,7 @@ impl QuickScene {
         self.reconcile(engine);
         self.apply_geometry();
         self.apply_content();
-        self.suppress_effect_sources(engine);
+        self.draw_effect_sources(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
         let mut snap = self.tree.compose(self.viewport, self.frame);
         let mut synced = self.snapshot.clone();
@@ -670,7 +674,7 @@ impl QuickScene {
                 break;
             }
             self.apply_content();
-            self.suppress_effect_sources(engine);
+            self.draw_effect_sources(engine);
             snap = self.tree.compose(self.viewport, self.frame);
         }
         let changed = !self
@@ -1075,7 +1079,12 @@ impl QuickScene {
             self.tree.set_size(node, size);
             self.tree
                 .set_opacity(node, g.opacity.clamp(0.0, 1.0) as f32);
-            self.tree.set_visible(node, g.visible);
+            // An item that reads false only because a parent is hidden is
+            // left shown in the tree: the parent prunes it anyway, and a
+            // `MultiEffect` drawing that parent shows it as Qt does.
+            let covered = e.inherit.borrow().visible.is_some();
+            self.tree
+                .set_visible(node, (g.visible || covered) && !g.faces_away);
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
             self.tree.set_z(node, g.z as f32);
@@ -1091,6 +1100,9 @@ impl QuickScene {
         for (obj, p) in content {
             if let Some(e) = self.entries.get(&obj) {
                 self.tree.mark_content_dirty(e.node);
+                if let Paint::Effect(fx) = &p {
+                    self.effect_base.insert(obj, (fx.clone(), None));
+                }
                 self.paint.insert(obj, p);
             }
         }
@@ -1113,52 +1125,91 @@ impl QuickScene {
         });
     }
 
-    /// Hides the items a `MultiEffect` draws (its `source` and
-    /// `maskSource`) in the render tree, and shows again the ones no
-    /// effect uses any more. The items keep their own `visible`; only
-    /// their tree node is hidden, as Qt renders them only as textures.
-    fn suppress_effect_sources(&mut self, engine: &Engine) {
-        if !self.entries.values().any(|e| e.kind == Kind::Effect) && self.suppressed.is_empty() {
+    /// Gives each `MultiEffect` whose source has children a picture of
+    /// the source with them, as Qt renders the whole item into the
+    /// texture the effect samples. The source itself stays where it is:
+    /// "MultiEffect type renders a new visual item alongside the source
+    /// item", and hiding it is the user's choice. Drawn again only when
+    /// what the source shows changed.
+    fn draw_effect_sources(&mut self, engine: &Engine) {
+        if self.effect_base.is_empty() {
             return;
         }
-        let mut want: HashSet<ObjectId> = HashSet::new();
-        for (obj, e) in &self.entries {
-            if e.kind != Kind::Effect {
+        let entries = &self.entries;
+        self.effect_base.retain(|o, _| entries.contains_key(o));
+        let mut parents: HashSet<ObjectId> = HashSet::new();
+        for e in self.entries.values() {
+            if let Some(p) = e.parent {
+                parents.insert(p);
+            }
+        }
+        let mut redrawn = false;
+        for (obj, (base, seen)) in &mut self.effect_base {
+            let Some(src) = base.source().filter(|s| parents.contains(s)) else {
+                continue;
+            };
+            let (Some(src_entry), Some(fx)) = (self.entries.get(&src), self.entries.get(obj))
+            else {
+                continue;
+            };
+            let Some(snap) = self.tree.compose_subtree(src_entry.node) else {
+                continue;
+            };
+            let print = fingerprint(&snap);
+            if seen.as_ref().is_some_and(|(p, _)| *p == print) {
                 continue;
             }
-            for p in [
-                crate::effects::MultiEffect::SOURCE.index,
-                crate::effects::MultiEffect::MASK_SOURCE.index,
-            ] {
-                if let Value::Object(src) = engine.read(*obj, p) {
-                    want.insert(src);
+            let paint = match crate::effects::picture(&snap) {
+                Some(img) => base.with_source(engine, img),
+                None => base.clone(),
+            };
+            *seen = Some((print, snap));
+            self.paint.insert(*obj, Paint::Effect(paint));
+            self.tree.mark_content_dirty(fx.node);
+            redrawn = true;
+        }
+        if redrawn {
+            self.apply_content();
+        }
+    }
+
+    /// The items that are drawn as part of a `MultiEffect`'s source: the
+    /// source and what is below it, shown or not.
+    fn effect_drawn(&self) -> HashSet<ObjectId> {
+        let sources: HashSet<ObjectId> = self
+            .effect_base
+            .values()
+            .filter_map(|(b, _)| b.source())
+            .collect();
+        if sources.is_empty() {
+            return HashSet::new();
+        }
+        self.entries
+            .iter()
+            .filter(|(obj, _)| {
+                let mut at = Some(**obj);
+                while let Some(o) = at {
+                    if sources.contains(&o) {
+                        return true;
+                    }
+                    at = self.entries.get(&o).and_then(|e| e.parent);
                 }
-            }
-        }
-        for obj in std::mem::take(&mut self.suppressed) {
-            if !want.contains(&obj)
-                && let Some(e) = self.entries.get(&obj)
-            {
-                let visible = engine.read(obj, Item::VISIBLE.index).to_boolean();
-                self.tree.set_visible(e.node, visible);
-            }
-        }
-        for obj in &want {
-            if let Some(e) = self.entries.get(obj) {
-                self.tree.set_visible(e.node, false);
-            }
-        }
-        self.suppressed = want;
+                false
+            })
+            .map(|(o, _)| *o)
+            .collect()
     }
 
     /// Installs paint effects for painting items in `snap` and drops them
     /// for items that left it. Returns whether any were installed.
     fn sync_content_effects(&mut self, engine: &Engine, snap: &FrameSnapshot) -> bool {
-        let visible: HashSet<ObjectId> = snap
+        let mut visible: HashSet<ObjectId> = snap
             .items
             .iter()
             .filter_map(|i| self.by_node.get(&i.node).copied())
             .collect();
+        // A hidden source is still drawn by its effect.
+        visible.extend(self.effect_drawn());
         let mut installed = false;
         // A dropped display list changes the tree, so the frame composes
         // again and does not hand out a snapshot that is already stale.
@@ -2080,4 +2131,30 @@ pub(crate) fn emit_mouse(
     let accepted = engine.read(me, MouseEvent::ACCEPTED.index).to_boolean();
     engine.destroy_now(me);
     accepted
+}
+
+/// What a composed subtree shows, to tell whether it must be drawn again.
+fn fingerprint(snap: &FrameSnapshot) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    snap.viewport.width().to_bits().hash(&mut h);
+    snap.viewport.height().to_bits().hash(&mut h);
+    for i in &snap.items {
+        i.node.hash(&mut h);
+        for c in i.world.as_coeffs() {
+            c.to_bits().hash(&mut h);
+        }
+        i.opacity.to_bits().hash(&mut h);
+        i.size.width.to_bits().hash(&mut h);
+        i.size.height.to_bits().hash(&mut h);
+        i.list
+            .as_ref()
+            .map(|l| Arc::as_ptr(l) as usize)
+            .hash(&mut h);
+        i.clip.map(|c| c.0).hash(&mut h);
+    }
+    for c in &snap.clips {
+        format!("{c:?}").hash(&mut h);
+    }
+    h.finish()
 }

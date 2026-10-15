@@ -253,6 +253,98 @@ impl RenderTree {
         snapshot
     }
 
+    /// What `node` and the nodes below it paint, in `node`'s own
+    /// coordinates and cut to its bounds, as though it were the root: its
+    /// own transform, opacity and visibility do not apply, those of the
+    /// nodes below it do. What an effect that draws an item sees of it.
+    /// Leaves the tree's cached snapshot and world data alone.
+    pub fn compose_subtree(&mut self, node: NodeId) -> Option<FrameSnapshot> {
+        let size = self.nodes.get(node)?.size;
+        let viewport = Rect::from_origin_size((0.0, 0.0), size);
+        let mut walk = Walk {
+            items: Vec::new(),
+            clips: Vec::new(),
+            stats: ComposeStats::default(),
+            frame: 0,
+        };
+        let top = Parent {
+            world: Affine::IDENTITY,
+            stamp: 0,
+            opacity: 1.0,
+            clip: None,
+            clip_bbox: viewport,
+        };
+        self.subtree_node(node, top, true, &mut walk);
+        Some(FrameSnapshot {
+            frame: 0,
+            viewport,
+            items: walk.items,
+            clips: walk.clips,
+            stats: walk.stats,
+        })
+    }
+
+    fn subtree_node(&mut self, id: NodeId, parent: Parent, root: bool, walk: &mut Walk) {
+        let Some(n) = self.nodes.get(id) else {
+            return;
+        };
+        let (world, opacity) = match root {
+            true => (parent.world, parent.opacity),
+            false if n.is_pruned() => return,
+            false => (parent.world * n.local, parent.opacity * n.opacity),
+        };
+        let mut here = Parent {
+            world,
+            stamp: 0,
+            opacity,
+            clip: parent.clip,
+            clip_bbox: parent.clip_bbox,
+        };
+        if let Some(spec) = n.clip {
+            let wb = world.transform_rect_bbox(spec.rect);
+            let inter = Rect::new(
+                wb.x0.max(parent.clip_bbox.x0),
+                wb.y0.max(parent.clip_bbox.y0),
+                wb.x1.min(parent.clip_bbox.x1),
+                wb.y1.min(parent.clip_bbox.y1),
+            );
+            if inter.x0 > inter.x1 || inter.y0 > inter.y1 {
+                return;
+            }
+            let cid = ClipId(walk.clips.len() as u32);
+            walk.clips.push(ClipEntry {
+                parent: parent.clip,
+                transform: world,
+                rect: spec.rect,
+                radii: spec.radii,
+                bbox: inter,
+                axis_aligned: is_axis_aligned(world),
+            });
+            here.clip = Some(cid);
+            here.clip_bbox = inter;
+        }
+        self.ensure_order(id);
+        let n = &self.nodes[id];
+        let order = n.paint_order.clone();
+        let neg = n.neg_count;
+        let item = PaintItem {
+            node: id,
+            world,
+            opacity,
+            size: n.size,
+            list: n.content.clone(),
+            clip: here.clip,
+            hit_testable: false,
+        };
+        for c in &order[..neg] {
+            self.subtree_node(*c, here, false, walk);
+        }
+        walk.items.push(item);
+        for c in &order[neg..] {
+            self.subtree_node(*c, here, false, walk);
+        }
+    }
+
     fn compose_node(&mut self, id: NodeId, parent: Parent, walk: &mut Walk) {
         if self.nodes[id].is_pruned() {
             walk.stats.pruned += 1;
