@@ -42,6 +42,23 @@ const MAX_IN_FLIGHT: usize = 8;
 /// gives up, so a broken decoder fails a test instead of hanging it.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A decoded picture and the size it reports, which is larger than its
+/// pixels when it was kept smaller for a request's `limit`.
+#[derive(Clone, Debug)]
+pub(crate) struct Picture {
+    pub image: ImageHandle,
+    pub natural: (u32, u32),
+}
+
+impl Picture {
+    fn of(loaded: &decode::Loaded) -> Self {
+        Self {
+            image: loaded.image.clone(),
+            natural: loaded.natural,
+        }
+    }
+}
+
 /// What a cached picture is known by.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ImageKey {
@@ -85,6 +102,48 @@ struct Done {
     result: Result<decode::Loaded, LoadError>,
 }
 
+/// Bytes that decodes under way may take at once. A decode waits for room
+/// while another runs, so a burst of large pictures is decoded a few at a
+/// time instead of all holding their pixels at full size together; one
+/// alone always runs, however large.
+#[derive(Default)]
+struct Gate {
+    used: Mutex<usize>,
+    freed: Condvar,
+}
+
+impl Gate {
+    fn enter(self: &Arc<Self>, bytes: usize, cap: usize) -> Permit {
+        let used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut used = self
+            .freed
+            .wait_while(used, |u| *u > 0 && u.saturating_add(bytes) > cap)
+            .unwrap_or_else(PoisonError::into_inner);
+        *used += bytes;
+        Permit {
+            gate: Arc::clone(self),
+            bytes,
+        }
+    }
+}
+
+struct Permit {
+    gate: Arc<Gate>,
+    bytes: usize,
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        let mut used = self
+            .gate
+            .used
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *used = used.saturating_sub(self.bytes);
+        self.gate.freed.notify_all();
+    }
+}
+
 /// What pool threads share with the store.
 #[derive(Default)]
 struct Signal {
@@ -119,7 +178,7 @@ impl Signal {
 
 struct State {
     resources: HashMap<String, Arc<[u8]>>,
-    cache: ByteLru<ImageKey, ImageHandle>,
+    cache: ByteLru<ImageKey, Picture>,
     /// Decodes asked for and not delivered yet, with who waits for each.
     jobs: HashMap<ImageKey, Vec<Waiter>>,
     /// Jobs not started yet because [`MAX_IN_FLIGHT`] are under way.
@@ -133,6 +192,8 @@ struct State {
     vectors: HashSet<String>,
     /// The scale each scene of the engine paints at, by scene.
     scales: HashMap<u64, f32>,
+    /// The longest side of each scene's view, in device pixels.
+    sides: HashMap<u64, f64>,
     /// A graph node holding the largest of `scales`, read by the paint of
     /// an item that shows a drawing, so that it follows a change.
     scale_node: Option<NodeId>,
@@ -144,6 +205,7 @@ pub struct ImageStore {
     inbox: UiInbox<Done>,
     tx: UiHandle<Done>,
     signal: Arc<Signal>,
+    gate: Arc<Gate>,
 }
 
 impl std::fmt::Debug for ImageStore {
@@ -174,11 +236,13 @@ impl Default for ImageStore {
                 held: false,
                 vectors: HashSet::new(),
                 scales: HashMap::new(),
+                sides: HashMap::new(),
                 scale_node: None,
             }),
             inbox,
             tx,
             signal,
+            gate: Arc::default(),
         }
     }
 }
@@ -235,7 +299,7 @@ impl ImageStore {
         let dropped = {
             let mut s = self.state.borrow_mut();
             s.cache.set_budget(bytes);
-            s.cache.evict_to_budget(|_, image| image.holders() == 1)
+            s.cache.evict_to_budget(|_, p| p.image.holders() == 1)
         };
         // Outside the borrow: dropping pixels is not free.
         drop(dropped);
@@ -344,15 +408,17 @@ impl ImageStore {
                 MemoryPressure::Moderate => s.cache.budget(),
                 MemoryPressure::Critical => 0,
             };
-            s.cache.evict_to(target, |_, image| image.holders() == 1)
+            s.cache.evict_to(target, |_, p| p.image.holders() == 1)
         };
-        dropped.iter().map(|(_, image)| image.byte_len()).sum()
+        dropped.iter().map(|(_, p)| p.image.byte_len()).sum()
     }
 
-    /// Says that `scene` paints at `scale` device pixels per logical pixel.
-    /// Drawings are made at the largest scale any scene paints at; a change
-    /// makes the items that show them paint again.
-    pub fn show_at(&self, engine: &Engine, scene: u64, scale: f32) {
+    /// Says that `scene` paints at `scale` device pixels per logical pixel,
+    /// on a view whose longest side is `side` logical pixels. Drawings are
+    /// made at the largest scale any scene paints at; a change makes the
+    /// items that show them paint again. Pictures loaded from now on keep
+    /// no more pixels than the largest view shows (see [`Request::limit`]).
+    pub fn show_at(&self, engine: &Engine, scene: u64, scale: f32, side: f64) {
         let scale = if scale.is_finite() && scale > 0.0 {
             scale
         } else {
@@ -360,6 +426,14 @@ impl ImageStore {
         };
         let (node, largest) = {
             let mut s = self.state.borrow_mut();
+            let device = if side.is_finite() {
+                side.max(0.0) * f64::from(scale)
+            } else {
+                0.0
+            };
+            if s.sides.get(&scene) != Some(&device) {
+                s.sides.insert(scene, device);
+            }
             if s.scales.get(&scene) == Some(&scale) {
                 return;
             }
@@ -375,7 +449,22 @@ impl ImageStore {
 
     /// `scene` is gone: its scale no longer counts.
     pub fn forget_scene(&self, scene: u64) {
-        self.state.borrow_mut().scales.remove(&scene);
+        let mut s = self.state.borrow_mut();
+        s.scales.remove(&scene);
+        s.sides.remove(&scene);
+    }
+
+    /// The `limit` a picture loaded now is kept at: the longest side of
+    /// the largest view, rounded up to a power of two so that a window
+    /// resized a little shares pictures with what it was. 0, for all of
+    /// it, while no scene has said how large it is.
+    pub(crate) fn limit(&self) -> u32 {
+        let s = self.state.borrow();
+        let side = s.sides.values().copied().fold(0.0, f64::max);
+        if side < 1.0 {
+            return 0;
+        }
+        (side.ceil().min(f64::from(1u32 << 30)) as u32).next_power_of_two()
     }
 
     /// The scale drawings are made at (tracked: a paint that reads it runs
@@ -420,20 +509,91 @@ impl ImageStore {
 
     /// The cached picture for `key`, which becomes the most recently used.
     pub(crate) fn cached(&self, key: &ImageKey) -> Option<ImageHandle> {
+        self.cached_picture(key).map(|p| p.image)
+    }
+
+    /// As [`ImageStore::cached`], with the size the picture reports.
+    pub(crate) fn cached_picture(&self, key: &ImageKey) -> Option<Picture> {
         self.state.borrow_mut().cache.get(key).cloned()
+    }
+
+    /// The picture of `key` or, when there is none, the same picture kept
+    /// for another `limit`, with the key it is kept under: the nearest one
+    /// with no more pixels than `key` asks for, else the smallest with
+    /// more. The item that takes it makes it smaller or sharper as it is
+    /// drawn, without fetching or decoding it again for that.
+    pub(crate) fn cached_like(&self, key: &ImageKey) -> Option<(ImageKey, Picture)> {
+        let mut s = self.state.borrow_mut();
+        if let Some(picture) = s.cache.get(key) {
+            return Some((key.clone(), picture.clone()));
+        }
+        if key.request.animated {
+            return None;
+        }
+        let longest = |limit: u32| {
+            if limit == 0 {
+                u64::MAX
+            } else {
+                u64::from(limit)
+            }
+        };
+        let asked = longest(key.request.limit);
+        let found = s
+            .cache
+            .keys_by_age()
+            .filter(|k| {
+                k.url == key.url
+                    && Request {
+                        limit: key.request.limit,
+                        ..k.request
+                    } == key.request
+            })
+            .max_by_key(|k| {
+                let kept = longest(k.request.limit);
+                if kept <= asked {
+                    (1, kept)
+                } else {
+                    (0, u64::MAX - kept)
+                }
+            })?
+            .clone();
+        let picture = s.cache.get(&found)?.clone();
+        Some((found, picture))
+    }
+
+    /// Lets go of the picture of `key` unless something still holds it.
+    pub(crate) fn release(&self, key: &ImageKey) {
+        let dropped = {
+            let mut s = self.state.borrow_mut();
+            if s.cache.peek(key).is_some_and(|p| p.image.holders() == 1) {
+                s.cache.remove(key)
+            } else {
+                None
+            }
+        };
+        drop(dropped);
     }
 
     /// Reads and decodes `key` on this thread. With `cache`, the cache is
     /// asked first and keeps the result.
     pub(crate) fn load_now(&self, key: &ImageKey, cache: bool) -> Result<ImageHandle, LoadError> {
-        if cache && let Some(image) = self.cached(key) {
-            return Ok(image);
+        self.load_picture_now(key, cache).map(|p| p.image)
+    }
+
+    /// As [`ImageStore::load_now`], with the size the picture reports.
+    pub(crate) fn load_picture_now(
+        &self,
+        key: &ImageKey,
+        cache: bool,
+    ) -> Result<Picture, LoadError> {
+        if cache && let Some(picture) = self.cached_picture(key) {
+            return Ok(picture);
         }
-        let loaded = self.decode_now(key)?;
+        let picture = Picture::of(&self.decode_now(key)?);
         if cache {
-            self.keep(key, &loaded.image);
+            self.keep(key, &picture);
         }
-        Ok(loaded.image)
+        Ok(picture)
     }
 
     /// Reads and decodes `key` on this thread, every frame of it when the
@@ -503,13 +663,14 @@ impl ImageStore {
 
     /// Puts `image` in the cache and makes room for it. What a display
     /// list shows is never dropped, nor is the newcomer.
-    fn keep(&self, key: &ImageKey, image: &ImageHandle) {
+    pub(crate) fn keep(&self, key: &ImageKey, picture: &Picture) {
         let dropped = {
             let mut s = self.state.borrow_mut();
-            let old = s.cache.insert(key.clone(), image.clone(), image.byte_len());
+            let bytes = picture.image.byte_len();
+            let old = s.cache.insert(key.clone(), picture.clone(), bytes);
             let mut dropped = s
                 .cache
-                .evict_to_budget(|k, cached| k != key && cached.holders() == 1);
+                .evict_to_budget(|k, cached| k != key && cached.image.holders() == 1);
             dropped.extend(old.map(|o| (key.clone(), o)));
             dropped
         };
@@ -517,10 +678,15 @@ impl ImageStore {
     }
 
     fn start(&self, engine: &Engine, key: ImageKey) {
-        self.state.borrow_mut().in_flight += 1;
+        let cap = {
+            let mut s = self.state.borrow_mut();
+            s.in_flight += 1;
+            s.cache.budget()
+        };
         let located = self.locate(&key);
         let tx = self.tx.clone();
         let signal = Arc::clone(&self.signal);
+        let gate = Arc::clone(&self.gate);
         let fetcher = matches!(located, Ok(Origin::Remote)).then(|| Platform::of(engine).fetcher());
         let remote = fetcher.is_some();
         let work = move || {
@@ -529,10 +695,12 @@ impl ImageStore {
                 (located, _) => located,
             };
             let result = located.and_then(|origin| {
+                let bytes = decode::read(&key.url, &origin)?;
+                let _permit = gate.enter(decode::cost(&bytes), cap);
                 // A decoder that panics on a hostile file must still answer,
                 // or its Image would say "Loading" for ever.
                 catch_unwind(AssertUnwindSafe(|| {
-                    decode::load(&key.url, &origin, key.request)
+                    decode::load_bytes(&key.url, &bytes, key.request)
                 }))
                 .unwrap_or_else(|_| {
                     Err(LoadError::Decode {
@@ -606,7 +774,7 @@ impl ImageStore {
                 && !key.request.animated
                 && (caches || waiters.is_empty())
             {
-                self.keep(&key, &loaded.image);
+                self.keep(&key, &Picture::of(loaded));
             }
             for waiter in waiters {
                 super::delivered(engine, waiter, &key, &result);

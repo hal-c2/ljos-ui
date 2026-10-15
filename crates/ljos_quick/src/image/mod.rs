@@ -27,6 +27,7 @@ mod tint;
 pub use animated::AnimatedImage;
 pub use border::{BorderImage, BorderImageBorder};
 pub use decode::{LoadError, Request, requested_size};
+use store::Picture;
 pub use store::{ImageKey, ImageStore};
 pub use tint::{ImageTint, register_image_tint};
 
@@ -203,12 +204,14 @@ struct Run {
     reshowing: bool,
     /// The dropped pixels could not be loaded again; do not keep trying.
     lost: bool,
-    /// A drawing made at the display's scale (in thousandths), like `held`:
-    /// for good when `pinned`, otherwise until the next paint takes it.
-    sharp: Option<(u32, ImageHandle)>,
-    /// The scale a drawing is being made at in the background, or failed
-    /// to be made at: it is not asked for again.
-    sharpening: Option<u32>,
+    /// Sharper pixels than those of `key` and what was asked for them: a
+    /// drawing made at the display's scale, or a picture kept smaller for
+    /// its `limit` that is drawn larger or read whole. Like `held`: for
+    /// good when `pinned`, otherwise until the next paint takes them.
+    sharp: Option<(Request, ImageHandle)>,
+    /// The sharper pixels being made in the background, or that failed to
+    /// be made: they are not asked for again.
+    sharpening: Option<Request>,
     /// A graph node that changes whenever the pixels do, so that the
     /// scene's paint effect and the painted size follow.
     epoch: Option<NodeId>,
@@ -410,6 +413,13 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
             ..Request::default()
         };
     }
+    let animated = is_a::<AnimatedImage>(e, me);
+    // Every frame of an animation is the item's own, and kept whole.
+    let limit = if animated {
+        0
+    } else {
+        ImageStore::of(e).limit()
+    };
     e.untrack(|| {
         let mode = int(e, me, Image::FILL_MODE.index);
         let keeps_shape = matches!(
@@ -428,7 +438,8 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
             cover: keeps_shape && (width > 0 || height > 0),
             clip,
             scale: 0,
-            animated: is_a::<AnimatedImage>(e, me),
+            animated,
+            limit,
         }
     })
 }
@@ -468,22 +479,26 @@ fn reload(e: &Engine, me: ObjectId) {
     let cache = cache && !key.request.animated;
     // A picture another item has loaded is there at once, also for an
     // asynchronous Image.
-    if cache && let Some(image) = store.cached(&key) {
-        finish(e, me, key, image, cache, None);
+    if cache && let Some((key, picture)) = store.cached_like(&key) {
+        finish(e, me, key, picture, cache, None);
         return;
     }
     if is_local(&key.url) && !asynchronous {
         let loaded = if key.request.animated {
-            store.decode_now(&key)
-        } else {
-            store.load_now(&key, cache).map(|image| decode::Loaded {
-                image,
-                vector: false,
-                frames: None,
+            store.decode_now(&key).map(|l| {
+                (
+                    Picture {
+                        image: l.image,
+                        natural: l.natural,
+                    },
+                    l.frames,
+                )
             })
+        } else {
+            store.load_picture_now(&key, cache).map(|p| (p, None))
         };
         match loaded {
-            Ok(loaded) => finish(e, me, key, loaded.image, cache, loaded.frames),
+            Ok((picture, frames)) => finish(e, me, key, picture, cache, frames),
             Err(err) => {
                 unload(e, me, image_status::ERROR);
                 warn(e, me, &err);
@@ -534,16 +549,17 @@ fn in_background(e: &Engine, me: ObjectId, url: &str) -> bool {
         || e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean())
 }
 
-/// The item shows `image` from now on, or the `frames` it is the first of.
+/// The item shows `picture` from now on, or the `frames` it is the first
+/// of.
 fn finish(
     e: &Engine,
     me: ObjectId,
     key: ImageKey,
-    image: ImageHandle,
+    picture: Picture,
     cache: bool,
     frames: Option<std::sync::Arc<decode::Frames>>,
 ) {
-    let natural = (image.width(), image.height());
+    let Picture { image, natural } = picture;
     let asked = with_run(e, me, |r| {
         r.frames = frames;
         r.frame = 0;
@@ -646,7 +662,10 @@ pub(crate) fn delivered(
                     e,
                     item,
                     key.clone(),
-                    l.image.clone(),
+                    Picture {
+                        image: l.image.clone(),
+                        natural: l.natural,
+                    },
                     cache,
                     l.frames.clone(),
                 ),
@@ -687,21 +706,19 @@ pub(crate) fn delivered(
                 return;
             }
             let wanted = with_run(e, item, |r| {
-                let same = r.key.as_ref().is_some_and(|k| {
-                    k.url == key.url && k.request.at_scale(1.0) == key.request.at_scale(1.0)
-                });
-                if !same || r.sharpening != Some(key.request.scale) {
+                let same = r.key.as_ref().is_some_and(|k| k.url == key.url);
+                if !same || r.sharpening != Some(key.request) {
                     return false;
                 }
                 if let Ok(image) = result {
                     r.sharpening = None;
                     if r.shown || r.pinned {
-                        r.sharp = Some((key.request.scale, image.clone()));
+                        r.sharp = Some((key.request, image.clone()));
                     }
                 }
                 true
             }) == Some(true);
-            // A drawing that cannot be made sharper is shown as it was.
+            // Pixels that cannot be made sharper are shown as they were.
             if wanted && result.is_ok() {
                 bump(e, item);
             }
@@ -753,8 +770,11 @@ fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     }
     let key = key?;
     let store = ImageStore::of(e);
-    if let Some(image) = store.cached(&key) {
-        return Some(image);
+    if let Some((kept, picture)) = store.cached_like(&key) {
+        if kept != key {
+            with_run(e, me, |r| r.key = Some(kept));
+        }
+        return Some(picture.image);
     }
     if lost_before {
         return None;
@@ -776,36 +796,65 @@ fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     }
 }
 
-/// The pixels of the drawing the item shows made at the display's scale,
-/// when that is not one and they are there or can be made on the spot. An
-/// asynchronous item has them made in the background and gets `None`
-/// meanwhile, to paint the drawing at one device pixel per logical pixel.
-/// Pictures that are not drawings are never made again.
-fn sharp_pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
-    let key = with_run(e, me, |r| r.key.clone()).flatten()?;
+/// Sharper pixels than those the item loaded, when they are wanted and
+/// there or can be made on the spot: a drawing made at the display's
+/// scale, and a picture kept smaller for its `limit` that is drawn larger
+/// than its pixels on screen (`on_screen`) or is read whole (otherwise).
+/// An asynchronous item has them made in the background and gets `None`
+/// meanwhile, to paint what it loaded.
+fn sharp_pixels(e: &Engine, me: ObjectId, on_screen: bool) -> Option<ImageHandle> {
+    let (key, natural) = with_run(e, me, |r| r.key.clone().map(|k| (k, r.natural))).flatten()?;
     let store = ImageStore::of(e);
-    if !store.is_vector(&key.url) {
-        return None;
-    }
+    let request = if store.is_vector(&key.url) {
+        if !on_screen {
+            return None;
+        }
+        let request = key.request.at_scale(store.device_scale(e));
+        if request.scale == 0 {
+            return None;
+        }
+        request
+    } else {
+        let kept = decode::halvings(natural, key.request.limit);
+        let limit = if on_screen {
+            wanted_limit(e, me, natural, store.device_scale(e))
+        } else {
+            0
+        };
+        let wanted = decode::halvings(natural, limit);
+        if wanted > kept {
+            return shrunk(e, me, &key, natural, limit);
+        }
+        if wanted == kept {
+            return None;
+        }
+        // A limit the picture is no longer than is no limit: one key for
+        // the whole picture.
+        let limit = if decode::halvings(natural, limit) == 0 {
+            0
+        } else {
+            limit
+        };
+        Request {
+            limit,
+            ..key.request
+        }
+    };
     let want = ImageKey {
-        request: key.request.at_scale(store.device_scale(e)),
+        request,
         url: key.url,
     };
-    let scale = want.request.scale;
-    if scale == 0 {
-        return None;
-    }
     follow(e, me);
     let (sharp, pinned, asked) = with_run(e, me, |r| {
         r.shown = true;
         let sharp = match &r.sharp {
-            Some((s, image)) if *s == scale => Some(image.clone()),
+            Some((s, image)) if *s == request => Some(image.clone()),
             _ => None,
         };
         if !r.pinned && sharp.is_some() {
             r.sharp = None;
         }
-        (sharp, r.pinned, r.sharpening == Some(scale))
+        (sharp, r.pinned, r.sharpening == Some(request))
     })?;
     if sharp.is_some() {
         return sharp;
@@ -817,22 +866,114 @@ fn sharp_pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
         return None;
     }
     if in_background(e, me, &want.url) {
-        with_run(e, me, |r| r.sharpening = Some(scale));
+        with_run(e, me, |r| r.sharpening = Some(request));
         store.request(e, want, Waiter::Sharpen { item: me });
         return None;
     }
     match store.load_now(&want, !pinned) {
         Ok(image) => {
             if pinned {
-                with_run(e, me, |r| r.sharp = Some((scale, image.clone())));
+                with_run(e, me, |r| r.sharp = Some((request, image.clone())));
             }
             Some(image)
         }
         Err(_) => {
-            with_run(e, me, |r| r.sharpening = Some(scale));
+            with_run(e, me, |r| r.sharpening = Some(request));
             None
         }
     }
+}
+
+/// The pixels of `me` made smaller for `limit`, when it is
+/// drawn that much smaller than they are: made from what is kept, with
+/// nothing fetched or decoded again, and kept in their place. Only once a
+/// load, and never after sharper pixels were asked for, so that an item
+/// whose size goes up and down does not swing between the two.
+fn shrunk(
+    e: &Engine,
+    me: ObjectId,
+    key: &ImageKey,
+    natural: (u32, u32),
+    limit: u32,
+) -> Option<ImageHandle> {
+    let (pinned, settled) = with_run(e, me, |r| {
+        (
+            r.pinned,
+            r.frames.is_some() || r.sharp.is_some() || r.sharpening.is_some(),
+        )
+    })?;
+    if settled || key.request.animated {
+        return None;
+    }
+    let source = pixels(e, me)?;
+    // Painting may have found them kept for another limit.
+    let key = with_run(e, me, |r| r.key.clone()).flatten()?;
+    let by = decode::halvings(natural, limit)
+        .saturating_sub(decode::halvings(natural, key.request.limit));
+    if by == 0 {
+        return Some(source);
+    }
+    let image = match decode::Raw::of(&source).reduced(by, &key.url) {
+        Ok(image) => image,
+        Err(_) => return Some(source),
+    };
+    let smaller = ImageKey {
+        request: Request {
+            limit,
+            ..key.request
+        },
+        url: key.url.clone(),
+    };
+    with_run(e, me, |r| {
+        if pinned {
+            r.held = Some(image.clone());
+        }
+        r.key = Some(smaller.clone());
+    });
+    if !pinned {
+        let store = ImageStore::of(e);
+        store.keep(
+            &smaller,
+            &Picture {
+                image: image.clone(),
+                natural,
+            },
+        );
+        drop(source);
+        store.release(&key);
+    }
+    Some(image)
+}
+
+/// The `limit` a picture of `natural` size needs to be as sharp as the
+/// item draws it, at `device` pixels per logical pixel (tracked: it
+/// follows the item's size, fill mode and scale).
+fn wanted_limit(e: &Engine, me: ObjectId, natural: (u32, u32), device: f32) -> u32 {
+    let area = kurbo::Size::new(
+        e.read(me, Item::WIDTH.index).to_number(),
+        e.read(me, Item::HEIGHT.index).to_number(),
+    );
+    let picture = kurbo::Size::new(f64::from(natural.0), f64::from(natural.1));
+    let shown = match fit_of(int(e, me, Image::FILL_MODE.index)) {
+        fit @ (ImageFit::Stretch | ImageFit::Fit | ImageFit::Crop) => {
+            painted_size(picture, area, fit)
+        }
+        _ => picture,
+    };
+    let scale = e.read(me, Item::SCALE.index).to_number().abs();
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let factor = (shown.width / picture.width).max(shown.height / picture.height)
+        * f64::from(device)
+        * scale;
+    let need = picture.width.max(picture.height) * factor;
+    if !(need.is_finite() && need >= 1.0) {
+        return 1;
+    }
+    (need.ceil().min(f64::from(1u32 << 30)) as u32).next_power_of_two()
 }
 
 /// The scene stopped painting `me` (hidden, scrolled away): pixels kept
@@ -929,8 +1070,8 @@ impl ImagePaint {
 
     fn read_at(e: &Engine, obj: ObjectId, on_screen: bool) -> Self {
         let flag = |p: PropIndex| e.read(obj, p).to_boolean();
-        let sharp = (on_screen && is_a::<Image>(e, obj))
-            .then(|| sharp_pixels(e, obj))
+        let sharp = is_a::<Image>(e, obj)
+            .then(|| sharp_pixels(e, obj, on_screen))
             .flatten();
         let image = sharp
             .or_else(|| pixels(e, obj))

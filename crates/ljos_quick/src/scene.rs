@@ -628,7 +628,12 @@ impl QuickScene {
         // Pictures decoded in the background since the last frame.
         let images = crate::image::ImageStore::of(engine);
         images.deliver(engine);
-        images.show_at(engine, self.id, self.scale_factor);
+        images.show_at(
+            engine,
+            self.id,
+            self.scale_factor,
+            self.viewport.width().max(self.viewport.height()),
+        );
         self.images = Some(images);
         // Answers of the platform's services (dialogs, downloads).
         let platform = ljos_platform::Platform::of(engine);

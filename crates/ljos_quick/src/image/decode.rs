@@ -32,6 +32,12 @@ pub struct Request {
     /// Every frame of an animation is wanted, not only the first: what an
     /// `AnimatedImage` asks for.
     pub animated: bool,
+    /// The longest side, in pixels, the pixels kept need to have; 0 for
+    /// all of them. A picture at least twice as long is kept halved, as
+    /// often as it stays this long: no window shows more of it, and the
+    /// paint asks for more when it is drawn larger. Nothing QML reads
+    /// changes, since the picture keeps reporting its own size.
+    pub limit: u32,
 }
 
 impl Request {
@@ -61,6 +67,9 @@ impl Request {
 #[derive(Clone, Debug)]
 pub(crate) struct Loaded {
     pub image: ImageHandle,
+    /// The size of the picture, in logical pixels: that of `image` unless
+    /// it was kept smaller for the request's `limit`.
+    pub natural: (u32, u32),
     pub vector: bool,
     /// Every frame, for a request that is `animated`; `image` is the first.
     pub frames: Option<Arc<Frames>>,
@@ -154,22 +163,86 @@ pub(crate) fn locate(url: &str, registered: Option<Arc<[u8]>>) -> Result<Origin,
 
 /// Reads and decodes `url`, then scales and clips it to `request`.
 pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loaded, LoadError> {
-    let read;
-    let bytes: &[u8] = match origin {
-        Origin::Bytes(b) => b,
-        Origin::File(path) => {
-            read = read_file(path).ok_or_else(|| LoadError::CannotOpen(url.to_owned()))?;
-            &read
-        }
+    load_bytes(url, &read(url, origin)?, request)
+}
+
+/// The bytes `origin` holds or names.
+pub(crate) fn read<'a>(
+    url: &str,
+    origin: &'a Origin,
+) -> Result<std::borrow::Cow<'a, [u8]>, LoadError> {
+    match origin {
+        Origin::Bytes(b) => Ok(std::borrow::Cow::Borrowed(b)),
+        Origin::File(path) => read_file(path)
+            .map(std::borrow::Cow::Owned)
+            .ok_or_else(|| LoadError::CannotOpen(url.to_owned())),
         // The fetch happens before, on a thread of its own; whoever asks
         // for a network picture on the spot cannot have it.
-        Origin::Remote => {
-            return Err(LoadError::UnknownProtocol(scheme(url).unwrap_or_default()));
-        }
+        Origin::Remote => Err(LoadError::UnknownProtocol(scheme(url).unwrap_or_default())),
+    }
+}
+
+/// About how many bytes decoding `bytes` takes at its height: the
+/// picture at four bytes a pixel, as its header says. 0 for what has no
+/// header read here (a drawing).
+pub(crate) fn cost(bytes: &[u8]) -> usize {
+    dimensions(bytes).map_or(0, |(w, h)| {
+        (w as usize).saturating_mul(h as usize).saturating_mul(4)
+    })
+}
+
+/// The size a PNG, JPEG or GIF says it has, read from its header alone.
+pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let be16 = |at: usize| {
+        Some(u32::from(u16::from_be_bytes([
+            *bytes.get(at)?,
+            *bytes.get(at + 1)?,
+        ])))
     };
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+        return Some((be32(16)?, be32(20)?));
+    }
+    if bytes.starts_with(GIF) {
+        let le16 = |at: usize| {
+            Some(u32::from(u16::from_le_bytes([
+                *bytes.get(at)?,
+                *bytes.get(at + 1)?,
+            ])))
+        };
+        return Some((le16(6)?, le16(8)?));
+    }
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
+    // Segment after segment up to the frame header, which holds the size.
+    let mut at = 2;
+    loop {
+        while *bytes.get(at)? != 0xff {
+            at += 1;
+        }
+        while *bytes.get(at)? == 0xff {
+            at += 1;
+        }
+        let marker = *bytes.get(at)?;
+        at += 1;
+        match marker {
+            0xd8 | 0x01 | 0xd0..=0xd7 => continue,
+            0xc0..=0xcf if !matches!(marker, 0xc4 | 0xc8 | 0xcc) => {
+                return Some((be16(at + 5)?, be16(at + 3)?));
+            }
+            0xd9 | 0xda => return None,
+            _ => at += be16(at)? as usize,
+        }
+    }
+}
+
+/// Decodes `bytes` of `url`, then scales and clips them to `request`.
+pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadError> {
     if is_svg(bytes) {
         let image = draw_svg(url, bytes, request)?;
         return Ok(Loaded {
+            natural: (image.width(), image.height()),
             image,
             vector: true,
             frames: None,
@@ -191,17 +264,145 @@ pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loade
             .cloned()
             .ok_or_else(|| LoadError::decode(url, "Unable to read image data"))?;
         return Ok(Loaded {
+            natural: (image.width(), image.height()),
             image,
             vector: false,
             frames: Some(Arc::new(Frames { images, delays })),
         });
     }
-    let image = fitted(url, decode(url, bytes)?, request)?;
+    let raw = decode_raw(url, bytes)?;
+    let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
+    if asks_nothing {
+        // Straight from the decoder's pixels: neither a copy at full size
+        // with four bytes a pixel nor one premultiplied comes in between.
+        let natural = (raw.width, raw.height);
+        let image = raw.reduced(halvings(natural, request.limit), url)?;
+        return Ok(Loaded {
+            image,
+            natural,
+            vector: false,
+            frames: None,
+        });
+    }
+    let image = fitted(url, raw.reduced(0, url)?, request)?;
+    let natural = (image.width(), image.height());
+    let image = match halvings(natural, request.limit) {
+        0 => image,
+        k => Raw::of(&image).reduced(k, url)?,
+    };
     Ok(Loaded {
         image,
+        natural,
         vector: false,
         frames: None,
     })
+}
+
+/// How many times a picture of `natural` size is halved for `limit`: as
+/// often as its longest side stays at least `limit` long.
+pub(crate) fn halvings(natural: (u32, u32), limit: u32) -> u32 {
+    let longest = natural.0.max(natural.1);
+    if limit == 0 {
+        return 0;
+    }
+    let mut k = 0;
+    while k < 16 && (1 << k) < longest && longest.div_ceil(1 << (k + 1)) >= limit {
+        k += 1;
+    }
+    k
+}
+
+/// Decoded pixels as the decoder gave them: RGB, straight RGBA, or RGBA
+/// already premultiplied (a picture that was scaled).
+pub(crate) struct Raw<'a> {
+    width: u32,
+    height: u32,
+    channels: usize,
+    premultiplied: bool,
+    data: std::borrow::Cow<'a, [u8]>,
+}
+
+impl<'a> Raw<'a> {
+    pub(crate) fn of(image: &'a ImageHandle) -> Self {
+        Raw {
+            width: image.width(),
+            height: image.height(),
+            channels: 4,
+            premultiplied: true,
+            data: std::borrow::Cow::Borrowed(image.data()),
+        }
+    }
+
+    /// The pixels made smaller `2^k` times on each side, every pixel the
+    /// average of the block it covers (a block at the right or bottom edge
+    /// may be cut short). Premultiplied before it is averaged, so that a
+    /// transparent pixel lends no colour. Only a row of sums is kept
+    /// besides the result.
+    pub(crate) fn reduced(self, k: u32, url: &str) -> Result<ImageHandle, LoadError> {
+        let bad = |err: ljos_render::ImageError| LoadError::decode(url, err.to_string());
+        let (w, h, n) = (self.width as usize, self.height as usize, self.channels);
+        if k == 0 {
+            let rgba = match (n, self.premultiplied) {
+                (4, true) => {
+                    return ImageHandle::from_premultiplied(
+                        self.width,
+                        self.height,
+                        self.data.into_owned(),
+                    )
+                    .map_err(bad);
+                }
+                (4, false) => self.data.into_owned(),
+                _ => {
+                    let mut rgba = Vec::new();
+                    rgba.try_reserve_exact(w * h * 4)
+                        .map_err(|_| too_large(url))?;
+                    for c in self.data.as_chunks::<3>().0 {
+                        rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
+                    }
+                    rgba
+                }
+            };
+            return ImageHandle::from_straight(self.width, self.height, rgba).map_err(bad);
+        }
+        let step = 1usize << k;
+        let (ow, oh) = (w.div_ceil(step), h.div_ceil(step));
+        let mut out = Vec::new();
+        out.try_reserve_exact(ow * oh * 4)
+            .map_err(|_| too_large(url))?;
+        let mut sums = vec![0u32; ow * 4];
+        for by in 0..oh {
+            sums.fill(0);
+            let rows = (by * step)..((by + 1) * step).min(h);
+            let tall = rows.len();
+            for y in rows {
+                let row = &self.data[y * w * n..(y + 1) * w * n];
+                for (x, px) in row.chunks_exact(n).enumerate() {
+                    let (r, g, b, a) = match n {
+                        3 => (px[0], px[1], px[2], 255),
+                        _ => (px[0], px[1], px[2], px[3]),
+                    };
+                    let (r, g, b) = if self.premultiplied || a == 255 {
+                        (r, g, b)
+                    } else {
+                        let pre = |c: u8| ((u32::from(c) * u32::from(a) + 127) / 255) as u8;
+                        (pre(r), pre(g), pre(b))
+                    };
+                    let s = &mut sums[(x / step) * 4..(x / step) * 4 + 4];
+                    s[0] += u32::from(r);
+                    s[1] += u32::from(g);
+                    s[2] += u32::from(b);
+                    s[3] += u32::from(a);
+                }
+            }
+            for bx in 0..ow {
+                let wide = (w - bx * step).min(step);
+                let count = (wide * tall) as u32;
+                let s = &sums[bx * 4..bx * 4 + 4];
+                out.extend(s.iter().map(|v| ((v + count / 2) / count) as u8));
+            }
+        }
+        ImageHandle::from_premultiplied(ow as u32, oh as u32, out).map_err(bad)
+    }
 }
 
 /// `full` scaled and clipped as `request` asks.
@@ -344,11 +545,12 @@ fn draw_svg(url: &str, bytes: &[u8], request: Request) -> Result<ImageHandle, Lo
 const GIF: &[u8] = b"GIF8";
 
 /// Decodes a PNG, JPEG or GIF (its first frame), told apart by their first
-/// bytes as Qt does (the file name's ending plays no part).
-pub(crate) fn decode(url: &str, bytes: &[u8]) -> Result<ImageHandle, LoadError> {
+/// bytes as Qt does (the file name's ending plays no part), with the
+/// pixels as the decoder gave them.
+fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     const JPEG: &[u8] = &[0xff, 0xd8, 0xff];
-    let (width, height, rgba) = if bytes.starts_with(PNG) {
+    let (width, height, channels, data) = if bytes.starts_with(PNG) {
         decode_png(bytes).map_err(|reason| LoadError::decode(url, reason))?
     } else if bytes.starts_with(JPEG) {
         decode_jpeg(bytes).map_err(|reason| LoadError::decode(url, reason))?
@@ -358,15 +560,29 @@ pub(crate) fn decode(url: &str, bytes: &[u8]) -> Result<ImageHandle, LoadError> 
         let (rgba, _) = frames
             .pop()
             .ok_or_else(|| LoadError::decode(url, "Unable to read image data"))?;
-        (width, height, rgba)
+        (width, height, 4, rgba)
     } else {
         return Err(LoadError::decode(url, "Unsupported image format"));
     };
-    ImageHandle::from_straight(width, height, rgba)
-        .map_err(|err| LoadError::decode(url, err.to_string()))
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(channels));
+    if expected != Some(data.len()) {
+        return Err(LoadError::decode(url, "Unable to read image data"));
+    }
+    Ok(Raw {
+        width,
+        height,
+        channels,
+        premultiplied: false,
+        data: std::borrow::Cow::Owned(data),
+    })
 }
 
-fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+/// Width, height, channels (3 or 4) and the straight pixels.
+type Decoded = (u32, u32, usize, Vec<u8>);
+
+fn decode_png(bytes: &[u8]) -> Result<Decoded, String> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
     // Palettes become RGB, 16 bits become 8, and a transparent colour key
     // becomes an alpha channel: four layouts are left to convert.
@@ -378,24 +594,21 @@ fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let mut buf = vec![0; size];
     let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
     buf.truncate(info.buffer_size());
-    let rgba: Vec<u8> = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => buf
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|c| [c[0], c[1], c[2], 255])
-            .collect(),
-        png::ColorType::Grayscale => buf.iter().flat_map(|g| [*g, *g, *g, 255]).collect(),
-        png::ColorType::GrayscaleAlpha => buf
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .flat_map(|c| [c[0], c[0], c[0], c[1]])
-            .collect(),
+    let (channels, pixels): (usize, Vec<u8>) = match info.color_type {
+        png::ColorType::Rgba => (4, buf),
+        png::ColorType::Rgb => (3, buf),
+        png::ColorType::Grayscale => (3, buf.iter().flat_map(|g| [*g, *g, *g]).collect()),
+        png::ColorType::GrayscaleAlpha => (
+            4,
+            buf.as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|c| [c[0], c[0], c[0], c[1]])
+                .collect(),
+        ),
         other => return Err(format!("unexpected PNG colour type {other:?}")),
     };
-    Ok((info.width, info.height, rgba))
+    Ok((info.width, info.height, channels, pixels))
 }
 
 /// How long a frame that says nothing (a delay of 0) is shown, as
@@ -464,17 +677,18 @@ fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<Frame>), String>
     Ok((w as u32, h as u32, out))
 }
 
-fn decode_jpeg(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+fn decode_jpeg(bytes: &[u8]) -> Result<Decoded, String> {
     use zune_jpeg::zune_core::{
         bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions,
     };
-    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
+    // Three bytes a pixel: a JPEG has no alpha to keep.
+    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
     let mut dec = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    let rgba = dec.decode().map_err(|e| e.to_string())?;
+    let rgb = dec.decode().map_err(|e| e.to_string())?;
     let info = dec
         .info()
         .ok_or_else(|| "the JPEG has no header".to_owned())?;
-    Ok((u32::from(info.width), u32::from(info.height), rgba))
+    Ok((u32::from(info.width), u32::from(info.height), 3, rgb))
 }
 
 /// The size a picture of `natural` pixels is decoded to for `request`
@@ -604,6 +818,7 @@ mod tests {
             clip: None,
             scale: 0,
             animated: false,
+            limit: 0,
         }
     }
 
@@ -773,13 +988,17 @@ mod tests {
 
     #[test]
     fn bytes_that_are_no_picture_are_an_unsupported_format() {
-        let err = decode("file:///letter.png", b"Dear reader,").unwrap_err();
+        let err = decode_raw("file:///letter.png", b"Dear reader,")
+            .err()
+            .unwrap();
         assert_eq!(
             err.to_string(),
             "Error decoding: file:///letter.png: Unsupported image format"
         );
         // A PNG signature with nothing behind it is a decoding error too.
-        let err = decode("file:///cut.png", b"\x89PNG\r\n\x1a\n").unwrap_err();
+        let err = decode_raw("file:///cut.png", b"\x89PNG\r\n\x1a\n")
+            .err()
+            .unwrap();
         assert!(
             err.to_string()
                 .starts_with("Error decoding: file:///cut.png: ")
@@ -831,5 +1050,104 @@ mod tests {
         let origin = Origin::Bytes(gif(&RGB[..2], 0).into());
         let all = load("file:///a.gif", &origin, request).unwrap();
         assert_eq!(all.frames.unwrap().delays, [100, 100]);
+    }
+
+    fn png_of(width: u32, height: u32, color: png::ColorType, data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, width, height);
+            enc.set_color(color);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.write_header().unwrap().write_image_data(data).unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn a_header_says_the_size_without_decoding() {
+        let png = png_of(5, 3, png::ColorType::Rgb, &[0; 45]);
+        assert_eq!(dimensions(&png), Some((5, 3)));
+        assert_eq!(cost(&png), 60);
+        assert_eq!(dimensions(&gif(&RGB, 10)), Some((3, 2)));
+        let mut jpeg = Vec::new();
+        jpeg_encoder::Encoder::new(&mut jpeg, 90)
+            .encode(&[0; 7 * 4 * 3], 7, 4, jpeg_encoder::ColorType::Rgb)
+            .unwrap();
+        assert_eq!(dimensions(&jpeg), Some((7, 4)));
+        assert_eq!(dimensions(WIDE), None);
+        assert_eq!(cost(WIDE), 0);
+        assert_eq!(dimensions(&[0xff, 0xd8, 0xff]), None, "cut short");
+    }
+
+    #[test]
+    fn a_picture_is_halved_while_it_stays_as_long_as_the_limit() {
+        assert_eq!(halvings((3000, 2000), 0), 0);
+        assert_eq!(halvings((3000, 2000), 4096), 0);
+        assert_eq!(halvings((3000, 2000), 1024), 1);
+        assert_eq!(halvings((3000, 2000), 512), 2);
+        assert_eq!(halvings((1024, 10), 512), 1);
+        assert_eq!(halvings((1022, 10), 512), 0);
+        assert_eq!(halvings((1, 1), 1), 0);
+    }
+
+    #[test]
+    fn halving_averages_each_block_and_keeps_the_edges() {
+        // 3 by 1, RGB: the second block is the last pixel alone.
+        let raw = Raw {
+            width: 3,
+            height: 1,
+            channels: 3,
+            premultiplied: false,
+            data: std::borrow::Cow::Owned(vec![200, 0, 0, 100, 0, 0, 0, 0, 90]),
+        };
+        let image = raw.reduced(1, "file:///a.png").unwrap();
+        assert_eq!((image.width(), image.height()), (2, 1));
+        assert_eq!(image.data(), &[150, 0, 0, 255, 0, 0, 90, 255]);
+    }
+
+    #[test]
+    fn a_transparent_pixel_lends_no_colour_when_halved() {
+        let raw = Raw {
+            width: 2,
+            height: 2,
+            channels: 4,
+            premultiplied: false,
+            data: std::borrow::Cow::Owned(
+                [
+                    [255, 0, 0, 255],
+                    [0, 255, 0, 0],
+                    [0, 255, 0, 0],
+                    [255, 0, 0, 255],
+                ]
+                .concat(),
+            ),
+        };
+        let image = raw.reduced(1, "file:///a.png").unwrap();
+        // Half covered, all red: premultiplied 128 of red at alpha 128.
+        assert_eq!(image.data(), &[128, 0, 0, 128]);
+    }
+
+    #[test]
+    fn a_limit_keeps_fewer_pixels_and_the_natural_size() {
+        let data: Vec<u8> = (0..64 * 32).flat_map(|_| [32, 96, 160]).collect();
+        let bytes = png_of(64, 32, png::ColorType::Rgb, &data);
+        let request = Request {
+            limit: 16,
+            ..Request::default()
+        };
+        let loaded = load_bytes("file:///a.png", &bytes, request).unwrap();
+        assert_eq!(loaded.natural, (64, 32));
+        assert_eq!((loaded.image.width(), loaded.image.height()), (16, 8));
+        assert_eq!(&loaded.image.data()[..4], &[32, 96, 160, 255]);
+
+        // With a sourceSize the natural size is the one asked for.
+        let request = Request {
+            width: 32,
+            limit: 8,
+            ..Request::default()
+        };
+        let loaded = load_bytes("file:///a.png", &bytes, request).unwrap();
+        assert_eq!(loaded.natural, (32, 16));
+        assert_eq!((loaded.image.width(), loaded.image.height()), (8, 4));
     }
 }

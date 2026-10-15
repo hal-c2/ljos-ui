@@ -1450,3 +1450,110 @@ Item {
     assert_eq!(painted(&s, picture).unwrap().id(), sharp.id());
     assert_eq!(store.decodes(), decodes);
 }
+
+// ------------------------------------------------- pictures larger than the view
+
+#[test]
+fn a_picture_larger_than_the_view_keeps_fewer_pixels_and_its_own_size() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; anchors.fill: parent }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    frame(&mut s, &e);
+    set(&e, picture, "source", Value::Url("file:///big.png".into()));
+    frame(&mut s, &e);
+    assert_eq!(status(&e, picture), image_status::READY);
+    // What QML sees is the picture's own size.
+    assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
+    assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
+    // What is kept is enough for a view 256 long.
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (256, 128));
+    assert_eq!(image.pixel(10, 10), BLUE);
+    assert_eq!(store.bytes(), 256 * 128 * 4);
+}
+
+#[test]
+fn a_reduced_picture_drawn_larger_is_decoded_again_sharper() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; width: 200; height: 100 }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    frame(&mut s, &e);
+    set(&e, picture, "source", Value::Url("file:///big.png".into()));
+    frame(&mut s, &e);
+    assert_eq!(painted(&s, picture).unwrap().width(), 256);
+    // Four times as wide on screen needs four times the pixels.
+    set(&e, picture, "scale", Value::from(4.0));
+    for _ in 0..50 {
+        frame(&mut s, &e);
+        if painted(&s, picture).is_some_and(|i| i.width() > 256) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (1024, 512));
+    assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
+}
+
+#[test]
+fn a_picture_drawn_much_smaller_than_it_is_kept_is_kept_smaller() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    // Loaded before any scene says how large it is: kept whole.
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image { objectName: "picture"; source: "big.png"; width: 100; height: 50 }
+    Image { objectName: "other"; width: 400; height: 200 }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    assert_eq!(store.bytes(), 2048 * 1024 * 4);
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (128, 64));
+    assert_eq!(image.pixel(5, 5), BLUE);
+    assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
+    assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
+    // The whole picture is no longer kept, and nothing was read again.
+    assert_eq!(store.bytes(), 128 * 64 * 4);
+    assert_eq!(store.decodes(), 1);
+
+    // Another Image of it starts from what is kept, and is made sharper
+    // for the size it is drawn at.
+    let other = find(&e, root, "other");
+    set(&e, other, "source", Value::Url("big.png".into()));
+    assert_eq!(status(&e, other), image_status::READY);
+    assert_eq!(implicit(&e, other), (2048.0, 1024.0));
+    frame(&mut s, &e);
+    let image = painted(&s, other).unwrap();
+    assert_eq!((image.width(), image.height()), (512, 256));
+    assert_eq!(store.decodes(), 2);
+}
