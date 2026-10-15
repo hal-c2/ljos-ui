@@ -61,6 +61,10 @@ pub struct ScreenAttached {
     pub orientation: i32,
     #[qml(notify, readonly, enumeration = "Qt.ScreenOrientation")]
     pub primary_orientation: i32,
+    /// Which orientation changes `orientation` reports; the host has
+    /// none to report, so the mask is only stored.
+    #[qml(notify, enumeration = "Qt.ScreenOrientation")]
+    pub orientation_update_mask: i32,
 }
 
 /// Quarter turns from landscape (doc: "the rotation angle, in degrees,

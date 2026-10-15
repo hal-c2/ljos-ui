@@ -111,3 +111,24 @@ Feature: The attached Screen
       | 4 | 4 | 0     |
       | 0 | 1 | 90    |
       | 8 | 1 | 270   |
+
+  # doc.qt.io lists orientationUpdateMask on the attached Screen, but Qt 6.11.2
+  # does not load a file that assigns it ("non-existent property"). Ljós has it.
+  @qt-diverges @api-QtQuick.Screen.orientationUpdateMask
+  Scenario: The orientation update mask is none until it is set
+    Given the QML:
+      """qml
+      import QtQuick
+      QtObject {
+        objectName: "root"
+        property int before: Screen.orientationUpdateMask
+        property int after: -1
+        function set() {
+          Screen.orientationUpdateMask = Qt.LandscapeOrientation | Qt.PortraitOrientation
+          after = Screen.orientationUpdateMask
+        }
+      }
+      """
+    Then the property "before" of "root" is 0
+    When the method "set" of "root" is called
+    Then the property "after" of "root" is 3
