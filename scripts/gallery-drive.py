@@ -9,12 +9,15 @@ each click, since a click may open a page with new controls. An example with alm
 (a game or a snippet built from MouseAreas) gets real pointer clicks through cua-driver on a grid
 instead. What the app logs after it started goes in <out>/<id>/report.txt, with screenshots;
 <out>/summary.txt lists, per example, whether it started and the distinct lines it logged."""
-import base64, glob, json, os, re, signal, subprocess, sys, time, urllib.error, urllib.request
+import base64, glob, json, os, re, shutil, signal, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
 CORPUS = "file://" + os.path.join(ROOT, "corpus", "qtdoc") + "/"
 SANDBOX = os.path.join(ROOT, "scripts", "cua-sandbox.sh")
+# The sandbox's config, data and state directories; cua-sandbox.sh makes them again, with the
+# user's fonts, for each command it runs.
+XDG = os.path.join(os.environ.get("LJOS_CUA_HOME") or os.path.join(TARGET, "cua"), "xdg")
 ROLES = r"button|checkbox|switch|radio|radiobutton|tab|menuitem|link|combobox|spinbox|slider"
 CONTROL = re.compile(r'\b(?:' + ROLES + r')\s+("([^"]*)"\s+)?\[(e\d+)\]')
 MAX_CLICKS = 40
@@ -118,6 +121,8 @@ def drive(out, eid):
     d = os.path.join(out, eid)
     os.makedirs(d, exist_ok=True)
     before = set(glob.glob(TARGET + "/ljos/mcp-*.json"))
+    # What the last run saved (Settings, LocalStorage) would start this one somewhere else.
+    shutil.rmtree(XDG, ignore_errors=True)
     log = open(os.path.join(d, "stderr.log"), "w")
     p = subprocess.Popen([SANDBOX, "exec", "mise", "run", "gallery:run", eid, "--mcp=inspect,input"],
                          cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
