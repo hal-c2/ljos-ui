@@ -653,15 +653,53 @@ fn give_row(
     if required.is_empty() {
         engine.set_context_object(ctx, Some(data.id));
     } else {
+        let mut members = None;
         for (p, name) in required {
-            let Some(from) = data.shape.meta.property_index(&name) else {
+            let row = data.id;
+            if let Some(from) = data.shape.meta.property_index(&name) {
+                let _ = engine.bind(root, p, move |e| e.read(row, from));
+                continue;
+            }
+            let Some(from) = data.shape.model_data else {
                 continue;
             };
-            let row = data.id;
-            let _ = engine.bind(root, p, move |e| e.read(row, from));
+            let members = members.get_or_insert_with(|| object_members(engine, model, index));
+            if members.contains(&name) {
+                // A row without the member gives the property's own
+                // default, as Qt does: `required property int d` is 0.
+                let _ = engine.bind(root, p, move |e| {
+                    let v = e.read(row, from);
+                    e.js_member(&v, &name)
+                        .unwrap_or_else(|| e.untrack(|| e.default_value(root, p)))
+                });
+            }
         }
     }
     Some(data)
+}
+
+/// The names a row of an array of JS objects gives required properties,
+/// as Qt 6.11.2 does (found by running qml6): the members of the first
+/// row and those of the row itself. A row without one of the first row's
+/// members gives `undefined`.
+fn object_members(engine: &Engine, model: &Rc<dyn ItemModel>, index: usize) -> Vec<String> {
+    let keys = |row: usize| {
+        model
+            .model_data(engine, row)
+            .map(|v| engine.untrack(|| engine.js_object_entries(&v)))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, _)| k)
+    };
+    let mut names: Vec<String> = keys(0).collect();
+    if index != 0 {
+        for k in keys(index) {
+            if !names.contains(&k) {
+                names.push(k);
+            }
+        }
+    }
+    names
 }
 
 /// The required properties of a delegate's root.
