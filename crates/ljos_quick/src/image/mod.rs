@@ -156,8 +156,6 @@ pub struct ImageBase {
     pub source_size: Size,
     #[qml(notify)]
     pub mirror: bool,
-    #[qml(notify)]
-    pub smooth: bool,
     #[qml(skip)]
     run: Run,
 }
@@ -173,7 +171,6 @@ impl Default for ImageBase {
             cache: true,
             source_size: Size::default(),
             mirror: false,
-            smooth: true,
             run: Run::default(),
         }
     }
@@ -944,7 +941,7 @@ impl ImagePaint {
                 .unwrap_or((image.width(), image.height())),
             None => (0, 0),
         };
-        let smooth = flag(ImageBase::SMOOTH.index);
+        let smooth = flag(Item::SMOOTH.index);
         let mirror = flag(ImageBase::MIRROR.index);
         let shape = if is_a::<BorderImage>(e, obj) {
             border::shape(e, obj, mirror)

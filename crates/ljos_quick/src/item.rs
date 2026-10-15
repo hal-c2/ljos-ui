@@ -81,6 +81,10 @@ pub struct Item {
     /// its `radius`, as Qt documents.
     #[qml(notify, reset = Reset::Follow(natural_antialiasing))]
     pub antialiasing: bool,
+    /// Whether what the item draws is filtered when it is scaled or
+    /// transformed (a picture; nothing else of ours changes). On, as in Qt.
+    #[qml(notify)]
+    pub smooth: bool,
     #[qml(group)]
     pub anchors: Anchors,
     // Anchor lines (`parent.left`). Set in `on_complete`, when the object
@@ -168,6 +172,7 @@ impl Default for Item {
             children_rect: Rect::default(),
             baseline_offset: 0.0,
             antialiasing: false,
+            smooth: true,
             anchors: Anchors::default(),
             left: Value::Undefined,
             right: Value::Undefined,
