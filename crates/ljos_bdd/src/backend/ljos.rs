@@ -15,7 +15,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duratio
 
 use ljos_a11y::{NodeKey, Tree, role_word};
 use ljos_compiler::{Project, Severity, compile_file};
-use ljos_engine::{Engine, MapSource, ObjectId, Value as QmlValue};
+use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
@@ -1028,10 +1028,18 @@ impl Backend for LjosBackend {
             .iter()
             .map(|a| live.to_qml(a))
             .collect::<Result<Vec<_>>>()?;
-        let out = live
-            .engine
-            .invoke_by_name(obj, method, &args)
-            .map_err(|e| failed(format!("cannot call {method}: {e}")))?;
+        // A signal is called as a method is, and calling it emits it.
+        let out = match live.engine.invoke_by_name(obj, method, &args) {
+            Err(EngineError::UnknownMethod { .. })
+                if live.engine.signal_index(obj, method).is_ok() =>
+            {
+                live.engine
+                    .emit_by_name(obj, method, &args)
+                    .map(|()| QmlValue::Undefined)
+            }
+            r => r,
+        }
+        .map_err(|e| failed(format!("cannot call {method}: {e}")))?;
         let out = live.to_json(&out);
         live.settle()?;
         Ok(out)

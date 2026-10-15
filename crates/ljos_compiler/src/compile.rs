@@ -776,10 +776,32 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             Slot::Group(path) => {
                 let refs: Vec<&str> = path.iter().map(String::as_str).collect();
+                if let Some(args) = self
+                    .group_kind(owner, &refs)
+                    .and_then(|kind| self.types.signal(&kind, signal))
+                {
+                    return Some(args);
+                }
                 let property = self.tree.property(self.types, owner, &refs)?;
                 oracle.signal(property.value?, signal)
             }
         }
+    }
+
+    /// The type of the object a group written on `owner` leads to through
+    /// properties that hold objects: `form.button` of `form.button.onClicked`,
+    /// where `form`'s component has `button` as an alias.
+    fn group_kind(&self, owner: usize, path: &[&str]) -> Option<Kind<O::Type>> {
+        let (first, rest) = path.split_first()?;
+        let object = &self.tree.objects[owner];
+        if object.declared.contains_key(first) {
+            return None;
+        }
+        let mut kind = self.types.property_kind(object.kind.as_ref()?, first)?;
+        for name in rest {
+            kind = self.types.property_kind(&kind, name)?;
+        }
+        Some(kind)
     }
 
     /// Whether the property a member names holds a colour.

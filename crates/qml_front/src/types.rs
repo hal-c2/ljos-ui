@@ -470,6 +470,54 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         None
     }
 
+    /// The type of the object the property `name` of an object of the type
+    /// holds, as the type table or a declaration says: what a group written
+    /// through it (`form.button.onClicked`) is a member of. An alias of an id
+    /// is of the type that object is written as.
+    pub fn property_kind(&self, kind: &Kind<O::Type>, name: &str) -> Option<Kind<O::Type>> {
+        self.property_kind_through(kind, name, 0)
+    }
+
+    fn property_kind_through(
+        &self,
+        kind: &Kind<O::Type>,
+        name: &str,
+        aliases: usize,
+    ) -> Option<Kind<O::Type>> {
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            match kind {
+                Kind::Builtin(ty) => {
+                    return self.oracle.property(ty, name)?.value.map(Kind::Builtin);
+                }
+                Kind::Component(key) => {
+                    let shape = self.project.shape(&key)?;
+                    if let Some(declaration) = shape.properties.get(name) {
+                        if declaration.is_list {
+                            return None;
+                        }
+                        let types = self.of(&key.file);
+                        let Some((of, path)) = &declaration.alias else {
+                            let parts: Vec<&str> = declaration.type_name.split('.').collect();
+                            return types.find(&parts).map(|found| found.kind);
+                        };
+                        if aliases == ALIASES {
+                            return None;
+                        }
+                        let parts: Vec<&str> = of.iter().map(String::as_str).collect();
+                        let mut target = types.find(&parts)?.kind;
+                        for name in path {
+                            target = types.property_kind_through(&target, name, aliases + 1)?;
+                        }
+                        return Some(target);
+                    }
+                    kind = self.root(&key, shape)?;
+                }
+            }
+        }
+        None
+    }
+
     /// The names a handler of the signal `name` may call its arguments. A
     /// type may have a property of the same name: `pressed` of a MouseArea.
     pub fn signal(&self, kind: &Kind<O::Type>, name: &str) -> Option<Vec<String>> {

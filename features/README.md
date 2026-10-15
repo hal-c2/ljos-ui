@@ -147,7 +147,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When the system setting "font scale" changes to 1.5` | the user changes a setting of the system while the application runs; the settings and values of `Given the system setting` (`@ljos-only`) |
 | `When the property "p" of "o" is set to V` | assign from JavaScript (breaks a binding) |
 | `When the property "p" of "o" is bound to "expr"` | assign `Qt.binding(() => expr)`; `expr` names `o`'s properties unqualified |
-| `When the method "m" of "o" is called` | call with no arguments |
+| `When the method "m" of "o" is called` | call with no arguments; calling a signal emits it |
 | `When the method "m" of "o" is called with V, V` | call with arguments |
 | `When N milliseconds pass` / `When N second(s) pass` | application time passes (`1 second passes`, `0.5 seconds pass`) |
 | `When the user clicks the "role" "name"` | click the control with that accessible role and name |

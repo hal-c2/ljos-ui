@@ -1401,6 +1401,11 @@ impl Engine {
         for h in &m.handlers {
             if path.is_empty() {
                 self.connect_handler(inst, obj, &h.signal, h.expr, scope);
+            } else if let Some(target) = self.object_at_path(obj, path) {
+                // `form.button.onClicked`: the group is a property that
+                // holds an object (an alias of an id, often), and the
+                // handler is that object's, written where the group is used.
+                self.connect_handler(inst, target, &h.signal, h.expr, scope);
             } else {
                 let b = inst.file.ir.expr(h.expr);
                 self.no_property(
@@ -1728,6 +1733,31 @@ impl Engine {
         }
         let prop = self.property_index(cur, name)?;
         Ok(Target { obj: cur, prop })
+    }
+
+    /// The object `path` leads to from `obj` through properties that hold
+    /// objects. None where a step is a group of `obj`'s own (`border`), or
+    /// holds no object.
+    fn object_at_path(&self, obj: ObjectId, path: &[String]) -> Option<ObjectId> {
+        let mut cur = obj;
+        for seg in path {
+            let p = self.property_index(cur, seg).ok()?;
+            let group = self
+                .meta_of(cur)
+                .and_then(|m| {
+                    m.property(p)
+                        .map(|i| i.flags.contains(PropertyFlags::GROUP))
+                })
+                .unwrap_or(false);
+            if group {
+                return None;
+            }
+            cur = self.untrack(|| self.read(cur, p)).as_object()?;
+            if !self.is_alive(cur) {
+                return None;
+            }
+        }
+        Some(cur)
     }
 
     fn apply_literal(&self, inst: &Rc<Instance>, t: &Target, lit: &Literal) {
