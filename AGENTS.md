@@ -24,6 +24,7 @@ Ljós is a general-purpose Rust UI toolkit that runs QML (Qt Quick + Qt Quick Co
 | qtdoc gallery | `mise run gallery` (after `mise run gallery:reference`) |
 | Run one corpus example | `mise run gallery:run <id>` (no id lists them) |
 | MCP authoring server | `mise run mcp` (also configured in `.mcp.json`) |
+| Run an app off-screen (headless sway, own bus, cua-driver) | `mise run desktop:cua <file.qml> [args]`, `desktop:cua:exec <command…>`, `desktop:cua:call <tool> [json]`, `desktop:cua:stop` |
 
 ## Conventions
 

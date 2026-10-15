@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run any command in the desktop:cua sandbox, starting it if needed: exec <command…> (mise run desktop:cua:exec mise run gallery:run <id> --mcp=inspect,input)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+exec scripts/cua-sandbox.sh exec "$@"

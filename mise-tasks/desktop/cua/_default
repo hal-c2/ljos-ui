@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Run a Ljós app (ljos run <file.qml> [args]) in a headless sandbox off the user's screen: its own sway/XWayland, session bus and AT-SPI registry, plus cua-driver when it is on the PATH; run it again to relaunch the app"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+exec scripts/cua-sandbox.sh start "$@"
