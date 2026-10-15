@@ -180,6 +180,8 @@ ljos-ui/
 │   │                           PlatformTextInput impls, clipboard, prefs backends
 │   ├── ljos_platform/          system services behind traits (clipboard, dialogs,
 │   │                           settings, fetch, permissions), QtCore, QtQuick.Dialogs
+│   ├── ljos_media/             QtMultimedia playback: players, outputs, SoundEffect,
+│   │                           media clock, null sink [features decode, audio] (7.6)
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit/wgpu loop (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
@@ -194,6 +196,7 @@ ljos-ui/
 ├── acceptance/<suite>/         external acceptance suites: allowlist + PIN + ratchet (section 18.4)
 ├── ledger/qtquick.toml         API ledger: type × member → status (section 18.5)
 ├── corpus/                     qtdoc submodule at e05e4f4, examples.json, stand-ins
+├── third_party/filmcraft/      FilmCraft submodule at 8309f21 (demuxers, decoders; 7.6)
 ├── android/                    Gradle + GameActivity template (M3)
 ├── mise-tasks/
 └── docs/  ARCHITECTURE.md  research/  CLEAN_ROOM.md (to write)
@@ -558,6 +561,42 @@ Caret and selection geometry come from Parley's `Cursor`/`Selection`. Parley's `
 - **Highlighting.** `TextEdit.textDocument` takes spans or a function that makes them (`highlight`, `clearHighlights`, ours); a span changes colours and underline only, never the text, the line breaks or the undo log.
 - **Editing (M2).** A `TextEdit` with rich text keeps a `RichText` beside its `TextModel` (`ljos_text::rich::editing`, `ljos_quick::text_input::rich`): every edit reaches the model first, and the new characters take their format the way Qt 6.11 gives it, as measured with qml6. Undo takes formats back too. `text` and `getFormattedText` write the document out as Qt's HTML or Markdown.
 - **Not built:** inline images are decoded synchronously; block and table-cell backgrounds; links in a `Label` are not activated by the pointer.
+
+### 7.6 Media (`ljos_media`)
+
+`QtMultimedia` for playback: `MediaPlayer`, `AudioOutput`, `VideoOutput`, `Video`, `SoundEffect`, `MediaDevices` with `AudioDevice`, and `MediaMetaData`, to the Qt 6 documentation and as `qml6` behaves (`features/multimedia/`). Capture is left out: `Camera`, `CaptureSession`, `ImageCapture`, `MediaRecorder`, `AudioInput`, `ScreenCapture`, `WindowCapture`, `VideoFrameInput`, `AudioBufferInput` and `AudioBufferOutput`, as are subtitles, playback over the network as a stream (a remote file is fetched whole) and `pitchCompensation`.
+
+**Crate.** `ljos_media` is a runtime crate: it depends on `ljos_engine`, `ljos_quick`, `ljos_render` (without egui), `ljos_platform` and `ljos_runtime`, never on `qml_syntax` or `qml_front`. Hosts register it beside `ljos_quick` and `ljos_controls` (the facade, the shell, `ljos` and the BDD engines). It has two cargo features, both on by default:
+- `decode`: the demuxers and decoders (below). Without it the types still load and every source fails the way Qt's does for a format it cannot read: `MediaPlayer` reports `FormatError` and `InvalidMedia`, `SoundEffect` goes to `SoundEffect.Error`.
+- `audio`: the audio device (cpal). Without it, without a device, or on a host that asks for it (a virtual clock: `ljos render`, the BDD runner), sound goes to a **null sink** and the media clock is the engine's clock. The scenarios run that way, with no sound card and no display.
+
+**Decoding: three options weighed.**
+
+| | 1. FilmCraft (`filmcraft-codecs`, `filmcraft-media`) | 2. symphonia + another video stack | 3. ffmpeg or GStreamer bindings |
+|---|---|---|---|
+| Formats | H.264, HEVC, VP8/9, AV1, ProRes; AAC, Opus, FLAC, the rest via symphonia; MP4/MOV, MKV/WebM, Ogg, MPEG-TS, WAV | audio only; video needs a second choice (openh264, dav1d: C) | everything |
+| System libraries | none: pure Rust, `unsafe_code = forbid` | none for audio | libav* 8 / gstreamer 1.28, headers in CI, a build per Android ABI and iOS |
+| Mobile | builds for any Rust target | audio yes, video depends | a heavy cross build, licence care (LGPL, codec patents) |
+| Licences | MIT OR Apache-2.0; symphonia MPL-2.0, used unmodified | MPL-2.0 + the video stack's | LGPL/GPL by configuration |
+| Weight | about 60 crates: rayon and image come with `filmcraft-media`, symphonia with `filmcraft-codecs`, and neither has a feature to drop them | small for audio | small Rust side, large native side |
+| API fit | `MediaSource::video_frame(time)` and `audio(start, frames)`: a pull API by media time, which is what a player asks for; GOP-aware seeking | build it | a full pipeline that owns its threads and clock |
+
+**Decision: option 1.** It gives a build with no system media library on every platform, which is also what CI and the headless sandbox need, and its pull API leaves the clock and the threads to us, so the rules below can hold. FilmCraft's crates are not on crates.io: they are a git submodule at `third_party/filmcraft` (pinned at `8309f21`, `shallow = true`), excluded from the workspace and named by path in `[workspace.dependencies]`; nothing inside it is modified, and what Ljós would want changed there is reported upstream. **A fresh clone needs `git submodule update --init --depth 1 third_party/filmcraft`** before it builds; CI does that step in every job that builds, and `--locked` holds because the path crates are in `Cargo.lock`. Upstream changes worth asking for: cargo features on `filmcraft-codecs` and `filmcraft-media` to leave out symphonia, `image` (stills) and rayon, which a player needs none of. ffmpeg or a platform decoder (MediaCodec, AVFoundation, Media Foundation) can come later as another `decode` backend behind the same core.
+
+**Audio output: cpal 0.18.** ALSA on Linux (`libasound2-dev` on CI's apt lines, the only system library), CoreAudio on macOS and iOS, WASAPI on Windows, AAudio on Android. The device callback runs on cpal's thread and reads from a bounded ring the decoder fills; it touches no engine state.
+
+**Threads and messages.** The Engine thread never reads a file or decodes:
+- **Opening** reads the bytes (a registered resource, a local file on a thread of its own, or the platform's fetcher) and probes them on that thread; the answer (duration, tracks, metadata, or the error) comes back as a `Platform` reply, through the engine's bounded inbox (`UiHandle`).
+- **Frames** are decoded by one worker thread per player, which takes requests from a bounded channel. The player asks for at most a few frames ahead of the playhead (preroll) and each answer is one reply. A request the playhead has already passed, or one from before a seek or a source change, is dropped by the worker, and its answer is ignored by generation if it already left.
+- **Sound** for `SoundEffect` is decoded once when the source loads; `MediaPlayer`'s is decoded in blocks ahead of the playhead into the ring.
+
+**The media clock.** With a device, the device's count of played samples is the master and video follows it. Without one, the clock is the engine's (`Engine::now`), so a virtual clock makes playback deterministic. The clock is read, never ticked: the player arms a native engine deadline (`Engine::call_at`) for the next thing that must happen — the next frame's time, the next `position` report (every 50 ms, as Qt reports it), the end of the stream or of a `SoundEffect` loop — and nothing else wakes it. Play prerolls the first frames before the clock starts.
+
+**Video on screen.** `VideoOutput` (and `Video`) paint through the render tree: `ljos_quick::register_paint_item` lets a crate's item type give the scene what it shows, and the frame is an image in the item's display list, sized by `fillMode` (the same rectangles `contentRect` and `sourceRect` report). The decoder converts YUV to RGBA on its own thread for now; uploading the planes and converting on the GPU waits for a YUV texture path in the B1 backend, and is the one place this differs from the pattern above. egui is never named here.
+
+**0 % CPU when idle.** A paused or stopped player, a `SoundEffect` that is not playing and a player with no source have no deadline armed and no request in flight. An output that is not visible, or has no size, asks for no frames and uploads none, and the player paces its `position` alone; showing it again asks for the frame at the playhead. The scenarios check this through `positionChanged` counts and the engine's armed deadlines.
+
+**Not built:** network streaming and `bufferProgress` below 1, more than one audio track playing, `playbackRate` other than 1 with sound (the clock follows the rate, the samples are not stretched), `videoSink` and frames as objects in QML, `orientation` other than 0 on the picture, hardware decoders.
 
 ---
 
@@ -1593,3 +1632,4 @@ All decided by the user on 2026-10-10. Every decision except D9 took the recomme
 | BDD | cucumber 0.23.0, gherkin 0.16.0 |
 | MCP | rmcp 3.5.x (MSRV 1.88, schemars 1.x); protocol 2026-07-28, compatible with 2025-11-25 |
 | Corpus | qtdoc at `e05e4f4`; Qt ≥ 6.11 for the parity oracle |
+| Media | FilmCraft at `8309f21` (submodule, path deps; symphonia 0.5 through it), cpal 0.18.2 (section 7.6) |
