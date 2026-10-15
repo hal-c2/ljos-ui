@@ -33,10 +33,6 @@ use crate::item::{Item, is_a, is_item};
 /// sums of a few of them do not overflow.
 pub(crate) const FOREVER: i64 = i64::MAX / 16;
 
-/// More passes than this of a group that takes no time are not run: a
-/// huge `loops` on a script must not hang the frame.
-const MAX_INSTANT_PASSES: i64 = 10_000;
-
 /// What a `Behavior` (or a property the animation is declared `on`) gives
 /// the animations that name no target of their own.
 #[derive(Clone, Debug)]
@@ -847,7 +843,9 @@ impl Timed {
         Timed {
             // Measured on Qt: a SmoothedAnimation and a SpringAnimation
             // are over when they are there, whatever `loops` says.
-            loops: if matches!(node, Node::Smooth(_) | Node::Spring(_)) {
+            // Measured on Qt: one that takes no time is over after one
+            // pass too, so an endless one never keeps the application busy.
+            loops: if matches!(node, Node::Smooth(_) | Node::Spring(_)) || pass == 0 {
                 loops.min(1)
             } else {
                 loops
@@ -988,15 +986,8 @@ impl Timed {
         let t = t.max(0);
         let (d, n) = (self.pass, self.loops);
         // The pass `t` is in; the very end belongs to the last one.
-        let k = if d == 0 {
-            if n >= FOREVER {
-                0
-            } else {
-                (n - 1).min(MAX_INSTANT_PASSES)
-            }
-        } else {
-            (t / d).min(n - 1)
-        };
+        // One that takes no time has a single pass (see `build_in`).
+        let k = if d == 0 { 0 } else { (t / d).min(n - 1) };
         while self.iter < k {
             self.pass_to(d, cx);
             if cx.cancelled.get() {
