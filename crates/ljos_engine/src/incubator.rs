@@ -1316,6 +1316,19 @@ impl Engine {
             }
             return;
         }
+        // `Layout.fillWidth: true` in a PropertyChanges is its target's.
+        if self.foreign_keeper(id).is_some()
+            && let Ok(meta) = self.type_meta(&inst.file, &at.ty)
+            && meta.chain().any(|m| m.attached.is_some())
+        {
+            for a in &at.members.assignments {
+                self.keep_foreign_literal_of(inst, id, &[], a, Some(meta.clone()));
+            }
+            for pb in &at.members.bindings {
+                self.keep_foreign_binding_of(inst, id, &[], pb, Some(meta.clone()));
+            }
+            return;
+        }
         let att = self
             .type_meta(&inst.file, &at.ty)
             .and_then(|m| self.attached_object(id, &m));
@@ -1633,6 +1646,18 @@ impl Engine {
         span: SourceSpan,
         value: ForeignValue,
     ) -> bool {
+        self.keep_foreign_of(inst, obj, (path, name), span, value, None)
+    }
+
+    fn keep_foreign_of(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        (path, name): (&[String], &str),
+        span: SourceSpan,
+        value: ForeignValue,
+        attached: Option<MetaRef>,
+    ) -> bool {
         let Some(keep) = self.foreign_keeper(obj) else {
             return false;
         };
@@ -1656,6 +1681,7 @@ impl Engine {
         let member = ForeignMember {
             object,
             name,
+            attached,
             value,
             at,
         };
@@ -1669,6 +1695,17 @@ impl Engine {
         obj: ObjectId,
         path: &[String],
         a: &ljos_ir::Assignment,
+    ) -> bool {
+        self.keep_foreign_literal_of(inst, obj, path, a, None)
+    }
+
+    fn keep_foreign_literal_of(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        path: &[String],
+        a: &ljos_ir::Assignment,
+        attached: Option<MetaRef>,
     ) -> bool {
         // Asked first: a literal is not made for a type that keeps none.
         if self.foreign_keeper(obj).is_none() {
@@ -1684,7 +1721,7 @@ impl Engine {
             }
             lit => ForeignValue::Value(self.literal_value(inst, lit)),
         };
-        self.keep_foreign(inst, obj, (path, &a.name), a.span, value)
+        self.keep_foreign_of(inst, obj, (path, &a.name), a.span, value, attached)
     }
 
     fn keep_foreign_binding(
@@ -1693,6 +1730,17 @@ impl Engine {
         obj: ObjectId,
         path: &[String],
         pb: &PropertyBinding,
+    ) -> bool {
+        self.keep_foreign_binding_of(inst, obj, path, pb, None)
+    }
+
+    fn keep_foreign_binding_of(
+        &self,
+        inst: &Rc<Instance>,
+        obj: ObjectId,
+        path: &[String],
+        pb: &PropertyBinding,
+        attached: Option<MetaRef>,
     ) -> bool {
         if self.foreign_keeper(obj).is_none() {
             return false;
@@ -1705,7 +1753,7 @@ impl Engine {
             let kept = matches!(hint, TypeTag::Var);
             e.eval_expr_as(&i, expr, hint, &[], false, kept)
         }));
-        self.keep_foreign(inst, obj, (path, &pb.name), span, value)
+        self.keep_foreign_of(inst, obj, (path, &pb.name), span, value, attached)
     }
 
     fn no_property(&self, inst: &Instance, line: u32, col: u32, path: &[String], name: &str) {

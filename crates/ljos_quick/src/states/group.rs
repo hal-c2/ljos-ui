@@ -569,6 +569,7 @@ impl Group {
         for ForeignMember {
             object,
             name,
+            attached,
             value,
             at,
         } in members
@@ -576,6 +577,12 @@ impl Group {
             let Some(mut target) = object.or(aimed).filter(|t| engine.is_alive(*t)) else {
                 continue;
             };
+            if let Some(meta) = &attached {
+                match engine.attached_object(target, meta) {
+                    Ok(a) => target = a,
+                    Err(_) => continue,
+                }
+            }
             let written = name;
             let mut name: &str = &written;
             // `button.opacity` where `button` holds an object (an alias of

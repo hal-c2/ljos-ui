@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 use crate::engine::Engine;
 use crate::ids::ObjectId;
-use crate::meta::MetaObject;
+use crate::meta::{MetaObject, MetaRef};
 use crate::types::TypeTag;
 use crate::value::Value;
 
@@ -28,6 +28,9 @@ pub struct ForeignMember {
     pub object: Option<ObjectId>,
     /// The property, dotted for a group's (`border.width`).
     pub name: String,
+    /// The type whose attached object has the property (`Layout` of
+    /// `Layout.fillWidth: true`), attached to the object the member is of.
+    pub attached: Option<MetaRef>,
     pub value: ForeignValue,
     /// Where it is written: `url:line:column`.
     pub at: String,
