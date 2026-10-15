@@ -253,8 +253,10 @@ fn change_signals_follow_the_graph() {
     let hits = Rc::new(Cell::new(0));
     let h = hits.clone();
     let c = e
-        .connect_by_name(r, "widthChanged", move |_, args| {
-            assert!(args.is_empty());
+        .connect_by_name(r, "widthChanged", move |e, args| {
+            // The new value goes along, as Qt's change signals carry it.
+            assert_eq!(args.len(), 1);
+            assert_eq!(args[0], e.read_by_name(r, "width"));
             h.set(h.get() + 1);
         })
         .unwrap();

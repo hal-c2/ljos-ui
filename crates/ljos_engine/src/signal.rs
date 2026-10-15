@@ -163,12 +163,17 @@ impl Engine {
                 let scope = self.ensure_scope(obj)?;
                 let weak = Rc::downgrade(&self.inner);
                 let h = handler.clone();
-                Some(self.inner.graph.watch(scope, n, move |_g, _v| {
+                Some(self.inner.graph.watch(scope, n, move |_g, v| {
                     if let Some(inner) = weak.upgrade() {
                         let engine = Engine::from_inner(inner);
                         let _t = Tracking::pause(&engine.inner.tracking);
+                        // The new value goes along: Qt's change signals
+                        // carry it (`textChanged(text)`), and a handler
+                        // compiled against Qt's description names it. One
+                        // that names nothing ignores it.
+                        let args = std::slice::from_ref(v);
                         // A panic ends this handler only (fault.rs).
-                        engine.guarded(receiver.unwrap_or(obj), || h(&engine, &[]));
+                        engine.guarded(receiver.unwrap_or(obj), || h(&engine, args));
                     }
                 })?)
             }
