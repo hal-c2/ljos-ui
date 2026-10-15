@@ -259,9 +259,10 @@ pub(crate) fn look_from_above(engine: &Engine, popup: ObjectId, prop: PropIndex)
     let reset = engine.reset_of(item, theirs)?;
     Some(match reset {
         Reset::Default => engine.default_value(item, theirs),
-        Reset::Follow(value) | Reset::Custom { value, .. } | Reset::Absent { value, .. } => {
-            value(engine, item, theirs)
-        }
+        Reset::Follow(value)
+        | Reset::FollowFromCreation(value)
+        | Reset::Custom { value, .. }
+        | Reset::Absent { value, .. } => value(engine, item, theirs),
     })
 }
 

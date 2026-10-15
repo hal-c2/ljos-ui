@@ -64,7 +64,9 @@ impl Engine {
             Reset::Default => self.reset_to_default(obj, prop),
             // Nobody wrote the value it follows, so no interceptor
             // animates it either.
-            Reset::Follow(value) => self.bind_computed(obj, prop, move |e| value(e, obj, prop)),
+            Reset::Follow(value) | Reset::FollowFromCreation(value) => {
+                self.bind_computed(obj, prop, move |e| value(e, obj, prop))
+            }
             Reset::Custom { apply, .. } => apply(self, obj, prop),
             Reset::Absent { value, .. } => {
                 let v = self.untrack(|| value(self, obj, prop));
@@ -73,7 +75,7 @@ impl Engine {
         }
     }
 
-    /// Gives the [`Reset::Absent`] properties of an object that was just
+    /// Gives the [`Reset::Absent`] and [`Reset::FollowFromCreation`] properties of an object that was just
     /// created their first values. Nothing reads or watches them yet, so
     /// nobody is told: the object has had them from the start.
     pub(crate) fn give_absent(&self, obj: ObjectId) {
@@ -111,9 +113,10 @@ impl Engine {
     pub(crate) fn reset_value(&self, obj: ObjectId, prop: PropIndex, reset: Reset) -> Value {
         match reset {
             Reset::Default => self.default_value(obj, prop),
-            Reset::Follow(value) | Reset::Custom { value, .. } | Reset::Absent { value, .. } => {
-                value(self, obj, prop)
-            }
+            Reset::Follow(value)
+            | Reset::FollowFromCreation(value)
+            | Reset::Custom { value, .. }
+            | Reset::Absent { value, .. } => value(self, obj, prop),
         }
     }
 

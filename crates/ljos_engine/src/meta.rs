@@ -146,6 +146,10 @@ pub enum Reset {
     /// The property follows the value this gives until something else is
     /// assigned: a side margin follows the margins.
     Follow(ResetValue),
+    /// [`Reset::Follow`], and a new object holds what `value` gives before
+    /// any of its bindings runs: a popup's `parent` is the item it is
+    /// declared in when its own `width: parent.width` first runs.
+    FollowFromCreation(ResetValue),
     /// The type does it itself. `value` is what the property holds then,
     /// for a binding that yields `undefined` and stays in place.
     Custom {
@@ -282,8 +286,9 @@ struct Lookup {
     props: HashMap<Atom, PropIndex>,
     signals: HashMap<Atom, SignalIndex>,
     methods: HashMap<Atom, MethodIndex>,
-    /// The properties with a [`Reset::Absent`], and what gives each its
-    /// value. Empty for nearly every type.
+    /// The properties with a [`Reset::Absent`] or a
+    /// [`Reset::FollowFromCreation`], and what gives each its first value.
+    /// Empty for nearly every type.
     absent: Vec<(PropIndex, ResetValue)>,
 }
 
@@ -337,7 +342,9 @@ impl MetaObject {
             let mut l = Lookup::default();
             for (i, p) in self.properties.iter().enumerate() {
                 l.props.insert(p.name.clone(), PropIndex(i as u32));
-                if let Some(Reset::Absent { value, .. }) = p.reset {
+                if let Some(Reset::Absent { value, .. } | Reset::FollowFromCreation(value)) =
+                    p.reset
+                {
                     l.absent.push((PropIndex(i as u32), value));
                 }
             }

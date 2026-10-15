@@ -40,3 +40,6 @@ Feature: A popup declared in an application window
     Then the property "x" of "p" is 100
     And the property "y" of "p" is 75
     And the property "contentItem.parent.x" of "p" is 100
+
+  Scenario: A binding that reads the parent is not run against no parent
+    Then the log has no warnings

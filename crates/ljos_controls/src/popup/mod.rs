@@ -253,7 +253,7 @@ pub struct Popup {
     pub content_children: QmlList,
     /// The item the popup is placed from: the one that declares it until
     /// another is given.
-    #[qml(notify, reset = ljos_engine::Reset::Follow(natural_parent))]
+    #[qml(notify, reset = ljos_engine::Reset::FollowFromCreation(natural_parent))]
     pub parent: Option<ObjectId>,
     #[qml(notify)]
     pub visible: bool,
