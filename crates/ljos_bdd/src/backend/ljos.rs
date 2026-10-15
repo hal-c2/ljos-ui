@@ -14,7 +14,7 @@
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc, time::Duration};
 
 use ljos_a11y::{NodeKey, Tree, role_word};
-use ljos_compiler::{Project, Severity, compile_file};
+use ljos_compiler::{Project, compile_file, failure_reason};
 use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
@@ -394,21 +394,14 @@ fn compile(files: &BTreeMap<String, String>) -> Result<MapSource> {
         .keys()
         .filter(|name| qmldir_of(name).is_none() && !is_script(name))
     {
+        // A file that does not compile stops nothing until an object of
+        // it is made, which is then told why.
         let key = key_of(name);
-        let compiled = compile_file(&project, key).map_err(|d| {
-            let lines: Vec<String> = d.iter().map(ToString::to_string).collect();
-            failed(format!("{name}: {}", lines.join("; ")))
-        })?;
-        if compiled.has_errors() {
-            let lines: Vec<String> = compiled
-                .diagnostics
-                .iter()
-                .filter(|d| d.severity == Severity::Error)
-                .map(ToString::to_string)
-                .collect();
-            return Err(failed(format!("{name}: {}", lines.join("; "))));
+        match compile_file(&project, key) {
+            Ok(c) if !c.has_errors() => out.insert(key, c.file),
+            Ok(c) => out.insert_failure(key, failure_reason(&c.diagnostics)),
+            Err(ds) => out.insert_failure(key, failure_reason(&ds)),
         }
-        out.insert(key, compiled.file);
     }
     Ok(out)
 }

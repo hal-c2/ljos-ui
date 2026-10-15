@@ -94,6 +94,17 @@ impl fmt::Display for Diagnostic {
     }
 }
 
+/// Why a file with these diagnostics cannot be made, as a program says it
+/// to whatever makes an object of the file: the first error's place and
+/// message (`3:5: message`), which a loader puts after the file's URL.
+#[must_use]
+pub fn failure_reason(diagnostics: &[Diagnostic]) -> String {
+    match diagnostics.iter().find(|d| d.severity == Severity::Error) {
+        Some(d) => format!("{}:{}: {}", d.span.line, d.span.column, d.message),
+        None => "the file does not compile".to_owned(),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("cannot read {}: {source}", path.display())]
@@ -108,6 +119,19 @@ pub enum Error {
 pub struct FileResult {
     pub key: String,
     pub result: Result<Compiled, Vec<Diagnostic>>,
+}
+
+impl FileResult {
+    /// The file as a program can run it, or why it cannot
+    /// ([`failure_reason`]). A file with an error compiled only as far as
+    /// it could, so it is not one to run.
+    pub fn usable(&self) -> Result<&Compiled, String> {
+        match &self.result {
+            Ok(c) if !c.has_errors() => Ok(c),
+            Ok(c) => Err(failure_reason(&c.diagnostics)),
+            Err(ds) => Err(failure_reason(ds)),
+        }
+    }
 }
 
 /// Compiles `text` as the file `key` of the project would be compiled: it

@@ -24,7 +24,9 @@ pub trait ComponentSource {
 
     /// Why `key` has no compiled file although the source knows it: the
     /// file is there but did not compile. Qt names the file's own mistake
-    /// when a type it needs does not load, not a missing file.
+    /// when a type it needs does not load, not a missing file. A reason
+    /// that starts with a place (`3:5: message`) follows the file's URL
+    /// as a place in it does.
     fn failure(&self, _key: &str) -> Option<String> {
         None
     }
@@ -472,6 +474,9 @@ impl Engine {
             .ok_or_else(|| EngineError::Load("no component source is set".into()))?;
         let ir = source.load(key).ok_or_else(|| {
             EngineError::Load(match source.failure(key) {
+                Some(why) if why.starts_with(|c: char| c.is_ascii_digit()) => {
+                    format!("{}:{why}", source.url(key))
+                }
                 Some(why) => format!("{}: {why}", source.url(key)),
                 None => format!("{}: No such file", source.url(key)),
             })

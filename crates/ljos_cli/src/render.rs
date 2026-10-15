@@ -304,67 +304,100 @@ pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
     EngineOracle::from_engine(&engine)
 }
 
-/// Compiles every file under `dir` against `oracle`, and keeps those that
-/// compiled. A file with a mistake is told of; only one the entry needs
-/// stops the run.
+/// A project compiled the way a program loads it: every file that
+/// compiled, and for each one that did not, why, which whatever makes an
+/// object of it is told. Shared with `ljos run`.
+pub(crate) struct Loaded {
+    pub(crate) source: MapSource,
+    pub(crate) files: usize,
+    pub(crate) compiled: usize,
+    /// The first error of each file that did not compile, by file name.
+    pub(crate) compile_errors: BTreeMap<String, String>,
+    /// Whatever the compiler could not settle in the files that compiled,
+    /// one a line with the file's name.
+    pub(crate) warnings: Vec<String>,
+    /// The entry is in the project.
+    pub(crate) entry_seen: bool,
+    /// The entry's own first error, with its name.
+    pub(crate) entry_error: Option<String>,
+}
+
+impl Loaded {
+    /// The source, unless the entry cannot be made: it is not in the
+    /// project, or it did not compile.
+    pub(crate) fn into_source(self, dir: &Path, entry: &str) -> anyhow::Result<MapSource> {
+        if let Some(error) = self.entry_error {
+            anyhow::bail!("{error}");
+        }
+        if !self.entry_seen {
+            anyhow::bail!("{entry}.qml is not in {}", dir.display());
+        }
+        Ok(self.source)
+    }
+}
+
+/// Compiles every file under `dir` against `oracle`, as Qt loads a
+/// program: a file with a mistake stops nothing until an object of it is
+/// made, so only the entry's own mistake stops the program.
+pub(crate) fn load_project<O: TypeOracle<Type = EngineType>>(
+    dir: &Path,
+    entry: &str,
+    oracle: O,
+) -> anyhow::Result<Loaded> {
+    let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
+    let mut out = Loaded {
+        source: MapSource::new().with_base_url(base),
+        files: 0,
+        compiled: 0,
+        compile_errors: BTreeMap::new(),
+        warnings: Vec::new(),
+        entry_seen: false,
+        entry_error: None,
+    };
+    for r in compile_project_with(dir, oracle).with_context(|| format!("{}", dir.display()))? {
+        out.files += 1;
+        out.entry_seen |= r.key == entry;
+        match r.usable() {
+            Ok(_) => {}
+            Err(why) => {
+                // The compiler's own words for the report; the loader's
+                // for whatever makes an object of the file.
+                let first = match &r.result {
+                    Ok(c) => c.diagnostics.iter().find(|d| d.severity == Severity::Error),
+                    Err(ds) => ds.first(),
+                }
+                .map_or_else(|| "does not compile".to_owned(), ToString::to_string);
+                out.source.insert_failure(r.key.clone(), why);
+                out.compile_errors
+                    .insert(format!("{}.qml", r.key), first.clone());
+                if r.key == entry {
+                    out.entry_error = Some(format!("{}.qml:{first}", r.key));
+                }
+                continue;
+            }
+        }
+        let Ok(c) = r.result else { continue };
+        out.compiled += 1;
+        out.warnings
+            .extend(c.diagnostics.iter().map(|d| format!("{}.qml: {d}", r.key)));
+        out.source.insert(r.key, c.file);
+    }
+    Ok(out)
+}
+
+/// [`load_project`], told in `notes`.
 fn compile<O: TypeOracle<Type = EngineType>>(
     dir: &Path,
     entry: &str,
     notes: &mut Notes,
     oracle: O,
 ) -> anyhow::Result<MapSource> {
-    let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
-    let mut source = MapSource::new().with_base_url(base);
-    let mut entry_error = None;
-    let mut seen = false;
-    for r in compile_project_with(dir, oracle).with_context(|| format!("{}", dir.display()))? {
-        notes.files += 1;
-        let errors: Vec<String> = match r.result {
-            Ok(c) => {
-                let errors = c
-                    .diagnostics
-                    .iter()
-                    .filter(|d| d.severity == Severity::Error)
-                    .map(ToString::to_string)
-                    .collect();
-                if c.diagnostics.iter().all(|d| d.severity != Severity::Error) {
-                    source.insert(r.key.clone(), c.file);
-                }
-                errors
-            }
-            Err(ds) => {
-                let lines: Vec<String> = ds.iter().map(ToString::to_string).collect();
-                if lines.is_empty() {
-                    vec!["does not compile".to_owned()]
-                } else {
-                    lines
-                }
-            }
-        };
-        match errors.first() {
-            None => notes.compiled += 1,
-            Some(first) => {
-                source.insert_failure(r.key.clone(), format!("does not compile: {first}"));
-                notes
-                    .compile_errors
-                    .insert(format!("{}.qml", r.key), first.clone());
-                if r.key == entry {
-                    entry_error = Some(format!("{}.qml:{first}", r.key));
-                }
-            }
-        }
-        if r.key == entry {
-            seen = true;
-            notes.entry_compiles = entry_error.is_none();
-        }
-    }
-    if let Some(error) = entry_error {
-        anyhow::bail!("{error}");
-    }
-    if !seen {
-        anyhow::bail!("{entry}.qml is not in {}", dir.display());
-    }
-    Ok(source)
+    let loaded = load_project(dir, entry, oracle)?;
+    notes.files = loaded.files;
+    notes.compiled = loaded.compiled;
+    notes.compile_errors = loaded.compile_errors.clone();
+    notes.entry_compiles = loaded.entry_seen && loaded.entry_error.is_none();
+    loaded.into_source(dir, entry)
 }
 
 /// The scene and the clock it runs on, being driven as a host drives them.
@@ -728,7 +761,7 @@ mod tests {
         let said: Vec<_> = notes.said.iter().map(|(t, _)| t.as_str()).collect();
         assert!(
             said.iter()
-                .any(|t| t.contains("Broken.qml") && t.contains("does not compile")),
+                .any(|t| t.contains("Broken.qml:2:1: ") && t.contains("is not a type")),
             "{said:?}"
         );
         assert!(said.iter().all(|t| !t.contains("No such file")), "{said:?}");
