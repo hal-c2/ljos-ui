@@ -11,7 +11,7 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, ObjectFlags, ObjectId, PropIndex, QmlList, QmlObject, Value,
     WriteKind, qml_impl,
 };
-use ljos_quick::{Item, is_item, set_parent_item};
+use ljos_quick::{Item, defer_states, is_item, set_parent_item, start_states};
 
 use crate::control::Control;
 use crate::parts::{PartKind, manage_part};
@@ -42,6 +42,16 @@ pub(crate) fn host_append(cx: &Cx, child: ObjectId, host: Host) -> Result<(), En
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
     if complete && let Some(ci) = e.untrack(|| object(e, cx.this, host.content_item)) {
         set_parent_item(e, child, Some(holder(e, cx.this, ci)))?;
+    } else if !complete {
+        // The child has no parent yet, so a state that anchors it to
+        // `parent` waits until `host_complete` has given it one.
+        defer_states(e, cx.this);
+        // Until then it is the host's, so that what reads `parent` finds
+        // an item; the content item takes it over when the host is
+        // complete.
+        if is_item(e, cx.this) {
+            set_parent_item(e, child, Some(cx.this))?;
+        }
     }
     Ok(())
 }
@@ -106,6 +116,7 @@ pub(crate) fn host_complete(engine: &Engine, obj: ObjectId, host: Host) -> Resul
         let ci = v.as_object().filter(|c| e.is_alive(*c));
         check(e, "contentItem", adopt(e, ci));
     })?;
+    start_states(engine, obj);
     Ok(())
 }
 

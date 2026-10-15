@@ -103,3 +103,72 @@ Feature: Repeaters in positioners and in each other
       Then the property "inner" of "root" is 3
       And the property "count" of "inner-a" is 3
       And the property "x" of "aw" is 20
+
+  Rule: A nested list reaches an inner delegate through required properties
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Column {
+          id: root
+          objectName: "root"
+          property string seen: ""
+          function read() { seen = "" + lm.get(0).parts.get(1).done + lm.get(1).parts.get(0).done }
+          ListModel { id: lm
+            ListElement { parts: [ ListElement { tag: "x"; done: false }, ListElement { tag: "y"; done: false } ] }
+            ListElement { parts: [ ListElement { tag: "z"; done: false } ] } }
+          Repeater {
+            model: lm
+            Row {
+              required property var parts
+              Repeater { model: parts
+                Item {
+                  required property string tag
+                  required property bool done
+                  objectName: "tag-" + tag
+                  property bool shown: done
+                  function flip() { done = !done }
+                }
+              }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+
+    Scenario: The inner delegate is created with the roles of its element
+      Then the property "shown" of "tag-x" is false
+      And the property "shown" of "tag-z" is false
+
+    Scenario: Writing a required property of an inner delegate changes the delegate only
+      When the method "flip" of "tag-y" is called
+      And the method "read" of "root" is called
+      Then the property "seen" of "root" is "falsefalse"
+      And the property "shown" of "tag-y" is true
+
+  Rule: A nested list declared as list<var> is a plain list, not a model
+
+    Scenario: An inner delegate has no roles to read from a list<var> property
+      Given the QML:
+        """qml
+        import QtQuick
+        Column {
+          ListModel {
+            id: lm
+            ListElement { parts: [ ListElement { tag: "x" } ] }
+          }
+          Repeater {
+            model: lm
+            Row {
+              required property list<var> parts
+              Repeater {
+                model: parts
+                Item { required property string tag; objectName: "tag-" + tag }
+              }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the object "tag-x" does not exist

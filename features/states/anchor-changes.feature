@@ -159,3 +159,64 @@ Feature: AnchorChanges
       And the property "state" of "root" is set to "bound"
       And the property "x" of "other" is set to 25
       Then the property "x" of "box" is 20
+
+  Rule: `parent` in an anchor line is the parent of the target
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          Item {
+            id: holder; x: 50; y: 60; width: 100; height: 80
+            Rectangle { id: box; objectName: "box"; width: 10; height: 10 }
+          }
+          states: [
+            State { name: "corner"
+              AnchorChanges { target: box; anchors.right: parent.right; anchors.bottom: parent.bottom } },
+            State { name: "filled"
+              AnchorChanges { target: box; anchors.top: parent.top; anchors.bottom: parent.bottom } }
+          ]
+        }
+        """
+
+    Scenario Outline: The anchors of the state reach the parent of the target: <property>
+      When the property "state" of "root" is set to "corner"
+      Then the property "<property>" of "box" is <value>
+
+      Examples:
+        | property | value |
+        | x        | 90    |
+        | y        | 70    |
+
+    Scenario: Both lines of one axis give the item its height
+      When the property "state" of "root" is set to "filled"
+      Then the property "height" of "box" is 80
+
+  Rule: The state of a control that holds content is entered with the content in place
+
+    Scenario: A state that is on from the start anchors to the parent of an item in a Pane
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Pane {
+          id: root
+          width: 200; height: 200
+          padding: 0
+          property bool on: true
+          Rectangle {
+            id: box; objectName: "box"; width: 10
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+          }
+          states: State {
+            name: "right"; when: root.on
+            AnchorChanges { target: box; anchors.left: undefined; anchors.right: parent.right; anchors.bottom: parent.bottom }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "box" is 190
+      And the property "height" of "box" is 200
+      And the log has no warnings

@@ -34,6 +34,17 @@ pub use types::{
     StateGroup,
 };
 
+/// Holds back the states of `owner` until [`start_states`]: for a host
+/// of content, whose children are given their parent when it completes.
+pub fn defer_states(engine: &Engine, owner: ljos_engine::ObjectId) {
+    group::defer(engine, owner);
+}
+
+/// Gives `owner` the states that [`defer_states`] held back.
+pub fn start_states(engine: &Engine, owner: ljos_engine::ObjectId) {
+    group::start(engine, owner);
+}
+
 #[derive(Default)]
 struct Registered(Cell<bool>);
 

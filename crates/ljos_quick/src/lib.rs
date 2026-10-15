@@ -122,7 +122,7 @@ pub use scene::{
 pub use shapes::{Shape, ShapePaint, ShapePath};
 pub use states::{
     AnchorChanges, AnchorChangesAnchors, Binding, ParentChange, PropertyChanges, State,
-    StateChangeScript, StateGroup,
+    StateChangeScript, StateGroup, defer_states, start_states,
 };
 pub use system_palette::{SystemPalette, color_group};
 pub use system_prefs::{

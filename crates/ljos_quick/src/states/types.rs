@@ -44,6 +44,7 @@ impl State {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         if let Some(owner) = cx.engine.owner(cx.this)
             && (is_item(cx.engine, owner) || is_a::<StateGroup>(cx.engine, owner))
+            && !group::is_deferred(cx.engine, owner)
         {
             group::attach(cx.engine, owner);
         }
