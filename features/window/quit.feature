@@ -13,11 +13,18 @@ Feature: Ending the application
     Given the QML:
       """qml
       import QtQuick
+      import QtQuick.Controls.Basic
       Window {
         objectName: "w"
         width: 300; height: 200
         visible: true
         function leave() { Qt.quit() }
+        Button {
+          text: "Leave"
+          Connections {
+            function onClicked() { Qt.quit() }
+          }
+        }
       }
       """
 
@@ -28,6 +35,10 @@ Feature: Ending the application
   @api-QtQml.Qt.quit
   Scenario: Qt.quit() asks the application to end
     When the method "leave" of "w" is called
+    Then the application was asked to quit
+
+  Scenario: A click on a button whose handler calls Qt.quit() asks the application to end
+    When the user clicks the "button" "Leave"
     Then the application was asked to quit
 
   @api-QtQuick.Window.close

@@ -196,6 +196,63 @@ Feature: AbstractButton
       Then the property "checked" of "free" is false
       And the property "checked" of "one" is true
 
+  # A switch for the whole application, as a settings page has one: the
+  # button's checked is bound to the setting, and its own click handler
+  # writes the setting. The click checks or unchecks the button first, so
+  # the handler writes what the binding already gives: no loop.
+  @qt-parity
+  Rule: A button bound to what its click handler writes
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 200
+          property bool active: true
+          Button {
+            id: button
+            objectName: "b"
+            width: 100; height: 40
+            checkable: true
+            checked: root.active
+            Connections {
+              function onClicked() { root.active = button.checked }
+            }
+          }
+          Switch {
+            objectName: "s"
+            y: 60
+            enabled: root.active
+            checked: root.active
+          }
+        }
+        """
+
+    Scenario: A click turns the setting off and what reads it follows
+      When the user touches 30, 20
+      Then the property "checked" of "b" is false
+      And the property "active" of "root" is false
+      And the property "enabled" of "s" is false
+      And the property "checked" of "s" is false
+      And the log has no warnings
+
+    Scenario: A second click turns it back on
+      When the user touches 30, 20
+      And 1 second passes
+      And the user touches 30, 20
+      Then the property "checked" of "b" is true
+      And the property "active" of "root" is true
+      And the property "enabled" of "s" is true
+
+    Scenario: The binding of checked outlives the click
+      When the user touches 30, 20
+      And the property "active" of "root" is set to true
+      Then the property "checked" of "b" is true
+
   # The Qt oracle sends whole clicks; what happens between the press and
   # the release was read from Qt with its own test tool (QtTest) instead.
   @ljos-only
