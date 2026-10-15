@@ -29,6 +29,8 @@ const MAX_DIRS: usize = 20_000;
 pub struct Project<O> {
     pub(crate) front: project::Project,
     sources: BTreeMap<String, String>,
+    /// The JavaScript files, by their path from the root (`content/calc.js`).
+    scripts: BTreeMap<String, String>,
     pub(crate) oracle: O,
     /// Names only the context an instance is made in has at run time. Known
     /// once every file is in.
@@ -45,6 +47,7 @@ impl<O: TypeOracle> Project<O> {
         Self {
             front: project::Project::new(),
             sources: BTreeMap::new(),
+            scripts: BTreeMap::new(),
             oracle,
             dynamic: OnceCell::new(),
             callable: RefCell::new(HashMap::new()),
@@ -108,6 +111,23 @@ impl<O: TypeOracle> Project<O> {
         self.callable.get_mut().clear();
     }
 
+    /// Adds the JavaScript file at `path` (from the root, with its suffix).
+    /// A QML file that imports it by path is compiled with it.
+    pub fn add_script(&mut self, path: &str, source: impl Into<String>) {
+        self.scripts.insert(path.to_string(), source.into());
+        self.callable.get_mut().clear();
+    }
+
+    /// The JavaScript files: their paths from the root, and their text.
+    pub fn scripts(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.scripts.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// The text of the JavaScript file at `path`.
+    pub fn script(&self, path: &str) -> Option<&str> {
+        self.scripts.get(path).map(String::as_str)
+    }
+
     /// Forgets the file `key`. What a module was said to have stays said.
     pub fn remove(&mut self, key: &str) {
         self.front.remove(key);
@@ -158,6 +178,17 @@ impl<O: TypeOracle> Project<O> {
                     continue;
                 };
                 project.add(&key, text);
+            }
+            for name in names
+                .iter()
+                .filter(|name| name.ends_with(".js") || name.ends_with(".mjs"))
+            {
+                let path = dir.join(name);
+                let (Some(key), Ok(text)) = (key(root, &path), std::fs::read_to_string(&path))
+                else {
+                    continue;
+                };
+                project.add_script(&key, text);
             }
         }
         for (dir, names) in &dirs {

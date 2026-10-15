@@ -100,7 +100,7 @@ pub fn extract_js(source: &str, stem: &str) -> Extraction {
 /// A QML script file with its `.pragma` and `.import` lines blanked, which
 /// are not JavaScript, and the script files those lines import. Blanked
 /// rather than removed, so that every position stays where it was.
-fn without_directives(source: &str) -> (String, Vec<String>) {
+pub(crate) fn without_directives(source: &str) -> (String, Vec<String>) {
     let mut text = String::with_capacity(source.len());
     let mut scripts = Vec::new();
     for line in source.split_inclusive('\n') {

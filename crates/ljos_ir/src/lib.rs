@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 7;
+pub const IR_VERSION: u32 = 8;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -79,6 +79,26 @@ pub struct CompiledFile {
     pub js: JsModule,
     /// What the file's programs take of other files to be so.
     pub invocable: Vec<Invocable>,
+    /// The script files the file imports by path (`import "calc.js" as Calc`).
+    pub scripts: Vec<Script>,
+}
+
+/// A JavaScript file a QML file imports by path, ready to run: the engine
+/// has no parser, so what it needs of the file is worked out here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Script {
+    /// As the import writes it, which is what an [`Arg::Namespace`] names.
+    pub path: String,
+    /// Where the file is from the project's root: two imports of one file
+    /// name the same script.
+    pub key: String,
+    /// `.pragma library`: one copy for every importer. Without it each
+    /// instance of the importing component has its own.
+    pub library: bool,
+    /// An expression that makes the script's object when evaluated: its
+    /// top-level names as members, read and written through to the
+    /// script's own variables.
+    pub source: String,
 }
 
 /// The functions of a singleton another file is, each with a tier-1 program

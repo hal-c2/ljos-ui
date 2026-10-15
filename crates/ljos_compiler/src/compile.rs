@@ -2010,6 +2010,23 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 }
             }
         }
+        let scripts: Vec<Script> = document
+            .imports
+            .iter()
+            .filter_map(|import| match &import.source {
+                QmlImportSource::Path(path)
+                    if path.ends_with(".js") || path.ends_with(".mjs") =>
+                {
+                    let key = qml_front::project::join(
+                        qml_front::project::directory(self.key),
+                        path,
+                    );
+                    let text = self.project.script(&key)?;
+                    Some(crate::script::lower(path, &key, text))
+                }
+                _ => None,
+            })
+            .collect();
         let mut file = CompiledFile {
             version: IR_VERSION,
             file: self.key.to_string(),
@@ -2043,6 +2060,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             translations,
             js: JsModule { source, functions },
             invocable,
+            scripts,
         };
         // A template is known by where it is written, which is only known
         // once every key is: templates come after what they are written in.

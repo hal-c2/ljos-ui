@@ -239,6 +239,11 @@ fn key_of(name: &str) -> &str {
     name.strip_suffix(".qml").unwrap_or(name)
 }
 
+/// A JavaScript file a QML file may import: it is not QML either.
+fn is_script(name: &str) -> bool {
+    name.ends_with(".js") || name.ends_with(".mjs")
+}
+
 /// The directory `name` is the `qmldir` file of (empty for the scenario's
 /// own), if it is one: it describes a module and is not QML.
 fn qmldir_of(name: &str) -> Option<&str> {
@@ -353,7 +358,9 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
 fn compile(files: &BTreeMap<String, String>) -> Result<MapSource> {
     let mut project = Project::new(oracle());
     for (name, source) in files {
-        if qmldir_of(name).is_none() {
+        if is_script(name) {
+            project.add_script(name, source.as_str());
+        } else if qmldir_of(name).is_none() {
             project.add(key_of(name), source.as_str());
         }
     }
@@ -364,7 +371,10 @@ fn compile(files: &BTreeMap<String, String>) -> Result<MapSource> {
         }
     }
     let mut out = MapSource::new();
-    for name in files.keys().filter(|name| qmldir_of(name).is_none()) {
+    for name in files
+        .keys()
+        .filter(|name| qmldir_of(name).is_none() && !is_script(name))
+    {
         let key = key_of(name);
         let compiled = compile_file(&project, key).map_err(|d| {
             let lines: Vec<String> = d.iter().map(ToString::to_string).collect();

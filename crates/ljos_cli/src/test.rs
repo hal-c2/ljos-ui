@@ -325,6 +325,9 @@ fn project(root: &Path, imports: &[PathBuf]) -> anyhow::Result<Project<QtTypeOra
     for key in found.files() {
         project.add(key, found.source(key).unwrap_or_default());
     }
+    for (path, text) in found.scripts() {
+        project.add_script(path, text);
+    }
     for dir in imports {
         add_import(&mut project, root, dir);
     }

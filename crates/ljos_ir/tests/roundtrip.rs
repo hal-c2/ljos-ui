@@ -379,6 +379,12 @@ fn sample() -> CompiledFile {
             },
             functions: vec!["scaled".into()],
         }],
+        scripts: vec![Script {
+            path: "calc.js".into(),
+            key: "app/calc.js".into(),
+            library: false,
+            source: "(function () { return {}; })()".into(),
+        }],
     }
 }
 

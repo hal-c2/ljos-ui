@@ -21,6 +21,7 @@ pub mod i18n;
 mod js;
 mod oracle;
 mod project;
+mod script;
 pub mod reload;
 pub mod reload_lint;
 pub mod tier1;

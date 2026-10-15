@@ -46,6 +46,7 @@ use crate::{Provenance, WriteKind};
 
 pub(crate) mod dynamic;
 pub(crate) mod reload;
+pub(crate) mod scripts;
 pub(crate) mod singletons;
 mod sliced;
 pub(crate) mod tier1;
@@ -2109,6 +2110,12 @@ impl Engine {
             // a script reads off the namespace itself is a name the module
             // does not have: nothing, as any member of an object that is
             // not there.
+            Arg::Namespace {
+                source: ljos_ir::ImportSource::Path(path),
+                ..
+            } if path.ends_with(".js") || path.ends_with(".mjs") => {
+                self.script_object(s, inst, path)
+            }
             Arg::Namespace { .. } => JsValue::Map(Vec::new()),
             Arg::Context {
                 component,

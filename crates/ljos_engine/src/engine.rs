@@ -2008,6 +2008,7 @@ impl Engine {
     pub fn destroy_context(&self, ctx: ContextId) {
         if ctx != self.inner.root_context {
             self.inner.contexts.borrow_mut().remove(ctx);
+            self.release_scripts(ctx);
         }
     }
 
