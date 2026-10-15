@@ -17,6 +17,7 @@
 //! `features/window/` and `features/controls/application-window.feature`.
 
 mod app;
+mod screen;
 mod system;
 
 use std::cell::Cell;
@@ -30,6 +31,7 @@ use ljos_quick::focus::{FocusReason, WindowAttached, active_focus_item, force_ac
 use ljos_quick::{Item, Rectangle, set_parent_item, window_of};
 
 pub use app::{Application, ApplicationState, ScreenInfo, ScreenSpec};
+pub use screen::{Screen, ScreenAttached};
 use system::NO_MAXIMUM;
 pub use system::{
     FRAMELESS, KIND_MASK, Modality, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowRequest, WindowShow,

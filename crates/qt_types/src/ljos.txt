@@ -627,6 +627,7 @@ module QtQuick
 	Row QtQuick.Row
 	SafeArea QtQuick.SafeArea
 	Scale QtQuick.Scale
+	Screen QtQuick.Screen
 	ScreenInfo QtQuick.ScreenInfo
 	ScriptAction QtQuick.ScriptAction
 	SequentialAnimation QtQuick.SequentialAnimation
@@ -1875,6 +1876,9 @@ module QtQuick
 		signal yScaleChanged
 		signal zScaleChanged
 		signal scaleChanged
+	type QtQuick.Screen Screen
+		attached QtQuick.ScreenAttached
+		is uncreatable
 	type QtQuick.ScreenInfo ScreenInfo
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -1887,6 +1891,7 @@ module QtQuick
 		prop virtualY QtQml.int named readonly
 		prop devicePixelRatio QtQml.real named readonly
 		prop pixelDensity QtQml.real named readonly
+		prop logicalPixelDensity QtQml.real named readonly
 		prop orientation Qt::ScreenOrientation readonly
 		prop primaryOrientation Qt::ScreenOrientation readonly
 		prop manufacturer QtQml.string named readonly
@@ -1901,6 +1906,7 @@ module QtQuick
 		signal virtualYChanged
 		signal devicePixelRatioChanged
 		signal pixelDensityChanged
+		signal logicalPixelDensityChanged
 		signal orientationChanged
 		signal primaryOrientationChanged
 		signal manufacturerChanged
@@ -2823,6 +2829,39 @@ module QtQuick
 		is uncreatable
 		prop margins QtQuick.SafeMargins pointer readonly
 		prop additionalMargins QtQuick.SafeAdditionalMargins pointer readonly
+	type QtQuick.ScreenAttached ScreenAttached
+		is uncreatable
+		prop name QtQml.string named readonly
+		prop manufacturer QtQml.string named readonly
+		prop model QtQml.string named readonly
+		prop serialNumber QtQml.string named readonly
+		prop width QtQml.int named readonly
+		prop height QtQml.int named readonly
+		prop desktopAvailableWidth QtQml.int named readonly
+		prop desktopAvailableHeight QtQml.int named readonly
+		prop virtualX QtQml.int named readonly
+		prop virtualY QtQml.int named readonly
+		prop devicePixelRatio QtQml.real named readonly
+		prop pixelDensity QtQml.real named readonly
+		prop logicalPixelDensity QtQml.real named readonly
+		prop orientation Qt::ScreenOrientation readonly
+		prop primaryOrientation Qt::ScreenOrientation readonly
+		signal nameChanged
+		signal manufacturerChanged
+		signal modelChanged
+		signal serialNumberChanged
+		signal widthChanged
+		signal heightChanged
+		signal desktopAvailableWidthChanged
+		signal desktopAvailableHeightChanged
+		signal virtualXChanged
+		signal virtualYChanged
+		signal devicePixelRatioChanged
+		signal pixelDensityChanged
+		signal logicalPixelDensityChanged
+		signal orientationChanged
+		signal primaryOrientationChanged
+		method angleBetween
 	type QtQuick.TextEditorBase TextEditorBase
 		prototype QtQuick.Item named
 		is uncreatable

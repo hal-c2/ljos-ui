@@ -90,6 +90,9 @@ pub struct ScreenInfo {
     /// Physical pixels per millimetre.
     #[qml(notify, readonly)]
     pub pixel_density: f64,
+    /// Logical pixels per millimetre.
+    #[qml(notify, readonly)]
+    pub logical_pixel_density: f64,
     #[qml(notify, readonly, enumeration = "Qt.ScreenOrientation")]
     pub orientation: i32,
     #[qml(notify, readonly, enumeration = "Qt.ScreenOrientation")]
@@ -103,7 +106,7 @@ pub struct ScreenInfo {
 }
 
 /// What a host said of a display, as property values.
-fn screen_values(spec: &ScreenSpec) -> [(ljos_engine::PropIndex, Value); 9] {
+fn screen_values(spec: &ScreenSpec) -> [(ljos_engine::PropIndex, Value); 10] {
     let [w, h] = spec.size.map(|v| v.round() as i32);
     let scale = if spec.scale > 0.0 { spec.scale } else { 1.0 };
     [
@@ -129,6 +132,10 @@ fn screen_values(spec: &ScreenSpec) -> [(ljos_engine::PropIndex, Value); 9] {
         (
             ScreenInfo::PIXEL_DENSITY.index,
             Value::Real(96.0 / 25.4 * scale),
+        ),
+        (
+            ScreenInfo::LOGICAL_PIXEL_DENSITY.index,
+            Value::Real(96.0 / 25.4),
         ),
     ]
 }
@@ -227,6 +234,12 @@ pub(super) fn register(engine: &Engine) {
         ljos_engine::Version::new(2, 15),
         ljos_engine::MetaRef::Static(ScreenInfo::static_meta()),
     );
+    engine.register_type(
+        "QtQuick",
+        ljos_engine::Version::new(2, 15),
+        ljos_engine::MetaRef::Static(super::screen::Screen::static_meta()),
+    );
+    super::screen::register(engine);
     engine.register_singleton::<Application>("QtQuick", ljos_engine::Version::new(2, 15));
     // Made here and not on first use: a native singleton has no hook that
     // runs when it is made, and what it says of the screens must be there
