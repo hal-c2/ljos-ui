@@ -16,13 +16,16 @@
 //! Answers from other threads come back through one bounded inbox that the
 //! scene drains at the start of a frame ([`Platform::deliver`]); nothing
 //! here polls. A host with a desktop turns on the `native` feature and
-//! installs [`native::SystemClipboard`] and [`native::SystemDialogs`].
+//! installs [`native::SystemClipboard`] and [`native::SystemDialogs`]; a
+//! host with a network turns on `http` and installs `HttpFetcher`.
 
 mod clipboard;
 mod dialogs;
 mod drop;
 mod fakes;
 mod fetch;
+#[cfg(feature = "http")]
+mod http;
 mod library;
 
 use library::DialogLibrary;
@@ -45,7 +48,11 @@ pub use dialogs::{
 };
 pub use drop::{ExternalDrag, external_drag};
 pub use fakes::FakeDialogs;
-pub use fetch::{FetchError, Fetcher, Method, NoNetwork, Request, Response, is_remote};
+pub use fetch::{
+    FetchError, Fetcher, Method, NoNetwork, Request, Response, is_remote, reason_phrase,
+};
+#[cfg(feature = "http")]
+pub use http::HttpFetcher;
 pub use paths::{Location, PathEnv, StandardPaths, file_url, url_path};
 pub use permissions::{
     BluetoothPermission, CalendarPermission, CameraPermission, ContactsPermission, FakePermissions,

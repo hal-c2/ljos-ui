@@ -327,6 +327,12 @@ impl Platform {
         *self.permissions.borrow_mut() = service;
     }
 
+    /// The installed fetcher, for work that fetches on a thread of its
+    /// own rather than through [`Platform::fetch`].
+    pub fn fetcher(&self) -> Arc<dyn Fetcher> {
+        Arc::clone(&self.fetcher.borrow())
+    }
+
     pub fn set_fetcher(&self, fetcher: Arc<dyn Fetcher>) {
         *self.fetcher.borrow_mut() = fetcher;
     }

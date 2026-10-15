@@ -14,6 +14,9 @@ build = "build.rs"
 # and message dialogs (rfd). Without it every service is the in-process one,
 # which is what tests and headless hosts want.
 native = ["dep:arboard", "dep:rfd", "dep:futures"]
+# A fetcher that reaches the network (HttpFetcher): HTTP and HTTPS. Without
+# it an application has only the fetcher its host writes, or none.
+http = ["dep:ureq"]
 
 [dependencies]
 ljos_engine = { path = "../ljos_engine" }
@@ -26,6 +29,9 @@ thiserror.workspace = true
 arboard = { version = "3.6.1", optional = true, features = ["wayland-data-control"] }
 rfd = { version = "0.17.2", optional = true }
 futures = { workspace = true, optional = true }
+# HttpFetcher: a small blocking client on rustls, called on a thread of
+# the caller's, so no async runtime and nothing on the Engine thread waits.
+ureq = { workspace = true, optional = true }
 
 [build-dependencies]
 # The fallback dialogs' QML is compiled when this crate is built; the crate

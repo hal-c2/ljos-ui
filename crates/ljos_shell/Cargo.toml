@@ -15,9 +15,9 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }
 ljos_host = { path = "../ljos_host" }
-# The desktop's own clipboard and dialogs, which only the shell's loop
-# installs; the other hosts keep the in-process ones.
-ljos_platform = { path = "../ljos_platform", features = ["native"] }
+# The desktop's own clipboard, dialogs and HTTP fetcher, which only the
+# shell's loop installs; the other hosts keep the in-process ones.
+ljos_platform = { path = "../ljos_platform", features = ["native", "http"] }
 egui.workspace = true
 # The loop is the shell's own (ARCHITECTURE.md §7.3): winit through
 # ljos_host, egui's input translation and its wgpu painter. Not in the
@@ -26,10 +26,6 @@ egui-winit = { version = "0.36.2", features = ["accesskit"] }
 egui-wgpu = { version = "0.36.2", features = ["winit", "wayland", "x11"] }
 # Surface creation is asynchronous in wgpu and immediate on the desktop.
 pollster = "1.0.1"
-# The desktop's HTTP fetcher (platform.rs): a small blocking client on
-# rustls, called on the fetcher's own thread, so no async runtime and
-# nothing on the Engine thread ever waits. Not in the workspace pins.
-ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 thiserror.workspace = true
 # Only with `eframe`: for a host that has an eframe application of its own
 # and shows a `ShellApp` in it.
