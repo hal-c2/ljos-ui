@@ -13,7 +13,8 @@ use std::sync::Arc;
 use egui::ViewportId;
 use egui_wgpu::winit::Painter;
 use egui_wgpu::{
-    RendererOptions, SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupExisting, wgpu,
+    RendererOptions, SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew,
+    WgpuSetupExisting, wgpu,
 };
 use egui_winit::winit::event_loop::OwnedDisplayHandle;
 use egui_winit::winit::window::Window;
@@ -63,7 +64,20 @@ pub(crate) fn painter(
             device: gpu.device.clone(),
             queue: gpu.queue.clone(),
         }),
-        None => WgpuSetup::from_display_handle(display),
+        None => {
+            let mut new = WgpuSetupCreateNew::from_display_handle(display);
+            // A debug build turns wgpu's validation on, and on GL that hands
+            // EGL a debug callback which wgpu-hal 30.0.1 lets read a null
+            // command name: Mesa reports a failed eglInitialize through it
+            // and the process segfaults as it starts. WGPU_VALIDATION=1
+            // still asks for it.
+            if std::env::var_os("WGPU_VALIDATION").is_none() {
+                new.instance_descriptor
+                    .flags
+                    .remove(wgpu::InstanceFlags::VALIDATION);
+            }
+            WgpuSetup::CreateNew(new)
+        }
     };
     let config = WgpuConfiguration {
         surface: SurfaceConfig {
