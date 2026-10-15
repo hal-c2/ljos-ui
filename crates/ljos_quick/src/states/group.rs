@@ -573,10 +573,25 @@ impl Group {
             at,
         } in members
         {
-            let Some(target) = object.or(aimed).filter(|t| engine.is_alive(*t)) else {
+            let Some(mut target) = object.or(aimed).filter(|t| engine.is_alive(*t)) else {
                 continue;
             };
-            let Ok(prop) = engine.property_index(target, &name) else {
+            let written = name;
+            let mut name: &str = &written;
+            // `button.opacity` where `button` holds an object (an alias of
+            // a child, say): the change is to that object's property.
+            while engine.property_index(target, name).is_err()
+                && let Some((head, rest)) = name.split_once('.')
+                && let Ok(p) = engine.property_index(target, head)
+                && let Some(o) = engine
+                    .untrack(|| engine.read(target, p))
+                    .as_object()
+                    .filter(|o| engine.is_alive(*o))
+            {
+                target = o;
+                name = rest;
+            }
+            let Ok(prop) = engine.property_index(target, name) else {
                 // `font.pixelSize`, `sourceSize.height`: one member of a
                 // value. Members of one value go in together, below.
                 if let Some((head, member)) = name.rsplit_once('.')
@@ -610,7 +625,7 @@ impl Group {
                     LogLevel::Warning,
                     "qml",
                     format!(
-                        "{at}: QML PropertyChanges: Cannot assign to non-existent property \"{name}\""
+                        "{at}: QML PropertyChanges: Cannot assign to non-existent property \"{written}\""
                     ),
                 );
                 continue;
