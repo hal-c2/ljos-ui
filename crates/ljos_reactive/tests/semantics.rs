@@ -726,3 +726,56 @@ fn heights_follow_dependencies() {
         (Some(0), Some(1), Some(2))
     );
 }
+
+#[test]
+fn a_write_in_an_effect_runs_its_own_observers_before_it_returns() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let x = g.property(r, 0).unwrap();
+    let seen = Rc::new(Cell::new(0));
+    let o = seen.clone();
+    g.effect(r, move |g| o.set(g.get(x))).unwrap();
+    let after_write = Rc::new(Cell::new(-1));
+    let a = after_write.clone();
+    let o = seen.clone();
+    g.effect(r, move |g| {
+        let v = g.get(s);
+        if v > 0 {
+            g.set(x, v * 10);
+            a.set(o.get());
+        }
+    })
+    .unwrap();
+    g.set(s, 4);
+    assert_eq!(after_write.get(), 40);
+}
+
+#[test]
+fn effects_waiting_in_one_flush_do_not_run_inside_each_other() {
+    // Each effect writes a property of its own, and each write flushes. A
+    // few nested flushes run every effect still waiting; past that a write
+    // flushes only what it changed, so the nesting stays small however many
+    // wait.
+    const N: usize = 20_000;
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let depth = Rc::new(Cell::new(0usize));
+    let deepest = Rc::new(Cell::new(0usize));
+    for _ in 0..N {
+        let t = g.property(r, 0).unwrap();
+        let (d, m) = (depth.clone(), deepest.clone());
+        g.effect(r, move |g| {
+            d.set(d.get() + 1);
+            m.set(m.get().max(d.get()));
+            let v = g.get(s);
+            g.batch(|| g.set(t, v));
+            d.set(d.get() - 1);
+        })
+        .unwrap();
+    }
+    deepest.set(0);
+    g.set(s, 1);
+    assert!(deepest.get() <= 16, "nested {} deep", deepest.get());
+}

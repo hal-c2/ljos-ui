@@ -88,6 +88,8 @@ struct Node<V> {
     /// Promoted (or explicitly made) an effect root.
     eager: bool,
     queued: bool,
+    /// The flush level its queue entry sits on (see `Inner::queues`).
+    queued_level: u32,
     /// Parked on a frozen scope until thaw.
     deferred: bool,
     /// On the current check-walk stack; meeting it again is a cycle.
@@ -188,7 +190,14 @@ struct Inner<V> {
     nodes: SlotMap<NodeId, Node<V>>,
     scopes: SlotMap<ScopeId, Scope>,
     root: ScopeId,
-    queue: BinaryHeap<Reverse<(u32, u64, NodeId)>>,
+    /// Queued roots, one heap per flush level. A flush nested in an effect
+    /// (a write it makes) runs every root that waits, so what the writer
+    /// reads next is up to date. Each such root can write and nest once
+    /// more, so past [`SHARED_FLUSH_DEPTH`] an effect that runs opens a
+    /// level of its own and a flush nested in it drains only what that run
+    /// queued. The call stack then grows with the chain of changes, as
+    /// Qt's handlers nest, and not with the number of waiting roots.
+    queues: Vec<Queue>,
     frames: Vec<Frame>,
     read_pool: Vec<Vec<NodeId>>,
     walk_pool: Vec<Vec<(NodeId, u32)>>,
@@ -289,6 +298,34 @@ impl<V: Clone + 'static> Drop for BatchGuard<'_, V> {
     }
 }
 
+/// Closes the flush level an effect's run opened, on every exit. What is
+/// still queued on it waits on the level below.
+struct LevelGuard<'g, V: Clone + 'static>(&'g Graph<V>);
+
+impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
+    fn drop(&mut self) {
+        let mut g = self.0.inner.borrow_mut();
+        let i = &mut *g;
+        let Some(left) = i.queues.pop() else {
+            return;
+        };
+        let below = i.queues.len().saturating_sub(1);
+        if i.queues.is_empty() {
+            i.queues.push(Queue::new());
+        }
+        for Reverse(entry) in left {
+            let n = entry.2;
+            if let Some(node) = i.nodes.get_mut(n)
+                && node.queued
+                && node.queued_level as usize == below + 1
+            {
+                node.queued_level = below as u32;
+                i.queues[below].push(Reverse(entry));
+            }
+        }
+    }
+}
+
 struct FlushGuard<'g, V: Clone + 'static>(&'g Graph<V>);
 
 impl<V: Clone + 'static> Drop for FlushGuard<'_, V> {
@@ -359,7 +396,7 @@ impl<V: Clone + 'static> Graph<V> {
                 nodes: SlotMap::with_key(),
                 scopes,
                 root,
-                queue: BinaryHeap::new(),
+                queues: vec![Queue::new()],
                 frames: Vec::new(),
                 read_pool: Vec::new(),
                 walk_pool: Vec::new(),
@@ -677,8 +714,8 @@ impl<V: Clone + 'static> Graph<V> {
                 NodeState::Dirty,
             )?;
             if i.options.eager {
-                let Inner { nodes, queue, .. } = &mut *i;
-                enqueue(queue, n, &mut nodes[n]);
+                let Inner { nodes, queues, .. } = &mut *i;
+                enqueue(queues, n, &mut nodes[n]);
             }
             n
         };
@@ -703,8 +740,8 @@ impl<V: Clone + 'static> Graph<V> {
                 None,
                 NodeState::Dirty,
             )?;
-            let Inner { nodes, queue, .. } = &mut *i;
-            enqueue(queue, n, &mut nodes[n]);
+            let Inner { nodes, queues, .. } = &mut *i;
+            enqueue(queues, n, &mut nodes[n]);
             n
         };
         self.flush_if_idle();
@@ -1214,7 +1251,7 @@ impl<V: Clone + 'static> Graph<V> {
             } else {
                 node.state = NodeState::Dirty;
                 if node.is_eager(all) {
-                    enqueue(&mut i.queue, n, node);
+                    enqueue(&mut i.queues, n, node);
                 }
                 i.mark_observers(n, NodeState::Check);
             }
@@ -1451,7 +1488,7 @@ impl<V: Clone + 'static> Graph<V> {
                 && node.state != NodeState::Computing
                 && node.is_eager(all)
             {
-                enqueue(&mut i.queue, n, node);
+                enqueue(&mut i.queues, n, node);
             }
         }
         self.flush_if_idle();
@@ -1600,7 +1637,7 @@ impl<V: Clone + 'static> Graph<V> {
     fn flush(&self) {
         {
             let mut i = self.inner.borrow_mut();
-            if i.batch_depth > 0 || i.queue.is_empty() {
+            if i.batch_depth > 0 || i.queues.last().is_none_or(BinaryHeap::is_empty) {
                 return;
             }
             if i.flush_depth == 0 {
@@ -1615,6 +1652,13 @@ impl<V: Clone + 'static> Graph<V> {
             let next = self.inner.borrow_mut().next_to_run();
             let Some(n) = next else {
                 break;
+            };
+            let _level = {
+                let mut i = self.inner.borrow_mut();
+                (i.flush_depth >= SHARED_FLUSH_DEPTH).then(|| {
+                    i.queues.push(Queue::new());
+                    LevelGuard(self)
+                })
             };
             self.update(n);
         }
@@ -1989,11 +2033,23 @@ fn drop_source_slot<V>(nodes: &mut SlotMap<NodeId, Node<V>>, obs: NodeId, at: u3
     Some(removed)
 }
 
-fn enqueue<V>(queue: &mut BinaryHeap<Reverse<(u32, u64, NodeId)>>, n: NodeId, node: &mut Node<V>) {
-    if !node.queued && !node.deferred {
-        node.queued = true;
-        queue.push(Reverse((node.height, node.seq, n)));
+type Queue = BinaryHeap<Reverse<(u32, u64, NodeId)>>;
+
+/// How deep flushes nest before an effect's writes flush only what they
+/// queued (`Inner::queues`).
+const SHARED_FLUSH_DEPTH: u32 = 8;
+
+/// Queues `n` on the innermost flush level. A node already waiting on an
+/// outer level moves in; its old entry is skipped when it comes up, as it
+/// is no longer queued there.
+fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
+    let top = queues.len().saturating_sub(1);
+    if node.deferred || (node.queued && node.queued_level as usize >= top) {
+        return;
     }
+    node.queued = true;
+    node.queued_level = top as u32;
+    queues[top].push(Reverse((node.height, node.seq, n)));
 }
 
 impl<V: Clone + 'static> Inner<V> {
@@ -2015,6 +2071,7 @@ impl<V: Clone + 'static> Inner<V> {
             pending: false,
             eager: false,
             queued: false,
+            queued_level: 0,
             deferred: false,
             walking: false,
             self_read: false,
@@ -2043,11 +2100,12 @@ impl<V: Clone + 'static> Inner<V> {
     /// Pops the next runnable root, parking frozen ones and enforcing the
     /// per-flush re-run cap.
     fn next_to_run(&mut self) -> Option<NodeId> {
-        while let Some(Reverse((_, _, n))) = self.queue.pop() {
+        let level = self.queues.len() - 1;
+        while let Some(Reverse((_, _, n))) = self.queues[level].pop() {
             let Some(node) = self.nodes.get_mut(n) else {
                 continue;
             };
-            if !node.queued {
+            if !node.queued || node.queued_level as usize != level {
                 continue;
             }
             node.queued = false;
@@ -2189,7 +2247,7 @@ impl<V: Clone + 'static> Inner<V> {
         node.state = NodeState::Dirty;
         node.pending = false;
         if node.is_eager(all) {
-            enqueue(&mut self.queue, n, node);
+            enqueue(&mut self.queues, n, node);
         }
         self.mark_observers(n, NodeState::Check);
     }
@@ -2200,7 +2258,7 @@ impl<V: Clone + 'static> Inner<V> {
         let node = &mut self.nodes[n];
         node.state = NodeState::Dirty;
         if node.is_eager(all) {
-            enqueue(&mut self.queue, n, node);
+            enqueue(&mut self.queues, n, node);
         }
         self.mark_observers(n, NodeState::Check);
     }
@@ -2273,12 +2331,17 @@ impl<V: Clone + 'static> Inner<V> {
                 continue;
             }
             if node.state.rank() >= st.rank() {
+                // Already waiting, maybe on an outer flush level: this
+                // change is news to it, so it runs with this change's flush.
+                if node.is_eager(all) {
+                    enqueue(&mut self.queues, m, node);
+                }
                 continue;
             }
             let was_clean = node.state == NodeState::Clean;
             node.state = st;
             if node.is_eager(all) {
-                enqueue(&mut self.queue, m, node);
+                enqueue(&mut self.queues, m, node);
             }
             if was_clean {
                 let stamp = node.read_stamp;
@@ -2393,7 +2456,7 @@ impl<V: Clone + 'static> Inner<V> {
             if let Some(node) = self.nodes.get_mut(n) {
                 node.deferred = false;
                 if node.state != NodeState::Clean && node.is_eager(all) {
-                    enqueue(&mut self.queue, n, node);
+                    enqueue(&mut self.queues, n, node);
                 }
             }
         }

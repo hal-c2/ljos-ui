@@ -42,7 +42,10 @@
 //!    pulled as in step 2, so it runs at most once per flush and only sees
 //!    consistent values (glitch-free within a flush). Consecutive unbatched
 //!    writes still flush separately, matching Qt's intermediate
-//!    `onXChanged` calls.
+//!    `onXChanged` calls. A write inside a running effect flushes every
+//!    waiting root for the first few levels of nesting; deeper than that it
+//!    flushes only what that run queued, so nesting follows the chain of
+//!    changes, not the length of the queue.
 //!
 //! Edges are stored on both ends with the index of their mirror entry, and
 //! child scopes form an intrusive list, so disposing a node or scope costs

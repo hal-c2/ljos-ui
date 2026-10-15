@@ -339,6 +339,7 @@ pub trait Reactive {
 - A write marks direct observers `Dirty` and transitive observers `Check`.
 - Writing an equal value does not propagate, but `notify` always does.
 - Effects then flush **synchronously**, in height order, before control returns to the writer. This reproduces Qt's synchronous `onXChanged`.
+- A write made while an effect runs flushes every root that waits, so what the writer reads next is current. Past a few levels of such nesting, a write flushes only what its effect's run queued, and roots that were already waiting run after it in the flush that ran the effect. Qt's handlers likewise nest only along a chain of changes, so the call stack grows with that chain and not with how many roots wait (hiding a parent of 2000 items is 2000 changes in a row, not 2000 inside each other).
 - `batch` defers the flush. Component creation, model resets, animation ticks and layout all run inside a batch.
 
 **Effect roots** are evaluated eagerly. They are:
