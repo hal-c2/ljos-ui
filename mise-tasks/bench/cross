@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#MISE description="Check that the ljos binary cross-compiles for a small aarch64 board (aarch64-unknown-linux-gnu): says what is missing rather than installing it, and gives the stripped size when it builds"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+# Nothing is installed here: a missing piece is named and the check fails.
+triple="${BENCH_TRIPLE:-aarch64-unknown-linux-gnu}"
+root="$(pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+env_triple="${triple//-/_}"
+linker_var="CARGO_TARGET_${env_triple^^}_LINKER"
+linker="${!linker_var:-aarch64-linux-gnu-gcc}"
+# The C libraries the binary links (ldd of the host build) are found
+# through pkg-config in the board's sysroot.
+sysroot="${PKG_CONFIG_SYSROOT_DIR:-}"
+missing=()
+
+if ! rustup target list --installed 2> /dev/null | grep -qx "$triple"; then
+  missing+=("Rust's standard library for $triple (rustup target add $triple)")
+fi
+if ! command -v "$linker" > /dev/null; then
+  missing+=("a linker for $triple: $linker, or set $linker_var (zig cc -target aarch64-linux-gnu works with a sysroot)")
+fi
+if [[ -z $sysroot || ! -d $sysroot ]]; then
+  missing+=("a sysroot of the board with the development files of alsa-lib and fontconfig (set PKG_CONFIG_SYSROOT_DIR and PKG_CONFIG_PATH)")
+fi
+
+host="$target/release/ljos"
+if [[ -x $host ]]; then
+  stripped="$(mktemp "$target/ljos-stripped.XXXXXX")"
+  strip -o "$stripped" "$host"
+  echo "host release ljos: $(stat -c %s "$host") bytes, $(stat -c %s "$stripped") stripped (x86_64, for comparison)"
+  rm -f "$stripped"
+fi
+
+if ((${#missing[@]})); then
+  echo "cannot cross-compile ljos for $triple; missing:" >&2
+  printf '  - %s\n' "${missing[@]}" >&2
+  exit 1
+fi
+
+PKG_CONFIG_ALLOW_CROSS=1 cargo build --quiet --release -p ljos_cli --target "$triple"
+bin="$target/$triple/release/ljos"
+strip_tool=llvm-strip
+command -v "$strip_tool" > /dev/null || strip_tool="${linker%gcc}strip"
+out="$target/$triple/release/ljos.stripped"
+"$strip_tool" -o "$out" "$bin"
+echo "$triple ljos: $(stat -c %s "$bin") bytes, $(stat -c %s "$out") stripped ($out)"
