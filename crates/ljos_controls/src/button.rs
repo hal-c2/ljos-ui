@@ -22,7 +22,7 @@ use ljos_engine::{
     OverrideId, PropIndex, Provenance, QmlObject, QmlType, RestoreMode, Timer, Url, Value,
     WriteKind, qml_impl,
 };
-use ljos_quick::keys::{KeyItem, key, register_key_item};
+use ljos_quick::keys::{KeyItem, Shortcut, key, register_key_item};
 use ljos_quick::{
     DOUBLE_CLICK_INTERVAL, Item, KeyEvent, PointerEvent, PointerItem, child_items, contains_point,
     is_item, register_pointer_item,
@@ -34,7 +34,9 @@ use crate::action::Action;
 use crate::control::{Control, click_focus, focus_policy, hover, is_left, takes_input};
 use crate::group;
 use crate::parts::{PartKind, manage_part};
-use crate::util::{bind_default, check, flag, is_a, is_unset, num, object, set_computed};
+use crate::util::{
+    bind_default, check, flag, is_a, is_unset, mnemonic_of, num, object, set_computed,
+};
 
 /// How long a press is held before `pressAndHold` (Qt's platform default,
 /// as the offscreen platform has it).
@@ -292,7 +294,37 @@ pub(crate) fn set_checked(engine: &Engine, obj: ObjectId, on: bool) -> Result<()
     }
 }
 
+/// Alt and the letter after an `&` in the button's text press it, from
+/// anywhere in its window (`features/controls/mnemonics.feature`). The
+/// `Shortcut` is made with the button and follows its text, so that a
+/// button without a mnemonic has a shortcut with no sequence. The rows of
+/// a menu are left to the menu.
+fn make_mnemonic(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    let s = engine.create_native(Shortcut::default(), Some(obj))?;
+    engine.bind(s, Shortcut::SEQUENCE.index, move |e| {
+        let text = e.read(obj, AbstractButton::TEXT.index).to_js_string();
+        match mnemonic_of(&text) {
+            Some(c) => Value::from(format!("Alt+{}", c.to_uppercase()).as_str()),
+            None => Value::Undefined,
+        }
+    })?;
+    engine.bind(s, Shortcut::ENABLED.index, move |e| {
+        Value::Bool(
+            flag(e, obj, Item::ENABLED.index)
+                && flag(e, obj, Item::VISIBLE.index)
+                && !in_menu(e, obj),
+        )
+    })?;
+    engine.connect_by_name(s, "activated", move |e, _| {
+        if e.is_alive(obj) && takes_input(e, obj) {
+            trigger(e, obj);
+        }
+    })?;
+    engine.complete(s)
+}
+
 fn init_button(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    make_mnemonic(engine, obj)?;
     bind_default(engine, obj, AbstractButton::DOWN.index, move |e| {
         Value::Bool(flag(e, obj, AbstractButton::PRESSED.index))
     })?;

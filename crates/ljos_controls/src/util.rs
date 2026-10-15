@@ -77,3 +77,59 @@ pub(crate) fn set_computed(
     }
     engine.write_internal(obj, prop, v, ljos_engine::WriteKind::Imperative)
 }
+
+/// The text a control draws for `text`: an `&` marks the letter after it
+/// as the mnemonic and is not drawn, and `&&` is one literal `&`. Measured
+/// on qml6 for longer runs: an `&` is dropped unless another `&` comes right
+/// before it, so `a&&&b` draws as `a&&b` (pinned by
+/// `features/controls/mnemonics.feature`).
+pub(crate) fn without_mnemonic(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut after_ampersand = false;
+    for c in text.chars() {
+        if c != '&' || after_ampersand {
+            out.push(c);
+        }
+        after_ampersand = c == '&';
+    }
+    out
+}
+
+/// The mnemonic of `text`: the letter after the first single `&`,
+/// lower-cased, so that Alt+that letter activates the control.
+pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            continue;
+        }
+        match chars.next() {
+            Some('&') => {}
+            Some(m) if !m.is_whitespace() => return m.to_lowercase().next(),
+            _ => return None,
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod mnemonic_tests {
+    use super::*;
+
+    #[test]
+    fn an_ampersand_marks_a_letter_and_two_make_one() {
+        assert_eq!(without_mnemonic("&File"), "File");
+        assert_eq!(without_mnemonic("A&&B"), "A&B");
+        assert_eq!(without_mnemonic("a&&&b"), "a&&b");
+        assert_eq!(without_mnemonic("&"), "");
+        assert_eq!(without_mnemonic("Save &as"), "Save as");
+    }
+
+    #[test]
+    fn the_mnemonic_is_the_letter_after_a_single_ampersand() {
+        assert_eq!(mnemonic_of("&File"), Some('f'));
+        assert_eq!(mnemonic_of("A&&B"), None);
+        assert_eq!(mnemonic_of("A&&&b"), Some('b'));
+        assert_eq!(mnemonic_of("File"), None);
+    }
+}

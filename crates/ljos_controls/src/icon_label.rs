@@ -34,7 +34,7 @@ use ljos_quick::enums::{align, elide};
 use ljos_quick::{Image, ImageBase, Item, Text, register_image_tint, set_parent_item};
 
 use crate::button::{AbstractButton, Icon, display, icon_giver};
-use crate::util::{check, flag, is_a, num, set_computed};
+use crate::util::{check, flag, is_a, num, set_computed, without_mnemonic};
 
 /// `IconImage`: an `Image` drawn in one colour.
 #[derive(Debug, QmlObject)]
@@ -296,7 +296,10 @@ fn keep<T: QmlType + Default>(
 fn show(engine: &Engine, label: ObjectId, made: &Made) -> Result<(), EngineError> {
     let icon = shown(engine, label);
     let how = num(engine, label, IconLabel::DISPLAY.index) as i32;
-    let text = engine.read(label, IconLabel::TEXT.index);
+    // What is drawn has no mnemonic markers; `text` keeps them.
+    let text = Value::String(Atom::from(
+        without_mnemonic(&engine.read(label, IconLabel::TEXT.index).to_js_string()).as_str(),
+    ));
     let has_text = !text.to_js_string().is_empty();
     let has_icon = !icon.name.is_empty() || !icon.source.is_empty();
     // A label with only one of the two shows it whatever the display.
