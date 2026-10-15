@@ -1306,6 +1306,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let mut params: Vec<Param> = Vec::new();
         let mut refs: Vec<Ref> = Vec::new();
         let mut edits = analysis.edits.clone();
+        if form == Form::Statement && kind == BindingKind::Property {
+            edits.extend(js::completion_returns(text));
+        }
         let mut plans: HashMap<(String, Vec<String>), Plan> = HashMap::new();
         let written: HashSet<&str> = analysis
             .free

@@ -803,6 +803,65 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 }
 
+/// A property binding written as a block has no `return`: its value is
+/// that of the last expression statement it ran, as the completion value of
+/// a script is (Qt 6.11.2, by running qml6). The edits that make each such
+/// statement of `text` (a block) return its expression: the last statement
+/// of a block, and of both branches of an `if`.
+pub(crate) fn completion_returns(text: &str) -> Vec<Edit> {
+    fn tails(statement: &Statement<'_>, out: &mut Vec<Span>) {
+        match statement {
+            Statement::ExpressionStatement(it) => out.push(it.expression.span()),
+            Statement::BlockStatement(it) => {
+                if let Some(last) = it.body.last() {
+                    tails(last, out);
+                }
+            }
+            Statement::IfStatement(it) => {
+                tails(&it.consequent, out);
+                if let Some(alternate) = &it.alternate {
+                    tails(alternate, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let prefix = "function $h() {\n";
+    let wrapped = format!("{prefix}{text}\n}}");
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, &wrapped, SourceType::ts()).parse_qml_script();
+    if !parsed.diagnostics.is_empty() {
+        return Vec::new();
+    }
+    let Some(Statement::FunctionDeclaration(function)) = parsed.program.body.first() else {
+        return Vec::new();
+    };
+    let Some(body) = &function.body else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    if let Some(last) = body.statements.last() {
+        tails(last, &mut spans);
+    }
+    let shift = prefix.len() as u32;
+    spans
+        .into_iter()
+        .flat_map(|span| {
+            let (start, end) = (span.start - shift, span.end - shift);
+            [
+                Edit {
+                    span: Span::new(start, start),
+                    text: "return (".into(),
+                },
+                Edit {
+                    span: Span::new(end, end),
+                    text: ")".into(),
+                },
+            ]
+        })
+        .collect()
+}
+
 /// The script's text with the edits made. Edits must not overlap.
 pub(crate) fn apply(text: &str, edits: &[Edit]) -> String {
     let mut edits: Vec<&Edit> = edits.iter().collect();

@@ -1126,6 +1126,9 @@ const PRELUDE: &str = r##"
   };
   Object.defineProperty(g, "console", { value: console, writable: true, configurable: true });
   Object.defineProperty(g, "print", { value: console.log, writable: true, configurable: true });
+  // Qt's `gc()` asks for a collection; the engine collects when it must,
+  // and a script only needs the name to exist.
+  Object.defineProperty(g, "gc", { value() {}, writable: true, configurable: true });
 
   // `new Date()`, `Date()` and `Date.now()` read the host's wall clock
   // when it is pinned; everything else about Date is the engine's own.
