@@ -142,6 +142,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the text file "X":` + doc string | make a text file available beside the QML files, each line trimmed of the scenario's indentation |
 | `Given the user has the text file "path":` + doc string | a text file under the user's home directory (`.config/tool.conf`), which is `/home/user` in a scenario (`@ljos-only`: the oracle's home is the real one) |
 | `Given the system clock reads "2026-10-11T17:57:09Z"` | the time a script's `new Date()` and `Date.now()` see when the application starts (an RFC 3339 time); it then moves with application time, so `1 second passes` moves it by a second (`@ljos-only`: the oracle's clock is the machine's) |
+| `Given the application uses the fonts installed on the system` | text is set in the machine's fonts, as a desktop application's is, and not only in the font Ljós carries; give it before the QML. Which faces those are is the machine's own, so a scenario compares one family with another rather than with numbers |
 | `Given the system cannot take its dialogs away` | a dialog the system shows stays up when the application closes it, until the user ends it (`@ljos-only`) |
 | `Given the system asks the user before it grants a permission` | a permission starts undetermined and `request()` asks the user, as a phone does; give it before the QML (`@ljos-only`: desktop Linux grants everything) |
 

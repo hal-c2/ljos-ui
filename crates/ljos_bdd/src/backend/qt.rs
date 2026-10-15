@@ -554,6 +554,11 @@ impl Backend for QtBackend {
         super::testrun::run_qt(files, run)
     }
 
+    // Qt always reads the machine's fonts.
+    fn system_fonts(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         for f in files {
             self.files.insert(f.name.clone(), f.source.clone());

@@ -536,6 +536,8 @@ As built: `ljos_quick` holds the engine in a thread-local, since an Engine is `!
 
 **Language and fonts.** The content language (`Text.lang`, a Ljós extension that defaults to the UI language) drives font fallback and CJK unification.
 
+**As built: a family that is not installed.** An engine with the machine's fonts follows every named family with the one the platform's font matching puts in its place, as Qt does: on Linux fontconfig's best match (`fc-match`), so Helvetica is Nimbus Sans where URW's fonts are installed, with that face's ascent and descent. Fontique substitutes generic families only. Other platforms are not asked yet. With the bundled font alone, a missing family is set in it.
+
 **Rich text** uses a `RichDoc` of `Block`s: Paragraph, Heading, Quote, Code, List, Table, Rule and Image. Each block caches its hash, layout, y and height. There are three front ends:
 - `MarkdownText`, using pulldown-cmark 0.13.4;
 - `StyledText`, a strict tag subset;

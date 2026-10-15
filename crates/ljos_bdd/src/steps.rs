@@ -228,6 +228,11 @@ fn wall_clock_reads(w: &mut LjosWorld, time: String) -> StepResult {
     w.each(|b| b.wall_clock(ms))
 }
 
+#[given("the application uses the fonts installed on the system")]
+fn system_fonts(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.system_fonts())
+}
+
 #[given("the system cannot take its dialogs away")]
 fn dialogs_stay(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.system_dialogs_stay())

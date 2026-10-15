@@ -3894,6 +3894,7 @@ dependencies = [
  "pulldown-cmark",
  "thiserror 2.0.21",
  "unicode-segmentation",
+ "yeslogic-fontconfig-sys",
 ]
 
 [[package]]

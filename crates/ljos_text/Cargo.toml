@@ -18,6 +18,11 @@ thiserror.workspace = true
 # Grapheme clusters for cursor movement.
 unicode-segmentation.workspace = true
 
+# The family fontconfig substitutes for one that is not installed: Fontique
+# links the same library and substitutes generic families only.
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+yeslogic-fontconfig-sys.workspace = true
+
 [dev-dependencies]
 proptest.workspace = true
 

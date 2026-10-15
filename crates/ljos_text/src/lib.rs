@@ -50,6 +50,7 @@ mod model;
 pub mod rich;
 mod snap;
 mod style;
+mod substitute;
 
 pub use direction::reads_right_to_left;
 pub use edit::{Caret, CaretCluster, EditLayout, EditLine, EditParams, EditRun};

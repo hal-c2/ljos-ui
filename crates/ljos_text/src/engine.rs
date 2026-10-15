@@ -1,6 +1,7 @@
 //! The engine: fonts, shaping, line breaking, and the two caches.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
@@ -26,6 +27,7 @@ use crate::style::{
     BoxAlign, ElideMode, InlineObject, LayoutParams, LineHeight, ParamsKey, Ranged, StyleSpan,
     TextStyle, WrapMode,
 };
+use crate::substitute;
 
 /// A layout unused for this many frames is dropped.
 const KEEP_FRAMES: u64 = 30;
@@ -251,6 +253,9 @@ impl RawLine {
 struct Families {
     system: bool,
     default_family: Option<Arc<str>>,
+    /// What the platform puts in place of each named family asked for so
+    /// far, when it is another family (system fonts only).
+    substitutes: RefCell<HashMap<Box<str>, Option<Arc<str>>>>,
 }
 
 impl Families {
@@ -268,10 +273,15 @@ impl Families {
                 if name.is_empty() {
                     continue;
                 }
-                names.push(match GenericFamily::parse(name) {
-                    Some(generic) => FontFamilyName::Generic(generic),
-                    None => FontFamilyName::Named(Cow::Borrowed(name)),
-                });
+                match GenericFamily::parse(name) {
+                    Some(generic) => names.push(FontFamilyName::Generic(generic)),
+                    None => {
+                        names.push(FontFamilyName::Named(Cow::Borrowed(name)));
+                        if let Some(sub) = self.substitute(name) {
+                            names.push(FontFamilyName::Named(Cow::Owned(sub.to_string())));
+                        }
+                    }
+                }
             }
         };
         add(family);
@@ -283,6 +293,19 @@ impl Families {
         }
         names.push(FontFamilyName::Generic(GenericFamily::SansSerif));
         names
+    }
+
+    /// The family the platform's rules name for `name`, as Qt asks the
+    /// platform; nothing with the bundled fonts alone.
+    fn substitute(&self, name: &str) -> Option<Arc<str>> {
+        if !self.system {
+            return None;
+        }
+        self.substitutes
+            .borrow_mut()
+            .entry(name.into())
+            .or_insert_with(|| substitute::platform_substitute(name).map(Arc::from))
+            .clone()
     }
 }
 
@@ -816,6 +839,7 @@ impl TextEngine {
             families: Families {
                 system,
                 default_family: None,
+                substitutes: RefCell::default(),
             },
             shapes: FrameCache::new(MAX_SHAPES),
             layouts: FrameCache::new(MAX_LAYOUTS),

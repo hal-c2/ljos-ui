@@ -192,6 +192,18 @@ pub struct LjosBackend {
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,
+    /// The thread's text engine reads the machine's fonts for this scenario.
+    system_fonts: bool,
+}
+
+impl Drop for LjosBackend {
+    fn drop(&mut self) {
+        // The text engine belongs to the thread, which runs the next
+        // scenario too: that one starts with the bundled font again.
+        if self.system_fonts {
+            ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+        }
+    }
 }
 
 impl std::fmt::Debug for LjosBackend {
@@ -1176,6 +1188,17 @@ impl Backend for LjosBackend {
         let live = self.live()?;
         ljos_platform::Platform::of(&live.engine).finish(&live.engine);
         live.settle()
+    }
+
+    fn system_fonts(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("the system's fonts are given before the QML"));
+        }
+        if !self.system_fonts {
+            self.system_fonts = true;
+            ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+        }
+        Ok(())
     }
 
     fn wall_clock(&mut self, epoch_ms: f64) -> Result<()> {

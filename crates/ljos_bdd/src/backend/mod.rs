@@ -341,6 +341,12 @@ pub trait Backend: fmt::Debug {
     fn wall_clock(&mut self, _epoch_ms: f64) -> Result<()> {
         Err(BackendError::NotImplemented("a pinned wall clock"))
     }
+    /// Text is set in the fonts installed on the machine, as a desktop
+    /// application's is, instead of only the fonts the toolkit carries.
+    /// Given before anything is loaded.
+    fn system_fonts(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's fonts"))
+    }
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))

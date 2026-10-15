@@ -41,6 +41,8 @@ egui_kittest = "0.36.2"
 accesskit = "0.24.1"
 vello_cpu = "0.3"
 parley = "0.12"
+# The library Fontique links on Linux; ljos_text asks it for family substitutes.
+yeslogic-fontconfig-sys = "6.0.1"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
 skrifa = "0.44"
 
