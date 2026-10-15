@@ -44,9 +44,20 @@ Item {
 }
 "#,
     );
-    e.invoke_by_name(root, "call", &[Value::from("file:///v/clip.mp4")]).unwrap();
-    e.invoke_by_name(root, "build", &[Value::from("file:///v/song.mp3")]).unwrap();
-    assert_eq!(e.read_by_name(root, "bound").to_js_string().as_str(), "b.mp4");
-    assert_eq!(e.read_by_name(root, "called").to_js_string().as_str(), "clip.mp4");
-    assert_eq!(e.read_by_name(root, "built").to_js_string().as_str(), "song.mp3");
+    e.invoke_by_name(root, "call", &[Value::from("file:///v/clip.mp4")])
+        .unwrap();
+    e.invoke_by_name(root, "build", &[Value::from("file:///v/song.mp3")])
+        .unwrap();
+    assert_eq!(
+        e.read_by_name(root, "bound").to_js_string().as_str(),
+        "b.mp4"
+    );
+    assert_eq!(
+        e.read_by_name(root, "called").to_js_string().as_str(),
+        "clip.mp4"
+    );
+    assert_eq!(
+        e.read_by_name(root, "built").to_js_string().as_str(),
+        "song.mp3"
+    );
 }

@@ -465,8 +465,7 @@ fn loaded(e: &Engine, me: ObjectId, o: Opened) {
 }
 
 fn tracks(e: &Engine, me: ObjectId, list: Vec<Vec<Entry>>) -> Vec<Value> {
-    list
-        .into_iter()
+    list.into_iter()
         .filter_map(|entries| {
             let id = e
                 .create_native(MediaMetaData::with(entries), Some(me))
