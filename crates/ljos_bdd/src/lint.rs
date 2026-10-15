@@ -47,9 +47,11 @@ impl Report {
 /// When a registered pattern is not a valid regex (that would also fail at run time).
 #[must_use]
 pub fn step_patterns(steps_source: &str) -> Vec<Regex> {
-    let raw =
-        Regex::new(r##"#\[(?:given|when|then)\(regex = r#"(.+?)"#\)\]"##).expect("static regex");
-    let bare = Regex::new(r#"#\[(?:given|when|then)\(regex = r"(.+?)"\)\]"#).expect("static regex");
+    // rustfmt puts a long pattern on a line of its own.
+    let raw = Regex::new(r##"#\[(?:given|when|then)\(\s*regex = r#"(.+?)"#,?\s*\)\]"##)
+        .expect("static regex");
+    let bare = Regex::new(r#"#\[(?:given|when|then)\(\s*regex = r"(.+?)",?\s*\)\]"#)
+        .expect("static regex");
     let plain = Regex::new(r#"#\[(?:given|when|then)\("(.+?)"\)\]"#).expect("static regex");
     let mut out: Vec<Regex> = raw
         .captures_iter(steps_source)
@@ -239,6 +241,8 @@ mod tests {
     fn reads_patterns_from_macro_attributes() {
         assert_eq!(step_patterns(STEPS).len(), 3);
         assert_eq!(step_patterns(r#"#[when(regex = r"^(\d+) ms$")]"#).len(), 1);
+        let wrapped = "#[given(\n    regex = r#\"^a (\\d+) long one$\"#\n)]";
+        assert_eq!(step_patterns(wrapped).len(), 1);
     }
 
     #[test]
