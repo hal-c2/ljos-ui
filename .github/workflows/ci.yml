@@ -33,13 +33,17 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: false
+      # FilmCraft (QtMultimedia's decoders) is a submodule the workspace builds from by path;
+      # only it is fetched, shallow, not the corpus.
+      - run: git submodule update --init --depth 1 third_party/filmcraft
       # Toolchains the image ships and this job never uses.
       - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
       # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
-      # Font discovery links fontconfig on Linux (the test fonts themselves are in the repository).
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev pkg-config
+      # Font discovery links fontconfig on Linux (the test fonts themselves are in the repository),
+      # and the audio sink links ALSA.
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config
       - run: mise run check
       # All of them, so one run shows every failure a runner has.
       - run: mise run test -- --no-fail-fast
@@ -67,13 +71,16 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: false
+      # FilmCraft (QtMultimedia's decoders) is a submodule the workspace builds from by path;
+      # only it is fetched, shallow, not the corpus.
+      - run: git submodule update --init --depth 1 third_party/filmcraft
       - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
         with:
           # Not the cache of `check`: every crate is built against another table here.
           key: qt-types
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev pkg-config
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config
       # The table is generated from the qmldir and .qmltypes files of the Qt it is written for.
       - uses: jurplel/install-qt-action@v4
         with:
@@ -94,10 +101,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: true
+      # Already there with every submodule; said so that no building job leaves it out.
+      - run: git submodule update --init --depth 1 third_party/filmcraft
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
-      # Font discovery links fontconfig, as in the other jobs.
-      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-window qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qt6-declarative-dev-tools qml-qt6
+      # Font discovery links fontconfig and the audio sink ALSA, as in the other jobs.
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev pkg-config qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-window qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtmultimedia qt6-declarative-dev-tools qml-qt6
       # The scripts run `qml6`; Ubuntu may install the runner only as Qt's own `qml`.
       - run: |
           if ! command -v qml6 >/dev/null; then
