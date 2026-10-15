@@ -22,6 +22,13 @@ use crate::meta::MetaRef;
 pub trait ComponentSource {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>>;
 
+    /// Why `key` has no compiled file although the source knows it: the
+    /// file is there but did not compile. Qt names the file's own mistake
+    /// when a type it needs does not load, not a missing file.
+    fn failure(&self, _key: &str) -> Option<String> {
+        None
+    }
+
     /// The URL messages name the file by.
     fn url(&self, key: &str) -> String {
         format!("file:///{key}.qml")
@@ -128,6 +135,7 @@ fn has_scheme(url: &str) -> bool {
 pub struct MapSource {
     files: HashMap<String, Arc<CompiledFile>>,
     bytecode: HashMap<String, Bytecode>,
+    failures: HashMap<String, String>,
     base: Option<String>,
 }
 
@@ -144,6 +152,11 @@ impl MapSource {
 
     pub fn insert(&mut self, key: impl Into<String>, file: impl Into<Arc<CompiledFile>>) {
         self.files.insert(key.into(), file.into());
+    }
+
+    /// Notes that `key` is a file that did not compile, and why.
+    pub fn insert_failure(&mut self, key: impl Into<String>, why: impl Into<String>) {
+        self.failures.insert(key.into(), why.into());
     }
 
     pub fn insert_bytecode(&mut self, key: impl Into<String>, code: Bytecode) {
@@ -163,6 +176,10 @@ impl std::fmt::Debug for MapSource {
 impl ComponentSource for MapSource {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
         self.files.get(key).cloned()
+    }
+
+    fn failure(&self, key: &str) -> Option<String> {
+        self.failures.get(key).cloned()
     }
 
     fn url(&self, key: &str) -> String {
@@ -453,9 +470,12 @@ impl Engine {
             .source
             .clone()
             .ok_or_else(|| EngineError::Load("no component source is set".into()))?;
-        let ir = source
-            .load(key)
-            .ok_or_else(|| EngineError::Load(format!("{}: No such file", source.url(key))))?;
+        let ir = source.load(key).ok_or_else(|| {
+            EngineError::Load(match source.failure(key) {
+                Some(why) => format!("{}: {why}", source.url(key)),
+                None => format!("{}: No such file", source.url(key)),
+            })
+        })?;
         if ir.version != ljos_ir::IR_VERSION {
             return Err(EngineError::Load(format!(
                 "{}: compiled for IR version {}, this engine reads {}",
