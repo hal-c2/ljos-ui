@@ -35,6 +35,7 @@ mod log;
 mod metrics;
 mod mirroring;
 mod mouse_drag;
+mod paint_item;
 mod particles;
 mod pointer_item;
 mod positioners;
@@ -109,6 +110,7 @@ pub use loader::Loader;
 pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
+pub use paint_item::{ItemPaint, ReadPaint, register_paint_item};
 pub use pointer_item::{
     HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored,
     register_hover_move, register_pointer_item,

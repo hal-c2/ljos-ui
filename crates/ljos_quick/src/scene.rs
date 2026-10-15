@@ -91,6 +91,9 @@ enum Kind {
     Canvas,
     /// A `MultiEffect`: paints its source with its mask applied.
     Effect,
+    /// An item of another crate that paints itself
+    /// (`crate::register_paint_item`).
+    External,
 }
 
 impl Kind {
@@ -115,6 +118,8 @@ impl Kind {
             Kind::Canvas
         } else if is_a::<crate::effects::MultiEffect>(engine, obj) {
             Kind::Effect
+        } else if crate::paint_item::paint_item(engine, obj).is_some() {
+            Kind::External
         } else {
             Kind::Item
         }
@@ -130,6 +135,7 @@ impl Kind {
                 | Kind::Shape
                 | Kind::Canvas
                 | Kind::Effect
+                | Kind::External
         )
     }
 
@@ -190,6 +196,7 @@ enum Paint {
     Shape(crate::shapes::ShapePaint),
     Canvas(crate::canvas::CanvasPicture),
     Effect(crate::effects::EffectPaint),
+    External(Rc<dyn crate::paint_item::ItemPaint>),
 }
 
 /// Dirty state written by effects and drained by `frame`.
@@ -839,9 +846,12 @@ impl QuickScene {
                     // Only after the fonts changed (`refresh_text`).
                     Kind::Editor => crate::text_input::refresh(engine, obj),
                     Kind::Canvas => crate::canvas::polish(engine, obj),
-                    Kind::Item | Kind::Rectangle | Kind::Image | Kind::Shape | Kind::Effect => {
-                        Ok(())
-                    }
+                    Kind::Item
+                    | Kind::Rectangle
+                    | Kind::Image
+                    | Kind::Shape
+                    | Kind::Effect
+                    | Kind::External => Ok(()),
                 };
                 if let Err(e) = r {
                     engine.log(
@@ -1121,6 +1131,7 @@ impl QuickScene {
                 Paint::Shape(s) => s.paint(cx.size, b),
                 Paint::Canvas(c) => c.paint(cx.size, b),
                 Paint::Effect(p) => p.paint(cx.size, b),
+                Paint::External(p) => p.paint(cx.size, b),
             }
         });
     }
@@ -1848,7 +1859,13 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
             TextInputs::read(e, obj);
         }
         Kind::Canvas => crate::canvas::read_inputs(e, obj),
-        Kind::Item | Kind::Rectangle | Kind::Image | Kind::Editor | Kind::Shape | Kind::Effect => {
+        Kind::Item
+        | Kind::Rectangle
+        | Kind::Image
+        | Kind::Editor
+        | Kind::Shape
+        | Kind::Effect
+        | Kind::External => {
             return;
         }
     }
@@ -1869,6 +1886,10 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),
         Kind::Effect => Paint::Effect(crate::effects::EffectPaint::read(e, obj)),
+        Kind::External => match crate::paint_item::paint_item(e, obj) {
+            Some(read) => Paint::External(read(e, obj)),
+            None => return,
+        },
         _ => return,
     };
     mark(shared, |s| {
