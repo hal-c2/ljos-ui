@@ -101,8 +101,7 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
         env.push(("WAYLAND_DISPLAY".to_owned(), display.display().to_string()));
         // The launcher needs the user's own runtime directory to reach the
         // service manager; the application gets the compositor's, as a
-        // session on that compositor would. With the user's, Ljós's GPU
-        // stack crashes before it opens a window (signal 11).
+        // session on that compositor would.
         if let Some(dir) = display.parent().filter(|d| !d.as_os_str().is_empty()) {
             env.push(("XDG_RUNTIME_DIR".to_owned(), dir.display().to_string()));
         }
