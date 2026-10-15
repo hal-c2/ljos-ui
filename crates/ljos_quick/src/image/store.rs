@@ -28,7 +28,7 @@ use ljos_reactive::NodeId;
 use ljos_render::ImageHandle;
 use ljos_runtime::{
     ByteLru, ComputePool, DeviceClass, DrainBudget, Evictable, Lane, MemoryPressure, SystemClock,
-    UiHandle, UiInbox, image_cache_budget, physical_memory,
+    UiHandle, UiInbox, image_cache_budget, usable_memory,
 };
 
 use super::decode::{self, LoadError, Origin, Request};
@@ -166,10 +166,7 @@ impl Default for ImageStore {
         Self {
             state: RefCell::new(State {
                 resources: HashMap::new(),
-                cache: ByteLru::new(image_cache_budget(
-                    DeviceClass::current(),
-                    physical_memory(),
-                )),
+                cache: ByteLru::new(image_cache_budget(DeviceClass::current(), usable_memory())),
                 jobs: HashMap::new(),
                 queue: VecDeque::new(),
                 in_flight: 0,

@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
+use std::path::Path;
 
 /// Why a cache is asked to release memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -47,15 +48,15 @@ impl DeviceClass {
 
 const MIB: u64 = 1024 * 1024;
 
-/// Budget for decoded images: 256 MiB on a desktop, min(64 MiB, 6 % of RAM)
-/// on a phone. `ram_bytes` is the device's physical memory when known.
-pub fn image_cache_budget(class: DeviceClass, ram_bytes: Option<u64>) -> usize {
-    let bytes = match class {
-        DeviceClass::Desktop => 256 * MIB,
-        DeviceClass::Phone => match ram_bytes {
-            Some(ram) => (64 * MIB).min(ram / 100 * 6),
-            None => 64 * MIB,
-        },
+/// Budget for decoded images: an eighth of `memory`, at most 256 MiB, on a
+/// desktop; 6 % of it, at most 64 MiB, on a phone. `memory` is what the
+/// application may use ([`usable_memory`]) when known.
+pub fn image_cache_budget(class: DeviceClass, memory: Option<u64>) -> usize {
+    let bytes = match (class, memory) {
+        (DeviceClass::Desktop, Some(m)) => (256 * MIB).min(m / 8),
+        (DeviceClass::Desktop, None) => 256 * MIB,
+        (DeviceClass::Phone, Some(m)) => (64 * MIB).min(m / 100 * 6),
+        (DeviceClass::Phone, None) => 64 * MIB,
     };
     usize::try_from(bytes).unwrap_or(usize::MAX)
 }
@@ -68,6 +69,54 @@ pub fn physical_memory() -> Option<u64> {
     }
     let text = std::fs::read_to_string("/proc/meminfo").ok()?;
     parse_meminfo(&text)
+}
+
+/// The memory this process may use in bytes: the machine's, or less when a
+/// cgroup it is in has a lower `memory.max` (a container, a systemd unit),
+/// where the platform says so cheaply.
+pub fn usable_memory() -> Option<u64> {
+    if !cfg!(any(target_os = "linux", target_os = "android")) {
+        return None;
+    }
+    usable_memory_under(Path::new("/"))
+}
+
+/// [`usable_memory`] as the system files under `root` say it:
+/// `proc/meminfo`, `proc/self/cgroup` and `sys/fs/cgroup`.
+pub fn usable_memory_under(root: &Path) -> Option<u64> {
+    let ram = std::fs::read_to_string(root.join("proc/meminfo"))
+        .ok()
+        .and_then(|t| parse_meminfo(&t));
+    let limit = std::fs::read_to_string(root.join("proc/self/cgroup"))
+        .ok()
+        .and_then(|t| cgroup_limit(&root.join("sys/fs/cgroup"), &t));
+    match (ram, limit) {
+        (Some(r), Some(l)) => Some(r.min(l)),
+        (r, l) => r.or(l),
+    }
+}
+
+/// The lowest `memory.max` of the unified-hierarchy cgroup `/proc/self/cgroup`
+/// names and of every group above it: a parent's limit binds its children.
+fn cgroup_limit(mount: &Path, proc_cgroup: &str) -> Option<u64> {
+    let path = proc_cgroup
+        .lines()
+        .find_map(|l| l.strip_prefix("0::"))?
+        .trim()
+        .trim_start_matches('/');
+    let mut dir = mount.join(path);
+    let mut lowest: Option<u64> = None;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(dir.join("memory.max"))
+            && let Ok(v) = text.trim().parse::<u64>()
+        {
+            lowest = Some(lowest.map_or(v, |l| l.min(v)));
+        }
+        if dir == mount || !dir.pop() || !dir.starts_with(mount) {
+            break;
+        }
+    }
+    lowest
 }
 
 fn parse_meminfo(text: &str) -> Option<u64> {
@@ -251,8 +300,13 @@ mod tests {
             256 * 1024 * 1024
         );
         assert_eq!(
-            image_cache_budget(DeviceClass::Desktop, Some(1 << 30)),
+            image_cache_budget(DeviceClass::Desktop, Some(4 << 30)),
             256 * 1024 * 1024
+        );
+        // An eighth of 1 GiB is under the 256 MiB cap.
+        assert_eq!(
+            image_cache_budget(DeviceClass::Desktop, Some(1 << 30)),
+            128 * 1024 * 1024
         );
         // 6 % of 512 MiB is under the 64 MiB cap.
         let small = image_cache_budget(DeviceClass::Phone, Some(512 * MIB));
@@ -274,6 +328,17 @@ mod tests {
         assert_eq!(parse_meminfo(text), Some(16_303_428 * 1024));
         assert_eq!(parse_meminfo("MemFree: 12 kB\n"), None);
         assert_eq!(parse_meminfo("MemTotal: lots kB\n"), None);
+    }
+
+    #[test]
+    fn only_the_unified_hierarchy_names_a_limit() {
+        // cgroup v1 lines name controllers; their limits are not read.
+        let v1 = "12:memory:/user.slice\n1:name=systemd:/user.slice\n";
+        assert_eq!(cgroup_limit(Path::new("/nonexistent"), v1), None);
+        assert_eq!(
+            cgroup_limit(Path::new("/nonexistent"), "0::/a.scope\n"),
+            None
+        );
     }
 
     #[test]

@@ -40,6 +40,7 @@ pub use job::{FnJob, Job, JobCx, JobPoll};
 pub use lane::{Lane, ProcId, ProcIdAllocator};
 pub use memory::{
     ByteLru, DeviceClass, Evictable, MemoryPressure, image_cache_budget, physical_memory,
+    usable_memory, usable_memory_under,
 };
 pub use pool::{ComputePool, PoolFull};
 pub use scheduler::{FrameReport, Scheduler};

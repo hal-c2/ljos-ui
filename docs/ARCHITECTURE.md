@@ -672,12 +672,14 @@ These are initial values, enforced in CI by benchmarks (04 §3.7).
 
 | Resource | Phone | Desktop |
 |---|---|---|
-| Decoded images (LRU, at `sourceSize` or layout size × DPR) | min(64 MiB, 6 % of RAM) | 256 MiB |
+| Decoded images (LRU, at `sourceSize` or layout size × DPR) | min(64 MiB, 6 % of usable memory) | min(256 MiB, ⅛ of usable memory) |
 | GPU caches (layers, paths) | 24 MB | 64 MB |
 | Glyph atlas | 2048² A8 | up to 4096² |
 | JS heap | `set_memory_limit(96 MiB)`, GC threshold 8 MiB | same; limit configurable |
 | JS time per dispatch | 4 ms soft (log), 100 ms hard (interrupt) | same |
 | Process | RSS ≤ 150 MiB, GPU ≤ 64 MiB, cold start ≤ 500 ms | — |
+
+Usable memory is the machine's (`MemTotal`), or the lowest `memory.max` of the cgroup the process is in and the groups above it when that is less: an application in a container or a systemd unit with a limit sizes its caches to the limit, not to the machine.
 
 **Memory pressure**
 - Caches implement `trait Evictable { fn evict(&mut self, level: MemoryPressure) -> usize }`.

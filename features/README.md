@@ -336,6 +336,7 @@ inspector above (`When the agent calls the tool …`, `When the agent reads the 
 | `Then the authoring tools' instructions match "regex"` | what the server tells an agent when it connects |
 | `Then the file "X" is:` + doc string | the whole text of a file of the project, as it is now |
 | `Then the JSON file "X" has "/pointer" equal to V` | a value of a JSON file of the project, written as JSON (`null`, `true`, `"text"`, a number) |
+| `Then a desktop with the system files under "root" keeps up to N MiB of decoded pictures` | the image budget (ARCHITECTURE §8.5) the files under a directory of the project give, read as `/`: `proc/meminfo`, `proc/self/cgroup` and `sys/fs/cgroup/…/memory.max`; or `a phone` (`@ljos-only`: Qt has no such budget) |
 | `Then the command prints:` + doc string | everything the command wrote to its output |
 | `Then the command exits with status N` | |
 | `Then the command's output mentions "text"` / `does not mention "text"` | in what it wrote to its output or as errors |

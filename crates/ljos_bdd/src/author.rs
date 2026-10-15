@@ -623,6 +623,15 @@ impl Slot {
         }
     }
 
+    /// Where a file or directory of the project is, with every file the
+    /// scenario has given so far written.
+    ///
+    /// # Errors
+    /// The name is outside the project, or a file cannot be written.
+    pub fn project_path(&mut self, files: &Files, name: &str) -> Result<PathBuf, String> {
+        self.rig(files)?.path(name)
+    }
+
     /// Checks a value of a JSON file of the project.
     ///
     /// # Errors

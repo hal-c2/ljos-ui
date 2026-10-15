@@ -2290,6 +2290,31 @@ fn file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     author.file_is(files, &name, &want)
 }
 
+// The directory stands for `/`: `proc/meminfo`, `proc/self/cgroup` and
+// `sys/fs/cgroup/…/memory.max` are read under it.
+#[then(
+    regex = r#"^a (desktop|phone) with the system files under "([^"]+)" keeps up to ([\d.]+) MiB of decoded pictures$"#
+)]
+fn image_budget(w: &mut LjosWorld, class: String, root: String, mib: f64) -> StepResult {
+    use ljos_runtime::{DeviceClass, image_cache_budget, usable_memory_under};
+    let (author, files) = w.author();
+    let root = author.project_path(files, &root)?;
+    let class = if class == "phone" {
+        DeviceClass::Phone
+    } else {
+        DeviceClass::Desktop
+    };
+    let bytes = image_cache_budget(class, usable_memory_under(&root));
+    #[allow(clippy::cast_precision_loss)]
+    let actual = bytes as f64 / (1024.0 * 1024.0);
+    // To the hundredth of a MiB the scenario names it by.
+    if (actual - mib).abs() < 0.005 {
+        Ok(())
+    } else {
+        Err(format!("the budget is {actual:.2} MiB ({bytes} bytes)"))
+    }
+}
+
 // The value is JSON, as in `the answer's "/pointer" is V`.
 #[then(regex = r#"^the JSON file "([^"]+)" has "(/[^"]*)" equal to (.+)$"#)]
 fn json_file_has(w: &mut LjosWorld, name: String, pointer: String, json: String) -> StepResult {
