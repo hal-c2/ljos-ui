@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "examples/*"]
-exclude = ["vendor"]
+exclude = ["vendor", "third_party/filmcraft"]
 
 [workspace.package]
 version = "0.0.0"
@@ -51,6 +51,16 @@ zune-jpeg = "0.5.15"
 resvg = { version = "0.48.1", default-features = false, features = ["svgz"] }
 # Test fixtures only: nothing shipped encodes JPEG.
 jpeg-encoder = "0.7.1"
+
+# Media (ljos_media, section 7.6). FilmCraft's pure-Rust demuxers and
+# decoders, a git submodule at third_party/filmcraft (MIT OR Apache-2.0),
+# used unmodified; `git submodule update --init --depth 1 third_party/filmcraft`.
+filmcraft-codecs = { path = "third_party/filmcraft/crates/codecs" }
+filmcraft-media = { path = "third_party/filmcraft/crates/media" }
+filmcraft-frame = { path = "third_party/filmcraft/crates/frame" }
+filmcraft-time = { path = "third_party/filmcraft/crates/time" }
+# Audio output: ALSA (libasound2-dev on Linux), CoreAudio, WASAPI, AAudio.
+cpal = "0.18.2"
 
 # Text editing
 # Grapheme clusters for cursor movement.

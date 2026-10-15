@@ -3,3 +3,7 @@
 	url = https://code.qt.io/qt/qtdoc.git
 	branch = 6.11
 	shallow = true
+[submodule "third_party/filmcraft"]
+	path = third_party/filmcraft
+	url = https://github.com/storytold/filmcraft
+	shallow = true
