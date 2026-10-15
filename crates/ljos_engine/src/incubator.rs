@@ -1645,17 +1645,6 @@ impl Engine {
         (path, name): (&[String], &str),
         span: SourceSpan,
         value: ForeignValue,
-    ) -> bool {
-        self.keep_foreign_of(inst, obj, (path, name), span, value, None)
-    }
-
-    fn keep_foreign_of(
-        &self,
-        inst: &Rc<Instance>,
-        obj: ObjectId,
-        (path, name): (&[String], &str),
-        span: SourceSpan,
-        value: ForeignValue,
         attached: Option<MetaRef>,
     ) -> bool {
         let Some(keep) = self.foreign_keeper(obj) else {
@@ -1721,7 +1710,7 @@ impl Engine {
             }
             lit => ForeignValue::Value(self.literal_value(inst, lit)),
         };
-        self.keep_foreign_of(inst, obj, (path, &a.name), a.span, value, attached)
+        self.keep_foreign(inst, obj, (path, &a.name), a.span, value, attached)
     }
 
     fn keep_foreign_binding(
@@ -1753,7 +1742,7 @@ impl Engine {
             let kept = matches!(hint, TypeTag::Var);
             e.eval_expr_as(&i, expr, hint, &[], false, kept)
         }));
-        self.keep_foreign_of(inst, obj, (path, &pb.name), span, value, attached)
+        self.keep_foreign(inst, obj, (path, &pb.name), span, value, attached)
     }
 
     fn no_property(&self, inst: &Instance, line: u32, col: u32, path: &[String], name: &str) {
