@@ -20,8 +20,7 @@ Feature: Synchronizer keeps properties in step without breaking bindings
       import QtQuick
       import Qt.labs.synchronizer
       Item {
-        id: root
-        objectName: "root"
+        id: root; objectName: "root"
         property int base: 3
         property int a: base * 2
         property int b: 1
@@ -29,8 +28,7 @@ Feature: Synchronizer keeps properties in step without breaking bindings
         property string bouncedName: ""
         property int bounced: 0
         QtObject {
-          id: clamp
-          objectName: "clamp"
+          id: clamp; objectName: "clamp"
           property int v: 0
           onVChanged: if (v > 10) v = 10
         }

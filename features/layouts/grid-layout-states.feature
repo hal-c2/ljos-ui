@@ -47,35 +47,21 @@ Feature: A state gives a layout's children their attached values
       import QtQuick
       import QtQuick.Layouts
       Item {
-        id: root; objectName: "grid"
-        width: 800; height: 400
+        id: root; objectName: "grid"; width: 800; height: 400; state: "landscape"
         property string dump: [a.x, a.y, a.width, a.height, b.x, b.y, b.width,
           c.x, c.y, c.width, c.height, grid.x, grid.width].join(" ")
-        state: "landscape"
         states: State {
           name: "landscape"
-          PropertyChanges {
-            target: grid; flow: GridLayout.LeftToRight; rows: 2; columns: 3
-          }
-          PropertyChanges {
-            target: a; Layout.column: 0
-            Layout.preferredWidth: root.width / 4
-            Layout.preferredHeight: root.height / 5
-          }
-          PropertyChanges {
-            target: b; Layout.column: 2
-            Layout.preferredWidth: root.width / 2
-            Layout.preferredHeight: root.height / 1.6
-          }
-          PropertyChanges {
-            target: c; Layout.row: 1; Layout.columnSpan: 3
-            Layout.preferredWidth: root.width / 4
-            Layout.preferredHeight: root.height / 8
-          }
+          PropertyChanges { target: grid; flow: GridLayout.LeftToRight; rows: 2; columns: 3 }
+          PropertyChanges { target: a; Layout.column: 0
+            Layout.preferredWidth: root.width / 4; Layout.preferredHeight: root.height / 5 }
+          PropertyChanges { target: b; Layout.column: 2
+            Layout.preferredWidth: root.width / 2; Layout.preferredHeight: root.height / 1.6 }
+          PropertyChanges { target: c; Layout.row: 1; Layout.columnSpan: 3
+            Layout.preferredWidth: root.width / 4; Layout.preferredHeight: root.height / 8 }
         }
         GridLayout {
-          id: grid
-          flow: GridLayout.TopToBottom
+          id: grid; flow: GridLayout.TopToBottom
           anchors.horizontalCenter: parent.horizontalCenter
           Rectangle { id: a }
           Rectangle { id: b }
