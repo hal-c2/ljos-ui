@@ -2290,6 +2290,14 @@ fn file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     author.file_is(files, &name, &want)
 }
 
+// The value is JSON, as in `the answer's "/pointer" is V`.
+#[then(regex = r#"^the JSON file "([^"]+)" has "(/[^"]*)" equal to (.+)$"#)]
+fn json_file_has(w: &mut LjosWorld, name: String, pointer: String, json: String) -> StepResult {
+    let want = value::parse(&json)?;
+    let (author, files) = w.author();
+    author.json_file_has(files, &name, &pointer, &want)
+}
+
 #[then("the command prints:")]
 fn command_prints(w: &mut LjosWorld, step: &Step) -> StepResult {
     let want = author_doc(step)?;

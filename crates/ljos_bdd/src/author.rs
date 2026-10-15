@@ -623,6 +623,29 @@ impl Slot {
         }
     }
 
+    /// Checks a value of a JSON file of the project.
+    ///
+    /// # Errors
+    /// The file is not JSON, or has nothing or something else at `pointer`.
+    pub fn json_file_has(
+        &mut self,
+        files: &Files,
+        name: &str,
+        pointer: &str,
+        want: &Value,
+    ) -> Result<(), String> {
+        let rig = self.rig(files)?;
+        let path = rig.path(name)?;
+        let text = fs::read_to_string(&path).map_err(|e| format!("cannot read {name:?}: {e}"))?;
+        let json: Value =
+            serde_json::from_str(&text).map_err(|e| format!("{name:?} is not JSON: {e}"))?;
+        match json.pointer(pointer) {
+            Some(actual) if crate::value::same(want, actual) => Ok(()),
+            Some(actual) => Err(format!("{name:?} has {actual} at {pointer}, not {want}")),
+            None => Err(format!("{name:?} has nothing at {pointer}:\n{text}")),
+        }
+    }
+
     /// Checks the text at `pointer` of the last answer against a doc string.
     ///
     /// # Errors
