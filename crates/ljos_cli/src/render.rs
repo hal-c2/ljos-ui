@@ -63,6 +63,14 @@ pub struct Render {
     /// example is the same picture on every run.
     #[arg(long, value_parser = parse_now, value_name = "RFC3339")]
     now: Option<f64>,
+    /// Sets text in the fonts installed on the machine, the way a desktop
+    /// application does, with the platform's substitute for a family it
+    /// lacks. Without it, text is set in the bundled font only and the
+    /// picture is the same on every machine. `mise run gallery` passes it:
+    /// the qml6 pictures it compares with were drawn with the machine's
+    /// fonts.
+    #[arg(long)]
+    system_fonts: bool,
 }
 
 fn parse_now(text: &str) -> Result<f64, String> {
@@ -157,6 +165,13 @@ impl Render {
         // example's own types (a native type is in no table of types) and
         // not only the runtime does.
         let engine = Engine::new();
+        // Before anything measures text: the engine is the thread's, and the
+        // bundled one is made on first use.
+        ljos_quick::set_text_engine(if self.system_fonts {
+            ljos_quick::TextEngine::with_system_fonts()
+        } else {
+            ljos_quick::TextEngine::new()
+        });
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
         ljos_media::register(&engine);
@@ -446,6 +461,7 @@ mod tests {
             out: out.clone(),
             example: None,
             now: None,
+            system_fonts: false,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
@@ -570,6 +586,12 @@ mod tests {
     }
 
     #[test]
+    fn the_bundled_font_is_the_default() {
+        assert!(!line(&["proj", "--out", "p.png"]).system_fonts);
+        assert!(line(&["proj", "--out", "p.png", "--system-fonts"]).system_fonts);
+    }
+
+    #[test]
     fn now_is_an_rfc3339_time_or_nothing() {
         assert_eq!(line(&["proj", "--out", "p.png"]).now, None);
         assert_eq!(
@@ -595,6 +617,7 @@ mod tests {
             out: out.clone(),
             example: None,
             now: Some(1_791_741_429_000.0),
+            system_fonts: false,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -617,6 +640,7 @@ mod tests {
             out: out.clone(),
             example: Some("no-such-example".to_owned()),
             now: None,
+            system_fonts: false,
         };
         let mut notes = Notes::default();
         r.render(&mut notes).unwrap();
