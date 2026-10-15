@@ -19,7 +19,7 @@ Rectangle {
             NumberAnimation on x {
                 from: 0
                 to: 788
-                duration: 1000 + (parent.index % 20) * 100
+                duration: 1000 + (index % 20) * 100
                 loops: Animation.Infinite
             }
         }
