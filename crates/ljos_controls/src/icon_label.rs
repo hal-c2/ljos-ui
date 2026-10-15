@@ -20,8 +20,8 @@
 //!   shows nothing, and `icon.source` is shown instead when given.
 //!
 //! A label shows the icon of the button it belongs to in whatever its own
-//! `icon` was not told. Qt's files write `icon: control.icon`; a group is
-//! not a value here, so that line has nothing to assign.
+//! `icon` was not told. Qt's files write `icon: control.icon`; the engine
+//! copies the members the source set, so the label sees them either way.
 
 use std::cell::Cell;
 use std::rc::Rc;
