@@ -11,6 +11,8 @@ use ljos_mcp_core::CapSet;
 mod bench;
 mod check;
 mod fmt;
+#[cfg(feature = "dhat-heap")]
+mod heap;
 mod i18n;
 mod render;
 mod run;
@@ -66,13 +68,15 @@ enum Command {
     /// memory and CPU (a systemd scope); writes `report.json` and
     /// `report.md`. Exits with 2 when an application was not inside the
     /// limit asked for.
-    Bench(bench::Bench),
+    Bench(Box<bench::Bench>),
     /// What `ljos bench` starts an application through.
     #[command(hide = true)]
     BenchGate(bench::Gate),
 }
 
 fn main() -> ExitCode {
+    #[cfg(feature = "dhat-heap")]
+    heap::start();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

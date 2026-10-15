@@ -45,12 +45,18 @@ qml_front = { path = "../qml_front" }
 qml_fmt = { path = "../qml_fmt" }
 # `ljos bench`: applications measured inside a cgroup limit.
 ljos_bench = { path = "../ljos_bench" }
+dhat = { workspace = true, optional = true }
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[features]
+# Every heap allocation of Rust code recorded with its call stack, for a
+# memory profile by subsystem; see docs/BENCHMARKS.md. Slow: never shipped.
+dhat-heap = ["dep:dhat"]
 
 [dev-dependencies]
 tempfile.workspace = true

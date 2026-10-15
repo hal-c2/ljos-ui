@@ -142,6 +142,8 @@ globset = "0.4.20"
 # The versions winit already brings.
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+# The heap profile of `ljos` built with the `dhat-heap` feature.
+dhat = "0.3.3"
 
 # Tests
 cucumber = "0.23.0"
