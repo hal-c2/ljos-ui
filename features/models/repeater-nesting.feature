@@ -173,6 +173,28 @@ Feature: Repeaters in positioners and in each other
       When 100 milliseconds pass
       Then the object "tag-x" does not exist
 
+    Scenario: An appended array of objects read through list<var> has no roles either
+      Given the QML:
+        """qml
+        import QtQuick
+        Column {
+          ListModel { id: lm }
+          Component.onCompleted: lm.append({ parts: [ { tag: "y" } ] })
+          Repeater {
+            model: lm
+            Row {
+              required property list<var> parts
+              Repeater {
+                model: parts
+                Item { required property string tag; objectName: "tag-" + tag }
+              }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the object "tag-y" does not exist
+
   Rule: An array of objects appended to a ListModel is a model of its own
 
     Scenario: An inner delegate of an appended row has the roles of its objects
