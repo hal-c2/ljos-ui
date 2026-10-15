@@ -32,6 +32,7 @@ globset.workspace = true
 # Image files for scenarios are made by code (src/fixture.rs).
 png.workspace = true
 jpeg-encoder.workspace = true
+gif.workspace = true
 # The Ljós backend. This is a test tool, so it may link the compiler (and so
 # the parser); shipped runtimes never do (ARCHITECTURE.md principle 5).
 ljos_a11y = { path = "../ljos_a11y" }

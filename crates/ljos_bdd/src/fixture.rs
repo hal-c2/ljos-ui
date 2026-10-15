@@ -23,6 +23,57 @@ pub fn image_file(name: &str, width: u32, height: u32, colour: &str) -> Result<V
     }
 }
 
+/// An animated GIF whose frames are each of one colour (`#rrggbb`), shown
+/// for `delay_ms` (rounded to the hundredth of a second GIF counts in)
+/// and repeated for ever. One colour makes a still GIF.
+///
+/// # Errors
+/// A colour is not one, there are more than 256 or none, or the size does
+/// not fit a GIF.
+pub fn animated_gif(
+    width: u32,
+    height: u32,
+    colours: &[String],
+    delay_ms: u32,
+) -> Result<Vec<u8>, String> {
+    if colours.is_empty() || colours.len() > 256 {
+        return Err("an animated image has 1 to 256 frames".to_owned());
+    }
+    let side = |n: u32| {
+        u16::try_from(n)
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| format!("a GIF is 1 to 65535 pixels a side, not {n}"))
+    };
+    let (w, h) = (side(width)?, side(height)?);
+    let mut palette = Vec::with_capacity(colours.len() * 3);
+    for c in colours {
+        let [_, r, g, b] = parse_colour(c)?;
+        palette.extend([r, g, b]);
+    }
+    let mut out = Vec::new();
+    {
+        let mut enc = gif::Encoder::new(&mut out, w, h, &palette).map_err(|e| e.to_string())?;
+        if colours.len() > 1 {
+            enc.set_repeat(gif::Repeat::Infinite)
+                .map_err(|e| e.to_string())?;
+        }
+        let delay = u16::try_from(delay_ms.div_ceil(10)).unwrap_or(u16::MAX);
+        for i in 0..colours.len() {
+            let index = u8::try_from(i).unwrap_or(u8::MAX);
+            let frame = gif::Frame {
+                width: w,
+                height: h,
+                delay,
+                buffer: std::borrow::Cow::Owned(vec![index; usize::from(w) * usize::from(h)]),
+                ..gif::Frame::default()
+            };
+            enc.write_frame(&frame).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(out)
+}
+
 /// Bytes no image decoder accepts.
 #[must_use]
 pub fn not_an_image() -> Vec<u8> {

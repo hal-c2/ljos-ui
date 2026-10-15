@@ -105,6 +105,42 @@ fn an_image_file(
     w.each(|b| b.resource(&name, &bytes))
 }
 
+// An animated GIF beside the QML, one colour a frame, each frame shown
+// for the same time; the colours are a list ("#ff0000, #00ff00").
+#[given(
+    regex = r#"^an? (\d+) by (\d+) animated image file "([^"]+)" of frames "([^"]+)" each shown for (\d+) milliseconds$"#
+)]
+fn an_animated_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    colours: String,
+    delay: u32,
+) -> StepResult {
+    let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
+    let bytes = fixture::animated_gif(width, height, &colours, delay)?;
+    w.each(|b| b.resource(&name, &bytes))
+}
+
+// The same, at `$SERVER/X.gif` on the scenario's web server.
+#[given(
+    regex = r#"^the web server serves an? (\d+) by (\d+) animated image file "([^"]+)" of frames "([^"]+)" each shown for (\d+) milliseconds$"#
+)]
+fn a_served_animated_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    colours: String,
+    delay: u32,
+) -> StepResult {
+    let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
+    let bytes = fixture::animated_gif(width, height, &colours, delay)?;
+    w.web()?.serve(&name, bytes);
+    Ok(())
+}
+
 // A file with an image's name and something else inside.
 #[given(regex = r#"^a file "([^"]+)" that is not an image$"#)]
 fn not_an_image(w: &mut LjosWorld, name: String) -> StepResult {

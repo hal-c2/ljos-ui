@@ -129,6 +129,8 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
 | `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, and a name nobody served is 404 Not Found |
+| `Given a W by H animated image file "X.gif" of frames "#rrggbb, #rrggbb" each shown for N milliseconds` | make an animated GIF, one colour a frame, repeating for ever (one colour: a still GIF) |
+| `Given the web server serves a W by H animated image file "X.gif" of frames "#rrggbb, #rrggbb" each shown for N milliseconds` | the same on the scenario's web server |
 | `Given the web server serves a file "X.png" that is not an image` | the same, with a file that is no image |
 | `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
 | `Given the HTML "html" was copied in another application` | the clipboard holds formatted text, as a rich text editor elsewhere copies it: the HTML (single quotes for attributes), and its characters as plain text; give it after the QML |
