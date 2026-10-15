@@ -402,11 +402,14 @@ fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 /// browsers and most viewers do.
 const GIF_DEFAULT_DELAY_MS: u32 = 100;
 
+/// A picture's straight RGBA pixels and how many milliseconds it is shown.
+type Frame = (Vec<u8>, u32);
+
 /// The frames of a GIF as whole pictures (straight RGBA, the size of the
 /// logical screen), each with its delay in milliseconds: every frame is
 /// drawn on what the ones before left, as its disposal says. Only the
 /// first unless `all`.
-fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<(Vec<u8>, u32)>), String> {
+fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<Frame>), String> {
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::RGBA);
     let mut dec = options
@@ -428,7 +431,7 @@ fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<(Vec<u8>, u32)>)
             if cy >= h {
                 break;
             }
-            for (x, px) in row.chunks_exact(4).enumerate() {
+            for (x, px) in row.as_chunks::<4>().0.iter().enumerate() {
                 let cx = left + x;
                 // A transparent index leaves what was there.
                 if cx >= w || px[3] == 0 {
