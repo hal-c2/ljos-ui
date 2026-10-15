@@ -625,6 +625,7 @@ module QtQuick
 	Rotation QtQuick.Rotation
 	RotationAnimation QtQuick.RotationAnimation
 	Row QtQuick.Row
+	SafeArea QtQuick.SafeArea
 	Scale QtQuick.Scale
 	ScreenInfo QtQuick.ScreenInfo
 	ScriptAction QtQuick.ScriptAction
@@ -754,6 +755,7 @@ module QtQuick
 		prop font QtQuick.font named readonly
 		prop screens QtQml.var named list
 		prop arguments QtQml.var named list
+		prop styleHints QtQml.QtObject named pointer readonly
 		signal stateChanged
 		signal activeChanged
 		signal nameChanged
@@ -1859,6 +1861,9 @@ module QtQuick
 		signal bottomPaddingChanged
 		signal layoutDirectionChanged
 		signal effectiveLayoutDirectionChanged
+	type QtQuick.SafeArea SafeArea
+		attached QtQuick.SafeAreaAttached
+		is uncreatable
 	type QtQuick.Scale Scale
 		prototype QtQuick.Transform
 		prop origin QtQuick.vector3d named
@@ -2814,6 +2819,10 @@ module QtQuick
 		prop color QtQuick.color named
 		signal widthChanged
 		signal colorChanged
+	type QtQuick.SafeAreaAttached SafeAreaAttached
+		is uncreatable
+		prop margins QtQuick.SafeMargins pointer readonly
+		prop additionalMargins QtQuick.SafeAdditionalMargins pointer readonly
 	type QtQuick.TextEditorBase TextEditorBase
 		prototype QtQuick.Item named
 		is uncreatable
@@ -2978,6 +2987,26 @@ module QtQuick
 		signal toolTipTextChanged
 		signal windowChanged
 		signal windowTextChanged
+	type QtQuick.SafeMargins SafeMargins
+		is uncreatable
+		prop left QtQml.real named readonly
+		prop top QtQml.real named readonly
+		prop right QtQml.real named readonly
+		prop bottom QtQml.real named readonly
+		signal leftChanged
+		signal topChanged
+		signal rightChanged
+		signal bottomChanged
+	type QtQuick.SafeAdditionalMargins SafeAdditionalMargins
+		is uncreatable
+		prop left QtQml.real named
+		prop top QtQml.real named
+		prop right QtQml.real named
+		prop bottom QtQml.real named
+		signal leftChanged
+		signal topChanged
+		signal rightChanged
+		signal bottomChanged
 
 module QtQuick.Controls
 	AbstractButton QtQuick.Templates.AbstractButton

@@ -40,6 +40,7 @@ mod pointer_item;
 mod positioners;
 mod rectangle;
 mod repeater;
+mod safe_area;
 mod scene;
 mod shapes;
 mod states;
@@ -115,6 +116,7 @@ pub use pointer_item::{PointerCondition, register_pointer_condition};
 pub use positioners::{Axis, Column, Flow, Grid, Positioner, PositionerAttached, Row};
 pub use rectangle::{Rectangle, RectangleBorder, RectanglePaint, to_rgba};
 pub use repeater::Repeater;
+pub use safe_area::{SafeArea, SafeAreaAttached, safe_area_insets, set_safe_area_insets};
 pub use scene::{
     DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, FrameOutput, INCUBATION_BUDGET, MAX_POLISH_PASSES,
     POLISH_CATEGORY, QuickScene, SCENE_CATEGORY, TimerHook,
@@ -165,7 +167,7 @@ pub fn register(engine: &Engine) {
         Item, Rectangle, Text, MouseArea, TapHandler, Row, Column, Loader, MouseEvent,
         Accessible, Repeater,
         FontMetrics, TextMetrics,
-        Grid, Flow, Positioner, LayoutMirroring,
+        Grid, Flow, Positioner, LayoutMirroring, SafeArea,
         Image, BorderImage,
         Gradient, GradientStop,
         focus::FocusScope, focus::Window,
@@ -179,6 +181,7 @@ pub fn register(engine: &Engine) {
         Layout, RowLayout, ColumnLayout, GridLayout, StackLayout, LayoutItemProxy,
     ]));
     mirroring::register(engine);
+    safe_area::register(engine);
     positioners::register(engine);
     layouts::register(engine);
     accessible::register(engine);

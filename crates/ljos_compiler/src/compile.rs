@@ -2014,13 +2014,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .imports
             .iter()
             .filter_map(|import| match &import.source {
-                QmlImportSource::Path(path)
-                    if path.ends_with(".js") || path.ends_with(".mjs") =>
-                {
-                    let key = qml_front::project::join(
-                        qml_front::project::directory(self.key),
-                        path,
-                    );
+                QmlImportSource::Path(path) if path.ends_with(".js") || path.ends_with(".mjs") => {
+                    let key =
+                        qml_front::project::join(qml_front::project::directory(self.key), path);
                     let text = self.project.script(&key)?;
                     Some(crate::script::lower(path, &key, text))
                 }
