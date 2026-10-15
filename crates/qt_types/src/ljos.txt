@@ -72,6 +72,21 @@ module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
 	DelegateChooser QtQml.Models.DelegateChooser
 
+module Qt.labs.synchronizer
+	Synchronizer Qt.labs.synchronizer.Synchronizer
+	type Qt.labs.synchronizer.Synchronizer Synchronizer
+		prototype QtQml.QtObject named
+		prop sourceObject QtQml.QtObject named pointer
+		prop sourceProperty QtQml.string named
+		prop targetObject QtQml.QtObject named pointer
+		prop targetProperty QtQml.string named
+		signal sourceObjectChanged
+		signal sourcePropertyChanged
+		signal targetObjectChanged
+		signal targetPropertyChanged
+		signal valueBounced object property
+		signal valueIgnored object property
+
 module QtCore
 	BluetoothPermission QtCore.BluetoothPermission
 	CalendarPermission QtCore.CalendarPermission

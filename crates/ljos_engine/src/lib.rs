@@ -86,6 +86,7 @@ mod script_owned;
 mod signal;
 mod slow;
 mod sort_filter;
+mod synchronizer;
 mod types;
 mod value;
 mod value_faces;

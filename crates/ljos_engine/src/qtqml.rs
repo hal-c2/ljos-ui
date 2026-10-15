@@ -543,6 +543,11 @@ pub(crate) fn register(engine: &Engine) {
         crate::chooser::DelegateChooser,
         crate::chooser::DelegateChoice
     ]));
+    engine.register_module(crate::module!("Qt.labs.synchronizer" 1.0 => [
+        crate::synchronizer::Synchronizer
+    ]));
+    // `Synchronizer on value { }`.
+    engine.on_value_source(crate::synchronizer::aim);
     // A file that imports `QtQml` has the models too.
     engine.register_import("QtQml", "QtQml.Models");
     // Handlers for another object's signals, and the roles of a row.
