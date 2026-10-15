@@ -816,7 +816,10 @@ impl QuickScene {
                 return;
             }
             // Deepest first, so a positioner sees its children's final size.
-            set.sort_by_key(|a| std::cmp::Reverse(a.0));
+            // Items of one depth go in creation order: the set's own order
+            // changes from run to run, and two layouts that share an item
+            // (LayoutItemProxy) give it the size of whichever runs last.
+            set.sort_by_key(|a| (std::cmp::Reverse(a.0), a.1));
             for (_, obj) in set {
                 if !engine.is_alive(obj) {
                     continue;
@@ -981,7 +984,9 @@ impl QuickScene {
 
     /// Step 8a: render-node structure follows the items' `children`.
     fn reconcile(&mut self, engine: &Engine) {
-        let dirty: Vec<ObjectId> = self.shared.borrow_mut().structure.drain().collect();
+        let mut dirty: Vec<ObjectId> = self.shared.borrow_mut().structure.drain().collect();
+        // In creation order, so the same scene builds the same way each run.
+        dirty.sort_unstable();
         let mut orphans = Vec::new();
         for p in dirty {
             if !engine.is_alive(p) {
@@ -1047,7 +1052,8 @@ impl QuickScene {
 
     /// Step 8b.
     fn apply_geometry(&mut self) {
-        let geoms: Vec<(ObjectId, Geom)> = self.shared.borrow_mut().geom.drain().collect();
+        let mut geoms: Vec<(ObjectId, Geom)> = self.shared.borrow_mut().geom.drain().collect();
+        geoms.sort_unstable_by_key(|g| g.0);
         for (obj, g) in geoms {
             let Some(e) = self.entries.get_mut(&obj) else {
                 continue;
@@ -1079,7 +1085,9 @@ impl QuickScene {
     /// Step 8c: rebuild the display lists of items whose paint inputs or
     /// size changed.
     fn apply_content(&mut self) {
-        let content: Vec<(ObjectId, Paint)> = self.shared.borrow_mut().content.drain().collect();
+        let mut content: Vec<(ObjectId, Paint)> =
+            self.shared.borrow_mut().content.drain().collect();
+        content.sort_unstable_by_key(|c| c.0);
         for (obj, p) in content {
             if let Some(e) = self.entries.get(&obj) {
                 self.tree.mark_content_dirty(e.node);

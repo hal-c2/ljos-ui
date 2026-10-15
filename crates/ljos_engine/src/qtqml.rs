@@ -597,7 +597,7 @@ pub(crate) fn park_timers(engine: &Engine) {
 /// while frozen fires once, at once, and a repeating one goes on from
 /// there: observers see that it triggered, not how often (§8.3).
 pub(crate) fn unpark_timers(engine: &Engine) {
-    let parked: Vec<(ObjectId, Time)> = engine
+    let mut parked: Vec<(ObjectId, Time)> = engine
         .inner
         .timers
         .borrow()
@@ -605,6 +605,9 @@ pub(crate) fn unpark_timers(engine: &Engine) {
         .iter()
         .map(|(o, t)| (*o, *t))
         .collect();
+    // Timers due together fire in the order they are armed: creation
+    // order, not the map's, which changes from run to run.
+    parked.sort_unstable_by_key(|p| p.0);
     let now = engine.now();
     for (o, due) in parked {
         if engine.is_frozen(o) {

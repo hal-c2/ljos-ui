@@ -503,6 +503,7 @@ This is the canonical order, merging 01 §3.5, 02 §3.2 and 03 §3.3. It runs on
 Layout is Ljós's own implementation of QML semantics.
 - **Anchors** are eager geometry bindings.
 - **Positioners** (Row, Column, Grid, Flow) and **QtQuick.Layouts** run in the polish pass. QtQuick.Layouts covers fill, preferred/min/max sizes, alignment, spans and margins.
+- The polish pass runs the deepest items first and items of one depth in creation order, so the same scene lays out the same way every run (two layouts sharing an item through `LayoutItemProxy` give it the size of the one that runs last).
 - **Implicit sizes** propagate through Loader and Repeater, as Qt does (07 R3).
 - **`LayoutMirroring`** is resolved at layout time. It flips anchors, positioner order and horizontal views, but never raw `x` (section 15).
 - **Taffy** may be offered later as an opt-in `Ljos.Flex` item.
