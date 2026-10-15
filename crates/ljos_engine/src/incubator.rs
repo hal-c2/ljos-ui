@@ -2106,12 +2106,38 @@ impl Engine {
         }
     }
 
+    /// `name` of the object `object` when it is a method and not a property:
+    /// the function, bound to the object. A name a delegate may have from
+    /// its model falls back to the root around it this way, and `add(1)`
+    /// written there calls the root's `add` with the root as `this`.
+    fn method_js(
+        &self,
+        s: &Scope<'_>,
+        inst: &Instance,
+        object: ObjRef,
+        name: &str,
+    ) -> Option<JsValue> {
+        use ljos_js::rquickjs::{Function, Value as Js, function::This};
+        let o = inst.resolve(object)?;
+        if self.property_index(o, name).is_ok() || self.method_index(o, name).is_err() {
+            return None;
+        }
+        let wrapper = s.to_value(&self.to_js(&Value::Object(o))).ok()?;
+        let f: Function = wrapper.as_object()?.get(name).ok()?;
+        let bind: Function = f.get("bind").ok()?;
+        let bound: Js = bind.call((This(f), wrapper)).ok()?;
+        s.from_value(&bound).ok()
+    }
+
     /// A parameter as JS sees it.
     fn arg_js(&self, s: &Scope<'_>, inst: &Instance, arg: &Arg) -> JsValue {
         match arg {
             // A `list<T>` declared in QML is the property's own list to a
             // script (list_faces.rs); the read is what a binding follows.
             Arg::Property { object, name } => {
+                if let Some(f) = self.method_js(s, inst, *object, name) {
+                    return f;
+                }
                 let Some(v) = self.arg_value(inst, arg) else {
                     return JsValue::Undefined;
                 };

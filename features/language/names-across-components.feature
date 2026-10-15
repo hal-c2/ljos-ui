@@ -95,3 +95,75 @@ Feature: Names of the component around
       When the method "bump" of "near" is called
       Then the property "count" of "near" is 11
       And the property "count" of "root" is 0
+
+  Rule: A function of an outer component is called by its name
+
+    Scenario: Each delegate calls a function of the root
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int total: 0
+          function add(n) { total += n; return total }
+          Repeater {
+            model: 3
+            Item { Component.onCompleted: add(index + 1) }
+          }
+        }
+        """
+      Then the property "total" of "root" is 6
+
+    Scenario: A delegate's binding calls a function of the root
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string prefix: "row"
+          function describe(i) { return prefix + " " + i }
+          Repeater {
+            model: 2
+            Item { objectName: "row" + index; property string label: describe(index) }
+          }
+        }
+        """
+      Then the property "label" of "row1" is "row 1"
+      When the property "prefix" of "root" is set to "line"
+      Then the property "label" of "row1" is "line 1"
+
+    Scenario: A loaded component calls a function of the root
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property int total: 0
+          function add(n) { total += n }
+          Component { id: later; Item { Component.onCompleted: add(10) } }
+          Loader { sourceComponent: later }
+          Loader { sourceComponent: Item { Component.onCompleted: add(100) } }
+        }
+        """
+      Then the property "total" of "root" is 110
+
+    Scenario: A component file's delegate calls a function of that file's root
+      Given the file "Panel.qml":
+        """qml
+        import QtQuick
+        Item {
+          objectName: "panel"
+          property int total: 0
+          function add(n) { total += n }
+          Repeater {
+            model: 2
+            Item { Component.onCompleted: add(5) }
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { Panel { } }
+        """
+      Then the property "total" of "panel" is 10
