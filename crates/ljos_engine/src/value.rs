@@ -206,6 +206,22 @@ pub struct Font {
     /// (`Qt.styleHints.accessibility.fontScale`). The sizes above stay as
     /// written either way; the scale is applied where text is laid out.
     pub scale_with_system: bool,
+    /// `font.styleName`: kept as written. Faces are picked by weight and
+    /// italic, so a style name changes nothing that is drawn.
+    pub style_name: Atom,
+    /// `font.overline`: a line above the text.
+    pub overline: bool,
+    /// `font.kerning`, `font.preferShaping`, `font.contextFontMerging` and
+    /// `font.preferTypoLineMetrics`: kept and read back. Text is always
+    /// kerned and shaped by the text stack, so these change nothing drawn.
+    pub kerning: bool,
+    pub prefer_shaping: bool,
+    pub context_font_merging: bool,
+    pub prefer_typo_line_metrics: bool,
+    /// `font.features` and `font.variableAxes`: the JS maps as assigned
+    /// (`Undefined` when never), kept and read back.
+    pub features: Value,
+    pub variable_axes: Value,
 }
 
 impl Default for Font {
@@ -223,6 +239,14 @@ impl Default for Font {
             capitalization: 0,
             hinting_preference: 0,
             scale_with_system: true,
+            style_name: Atom::EMPTY,
+            overline: false,
+            kerning: true,
+            prefer_shaping: true,
+            context_font_merging: false,
+            prefer_typo_line_metrics: false,
+            features: Value::Undefined,
+            variable_axes: Value::Undefined,
         }
     }
 }
@@ -401,6 +425,26 @@ impl Value {
                         f.hinting_preference = font_key(v, &HINTING_PREFERENCE);
                     }
                     "scaleWithSystem" => f.scale_with_system = v.to_boolean(),
+                    "styleName" => f.style_name = v.to_js_string(),
+                    "overline" => f.overline = v.to_boolean(),
+                    "kerning" => f.kerning = v.to_boolean(),
+                    "preferShaping" => f.prefer_shaping = v.to_boolean(),
+                    "contextFontMerging" => f.context_font_merging = v.to_boolean(),
+                    "preferTypoLineMetrics" => f.prefer_typo_line_metrics = v.to_boolean(),
+                    "features" => {
+                        f.features = if matches!(v, Value::Js(_)) {
+                            v.clone()
+                        } else {
+                            Value::Undefined
+                        };
+                    }
+                    "variableAxes" => {
+                        f.variable_axes = if matches!(v, Value::Js(_)) {
+                            v.clone()
+                        } else {
+                            Value::Undefined
+                        };
+                    }
                     _ => return None,
                 }
                 Some(Value::Font(Arc::new(f)))

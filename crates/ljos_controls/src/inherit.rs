@@ -65,7 +65,7 @@ pub(crate) enum Kind {
 #[derive(Debug, Default)]
 pub(crate) struct InheritState {
     /// The attributes of the font the author set here ([`attr`]).
-    font_mask: Cell<u16>,
+    font_mask: Cell<u32>,
     /// The font this module last wrote, so that the author's writes can be
     /// told from its own.
     font_resolved: RefCell<Option<Arc<Font>>>,
@@ -74,24 +74,32 @@ pub(crate) struct InheritState {
 }
 
 mod attr {
-    pub const FAMILY: u16 = 1 << 0;
-    pub const POINT_SIZE: u16 = 1 << 1;
-    pub const PIXEL_SIZE: u16 = 1 << 2;
-    pub const WEIGHT: u16 = 1 << 3;
-    pub const ITALIC: u16 = 1 << 4;
-    pub const UNDERLINE: u16 = 1 << 5;
-    pub const STRIKEOUT: u16 = 1 << 6;
-    pub const LETTER_SPACING: u16 = 1 << 7;
-    pub const WORD_SPACING: u16 = 1 << 8;
-    pub const SCALE_WITH_SYSTEM: u16 = 1 << 9;
-    pub const CAPITALIZATION: u16 = 1 << 10;
-    pub const HINTING_PREFERENCE: u16 = 1 << 11;
+    pub const FAMILY: u32 = 1 << 0;
+    pub const POINT_SIZE: u32 = 1 << 1;
+    pub const PIXEL_SIZE: u32 = 1 << 2;
+    pub const WEIGHT: u32 = 1 << 3;
+    pub const ITALIC: u32 = 1 << 4;
+    pub const UNDERLINE: u32 = 1 << 5;
+    pub const STRIKEOUT: u32 = 1 << 6;
+    pub const LETTER_SPACING: u32 = 1 << 7;
+    pub const WORD_SPACING: u32 = 1 << 8;
+    pub const SCALE_WITH_SYSTEM: u32 = 1 << 9;
+    pub const CAPITALIZATION: u32 = 1 << 10;
+    pub const HINTING_PREFERENCE: u32 = 1 << 11;
+    pub const STYLE_NAME: u32 = 1 << 12;
+    pub const OVERLINE: u32 = 1 << 13;
+    pub const KERNING: u32 = 1 << 14;
+    pub const PREFER_SHAPING: u32 = 1 << 15;
+    pub const CONTEXT_FONT_MERGING: u32 = 1 << 16;
+    pub const PREFER_TYPO_LINE_METRICS: u32 = 1 << 17;
+    pub const FEATURES: u32 = 1 << 18;
+    pub const VARIABLE_AXES: u32 = 1 << 19;
 }
 
 /// The attributes in which two fonts differ.
-fn differing(a: &Font, b: &Font) -> u16 {
+fn differing(a: &Font, b: &Font) -> u32 {
     let mut m = 0;
-    let mut bit = |differs: bool, flag: u16| {
+    let mut bit = |differs: bool, flag: u32| {
         if differs {
             m |= flag;
         }
@@ -114,13 +122,27 @@ fn differing(a: &Font, b: &Font) -> u16 {
         a.hinting_preference != b.hinting_preference,
         attr::HINTING_PREFERENCE,
     );
+    bit(a.style_name != b.style_name, attr::STYLE_NAME);
+    bit(a.overline != b.overline, attr::OVERLINE);
+    bit(a.kerning != b.kerning, attr::KERNING);
+    bit(a.prefer_shaping != b.prefer_shaping, attr::PREFER_SHAPING);
+    bit(
+        a.context_font_merging != b.context_font_merging,
+        attr::CONTEXT_FONT_MERGING,
+    );
+    bit(
+        a.prefer_typo_line_metrics != b.prefer_typo_line_metrics,
+        attr::PREFER_TYPO_LINE_METRICS,
+    );
+    bit(a.features != b.features, attr::FEATURES);
+    bit(a.variable_axes != b.variable_axes, attr::VARIABLE_AXES);
     m
 }
 
 /// `base` with the attributes in `mask` taken from `own`.
-fn merged(base: &Font, own: &Font, mask: u16) -> Font {
+fn merged(base: &Font, own: &Font, mask: u32) -> Font {
     let mut f = base.clone();
-    let has = |flag: u16| mask & flag != 0;
+    let has = |flag: u32| mask & flag != 0;
     if has(attr::FAMILY) {
         f.family = own.family.clone();
     }
@@ -167,6 +189,30 @@ fn merged(base: &Font, own: &Font, mask: u16) -> Font {
     }
     if has(attr::HINTING_PREFERENCE) {
         f.hinting_preference = own.hinting_preference;
+    }
+    if has(attr::STYLE_NAME) {
+        f.style_name = own.style_name.clone();
+    }
+    if has(attr::OVERLINE) {
+        f.overline = own.overline;
+    }
+    if has(attr::KERNING) {
+        f.kerning = own.kerning;
+    }
+    if has(attr::PREFER_SHAPING) {
+        f.prefer_shaping = own.prefer_shaping;
+    }
+    if has(attr::CONTEXT_FONT_MERGING) {
+        f.context_font_merging = own.context_font_merging;
+    }
+    if has(attr::PREFER_TYPO_LINE_METRICS) {
+        f.prefer_typo_line_metrics = own.prefer_typo_line_metrics;
+    }
+    if has(attr::FEATURES) {
+        f.features = own.features.clone();
+    }
+    if has(attr::VARIABLE_AXES) {
+        f.variable_axes = own.variable_axes.clone();
     }
     f
 }

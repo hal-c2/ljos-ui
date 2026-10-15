@@ -23,6 +23,7 @@
 use ljos_js::rquickjs::Object;
 use ljos_js::{JsFault, JsHost, JsValue, ValueKind};
 
+use crate::atom::Atom;
 use crate::value::{Font, Value};
 use crate::value_types::{Quaternion, Vector2d, Vector3d, Vector4d};
 
@@ -75,6 +76,14 @@ fn numbers(kind: ValueKind, of: &[f64]) -> JsValue {
     JsValue::Typed(kind, of.iter().map(|n| JsValue::Number(*n)).collect())
 }
 
+/// A map a font keeps (`features`) as JS takes it.
+fn handle(v: &Value) -> JsValue {
+    match v {
+        Value::Js(h) => JsValue::Handle(h.0.clone()),
+        _ => JsValue::Undefined,
+    }
+}
+
 /// A value type as JS sees it; `None` for every other value.
 pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
     let f = f64::from;
@@ -102,10 +111,26 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
                 JsValue::Bool(font.scale_with_system),
                 JsValue::Number(f64::from(font.capitalization)),
                 JsValue::Number(f64::from(font.hinting_preference)),
+                JsValue::String(font.style_name.to_string()),
+                JsValue::Bool(font.overline),
+                JsValue::Bool(font.kerning),
+                JsValue::Bool(font.prefer_shaping),
+                JsValue::Bool(font.context_font_merging),
+                JsValue::Bool(font.prefer_typo_line_metrics),
+                handle(&font.features),
+                handle(&font.variable_axes),
             ],
         ),
         _ => return None,
     })
+}
+
+/// A map of a font that came back from JS.
+fn kept(v: Option<&JsValue>) -> Value {
+    match v {
+        Some(JsValue::Handle(r)) => Value::Js(crate::value::JsHandle(r.clone())),
+        _ => Value::Undefined,
+    }
 }
 
 /// What a [`JsValue::Typed`] that came back from JS holds.
@@ -155,6 +180,17 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
             scale_with_system: b(9),
             capitalization: n(10) as i32,
             hinting_preference: n(11) as i32,
+            style_name: match fields.get(12) {
+                Some(JsValue::String(name)) => name.as_str().into(),
+                _ => Atom::EMPTY,
+            },
+            overline: b(13),
+            kerning: !matches!(fields.get(14), Some(JsValue::Bool(false))),
+            prefer_shaping: !matches!(fields.get(15), Some(JsValue::Bool(false))),
+            context_font_merging: b(16),
+            prefer_typo_line_metrics: b(17),
+            features: kept(fields.get(18)),
+            variable_axes: kept(fields.get(19)),
         })),
         _ => Value::Undefined,
     }
@@ -359,13 +395,19 @@ const FACES: &str = r##"
   // A font crosses as these, in this order (see `to_js` beside this text).
   const fontFields = ["family", "pointSize", "pixelSize", "weight", "italic", "underline",
     "strikeout", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
-    "hintingPreference"];
+    "hintingPreference", "styleName", "overline", "kerning", "preferShaping", "contextFontMerging",
+    "preferTypoLineMetrics", "features", "variableAxes"];
+  // Qt's answer for a map never given: an empty one.
+  const noMap = Object.freeze({});
+  const map = (v) => (v === undefined || v === null || v === noMap ? undefined : v);
   const whole = (v) => { v = Math.trunc(Number(v)); return v !== v ? 0 : v + 0; };
   const flag = (v) => !!v;
   const font = kind(fontFields,
-    [String, double, whole, whole, flag, flag, flag, double, double, flag, whole, whole],
+    [String, double, whole, whole, flag, flag, flag, double, double, flag, whole, whole,
+      String, flag, flag, flag, flag, flag, map, map],
     (o, [family, pointSize, pixelSize, weight, italic, underline, strikeout, letterSpacing, wordSpacing,
-      scaleWithSystem, capitalization, hintingPreference]) => {
+      scaleWithSystem, capitalization, hintingPreference, styleName, overline, kerning, preferShaping,
+      contextFontMerging, preferTypoLineMetrics, features, variableAxes]) => {
       o.family = family;
       o.bold = weight > 500;
       o.weight = weight;
@@ -378,6 +420,14 @@ const FACES: &str = r##"
       o.letterSpacing = letterSpacing;
       o.wordSpacing = wordSpacing;
       o.hintingPreference = hintingPreference;
+      o.styleName = styleName;
+      o.overline = overline;
+      o.kerning = kerning;
+      o.preferShaping = preferShaping;
+      o.contextFontMerging = contextFontMerging;
+      o.preferTypoLineMetrics = preferTypoLineMetrics;
+      o.features = features === undefined ? noMap : features;
+      o.variableAxes = variableAxes === undefined ? noMap : variableAxes;
       // Ours, so not one of the keys a script finds when it lists a font's:
       // those stay Qt's.
       hide(o, "scaleWithSystem", scaleWithSystem);

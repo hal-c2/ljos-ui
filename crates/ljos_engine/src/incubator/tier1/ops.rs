@@ -370,6 +370,14 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
                 && x.capitalization == y.capitalization
                 && x.hinting_preference == y.hinting_preference
                 && x.scale_with_system == y.scale_with_system
+                && x.style_name == y.style_name
+                && x.overline == y.overline
+                && x.kerning == y.kerning
+                && x.prefer_shaping == y.prefer_shaping
+                && x.context_font_merging == y.context_font_merging
+                && x.prefer_typo_line_metrics == y.prefer_typo_line_metrics
+                && x.features == y.features
+                && x.variable_axes == y.variable_axes
         }
         _ => false,
     }

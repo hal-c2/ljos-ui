@@ -649,6 +649,16 @@ fn field(v: &Value, name: &str) -> Option<Value> {
             "capitalization" => Some(Value::Real(f64::from(f.capitalization))),
             "hintingPreference" => Some(Value::Real(f64::from(f.hinting_preference))),
             "scaleWithSystem" => Some(Value::Bool(f.scale_with_system)),
+            "styleName" => Some(Value::String(f.style_name.clone())),
+            "overline" => Some(Value::Bool(f.overline)),
+            "kerning" => Some(Value::Bool(f.kerning)),
+            "preferShaping" => Some(Value::Bool(f.prefer_shaping)),
+            "contextFontMerging" => Some(Value::Bool(f.context_font_merging)),
+            "preferTypoLineMetrics" => Some(Value::Bool(f.prefer_typo_line_metrics)),
+            "features" if matches!(f.features, Value::Js(_)) => Some(f.features.clone()),
+            "variableAxes" if matches!(f.variable_axes, Value::Js(_)) => {
+                Some(f.variable_axes.clone())
+            }
             _ => None,
         },
         Value::Color(c) => color_field(*c, name),

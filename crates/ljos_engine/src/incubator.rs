@@ -1940,6 +1940,74 @@ impl Engine {
         }
     }
 
+    /// `icon: control.icon`: a group is not a value here, so a whole group
+    /// written from another object's group of the same kind is its members,
+    /// each bound to the member of the source that was given a value (what
+    /// was not stays the target's own, and a control that follows another's
+    /// leaves reads those from it). False when `expr` is not such a path.
+    fn copy_group(&self, inst: &Rc<Instance>, t: &Target, expr: ExprId) -> bool {
+        let b = inst.file.ir.expr(expr);
+        let Some(Some(t0)) = inst.file.tier0.get(b.js_fn.index()) else {
+            return false;
+        };
+        let Some((last, walk)) = t0.path.split_last() else {
+            return false;
+        };
+        let Some(param) = b.params.get(t0.param) else {
+            return false;
+        };
+        let Some(mut cur) = self.arg_value(inst, &param.arg) else {
+            return false;
+        };
+        for name in walk {
+            let Value::Object(o) = cur else { return false };
+            let Ok(p) = self.property_index(o, name) else {
+                return false;
+            };
+            cur = self.untrack(|| self.read(o, p));
+        }
+        let Value::Object(src) = cur else {
+            return false;
+        };
+        if !self.is_alive(src) || self.property_index(src, last).is_err() {
+            return false;
+        }
+        let Some(name) = self
+            .meta_of(t.obj)
+            .and_then(|m| m.property(t.prop).map(|p| p.name.to_string()))
+        else {
+            return false;
+        };
+        let Some(leaves) = self.meta_of(t.obj).map(|m| {
+            m.properties
+                .iter()
+                .filter_map(|p| p.name.strip_prefix(&format!("{name}.")).map(str::to_string))
+                .collect::<Vec<_>>()
+        }) else {
+            return false;
+        };
+        for leaf in leaves {
+            let (Ok(to), Ok(from)) = (
+                self.property_index(t.obj, &format!("{name}.{leaf}")),
+                self.property_index(src, &format!("{last}.{leaf}")),
+            ) else {
+                continue;
+            };
+            let given = self.untrack(|| self.provenance(src, from));
+            if matches!(
+                given,
+                Some(Provenance::Default | Provenance::Animated) | None
+            ) {
+                continue;
+            }
+            let r = self.bind_fallible(t.obj, to, move |e| Some(e.read(src, from)));
+            if let Err(e) = r {
+                self.warn(e.to_string());
+            }
+        }
+        true
+    }
+
     fn install_binding(&self, inst: &Rc<Instance>, t: &Target, pb: &PropertyBinding) {
         let expr = pb.expr;
         let b = inst.file.ir.expr(expr);
@@ -1948,6 +2016,9 @@ impl Engine {
             .and_then(|m| m.property(t.prop).map(|p| p.ty.clone()))
             .unwrap_or(TypeTag::Var);
         let i = inst.clone();
+        if matches!(hint, TypeTag::Group(_)) && self.copy_group(inst, t, expr) {
+            return;
+        }
         if self.is_script_property(t.obj, t.prop) {
             // A statement to run when asked, not a value to keep current.
             self.set_script(
