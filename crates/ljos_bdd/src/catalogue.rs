@@ -52,8 +52,8 @@ pub fn steps() -> Vec<Step> {
 
 fn parse(source: &str) -> Vec<Step> {
     let mut out = Vec::new();
-    for line in source.lines() {
-        let Some(rest) = line.trim().strip_prefix("#[") else {
+    for line in attributes(source) {
+        let Some(rest) = line.strip_prefix("#[") else {
             continue;
         };
         let Some((keyword, rest)) = [
@@ -87,6 +87,29 @@ fn parse(source: &str) -> Vec<Step> {
             pattern: pattern.then_some(literal),
         });
     }
+    out
+}
+
+/// The trimmed lines of `source`, an attribute rustfmt spread over several
+/// lines (a long pattern goes on a line of its own) put back on one.
+fn attributes(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut open: Option<String> = None;
+    for line in source.lines().map(str::trim) {
+        if let Some(mut attribute) = open.take() {
+            attribute.push_str(line);
+            if line.ends_with(")]") {
+                out.push(attribute.replace(",)]", ")]"));
+            } else {
+                open = Some(attribute);
+            }
+        } else if line.starts_with("#[") && line.ends_with('(') {
+            open = Some(line.to_owned());
+        } else {
+            out.push(line.to_owned());
+        }
+    }
+    out.extend(open);
     out
 }
 
