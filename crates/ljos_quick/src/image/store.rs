@@ -432,14 +432,21 @@ impl ImageStore {
         if cache && let Some(image) = self.cached(key) {
             return Ok(image);
         }
-        let origin = self.locate(key)?;
-        let decode::Loaded { image, vector } = decode::load(&key.url, &origin, key.request)?;
-        self.note(&key.url, vector);
-        self.state.borrow_mut().decodes += 1;
+        let loaded = self.decode_now(key)?;
         if cache {
-            self.keep(key, &image);
+            self.keep(key, &loaded.image);
         }
-        Ok(image)
+        Ok(loaded.image)
+    }
+
+    /// Reads and decodes `key` on this thread, every frame of it when the
+    /// request is `animated`, past the cache (which keeps single pictures).
+    pub(crate) fn decode_now(&self, key: &ImageKey) -> Result<decode::Loaded, LoadError> {
+        let origin = self.locate(key)?;
+        let loaded = decode::load(&key.url, &origin, key.request)?;
+        self.note(&key.url, loaded.vector);
+        self.state.borrow_mut().decodes += 1;
+        Ok(loaded)
     }
 
     /// Decodes `key` on the compute pool; `waiter` hears of the result in
@@ -591,17 +598,18 @@ impl ImageStore {
             if let Ok(loaded) = &result {
                 self.note(&key.url, loaded.vector);
             }
-            let result = result.map(|loaded| loaded.image);
             let caches = waiters.iter().any(|w| match w {
                 Waiter::Load { cache, .. } => *cache,
                 Waiter::Reshow { .. } | Waiter::Sharpen { .. } | Waiter::Canvas { .. } => true,
             });
             // Kept even when every waiter has gone: the work is done, and
-            // the picture is the first to go if room is needed.
-            if let Ok(image) = &result
+            // the picture is the first to go if room is needed. The frames
+            // of an animation are their item's alone.
+            if let Ok(loaded) = &result
+                && !key.request.animated
                 && (caches || waiters.is_empty())
             {
-                self.keep(&key, image);
+                self.keep(&key, &loaded.image);
             }
             for waiter in waiters {
                 super::delivered(engine, waiter, &key, &result);

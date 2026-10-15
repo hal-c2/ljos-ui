@@ -552,6 +552,7 @@ module QtQuick
 	Accessible QtQuick.Accessible
 	AnchorAnimation QtQuick.AnchorAnimation
 	AnchorChanges QtQuick.AnchorChanges
+	AnimatedImage QtQuick.AnimatedImage
 	Animation QtQuick.Animation
 	AnimationController QtQuick.AnimationController
 	Application QtQuick.Application
@@ -714,6 +715,19 @@ module QtQuick
 		prop target QtQml.QtObject named pointer
 		prop anchors QtQuick.AnchorChangesAnchors pointer readonly
 		signal targetChanged
+	type QtQuick.AnimatedImage AnimatedImage
+		prototype QtQuick.Image named
+		prop playing QtQml.bool named
+		prop paused QtQml.bool named
+		prop currentFrame QtQml.int named
+		prop frameCount QtQml.int named readonly
+		prop speed QtQml.real named
+		signal playingChanged
+		signal pausedChanged
+		signal currentFrameChanged
+		signal frameCountChanged
+		signal speedChanged
+		signal frameChanged
 	type QtQuick.Animation Animation
 		prototype QtQml.QtObject named
 		is uncreatable

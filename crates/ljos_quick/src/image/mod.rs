@@ -18,11 +18,13 @@
 //! scale as well, so that it is sharp there. The item's size, and every
 //! property that says it, stays in logical pixels.
 
+mod animated;
 mod border;
 mod decode;
 mod store;
 mod tint;
 
+pub use animated::AnimatedImage;
 pub use border::{BorderImage, BorderImageBorder};
 pub use decode::{LoadError, Request, requested_size};
 pub use store::{ImageKey, ImageStore};
@@ -213,6 +215,10 @@ struct Run {
     /// A graph node that changes whenever the pixels do, so that the
     /// scene's paint effect and the painted size follow.
     epoch: Option<NodeId>,
+    /// The frames of an animation an `AnimatedImage` shows, and which of
+    /// them it shows. Its own: the cache keeps single pictures.
+    frames: Option<std::sync::Arc<decode::Frames>>,
+    frame: usize,
 }
 
 #[qml_impl]
@@ -403,6 +409,7 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
         return Request {
             width,
             height,
+            animated: is_a::<AnimatedImage>(e, me),
             ..Request::default()
         };
     }
@@ -424,6 +431,7 @@ fn request_of(e: &Engine, me: ObjectId) -> Request {
             cover: keeps_shape && (width > 0 || height > 0),
             clip,
             scale: 0,
+            animated: is_a::<AnimatedImage>(e, me),
         }
     })
 }
@@ -459,15 +467,26 @@ fn reload(e: &Engine, me: ObjectId) {
         url: e.resolve_url(me, &source),
         request: request_of(e, me),
     };
+    // The cache keeps single pictures; the frames are the item's own.
+    let cache = cache && !key.request.animated;
     // A picture another item has loaded is there at once, also for an
     // asynchronous Image.
     if cache && let Some(image) = store.cached(&key) {
-        finish(e, me, key, image, cache);
+        finish(e, me, key, image, cache, None);
         return;
     }
     if is_local(&key.url) && !asynchronous {
-        match store.load_now(&key, cache) {
-            Ok(image) => finish(e, me, key, image, cache),
+        let loaded = if key.request.animated {
+            store.decode_now(&key)
+        } else {
+            store.load_now(&key, cache).map(|image| decode::Loaded {
+                image,
+                vector: false,
+                frames: None,
+            })
+        };
+        match loaded {
+            Ok(loaded) => finish(e, me, key, loaded.image, cache, loaded.frames),
             Err(err) => {
                 unload(e, me, image_status::ERROR);
                 warn(e, me, &err);
@@ -518,10 +537,19 @@ fn in_background(e: &Engine, me: ObjectId, url: &str) -> bool {
         || e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean())
 }
 
-/// The item shows `image` from now on.
-fn finish(e: &Engine, me: ObjectId, key: ImageKey, image: ImageHandle, cache: bool) {
+/// The item shows `image` from now on, or the `frames` it is the first of.
+fn finish(
+    e: &Engine,
+    me: ObjectId,
+    key: ImageKey,
+    image: ImageHandle,
+    cache: bool,
+    frames: Option<std::sync::Arc<decode::Frames>>,
+) {
     let natural = (image.width(), image.height());
     let asked = with_run(e, me, |r| {
+        r.frames = frames;
+        r.frame = 0;
         r.key = Some(key);
         r.natural = natural;
         // Without the cache nobody else has the pixels: the item must.
@@ -538,6 +566,7 @@ fn finish(e: &Engine, me: ObjectId, key: ImageKey, image: ImageHandle, cache: bo
     // others already in place.
     e.batch(|| {
         bump(e, me);
+        animated::loaded(e, me);
         set(e, me, ImageBase::PROGRESS.index, Value::Real(1.0));
         set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(w));
         set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(h));
@@ -564,10 +593,13 @@ fn unload(e: &Engine, me: ObjectId, status: i32) {
         r.lost = false;
         r.sharp = None;
         r.sharpening = None;
+        r.frames = None;
+        r.frame = 0;
         r.requested.is_some()
     }) == Some(true);
     e.batch(|| {
         bump(e, me);
+        animated::loaded(e, me);
         set(e, me, ImageBase::PROGRESS.index, Value::Real(0.0));
         set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(0.0));
         set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(0.0));
@@ -595,8 +627,13 @@ pub(crate) fn delivered(
     e: &Engine,
     waiter: Waiter,
     key: &ImageKey,
-    result: &Result<ImageHandle, LoadError>,
+    result: &Result<decode::Loaded, LoadError>,
 ) {
+    let loaded = result;
+    let result = &loaded
+        .as_ref()
+        .map(|l| l.image.clone())
+        .map_err(Clone::clone);
     match waiter {
         Waiter::Load {
             item,
@@ -607,8 +644,15 @@ pub(crate) fn delivered(
             if !e.is_alive(item) || !current {
                 return;
             }
-            match result {
-                Ok(image) => finish(e, item, key.clone(), image.clone(), cache),
+            match loaded {
+                Ok(l) => finish(
+                    e,
+                    item,
+                    key.clone(),
+                    l.image.clone(),
+                    cache,
+                    l.frames.clone(),
+                ),
                 Err(err) => {
                     unload(e, item, image_status::ERROR);
                     warn(e, item, err);
@@ -685,6 +729,19 @@ fn lost(e: &Engine, err: &LoadError) {
 /// background (painting nothing meanwhile) for an asynchronous one.
 fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     follow(e, me);
+    let frame = with_run(e, me, |r| {
+        let frames = r.frames.as_ref()?;
+        r.shown = true;
+        frames
+            .images
+            .get(r.frame)
+            .or(frames.images.first())
+            .cloned()
+    })
+    .flatten();
+    if frame.is_some() {
+        return frame;
+    }
     let (held, key, lost_before) = with_run(e, me, |r| {
         r.shown = true;
         let held = if r.pinned {

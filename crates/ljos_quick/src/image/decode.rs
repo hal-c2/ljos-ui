@@ -1,5 +1,5 @@
-//! From a URL to pixels: fetching the bytes, decoding PNG and JPEG or
-//! drawing an SVG, and scaling to the size an item asked for.
+//! From a URL to pixels: fetching the bytes, decoding PNG, JPEG and GIF
+//! or drawing an SVG, and scaling to the size an item asked for.
 //!
 //! Everything here is plain data in and out, with no engine in sight, so
 //! the same function runs on the UI thread for a synchronous Image and on
@@ -29,6 +29,9 @@ pub struct Request {
     /// the pixels of a PNG or JPEG are what they are. Everything else in
     /// the request, and the size the item reports, stays in logical pixels.
     pub scale: u32,
+    /// Every frame of an animation is wanted, not only the first: what an
+    /// `AnimatedImage` asks for.
+    pub animated: bool,
 }
 
 impl Request {
@@ -59,6 +62,16 @@ impl Request {
 pub(crate) struct Loaded {
     pub image: ImageHandle,
     pub vector: bool,
+    /// Every frame, for a request that is `animated`; `image` is the first.
+    pub frames: Option<Arc<Frames>>,
+}
+
+/// The frames of an animation, each with how long it is shown.
+#[derive(Debug)]
+pub(crate) struct Frames {
+    pub images: Vec<ImageHandle>,
+    /// Milliseconds, at speed one.
+    pub delays: Vec<u32>,
 }
 
 /// Why a picture could not be shown. `Display` is the text Qt 6.11 prints
@@ -159,20 +172,47 @@ pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loade
         return Ok(Loaded {
             image,
             vector: true,
+            frames: None,
         });
     }
-    let full = decode(url, bytes)?;
+    if request.animated && bytes.starts_with(GIF) {
+        let (width, height, frames) =
+            decode_gif(bytes, true).map_err(|reason| LoadError::decode(url, reason))?;
+        let mut images = Vec::with_capacity(frames.len());
+        let mut delays = Vec::with_capacity(frames.len());
+        for (rgba, delay) in frames {
+            let full = ImageHandle::from_straight(width, height, rgba)
+                .map_err(|err| LoadError::decode(url, err.to_string()))?;
+            images.push(fitted(url, full, request)?);
+            delays.push(delay);
+        }
+        let image = images
+            .first()
+            .cloned()
+            .ok_or_else(|| LoadError::decode(url, "Unable to read image data"))?;
+        return Ok(Loaded {
+            image,
+            vector: false,
+            frames: Some(Arc::new(Frames { images, delays })),
+        });
+    }
+    let image = fitted(url, decode(url, bytes)?, request)?;
+    Ok(Loaded {
+        image,
+        vector: false,
+        frames: None,
+    })
+}
+
+/// `full` scaled and clipped as `request` asks.
+fn fitted(url: &str, full: ImageHandle, request: Request) -> Result<ImageHandle, LoadError> {
     let (w, h) = requested_size((full.width(), full.height()), request);
     let scaled = if (w, h) == (full.width(), full.height()) {
         full
     } else {
         full.resized(w, h).ok_or_else(|| too_large(url))?
     };
-    let image = clip(url, scaled, request.clip, 1.0)?;
-    Ok(Loaded {
-        image,
-        vector: false,
-    })
+    clip(url, scaled, request.clip, 1.0)
 }
 
 /// The suffixes of the formats Qt reads, in the order it tries them on a
@@ -300,8 +340,11 @@ fn draw_svg(url: &str, bytes: &[u8], request: Request) -> Result<ImageHandle, Lo
     clip(url, image, request.clip, scale)
 }
 
-/// Decodes a PNG or JPEG, told apart by their first bytes as Qt does (the
-/// file name's ending plays no part).
+/// The first bytes of a GIF, either version.
+const GIF: &[u8] = b"GIF8";
+
+/// Decodes a PNG, JPEG or GIF (its first frame), told apart by their first
+/// bytes as Qt does (the file name's ending plays no part).
 pub(crate) fn decode(url: &str, bytes: &[u8]) -> Result<ImageHandle, LoadError> {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     const JPEG: &[u8] = &[0xff, 0xd8, 0xff];
@@ -309,6 +352,13 @@ pub(crate) fn decode(url: &str, bytes: &[u8]) -> Result<ImageHandle, LoadError> 
         decode_png(bytes).map_err(|reason| LoadError::decode(url, reason))?
     } else if bytes.starts_with(JPEG) {
         decode_jpeg(bytes).map_err(|reason| LoadError::decode(url, reason))?
+    } else if bytes.starts_with(GIF) {
+        let (width, height, mut frames) =
+            decode_gif(bytes, false).map_err(|reason| LoadError::decode(url, reason))?;
+        let (rgba, _) = frames
+            .pop()
+            .ok_or_else(|| LoadError::decode(url, "Unable to read image data"))?;
+        (width, height, rgba)
     } else {
         return Err(LoadError::decode(url, "Unsupported image format"));
     };
@@ -346,6 +396,69 @@ fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         other => return Err(format!("unexpected PNG colour type {other:?}")),
     };
     Ok((info.width, info.height, rgba))
+}
+
+/// How long a frame that says nothing (a delay of 0) is shown, as
+/// browsers and most viewers do.
+const GIF_DEFAULT_DELAY_MS: u32 = 100;
+
+/// The frames of a GIF as whole pictures (straight RGBA, the size of the
+/// logical screen), each with its delay in milliseconds: every frame is
+/// drawn on what the ones before left, as its disposal says. Only the
+/// first unless `all`.
+fn decode_gif(bytes: &[u8], all: bool) -> Result<(u32, u32, Vec<(Vec<u8>, u32)>), String> {
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut dec = options
+        .read_info(std::io::Cursor::new(bytes))
+        .map_err(|e| e.to_string())?;
+    let (w, h) = (usize::from(dec.width()), usize::from(dec.height()));
+    if w == 0 || h == 0 {
+        return Err("Unable to read image data".to_owned());
+    }
+    let mut canvas = vec![0u8; w * h * 4];
+    let mut out = Vec::new();
+    while let Some(frame) = dec.read_next_frame().map_err(|e| e.to_string())? {
+        let before = (frame.dispose == gif::DisposalMethod::Previous).then(|| canvas.clone());
+        let (left, top) = (usize::from(frame.left), usize::from(frame.top));
+        let fw = usize::from(frame.width);
+        let rows = frame.buffer.chunks_exact(fw.max(1) * 4);
+        for (y, row) in rows.enumerate() {
+            let cy = top + y;
+            if cy >= h {
+                break;
+            }
+            for (x, px) in row.chunks_exact(4).enumerate() {
+                let cx = left + x;
+                // A transparent index leaves what was there.
+                if cx >= w || px[3] == 0 {
+                    continue;
+                }
+                let at = (cy * w + cx) * 4;
+                canvas[at..at + 4].copy_from_slice(px);
+            }
+        }
+        let delay = match u32::from(frame.delay) * 10 {
+            0 => GIF_DEFAULT_DELAY_MS,
+            ms => ms,
+        };
+        out.push((canvas.clone(), delay));
+        if !all {
+            break;
+        }
+        match (frame.dispose, before) {
+            (gif::DisposalMethod::Previous, Some(before)) => canvas = before,
+            (gif::DisposalMethod::Background, _) => {
+                for y in top..(top + usize::from(frame.height)).min(h) {
+                    let from = (y * w + left.min(w)) * 4;
+                    let to = (y * w + (left + fw).min(w)) * 4;
+                    canvas[from..to].fill(0);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok((w as u32, h as u32, out))
 }
 
 fn decode_jpeg(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
@@ -487,8 +600,31 @@ mod tests {
             cover,
             clip: None,
             scale: 0,
+            animated: false,
         }
     }
+
+    /// A 3 by 2 GIF of one colour a frame, each frame `delay` hundredths.
+    fn gif(colours: &[[u8; 3]], delay: u16) -> Vec<u8> {
+        let palette: Vec<u8> = colours.iter().flatten().copied().collect();
+        let mut out = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut out, 3, 2, &palette).unwrap();
+            for i in 0..colours.len() {
+                let frame = gif::Frame {
+                    width: 3,
+                    height: 2,
+                    delay,
+                    buffer: std::borrow::Cow::Owned(vec![u8::try_from(i).unwrap(); 6]),
+                    ..gif::Frame::default()
+                };
+                enc.write_frame(&frame).unwrap();
+            }
+        }
+        out
+    }
+
+    const RGB: [[u8; 3]; 3] = [[255, 0, 0], [0, 255, 0], [0, 0, 255]];
 
     const WIDE: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
         <rect width="40" height="20" fill="#ff0000"/>
@@ -659,5 +795,38 @@ mod tests {
             err.unwrap_err().to_string(),
             "Cannot open: file:///nonexistent/ljos/missing.png"
         );
+    }
+
+    #[test]
+    fn a_gif_is_its_first_frame_unless_every_frame_is_asked_for() {
+        let origin = Origin::Bytes(gif(&RGB, 20).into());
+        let still = load("file:///a.gif", &origin, Request::default()).unwrap();
+        assert!(still.frames.is_none());
+        assert_eq!((still.image.width(), still.image.height()), (3, 2));
+        assert_eq!(&still.image.data()[..4], &[255, 0, 0, 255]);
+
+        let request = Request {
+            animated: true,
+            ..Request::default()
+        };
+        let all = load("file:///a.gif", &origin, request).unwrap();
+        let frames = all.frames.expect("every frame");
+        assert_eq!(frames.delays, [200, 200, 200]);
+        let firsts: Vec<&[u8]> = frames.images.iter().map(|i| &i.data()[..4]).collect();
+        assert_eq!(
+            firsts,
+            [&[255, 0, 0, 255][..], &[0, 255, 0, 255], &[0, 0, 255, 255]]
+        );
+    }
+
+    #[test]
+    fn a_frame_without_a_delay_is_shown_for_a_tenth_of_a_second() {
+        let request = Request {
+            animated: true,
+            ..Request::default()
+        };
+        let origin = Origin::Bytes(gif(&RGB[..2], 0).into());
+        let all = load("file:///a.gif", &origin, request).unwrap();
+        assert_eq!(all.frames.unwrap().delays, [100, 100]);
     }
 }

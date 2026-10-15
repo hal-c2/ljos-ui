@@ -1911,6 +1911,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
+dependencies = [
+ "weezl",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3008,6 +3017,7 @@ dependencies = [
  "cucumber",
  "futures",
  "gherkin",
+ "gif",
  "globset",
  "jpeg-encoder",
  "ljos",
@@ -3340,6 +3350,7 @@ name = "ljos_quick"
 version = "0.0.0"
 dependencies = [
  "bitflags 2.13.2",
+ "gif",
  "jpeg-encoder",
  "ljos_a11y",
  "ljos_compiler",

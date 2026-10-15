@@ -79,8 +79,9 @@ pub use handlers::{
     PointerHandler, grab_permission, grab_transition, snap_mode,
 };
 pub use image::{
-    BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint, ImageStore, LoadError,
-    Request as ImageRequest, fill_mode, image_status, requested_size, tile_mode,
+    AnimatedImage, BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint,
+    ImageStore, LoadError, Request as ImageRequest, fill_mode, image_status, requested_size,
+    tile_mode,
 };
 pub use image::{ImageTint, register_image_tint};
 pub use incubation::{BASE_REFRESH_HZ, MIN_INCUBATION_BUDGET, incubation_budget};
@@ -168,7 +169,7 @@ pub fn register(engine: &Engine) {
         Accessible, Repeater,
         FontMetrics, TextMetrics,
         Grid, Flow, Positioner, LayoutMirroring, SafeArea,
-        Image, BorderImage,
+        Image, BorderImage, AnimatedImage,
         Gradient, GradientStop,
         focus::FocusScope, focus::Window,
         keys::Keys, keys::KeyNavigation, keys::KeyEventObject, keys::Shortcut,

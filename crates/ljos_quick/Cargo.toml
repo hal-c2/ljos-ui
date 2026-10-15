@@ -21,6 +21,7 @@ ljos_text = { path = "../ljos_text" }
 bitflags.workspace = true
 # Image decoding: PNG and JPEG are the formats Image reads.
 png.workspace = true
+gif.workspace = true
 # ObjectId is a slotmap key; an accessibility node is named by its number.
 slotmap.workspace = true
 # RegularExpressionValidator: a DFA says whether a text can still become a
