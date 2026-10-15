@@ -751,6 +751,7 @@ module QtQuick
 		prop organization QtQml.string named
 		prop domain QtQml.string named
 		prop layoutDirection Qt::LayoutDirection readonly
+		prop font QtQuick.font named readonly
 		prop screens QtQml.var named list
 		prop arguments QtQml.var named list
 		signal stateChanged

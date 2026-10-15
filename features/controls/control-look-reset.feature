@@ -3,6 +3,7 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-control.html#palette-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-control.html#locale-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#palette-prop
+#   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#locale-prop
 #   https://doc.qt.io/qt-6/qtquickcontrols-customize.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
@@ -282,3 +283,26 @@ Feature: Handing the font, the colours and the locale of a control back
       And the method "other" of "outer" is called
       Then the property "speaks" of "outer" is "nb_NO"
       And the property "inherits" of "outer" is "nb_NO"
+
+  Rule: A locale nobody gave is the application's
+
+    @api-QtQuick.Controls.Control.locale @api-QtQuick.Controls.Popup.locale
+    Scenario: A control and a popup outside any control have the application's locale
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          objectName: "root"
+          property string control: lone.locale.name
+          property string popup: dialog.locale.name
+          property string format: lone.locale.dateFormat(Locale.ShortFormat)
+          property string month: dialog.locale.standaloneMonthName(0, Locale.ShortFormat)
+          Button { id: lone }
+          Popup { id: dialog }
+        }
+        """
+      Then the property "control" of "root" is "en_US"
+      And the property "popup" of "root" is "en_US"
+      And the property "format" of "root" is "M/d/yy"
+      And the property "month" of "root" is "Jan"

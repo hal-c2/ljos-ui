@@ -8,8 +8,8 @@
 //! is what the oracle's offscreen platform reports.
 
 use ljos_engine::{
-    Atom, Engine, EngineError, ObjectId, QmlList, QmlObject, QmlType, QtObject, Value, WriteKind,
-    qml_singleton,
+    Atom, Engine, EngineError, Font, ObjectId, QmlList, QmlObject, QmlType, QtObject, Value,
+    WriteKind, qml_singleton,
 };
 
 use super::system::WindowSystem;
@@ -181,6 +181,9 @@ pub struct Application {
     pub domain: Atom,
     #[qml(notify, readonly, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
+    /// The font text has when nothing sets one.
+    #[qml(readonly)]
+    pub font: Font,
     #[qml(notify, list)]
     pub screens: QmlList,
     /// What the program was started with; a host fills it.
@@ -199,6 +202,10 @@ impl Default for Application {
             organization: Atom::default(),
             domain: Atom::default(),
             layout_direction: 0,
+            font: Font {
+                pixel_size: ljos_quick::DEFAULT_PIXEL_SIZE as i32,
+                ..Font::default()
+            },
             screens: QmlList::default(),
             arguments: Vec::new(),
         }

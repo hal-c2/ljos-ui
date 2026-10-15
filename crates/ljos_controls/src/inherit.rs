@@ -10,7 +10,8 @@
 //! scheme (`Qt.styleHints.colorScheme`).
 //!
 //! The `locale` of a control or an `ApplicationWindow` is the nearest
-//! such ancestor's as a whole until it is given one.
+//! such ancestor's as a whole until it is given one, and the
+//! application's (`Qt.locale()`) when no ancestor has one.
 //!
 //! Most objects never set any of them. Until the first one does, nothing
 //! walks the tree: one graph node per kind (an epoch, as `LayoutMirroring`
@@ -24,8 +25,8 @@
 //! `control-palette.feature` and `control-look-reset.feature`.
 //!
 //! Limits: an attribute set to the value it would have had anyway is not
-//! seen as set; a locale nobody above gave is `undefined` and not the
-//! application's.
+//! seen as set; a control that has the application's locale keeps the one
+//! it was given when the application's changes.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -329,6 +330,10 @@ pub(crate) fn attach(
         if let Some(lp) = lp {
             if author_set(engine, obj, lp) {
                 bump(engine, Which::Locale);
+            } else if !engine.untrack(|| in_use(engine, Which::Locale)) {
+                // Nothing in the scene has a locale of its own, so nothing
+                // above this one has one to hand down.
+                engine.write_derived(obj, lp, application_locale(engine))?;
             }
             if has_children {
                 engine.watch(obj, lp, move |e, _| {
@@ -497,7 +502,29 @@ fn inherited_locale(engine: &Engine, obj: ObjectId) -> Value {
         }
         cur = above(engine, p);
     }
-    Value::Undefined
+    application_locale(engine)
+}
+
+/// The application's locale, the object `Qt.locale()` gives: what a
+/// control has when nothing above it gave one. Made once per locale name,
+/// so every such control has the same object.
+fn application_locale(engine: &Engine) -> Value {
+    #[derive(Default)]
+    struct Cached(RefCell<Option<(String, Value)>>);
+    let cached = engine.extension::<Cached>();
+    let name = engine.locale_name();
+    if let Some((made_for, locale)) = &*cached.0.borrow()
+        && *made_for == name
+    {
+        return locale.clone();
+    }
+    // Without a script host (a scene built from Rust alone) there is no
+    // locale object to give, and the control has none, as before.
+    let locale = engine
+        .untrack(|| engine.eval_js("Qt.locale()"))
+        .unwrap_or(Value::Undefined);
+    *cached.0.borrow_mut() = Some((name, locale.clone()));
+    locale
 }
 
 fn resolve_locale(engine: &Engine, obj: ObjectId, lp: PropIndex) -> Result<(), EngineError> {

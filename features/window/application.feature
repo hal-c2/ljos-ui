@@ -49,3 +49,17 @@ Feature: The application
   @api-QtQuick.Application.screens
   Scenario: Each screen tells its size
     Then the property "firstScreenWidth" of "root" is at least 1
+
+  @api-QtQuick.Application.font
+  Scenario: The application's font is the size text has when nothing sets one
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "app"
+        property int size: Qt.application.font.pixelSize
+        property int sameSize: Application.font.pixelSize
+      }
+      """
+    Then the property "size" of "app" is 14
+    And the property "sameSize" of "app" is 14
