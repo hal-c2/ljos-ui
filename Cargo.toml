@@ -83,6 +83,8 @@ hyper-util = { version = "0.1.21", default-features = false }
 http = "1.5"
 # HTTP and HTTPS for what an application fetches (ljos_platform `http`).
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+# The TLS errors ureq hands back, to say them as Qt does.
+rustls = { version = "0.23.46", default-features = false }
 http-body-util = "0.1.5"
 bytes = "1.12"
 getrandom = "0.4"

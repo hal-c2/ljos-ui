@@ -16,7 +16,7 @@ build = "build.rs"
 native = ["dep:arboard", "dep:rfd", "dep:futures"]
 # A fetcher that reaches the network (HttpFetcher): HTTP and HTTPS. Without
 # it an application has only the fetcher its host writes, or none.
-http = ["dep:ureq"]
+http = ["dep:ureq", "dep:rustls"]
 
 [dependencies]
 ljos_engine = { path = "../ljos_engine" }
@@ -32,6 +32,7 @@ futures = { workspace = true, optional = true }
 # HttpFetcher: a small blocking client on rustls, called on a thread of
 # the caller's, so no async runtime and nothing on the Engine thread waits.
 ureq = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 
 [build-dependencies]
 # The fallback dialogs' QML is compiled when this crate is built; the crate

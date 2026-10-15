@@ -188,8 +188,34 @@ fn transport(url: &str, err: ureq::Error, failed: impl Fn(String) -> FetchError)
                 .unwrap_or(url);
             FetchError::Failed(format!("Host {host} not found"))
         }
+        ureq::Error::Rustls(tls) => handshake(tls),
+        ureq::Error::Io(io) => match io.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()) {
+            Some(tls) => handshake(tls),
+            None => failed(err.to_string()),
+        },
         _ => failed(err.to_string()),
     }
+}
+
+/// A TLS failure in Qt 6.11's words for the certificate faults it names
+/// alike; any other is said in rustls's.
+fn handshake(err: &rustls::Error) -> FetchError {
+    use rustls::CertificateError as C;
+    let why = match err {
+        rustls::Error::InvalidCertificate(cert) => match cert {
+            C::Expired | C::ExpiredContext { .. } => "The certificate has expired".to_owned(),
+            C::NotValidForName | C::NotValidForNameContext { .. } => {
+                "The host name did not match any of the valid hosts for this certificate".to_owned()
+            }
+            C::UnknownIssuer => {
+                "The issuer certificate of a locally looked up certificate could not be found"
+                    .to_owned()
+            }
+            other => other.to_string(),
+        },
+        other => other.to_string(),
+    };
+    FetchError::Failed(format!("SSL handshake failed: {why}"))
 }
 
 #[cfg(test)]
@@ -372,6 +398,27 @@ mod tests {
         let err = fetcher.fetch(&url).err().unwrap().to_string();
         assert!(err.contains("failed"), "{err}");
         assert!(err.contains(&url), "{err}");
+    }
+
+    #[test]
+    fn a_certificate_fault_is_said_in_qts_words() {
+        let expired = rustls::Error::InvalidCertificate(rustls::CertificateError::Expired);
+        let wrapped = ureq::Error::Io(std::io::Error::other(expired));
+        assert_eq!(
+            transport("https://a.test/", wrapped, FetchError::Failed).to_string(),
+            "SSL handshake failed: The certificate has expired"
+        );
+        let unknown = rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer);
+        assert_eq!(
+            transport(
+                "https://a.test/",
+                ureq::Error::Rustls(unknown),
+                FetchError::Failed
+            )
+            .to_string(),
+            "SSL handshake failed: The issuer certificate of a locally looked up certificate \
+             could not be found"
+        );
     }
 
     #[test]
