@@ -10,7 +10,9 @@ fn session(files: &[(&str, &str)]) -> ReloadSession<QtTypeOracle> {
     for (key, source) in files {
         s.set_file(key, *source);
     }
-    s.start().expect("the files compile");
+    s.start();
+    let failed: Vec<&str> = s.failures().map(|(key, _)| key).collect();
+    assert!(failed.is_empty(), "{failed:?} do not compile");
     s
 }
 
@@ -447,7 +449,7 @@ fn a_session_over_a_directory_reads_it_and_reads_it_again() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem { }\n").unwrap();
     let mut s = ReloadSession::open(dir.path(), QtTypeOracle).unwrap();
-    s.start().unwrap();
+    s.start();
     assert_eq!(s.files().collect::<Vec<_>>(), ["Main"]);
     assert_eq!(
         s.key_of(&dir.path().join("sub/Thing.qml")).as_deref(),

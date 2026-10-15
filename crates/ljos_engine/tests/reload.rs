@@ -26,7 +26,7 @@ fn rig_on(h: Harness, files: &[(&str, &str)]) -> Rig {
         session.set_file(key, *source);
     }
     let mut source = MapSource::new();
-    for (key, file) in session.start().expect("the files compile") {
+    for (key, file) in session.start() {
         source.insert(key.clone(), file.clone());
     }
     h.engine.set_component_source(source);
@@ -343,7 +343,7 @@ fn reload_needs_tracking_and_a_root_it_made() {
     let root = h.load(COUNTER);
     let mut session = ReloadSession::in_memory(QtTypeOracle);
     session.set_file("Main", COUNTER);
-    session.start().unwrap();
+    session.start();
     session.set_file("Main", COUNTER.replace("width: 10", "width: 30"));
     let patch = session.build().unwrap().unwrap();
     let mut swap = |_: &Engine, _: ObjectId, _: ObjectId| {};

@@ -559,6 +559,17 @@ impl std::fmt::Display for CompileFault {
 }
 
 impl CompileFault {
+    /// Why the file cannot be made, as a loader says it after the file's
+    /// URL ([`crate::failure_reason`]).
+    #[must_use]
+    pub fn reason(&self) -> String {
+        if self.line == 0 {
+            self.message.clone()
+        } else {
+            format!("{}:{}: {}", self.line, self.column, self.message)
+        }
+    }
+
     fn of(key: &str, d: &Diagnostic) -> Self {
         Self {
             file: format!("{key}.qml"),
@@ -575,6 +586,12 @@ impl CompileFault {
 /// applied) and what the files now say, and gives the patch from the one to
 /// the other. Only what a change can affect is compiled again: the changed
 /// files and the files that name them.
+///
+/// A file that does not compile when the session starts does not stop it:
+/// the application runs without it, as a program that never makes an object
+/// of the file runs, and [`failures`](Self::failures) says why it is
+/// missing. Such a file stops no later build until it is saved; a save that
+/// does not compile is refused, as any other is.
 #[derive(Debug)]
 pub struct ReloadSession<O> {
     oracle: O,
@@ -583,6 +600,13 @@ pub struct ReloadSession<O> {
     project: Project<O>,
     /// What the application runs.
     live: FileSet,
+    /// The files the application runs without, because they did not
+    /// compile.
+    live_failed: BTreeSet<String>,
+    /// The files that do not compile now and are let be: they did not
+    /// compile in what the application runs either, and were not saved
+    /// since.
+    failed: BTreeMap<String, Vec<CompileFault>>,
     /// What the sources say, for every file that is not dirty.
     compiled: FileSet,
     dirty: BTreeSet<String>,
@@ -592,7 +616,7 @@ pub struct ReloadSession<O> {
     dynamic: Option<HashSet<String>>,
     generation: u64,
     last: u64,
-    pending: Option<(u64, FileSet)>,
+    pending: Option<(u64, FileSet, BTreeSet<String>)>,
     warnings: BTreeMap<String, Vec<CompileFault>>,
 }
 
@@ -605,6 +629,8 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             root: None,
             sources: BTreeMap::new(),
             live: FileSet::new(),
+            live_failed: BTreeSet::new(),
+            failed: BTreeMap::new(),
             compiled: FileSet::new(),
             dirty: BTreeSet::new(),
             all_dirty: true,
@@ -707,6 +733,12 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         &self.live
     }
 
+    /// The files that do not compile, with why, which the application runs
+    /// without: whatever makes an object of one is told the first reason.
+    pub fn failures(&self) -> impl Iterator<Item = (&str, &[CompileFault])> {
+        self.failed.iter().map(|(k, f)| (k.as_str(), f.as_slice()))
+    }
+
     /// The generation the application is at.
     pub fn generation(&self) -> u64 {
         self.generation
@@ -722,8 +754,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// application already runs; `Err` with every error when a file does
     /// not compile, and then nothing of the change is offered.
     pub fn build(&mut self) -> Result<Option<ReloadPatch>, Vec<CompileFault>> {
-        self.compile_dirty()?;
-        if self.compiled.len() == self.live.len()
+        self.compile_dirty(false)?;
+        let failed: BTreeSet<String> = self.failed.keys().cloned().collect();
+        if failed == self.live_failed
+            && self.compiled.len() == self.live.len()
             && self
                 .compiled
                 .iter()
@@ -734,29 +768,41 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return Ok(None);
         }
         self.last += 1;
-        let patch = diff(&self.live, &self.compiled, self.generation, self.last);
-        self.pending = Some((self.last, self.compiled.clone()));
+        let mut patch = diff(&self.live, &self.compiled, self.generation, self.last);
+        // A file that never compiled and is gone now: the application
+        // forgets why it was missing.
+        for key in self.live_failed.difference(&failed) {
+            if !self.compiled.contains_key(key) && !patch.removed.contains(key) {
+                patch.removed.push(key.clone());
+            }
+        }
+        self.pending = Some((self.last, self.compiled.clone(), failed));
         Ok(Some(patch))
     }
 
     /// Compiles everything and takes it as what the application runs, at
-    /// generation 0: how a session starts.
-    pub fn start(&mut self) -> Result<&FileSet, Vec<CompileFault>> {
+    /// generation 0: how a session starts. A file that does not compile is
+    /// left out and told by [`failures`](Self::failures).
+    pub fn start(&mut self) -> &FileSet {
         self.all_dirty = true;
-        self.compile_dirty()?;
+        if let Err(faults) = self.compile_dirty(true) {
+            unreachable!("a start lets every file fail: {faults:?}");
+        }
         self.live = self.compiled.clone();
+        self.live_failed = self.failed.keys().cloned().collect();
         self.pending = None;
-        Ok(&self.live)
+        &self.live
     }
 
     /// The application applied the patch of this generation.
     pub fn ack(&mut self, generation: u64) {
-        if let Some((g, files)) = self.pending.take() {
+        if let Some((g, files, failed)) = self.pending.take() {
             if g == generation {
                 self.live = files;
+                self.live_failed = failed;
                 self.generation = generation;
             } else {
-                self.pending = Some((g, files));
+                self.pending = Some((g, files, failed));
             }
         }
     }
@@ -764,12 +810,19 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// The application refused the patch of this generation: the next build
     /// starts again from what it runs.
     pub fn reject(&mut self, generation: u64) {
-        if self.pending.as_ref().is_some_and(|(g, _)| *g == generation) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|(g, ..)| *g == generation)
+        {
             self.pending = None;
         }
     }
 
-    fn compile_dirty(&mut self) -> Result<(), Vec<CompileFault>> {
+    /// `tolerate`: every file may fail, as at the start. Otherwise only a
+    /// file the application already runs without, and which was not saved
+    /// since, may.
+    fn compile_dirty(&mut self, tolerate: bool) -> Result<(), Vec<CompileFault>> {
         let dynamic = self.project.front().dynamic_names(self.project.oracle());
         if self.dynamic.as_ref() != Some(&dynamic) {
             self.all_dirty = true;
@@ -781,31 +834,49 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         };
         let mut faults = Vec::new();
         let mut done: Vec<(String, Arc<CompiledFile>, Vec<CompileFault>)> = Vec::new();
+        let mut let_be: Vec<(String, Vec<CompileFault>)> = Vec::new();
         for key in &todo {
-            match compile_file(&self.project, key) {
+            let errors: Vec<CompileFault> = match compile_file(&self.project, key) {
                 Err(diagnostics) => {
-                    faults.extend(diagnostics.iter().map(|d| CompileFault::of(key, d)));
-                    if diagnostics.is_empty() {
-                        faults.push(CompileFault {
+                    let mut errors: Vec<CompileFault> = diagnostics
+                        .iter()
+                        .map(|d| CompileFault::of(key, d))
+                        .collect();
+                    if errors.is_empty() {
+                        errors.push(CompileFault {
                             file: format!("{key}.qml"),
                             line: 0,
                             column: 0,
                             message: "the file does not compile".to_owned(),
                         });
                     }
+                    errors
                 }
                 Ok(c) => {
                     let (errors, warnings): (Vec<_>, Vec<_>) = c
                         .diagnostics
                         .iter()
                         .partition(|d| d.severity == Severity::Error);
-                    faults.extend(errors.into_iter().map(|d| CompileFault::of(key, d)));
-                    let warnings = warnings
+                    if errors.is_empty() {
+                        let warnings = warnings
+                            .into_iter()
+                            .map(|d| CompileFault::of(key, d))
+                            .collect();
+                        done.push((key.clone(), Arc::new(c.file), warnings));
+                    }
+                    errors
                         .into_iter()
                         .map(|d| CompileFault::of(key, d))
-                        .collect();
-                    done.push((key.clone(), Arc::new(c.file), warnings));
+                        .collect()
                 }
+            };
+            if errors.is_empty() {
+                continue;
+            }
+            if tolerate || (self.live_failed.contains(key) && !self.dirty.contains(key)) {
+                let_be.push((key.clone(), errors));
+            } else {
+                faults.extend(errors);
             }
         }
         if !faults.is_empty() {
@@ -813,11 +884,18 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return Err(faults);
         }
         for (key, file, warnings) in done {
+            self.failed.remove(&key);
             self.compiled.insert(key.clone(), file);
             self.warnings.insert(key, warnings);
         }
+        for (key, errors) in let_be {
+            self.compiled.remove(&key);
+            self.warnings.remove(&key);
+            self.failed.insert(key, errors);
+        }
         self.compiled
             .retain(|key, _| self.sources.contains_key(key));
+        self.failed.retain(|key, _| self.sources.contains_key(key));
         self.warnings
             .retain(|key, _| self.sources.contains_key(key));
         for key in &todo {

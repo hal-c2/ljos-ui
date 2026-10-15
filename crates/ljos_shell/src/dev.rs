@@ -63,15 +63,30 @@ impl<M> Setup<'_, M> {
     /// here on a save is applied to the running application. Returns the
     /// root for the setup closure to return.
     ///
-    /// A project that does not compile opens an empty window with the
+    /// A file that does not compile only matters when an object of it is
+    /// made. An entry that cannot be made opens an empty window with the
     /// error overlay; the first save that compiles fills it.
     ///
     /// # Errors
     /// `main` is not a `.qml` file that can be read, or its directory
     /// cannot be watched.
     pub fn watch(&mut self, main: &Path) -> Result<ObjectId, SetupError> {
+        self.watch_in(main, None)
+    }
+
+    /// As [`watch`](Self::watch), with the project in `project` when the
+    /// entry is below it (`App/Main.qml` beside the modules it imports);
+    /// None: the entry's directory. The whole project is watched.
+    ///
+    /// # Errors
+    /// As [`watch`](Self::watch), and `main` is not under `project`.
+    pub fn watch_in(
+        &mut self,
+        main: &Path,
+        project: Option<&Path>,
+    ) -> Result<ObjectId, SetupError> {
         let engine = self.engine;
-        let session = DevSession::open(engine, main, Arc::clone(&self.dev.wake))?;
+        let session = DevSession::open_in(engine, main, project, Arc::clone(&self.dev.wake))?;
         let (root, placeholder) = match session.root() {
             Some(root) => (root, None),
             None => {

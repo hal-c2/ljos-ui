@@ -56,6 +56,75 @@ Feature: A reload that fails
     Scenario: No error is reported while nothing has failed
       Then there is no reload error
 
+  Rule: A file that did not compile when the application started holds nothing back
+
+    Background:
+      Given the file "Broken.qml":
+        """qml
+        import QtQuick
+        Item {
+          NoSuchThing { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+          property int taps: 0
+        }
+        """
+      When the property "taps" of "root" is set to 3
+
+    Scenario: Another file's change is applied
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 20
+          property int taps: 0
+        }
+        """
+      And a reload happens
+      Then there is no reload error
+      And the property "width" of "root" is 20
+      And the property "taps" of "root" is 3
+
+    Scenario: The file mended can be used
+      When the file "Broken.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { objectName: "mended" }
+        """
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+          property int taps: 0
+          Broken { }
+        }
+        """
+      And a reload happens
+      Then there is no reload error
+      And the object "mended" exists
+      And the property "taps" of "root" is 3
+
+    Scenario: A save that leaves the file broken is reported
+      When the file "Broken.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          NorThis { }
+        }
+        """
+      And a reload happens
+      Then the reload error is in "Broken.qml" at line 3
+      And the property "taps" of "root" is 3
+
   Rule: A file that is removed while it is used leaves the application as it was
 
     Scenario: The missing file is reported

@@ -12,7 +12,9 @@ fn started(files: &[(&str, &str)]) -> Reloader<QtTypeOracle> {
     for (key, text) in files {
         r.save(key, Some((*text).to_owned()));
     }
-    r.start().expect("the files compile");
+    r.start();
+    let failed: Vec<&str> = r.session().failures().map(|(key, _)| key).collect();
+    assert!(failed.is_empty(), "{failed:?} do not compile");
     r
 }
 
@@ -126,11 +128,13 @@ fn a_file_can_come_and_go() {
 }
 
 #[test]
-fn a_project_that_starts_broken_offers_everything_once_it_compiles() {
+fn a_project_that_starts_broken_offers_the_file_once_it_compiles() {
     let mut r = Reloader::in_memory(QtTypeOracle);
     r.save("Main", Some("import QtQuick\nItem {".to_owned()));
-    let faults = r.start().expect_err("it does not compile");
-    assert_eq!(faults[0].file, "Main.qml");
+    let live = r.start();
+    assert!(live.is_empty());
+    let failed: Vec<&str> = r.session().failures().map(|(key, _)| key).collect();
+    assert_eq!(failed, ["Main"]);
     assert_eq!(r.build(), Build::NoChange);
     r.save("Main", Some(MAIN.to_owned()));
     let Build::Patch { patch, .. } = r.build() else {
@@ -138,6 +142,57 @@ fn a_project_that_starts_broken_offers_everything_once_it_compiles() {
     };
     assert_eq!((patch.base, patch.generation), (0, 1));
     assert!(patch.files.iter().all(|f| f.added));
+    r.ack(1);
+    assert_eq!(r.session().failures().count(), 0);
+}
+
+#[test]
+fn a_file_that_failed_at_the_start_does_not_hold_back_a_save_of_another() {
+    let broken = "import QtQuick\nItem {\n  NoSuchThing { }\n}\n";
+    let mut r = Reloader::in_memory(QtTypeOracle);
+    r.save("Main", Some(MAIN.to_owned()));
+    r.save("Broken", Some(broken.to_owned()));
+    let live = r.start();
+    assert_eq!(live.keys().collect::<Vec<_>>(), ["Main"]);
+
+    r.save("Main", Some(MAIN.replace("10", "20")));
+    assert_eq!(patch_of(&mut r), 1);
+    r.ack(1);
+
+    // A save of the broken file that is still broken is a reload error,
+    // and what runs is kept.
+    r.save("Broken", Some(broken.replace("NoSuchThing", "NorThis")));
+    let Build::Failed(faults) = r.build() else {
+        panic!("expected the save to fail");
+    };
+    assert_eq!(faults[0].file, "Broken.qml");
+
+    // Mended, it is added.
+    r.save("Broken", Some("import QtQuick\nItem {}\n".to_owned()));
+    let Build::Patch { patch, .. } = r.build() else {
+        panic!("expected a patch");
+    };
+    assert!(
+        patch
+            .files
+            .iter()
+            .any(|f| f.added && f.file.file == "Broken")
+    );
+}
+
+#[test]
+fn a_file_that_failed_at_the_start_and_is_removed_goes_from_the_source() {
+    let mut r = Reloader::in_memory(QtTypeOracle);
+    r.save("Main", Some(MAIN.to_owned()));
+    r.save("Broken", Some("import QtQuick\nItem {".to_owned()));
+    r.start();
+    r.save("Broken", None);
+    let Build::Patch { patch, .. } = r.build() else {
+        panic!("expected a patch");
+    };
+    assert_eq!(patch.removed, ["Broken".to_owned()]);
+    r.ack(patch.generation);
+    assert_eq!(r.session().failures().count(), 0);
 }
 
 #[test]
@@ -167,7 +222,7 @@ fn files_on_disk_are_read_when_the_build_starts() {
     let main = root.join("Main.qml");
     fs::write(&main, MAIN).unwrap();
     let mut r = Reloader::open(&root, QtTypeOracle).unwrap();
-    r.start().unwrap();
+    r.start();
 
     // An event with nothing behind it.
     assert!(r.touch(&main, false));
@@ -201,7 +256,7 @@ fn a_new_directory_is_found_by_reading_again() {
     let root = dir.path().canonicalize().unwrap();
     fs::write(root.join("Main.qml"), MAIN).unwrap();
     let mut r = Reloader::open(&root, QtTypeOracle).unwrap();
-    r.start().unwrap();
+    r.start();
     let parts = root.join("parts");
     fs::create_dir(&parts).unwrap();
     fs::write(parts.join("Knob.qml"), "import QtQuick\nItem {}\n").unwrap();

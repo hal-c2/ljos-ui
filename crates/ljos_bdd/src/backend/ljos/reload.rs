@@ -10,7 +10,7 @@ use ljos_dev::{Build, Debounce, Reloader, component_source, fault_of};
 use ljos_engine::{ReloadError, ReloadFault};
 use ljos_runtime::{Clock as _, Time};
 
-use super::{Live, Result, compile, failed, key_of};
+use super::{Live, Result, failed, key_of};
 
 /// What a scenario that reloads has beside the live engine.
 pub(super) struct Rig {
@@ -71,20 +71,13 @@ impl Live {
                 None => Ok(true),
             };
         }
-        match rig.reloader.start() {
-            Ok(files) => {
-                rig.started = true;
-                self.engine
-                    .set_component_source(component_source(&files, None));
-                Ok(true)
-            }
-            // Said as a load without a reload session says it, so that a
-            // scenario reads the same error either way.
-            Err(faults) => Err(compile(wanted).err().unwrap_or_else(|| {
-                let lines: Vec<String> = faults.iter().map(ToString::to_string).collect();
-                failed(lines.join("; "))
-            })),
-        }
+        // A file that does not compile is told by making an object of it,
+        // as without a reload session.
+        rig.reloader.start();
+        rig.started = true;
+        self.engine
+            .set_component_source(component_source(rig.reloader.session(), None));
+        Ok(true)
     }
 
     /// A file is saved with new text, or removed. Nothing happens to the

@@ -88,11 +88,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     }
 
     /// Compiles everything, with every save so far, as what the
-    /// application starts from. On `Err` the application has no files
-    /// yet; the first build that compiles offers all of them as a patch.
-    pub fn start(&mut self) -> Result<FileSet, Vec<CompileFault>> {
+    /// application starts from. A file that does not compile is not among
+    /// them: [`ReloadSession::failures`] says why, and a build offers it
+    /// once it compiles.
+    pub fn start(&mut self) -> FileSet {
         self.take_saves();
-        let files = self.session.start().cloned();
+        let files = self.session.start().clone();
         self.prints.replace(
             self.session
                 .files()

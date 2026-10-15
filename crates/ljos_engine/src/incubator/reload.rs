@@ -262,6 +262,15 @@ impl ComponentSource for PatchedSource {
         }
     }
 
+    fn failure(&self, key: &str) -> Option<String> {
+        // A file of the patch compiled, or is gone.
+        if self.files.contains_key(key) {
+            None
+        } else {
+            self.base.failure(key)
+        }
+    }
+
     fn url(&self, key: &str) -> String {
         self.base.url(key)
     }

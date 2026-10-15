@@ -8,12 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ljos_compiler::{CompileFault, FileSet};
+use ljos_compiler::{CompileFault, ReloadSession};
 use ljos_engine::{Engine, MapSource, ObjectId, ReloadError, ReloadFault, ReloadOutcome};
 use ljos_ir::{ReloadOp, ReloadPatch};
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_runtime::{Clock, CoalesceKey, DrainBudget, UiInbox, WakeHook};
-use qml_front::QtTypeOracle;
+use qml_front::{QtTypeOracle, TypeOracle};
 
 use crate::{
     reloader::Reloader,
@@ -67,16 +67,25 @@ pub fn fault_of(fault: &CompileFault) -> ReloadFault {
     }
 }
 
-/// The files as the engine takes them. `base` is the URL of the project's
-/// directory, for what a file names beside itself (a picture).
+/// The files the application runs as the engine takes them, with why
+/// each file that did not compile is missing. `base` is the URL of the
+/// project's directory, for what a file names beside itself (a picture).
 #[must_use]
-pub fn component_source(files: &FileSet, base: Option<&str>) -> MapSource {
+pub fn component_source<O: TypeOracle + Clone>(
+    session: &ReloadSession<O>,
+    base: Option<&str>,
+) -> MapSource {
     let mut source = match base {
         Some(base) => MapSource::new().with_base_url(base),
         None => MapSource::new(),
     };
-    for (key, file) in files {
+    for (key, file) in session.live() {
         source.insert(key.clone(), file.clone());
+    }
+    for (key, faults) in session.failures() {
+        if let Some(first) = faults.first() {
+            source.insert_failure(key, first.reason());
+        }
     }
     source
 }
@@ -195,21 +204,44 @@ impl DevSession {
     /// `wake` asks the host for a frame; it is called from the watcher's
     /// thread.
     ///
-    /// A project that does not compile is not an error here: there is no
-    /// [`root`](Self::root) yet, [`Engine::last_reload_error`] says why,
-    /// and the first save that compiles makes it.
+    /// A file that does not compile is not an error here, as it is not
+    /// for a program that never makes an object of it. When the entry
+    /// cannot be made there is no [`root`](Self::root) yet,
+    /// [`Engine::last_reload_error`] says why, and the first save that
+    /// compiles makes it.
     pub fn open(engine: &Engine, main: &Path, wake: WakeHook) -> Result<Self, DevError> {
+        Self::open_in(engine, main, None, wake)
+    }
+
+    /// As [`open`](Self::open), over the project in `project` when the
+    /// entry is below it rather than in it (`App/Main.qml` beside the
+    /// modules it imports); None: the entry's directory.
+    pub fn open_in(
+        engine: &Engine,
+        main: &Path,
+        project: Option<&Path>,
+        wake: WakeHook,
+    ) -> Result<Self, DevError> {
         // The watcher is told absolute paths; with the same root they
         // are the project's.
         let main = std::fs::canonicalize(main).map_err(|_| DevError::NotQml(main.to_owned()))?;
-        let (Some(dir), Some(entry)) = (
-            main.parent(),
-            main.file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|n| n.strip_suffix(".qml")),
-        ) else {
+        let dir = match project {
+            Some(p) => std::fs::canonicalize(p).map_err(|_| DevError::NotQml(main.clone()))?,
+            None => main
+                .parent()
+                .ok_or_else(|| DevError::NotQml(main.clone()))?
+                .to_owned(),
+        };
+        let Some(entry) = main
+            .strip_prefix(&dir)
+            .ok()
+            .and_then(|below| below.to_str())
+            .and_then(|below| below.strip_suffix(".qml"))
+            .map(|below| below.replace('\\', "/"))
+        else {
             return Err(DevError::NotQml(main));
         };
+        let dir = dir.as_path();
         prepare(engine);
         let mut reloader = Reloader::open(dir, QtTypeOracle)?;
         let texts = ProjectTexts::new(dir);
@@ -217,18 +249,20 @@ impl DevSession {
         let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
         let mut root = None;
         let mut more_errors = 0;
-        match reloader.start() {
-            Ok(files) => {
-                engine.set_component_source(component_source(&files, Some(&base)));
-                match engine.create_from_url(entry, None, Vec::new()) {
-                    Ok(made) => root = Some(made),
-                    Err(e) => engine.set_last_reload_error(Some(engine.reload_fault(&e))),
-                }
-            }
-            Err(faults) => {
-                engine.set_component_source(MapSource::new().with_base_url(base));
-                more_errors = faults.len().saturating_sub(1);
-                engine.set_last_reload_error(faults.first().map(fault_of));
+        reloader.start();
+        engine.set_component_source(component_source(reloader.session(), Some(&base)));
+        match engine.create_from_url(&entry, None, Vec::new()) {
+            Ok(made) => root = Some(made),
+            Err(e) => {
+                let fault = engine.reload_fault(&e);
+                // The entry's own mistakes, when it is the file that did
+                // not compile.
+                more_errors = reloader
+                    .session()
+                    .failures()
+                    .find(|(key, _)| format!("{key}.qml") == fault.file)
+                    .map_or(0, |(_, faults)| faults.len().saturating_sub(1));
+                engine.set_last_reload_error(Some(fault));
             }
         }
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
@@ -245,7 +279,7 @@ impl DevSession {
         Ok(Self {
             watcher,
             inbox,
-            entry: entry.to_owned(),
+            entry,
             root,
             settling: false,
             more_errors,
