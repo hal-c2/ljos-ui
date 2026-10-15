@@ -73,7 +73,9 @@ impl Engine {
         {
             return JsValue::Handle(held.clone());
         }
-        match self.evaluate_script(s, script) {
+        // Beside the file that imports it, as its own `path` says.
+        let url = crate::loader::join_url(&inst.file.url, &script.path);
+        match self.evaluate_script(s, script, &url) {
             Some(held) => {
                 all.made
                     .borrow_mut()
@@ -84,8 +86,12 @@ impl Engine {
         }
     }
 
-    fn evaluate_script(&self, s: &Scope<'_>, script: &Script) -> Option<JsRef> {
-        let made: Result<ljos_js::rquickjs::Value, _> = s.ctx().eval(script.source.as_bytes());
+    fn evaluate_script(&self, s: &Scope<'_>, script: &Script, url: &str) -> Option<JsRef> {
+        // The source is a function of the script's own address.
+        let made: Result<ljos_js::rquickjs::Value, _> = s
+            .ctx()
+            .eval::<ljos_js::rquickjs::Function, _>(script.source.as_bytes())
+            .and_then(|f| f.call((url,)));
         match made {
             Ok(object) => Some(s.keep(object)),
             Err(error) => {

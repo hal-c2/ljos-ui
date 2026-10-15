@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 8;
+pub const IR_VERSION: u32 = 9;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {

@@ -29,9 +29,21 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
         .iter()
         .map(|n| format!("get {n}() {{ return {n}; }}, set {n}(v) {{ {n} = v; }}"))
         .collect();
-    // The text is not moved, so a fault reads the script's own lines.
+    // A relative address the script writes is the script's own file's, as
+    // Qt resolves it, library or not, whoever calls it: the runtime calls
+    // this function with that file's address, and the script's `Qt` is
+    // the one that knows it (`__ljos_qt`, incubator/dynamic.rs). Written on
+    // the first line, so the text's own lines do not move.
+    let qt = if ["createComponent", "createQmlObject", "resolvedUrl"]
+        .iter()
+        .any(|maker| text.contains(maker))
+    {
+        "const Qt = globalThis.__ljos_qt(__ljos_url);"
+    } else {
+        ""
+    };
     let source = format!(
-        "(function () {{{text}\n;return {{ {} }};\n}})()",
+        "(function (__ljos_url) {{{qt}{text}\n;return {{ {} }};\n}})",
         members.join(", ")
     );
     Script {
