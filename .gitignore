@@ -6,4 +6,5 @@
 /target/features/
 /target/ljos/
 .DS_Store
+__pycache__/
 mise.local.toml
