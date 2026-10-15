@@ -1,0 +1,37 @@
+[package]
+name = "ljos_media"
+description = "QtMultimedia for Ljós: MediaPlayer, SoundEffect, AudioOutput, VideoOutput, Video and MediaDevices, decoded by FilmCraft's pure-Rust codecs and played through cpal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["decode", "audio"]
+# Demux and decode with FilmCraft. Without it every source is an error
+# (MediaPlayer.FormatError, SoundEffect.Error).
+decode = ["dep:filmcraft-codecs", "dep:filmcraft-media", "dep:filmcraft-frame", "dep:filmcraft-time"]
+# Play sound on the system's device. Without it, or with no device, sound
+# goes to a null sink and the engine's clock is the media clock.
+audio = ["dep:cpal"]
+
+[dependencies]
+ljos_engine = { path = "../ljos_engine" }
+ljos_platform = { path = "../ljos_platform" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_render = { path = "../ljos_render", default-features = false }
+ljos_runtime = { path = "../ljos_runtime" }
+thiserror.workspace = true
+filmcraft-codecs = { workspace = true, optional = true }
+filmcraft-media = { workspace = true, optional = true }
+filmcraft-frame = { workspace = true, optional = true }
+filmcraft-time = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+
+[dev-dependencies]
+ljos_compiler = { path = "../ljos_compiler" }
+
+[lints]
+workspace = true

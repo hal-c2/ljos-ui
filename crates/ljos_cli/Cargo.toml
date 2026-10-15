@@ -31,6 +31,7 @@ ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
 ljos_controls = { path = "../ljos_controls" }
 ljos_quick = { path = "../ljos_quick" }
+ljos_media = { path = "../ljos_media" }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 # `ljos test`: the QtTest runner, the IR it is given, and the type oracle

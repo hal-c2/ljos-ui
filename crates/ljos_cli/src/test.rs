@@ -223,6 +223,8 @@ impl Suite {
             let engine = Engine::new();
             ljos_quick::register(&engine);
             ljos_controls::register(&engine);
+            ljos_media::register(&engine);
+            ljos_media::use_null_audio(&engine);
             ljos_test::qttest::register(&engine);
             // The engine would refuse the file too, but cannot say where
             // in it the import is.

@@ -159,6 +159,10 @@ impl Render {
         let engine = Engine::new();
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
+        ljos_media::register(&engine);
+        // The render's clock is virtual: sound on a device would play at
+        // the wrong pace.
+        ljos_media::use_null_audio(&engine);
         register_example(&engine, self.example.as_deref());
         let source = match &self.example {
             Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
@@ -247,6 +251,7 @@ pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
+    ljos_media::register(&engine);
     register_example(&engine, Some(id));
     EngineOracle::from_engine(&engine)
 }

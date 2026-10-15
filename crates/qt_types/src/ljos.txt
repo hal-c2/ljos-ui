@@ -161,6 +161,205 @@ module QtCore
 		method locate
 		method locateAll
 
+module QtMultimedia
+	AudioDevice QtMultimedia.AudioDevice
+	AudioOutput QtMultimedia.AudioOutput
+	MediaDevices QtMultimedia.MediaDevices
+	MediaMetaData QtMultimedia.MediaMetaData
+	MediaPlayer QtMultimedia.MediaPlayer
+	SoundEffect QtMultimedia.SoundEffect
+	Video QtMultimedia.Video
+	VideoOutput QtMultimedia.VideoOutput
+	type QtMultimedia.AudioDevice AudioDevice
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum Mode Null=0 Input=1 Output=2
+		prop id QtQml.string named readonly
+		prop description QtQml.string named readonly
+		prop isDefault QtQml.bool named readonly
+		prop mode Mode readonly
+	type QtMultimedia.AudioOutput AudioOutput
+		prototype QtQml.QtObject named
+		prop device QtMultimedia.AudioDevice named pointer
+		prop volume QtQml.real named
+		prop muted QtQml.bool named
+		signal deviceChanged
+		signal volumeChanged
+		signal mutedChanged
+		method setVolume
+		method setMuted
+		method setDevice
+	type QtMultimedia.MediaDevices MediaDevices
+		prototype QtQml.QtObject named
+		prop audioInputs QtQml.var named list readonly
+		prop audioOutputs QtQml.var named list readonly
+		prop videoInputs QtQml.var named list readonly
+		prop defaultAudioInput QtMultimedia.AudioDevice named pointer readonly
+		prop defaultAudioOutput QtMultimedia.AudioDevice named pointer readonly
+		prop defaultVideoInput QtQml.var named readonly
+		signal audioInputsChanged
+		signal audioOutputsChanged
+		signal videoInputsChanged
+	type QtMultimedia.MediaMetaData MediaMetaData
+		prototype QtQml.QtObject named
+		is uncreatable
+		enum Key Title=0 Author=1 Comment=2 Description=3 Genre=4 Date=5 Language=6 Publisher=7 Copyright=8 Url=9 Duration=10 MediaType=11 FileFormat=12 AudioBitRate=13 AudioCodec=14 VideoBitRate=15 VideoCodec=16 VideoFrameRate=17 AlbumTitle=18 AlbumArtist=19 ContributingArtist=20 TrackNumber=21 Composer=22 LeadPerformer=23 ThumbnailImage=24 CoverArtImage=25 Orientation=26 Resolution=27 HasHdrContent=28
+		method value
+		method insert
+		method remove
+		method keys
+		method clear
+		method isEmpty
+		method stringValue
+		method metaDataKeyToString
+	type QtMultimedia.MediaPlayer MediaPlayer
+		prototype QtQml.QtObject named
+		enum PlaybackState StoppedState=0 PlayingState=1 PausedState=2
+		enum MediaStatus NoMedia=0 LoadingMedia=1 LoadedMedia=2 StalledMedia=3 BufferingMedia=4 BufferedMedia=5 EndOfMedia=6 InvalidMedia=7
+		enum Error NoError=0 ResourceError=1 FormatError=2 NetworkError=3 AccessDeniedError=4
+		enum Loops Infinite=-1 Once=1
+		enum PitchCompensationAvailability AlwaysOn=0 Available=1 Unavailable=2
+		prop source QtQml.url named
+		prop autoPlay QtQml.bool named
+		prop duration QtQml.real named readonly
+		prop position QtQml.real named
+		prop bufferProgress QtQml.real named readonly
+		prop hasAudio QtQml.bool named readonly
+		prop hasVideo QtQml.bool named readonly
+		prop seekable QtQml.bool named readonly
+		prop playing QtQml.bool named readonly
+		prop playbackRate QtQml.real named
+		prop loops QtQml.int named
+		prop playbackState PlaybackState readonly
+		prop mediaStatus MediaStatus readonly
+		prop metaData QtMultimedia.MediaMetaData named pointer readonly
+		prop error Error readonly
+		prop errorString QtQml.string named readonly
+		prop videoOutput QtQml.QtObject named pointer
+		prop audioOutput QtMultimedia.AudioOutput named pointer
+		prop audioBufferOutput QtQml.QtObject named pointer
+		prop audioTracks QtQml.var named list readonly
+		prop videoTracks QtQml.var named list readonly
+		prop subtitleTracks QtQml.var named list readonly
+		prop activeAudioTrack QtQml.int named
+		prop activeVideoTrack QtQml.int named
+		prop activeSubtitleTrack QtQml.int named
+		prop pitchCompensationAvailability PitchCompensationAvailability readonly
+		prop pitchCompensation QtQml.bool named
+		signal sourceChanged
+		signal autoPlayChanged
+		signal durationChanged
+		signal positionChanged
+		signal bufferProgressChanged
+		signal hasAudioChanged
+		signal hasVideoChanged
+		signal seekableChanged
+		signal playingChanged
+		signal playbackRateChanged
+		signal loopsChanged
+		signal playbackStateChanged
+		signal mediaStatusChanged
+		signal videoOutputChanged
+		signal audioOutputChanged
+		signal audioBufferOutputChanged
+		signal pitchCompensationChanged
+		signal tracksChanged
+		signal activeTracksChanged
+		signal metaDataChanged
+		signal errorChanged
+		signal errorOccurred error errorString
+		method play
+		method pause
+		method stop
+		method setPosition
+		method setPlaybackRate
+		method setSource
+		method setPitchCompensation
+	type QtMultimedia.SoundEffect SoundEffect
+		prototype QtQml.QtObject named
+		enum Loop Infinite=-2
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop source QtQml.url named
+		prop loops QtQml.int named
+		prop loopsRemaining QtQml.int named readonly
+		prop volume QtQml.real named
+		prop muted QtQml.bool named
+		prop playing QtQml.bool named readonly
+		prop status Status readonly
+		prop audioDevice QtMultimedia.AudioDevice named pointer
+		signal sourceChanged
+		signal loopsRemainingChanged
+		signal volumeChanged
+		signal mutedChanged
+		signal playingChanged
+		signal statusChanged
+		signal audioDeviceChanged
+		signal loopCountChanged
+		signal loadedChanged
+		method play
+		method stop
+		method isLoaded
+		method isMuted
+		method isPlaying
+	type QtMultimedia.Video Video
+		prototype QtMultimedia.VideoOutput named
+		prop source QtQml.url named
+		prop autoPlay QtQml.bool named
+		prop loops QtQml.int named
+		prop playbackRate QtQml.real named
+		prop volume QtQml.real named
+		prop muted QtQml.bool named
+		prop position QtQml.real named
+		prop duration QtQml.real named readonly
+		prop seekable QtQml.bool named readonly
+		prop hasAudio QtQml.bool named readonly
+		prop hasVideo QtQml.bool named readonly
+		prop playbackState QtQml.int named readonly
+		prop bufferProgress QtQml.real named readonly
+		prop metaData QtMultimedia.MediaMetaData named pointer readonly
+		prop error QtQml.int named readonly
+		prop errorString QtQml.string named readonly
+		signal sourceChanged
+		signal autoPlayChanged
+		signal loopsChanged
+		signal playbackRateChanged
+		signal volumeChanged
+		signal mutedChanged
+		signal positionChanged
+		signal durationChanged
+		signal seekableChanged
+		signal hasAudioChanged
+		signal hasVideoChanged
+		signal playbackStateChanged
+		signal bufferProgressChanged
+		signal paused
+		signal playing
+		signal stopped
+		signal errorOccurred error errorString
+		method play
+		method pause
+		method stop
+		method seek
+	type QtMultimedia.VideoOutput VideoOutput
+		prototype QtQuick.Item named
+		default data
+		enum FillMode Stretch=0 PreserveAspectFit=1 PreserveAspectCrop=2
+		enum EndOfStreamPolicy ClearOutput=0 KeepLastFrame=1
+		prop fillMode FillMode
+		prop endOfStreamPolicy EndOfStreamPolicy
+		prop orientation QtQml.int named
+		prop mirrored QtQml.bool named
+		prop sourceRect QtQml.rect named readonly
+		prop contentRect QtQml.rect named readonly
+		signal fillModeChanged
+		signal endOfStreamPolicyChanged
+		signal orientationChanged
+		signal mirroredChanged
+		signal sourceRectChanged
+		signal contentRectChanged
+		signal sourceChanged
+		method clearOutput
+
 module QtQml
 	import QtQml.Models
 	Binding QtQml.Binding

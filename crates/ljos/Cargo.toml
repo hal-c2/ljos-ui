@@ -16,9 +16,11 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_controls = { path = "../ljos_controls" }
 ljos_platform = { path = "../ljos_platform" }
+# Only with `media` (on by default): QtMultimedia.
+ljos_media = { path = "../ljos_media", optional = true }
 # Only with `shell`: the desktop loop an application runs in. Without it
 # the facade is the runtime alone (headless hosts, tests, other shells).
-ljos_shell = { path = "../ljos_shell", optional = true }
+ljos_shell = { path = "../ljos_shell", optional = true, default-features = false }
 # Unconditional: the compute pool behind `task::spawn`, and with `shell`
 # the UiHandle type the shell's setup hands out, named here so an
 # application needs no second Ljós dependency to hold one. Default
@@ -41,8 +43,11 @@ tempfile.workspace = true
 ljos = { path = ".", features = ["dev-qml"] }
 
 [features]
-default = ["shell"]
+default = ["shell", "media"]
 shell = ["dep:ljos_shell"]
+# QtMultimedia (MediaPlayer, Video, SoundEffect and their kin), in the
+# Engine `engine()` makes and, with `shell`, in the shell's.
+media = ["dep:ljos_media", "ljos_shell?/media"]
 # Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
 # directory of QML at start-up. Never in a shipped application.
 dev-qml = ["dep:ljos_compiler", "dep:qml_front"]

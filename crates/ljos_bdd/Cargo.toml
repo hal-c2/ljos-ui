@@ -52,8 +52,9 @@ ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
 # `.ts` catalogues of scenarios, read as a development build reads them.
 ljos_i18n = { path = "../ljos_i18n" }
 ljos_quick = { path = "../ljos_quick" }
-# An opt-in module scenarios may import (QtQml.XmlListModel).
+# Opt-in modules scenarios may import (QtQml.XmlListModel, QtMultimedia).
 ljos_xml = { path = "../ljos_xml" }
+ljos_media = { path = "../ljos_media" }
 # The system a scenario runs on: its files and its dialogs, answered by
 # the scenario, and a network that reaches the scenario's web server.
 ljos_platform = { path = "../ljos_platform", features = ["http"] }

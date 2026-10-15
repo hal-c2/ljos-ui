@@ -401,6 +401,15 @@ pub trait Backend: fmt::Debug {
     fn reload_count(&mut self) -> Result<u64> {
         Err(self.no_reload())
     }
+    /// What the application would wake for if no one touched it: the
+    /// next timer, the next frame of something moving, an answer it waits
+    /// for. Empty when it is idle. The oracle's event loop cannot be read.
+    fn scheduled(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "seeing what the application has scheduled",
+        })
+    }
     /// Whether the application asked to end (`Qt.quit()`). The oracle is
     /// itself the application that would end, so it cannot say.
     fn quit_requested(&mut self) -> Result<bool> {

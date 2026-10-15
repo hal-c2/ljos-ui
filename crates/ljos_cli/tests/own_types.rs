@@ -76,6 +76,7 @@ fn engine() -> Engine {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
+    ljos_media::register(&engine);
     ljos_test::qttest::register(&engine);
     engine
 }
@@ -979,6 +980,14 @@ fn what_qt_says_of_a_type_ljos_has() {
 /// its properties, `module: Type` a type an import of the module gives a
 /// file on Qt and not here.
 const NOT_YET: &[(&str, &str)] = &[
+    (
+        "QtMultimedia.AudioDevice.id",
+        "a byte array to Qt, which a script sees as an ArrayBuffer; Ljós has no such value, so the id is the device's name as text",
+    ),
+    (
+        "QtMultimedia.Video",
+        "an Item to Qt that holds a VideoOutput and declares no default property; here it is a VideoOutput, and so an item with one",
+    ),
     (
         "QtQuick.Templates: Calendar",
         "Qt's Templates make it a creatable type; here it is the enum holder of QtQuick.Controls alone",

@@ -22,6 +22,7 @@ One directory per language or toolkit area, not per surface. Surfaces are tags.
 | `input/`, `focus/` | pointer, touch, keyboard, focus scopes, IME |
 | `text/`, `animation/`, `i18n/`, `rendering/` | text, animation and timers, localisation, pixels |
 | `states/` | `State` and what it changes (`PropertyChanges`, `AnchorChanges`, `ParentChange`, `StateChangeScript`), `StateGroup`, the `Binding` element; a `Transition` between states is under `animation/` |
+| `multimedia/` | `QtMultimedia`: `MediaPlayer` and its states, `AudioOutput`, `VideoOutput` and `Video`, `SoundEffect`, `MediaDevices`, `MediaMetaData`; the small files they play are in `multimedia/media` |
 | `shapes/` | `QtQuick.Shapes`: `Shape`, `ShapePath` (strokes, joins, caps, dashes, fill rules), the linear, radial and conical fill gradients, `Shape.FillContains`; `Path` and its elements, `PathSvg` data and its errors |
 | `text-input/` | `TextInput` and `TextEdit`: typing, keys, selection, the clipboard, undo, validators, echo modes, composing with an input method |
 | `a11y/` | accessibility tree, names, roles, actions |
@@ -135,6 +136,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given "text" was copied in another application` | the clipboard holds the text when the scenario starts |
 | `Given the HTML "html" was copied in another application` | the clipboard holds formatted text, as a rich text editor elsewhere copies it: the HTML (single quotes for attributes), and its characters as plain text; give it after the QML |
 | `Given the font file "X.ttf"` | make a font file of `features/text/fonts` available beside the QML files under its own name |
+| `Given the media file "X"` | make a sound or a film of `features/multimedia/media` available beside the QML files under its own name |
 | `Given a file "X.ttf" that is not a font` | make a file with that name and no font inside available |
 | `Given the text file "X":` + doc string | make a text file available beside the QML files, each line trimmed of the scenario's indentation |
 | `Given the user has the text file "path":` + doc string | a text file under the user's home directory (`.config/tool.conf`), which is `/home/user` in a scenario (`@ljos-only`: the oracle's home is the real one) |
@@ -230,6 +232,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
 | `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
 | `Then the application was asked to quit` / `Then the application was not asked to quit` | whether `Qt.quit()` was called, which a host answers by ending (`@ljos-only`: the oracle is itself the application that would end) |
+| `Then the application has nothing scheduled` | nothing would wake the application if no one touched it: no timer, no frame of something moving, no answer it waits for (`@ljos-only`: the oracle's event loop cannot be read) |
 | `Then the application has no fault` | no fault got past every boundary, or the one that did was cleared (`@ljos-only`) |
 | `Then the application fault is a "kind" matching "regex"` | the fault no boundary contained, which the host shows: its kind (`"JsException"`, `"JsInterrupted"`, `"JsOutOfMemory"`, `"Panic"`, `"Startup"`) and its message (`@ljos-only`) |
 | `Then the test report is:` + doc string | everything the test runner printed, without its banner lines, the directory of the files, the runner's own name in front of a test, and the time after `skipped` |

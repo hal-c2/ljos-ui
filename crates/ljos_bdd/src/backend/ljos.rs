@@ -270,8 +270,11 @@ impl LjosBackend {
         engine.set_eager_bindings(true);
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
-        // An opt-in module a scenario may import (QtQml.XmlListModel).
+        // Opt-in modules a scenario may import (QtQml.XmlListModel,
+        // QtMultimedia). Sound goes nowhere: the clock is virtual.
         ljos_xml::register(&engine);
+        ljos_media::register(&engine);
+        ljos_media::use_null_audio(&engine);
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
         let log: Rc<RefCell<Vec<LogEntry>>> = Rc::default();
@@ -349,6 +352,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_quick::register(&snapshot);
                 ljos_controls::register(&snapshot);
                 ljos_xml::register(&snapshot);
+                ljos_media::register(&snapshot);
                 ljos::dev::EngineOracle::from_engine(&snapshot)
             })
             .clone()
@@ -1399,6 +1403,29 @@ impl Backend for LjosBackend {
 
     fn reload_count(&mut self) -> Result<u64> {
         self.live()?.reload_count()
+    }
+
+    fn scheduled(&mut self) -> Result<Vec<String>> {
+        let live = self.live()?;
+        let now = live.clock.now();
+        let mut what = Vec::new();
+        if let Some(t) = live.engine.next_timer_deadline() {
+            what.push(format!(
+                "a timer in {} ms",
+                t.saturating_since(now).as_millis()
+            ));
+        }
+        if let Some(t) = live.wake {
+            what.push(format!(
+                "a frame in {} ms",
+                t.saturating_since(now).as_millis()
+            ));
+        }
+        let pending = ljos_platform::Platform::of(&live.engine).pending();
+        if pending > 0 {
+            what.push(format!("{pending} answers from the platform"));
+        }
+        Ok(what)
     }
 
     fn quit_requested(&mut self) -> Result<bool> {

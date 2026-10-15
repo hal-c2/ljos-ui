@@ -247,6 +247,8 @@ impl<M: Send + 'static> ShellApp<M> {
         let engine = Rc::new(Engine::new());
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
+        #[cfg(feature = "media")]
+        ljos_media::register(&engine);
         // Before `setup`: a window knows from its first moment whether it
         // is an item of a scene or a window of the platform.
         let tree = hosting.map(|h| {

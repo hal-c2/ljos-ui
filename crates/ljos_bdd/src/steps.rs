@@ -179,6 +179,17 @@ fn the_font_file(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.resource(&name, &bytes))
 }
 
+// A sound or a film of features/multimedia/media, beside the QML under its
+// own name.
+#[given(regex = r#"^the media file "([^"]+)"$"#)]
+fn the_media_file(w: &mut LjosWorld, name: String) -> StepResult {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../features/multimedia/media")
+        .join(&name);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    w.each(|b| b.resource(&name, &bytes))
+}
+
 // A file with a font's name and something else inside.
 #[given(regex = r#"^a file "([^"]+)" that is not a font$"#)]
 fn not_a_font(w: &mut LjosWorld, name: String) -> StepResult {
@@ -769,6 +780,22 @@ fn window_pixel_near(w: &mut LjosWorld, x: u32, y: u32, tolerance: u8, colour: &
 #[when(regex = r#"^a native handler of "([^"]+)" panics with "([^"]*)"$"#)]
 fn native_handler_panics(w: &mut LjosWorld, object: String, message: String) -> StepResult {
     w.each(|b| b.panic_in(&object, &message))
+}
+
+// Nothing would wake the application: 0 % CPU when idle.
+#[then("the application has nothing scheduled")]
+fn nothing_scheduled(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let what = b.scheduled()?;
+        if what.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the application has scheduled {}",
+                what.join(", ")
+            )))
+        }
+    })
 }
 
 #[then("the application has no fault")]

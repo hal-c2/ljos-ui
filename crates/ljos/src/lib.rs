@@ -99,12 +99,14 @@ pub use ljos_engine::module;
 pub use ljos_engine::{ComponentSource, Engine, MapSource, ObjectId};
 
 /// An Engine with the standard modules registered (QtQml, QtQuick,
-/// QtQuick.Controls and what they pull in), ready for an application's
+/// QtQuick.Controls, with `media` QtMultimedia, and what they pull in), ready for an application's
 /// own `register` functions and its root component.
 pub fn engine() -> Engine {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
+    #[cfg(feature = "media")]
+    ljos_media::register(&engine);
     engine
 }
 
