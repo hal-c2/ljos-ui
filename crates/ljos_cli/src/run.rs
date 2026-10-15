@@ -352,6 +352,7 @@ impl Run {
                 tools.start(setup)?;
                 let engine = setup.engine();
                 engine.set_component_source(source);
+                crate::render::stage_resources(engine, &dir);
                 Ok(engine
                     .create_from_url(
                         &key,

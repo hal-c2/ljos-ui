@@ -237,6 +237,33 @@ impl<O: TypeOracle> Project<O> {
     }
 }
 
+/// The files a project's builds keep inside the program (`RESOURCES` of a
+/// module, `qt_add_resources`), by the address the program names each by
+/// (`qrc:/qt/qml/Thermostat/icons/close.svg`) and where each is on disk. A
+/// file the build names that is not there is left out.
+pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
+    let mut out = Vec::new();
+    for (dir, names) in scan(root)? {
+        if !names.iter().any(|name| name == "CMakeLists.txt") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt")) else {
+            continue;
+        };
+        let at = |path: &str| dir.join(path.strip_prefix("./").unwrap_or(path));
+        for module in discover::cmake(&text) {
+            for file in &module.resources {
+                out.push((module.address(file), at(file)));
+            }
+        }
+        for kept in discover::kept(&text) {
+            out.push((kept.address, at(&kept.path)));
+        }
+    }
+    out.retain(|(_, path)| path.is_file());
+    Ok(out)
+}
+
 /// A file's key: its path from the root without `.qml`, with forward
 /// slashes.
 fn key(root: &Path, path: &Path) -> Option<String> {

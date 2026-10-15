@@ -179,6 +179,7 @@ impl Render {
             }
         });
         engine.set_component_source(source);
+        stage_resources(&engine, &dir);
         let root = engine
             .create_from_url(&key, None, example_properties(self.example.as_deref()))
             .map_err(|e| anyhow::anyhow!("{e}"));
@@ -232,6 +233,26 @@ impl Render {
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
         std::fs::write(&self.out, png).with_context(|| format!("writing {}", self.out.display()))
+    }
+}
+
+/// Makes the pictures the project's build keeps inside its program
+/// (`qrc:/qt/qml/<Module>/icons/a.svg`, as `qt_add_qml_module` lays out a
+/// module's `RESOURCES`) loadable by the address the program names them by.
+pub(crate) fn stage_resources(engine: &Engine, dir: &Path) {
+    const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"];
+    let Ok(files) = ljos_compiler::resources(dir) else {
+        return;
+    };
+    let images = ljos_quick::ImageStore::of(engine);
+    for (address, path) in files {
+        let picture = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| PICTURES.iter().any(|p| e.eq_ignore_ascii_case(p)));
+        if picture && let Ok(bytes) = std::fs::read(&path) {
+            images.register_resource(address, bytes);
+        }
     }
 }
 
@@ -304,6 +325,7 @@ fn compile<O: TypeOracle<Type = EngineType>>(
         match errors.first() {
             None => notes.compiled += 1,
             Some(first) => {
+                source.insert_failure(r.key.clone(), format!("does not compile: {first}"));
                 notes
                     .compile_errors
                     .insert(format!("{}.qml", r.key), first.clone());
@@ -639,6 +661,49 @@ mod tests {
             "{:?}",
             notes.compile_errors
         );
+    }
+
+    #[test]
+    fn a_module_resource_is_drawn_from_the_address_its_build_gives_it() {
+        let dir = project(&[
+            (
+                "CMakeLists.txt",
+                "qt_add_qml_module(app URI Shapes QML_FILES Main.qml RESOURCES icons/red.svg)\n",
+            ),
+            (
+                "icons/red.svg",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"30\"><rect width=\"40\" height=\"30\" fill=\"#ff0000\"/></svg>",
+            ),
+            (
+                "Main.qml",
+                "import QtQuick\nImage { width: 40; height: 30; source: \"qrc:/qt/qml/Shapes/icons/red.svg\" }\n",
+            ),
+        ]);
+        let (result, notes, out) = render(dir.path(), "Main.qml");
+        result.unwrap();
+        assert!(notes.said.is_empty(), "{:?}", notes.said);
+        let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
+        assert_eq!(&image.data[(15 * 40 + 20) * 4..][..4], [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_file_that_did_not_compile_is_said_to_be_that_not_missing() {
+        let dir = project(&[
+            (
+                "Main.qml",
+                "import QtQuick\nItem { Loader { source: \"Broken.qml\" } }\n",
+            ),
+            ("Broken.qml", "import QtQuick\nNoSuchType {}\n"),
+        ]);
+        let (result, notes, _) = render(dir.path(), "Main.qml");
+        result.unwrap();
+        let said: Vec<_> = notes.said.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(
+            said.iter()
+                .any(|t| t.contains("Broken.qml") && t.contains("does not compile")),
+            "{said:?}"
+        );
+        assert!(said.iter().all(|t| !t.contains("No such file")), "{said:?}");
     }
 
     #[test]

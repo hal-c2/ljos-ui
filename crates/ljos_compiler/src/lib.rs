@@ -28,7 +28,7 @@ pub mod tier1;
 
 pub use compile::compile_file;
 pub use dump::dump;
-pub use project::Project;
+pub use project::{Project, resources};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 
 /// A file's compiled form, with what was wrong with it. A file with errors
