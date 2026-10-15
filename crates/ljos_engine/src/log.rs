@@ -135,6 +135,9 @@ impl Engine {
 
     /// An engine warning in category `qml`.
     pub(crate) fn warn(&self, msg: String) {
+        if self.hold_warning(&msg) {
+            return;
+        }
         self.log(LogLevel::Warning, "qml", msg);
     }
 }

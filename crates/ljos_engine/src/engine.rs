@@ -118,6 +118,8 @@ pub(crate) struct Inner {
     /// The slow native call watchdog (slow.rs): its budget and the calls
     /// that ran over it. Untouched beyond one branch while off.
     pub(crate) slow: crate::slow::SlowState,
+    /// What bindings say while their objects are made (delayed_errors.rs).
+    pub(crate) delayed: crate::delayed_errors::DelayedErrors,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -258,6 +260,7 @@ impl Engine {
             tier1: Default::default(),
             faults: Default::default(),
             slow: Default::default(),
+            delayed: Default::default(),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {

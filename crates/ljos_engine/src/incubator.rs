@@ -381,6 +381,20 @@ impl Engine {
         lenient: bool,
         allocated: impl FnOnce(ObjectId),
     ) -> Result<ObjectId, EngineError> {
+        let errors = self.open_creation();
+        let made = self.create_from_template_held(template, parent, props, lenient, allocated);
+        self.close_creation(errors);
+        made
+    }
+
+    fn create_from_template_held(
+        &self,
+        template: &Template,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        lenient: bool,
+        allocated: impl FnOnce(ObjectId),
+    ) -> Result<ObjectId, EngineError> {
         let mut cr = Creation::default();
         let root = self.allocate_template(&mut cr, template, parent)?;
         allocated(root);
@@ -492,6 +506,18 @@ impl Engine {
     /// the delegate runs: the place to give the context its row and the
     /// root its visual parent.
     pub(crate) fn create_delegate(
+        &self,
+        component: ObjectId,
+        owner: Option<ObjectId>,
+        setup: impl FnOnce(&Engine, ObjectId, ContextId),
+    ) -> Result<ObjectId, EngineError> {
+        let errors = self.open_creation();
+        let made = self.create_delegate_held(component, owner, setup);
+        self.close_creation(errors);
+        made
+    }
+
+    fn create_delegate_held(
         &self,
         component: ObjectId,
         owner: Option<ObjectId>,
@@ -1890,8 +1916,11 @@ impl Engine {
         }
         // A `var` holds the array the expression gives, not a copy of it.
         let kept = matches!(hint, TypeTag::Var);
+        let (obj, prop) = (t.obj, t.prop);
         let r = self.bind_fallible(t.obj, t.prop, move |e| {
-            e.eval_expr_as(&i, expr, &hint, &[], false, kept)
+            e.run_binding(obj, prop, || {
+                e.eval_expr_as(&i, expr, &hint, &[], false, kept)
+            })
         });
         match r {
             Ok(()) => {
@@ -2440,6 +2469,8 @@ pub struct CreationJob {
     done: Option<DoneFn>,
     /// Set for a view's delegate, which is not a child of its owner.
     setup: Option<DelegateSetup>,
+    /// What its bindings say, held from the first slice to the last.
+    errors: Option<crate::delayed_errors::CreationErrors>,
 }
 
 impl std::fmt::Debug for CreationJob {
@@ -2516,6 +2547,7 @@ impl CreationJob {
                 handle: handle.clone(),
                 done: None,
                 setup: None,
+                errors: None,
             },
             handle,
         )
@@ -2559,6 +2591,7 @@ impl CreationJob {
                 handle: CreationHandle::default(),
                 done: None,
                 setup: None,
+                errors: None,
             },
             SharedCreation(inner),
         )
@@ -2629,6 +2662,24 @@ impl CreationJob {
         let Some(e) = self.engine.upgrade().map(Engine::from_inner) else {
             return self.abandon(None, EngineError::Load("the engine is gone".into()));
         };
+        let errors = match self.errors {
+            Some(c) => {
+                e.resume_creation(c);
+                c
+            }
+            None => *self.errors.insert(e.open_creation()),
+        };
+        let poll = self.run(&e, check);
+        if matches!(poll, JobPoll::Done) {
+            e.close_creation(errors);
+        } else {
+            e.pause_creation(errors);
+        }
+        poll
+    }
+
+    fn run(&mut self, e: &Engine, check: &dyn Fn() -> bool) -> JobPoll {
+        let e = e.clone();
         loop {
             if self.handle.is_cancelled() {
                 return self.abandon(Some(&e), EngineError::Load("creation was cancelled".into()));
