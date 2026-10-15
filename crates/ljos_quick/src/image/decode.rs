@@ -71,6 +71,10 @@ pub enum LoadError {
     UnknownProtocol(String),
     #[error("Error decoding: {url}: {reason}")]
     Decode { url: String, reason: String },
+    /// A network source whose bytes did not arrive, in the words of the
+    /// failure (a refused connection, a reply that was not a success).
+    #[error("{0}")]
+    Network(String),
 }
 
 impl LoadError {
@@ -89,6 +93,8 @@ pub(crate) enum Origin {
     Bytes(Arc<[u8]>),
     /// A file to read.
     File(std::path::PathBuf),
+    /// A URL to fetch (`http`, `https`): only ever in the background.
+    Remote,
 }
 
 /// The scheme of `url`, lower case, when it has one. A single letter is a
@@ -127,8 +133,8 @@ pub(crate) fn locate(url: &str, registered: Option<Arc<[u8]>>) -> Result<Origin,
         Some("data") => data_url(url).map(|b| Origin::Bytes(b.into())),
         // Resource URLs name nothing on disk: only registered ones exist.
         Some("qrc") => Err(LoadError::CannotOpen(url.to_owned())),
-        // `http` and `https` are not loaded in this milestone and get the
-        // message Qt has for a scheme it has no handler for.
+        Some("http" | "https") => Ok(Origin::Remote),
+        // What has no handler gets the message Qt has for that.
         Some(other) => Err(LoadError::UnknownProtocol(other.to_owned())),
     }
 }
@@ -141,6 +147,11 @@ pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loade
         Origin::File(path) => {
             read = read_file(path).ok_or_else(|| LoadError::CannotOpen(url.to_owned()))?;
             &read
+        }
+        // The fetch happens before, on a thread of its own; whoever asks
+        // for a network picture on the spot cannot have it.
+        Origin::Remote => {
+            return Err(LoadError::UnknownProtocol(scheme(url).unwrap_or_default()));
         }
     };
     if is_svg(bytes) {

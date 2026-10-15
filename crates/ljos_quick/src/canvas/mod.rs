@@ -318,7 +318,7 @@ impl Canvas {
         run.borrow_mut()
             .images
             .insert(key.url.clone(), Loaded::Loading);
-        store.request(key, Waiter::Canvas { item: me });
+        store.request(e, key, Waiter::Canvas { item: me });
     }
 
     #[qml(invokable, name = "unloadImage")]

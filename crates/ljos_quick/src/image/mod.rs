@@ -10,7 +10,8 @@
 //! Loading follows Qt 6.11 as measured on qml6. A local file loads on the
 //! spot unless `asynchronous` is set; then it is read and decoded on the
 //! compute pool and arrives with a later frame. While a new source loads,
-//! the item keeps the size of the old picture.
+//! the item keeps the size of the old picture. A network source is
+//! always loaded that way, whatever `asynchronous` says.
 //!
 //! An SVG is a drawing rather than pixels: it is made at the size asked
 //! for (stretched when both sides are), and on screen at the display's
@@ -256,7 +257,9 @@ impl ImageBase {
 /// `Image` (QtQuick).
 ///
 /// `mipmap` is accepted and has no effect: both backends scale a picture
-/// down in one step. Network sources (`http`, `https`) are not loaded.
+/// down in one step. A network source (`http`, `https`) is fetched with
+/// the fetcher the host installed on the platform, always in the
+/// background.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -462,13 +465,7 @@ fn reload(e: &Engine, me: ObjectId) {
         finish(e, me, key, image, cache);
         return;
     }
-    // Qt reads only local files on the spot; whatever else has a scheme,
-    // a `data:` URL included, arrives later.
-    let local = matches!(
-        decode::scheme(&key.url).as_deref(),
-        None | Some("file" | "qrc")
-    );
-    if local && !asynchronous {
+    if is_local(&key.url) && !asynchronous {
         match store.load_now(&key, cache) {
             Ok(image) => finish(e, me, key, image, cache),
             Err(err) => {
@@ -497,6 +494,7 @@ fn reload(e: &Engine, me: ObjectId) {
         );
     });
     store.request(
+        e,
         key,
         Waiter::Load {
             item: me,
@@ -504,6 +502,20 @@ fn reload(e: &Engine, me: ObjectId) {
             cache,
         },
     );
+}
+
+/// Whether Qt reads `url` on the spot: only local files are; whatever
+/// else has a scheme, a `data:` URL or a network source, arrives later
+/// whatever `asynchronous` says.
+fn is_local(url: &str) -> bool {
+    matches!(decode::scheme(url).as_deref(), None | Some("file" | "qrc"))
+}
+
+/// Whether pixels of `url` the store dropped are made again in the
+/// background: always for a network source, which is never waited for.
+fn in_background(e: &Engine, me: ObjectId, url: &str) -> bool {
+    matches!(decode::scheme(url).as_deref(), Some("http" | "https"))
+        || e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean())
 }
 
 /// The item shows `image` from now on.
@@ -693,11 +705,10 @@ fn pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     if lost_before {
         return None;
     }
-    let asynchronous = e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean());
-    if asynchronous {
+    if in_background(e, me, &key.url) {
         let ask = with_run(e, me, |r| !std::mem::replace(&mut r.reshowing, true)) == Some(true);
         if ask {
-            store.request(key, Waiter::Reshow { item: me });
+            store.request(e, key, Waiter::Reshow { item: me });
         }
         return None;
     }
@@ -751,10 +762,9 @@ fn sharp_pixels(e: &Engine, me: ObjectId) -> Option<ImageHandle> {
     if asked {
         return None;
     }
-    let asynchronous = e.untrack(|| e.read(me, ImageBase::ASYNCHRONOUS.index).to_boolean());
-    if asynchronous {
+    if in_background(e, me, &want.url) {
         with_run(e, me, |r| r.sharpening = Some(scale));
-        store.request(want, Waiter::Sharpen { item: me });
+        store.request(e, want, Waiter::Sharpen { item: me });
         return None;
     }
     match store.load_now(&want, !pinned) {

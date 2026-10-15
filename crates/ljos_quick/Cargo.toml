@@ -37,6 +37,8 @@ ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
 # Image tests make their JPEG fixtures in code.
 jpeg-encoder.workspace = true
+# Network pictures are fetched from a listener the test runs on loopback.
+ljos_platform = { path = "../ljos_platform", features = ["http"] }
 
 [lints]
 workspace = true

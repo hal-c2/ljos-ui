@@ -5,7 +5,10 @@
 //! byte budget (ARCHITECTURE §8.5). It also runs the background decodes:
 //! a job on the compute pool reads and decodes, sends the pixels back
 //! through a bounded [`UiInbox`], and that send is what wakes the host.
-//! Nothing here polls.
+//! Nothing here polls. A network source is fetched first, on a thread
+//! of its own through the platform's fetcher (a fetch may wait on a slow
+//! server for as long as the fetcher allows, which a pool thread must
+//! not), and decoded on that thread; its result comes back the same way.
 //!
 //! The store never keeps a picture alive that is over budget and that no
 //! display list shows: an item does not own its pixels, it asks for them
@@ -20,6 +23,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use ljos_engine::{Engine, ObjectId, Value};
+use ljos_platform::{Fetcher, Platform, reason_phrase};
 use ljos_reactive::NodeId;
 use ljos_render::ImageHandle;
 use ljos_runtime::{
@@ -441,7 +445,7 @@ impl ImageStore {
     /// Decodes `key` on the compute pool; `waiter` hears of the result in
     /// a later [`ImageStore::deliver`]. Several waiters for one key share
     /// one decode.
-    pub(crate) fn request(&self, key: ImageKey, waiter: Waiter) {
+    pub(crate) fn request(&self, engine: &Engine, key: ImageKey, waiter: Waiter) {
         let start = {
             let mut s = self.state.borrow_mut();
             if let Some(waiters) = s.jobs.get_mut(&key) {
@@ -457,7 +461,7 @@ impl ImageStore {
             }
         };
         if start {
-            self.start(key);
+            self.start(engine, key);
         }
     }
 
@@ -508,12 +512,18 @@ impl ImageStore {
         drop(dropped);
     }
 
-    fn start(&self, key: ImageKey) {
+    fn start(&self, engine: &Engine, key: ImageKey) {
         self.state.borrow_mut().in_flight += 1;
         let located = self.locate(&key);
         let tx = self.tx.clone();
         let signal = Arc::clone(&self.signal);
+        let fetcher = matches!(located, Ok(Origin::Remote)).then(|| Platform::of(engine).fetcher());
+        let remote = fetcher.is_some();
         let work = move || {
+            let located = match (located, &fetcher) {
+                (Ok(Origin::Remote), Some(fetcher)) => fetch(fetcher.as_ref(), &key.url),
+                (located, _) => located,
+            };
             let result = located.and_then(|origin| {
                 // A decoder that panics on a hostile file must still answer,
                 // or its Image would say "Loading" for ever.
@@ -535,6 +545,17 @@ impl ImageStore {
         // sides can reach: when the queue is full it runs here instead.
         // Late beats never.
         let slot: Slot = Arc::new(Mutex::new(Some(Box::new(work))));
+        if remote {
+            let for_thread = Arc::clone(&slot);
+            if std::thread::Builder::new()
+                .name("ljos-image-fetch".to_owned())
+                .spawn(move || run_once(&for_thread))
+                .is_err()
+            {
+                run_once(&slot);
+            }
+            return;
+        }
         let for_pool = Arc::clone(&slot);
         if ComputePool::global()
             .spawn(Lane::Visible, move || run_once(&for_pool))
@@ -565,7 +586,7 @@ impl ImageStore {
                 (waiters, next)
             };
             if let Some(next) = next {
-                self.start(next);
+                self.start(engine, next);
             }
             if let Ok(loaded) = &result {
                 self.note(&key.url, loaded.vector);
@@ -601,6 +622,19 @@ impl Evictable for &ImageStore {
 impl Evictable for ImageStore {
     fn evict(&mut self, level: MemoryPressure) -> usize {
         self.trim(level)
+    }
+}
+
+/// The bytes at `url`, fetched on this (background) thread, or why there
+/// are none in the words Qt logs.
+fn fetch(fetcher: &dyn Fetcher, url: &str) -> Result<Origin, LoadError> {
+    match fetcher.request(&ljos_platform::Request::get(url)) {
+        Ok(reply) if reply.ok() => Ok(Origin::Bytes(reply.body.into())),
+        Ok(reply) => Err(LoadError::Network(format!(
+            "Error transferring {url} - server replied: {}",
+            reason_phrase(reply.status)
+        ))),
+        Err(err) => Err(LoadError::Network(err.to_string())),
     }
 }
 

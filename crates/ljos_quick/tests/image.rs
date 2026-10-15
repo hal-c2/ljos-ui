@@ -332,6 +332,166 @@ Item {
     );
 }
 
+// ----------------------------------------------------------------- network
+
+/// A web server on loopback that answers `/red.png` (30×20) and 404 for
+/// anything else, one request per connection, until the test ends.
+fn web_server() -> String {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let red = png(30, 20, RED);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                    break;
+                }
+            }
+            let (status, body) = if line.starts_with("GET /red.png ") {
+                ("200 OK", red.clone())
+            } else {
+                ("404 Not Found", Vec::new())
+            };
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    address
+}
+
+fn networked() -> Engine {
+    let e = engine();
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(ljos_platform::HttpFetcher::new()));
+    e
+}
+
+#[test]
+fn a_network_picture_loads_in_the_background_even_when_not_asynchronous() {
+    let server = web_server();
+    let e = networked();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+Item {{
+    Image {{ objectName: "picture"; asynchronous: false; source: "{server}/red.png" }}
+}}
+"#
+        ),
+    );
+    let picture = find(&e, root, "picture");
+    assert_eq!(status(&e, picture), image_status::LOADING);
+    assert_eq!(num(&e, picture, "progress"), 0.0);
+    ImageStore::of(&e).finish(&e);
+    assert_eq!(status(&e, picture), image_status::READY);
+    assert_eq!(num(&e, picture, "progress"), 1.0);
+    assert_eq!(implicit(&e, picture), (30.0, 20.0));
+    assert_eq!(source_size(&e, picture), (30.0, 20.0));
+    assert!(warnings(&e).is_empty());
+}
+
+#[test]
+fn a_network_picture_the_server_lacks_fails_with_qts_words() {
+    let server = web_server();
+    let e = networked();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+Item {{
+    Image {{ objectName: "picture"; source: "{server}/gone.png" }}
+}}
+"#
+        ),
+    );
+    let picture = find(&e, root, "picture");
+    ImageStore::of(&e).finish(&e);
+    assert_eq!(status(&e, picture), image_status::ERROR);
+    assert_eq!(
+        warnings(&e),
+        [format!(
+            "file:///Main.qml:4:5: QML Image: Error transferring {server}/gone.png - server replied: Not Found"
+        )]
+    );
+}
+
+#[test]
+fn without_a_network_a_network_picture_is_an_error() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    Image { objectName: "picture"; source: "https://example.invalid/a.png" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    assert_eq!(status(&e, picture), image_status::LOADING);
+    ImageStore::of(&e).finish(&e);
+    assert_eq!(status(&e, picture), image_status::ERROR);
+    assert_eq!(
+        warnings(&e),
+        [
+            "file:///Main.qml:4:5: QML Image: this application cannot fetch https://example.invalid/a.png: it has no network access"
+        ]
+    );
+}
+
+/// A fetcher that answers only when the test lets it.
+struct Gate {
+    open: std::sync::Mutex<mpsc::Receiver<()>>,
+    bytes: Vec<u8>,
+}
+
+impl ljos_platform::Fetcher for Gate {
+    fn fetch(&self, _url: &str) -> Result<Vec<u8>, ljos_platform::FetchError> {
+        let _ = self.open.lock().unwrap().recv();
+        Ok(self.bytes.clone())
+    }
+}
+
+#[test]
+fn a_network_picture_left_behind_while_on_its_way_is_ignored() {
+    let (e, store) = pictures();
+    let (open, gate) = mpsc::channel();
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(Gate {
+        open: std::sync::Mutex::new(gate),
+        bytes: png(30, 20, GREEN),
+    }));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    Image { objectName: "picture"; source: "http://example.invalid/a.png" }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    assert_eq!(status(&e, picture), image_status::LOADING);
+    set(&e, picture, "source", Value::from("blue.png"));
+    assert_eq!(status(&e, picture), image_status::READY);
+    open.send(()).unwrap();
+    store.finish(&e);
+    assert_eq!(status(&e, picture), image_status::READY);
+    assert_eq!(implicit(&e, picture), (60.0, 40.0));
+    assert!(warnings(&e).is_empty());
+}
+
 #[test]
 fn clearing_and_changing_the_source() {
     let (e, _store) = pictures();
