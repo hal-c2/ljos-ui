@@ -2117,7 +2117,15 @@ impl Engine {
             .resolve(b.scope)
             .map_or(JsValue::Undefined, |o| self.to_js(&Value::Object(o)));
         let _calling = self.calling(inst);
-        self.run_js("binding", |s| {
+        // A handler's dispatch includes every binding its writes wake, so
+        // it is told apart from a binding, and both are named by their line.
+        let label = match b.kind {
+            ljos_ir::BindingKind::Property => "binding",
+            ljos_ir::BindingKind::Handler => "signal handler",
+            ljos_ir::BindingKind::Function => "function",
+        };
+        let what = || format!("{}:{}:{}", file.url, b.span.line, b.span.column);
+        self.run_js_naming(label, what, |s| {
             let mut a: Vec<JsValue> = Vec::with_capacity(b.params.len() + args.len());
             for p in &b.params {
                 a.push(self.arg_js(s, inst, &p.arg));

@@ -739,6 +739,30 @@ fn soft_budget_overrun_does_not_fail_the_call() {
 }
 
 #[test]
+fn the_overrun_is_named_and_only_then() {
+    let host = plain();
+    let named = std::cell::Cell::new(0);
+    let what = || {
+        named.set(named.get() + 1);
+        "Main.qml:3:5".to_owned()
+    };
+    let roomy = Slice {
+        soft: Duration::from_secs(1),
+        hard: Duration::from_secs(2),
+    };
+    host.enter_naming("binding", what, roomy, |s| s.eval::<f64, _>("1"))
+        .unwrap();
+    assert_eq!(named.get(), 0);
+    let tight = Slice {
+        soft: Duration::ZERO,
+        hard: Duration::from_secs(1),
+    };
+    host.enter_naming("binding", what, tight, |s| s.eval::<f64, _>("1"))
+        .unwrap();
+    assert_eq!(named.get(), 1);
+}
+
+#[test]
 fn panic_inside_a_host_callback_is_a_fault() {
     let (host, store) = host_with_store();
     store.insert(1, 1.0, 1.0);

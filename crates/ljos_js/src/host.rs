@@ -949,6 +949,19 @@ impl JsHost {
         slice: Slice,
         f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
     ) -> Result<R, JsFault> {
+        self.enter_naming(label, String::new, slice, f)
+    }
+
+    /// [`Host::enter`], with `what` naming the code that ran (a QML file
+    /// and line) in the warning over `slice.soft`. `what` is only called
+    /// then, so a dispatch within its budget pays nothing for the name.
+    pub fn enter_naming<R>(
+        &self,
+        label: &str,
+        what: impl FnOnce() -> String,
+        slice: Slice,
+        f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
+    ) -> Result<R, JsFault> {
         if self.state.entered.get() {
             return self.enter_nested(label, f);
         }
@@ -977,7 +990,12 @@ impl JsHost {
         drop(guard);
 
         if elapsed > slice.soft {
-            tracing::warn!(label, ?elapsed, soft = ?slice.soft, "JS dispatch exceeded its soft budget");
+            let what = what();
+            if what.is_empty() {
+                tracing::warn!(label, ?elapsed, soft = ?slice.soft, "JS dispatch exceeded its soft budget");
+            } else {
+                tracing::warn!(label, what, ?elapsed, soft = ?slice.soft, "JS dispatch exceeded its soft budget");
+            }
         }
         self.flush_released();
         match outcome {

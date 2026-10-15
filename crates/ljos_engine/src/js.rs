@@ -650,6 +650,17 @@ impl Engine {
         label: &str,
         f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
     ) -> Option<R> {
+        self.run_js_naming(label, String::new, f)
+    }
+
+    /// [`Engine::run_js`], with `what` naming the code for the warning a
+    /// dispatch over its soft budget gives (`ljos_js::Host::enter_naming`).
+    pub(crate) fn run_js_naming<R>(
+        &self,
+        label: &str,
+        what: impl FnOnce() -> String,
+        f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
+    ) -> Option<R> {
         let js = match self.js() {
             Ok(js) => js,
             Err(e) => {
@@ -658,7 +669,7 @@ impl Engine {
             }
         };
         let slice = js.slice();
-        match js.host.enter(label, slice, f) {
+        match js.host.enter_naming(label, what, slice, f) {
             Ok(v) => Some(v),
             Err(fault) => {
                 self.report_js_fault(&fault);
