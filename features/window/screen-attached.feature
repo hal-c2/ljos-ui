@@ -68,12 +68,10 @@ Feature: The attached Screen
         Item {
           objectName: "inner"
           readonly property var pairs: [
-            ["name", Screen.name, w.screen.name],
+            ["name", Screen.name, w.screen.name], ["model", Screen.model, w.screen.model],
             ["manufacturer", Screen.manufacturer, w.screen.manufacturer],
-            ["model", Screen.model, w.screen.model],
             ["serialNumber", Screen.serialNumber, w.screen.serialNumber],
-            ["width", Screen.width, w.screen.width],
-            ["height", Screen.height, w.screen.height],
+            ["width", Screen.width, w.screen.width], ["height", Screen.height, w.screen.height],
             ["desktopAvailableWidth", Screen.desktopAvailableWidth, w.screen.desktopAvailableWidth],
             ["desktopAvailableHeight", Screen.desktopAvailableHeight, w.screen.desktopAvailableHeight],
             ["logicalPixelDensity", Screen.logicalPixelDensity, w.screen.logicalPixelDensity],
@@ -81,8 +79,7 @@ Feature: The attached Screen
             ["devicePixelRatio", Screen.devicePixelRatio, w.screen.devicePixelRatio],
             ["primaryOrientation", Screen.primaryOrientation, w.screen.primaryOrientation],
             ["orientation", Screen.orientation, w.screen.orientation],
-            ["virtualX", Screen.virtualX, w.screen.virtualX],
-            ["virtualY", Screen.virtualY, w.screen.virtualY]]
+            ["virtualX", Screen.virtualX, w.screen.virtualX], ["virtualY", Screen.virtualY, w.screen.virtualY]]
           readonly property string differs: pairs.filter(p => p[1] !== p[2]).map(p => p[0]).join(",")
           readonly property bool known: Screen.width > 0
         }
