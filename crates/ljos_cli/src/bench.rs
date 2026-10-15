@@ -156,9 +156,7 @@ fn absolute(path: &Path) -> std::io::Result<PathBuf> {
 /// A program named with a directory is a file; a bare name is looked up
 /// on PATH by whoever starts it.
 fn program(path: &Path) -> std::io::Result<PathBuf> {
-    if path.components().count() > 1 {
-        absolute(path)
-    } else if path.exists() {
+    if path.components().count() > 1 || path.exists() {
         absolute(path)
     } else {
         Ok(path.to_owned())
