@@ -300,10 +300,11 @@ fn a_project_that_starts_broken_gets_its_root_when_it_compiles() {
 #[test]
 fn saves_within_the_quiet_time_are_one_reload() {
     let mut app = app(&[("Main.qml", MAIN)]);
+    // Back to back: a pause between the saves would be stretched past the
+    // quiet time on a loaded machine. That every change restarts the quiet
+    // time is the debouncer's own test, on a clock it controls.
     app.save("Main.qml", &MAIN.replace("width: 10;", "width: 20;"));
-    std::thread::sleep(QUIET / 4);
     app.save("Main.qml", "import QtQuick\nItem {");
-    std::thread::sleep(QUIET / 4);
     app.save("Main.qml", &MAIN.replace("width: 10;", "width: 70;"));
     let reports = app.wait();
     assert_eq!(reloaded(&reports).generation, 1);
