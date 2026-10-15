@@ -1922,8 +1922,17 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             .base(kind)
             .and_then(|base| self.types.oracle.attached(base))
             .is_some();
-        match chain.first() {
-            Some(member) if attaches && member.starts_with(|c: char| c.is_ascii_lowercase()) => {
+        // The name alone, as a value (`target: Component`), is what the type
+        // attached to the scope object too, as in Qt; its member is "".
+        let member = match chain.first() {
+            Some(member) if member.starts_with(|c: char| c.is_ascii_lowercase()) => {
+                Some(member.as_str())
+            }
+            None => Some(""),
+            Some(_) => None,
+        };
+        match member {
+            Some(member) if attaches => {
                 // Its own parameter: the type's name may also be read for an
                 // enum in the same script (`Accessible.Button`), and that is
                 // the type, not what it attached.
@@ -1931,7 +1940,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 Plan {
                     resolved: Resolved::Attached {
                         ty: ty.clone(),
-                        member: member.clone(),
+                        member: member.to_string(),
                     },
                     param: Some(Param {
                         name: through.clone(),

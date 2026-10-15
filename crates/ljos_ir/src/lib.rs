@@ -703,7 +703,8 @@ pub enum Resolved {
     /// A member of another object: the root of a component around, or the
     /// target a PropertyChanges names.
     OuterProp(ObjRef),
-    /// `ListView.isCurrentItem`: a member of what a type attaches.
+    /// `ListView.isCurrentItem`: a member of what a type attaches. With an
+    /// empty member, the name alone is what it attaches (`target: Component`).
     Attached {
         ty: TypeRef,
         member: String,

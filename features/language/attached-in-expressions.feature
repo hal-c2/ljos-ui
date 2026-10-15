@@ -114,3 +114,26 @@ Feature: Attached properties in expressions
       Then the property "label" of "root" is "Open"
       And the property "isButton" of "root" is false
       And the property "isLink" of "root" is true
+
+  Rule: The type's name alone, as a value, is the object it attaches
+
+    Scenario: Each object has its own attached object
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        RowLayout {
+          objectName: "root"
+          property QtObject mine: Layout
+          Item { id: child; Layout.row: 3; property QtObject mine: Layout }
+          property bool distinct: mine !== child.mine
+          property int row: child.mine.row
+          function same() { let l = Layout; return l === mine }
+          property bool seen: false
+          function look() { seen = same() }
+        }
+        """
+      When the method "look" of "root" is called
+      Then the property "distinct" of "root" is true
+      And the property "row" of "root" is 3
+      And the property "seen" of "root" is true

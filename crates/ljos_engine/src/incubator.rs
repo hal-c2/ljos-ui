@@ -617,6 +617,14 @@ impl Engine {
                         self.call_expr(inst, *expr, &[]);
                     }
                 }
+                // Whatever else listens to the attached object: a
+                // `Connections { target: Component }`, a `connect()`.
+                if let Some(att) = self.existing_attached_object(
+                    o,
+                    &MetaRef::Static(<Component as QmlType>::static_meta()),
+                ) {
+                    let _ = self.emit_by_name(att, "completed", &[]);
+                }
             }
             stack.extend(node.children.iter().copied());
         }

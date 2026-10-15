@@ -72,3 +72,21 @@ Feature: Connections
       """
     When "Quiet.qml" is loaded
     Then the log has no warnings
+
+  Scenario: The attached Component of the Connections can be its target
+    Given the file "Attached.qml":
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "attached"
+        property int completions: 0
+        Connections {
+          target: Component
+          function onCompleted() { root.completions += 1 }
+        }
+      }
+      """
+    When "Attached.qml" is loaded
+    Then the property "completions" of "attached" is 1
+    And the log has no warnings
