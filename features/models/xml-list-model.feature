@@ -300,6 +300,40 @@ Feature: XmlListModel
     Then the property "seen" of "o" is "2;1;2;1;"
     And the property "count" of "m" is 1
 
+  # A view shows its first frame while the document is still read, so the
+  # order in which the model says it has loaded is part of what a view sees.
+  @api-QtQml.XmlListModel.XmlListModel.progress
+  Scenario: A local document is in progress at once, then delegates, count and status say it loaded
+    Given the text file "feed.xml":
+      """xml
+      <docs><doc><title>One</title></doc><doc><title>Two</title></doc></docs>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtQml.XmlListModel
+      Item {
+        id: root; objectName: "o"
+        property string seen: ""
+        XmlListModel {
+          id: m; objectName: "m"; source: "feed.xml"; query: "/docs/doc"
+          XmlListModelRole { name: "t"; elementName: "title" }
+          onCountChanged: root.seen += "count " + count + ";"
+          onProgressChanged: root.seen += "progress " + progress + ";"
+          onStatusChanged: root.seen += "status " + status + ";"
+        }
+        Repeater {
+          model: m
+          delegate: Item {
+            required property string t
+            Component.onCompleted: root.seen += t + ";"
+          }
+        }
+      }
+      """
+    When 500 milliseconds pass
+    Then the property "seen" of "o" is "progress 1;status 2;One;Two;count 2;status 1;"
+
   # The document is read as a stream: a row that was read before the
   # document broke stays in the model, and the model is ready.
   Scenario: A document that breaks part-way keeps the rows already read
