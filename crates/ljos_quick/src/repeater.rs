@@ -96,6 +96,9 @@ impl DelegateHost for Host {
             "itemRemoved",
             &[Value::Int(index as i32), Value::Object(object)],
         );
+    }
+
+    fn released(&self, e: &Engine, object: ObjectId) {
         // Out of the tree now; the object itself goes at the next frame.
         if is_item(e, object) {
             let _ = tree::set_parent_item(e, object, None);

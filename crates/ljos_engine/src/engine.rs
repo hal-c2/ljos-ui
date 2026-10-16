@@ -1561,6 +1561,9 @@ impl Engine {
                 return last.clone();
             };
             let engine = Engine::from_inner(inner);
+            if engine.destruction_told(obj) {
+                return last.clone();
+            }
             let unseen = free != Free::Never;
             if free == Free::First {
                 free = Free::Never;
@@ -1791,14 +1794,30 @@ impl Engine {
         self.effect_scoped(self.inner.graph.root(), f)
     }
 
-    /// [`Engine::effect`] that dies with `obj`.
+    /// [`Engine::effect`] that dies with `obj`. Like `obj`'s bindings it
+    /// stops once `obj`'s destruction has been told.
     pub fn effect_in(
         &self,
         obj: ObjectId,
-        f: impl FnMut(&Engine) + 'static,
+        mut f: impl FnMut(&Engine) + 'static,
     ) -> Result<NodeId, EngineError> {
         let scope = self.ensure_scope(obj)?;
-        self.effect_scoped(scope, f)
+        self.effect_scoped(scope, move |e| {
+            if !e.destruction_told(obj) {
+                f(e);
+            }
+        })
+    }
+
+    /// Whether `obj` is gone or `Component.onDestruction` has been told for
+    /// it: what it runs would see a half torn-down object.
+    fn destruction_told(&self, obj: ObjectId) -> bool {
+        self.inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .is_none_or(|h| h.flags.contains(ObjectFlags::DESTRUCTION_TOLD))
     }
 
     /// Calls `f(new value)` whenever `obj`'s `prop` changes (not now), until

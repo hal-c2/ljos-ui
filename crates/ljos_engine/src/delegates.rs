@@ -52,6 +52,13 @@ pub trait DelegateHost {
     /// The delegate that was at `index` is about to be destroyed.
     fn removed(&self, engine: &Engine, index: usize, object: ObjectId);
 
+    /// `Component.onDestruction` has run for a removed delegate and its
+    /// bindings have stopped; the object goes at the next frame. The place
+    /// to take it out of the tree without its handlers seeing it go.
+    fn released(&self, engine: &Engine, object: ObjectId) {
+        let _ = (engine, object);
+    }
+
     /// Rows changed places; [`Delegates::objects`] has the new order.
     fn moved(&self, engine: &Engine) {
         let _ = engine;
@@ -357,6 +364,7 @@ impl Shared {
             // goes, as in Qt. The object itself goes later: the handler
             // that removed the row may be the delegate's own.
             engine.tell_destruction(obj, false);
+            self.host.released(engine, obj);
             engine.destroy(obj);
         }
     }

@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos_js::{JsRef, JsValue, Scope};
+use ljos_reactive::NodeState;
 use ljos_runtime::{Clock, FrameScheduler, SystemClock, Time, TimerId, TimerKind};
 
 use crate::atom::Atom;
@@ -230,10 +231,59 @@ impl Engine {
     /// deletion in Qt starts one layer above the innermost and works
     /// outwards, which shows only for a root whose type derives from a
     /// component that derives from another.
+    ///
+    /// Once told, the object and what it owns are done: their bindings
+    /// keep the values they had and their effects ([`Engine::effect_in`])
+    /// stop, so nothing runs against a half torn-down object (a delegate
+    /// that is already out of its view). Qt evaluates bindings as their
+    /// inputs change, so what is still due is settled first.
     pub(crate) fn tell_destruction(&self, obj: ObjectId, outermost: bool) {
-        if !self.inner.destruction_handlers.get() {
-            return;
+        let (ids, due) = {
+            let store = self.inner.store.borrow();
+            if store
+                .objects
+                .get(obj)
+                .is_none_or(|h| h.flags.contains(ObjectFlags::DESTRUCTION_TOLD))
+            {
+                return;
+            }
+            let g = &self.inner.graph;
+            let (mut ids, mut due) = (Vec::new(), Vec::new());
+            let mut stack = vec![obj];
+            while let Some(id) = stack.pop() {
+                let Some(h) = store.objects.get(id) else {
+                    continue;
+                };
+                if id != obj && h.flags.contains(ObjectFlags::DESTRUCTION_TOLD) {
+                    continue;
+                }
+                ids.push(id);
+                due.extend(
+                    h.nodes
+                        .iter()
+                        .flatten()
+                        .flatten()
+                        .filter(|n| g.state(**n).is_some_and(|s| s != NodeState::Clean)),
+                );
+                stack.extend_from_slice(&h.children);
+            }
+            (ids, due)
+        };
+        for n in due {
+            let _ = self.untrack(|| self.inner.graph.try_get(n));
         }
+        if self.inner.destruction_handlers.get() {
+            self.run_destruction_handlers(obj, outermost);
+        }
+        let mut store = self.inner.store.borrow_mut();
+        for id in ids {
+            if let Some(h) = store.objects.get_mut(id) {
+                h.flags |= ObjectFlags::DESTRUCTION_TOLD;
+            }
+        }
+    }
+
+    fn run_destruction_handlers(&self, obj: ObjectId, outermost: bool) {
         let key = MetaRef::Static(<Component as QmlType>::static_meta()).type_id();
         // (the context it is told with, attached object), children before
         // their owner.
