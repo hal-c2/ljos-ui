@@ -575,6 +575,7 @@ module QtQml.Models
 	DelegateModelGroup QtQml.Models.DelegateModelGroup
 	FilterBase QtQml.Models.FilterBase
 	Instantiator QtQml.Instantiator
+	ItemSelectionModel QtQml.Models.ItemSelectionModel
 	ListElement QtQml.Models.ListElement
 	ListModel QtQml.Models.ListModel
 	ObjectModel QtQml.Models.ObjectModel
@@ -657,6 +658,37 @@ module QtQml.Models
 		signal invalidateModel
 		signal invalidateCache filter
 		method invalidate
+	type QtQml.Models.ItemSelectionModel ItemSelectionModel
+		prototype QtQml.QtObject named
+		enum SelectionFlag NoUpdate=0 Clear=1 Select=2 Deselect=4 Toggle=8 Current=16 Rows=32 Columns=64 SelectCurrent=18 ToggleCurrent=24 ClearAndSelect=3
+		enum SelectionFlags NoUpdate=0 Clear=1 Select=2 Deselect=4 Toggle=8 Current=16 Rows=32 Columns=64 SelectCurrent=18 ToggleCurrent=24 ClearAndSelect=3
+		prop model QtQml.var named
+		prop hasSelection QtQml.bool named readonly
+		prop currentIndex QtQml.var named readonly
+		prop selectedIndexes QtQml.var named list readonly
+		prop selection QtQml.var named list readonly
+		signal modelChanged
+		signal hasSelectionChanged
+		signal currentIndexChanged
+		signal selectedIndexesChanged
+		signal selectionChanged
+		signal selectionChanged selected deselected
+		signal currentChanged current previous
+		signal currentRowChanged current previous
+		signal currentColumnChanged current previous
+		method select
+		method setCurrentIndex
+		method clear
+		method reset
+		method clearSelection
+		method clearCurrentIndex
+		method isSelected
+		method isRowSelected
+		method isColumnSelected
+		method rowIntersectsSelection
+		method columnIntersectsSelection
+		method selectedRows
+		method selectedColumns
 	type QtQml.Models.ListElement ListElement
 		prototype QtQml.QtObject named
 		is parser
@@ -666,6 +698,7 @@ module QtQml.Models
 		prop dynamicRoles QtQml.bool named
 		signal countChanged
 		signal dynamicRolesChanged
+		method index
 		method get
 		method append
 		method insert

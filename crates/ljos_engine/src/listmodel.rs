@@ -671,6 +671,13 @@ pub(crate) fn nested_model(
 
 #[qml_impl]
 impl ListModel {
+    /// The model index of the row: what a selection model or a view is
+    /// handed; the invalid index out of range.
+    #[qml(invokable)]
+    fn index(cx: &Cx, row: Value, column: Value) -> Value {
+        crate::item_selection::list_index(cx.engine, cx.this, &row, &column)
+    }
+
     /// The row at `index` as a live object; `undefined` out of range.
     #[qml(invokable)]
     fn get(cx: &Cx, index: Value) -> Value {

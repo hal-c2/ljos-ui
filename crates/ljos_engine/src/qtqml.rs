@@ -580,6 +580,7 @@ pub(crate) fn register(engine: &Engine) {
         crate::chooser::DelegateChooser,
         crate::chooser::DelegateChoice,
         crate::sort_filter::SortFilterProxyModel,
+        crate::item_selection::ItemSelectionModel,
         crate::sort_filter::FilterBase,
         crate::sort_filter::RoleFilter,
         crate::sort_filter::ValueFilter,
