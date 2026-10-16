@@ -719,7 +719,7 @@ Source: 03 §3.
 
 `Fault::{JsException, JsInterrupted, JsOutOfMemory, Panic, Startup}`.
 
-- **Panics.** Rust panics in handlers are caught at the turn boundary. Mobile release builds keep `panic = "unwind"` unless decision D11 says otherwise.
+- **Panics.** Rust panics in handlers are caught at the turn boundary. So are panics in what a host runs for the application on the Engine thread: each `on_message` message and each platform job (a task's `done`, a fetch's callback, any `Reply::send`) is a turn of its own, so one that panics is a fault and the rest of its batch still runs. A task whose work panics on the pool answers its `done` with `Err(TaskPanic)` and is reported as a fault too. Mobile release builds keep `panic = "unwind"` unless decision D11 says otherwise.
 - **Exceptions.** A JS exception in a handler is logged with its QML file, line and stack. The exception does not stop other handlers.
 
 ### 9.4 Supervisor

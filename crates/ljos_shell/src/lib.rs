@@ -163,6 +163,9 @@ impl<M> Setup<'_, M> {
     }
 
     /// Runs on the UI thread for every message, at the start of a frame.
+    /// Each message is a turn of its own ([`Engine::turn`]): a panic in
+    /// the handler reaches the engine's fault handler and the next
+    /// message is still handled.
     pub fn on_message(&mut self, f: impl FnMut(&Engine, M) + 'static) {
         self.on_message = Some(Box::new(f));
     }
@@ -366,7 +369,10 @@ impl<M: Send + 'static> ShellApp<M> {
             let clock = Arc::clone(view.clock());
             inbox.drain(*budget, &*clock, |m| {
                 if let Some(f) = on_message.as_mut() {
-                    f(&engine, m);
+                    // One message, one turn: a handler that panics is a
+                    // fault of the application, not the end of it, and
+                    // the messages after it are still handled.
+                    engine.turn(None, || f(&engine, m));
                 }
             })
         });

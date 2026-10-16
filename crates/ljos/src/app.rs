@@ -228,7 +228,9 @@ impl<M> App<M> {
 
     /// Runs on the Engine thread for every message a worker thread
     /// posts through the shell's handle, and so chooses the message
-    /// type `N` of the application. Only the shell has an inbox; a
+    /// type `N` of the application. Each message is a turn of its own:
+    /// a panic in the handler reaches the engine's fault handler and the
+    /// next message is still handled. Only the shell has an inbox; a
     /// headless [`build`](App::build) drops the handler.
     #[must_use]
     pub fn on_message<N>(self, handler: impl FnMut(&Engine, N) + 'static) -> App<N> {

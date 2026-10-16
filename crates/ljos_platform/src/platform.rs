@@ -246,7 +246,9 @@ impl Platform {
     }
 
     /// Runs the answers that have arrived and returns how many there were.
-    /// The scene calls it at the start of a frame; it never waits.
+    /// The scene calls it at the start of a frame; it never waits. A job
+    /// that panics is reported through the engine's fault handler
+    /// ([`Engine::turn`]); the rest still run.
     pub fn deliver(&self, engine: &Engine) -> usize {
         if self.held.get() {
             return 0;
@@ -261,8 +263,11 @@ impl Platform {
                 jobs.push(j)
             });
         let count = jobs.len();
+        // Each job is a turn of its own: one that panics is reported as a
+        // fault and counts as done, and the jobs after it still run. A
+        // job already answered its promise before its own code started.
         for job in jobs {
-            job(engine);
+            engine.turn(None, || job(engine));
         }
         count
     }
@@ -583,5 +588,56 @@ mod tests {
             got.borrow().as_ref().unwrap().as_ref().unwrap_err(),
             &FetchError::NoNetwork("http://127.0.0.1/x".to_owned())
         );
+    }
+
+    #[test]
+    fn a_panicking_job_is_a_fault_and_the_rest_of_the_batch_runs() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let heard = Rc::new(Cell::new(0u32));
+        let count = Rc::clone(&heard);
+        engine.set_fault_handler(move |_, _| count.set(count.get() + 1));
+        let (first, second) = (platform.expect(), platform.expect());
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mark = Arc::clone(&ran);
+        std::thread::spawn(move || {
+            first.send(|_| panic!("the first job panicked"));
+            second.send(move |_| mark.store(true, std::sync::atomic::Ordering::SeqCst));
+        })
+        .join()
+        .unwrap();
+
+        assert_eq!(platform.deliver(&engine), 2);
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst), "the second job ran");
+        assert_eq!(platform.pending(), 0);
+        let faults = engine.faults();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].message(), "the first job panicked");
+        engine.deliver_faults();
+        assert_eq!(heard.get(), 1);
+        // Nothing is left to wait for.
+        platform.finish(&engine);
+    }
+
+    #[test]
+    fn a_panicking_fetch_callback_is_a_fault() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let after = Rc::new(Cell::new(false));
+        let mark = Rc::clone(&after);
+        // The default fetcher is NoNetwork.
+        platform.fetch("https://example.invalid/x", |_, _| {
+            panic!("the fetch callback panicked")
+        });
+        platform.request(
+            Request::new(Method::Get, "https://example.invalid/y"),
+            move |_, _| mark.set(true),
+        );
+        platform.finish(&engine);
+        assert!(after.get(), "the other answer was delivered");
+        assert_eq!(platform.pending(), 0);
+        let faults = engine.faults();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].message(), "the fetch callback panicked");
     }
 }

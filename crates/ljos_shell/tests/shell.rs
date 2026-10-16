@@ -125,3 +125,59 @@ fn an_idle_shell_runs_nothing() {
     }
     assert_eq!(h.state().view().stats().frames, frames);
 }
+
+/// A message the handler of [`a_panicking_message_is_a_fault_and_the_rest_are_handled`]
+/// either takes or panics on.
+enum Probe {
+    Ok(u32),
+    Boom,
+}
+
+#[test]
+fn a_panicking_message_is_a_fault_and_the_rest_are_handled() {
+    let ctx = egui::Context::default();
+    let handled = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = std::rc::Rc::clone(&handled);
+    // All three in one drain, however slow the panic's report is.
+    let config = ShellConfig {
+        drain_budget: DrainBudget::UNLIMITED,
+        ..ShellConfig::default()
+    };
+    let mut app: ShellApp<Probe> =
+        ShellApp::new(&ctx, &config, Arc::new(SystemClock::new()), move |s| {
+            s.on_message(move |_, m| match m {
+                Probe::Ok(n) => seen.borrow_mut().push(n),
+                Probe::Boom => panic!("the handler panicked"),
+            });
+            let root = s
+                .engine()
+                .create_native(Item::default(), None)
+                .map_err(|e| e.to_string())?;
+            s.engine().complete(root).map_err(|e| e.to_string())?;
+            Ok(root)
+        })
+        .unwrap();
+    let heard = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let count = std::rc::Rc::clone(&heard);
+    app.engine()
+        .set_fault_handler(move |_, _| count.set(count.get() + 1));
+    let h = app.handle();
+    for m in [Probe::Ok(100), Probe::Boom, Probe::Ok(101)] {
+        h.send(m).unwrap_or_else(|_| panic!("room in the inbox"));
+    }
+
+    let report = app.drain_inbox();
+    assert_eq!(report.drained, 3);
+    assert_eq!(*handled.borrow(), vec![100, 101]);
+    let faults = app.engine().faults();
+    assert_eq!(faults.len(), 1);
+    assert_eq!(faults[0].kind(), "Panic");
+    assert_eq!(faults[0].message(), "the handler panicked");
+    app.engine().deliver_faults();
+    assert_eq!(heard.get(), 1, "the fault handler heard of it");
+
+    // And the application goes on.
+    h.send(Probe::Ok(102)).unwrap_or_else(|_| panic!("room"));
+    app.drain_inbox();
+    assert_eq!(*handled.borrow(), vec![100, 101, 102]);
+}
