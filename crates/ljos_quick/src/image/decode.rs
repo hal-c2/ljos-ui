@@ -184,10 +184,10 @@ pub(crate) fn read<'a>(
 
 /// About how many bytes decoding `bytes` for `request` holds at its
 /// height, as the header says: the pixels kept, and what they are made
-/// from. That is the picture whole at up to four bytes a pixel, or for a
+/// from. That is the picture whole at up to four bytes a pixel; for a
 /// JPEG decoded smaller the smaller pixels, plus for a progressive one
 /// the coefficients of the whole picture, which its decoder keeps until
-/// the last scan. 0 for what has no header read here (a drawing).
+/// the last scan; for a PNG made smaller as it is decoded, a row. 0 for what has no header read here (a drawing).
 pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
     let Some((w, h)) = dimensions(bytes) else {
         return 0;
@@ -202,6 +202,14 @@ pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
     let held = area(kept).saturating_mul(4);
     let k = halvings((w, h), kept).min(3);
     let from = match jpeg_frame(bytes) {
+        // Made smaller row by row: a row, and that row widened.
+        None if asks_nothing
+            && kept != (w, h)
+            && bytes.starts_with(PNG)
+            && !png_interlaced(bytes) =>
+        {
+            (w as usize).saturating_mul(8)
+        }
         Some(frame) if asks_nothing && k > 0 => {
             let side = |n: u32| n.div_ceil(1 << k);
             let smaller = area((side(w), side(h))).saturating_mul(3);
@@ -282,7 +290,7 @@ fn jpeg_frame(bytes: &[u8]) -> Option<JpegFrame> {
 
 /// The size a PNG, JPEG or GIF says it has, read from its header alone.
 pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+    if bytes.starts_with(PNG) {
         let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
         return Some((be32(16)?, be32(20)?));
     }
@@ -345,6 +353,9 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             vector: false,
             frames: None,
         });
+    }
+    if asks_nothing && let Some(loaded) = png_shrunk(url, bytes, request.limit) {
+        return loaded;
     }
     let raw = decode_raw(url, bytes)?;
     if asks_nothing {
@@ -472,67 +483,12 @@ impl<'a> Raw<'a> {
     /// even halving goes through [`Raw::reduced`]. Like it, it keeps only
     /// the result and a couple of rows besides.
     pub(crate) fn shrunk_to(self, kept: (u32, u32), url: &str) -> Result<ImageHandle, LoadError> {
-        let k = halvings((self.width, self.height), kept);
-        let halved = (self.width.div_ceil(1 << k), self.height.div_ceil(1 << k));
-        if halved == kept || (kept.0 >= self.width && kept.1 >= self.height) {
-            return self.reduced(k, url);
+        if kept.0 >= self.width && kept.1 >= self.height {
+            return self.reduced(0, url);
         }
-        let bad = |err: ljos_render::ImageError| LoadError::decode(url, err.to_string());
-        let (w, n) = (self.width as usize, self.channels);
-        let (ow, oh) = (kept.0 as usize, kept.1 as usize);
-        let xs = Spans::new(w, ow);
-        let ys = Spans::new(self.height as usize, oh);
-        let mut out = Vec::new();
-        out.try_reserve_exact(ow * oh * 4)
-            .map_err(|_| too_large(url))?;
-        // Output rows being summed: the one a source row ends in and the
-        // next, which a row straddling the border starts.
-        let mut rows = [vec![0f32; ow * 4], vec![0f32; ow * 4]];
-        let mut across = vec![0f32; ow * 4];
-        let mut oy = 0;
-        for (y, line) in self.data.chunks_exact(w * n).enumerate() {
-            across.fill(0.0);
-            for (x, px) in line.chunks_exact(n).enumerate() {
-                let (r, g, b, a) = match n {
-                    3 => (px[0], px[1], px[2], 255),
-                    _ => (px[0], px[1], px[2], px[3]),
-                };
-                let px = if self.premultiplied || a == 255 {
-                    [r, g, b, a].map(f32::from)
-                } else {
-                    let a = f32::from(a);
-                    [
-                        f32::from(r) * a / 255.0,
-                        f32::from(g) * a / 255.0,
-                        f32::from(b) * a / 255.0,
-                        a,
-                    ]
-                };
-                for (o, share) in xs.of(x) {
-                    for (sum, v) in across[o * 4..o * 4 + 4].iter_mut().zip(px) {
-                        *sum += v * share;
-                    }
-                }
-            }
-            for (o, share) in ys.of(y) {
-                let row = &mut rows[o - oy];
-                for (sum, v) in row.iter_mut().zip(&across) {
-                    *sum += v * share;
-                }
-            }
-            // The last source row of output row `oy`: it is complete.
-            while oy < oh && ys.ends_at(oy) == y {
-                out.extend(rows[0].as_chunks::<4>().0.iter().flat_map(|px| {
-                    let a = px[3].round().clamp(0.0, 255.0);
-                    // Colour never above alpha: the pixels stay premultiplied.
-                    [px[0], px[1], px[2], px[3]].map(|v| v.round().clamp(0.0, a) as u8)
-                }));
-                rows.swap(0, 1);
-                rows[1].fill(0.0);
-                oy += 1;
-            }
-        }
-        ImageHandle::from_premultiplied(kept.0, kept.1, out).map_err(bad)
+        let mut shrink = Shrink::new(self.layout(), kept, url)?;
+        self.feed(&mut shrink);
+        shrink.finish()
     }
 
     pub(crate) fn of(image: &'a ImageHandle) -> Self {
@@ -576,44 +532,240 @@ impl<'a> Raw<'a> {
             };
             return ImageHandle::from_straight(self.width, self.height, rgba).map_err(bad);
         }
+        let mut shrink = Shrink::halving(self.layout(), k, url)?;
+        self.feed(&mut shrink);
+        shrink.finish()
+    }
+
+    fn layout(&self) -> Layout {
+        Layout {
+            width: self.width,
+            height: self.height,
+            channels: self.channels,
+            premultiplied: self.premultiplied,
+        }
+    }
+
+    fn feed(&self, shrink: &mut Shrink<'_>) {
+        let line = self.width as usize * self.channels;
+        for row in self.data.chunks_exact(line) {
+            shrink.row(row);
+        }
+    }
+}
+
+/// The shape of pixels as a decoder gives them, row after row.
+#[derive(Clone, Copy)]
+struct Layout {
+    width: u32,
+    height: u32,
+    /// 3 (RGB) or 4 (RGBA).
+    channels: usize,
+    premultiplied: bool,
+}
+
+impl Layout {
+    /// A pixel premultiplied, as a decoder's row holds it.
+    fn pixel(&self, px: &[u8]) -> [u8; 4] {
+        let (r, g, b, a) = match self.channels {
+            3 => (px[0], px[1], px[2], 255),
+            _ => (px[0], px[1], px[2], px[3]),
+        };
+        if self.premultiplied || a == 255 {
+            [r, g, b, a]
+        } else {
+            let pre = |c: u8| ((u32::from(c) * u32::from(a) + 127) / 255) as u8;
+            [pre(r), pre(g), pre(b), a]
+        }
+    }
+
+    /// A pixel premultiplied, unrounded, for averages over areas.
+    fn pixel_f32(&self, px: &[u8]) -> [f32; 4] {
+        let (r, g, b, a) = match self.channels {
+            3 => (px[0], px[1], px[2], 255),
+            _ => (px[0], px[1], px[2], px[3]),
+        };
+        if self.premultiplied || a == 255 {
+            [r, g, b, a].map(f32::from)
+        } else {
+            let a = f32::from(a);
+            [
+                f32::from(r) * a / 255.0,
+                f32::from(g) * a / 255.0,
+                f32::from(b) * a / 255.0,
+                a,
+            ]
+        }
+    }
+}
+
+/// Makes pixels smaller as their rows come, top to bottom, so that what is
+/// kept is the result and a few rows of sums: a decoder that gives rows
+/// one at a time never holds the picture whole.
+struct Shrink<'u> {
+    from: Layout,
+    to: (usize, usize),
+    url: &'u str,
+    /// Source rows taken so far.
+    y: usize,
+    out: Vec<u8>,
+    how: How,
+}
+
+enum How {
+    /// Blocks `step` pixels on a side, averaged: the sums of the row of
+    /// blocks under way.
+    Halving { step: usize, sums: Vec<u32> },
+    /// Any smaller size, every pixel the average of the area it covers.
+    Area {
+        xs: Spans,
+        ys: Spans,
+        /// Output rows being summed: the one a source row ends in and the
+        /// next, which a row straddling the border starts.
+        rows: [Vec<f32>; 2],
+        across: Vec<f32>,
+        /// The output row `rows[0]` is.
+        oy: usize,
+    },
+}
+
+impl<'u> Shrink<'u> {
+    /// To `kept`, through a halving when that is exactly it.
+    fn new(from: Layout, kept: (u32, u32), url: &'u str) -> Result<Self, LoadError> {
+        let k = halvings((from.width, from.height), kept);
+        let halved = (from.width.div_ceil(1 << k), from.height.div_ceil(1 << k));
+        if halved == kept {
+            return Self::halving(from, k, url);
+        }
+        let (ow, oh) = (kept.0 as usize, kept.1 as usize);
+        Self::with(
+            from,
+            (ow, oh),
+            url,
+            How::Area {
+                xs: Spans::new(from.width as usize, ow),
+                ys: Spans::new(from.height as usize, oh),
+                rows: [vec![0f32; ow * 4], vec![0f32; ow * 4]],
+                across: vec![0f32; ow * 4],
+                oy: 0,
+            },
+        )
+    }
+
+    /// Smaller `2^k` times on each side (`k` > 0).
+    fn halving(from: Layout, k: u32, url: &'u str) -> Result<Self, LoadError> {
         let step = 1usize << k;
-        let (ow, oh) = (w.div_ceil(step), h.div_ceil(step));
+        let to = (
+            (from.width as usize).div_ceil(step),
+            (from.height as usize).div_ceil(step),
+        );
+        Self::with(
+            from,
+            to,
+            url,
+            How::Halving {
+                step,
+                sums: vec![0u32; to.0 * 4],
+            },
+        )
+    }
+
+    fn with(from: Layout, to: (usize, usize), url: &'u str, how: How) -> Result<Self, LoadError> {
         let mut out = Vec::new();
-        out.try_reserve_exact(ow * oh * 4)
+        out.try_reserve_exact(to.0 * to.1 * 4)
             .map_err(|_| too_large(url))?;
-        let mut sums = vec![0u32; ow * 4];
-        for by in 0..oh {
-            sums.fill(0);
-            let rows = (by * step)..((by + 1) * step).min(h);
-            let tall = rows.len();
-            for y in rows {
-                let row = &self.data[y * w * n..(y + 1) * w * n];
-                for (x, px) in row.chunks_exact(n).enumerate() {
-                    let (r, g, b, a) = match n {
-                        3 => (px[0], px[1], px[2], 255),
-                        _ => (px[0], px[1], px[2], px[3]),
-                    };
-                    let (r, g, b) = if self.premultiplied || a == 255 {
-                        (r, g, b)
-                    } else {
-                        let pre = |c: u8| ((u32::from(c) * u32::from(a) + 127) / 255) as u8;
-                        (pre(r), pre(g), pre(b))
-                    };
+        Ok(Shrink {
+            from,
+            to,
+            url,
+            y: 0,
+            out,
+            how,
+        })
+    }
+
+    /// Takes the next source row, `width * channels` bytes.
+    fn row(&mut self, line: &[u8]) {
+        let (w, h, n) = (
+            self.from.width as usize,
+            self.from.height as usize,
+            self.from.channels,
+        );
+        let (ow, oh) = self.to;
+        let y = self.y;
+        if y >= h {
+            return;
+        }
+        self.y += 1;
+        let from = self.from;
+        match &mut self.how {
+            How::Halving { step, sums } => {
+                let step = *step;
+                for (x, px) in line.chunks_exact(n).take(w).enumerate() {
                     let s = &mut sums[(x / step) * 4..(x / step) * 4 + 4];
-                    s[0] += u32::from(r);
-                    s[1] += u32::from(g);
-                    s[2] += u32::from(b);
-                    s[3] += u32::from(a);
+                    for (sum, v) in s.iter_mut().zip(from.pixel(px)) {
+                        *sum += u32::from(v);
+                    }
+                }
+                // The last row of a row of blocks: it is complete.
+                if (y + 1).is_multiple_of(step) || y + 1 == h {
+                    let tall = y % step + 1;
+                    for bx in 0..ow {
+                        let wide = (w - bx * step).min(step);
+                        let count = (wide * tall) as u32;
+                        let s = &sums[bx * 4..bx * 4 + 4];
+                        self.out
+                            .extend(s.iter().map(|v| ((v + count / 2) / count) as u8));
+                    }
+                    sums.fill(0);
                 }
             }
-            for bx in 0..ow {
-                let wide = (w - bx * step).min(step);
-                let count = (wide * tall) as u32;
-                let s = &sums[bx * 4..bx * 4 + 4];
-                out.extend(s.iter().map(|v| ((v + count / 2) / count) as u8));
+            How::Area {
+                xs,
+                ys,
+                rows,
+                across,
+                oy,
+            } => {
+                across.fill(0.0);
+                for (x, px) in line.chunks_exact(n).take(w).enumerate() {
+                    let px = from.pixel_f32(px);
+                    for (o, share) in xs.of(x) {
+                        for (sum, v) in across[o * 4..o * 4 + 4].iter_mut().zip(px) {
+                            *sum += v * share;
+                        }
+                    }
+                }
+                for (o, share) in ys.of(y) {
+                    let row = &mut rows[o - *oy];
+                    for (sum, v) in row.iter_mut().zip(across.iter()) {
+                        *sum += v * share;
+                    }
+                }
+                // The last source row of output row `oy`: it is complete.
+                while *oy < oh && ys.ends_at(*oy) == y {
+                    self.out
+                        .extend(rows[0].as_chunks::<4>().0.iter().flat_map(|px| {
+                            let a = px[3].round().clamp(0.0, 255.0);
+                            // Colour never above alpha: the pixels stay
+                            // premultiplied.
+                            [px[0], px[1], px[2], px[3]].map(|v| v.round().clamp(0.0, a) as u8)
+                        }));
+                    rows.swap(0, 1);
+                    rows[1].fill(0.0);
+                    *oy += 1;
+                }
             }
         }
-        ImageHandle::from_premultiplied(ow as u32, oh as u32, out).map_err(bad)
+    }
+
+    fn finish(self) -> Result<ImageHandle, LoadError> {
+        let url = self.url;
+        if self.y < self.from.height as usize {
+            return Err(LoadError::decode(url, "Unable to read image data"));
+        }
+        ImageHandle::from_premultiplied(self.to.0 as u32, self.to.1 as u32, self.out)
+            .map_err(|err| LoadError::decode(url, err.to_string()))
     }
 }
 
@@ -760,7 +912,6 @@ const GIF: &[u8] = b"GIF8";
 /// bytes as Qt does (the file name's ending plays no part), with the
 /// pixels as the decoder gave them.
 fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
-    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
     const JPEG: &[u8] = &[0xff, 0xd8, 0xff];
     let (width, height, channels, data) = if bytes.starts_with(PNG) {
         decode_png(bytes).map_err(|reason| LoadError::decode(url, reason))?
@@ -793,6 +944,81 @@ fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
 
 /// Width, height, channels (3 or 4) and the straight pixels.
 type Decoded = (u32, u32, usize, Vec<u8>);
+
+/// A PNG kept smaller than it is, made smaller row by row as it is
+/// decoded: the picture is never whole in memory. None for what this does
+/// not take (not a PNG, interlaced, kept whole), which is decoded whole.
+fn png_shrunk(url: &str, bytes: &[u8], limit: u32) -> Option<Result<Loaded, LoadError>> {
+    if !bytes.starts_with(PNG) || png_interlaced(bytes) {
+        return None;
+    }
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+    dec.set_transformations(png::Transformations::normalize_to_color8());
+    // What cannot be read is said by the whole decode, in its words.
+    let mut reader = dec.read_info().ok()?;
+    let natural = (reader.info().width, reader.info().height);
+    let kept = kept_size(natural, limit);
+    if kept == natural {
+        return None;
+    }
+    let (colour, _) = reader.output_color_type();
+    let channels = match colour {
+        png::ColorType::Rgba | png::ColorType::GrayscaleAlpha => 4,
+        png::ColorType::Rgb | png::ColorType::Grayscale => 3,
+        _ => return None,
+    };
+    let from = Layout {
+        width: natural.0,
+        height: natural.1,
+        channels,
+        premultiplied: false,
+    };
+    let mut shrink = match Shrink::new(from, kept, url) {
+        Ok(shrink) => shrink,
+        Err(err) => return Some(Err(err)),
+    };
+    let mut wide = Vec::new();
+    loop {
+        let row = match reader.next_row() {
+            Ok(Some(row)) => row.data(),
+            Ok(None) => break,
+            Err(err) => return Some(Err(LoadError::decode(url, err.to_string()))),
+        };
+        match colour {
+            png::ColorType::Grayscale => {
+                wide.clear();
+                wide.extend(row.iter().flat_map(|g| [*g, *g, *g]));
+                shrink.row(&wide);
+            }
+            png::ColorType::GrayscaleAlpha => {
+                wide.clear();
+                wide.extend(
+                    row.as_chunks::<2>()
+                        .0
+                        .iter()
+                        .flat_map(|c| [c[0], c[0], c[0], c[1]]),
+                );
+                shrink.row(&wide);
+            }
+            _ => shrink.row(row),
+        }
+    }
+    Some(shrink.finish().map(|image| Loaded {
+        image,
+        natural,
+        vector: false,
+        frames: None,
+    }))
+}
+
+/// The first bytes of a PNG.
+const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// Whether a PNG's header says its rows come in passes (Adam7), which
+/// cannot be made smaller one row at a time.
+fn png_interlaced(bytes: &[u8]) -> bool {
+    bytes.get(28).is_some_and(|&i| i != 0)
+}
 
 fn decode_png(bytes: &[u8]) -> Result<Decoded, String> {
     let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -1513,6 +1739,73 @@ mod tests {
         let loaded = load_bytes("file:///a.png", &bytes, request).unwrap();
         assert_eq!(loaded.natural, (32, 16));
         assert_eq!((loaded.image.width(), loaded.image.height()), (8, 4));
+    }
+
+    /// A picture `w` by `h` of `colour` whose every pixel differs.
+    fn patterned(w: u32, h: u32, colour: png::ColorType) -> Vec<u8> {
+        let n = colour.samples();
+        let data: Vec<u8> = (0..w * h * n as u32)
+            .map(|i| (i.wrapping_mul(37) ^ (i >> 3)) as u8)
+            .collect();
+        png_of(w, h, colour, &data)
+    }
+
+    #[test]
+    fn a_png_kept_smaller_is_made_smaller_as_its_rows_come() {
+        use png::ColorType::*;
+        for colour in [Rgb, Rgba, Grayscale, GrayscaleAlpha] {
+            let bytes = patterned(67, 41, colour);
+            // An even halving and any other size.
+            for limit in [34, 20] {
+                let streamed = png_shrunk("file:///a.png", &bytes, limit)
+                    .expect("taken row by row")
+                    .unwrap();
+                let whole = decode_raw("file:///a.png", &bytes)
+                    .unwrap()
+                    .shrunk_to(kept_size((67, 41), limit), "file:///a.png")
+                    .unwrap();
+                assert_eq!(streamed.natural, (67, 41));
+                assert_eq!(
+                    (streamed.image.width(), streamed.image.height()),
+                    (whole.width(), whole.height())
+                );
+                assert_eq!(streamed.image.data(), whole.data(), "{colour:?} at {limit}");
+            }
+            // Kept whole, it is decoded whole.
+            assert!(png_shrunk("file:///a.png", &bytes, 0).is_none());
+            assert!(png_shrunk("file:///a.png", &bytes, 67).is_none());
+        }
+    }
+
+    #[test]
+    fn an_interlaced_png_is_decoded_whole() {
+        let mut bytes = patterned(40, 40, png::ColorType::Rgb);
+        // The header's interlace method; its checksum is not checked here.
+        bytes[28] = 1;
+        assert!(png_interlaced(&bytes));
+        assert!(png_shrunk("file:///a.png", &bytes, 10).is_none());
+    }
+
+    #[test]
+    fn a_png_cut_short_cannot_be_read_row_by_row_either() {
+        let bytes = patterned(64, 64, png::ColorType::Rgba);
+        let cut = &bytes[..bytes.len() / 2];
+        let err = png_shrunk("file:///cut.png", cut, 16)
+            .expect("taken row by row")
+            .unwrap_err();
+        assert!(matches!(err, LoadError::Decode { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_png_made_smaller_as_it_is_decoded_costs_a_row() {
+        let bytes = patterned(400, 300, png::ColorType::Rgba);
+        let limit = |limit| Request {
+            limit,
+            ..Request::default()
+        };
+        assert_eq!(cost(&bytes, limit(100)), 100 * 75 * 4 + 400 * 8);
+        // Whole, it is the picture and what it is made from.
+        assert_eq!(cost(&bytes, limit(0)), 400 * 300 * 4 * 2);
     }
 
     #[test]
