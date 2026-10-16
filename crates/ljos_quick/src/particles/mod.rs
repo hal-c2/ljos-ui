@@ -9,10 +9,11 @@
 //! will emit); a system with nothing to do asks for nothing, which is how an
 //! idle scene stays at no work.
 //!
-//! An `ImageParticle` draws through ordinary items: it keeps a pool of
-//! picture items as its children and places one over each particle it
-//! paints. No scene hook is needed, and a particle is clipped, stacked and
-//! faded as any picture is.
+//! An `ImageParticle` paints itself (`crate::register_paint_item`): each
+//! step makes one display list with a picture for each particle, which
+//! the scene draws in the painter's node. An item for each particle
+//! would run its own geometry, paint and bindings on every step; a burst
+//! of a thousand is then a thousand of each.
 
 mod sim;
 
@@ -21,15 +22,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Color, Cx, Engine, EngineError, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject,
-    QmlType, QtObject, Timer, Url, Value, qml_impl,
+    Atom, Color, Cx, Engine, EngineError, LogLevel, MetaRef, NodeId, ObjectId, PropIndex,
+    QmlObject, QmlType, QtObject, Timer, Url, Value, qml_impl,
 };
-use ljos_render::ImageHandle;
+use ljos_render::{DisplayListBuilder, DrawOp, ImageHandle, kurbo};
+use rustc_hash::FxHashMap;
 
 use self::sim::{Affected, Dir, Mask, Particle, Rng, SEED, STEP, Shape, Wandering};
 use crate::enums::EnumTable;
-use crate::image::{Image, ImageKey, ImageStore, register_image_tint};
+use crate::image::{ImageKey, ImageStore, tinted_in};
 use crate::item::{Item, is_a, write_computed};
+use crate::paint_item::{ItemPaint, register_paint_item};
 
 const CATEGORY: &str = "particles";
 
@@ -455,7 +458,20 @@ impl ImageParticle {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, pa) = (cx.engine, cx.this);
-        registry(e).painters.borrow_mut().push(pa);
+        let reg = registry(e);
+        reg.painters.borrow_mut().push(pa);
+        let scope = e.object_scope(pa).unwrap_or_else(|| e.graph().root());
+        let serial = e.graph().property(scope, Value::Int(0)).ok();
+        let mut shown = reg.shown.borrow_mut();
+        shown.retain(|p, _| e.is_alive(*p));
+        shown.insert(
+            pa,
+            Shown {
+                serial,
+                ..Shown::default()
+            },
+        );
+        drop(shown);
         // What it reads is what repainting follows: its look, and its place.
         e.effect_in(pa, move |e| {
             if !e.is_alive(pa) {
@@ -583,31 +599,6 @@ impl Wander {
     }
 }
 
-/// The picture a particle is drawn with: an `Image` that can be laid over
-/// in a colour. Made by `ImageParticle` and registered in no module, so
-/// no QML file can name it.
-#[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick.Particles", name = "ParticleSprite", extends = Image, uncreatable)]
-pub struct ParticleSprite {
-    #[qml(base)]
-    pub image: Image,
-    /// Transparent shows the picture as it is.
-    #[qml(notify)]
-    pub color: Color,
-}
-
-impl Default for ParticleSprite {
-    fn default() -> Self {
-        Self {
-            image: Image::default(),
-            color: Color::TRANSPARENT,
-        }
-    }
-}
-
-#[qml_impl]
-impl ParticleSprite {}
-
 // ------------------------------------------------------------ state
 
 /// A system's particles and what it needs to carry on.
@@ -632,13 +623,13 @@ impl Default for SystemRun {
     }
 }
 
-/// Everything that took part, and the pictures each painter keeps.
+/// Everything that took part, and what each painter shows.
 #[derive(Default)]
 struct Registry {
     emitters: RefCell<Vec<ObjectId>>,
     painters: RefCell<Vec<ObjectId>>,
     affectors: RefCell<Vec<ObjectId>>,
-    pools: RefCell<HashMap<ObjectId, Vec<ObjectId>>>,
+    shown: RefCell<FxHashMap<ObjectId, Shown>>,
     /// Each `MaskShape` picture's alpha, by URL, with the picture it was
     /// read from: a new picture under the URL is read again.
     masks: RefCell<HashMap<String, (ImageHandle, Rc<Mask>)>>,
@@ -1224,51 +1215,125 @@ fn paint(e: &Engine, sys: ObjectId, only: Option<ObjectId>) {
     }
 }
 
-fn place(e: &Engine, pa: ObjectId, source: &Atom, sprites: &[Sprite]) {
-    let reg = registry(e);
-    let mut pool = reg.pools.borrow().get(&pa).cloned().unwrap_or_default();
-    pool.retain(|s| e.is_alive(*s));
-    while pool.len() < sprites.len() {
-        let made = e
-            .create_native_incomplete(ParticleSprite::default(), Some(pa))
-            .and_then(|s| {
-                crate::tree::set_parent_item(e, s, Some(pa))?;
-                e.complete(s)?;
-                Ok(s)
-            });
-        match made {
-            Ok(s) => pool.push(s),
-            Err(err) => {
-                warn(e, "picture", Err(err));
-                break;
-            }
-        }
-    }
-    e.batch(|| {
-        for (i, s) in pool.iter().enumerate() {
-            let w = |p: PropIndex, v: Value| warn(e, "picture", write_computed(e, *s, p, v));
-            match sprites.get(i) {
-                Some(sp) => {
-                    w(ImageSource::SOURCE, Value::Url(source.clone()));
-                    w(ParticleSprite::COLOR.index, Value::Color(sp.tint));
-                    w(Item::WIDTH.index, Value::Real(sp.size));
-                    w(Item::HEIGHT.index, Value::Real(sp.size));
-                    w(Item::X.index, Value::Real(sp.x));
-                    w(Item::Y.index, Value::Real(sp.y));
-                    w(Item::OPACITY.index, Value::Real(sp.opacity));
-                    w(Item::VISIBLE.index, Value::Bool(true));
-                }
-                None => w(Item::VISIBLE.index, Value::Bool(false)),
-            }
-        }
-    });
-    reg.pools.borrow_mut().insert(pa, pool);
+/// What a painter shows, and the serial its paint follows.
+#[derive(Default)]
+struct Shown {
+    serial: Option<NodeId>,
+    /// The picture of `url`; none when it could not be read.
+    url: Option<Atom>,
+    image: Option<ImageHandle>,
+    paint: Rc<Pictures>,
 }
 
-// `Image.source` is declared by the base of `Image`; named once here.
-struct ImageSource;
-impl ImageSource {
-    const SOURCE: PropIndex = crate::image::ImageBase::SOURCE.index;
+/// Every particle of a painter, drawn into the painter's own node: one
+/// display list, where an item for each would cost its own geometry,
+/// paint and bindings on every step.
+#[derive(Debug, Default)]
+struct Pictures {
+    quads: Vec<(ImageHandle, kurbo::Rect, f32)>,
+}
+
+impl ItemPaint for Pictures {
+    fn paint(&self, _size: kurbo::Size, out: &mut DisplayListBuilder) {
+        for (image, dst, opacity) in &self.quads {
+            out.push(DrawOp::Image {
+                image: image.clone(),
+                src: image.rect(),
+                dst: *dst,
+                tile: None,
+                mirror: [false; 2],
+                smooth: true,
+                opacity: *opacity,
+            });
+        }
+    }
+}
+
+fn read_pictures(e: &Engine, pa: ObjectId) -> Rc<dyn ItemPaint> {
+    let reg = registry(e);
+    let shown = reg.shown.borrow();
+    let Some(s) = shown.get(&pa) else {
+        return Rc::new(Pictures::default());
+    };
+    if let Some(n) = s.serial {
+        let _ = e.graph().get(n);
+    }
+    s.paint.clone()
+}
+
+fn place(e: &Engine, pa: ObjectId, source: &Atom, sprites: &[Sprite]) {
+    let reg = registry(e);
+    let (serial, image) = {
+        let mut shown = reg.shown.borrow_mut();
+        let Some(s) = shown.get_mut(&pa) else {
+            return;
+        };
+        if s.url.as_ref() != Some(source) {
+            s.url = Some(source.clone());
+            s.image = load_picture(e, source);
+        }
+        (s.serial, s.image.clone())
+    };
+    let quads = match image {
+        Some(image) => {
+            // With a `colorVariation` each particle has a colour of its own.
+            let mut tints: FxHashMap<Color, ImageHandle> = FxHashMap::default();
+            sprites
+                .iter()
+                .filter(|sp| sp.opacity > 0.0 && sp.size > 0.0)
+                .map(|sp| {
+                    let image = if sp.tint.a == 0 {
+                        image.clone()
+                    } else {
+                        tints
+                            .entry(sp.tint)
+                            .or_insert_with(|| tinted_in(e, image.clone(), sp.tint))
+                            .clone()
+                    };
+                    let dst = kurbo::Rect::new(sp.x, sp.y, sp.x + sp.size, sp.y + sp.size);
+                    (image, dst, sp.opacity.clamp(0.0, 1.0) as f32)
+                })
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let still_empty = {
+        let mut shown = reg.shown.borrow_mut();
+        let Some(s) = shown.get_mut(&pa) else {
+            return;
+        };
+        let still_empty = s.paint.quads.is_empty() && quads.is_empty();
+        s.paint = Rc::new(Pictures { quads });
+        still_empty
+    };
+    // Nothing shown before or now: no repaint.
+    if !still_empty && let Some(n) = serial {
+        let next = e.graph().get_untracked(n).to_number() as i32 + 1;
+        e.graph().set(n, Value::Int(next));
+    }
+}
+
+/// The picture of `url`, read on this thread as `Image` reads a local
+/// file. None, with a warning, when it cannot be read.
+fn load_picture(e: &Engine, url: &Atom) -> Option<ImageHandle> {
+    if url.as_str().is_empty() {
+        return None;
+    }
+    let key = ImageKey {
+        url: url.as_str().to_owned(),
+        request: Default::default(),
+    };
+    match ImageStore::of(e).load_now(&key, true) {
+        Ok(image) => Some(image),
+        Err(err) => {
+            e.log(
+                LogLevel::Warning,
+                CATEGORY,
+                format!("cannot read the particle picture {url}: {err}"),
+            );
+            None
+        }
+    }
 }
 
 // ------------------------------------------------------------ registration
@@ -1279,12 +1344,9 @@ pub(crate) fn register(engine: &Engine) {
         Direction, PointDirection, AngleDirection, TargetDirection,
         Emitter, ParticlePainter, ImageParticle, ParticleAffector, Wander, Age,
     ]));
-    register_image_tint(
+    register_paint_item(
         engine,
-        MetaRef::Static(ParticleSprite::static_meta()),
-        |e, o| match e.read(o, ParticleSprite::COLOR.index) {
-            Value::Color(c) if c.a > 0 => Some(c),
-            _ => None,
-        },
+        MetaRef::Static(ImageParticle::static_meta()),
+        read_pictures,
     );
 }

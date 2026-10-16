@@ -7,11 +7,11 @@
 //! pixels are made once for each picture and colour, and are dropped with
 //! the last display list that shows them.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
 
 use ljos_engine::{Color, Engine, MetaRef, ObjectId};
 use ljos_render::{ImageHandle, WeakImage};
+use rustc_hash::FxHashMap;
 
 /// The colour an item of a registered type lays over its picture just
 /// now; none shows the picture as it is. Read inside the scene's paint
@@ -22,7 +22,9 @@ pub type ImageTint = fn(&Engine, ObjectId) -> Option<Color>;
 struct Tints {
     types: RefCell<Vec<(MetaRef, ImageTint)>>,
     /// By the picture's identity and the colour's bytes.
-    made: RefCell<HashMap<(u64, [u8; 4]), WeakImage>>,
+    made: RefCell<FxHashMap<(u64, [u8; 4]), WeakImage>>,
+    /// How many `made` kept at its last sweep.
+    swept: Cell<usize>,
 }
 
 /// Makes items of type `meta` (and of the types derived from it) paint
@@ -51,9 +53,16 @@ pub(crate) fn tinted(engine: &Engine, obj: ObjectId, image: ImageHandle) -> Imag
         .iter()
         .find(|(m, _)| meta.inherits(m))
         .map(|(_, t)| *t);
-    let Some(colour) = tint.and_then(|t| t(engine, obj)) else {
-        return image;
-    };
+    match tint.and_then(|t| t(engine, obj)) {
+        Some(colour) => tinted_in(engine, image, colour),
+        None => image,
+    }
+}
+
+/// `image` laid over in `colour`, made once for each picture and colour
+/// while a display list shows it.
+pub(crate) fn tinted_in(engine: &Engine, image: ImageHandle, colour: Color) -> ImageHandle {
+    let tints = engine.extension::<Tints>();
     let rgba = colour.to_rgba_f().map(|c| (c * 255.0).round() as u8);
     let key = (image.id(), rgba);
     let mut made = tints.made.borrow_mut();
@@ -61,8 +70,12 @@ pub(crate) fn tinted(engine: &Engine, obj: ObjectId, image: ImageHandle) -> Imag
         return done;
     }
     // The pictures that are gone would otherwise stay in the table for
-    // as long as the engine lives.
-    made.retain(|_, w| w.is_alive());
+    // as long as the engine lives. Swept when it has doubled, so that
+    // making many (a particle each) does not walk it each time.
+    if made.len() >= 2 * tints.swept.get().max(16) {
+        made.retain(|_, w| w.is_alive());
+        tints.swept.set(made.len());
+    }
     let out = lay_over(&image, rgba);
     made.insert(key, out.downgrade());
     out

@@ -101,6 +101,27 @@ Feature: Particles
     Then the property "empty" of "system" is false
 
   @qt-parity
+  Scenario: The painter draws its particles without items of its own
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Particles
+      ParticleSystem {
+        objectName: "system"
+        width: 300; height: 300
+        Emitter { emitRate: 100; lifeSpan: 5000; width: 10; height: 10 }
+        ImageParticle {
+          objectName: "painter"
+          source: "dot.png"
+          property int items: children.length
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the property "empty" of "system" is false
+    And the property "items" of "painter" is 0
+
+  @qt-parity
   Scenario: A disabled emitter makes none
     Given the QML:
       """qml

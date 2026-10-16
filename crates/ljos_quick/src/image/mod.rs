@@ -44,6 +44,7 @@ use ljos_render::{
 use crate::enums::{EnumTable, align};
 use crate::item::{Item, is_a, write_computed};
 pub(crate) use store::Waiter;
+pub(crate) use tint::tinted_in;
 
 /// Log category of what the store has to say that Qt has no words for.
 pub(crate) const CATEGORY: &str = "ljos.image";
