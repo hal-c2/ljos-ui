@@ -102,6 +102,11 @@ struct Done {
     result: Result<decode::Loaded, LoadError>,
 }
 
+/// Decodes under way may take this share of the cache's budget at once:
+/// pictures at full size are about to be made smaller, so they need not
+/// all be decoded side by side.
+const DECODE_SHARE: usize = 4;
+
 /// Bytes that decodes under way may take at once. A decode waits for room
 /// while another runs, so a burst of large pictures is decoded a few at a
 /// time instead of all holding their pixels at full size together; one
@@ -681,7 +686,7 @@ impl ImageStore {
         let cap = {
             let mut s = self.state.borrow_mut();
             s.in_flight += 1;
-            s.cache.budget()
+            s.cache.budget() / DECODE_SHARE
         };
         let located = self.locate(&key);
         let tx = self.tx.clone();
@@ -696,7 +701,7 @@ impl ImageStore {
             };
             let result = located.and_then(|origin| {
                 let bytes = decode::read(&key.url, &origin)?;
-                let _permit = gate.enter(decode::cost(&bytes), cap);
+                let _permit = gate.enter(decode::cost(&bytes, key.request), cap);
                 // A decoder that panics on a hostile file must still answer,
                 // or its Image would say "Loading" for ever.
                 catch_unwind(AssertUnwindSafe(|| {

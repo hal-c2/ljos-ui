@@ -32,6 +32,7 @@ fancy-regex.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 zune-jpeg.workspace = true
+jpeg-decoder.workspace = true
 resvg.workspace = true
 
 [dev-dependencies]

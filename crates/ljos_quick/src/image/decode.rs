@@ -182,12 +182,21 @@ pub(crate) fn read<'a>(
     }
 }
 
-/// About how many bytes decoding `bytes` takes at its height: the
-/// picture at four bytes a pixel, as its header says. 0 for what has no
+/// About how many bytes decoding `bytes` for `request` takes at its
+/// height: the picture at four bytes a pixel, as its header says, or for
+/// a JPEG kept smaller the size its IDCT makes it. 0 for what has no
 /// header read here (a drawing).
-pub(crate) fn cost(bytes: &[u8]) -> usize {
+pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
     dimensions(bytes).map_or(0, |(w, h)| {
-        (w as usize).saturating_mul(h as usize).saturating_mul(4)
+        let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
+        let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
+        let s = if jpeg && asks_nothing {
+            halvings((w, h), request.limit).min(3)
+        } else {
+            0
+        };
+        let side = |n: u32| n.div_ceil(1 << s) as usize;
+        side(w).saturating_mul(side(h)).saturating_mul(4)
     })
 }
 
@@ -270,8 +279,21 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             frames: Some(Arc::new(Frames { images, delays })),
         });
     }
-    let raw = decode_raw(url, bytes)?;
     let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
+    if asks_nothing
+        && let Some(natural) = dimensions(bytes)
+        && let k @ 1.. = halvings(natural, request.limit)
+        && let Some((raw, done)) = decode_jpeg_smaller(bytes, natural, k)
+    {
+        let image = raw.reduced(k - done, url)?;
+        return Ok(Loaded {
+            image,
+            natural,
+            vector: false,
+            frames: None,
+        });
+    }
+    let raw = decode_raw(url, bytes)?;
     if asks_nothing {
         // Straight from the decoder's pixels: neither a copy at full size
         // with four bytes a pixel nor one premultiplied comes in between.
@@ -691,6 +713,56 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Decoded, String> {
     Ok((u32::from(info.width), u32::from(info.height), 3, rgb))
 }
 
+/// A JPEG of `natural` size decoded halved up to `k` times (at most three:
+/// an eighth) by its IDCT, so that the picture is never held whole, with
+/// how many times it was halved. None for what is no JPEG or has no RGB
+/// or grey 8-bit pixels; the whole picture is decoded then.
+fn decode_jpeg_smaller<'a>(bytes: &[u8], natural: (u32, u32), k: u32) -> Option<(Raw<'a>, u32)> {
+    if !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return None;
+    }
+    let mut dec = jpeg_decoder::Decoder::new(bytes);
+    let side = |n: u32, s: u32| u16::try_from(n.div_ceil(1 << s)).ok();
+    let want = k.min(3);
+    let (w, h) = dec
+        .scale(side(natural.0, want)?, side(natural.1, want)?)
+        .ok()?;
+    // The halvings the decoder chose, if they are halvings at all.
+    let done =
+        (0..=want).find(|&s| side(natural.0, s) == Some(w) && side(natural.1, s) == Some(h))?;
+    let format = dec.info()?.pixel_format;
+    if !matches!(
+        format,
+        jpeg_decoder::PixelFormat::RGB24 | jpeg_decoder::PixelFormat::L8
+    ) {
+        return None;
+    }
+    let pixels = dec.decode().ok()?;
+    let channels = if format == jpeg_decoder::PixelFormat::L8 {
+        1
+    } else {
+        3
+    };
+    if pixels.len() != usize::from(w) * usize::from(h) * channels {
+        return None;
+    }
+    let data = if channels == 1 {
+        pixels.iter().flat_map(|&g| [g, g, g]).collect()
+    } else {
+        pixels
+    };
+    Some((
+        Raw {
+            width: u32::from(w),
+            height: u32::from(h),
+            channels: 3,
+            premultiplied: false,
+            data: std::borrow::Cow::Owned(data),
+        },
+        done,
+    ))
+}
+
 /// The size a picture of `natural` pixels is decoded to for `request`
 /// (Qt 6.11.2, measured on qml6).
 ///
@@ -1067,7 +1139,7 @@ mod tests {
     fn a_header_says_the_size_without_decoding() {
         let png = png_of(5, 3, png::ColorType::Rgb, &[0; 45]);
         assert_eq!(dimensions(&png), Some((5, 3)));
-        assert_eq!(cost(&png), 60);
+        assert_eq!(cost(&png, Request::default()), 60);
         assert_eq!(dimensions(&gif(&RGB, 10)), Some((3, 2)));
         let mut jpeg = Vec::new();
         jpeg_encoder::Encoder::new(&mut jpeg, 90)
@@ -1075,7 +1147,7 @@ mod tests {
             .unwrap();
         assert_eq!(dimensions(&jpeg), Some((7, 4)));
         assert_eq!(dimensions(WIDE), None);
-        assert_eq!(cost(WIDE), 0);
+        assert_eq!(cost(WIDE, Request::default()), 0);
         assert_eq!(dimensions(&[0xff, 0xd8, 0xff]), None, "cut short");
     }
 
@@ -1149,5 +1221,33 @@ mod tests {
         let loaded = load_bytes("file:///a.png", &bytes, request).unwrap();
         assert_eq!(loaded.natural, (32, 16));
         assert_eq!((loaded.image.width(), loaded.image.height()), (8, 4));
+    }
+
+    #[test]
+    fn a_jpeg_kept_smaller_is_decoded_smaller() {
+        let data: Vec<u8> = (0..64 * 32).flat_map(|_| [32u8, 96, 160]).collect();
+        let mut bytes = Vec::new();
+        jpeg_encoder::Encoder::new(&mut bytes, 95)
+            .encode(&data, 64, 32, jpeg_encoder::ColorType::Rgb)
+            .unwrap();
+        let (raw, done) = decode_jpeg_smaller(&bytes, (64, 32), 5).unwrap();
+        assert_eq!(
+            (raw.width, raw.height, done),
+            (8, 4, 3),
+            "an eighth at most"
+        );
+        for (k, size) in [(1, (32, 16)), (3, (8, 4)), (4, (4, 2))] {
+            let request = Request {
+                limit: 64 >> k,
+                ..Request::default()
+            };
+            let loaded = load_bytes("file:///a.jpg", &bytes, request).unwrap();
+            assert_eq!(loaded.natural, (64, 32));
+            assert_eq!((loaded.image.width(), loaded.image.height()), size);
+            let px = &loaded.image.data()[..4];
+            for (got, want) in px.iter().zip([32u8, 96, 160, 255]) {
+                assert!(got.abs_diff(want) <= 4, "{px:?}");
+            }
+        }
     }
 }

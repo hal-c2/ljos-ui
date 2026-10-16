@@ -48,6 +48,10 @@ skrifa = "0.44"
 
 # Images
 zune-jpeg = "0.5.15"
+# Only for a JPEG kept smaller than it is: it decodes at 1/2, 1/4 or 1/8 of
+# the size in its IDCT, which zune-jpeg cannot, so the full picture is never
+# held. Without rayon: decodes already run on the ComputePool.
+jpeg-decoder = { version = "0.3.1", default-features = false }
 # SVG: parsed by usvg and drawn by resvg (linebender), pure Rust. Without
 # text, so it brings no second font stack, and without its own raster decoders.
 resvg = { version = "0.48.1", default-features = false, features = ["svgz"] }
