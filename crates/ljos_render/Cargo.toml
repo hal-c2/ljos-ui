@@ -18,6 +18,8 @@ b0 = ["dep:egui", "dep:lyon_tessellation"]
 ljos_runtime = { path = "../ljos_runtime" }
 bitflags.workspace = true
 png.workspace = true
+# Maps keyed by ids looked up many times a frame: no SipHash.
+rustc-hash.workspace = true
 slotmap.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true

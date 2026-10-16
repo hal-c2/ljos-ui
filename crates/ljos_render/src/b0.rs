@@ -50,6 +50,8 @@ use egui::{
     Color32, ColorImage, Context, FontId, Pos2, Rect as ERect, TextureFilter, TextureHandle,
     TextureId, TextureOptions, TextureWrapMode,
 };
+use rustc_hash::FxHashMap;
+use slotmap::SecondaryMap;
 use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 
 use crate::b0_shape::{ShapeCache, ShapeCmd, ShapeSeg};
@@ -575,8 +577,8 @@ pub struct EpaintBackend {
     ppp: f32,
     aa: Tessellator,
     no_aa: Tessellator,
-    lists: HashMap<DisplayListId, ListEntry>,
-    nodes: HashMap<NodeId, NodeEntry>,
+    lists: FxHashMap<DisplayListId, ListEntry>,
+    nodes: SecondaryMap<NodeId, NodeEntry>,
     frame: u64,
     /// The frame of the last `encode`; `frame` is also set by `sync`.
     encoded: u64,
@@ -845,8 +847,8 @@ impl EpaintBackend {
             ppp: 1.0,
             aa: tessellator(1.0, true),
             no_aa: tessellator(1.0, false),
-            lists: HashMap::new(),
-            nodes: HashMap::new(),
+            lists: FxHashMap::default(),
+            nodes: SecondaryMap::new(),
             frame: 0,
             encoded: 0,
             tessellations: 0,
@@ -1174,7 +1176,7 @@ impl EpaintBackend {
                 let Drawn::Node(node, clip) = drawn else {
                     continue;
                 };
-                let Some(ne) = self.nodes.get(node) else {
+                let Some(ne) = self.nodes.get(*node) else {
                     continue;
                 };
                 for seg in &ne.segs {
@@ -1421,10 +1423,10 @@ impl RenderBackend for EpaintBackend {
             stats.warnings += le.warnings;
             let local = Arc::clone(&le.segs);
 
-            let reuse = self.nodes.get(&item.node).is_some_and(|n| n.sig == sig);
+            let reuse = self.nodes.get(item.node).is_some_and(|n| n.sig == sig);
             if !reuse {
                 let mut segs = Self::world_segs(&local, to_screen, item.opacity);
-                if let Some(old) = self.nodes.get_mut(&item.node) {
+                if let Some(old) = self.nodes.get_mut(item.node) {
                     hand_over(&mut self.shapes, &mut old.segs, &mut segs);
                 }
                 self.world_rebuilds += 1;
@@ -1439,7 +1441,7 @@ impl RenderBackend for EpaintBackend {
             } else {
                 stats.caches_reused += 1;
             }
-            let ne = self.nodes.get_mut(&item.node).expect("present");
+            let ne = self.nodes.get_mut(item.node).expect("present");
             ne.last_used = self.frame;
             has_glyphs |= ne.segs.iter().any(|s| matches!(s, WorldSeg::Glyphs(_)));
             order.push(Drawn::Node(item.node, clip));
@@ -1463,7 +1465,7 @@ impl RenderBackend for EpaintBackend {
                     continue;
                 }
             };
-            let ne = self.nodes.get_mut(&node).expect("present");
+            let ne = self.nodes.get_mut(node).expect("present");
             for seg in &mut ne.segs {
                 match seg {
                     WorldSeg::Mesh(m) => sink.shapes.push(ClippedShape {
@@ -1574,7 +1576,7 @@ impl RenderBackend for EpaintBackend {
         // something nobody sees, and the next frame may be a long way off.
         let (nodes, frame) = (&mut self.nodes, self.frame);
         self.textured.retain(|id| {
-            let Some(e) = nodes.get_mut(id) else {
+            let Some(e) = nodes.get_mut(*id) else {
                 return false;
             };
             let shapes = e.segs.iter_mut().filter_map(shape_of_mut);

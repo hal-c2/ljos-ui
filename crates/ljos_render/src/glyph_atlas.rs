@@ -10,9 +10,8 @@
 //! is emptied instead and the frame's glyphs are filled again. Colour glyphs
 //! (emoji) have no outline and are not drawn yet.
 
-use std::collections::HashMap;
-
 use egui::{Color32, ColorImage, Context, TextureHandle, TextureId, TextureOptions};
+use rustc_hash::FxHashMap;
 use vello_cpu::color::palette::css::WHITE;
 use vello_cpu::kurbo::{Affine, Stroke};
 use vello_cpu::peniko::{Fill, ImageAlphaType};
@@ -106,7 +105,7 @@ pub(crate) struct GlyphAtlas {
     side: usize,
     alpha: Vec<u8>,
     shelves: Vec<Shelf>,
-    slots: HashMap<GlyphKey, Slot>,
+    slots: FxHashMap<GlyphKey, Slot>,
     /// Bumped whenever texture coordinates handed out earlier stop being valid.
     generation: u64,
     texture: Option<TextureHandle>,
@@ -133,7 +132,7 @@ impl Default for GlyphAtlas {
             side: START_SIDE,
             alpha: Vec::new(),
             shelves: Vec::new(),
-            slots: HashMap::new(),
+            slots: FxHashMap::default(),
             generation: 0,
             texture: None,
             dirty: None,
