@@ -408,8 +408,6 @@ pub struct Timer {
     /// the owner.
     #[qml(notify, readonly)]
     pub parent: Option<ObjectId>,
-    #[qml(skip)]
-    completed: bool,
 }
 
 impl Default for Timer {
@@ -421,7 +419,6 @@ impl Default for Timer {
             repeat: false,
             triggered_on_start: false,
             parent: None,
-            completed: false,
         }
     }
 }
@@ -457,7 +454,6 @@ impl Timer {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let me = cx.this;
-        cx.with_mut::<Timer, _>(|t| t.completed = true)?;
         cx.engine
             .watch(me, Timer::RUNNING.index, move |e, _| e.timer_arm(me, true))?;
         cx.engine.watch(me, Timer::INTERVAL.index, move |e, _| {
@@ -817,14 +813,17 @@ impl Engine {
     /// (Re)starts or stops `obj`'s timer to match `running`. `on_start`:
     /// this is a start, so `triggeredOnStart` applies.
     pub(crate) fn timer_arm(&self, obj: ObjectId, on_start: bool) {
-        let Ok((running, interval, on_start_flag, completed)) = self.untrack(|| {
-            self.with::<Timer, _>(obj, |t| {
-                (t.running, t.interval, t.triggered_on_start, t.completed)
-            })
+        let Ok((running, interval, on_start_flag)) = self.untrack(|| {
+            self.with::<Timer, _>(obj, |t| (t.running, t.interval, t.triggered_on_start))
         }) else {
             return;
         };
-        if !completed {
+        // The engine's own mark, not a field: a field the application
+        // cannot see would stop `Timer { .., ..Default::default() }`.
+        if !self
+            .flags(obj)
+            .is_some_and(|f| f.contains(crate::ObjectFlags::COMPLETED))
+        {
             return;
         }
         {

@@ -449,8 +449,10 @@ fn make_timer(
     obj: ObjectId,
     file: Rc<SettingsFile>,
 ) -> Result<ObjectId, EngineError> {
-    let mut quiet = Timer::default();
-    quiet.interval = WRITE_DELAY_MS;
+    let quiet = Timer {
+        interval: WRITE_DELAY_MS,
+        ..Default::default()
+    };
     let timer = engine.create_native(quiet, Some(obj))?;
     engine.complete(timer)?;
     engine.connect_by_name(timer, "triggered", move |e, _| write_now(e, &file))?;
