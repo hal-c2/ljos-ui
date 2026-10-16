@@ -222,4 +222,46 @@ Each figure is the geometric mean of Ljós/Qt over the apps (below 1 is Ljós sm
 - **CPU while clicked.**
   - For apps where clicks change nothing on screen, Ljós used 5–37 % of one core. Qt stayed near
     0.1 %.
-  - The likely reason, not yet confirmed, is that Ljós redraws on every pointer event.
+  - The reason was that Ljós drew and presented a frame for every pointer event. It no longer
+    does (see below).
+
+### After drawing only what changed (2026-10-16)
+
+`bench/animations.qml` was profiled in the sandbox (llvmpipe through wgpu's GL backend, as the
+bench runs it). Building the frame took 0.1–0.5 ms, tessellating 0.02 ms and submitting 1.1 ms. The
+rest was llvmpipe's raster threads, at about 80 % of a core. Their cost hardly depended on what
+moved: a white window with one moving 12×3 rectangle cost as much as 200. Each full-window quad cost
+about 22 % of a core at 60 frames a second, and the window had three: the clear, the shell's
+backdrop and the root `Rectangle`.
+
+Three changes followed:
+
+- A pass that draws what is already shown is not presented.
+- The backdrop is not painted over a clear of the same colour.
+- An opaque root rectangle covering the window becomes the clear colour.
+
+A single run of each, Ljós before → after, with Qt from the same session (load average 37–68):
+
+| App | Idle CPU, desktop | Frames, desktop | CPU clicked, desktop | Frames, pi-zero |
+|---|---|---|---|---|
+| animations | 86.7 → 43.9 (Qt 21.8) | 61.9 → 59.9 (Qt 62.1) | 87.5 → 44.9 (Qt 23.1) | 20.7 → 45.5 (Qt 61.8) |
+| listview | 72.3 → 44.0 (Qt 23.2) | 62.2 → 59.8 (Qt 62.0) | 72.4 → 49.2 (Qt 24.1) | 16.8 → 31.2 (Qt 62.1) |
+| clocks | 92.0 → 50.7 (Qt 21.2) | 56.0 → 60.6 (Qt 60.2) | 96.5 → 53.2 (Qt 20.7) | 18.0 → 27.4 (Qt 60.2) |
+| maroon | 61.5 → 62.5 (Qt 58.3) | 62.2 → 62.0 (Qt 62.2) | 68.7 → 73.9 (Qt 69.0) | 30.8 → 35.4 (Qt 29.1) |
+| samegame | 107 → 58.4 (Qt 28.2) | 53.6 → 45.2 (Qt 61.7) | 161 → 144 (Qt 145) | 12.4 → 18.5 (Qt 59.2) |
+| rectangles | 0 → 0 (Qt 0) | 0 → 0 (Qt 0) | 37.1 → 0.98 (Qt 0.13) | — |
+| calqlatr | 0 → 0 (Qt 0) | 0 → 0 (Qt 0) | 9.83 → 1.21 (Qt 1.00) | — |
+
+"Frames" counts the frames the compositor was given. Before the change that included frames
+showing the same picture again; after it, only new pictures are counted.
+
+What is left in an animating frame is mostly fixed cost in wgpu's GL backend, about 27 % of a core
+at 60 frames a second against Qt's 7 %. Each frame it:
+
+- clears the frame;
+- copies it, flipped, from an offscreen buffer to the window;
+- swaps the buffers;
+- makes the context current twice and waits on fences.
+
+None of that can be changed from Ljós. A GL painter that draws straight into the window, or a
+Vulkan software driver, would avoid the copy.
