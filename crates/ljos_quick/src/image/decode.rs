@@ -372,33 +372,35 @@ pub(crate) fn step_up(need: f64) -> u32 {
 /// `to` long covers, and by how much (a share of the larger pixel, so the
 /// shares of one sum to 1). For `to <= from`.
 struct Spans {
-    scale: f64,
-    to: usize,
+    from: u64,
+    to: u64,
 }
 
+// On a grid `from * to` long, source pixel `i` is `[i * to, (i + 1) * to)`
+// and smaller pixel `o` is `[o * from, (o + 1) * from)`: whole numbers, so
+// which pixels meet is never a rounding question.
 impl Spans {
     fn new(from: usize, to: usize) -> Self {
         Spans {
-            scale: from as f64 / to as f64,
-            to,
+            from: from as u64,
+            to: to as u64,
         }
     }
 
     /// The smaller pixels source pixel `i` falls in, with its share of
     /// each: one, or two when it straddles their border.
     fn of(&self, i: usize) -> impl Iterator<Item = (usize, f32)> {
-        let (start, end) = (i as f64 / self.scale, (i + 1) as f64 / self.scale);
-        let first = (start.floor() as usize).min(self.to - 1);
-        let last = ((end.ceil() as usize).max(first + 1) - 1).min(self.to - 1);
-        (first..=last).filter_map(move |o| {
-            let covered = end.min((o + 1) as f64) - start.max(o as f64);
-            (covered > 0.0).then_some((o, covered as f32))
+        let (start, end) = (i as u64 * self.to, (i as u64 + 1) * self.to);
+        let (first, last) = (start / self.from, (end - 1) / self.from);
+        (first..=last).map(move |o| {
+            let covered = end.min((o + 1) * self.from) - start.max(o * self.from);
+            (o as usize, covered as f32 / self.from as f32)
         })
     }
 
     /// The last source pixel smaller pixel `o` takes from.
     fn ends_at(&self, o: usize) -> usize {
-        (((o + 1) as f64 * self.scale).ceil() as usize).max(1) - 1
+        (((o as u64 + 1) * self.from).div_ceil(self.to) - 1) as usize
     }
 }
 
@@ -1350,6 +1352,30 @@ mod tests {
             image.data(),
             &[15, 15, 15, 255, 90, 90, 90, 255, 30, 30, 30, 64]
         );
+    }
+
+    #[test]
+    fn every_pixel_goes_whole_into_pixels_not_yet_finished() {
+        for from in 1..200 {
+            for to in 1..=from {
+                let spans = Spans::new(from, to);
+                let mut shares = vec![0f32; to];
+                for i in 0..from {
+                    let mut total = 0.0;
+                    for (o, share) in spans.of(i) {
+                        assert!(spans.ends_at(o) >= i, "{from} to {to}: {i} after {o} ended");
+                        shares[o] += share;
+                        total += share;
+                    }
+                    assert!((total * from as f32 / to as f32 - 1.0).abs() < 1e-4);
+                }
+                assert!(
+                    shares.iter().all(|s| (s - 1.0).abs() < 1e-4),
+                    "{from} to {to}"
+                );
+                assert_eq!(spans.ends_at(to - 1), from - 1);
+            }
+        }
     }
 
     #[test]
