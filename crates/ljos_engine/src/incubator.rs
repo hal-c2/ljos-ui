@@ -50,6 +50,7 @@ pub(crate) mod scripts;
 pub(crate) mod singletons;
 mod sliced;
 pub(crate) mod tier1;
+pub(crate) mod types;
 
 /// Deepest nesting of file components; deeper is a component using
 /// itself.
@@ -2337,7 +2338,7 @@ impl Engine {
                 .arg_value(inst, arg)
                 .map_or(JsValue::Undefined, |v| self.to_js(&v)),
             Arg::Type(t) => match self.type_meta(&inst.file, t) {
-                Ok(m) => singletons::enum_keys(&m),
+                Ok(m) => self.type_face(s, &m),
                 Err(_) => JsValue::Undefined,
             },
             // What stands for the object: the script asks for it where the

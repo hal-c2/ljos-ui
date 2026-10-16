@@ -942,7 +942,7 @@ impl Engine {
         // A type of a module a script imports under a name
         // (`.import QtQuick as QQ`): its enums, or nothing.
         let w = Rc::downgrade(&self.inner);
-        let type_of: HostFn = Rc::new(move |_scope, args| {
+        let type_of: HostFn = Rc::new(move |scope, args| {
             let (Some(inner), [JsValue::String(module), JsValue::String(name)]) =
                 (w.upgrade(), args)
             else {
@@ -953,13 +953,28 @@ impl Engine {
             Ok(engine
                 .lookup_type(module, name)
                 .or_else(|| engine.lookup_type("QtQml", name))
-                .map_or(JsValue::Undefined, |m| {
-                    crate::incubator::singletons::enum_keys(&m)
-                }))
+                .map_or(JsValue::Undefined, |m| engine.type_face(scope, &m)))
+        });
+        // `value instanceof Type`, asked by what stands for the type
+        // (incubator/types.rs).
+        let w = Rc::downgrade(&self.inner);
+        let instance_of: HostFn = Rc::new(move |_scope, args| {
+            let (Some(inner), [value, JsValue::Number(index)]) = (w.upgrade(), args) else {
+                return Ok(JsValue::Bool(false));
+            };
+            Ok(JsValue::Bool(
+                Engine::from_inner(inner).instance_of(value, *index as usize),
+            ))
         });
         let err = |e: JsFault| EngineError::Js(e.to_string());
         js.host
             .set_global_function("__ljos_type", type_of)
+            .map_err(err)?;
+        js.host
+            .set_global_function("__ljos_instanceOf", instance_of)
+            .map_err(err)?;
+        js.host
+            .eval_script("types", crate::incubator::types::TYPE_FACES)
             .map_err(err)?;
         js.host
             .eval_script(
