@@ -112,3 +112,34 @@ Feature: Eliding text that does not fit
     Scenario: Without an elide mode a short item overflows instead
       Then the property "truncated" of "tall" is false
       And the property "lineCount" of "tall" is at least 2
+
+  Rule: A width a layout gives
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          RowLayout {
+            objectName: "row"
+            width: 80; height: 40
+            Text {
+              objectName: "cut"
+              Layout.fillWidth: true
+              text: "a rather long title that will be cut"
+              elide: Text.ElideRight
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+
+    Scenario: Text a layout makes narrower is elided
+      Then the property "width" of "cut" is 80
+      And the property "truncated" of "cut" is true
+
+    Scenario: Text a layout makes wide enough is whole again
+      When the property "width" of "row" is set to 2000
+      And 100 milliseconds pass
+      Then the property "truncated" of "cut" is false

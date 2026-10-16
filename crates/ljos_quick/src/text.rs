@@ -525,8 +525,12 @@ impl TextInputs {
         .map(|p| num(engine, obj, p));
         // Qt wraps and elides to a width the item was given, never to the
         // one it took from the text itself.
+        // The size is read either way: a layout that sizes the item stops
+        // it following the implicit size without changing anything else
+        // this reads, and the new size is what says so.
         let own = |horizontal: bool, p| {
-            (!size_follows_implicit(engine, obj, horizontal)).then(|| num(engine, obj, p))
+            let size = num(engine, obj, p);
+            (!size_follows_implicit(engine, obj, horizontal)).then_some(size)
         };
         let constrained = wrap != WrapMode::NoWrap || elide != ElideMode::None;
         let width = if constrained {
