@@ -118,44 +118,114 @@ struct Done {
 /// all be decoded side by side.
 const DECODE_SHARE: usize = 8;
 
-/// Bytes that decodes under way may take at once. A decode waits for room
-/// while another runs, so a burst of large pictures is decoded a few at a
-/// time instead of all holding their pixels at full size together; one
-/// alone always runs, however large.
+/// What fetching a picture is guessed to hold before its body is in, as a
+/// share of the gate's cap: enough that a burst of small pictures is
+/// fetched side by side, few enough that large ones wait their turn.
+const FETCH_GUESS_SHARE: usize = MAX_IN_FLIGHT;
+
+/// Bytes that background loads may hold at once: bodies fetched or read
+/// and not decoded yet, fetches under way (at a guess), and decodes under
+/// way. A fetch starts only while there is room, so a burst of large
+/// network pictures does not pile up undecoded; a decode waits for room
+/// while another runs, so pictures are not all at full size together. A
+/// decode waits only on other decodes, never on bodies, which only a
+/// decode frees; and one alone always runs, however large.
 #[derive(Default)]
 struct Gate {
-    used: Mutex<usize>,
+    held: Mutex<Held>,
     freed: Condvar,
 }
 
+#[derive(Default, Clone, Copy)]
+struct Held {
+    fetching: usize,
+    bodies: usize,
+    decoding: usize,
+}
+
+impl Held {
+    fn total(self) -> usize {
+        self.fetching
+            .saturating_add(self.bodies)
+            .saturating_add(self.decoding)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Part {
+    Fetching,
+    Body,
+    Decoding,
+}
+
 impl Gate {
-    fn enter(self: &Arc<Self>, bytes: usize, cap: usize) -> Permit {
-        let used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut used = self
+    fn lock(&self) -> std::sync::MutexGuard<'_, Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits until a fetch fits, and holds its guess until the body is in.
+    fn fetch(self: &Arc<Self>, cap: usize) -> Permit {
+        let guess = cap / FETCH_GUESS_SHARE;
+        let held = self.lock();
+        let mut held = self
             .freed
-            .wait_while(used, |u| *u > 0 && u.saturating_add(bytes) > cap)
+            .wait_while(held, |h| {
+                h.total() > 0 && h.total().saturating_add(guess) > cap
+            })
             .unwrap_or_else(PoisonError::into_inner);
-        *used += bytes;
+        held.fetching += guess;
+        self.permit(Part::Fetching, guess)
+    }
+
+    /// Holds a body that is in memory: it is there already, so it never
+    /// waits.
+    fn body(self: &Arc<Self>, bytes: usize) -> Permit {
+        self.lock().bodies += bytes;
+        self.permit(Part::Body, bytes)
+    }
+
+    /// Waits until a decode holding `bytes` fits beside the others.
+    fn decode(self: &Arc<Self>, bytes: usize, cap: usize) -> Permit {
+        let held = self.lock();
+        let mut held = self
+            .freed
+            .wait_while(held, |h| {
+                h.decoding > 0 && h.total().saturating_add(bytes) > cap
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        held.decoding += bytes;
+        self.permit(Part::Decoding, bytes)
+    }
+
+    fn permit(self: &Arc<Self>, part: Part, bytes: usize) -> Permit {
         Permit {
             gate: Arc::clone(self),
+            part,
             bytes,
         }
+    }
+
+    #[cfg(test)]
+    fn held(&self) -> usize {
+        self.lock().total()
     }
 }
 
 struct Permit {
     gate: Arc<Gate>,
+    part: Part,
     bytes: usize,
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut used = self
-            .gate
-            .used
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *used = used.saturating_sub(self.bytes);
+        let mut held = self.gate.lock();
+        let n = match self.part {
+            Part::Fetching => &mut held.fetching,
+            Part::Body => &mut held.bodies,
+            Part::Decoding => &mut held.decoding,
+        };
+        *n = n.saturating_sub(self.bytes);
         self.gate.freed.notify_all();
     }
 }
@@ -720,16 +790,22 @@ impl ImageStore {
         let fetcher = matches!(located, Ok(Origin::Remote)).then(|| Platform::of(engine).fetcher());
         let remote = fetcher.is_some();
         let work = move || {
-            let located = match (located, &fetcher) {
-                (Ok(Origin::Remote), Some(fetcher)) => fetch(fetcher.as_ref(), &key.url),
-                (located, _) => located,
-            };
-            let result = located.and_then(|origin| {
-                let bytes = decode::read(&key.url, &origin)?;
-                let held = bytes
-                    .len()
-                    .saturating_add(decode::cost(&bytes, key.request));
-                let _permit = gate.enter(held, cap);
+            let result = (|| {
+                let origin;
+                let bytes = match (located, &fetcher) {
+                    (Ok(Origin::Remote), Some(fetcher)) => {
+                        let fetching = gate.fetch(cap);
+                        let body = fetch(fetcher.as_ref(), &key.url)?;
+                        drop(fetching);
+                        std::borrow::Cow::Owned(body)
+                    }
+                    (located, _) => {
+                        origin = located?;
+                        decode::read(&key.url, &origin)?
+                    }
+                };
+                let _body = gate.body(bytes.len());
+                let _decoding = gate.decode(decode::cost(&bytes, key.request), cap);
                 // A decoder that panics on a hostile file must still answer,
                 // or its Image would say "Loading" for ever.
                 catch_unwind(AssertUnwindSafe(|| {
@@ -741,7 +817,7 @@ impl ImageStore {
                         reason: "the decoder failed".to_owned(),
                     })
                 })
-            });
+            })();
             // A closed inbox means the engine is gone and nobody waits.
             let _ = tx.send(Done { key, result });
             signal.sent_one();
@@ -834,10 +910,11 @@ impl Evictable for ImageStore {
 }
 
 /// The bytes at `url`, fetched on this (background) thread, or why there
-/// are none in the words Qt logs.
-fn fetch(fetcher: &dyn Fetcher, url: &str) -> Result<Origin, LoadError> {
+/// are none in the words Qt logs. Kept as they came: they are decoded
+/// once and dropped, so they need not be shared.
+fn fetch(fetcher: &dyn Fetcher, url: &str) -> Result<Vec<u8>, LoadError> {
     match fetcher.request(&ljos_platform::Request::get(url)) {
-        Ok(reply) if reply.ok() => Ok(Origin::Bytes(reply.body.into())),
+        Ok(reply) if reply.ok() => Ok(reply.body),
         Ok(reply) => Err(LoadError::Network(format!(
             "Error transferring {url} - server replied: {}",
             reason_phrase(reply.status)
@@ -848,4 +925,75 @@ fn fetch(fetcher: &dyn Fetcher, url: &str) -> Result<Origin, LoadError> {
 
 fn largest_scale(scales: &HashMap<u64, f32>) -> f32 {
     scales.values().copied().fold(1.0, f32::max)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Runs `f` on a thread and says whether it finished within a while.
+    fn finishes(f: impl FnOnce() + Send + 'static) -> bool {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            f();
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_millis(300)).is_ok()
+    }
+
+    #[test]
+    fn a_fetch_waits_while_bodies_fill_the_gate() {
+        let gate = Arc::new(Gate::default());
+        let cap = 800;
+        let body = gate.body(900);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let g = Arc::clone(&gate);
+        std::thread::spawn(move || {
+            let _fetching = g.fetch(cap);
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+        // The body is decoded and dropped: the fetch starts.
+        drop(body);
+        assert!(rx.recv_timeout(Duration::from_secs(30)).is_ok());
+    }
+
+    #[test]
+    fn fetches_of_small_pictures_go_side_by_side() {
+        let gate = Arc::new(Gate::default());
+        let cap = 800;
+        let fetches: Vec<_> = (0..MAX_IN_FLIGHT).map(|_| gate.fetch(cap)).collect();
+        assert_eq!(gate.held(), cap);
+        drop(fetches);
+        assert_eq!(gate.held(), 0);
+    }
+
+    #[test]
+    fn a_decode_never_waits_on_bodies_alone() {
+        // Bodies over the cap are freed only by decodes, so a decode that
+        // waited for them would wait for ever.
+        let gate = Arc::new(Gate::default());
+        let _bodies = [gate.body(500), gate.body(500)];
+        let g = Arc::clone(&gate);
+        assert!(finishes(move || drop(g.decode(400, 800))));
+    }
+
+    #[test]
+    fn a_decode_waits_for_another_when_both_do_not_fit() {
+        let gate = Arc::new(Gate::default());
+        let first = gate.decode(600, 800);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let g = Arc::clone(&gate);
+        std::thread::spawn(move || {
+            let _second = g.decode(600, 800);
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+        drop(first);
+        assert!(rx.recv_timeout(Duration::from_secs(30)).is_ok());
+        // One alone runs however large.
+        let g = Arc::clone(&gate);
+        assert!(finishes(move || drop(g.decode(10_000, 800))));
+    }
 }
