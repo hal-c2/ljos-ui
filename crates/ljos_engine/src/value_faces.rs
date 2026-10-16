@@ -626,9 +626,15 @@ pub(crate) const COLORS: &str = r##"
     const c = colorOf(color);
     return c === null ? null : rgba(c.r, c.g, c.b, Number(alpha));
   };
+  // Qt reads the argument as a string, whatever it is: a colour reads as
+  // its own name, `undefined` and `null` as "" (seen in qml6).
   Qt.color = function (name) {
-    const c = typeof name === "string" ? named(name) : null;
-    if (c === null) throw new Error('"' + name + '" is not a valid color name');
+    if (arguments.length < 1) throw new Error("Insufficient arguments");
+    if (arguments.length > 1) throw new Error("Too many arguments");
+    if (isColor(name)) return name;
+    const text = name === undefined || name === null ? "" : String(name);
+    const c = named(text);
+    if (c === null) throw new Error('"' + text + '" is not a valid color name');
     return c;
   };
   Qt.colorEqual = function (a, b) {

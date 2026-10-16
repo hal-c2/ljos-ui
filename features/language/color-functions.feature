@@ -101,7 +101,48 @@ Feature: Making one colour from another
         | Qt.tint("red", "nope")     |
         | Qt.alpha("nope", 0.5)      |
 
-    Scenario: Qt.color refuses a name that is not a colour
+  Rule: Qt.color reads what it is given as a name, so a colour is a colour again
+
+    Scenario Outline: Qt.color(<argument>) is <colour>
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property color base: "#8b8b93"
+          property color seen: "#80336699"
+          property color made: Qt.color(<argument>)
+        }
+        """
+      Then the property "made" of "root" is "<colour>"
+
+      Examples:
+        | argument               | colour    |
+        | base                   | #8b8b93   |
+        | seen                   | #80336699 |
+        | Qt.rgba(1, 0, 0, 0.5)  | #80ff0000 |
+        | Qt.darker("#336699")   | #19334c   |
+        | new String("red")      | #ff0000   |
+        | " red "                | #ff0000   |
+
+    Scenario: A colour given to Qt.color is the same colour, and can be made more transparent
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property color base: "#8b8b93"
+          function fade(value, f) { const c = Qt.color(value); return Qt.alpha(c, c.a * f) }
+          property bool same: Qt.color(base) === base
+          property color faded: fade(base, 0.5)
+          property real red: Qt.color(base).r
+        }
+        """
+      Then the property "same" of "root" is true
+      And the property "faded" of "root" is "#808b8b93"
+      And the property "red" of "root" is within 0.001 of 0.545
+
+    Scenario Outline: Qt.color refuses <what>
       Given the QML:
         """qml
         import QtQuick
@@ -109,12 +150,23 @@ Feature: Making one colour from another
           objectName: "root"
           property string said
           function read() {
-            try { Qt.color("nope") } catch (e) { said = e.message }
+            try { Qt.color(<arguments>) } catch (e) { said = e.message.replace(/"/g, "'") }
           }
         }
         """
       When the method "read" of "root" is called
-      Then the property "said" of "root" is "\"nope\" is not a valid color name"
+      Then the property "said" of "root" is "<message>"
+
+      Examples:
+        | what                        | arguments | message                                     |
+        | a name that is not a colour | "nope"    | 'nope' is not a valid color name            |
+        | a number                    | 5         | '5' is not a valid color name               |
+        | a truth value               | true      | 'true' is not a valid color name            |
+        | undefined                   | undefined | '' is not a valid color name                |
+        | null                        | null      | '' is not a valid color name                |
+        | an object                   | ({})      | '[object Object]' is not a valid color name |
+        | no argument                 |           | Insufficient arguments                      |
+        | two arguments               | "red", 5  | Too many arguments                          |
 
   Rule: Qt.colorEqual compares two colours, given as colours or as names
 
