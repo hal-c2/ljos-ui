@@ -87,7 +87,7 @@ pub(crate) fn host_complete(engine: &Engine, obj: ObjectId, host: Host) -> Resul
         .untrack(|| object(engine, obj, host.content_item))
         .is_none()
     {
-        let ci = engine.create_native(Item::default(), Some(obj))?;
+        let ci = engine.create_native_incomplete(Item::default(), Some(obj))?;
         engine.complete(ci)?;
         engine.write_internal(
             obj,

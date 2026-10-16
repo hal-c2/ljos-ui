@@ -730,7 +730,7 @@ fn make_standard(e: &Engine, bx: ObjectId) -> Result<(), EngineError> {
             Some(d) => e.component_create(d, Some(bx), Vec::new())?,
             None => {
                 // A box without a style: the template, which draws nothing.
-                let b = e.create_native(Button::default(), Some(bx))?;
+                let b = e.create_native_incomplete(Button::default(), Some(bx))?;
                 e.complete(b)?;
                 b
             }

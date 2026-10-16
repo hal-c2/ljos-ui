@@ -107,7 +107,7 @@ pub(crate) fn emit_wheel(
         phase: scroll_phase(ev.phase),
         ..WheelEventObject::default()
     };
-    let Ok(event) = engine.create_native(native, Some(to)) else {
+    let Ok(event) = engine.create_native_incomplete(native, Some(to)) else {
         return true;
     };
     let _ = engine.emit_by_name(to, "wheel", &[Value::Object(event)]);

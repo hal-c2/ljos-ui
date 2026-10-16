@@ -70,7 +70,7 @@ pub(crate) fn default_output(e: &Engine) -> Option<ObjectId> {
         },
         None => AudioDevice::default(),
     };
-    let id = e.create_native(device, None).ok()?;
+    let id = e.create_native_incomplete(device, None).ok()?;
     let _ = e.complete(id);
     known.output.set(Some(id));
     Some(id)
@@ -81,7 +81,9 @@ fn null_input(e: &Engine) -> Option<ObjectId> {
     if let Some(id) = known.null_input.get().filter(|id| e.is_alive(*id)) {
         return Some(id);
     }
-    let id = e.create_native(AudioDevice::default(), None).ok()?;
+    let id = e
+        .create_native_incomplete(AudioDevice::default(), None)
+        .ok()?;
     let _ = e.complete(id);
     known.null_input.set(Some(id));
     Some(id)

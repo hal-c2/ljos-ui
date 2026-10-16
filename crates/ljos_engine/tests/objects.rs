@@ -332,7 +332,8 @@ fn invokables() {
         Err(EngineError::Invoke("nope".into()))
     );
     assert_eq!(e.invoke_by_name(r, "bump", &[]), Ok(Value::Undefined));
-    assert_eq!(e.with(r, |x: &Rectangle| x.completed_runs), Ok(10));
+    // 1 from completion on creation, 10 from `bump`.
+    assert_eq!(e.with(r, |x: &Rectangle| x.completed_runs), Ok(11));
     assert!(matches!(
         e.invoke_by_name(r, "helper", &[]),
         Err(EngineError::UnknownMethod { .. })
@@ -639,11 +640,25 @@ impl IntoSignal for PropIndex {
 #[test]
 fn completion_hooks_run_once() {
     let e = engine();
-    let r = rect(&e);
+    let r = e
+        .create_native_incomplete(Rectangle::default(), None)
+        .unwrap();
     assert_eq!(e.with(r, |x: &Rectangle| x.completed_runs), Ok(0));
     e.complete(r).unwrap();
     e.complete(r).unwrap();
     assert_eq!(e.with(r, |x: &Rectangle| x.completed_runs), Ok(1));
+}
+
+#[test]
+fn an_object_made_from_rust_is_complete() {
+    let e = engine();
+    let by_name = rect(&e);
+    let native = e.create_native(Rectangle::default(), None).unwrap();
+    for r in [by_name, native] {
+        assert_eq!(e.with(r, |x: &Rectangle| x.completed_runs), Ok(1));
+        e.complete(r).unwrap();
+        assert_eq!(e.with(r, |x: &Rectangle| x.completed_runs), Ok(1));
+    }
 }
 
 #[test]

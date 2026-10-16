@@ -574,7 +574,7 @@ fn context_or_new(e: &Engine, me: ObjectId) -> Value {
         return js.clone();
     }
     let made = (|| -> Result<Value, EngineError> {
-        let native = e.create_native(Context2D::new(me, Rc::clone(&run)), Some(me))?;
+        let native = e.create_native_incomplete(Context2D::new(me, Rc::clone(&run)), Some(me))?;
         let make = e.eval_js("globalThis.__ljosCanvasContext")?;
         e.call_js(&make, &[Value::Object(native), Value::Object(me)])
             .inspect(|js| run.borrow_mut().context = Some((native, js.clone())))

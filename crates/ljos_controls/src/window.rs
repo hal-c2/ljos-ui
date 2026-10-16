@@ -563,7 +563,7 @@ pub(crate) fn close(engine: &Engine, win: ObjectId) -> bool {
         accepted: true,
         ..CloseEvent::default()
     };
-    let accepted = match engine.create_native(event, Some(win)) {
+    let accepted = match engine.create_native_incomplete(event, Some(win)) {
         Ok(ev) => {
             check(
                 engine,

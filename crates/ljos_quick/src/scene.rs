@@ -2150,7 +2150,7 @@ pub(crate) fn emit_mouse(
         is_click,
         ..MouseEvent::default()
     };
-    let Ok(me) = engine.create_native(native, Some(m)) else {
+    let Ok(me) = engine.create_native_incomplete(native, Some(m)) else {
         return true;
     };
     emit(engine, m, name, &[Value::Object(me)]);

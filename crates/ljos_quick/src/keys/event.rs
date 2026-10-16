@@ -69,7 +69,7 @@ pub(crate) fn emit(
         native_scan_code: ev.native_scan_code as i32,
         accepted,
     };
-    let Ok(obj) = engine.create_native(native, Some(target)) else {
+    let Ok(obj) = engine.create_native_incomplete(native, Some(target)) else {
         return accepted;
     };
     let _ = engine.emit(target, signal, &[Value::Object(obj)]);

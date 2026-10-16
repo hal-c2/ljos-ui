@@ -425,7 +425,7 @@ fn schedule(engine: &Engine, att: ObjectId, st: &DragState) {
         Some(t) => t,
         None => {
             let made = engine
-                .create_native(Timer::default(), Some(att))
+                .create_native_incomplete(Timer::default(), Some(att))
                 .and_then(|t| {
                     engine.complete(t)?;
                     engine.set(t, Timer::INTERVAL, 0)?;

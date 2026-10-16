@@ -202,7 +202,7 @@ impl SpriteSequence {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
-        let picture = e.create_native(Image::default(), Some(me))?;
+        let picture = e.create_native_incomplete(Image::default(), Some(me))?;
         crate::tree::set_parent_item(e, picture, Some(me))?;
         write_computed(e, picture, Item::VISIBLE.index, Value::Bool(false))?;
         e.complete(picture)?;

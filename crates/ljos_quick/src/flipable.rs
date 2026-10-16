@@ -99,7 +99,7 @@ fn adopt(e: &Engine, me: ObjectId, front: Option<ObjectId>, back: Option<ObjectI
     }
     if let Some(back) = back.filter(|b| crate::item::is_item(e, *b))
         && local_of(e, back).is_none()
-        && let Ok(t) = e.create_native(LocalTransform::default(), Some(back))
+        && let Ok(t) = e.create_native_incomplete(LocalTransform::default(), Some(back))
     {
         let _ = e.list_push(back, Item::TRANSFORM.index, t);
         if e.untrack(|| num(e, me, Flipable::SIDE.index)) as i32 == side::BACK {

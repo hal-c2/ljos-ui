@@ -154,7 +154,7 @@ fn cache_of(engine: &Engine, path: ObjectId) -> Option<ObjectId> {
     // Whoever asked first must not come to depend on the making of it.
     engine.untrack(|| {
         let cache = engine
-            .create_native(GeometryCache::default(), Some(path))
+            .create_native_incomplete(GeometryCache::default(), Some(path))
             .ok()?;
         engine
             .with_mut(path, |p: &mut Path| p.cache = Some(cache))

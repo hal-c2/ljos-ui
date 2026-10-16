@@ -173,12 +173,14 @@ fn arm(
 ) {
     let timer = match slot.get().filter(|t| e.is_alive(*t)) {
         Some(t) => Ok(t),
-        None => e.create_native(Timer::default(), Some(tip)).and_then(|t| {
-            e.complete(t)?;
-            e.connect_by_name(t, "triggered", move |e, _| fired(e, tip))?;
-            slot.set(Some(t));
-            Ok(t)
-        }),
+        None => e
+            .create_native_incomplete(Timer::default(), Some(tip))
+            .and_then(|t| {
+                e.complete(t)?;
+                e.connect_by_name(t, "triggered", move |e, _| fired(e, tip))?;
+                slot.set(Some(t));
+                Ok(t)
+            }),
     };
     let r = timer.and_then(|t| {
         e.set(t, Timer::INTERVAL, ms.max(1))?;
@@ -365,7 +367,7 @@ fn shared_for(e: &Engine, owner: ObjectId) -> Option<ObjectId> {
         let made = e
             .create_from_url(&format!("{BASIC}/ToolTip"), None, Vec::new())
             .or_else(|_| {
-                let tip = e.create_native(ToolTip::default(), None)?;
+                let tip = e.create_native_incomplete(ToolTip::default(), None)?;
                 e.complete(tip)?;
                 Ok::<_, EngineError>(tip)
             });

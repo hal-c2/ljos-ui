@@ -464,9 +464,9 @@ impl Video {
         // `VideoOutput`'s hook has run: the base's come first.
         let e = cx.engine;
         let me = cx.this;
-        let out = e.create_native(AudioOutput::default(), Some(me))?;
+        let out = e.create_native_incomplete(AudioOutput::default(), Some(me))?;
         e.complete(out)?;
-        let p = e.create_native(MediaPlayer::default(), Some(me))?;
+        let p = e.create_native_incomplete(MediaPlayer::default(), Some(me))?;
         cx.with_mut::<Video, _>(|v| v.player = Some(p))?;
         e.set(p, MediaPlayer::VIDEO_OUTPUT, Some(me))?;
         e.set(p, MediaPlayer::AUDIO_OUTPUT, Some(out))?;

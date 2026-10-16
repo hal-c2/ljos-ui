@@ -199,7 +199,7 @@ const INSTALL: &str = r#"(function (helper) {
 pub(crate) fn register(engine: &Engine) {
     engine.on_js_started(|e| {
         let installed = e
-            .create_native(FontFamilies {}, None)
+            .create_native_incomplete(FontFamilies {}, None)
             .map_err(|err| err.to_string())
             .and_then(|helper| {
                 let install = e.eval_js(INSTALL).map_err(|err| err.to_string())?;

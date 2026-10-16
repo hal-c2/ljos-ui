@@ -91,7 +91,7 @@ impl<M> Setup<'_, M> {
             Some(root) => (root, None),
             None => {
                 let empty = engine
-                    .create_native(Item::default(), None)
+                    .create_native_incomplete(Item::default(), None)
                     .map_err(|e| e.to_string())?;
                 engine.complete(empty).map_err(|e| e.to_string())?;
                 (empty, Some(empty))

@@ -926,7 +926,7 @@ fn sync_blink(engine: &Engine, obj: ObjectId) {
         (false, Some(t)) => engine.set(t, Timer::RUNNING, false),
         (true, Some(t)) => engine.invoke_by_name(t, "restart", &[]).map(|_| ()),
         (true, None) => engine
-            .create_native(Timer::default(), Some(obj))
+            .create_native_incomplete(Timer::default(), Some(obj))
             .and_then(|t| {
                 engine.complete(t)?;
                 engine.set(t, Timer::INTERVAL, BLINK_MS)?;

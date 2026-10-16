@@ -536,7 +536,7 @@ pub(crate) fn init_document(
     edit: ObjectId,
     st: &SharedState,
 ) -> Result<(), EngineError> {
-    let doc = engine.create_native(
+    let doc = engine.create_native_incomplete(
         TextDocument {
             edit: Some(edit),
             ..TextDocument::default()

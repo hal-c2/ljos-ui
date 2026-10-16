@@ -145,7 +145,7 @@ fn tell(
         was_held: held,
         ..MouseEvent::default()
     };
-    let Ok(me) = engine.create_native(native, Some(obj)) else {
+    let Ok(me) = engine.create_native_incomplete(native, Some(obj)) else {
         return;
     };
     check(

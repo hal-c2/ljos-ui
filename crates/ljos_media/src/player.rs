@@ -468,7 +468,7 @@ fn tracks(e: &Engine, me: ObjectId, list: Vec<Vec<Entry>>) -> Vec<Value> {
     list.into_iter()
         .filter_map(|entries| {
             let id = e
-                .create_native(MediaMetaData::with(entries), Some(me))
+                .create_native_incomplete(MediaMetaData::with(entries), Some(me))
                 .ok()?;
             let _ = e.complete(id);
             Some(Value::Object(id))
@@ -482,7 +482,7 @@ fn set_meta(e: &Engine, me: ObjectId, entries: Vec<Entry>) {
             let _ = e.with_mut::<MediaMetaData, _>(meta, |m| m.replace(entries));
         }
         _ => {
-            if let Ok(id) = e.create_native(MediaMetaData::with(entries), Some(me)) {
+            if let Ok(id) = e.create_native_incomplete(MediaMetaData::with(entries), Some(me)) {
                 let _ = e.complete(id);
                 put(e, me, MediaPlayer::META_DATA, Some(id));
             }

@@ -51,7 +51,7 @@ pub(crate) fn follow(
 
 /// Makes the item of `popup`, hidden and outside every tree.
 pub(super) fn create(engine: &Engine, popup: ObjectId) -> Result<ObjectId, EngineError> {
-    let item = engine.create_native(PopupItem::default(), Some(popup))?;
+    let item = engine.create_native_incomplete(PopupItem::default(), Some(popup))?;
     engine.write(
         item,
         Item::VISIBLE.index,

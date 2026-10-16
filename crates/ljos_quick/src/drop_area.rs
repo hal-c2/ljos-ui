@@ -486,7 +486,7 @@ fn emit_event(engine: &Engine, area: ObjectId, signal: &str, offer: &Offer) -> (
         data,
         ..DragEvent::default()
     };
-    let Ok(ev) = engine.create_native(native, Some(area)) else {
+    let Ok(ev) = engine.create_native_incomplete(native, Some(area)) else {
         return (false, IGNORE_ACTION);
     };
     let _ = engine.emit_by_name(area, signal, &[Value::Object(ev)]);

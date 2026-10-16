@@ -104,7 +104,7 @@ pub(crate) fn prepare(engine: &Engine, obj: ObjectId) -> Result<(), EngineError>
     let flick = match declared.as_slice() {
         [one] if flickable::is_flickable(engine, *one) => *one,
         _ => {
-            let f = engine.create_native(Flickable::default(), Some(obj))?;
+            let f = engine.create_native_incomplete(Flickable::default(), Some(obj))?;
             // What is scrolled out of the view is not to be seen beside
             // it, and the content of a view rests on whole pixels.
             for prop in [Item::CLIP.index, Flickable::PIXEL_ALIGNED.index] {

@@ -173,12 +173,14 @@ fn schedule(e: &Engine, me: ObjectId) {
     };
     let timer = match timer {
         Some(t) => Ok(t),
-        None => e.create_native(Timer::default(), Some(me)).and_then(|t| {
-            e.complete(t)?;
-            e.connect_by_name(t, "triggered", move |e, _| advance(e, me))?;
-            let _ = e.with(me, |a: &AnimatedImage| a.timer.set(Some(t)));
-            Ok(t)
-        }),
+        None => e
+            .create_native_incomplete(Timer::default(), Some(me))
+            .and_then(|t| {
+                e.complete(t)?;
+                e.connect_by_name(t, "triggered", move |e, _| advance(e, me))?;
+                let _ = e.with(me, |a: &AnimatedImage| a.timer.set(Some(t)));
+                Ok(t)
+            }),
     };
     let armed = timer.and_then(|t| {
         e.set(t, Timer::INTERVAL, ms)?;

@@ -196,7 +196,9 @@ fn make_highlight(
         // Below the rows, which are at 1: `z` is left as it is.
         Some(c) => pass::make_extra(e, view, content, c, &[], None)?,
         None => {
-            let h = e.create_native(Item::default(), Some(view)).ok()?;
+            let h = e
+                .create_native_incomplete(Item::default(), Some(view))
+                .ok()?;
             warn(e, "highlight", e.complete(h));
             enrol(e, h, view, Part::Extra);
             warn(e, "parent", tree::set_parent_item(e, h, Some(content)));
@@ -220,7 +222,7 @@ fn mover(e: &Engine, view: ObjectId, st: &ViewState, axis: usize) -> Option<Obje
         return Some(m);
     }
     let m = e
-        .create_native(SmoothedAnimation::default(), Some(view))
+        .create_native_incomplete(SmoothedAnimation::default(), Some(view))
         .ok()?;
     warn(e, "highlight", e.complete(m));
     st.movers[axis].set(Some(m));

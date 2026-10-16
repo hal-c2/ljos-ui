@@ -123,7 +123,7 @@ impl Engine {
         props: Vec<(String, Value)>,
         synchronous: bool,
     ) -> Result<ObjectId, EngineError> {
-        let inc = self.create_native(Incubator::default(), None)?;
+        let inc = self.create_native_incomplete(Incubator::default(), None)?;
         self.give_to_script(inc);
         self.write_internal(
             inc,
@@ -241,7 +241,8 @@ impl Engine {
         let ended = match running.ended.get() {
             Some(o) => o,
             None => {
-                let Ok(o) = self.untrack(|| self.create_native(Ended::default(), None)) else {
+                let Ok(o) = self.untrack(|| self.create_native_incomplete(Ended::default(), None))
+                else {
                     return;
                 };
                 running.ended.set(Some(o));

@@ -184,7 +184,7 @@ fn open(cx: &Cx, meta: Meta) -> Result<(Rc<Database>, bool), String> {
     let name = meta.name.clone();
     let handle = cx
         .engine
-        .create_native(SqlDatabase { name: name.clone() }, Some(cx.this))
+        .create_native_incomplete(SqlDatabase { name: name.clone() }, Some(cx.this))
         .map_err(|e| fail(&e))?;
     let made = stored.is_none();
     let meta = Meta {

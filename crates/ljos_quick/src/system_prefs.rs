@@ -161,7 +161,7 @@ fn objects(engine: &Engine) -> Option<(ObjectId, ObjectId)> {
     }
     let p = s.system.get();
     let a11y = engine
-        .create_native(
+        .create_native_incomplete(
             AccessibilityHints {
                 contrast_preference: p.contrast.qt_value(),
                 motion_preference: i32::from(p.reduced_motion),
@@ -172,7 +172,7 @@ fn objects(engine: &Engine) -> Option<(ObjectId, ObjectId)> {
         )
         .ok()?;
     let hints = engine
-        .create_native(
+        .create_native_incomplete(
             StyleHints {
                 color_scheme: shown_scheme(&s).qt_value(),
                 accessibility: Some(a11y),

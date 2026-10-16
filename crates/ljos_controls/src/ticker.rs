@@ -25,7 +25,7 @@ pub(crate) fn start(
         Some(t) => t,
         None => {
             let made = engine
-                .create_native(Timer::default(), Some(owner))
+                .create_native_incomplete(Timer::default(), Some(owner))
                 .and_then(|t| {
                     engine.complete(t)?;
                     engine.connect_by_name(t, "triggered", move |e, _| {

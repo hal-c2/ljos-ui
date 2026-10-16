@@ -174,7 +174,7 @@ impl PropertyMap {
     /// A new, empty map, owned by `owner` when there is one.
     pub fn new(engine: &Engine, owner: Option<ObjectId>) -> Result<PropertyMap, EngineError> {
         let state = Rc::new(MapState::default());
-        let id = engine.create_native(
+        let id = engine.create_native_incomplete(
             PropertyMapObject {
                 object: QtObject::default(),
                 state: state.clone(),

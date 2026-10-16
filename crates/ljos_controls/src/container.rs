@@ -279,7 +279,7 @@ fn keep(e: &Engine, me: ObjectId, obj: ObjectId) -> Result<(), EngineError> {
 }
 
 fn init(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
-    let model = e.create_native(ObjectModel::default(), Some(me))?;
+    let model = e.create_native_incomplete(ObjectModel::default(), Some(me))?;
     e.complete(model)?;
     if let Some(st) = state_of(e, me) {
         st.model.set(Some(model));

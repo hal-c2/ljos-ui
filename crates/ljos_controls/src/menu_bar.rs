@@ -481,7 +481,7 @@ fn make_item(e: &Engine, bar: ObjectId, st: &BarState) -> Result<ObjectId, Engin
             Err(err) => check(e, "delegate", Err(err)),
         }
     }
-    let item = e.create_native(MenuBarItem::default(), Some(bar))?;
+    let item = e.create_native_incomplete(MenuBarItem::default(), Some(bar))?;
     e.complete(item)?;
     Ok(item)
 }

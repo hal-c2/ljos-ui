@@ -475,7 +475,7 @@ fn rest_after_timeout(engine: &Engine, h: ObjectId, st: &HandlerState) {
         Some(t) => t,
         None => {
             let made = engine
-                .create_native(Timer::default(), Some(h))
+                .create_native_incomplete(Timer::default(), Some(h))
                 .and_then(|t| {
                     engine.complete(t)?;
                     engine.connect_by_name(t, "triggered", move |e, _| {

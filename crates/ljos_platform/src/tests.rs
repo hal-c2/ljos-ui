@@ -22,7 +22,9 @@ fn engine(home: &std::path::Path) -> Engine {
 }
 
 fn make<T: ljos_engine::QmlType + Default>(e: &Engine) -> ObjectId {
-    let o = e.create_native(T::default(), None).expect("made");
+    let o = e
+        .create_native_incomplete(T::default(), None)
+        .expect("made");
     e.complete(o).expect("completed");
     o
 }

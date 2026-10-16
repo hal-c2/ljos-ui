@@ -426,7 +426,7 @@ fn builtin_group(
     include_by_default: bool,
 ) -> Option<ObjectId> {
     let o = e
-        .create_native(
+        .create_native_incomplete(
             DelegateModelGroup {
                 object: QtObject::default(),
                 count: 0,

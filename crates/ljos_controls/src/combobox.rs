@@ -911,7 +911,7 @@ fn make_delegate_model(
     combo: ObjectId,
     st: &ComboState,
 ) -> Result<(), EngineError> {
-    let model = engine.create_native(DelegateModel::default(), Some(combo))?;
+    let model = engine.create_native_incomplete(DelegateModel::default(), Some(combo))?;
     let rows = drive_delegate_model(engine, model);
     engine.complete(model)?;
     if let Some(rows) = &rows {

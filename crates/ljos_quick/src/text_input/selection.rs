@@ -164,7 +164,7 @@ pub(crate) fn sync(engine: &Engine, obj: ObjectId, st: &SharedState) {
 
 /// Makes `cursorSelection` of a `TextEdit` that completes.
 pub(crate) fn init(engine: &Engine, edit: ObjectId, st: &SharedState) -> Result<(), EngineError> {
-    let sel = engine.create_native(
+    let sel = engine.create_native_incomplete(
         TextSelection {
             alignment: align::LEFT,
             ..TextSelection::default()

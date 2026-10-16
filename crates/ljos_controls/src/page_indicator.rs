@@ -117,7 +117,7 @@ fn rebuild(e: &Engine, obj: ObjectId) {
     };
     let mut made = Vec::new();
     for index in 0..count {
-        let dot = match e.create_native(
+        let dot = match e.create_native_incomplete(
             PageIndicatorDot {
                 index,
                 pressed: false,

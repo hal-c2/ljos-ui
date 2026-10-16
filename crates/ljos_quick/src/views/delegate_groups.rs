@@ -388,7 +388,7 @@ impl GroupState {
                 Value::list(
                     rs.iter()
                         .filter_map(|(index, count)| {
-                            e.create_native(
+                            e.create_native_incomplete(
                                 GroupChange {
                                     index: *index,
                                     count: *count,

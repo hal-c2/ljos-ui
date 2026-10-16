@@ -580,19 +580,21 @@ fn proxy(e: &Engine, f: ObjectId, st: &FlickState) -> Option<ObjectId> {
     if let Some(p) = st.fling.proxy.get().filter(|p| e.is_alive(*p)) {
         return Some(p);
     }
-    let made = e.create_native(Item::default(), Some(f)).and_then(|p| {
-        e.complete(p)?;
-        for (axis, prop) in [(X, Item::X.index), (Y, Item::Y.index)] {
-            e.watch(p, prop, move |e, _| {
-                let Some(st) = state_of(e, f) else { return };
-                if st.fling.runs.get()[axis].is_some_and(|r| r.driven) {
-                    let at = e.untrack(|| num(e, p, prop));
-                    place(e, f, axis, at, 0.0);
-                }
-            })?;
-        }
-        Ok(p)
-    });
+    let made = e
+        .create_native_incomplete(Item::default(), Some(f))
+        .and_then(|p| {
+            e.complete(p)?;
+            for (axis, prop) in [(X, Item::X.index), (Y, Item::Y.index)] {
+                e.watch(p, prop, move |e, _| {
+                    let Some(st) = state_of(e, f) else { return };
+                    if st.fling.runs.get()[axis].is_some_and(|r| r.driven) {
+                        let at = e.untrack(|| num(e, p, prop));
+                        place(e, f, axis, at, 0.0);
+                    }
+                })?;
+            }
+            Ok(p)
+        });
     match made {
         Ok(p) => {
             st.fling.proxy.set(Some(p));

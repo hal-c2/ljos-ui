@@ -143,7 +143,7 @@ fn screen_values(spec: &ScreenSpec) -> [(ljos_engine::PropIndex, Value); 10] {
 /// Makes the object of a display.
 pub(super) fn make_screen(engine: &Engine, spec: &ScreenSpec) -> Result<ObjectId, EngineError> {
     let landscape = spec.size[0] >= spec.size[1];
-    let obj = engine.create_native(
+    let obj = engine.create_native_incomplete(
         ScreenInfo {
             // Qt.LandscapeOrientation or Qt.PortraitOrientation.
             primary_orientation: if landscape { 2 } else { 1 },

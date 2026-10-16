@@ -588,7 +588,7 @@ fn ensure_content_item(e: &Engine, f: ObjectId) -> Result<ObjectId, EngineError>
     if let Some(ci) = st.content_item.get().filter(|ci| e.is_alive(*ci)) {
         return Ok(ci);
     }
-    let ci = e.create_native(Item::default(), Some(f))?;
+    let ci = e.create_native_incomplete(Item::default(), Some(f))?;
     e.complete(ci)?;
     st.content_item.set(Some(ci));
     tree::set_parent_item(e, ci, Some(f))?;
@@ -825,11 +825,13 @@ fn start_wheel_timer(e: &Engine, f: ObjectId, st: &FlickState, ms: i32) {
     let timer = match st.wheel_timer.get().filter(|t| e.is_alive(*t)) {
         Some(t) => t,
         None => {
-            let made = e.create_native(Timer::default(), Some(f)).and_then(|t| {
-                e.complete(t)?;
-                e.connect_by_name(t, "triggered", move |e, _| wheel_rested(e, f))?;
-                Ok(t)
-            });
+            let made = e
+                .create_native_incomplete(Timer::default(), Some(f))
+                .and_then(|t| {
+                    e.complete(t)?;
+                    e.connect_by_name(t, "triggered", move |e, _| wheel_rested(e, f))?;
+                    Ok(t)
+                });
             match made {
                 Ok(t) => {
                     st.wheel_timer.set(Some(t));

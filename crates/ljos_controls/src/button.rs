@@ -300,7 +300,7 @@ pub(crate) fn set_checked(engine: &Engine, obj: ObjectId, on: bool) -> Result<()
 /// button without a mnemonic has a shortcut with no sequence. The rows of
 /// a menu are left to the menu.
 fn make_mnemonic(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    let s = engine.create_native(Shortcut::default(), Some(obj))?;
+    let s = engine.create_native_incomplete(Shortcut::default(), Some(obj))?;
     engine.bind(s, Shortcut::SEQUENCE.index, move |e| {
         let text = e.read(obj, AbstractButton::TEXT.index).to_js_string();
         match mnemonic_of(&text) {
@@ -714,7 +714,7 @@ fn start_timer(engine: &Engine, obj: ObjectId, st: &ButtonState, ms: i32) {
         Some(t) => t,
         None => {
             let made = engine
-                .create_native(Timer::default(), Some(obj))
+                .create_native_incomplete(Timer::default(), Some(obj))
                 .and_then(|t| {
                     engine.complete(t)?;
                     engine.connect_by_name(t, "triggered", move |e, _| timer_fired(e, obj))?;

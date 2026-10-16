@@ -486,7 +486,7 @@ pub(crate) fn append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
 }
 
 fn init_menu(e: &Engine, menu: ObjectId) -> Result<(), EngineError> {
-    let model = e.create_native(ObjectModel::default(), Some(menu))?;
+    let model = e.create_native_incomplete(ObjectModel::default(), Some(menu))?;
     e.complete(model)?;
     if let Some(st) = state_of(e, menu) {
         st.model.set(Some(model));
@@ -669,7 +669,7 @@ fn make_item(e: &Engine, menu: ObjectId) -> Result<ObjectId, EngineError> {
             Err(err) => check(e, "delegate", Err(err)),
         }
     }
-    let item = e.create_native(MenuItem::default(), Some(menu))?;
+    let item = e.create_native_incomplete(MenuItem::default(), Some(menu))?;
     e.complete(item)?;
     Ok(item)
 }
@@ -1254,11 +1254,13 @@ fn start_timer(e: &Engine, menu: ObjectId, st: &MenuState) {
         None => {
             // An engine timer: it runs on the engine's clock and nothing
             // polls.
-            let made = e.create_native(Timer::default(), Some(menu)).and_then(|t| {
-                e.complete(t)?;
-                e.connect_by_name(t, "triggered", move |e, _| timer_fired(e, menu))?;
-                Ok(t)
-            });
+            let made = e
+                .create_native_incomplete(Timer::default(), Some(menu))
+                .and_then(|t| {
+                    e.complete(t)?;
+                    e.connect_by_name(t, "triggered", move |e, _| timer_fired(e, menu))?;
+                    Ok(t)
+                });
             match made {
                 Ok(t) => {
                     st.timer.set(Some(t));

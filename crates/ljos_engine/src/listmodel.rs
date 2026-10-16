@@ -660,7 +660,7 @@ pub(crate) fn nested_model(
     owner: ObjectId,
     rows: Vec<Vec<(String, Value)>>,
 ) -> Value {
-    match engine.create_native(ListModel::default(), Some(owner)) {
+    match engine.create_native_incomplete(ListModel::default(), Some(owner)) {
         Ok(id) => {
             declare_rows(engine, id, rows);
             Value::Object(id)

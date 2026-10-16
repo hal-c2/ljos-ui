@@ -199,7 +199,7 @@ fn run_to(engine: &Engine, obj: ObjectId, to: f64) {
         Some(a) => a,
         None => {
             let made = engine
-                .create_native(NumberAnimation::default(), Some(obj))
+                .create_native_incomplete(NumberAnimation::default(), Some(obj))
                 .and_then(|a| {
                     engine.complete(a)?;
                     engine.set(a, PropertyAnimation::TARGET, Some(obj))?;

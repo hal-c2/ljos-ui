@@ -453,7 +453,7 @@ fn make_timer(
         interval: WRITE_DELAY_MS,
         ..Default::default()
     };
-    let timer = engine.create_native(quiet, Some(obj))?;
+    let timer = engine.create_native_incomplete(quiet, Some(obj))?;
     engine.complete(timer)?;
     engine.connect_by_name(timer, "triggered", move |e, _| write_now(e, &file))?;
     Ok(timer)

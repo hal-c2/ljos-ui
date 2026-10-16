@@ -137,7 +137,7 @@ impl Action {
 /// action's sequence and `enabled`, and triggers the action, which is its
 /// own source (as on qml6).
 fn make_shortcut(e: &Engine, action: ObjectId) -> Result<(), EngineError> {
-    let s = e.create_native(Shortcut::default(), Some(action))?;
+    let s = e.create_native_incomplete(Shortcut::default(), Some(action))?;
     e.bind(s, Shortcut::SEQUENCE.index, move |e| {
         e.read(action, Action::SHORTCUT.index)
     })?;

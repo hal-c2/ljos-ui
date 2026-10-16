@@ -426,7 +426,7 @@ fn rebuild(e: &Engine, obj: ObjectId) {
     let mut made = Vec::new();
     for cell in data {
         let mut values = role_values(&cell);
-        let ctx = match e.create_native(cell, Some(obj)) {
+        let ctx = match e.create_native_incomplete(cell, Some(obj)) {
             Ok(c) => c,
             Err(err) => {
                 check(e, "delegate", Err(err));

@@ -67,7 +67,7 @@ impl GrabbedImage {
             data,
             ..GrabbedImage::default()
         };
-        engine.create_native(native, Some(case))
+        engine.create_native_incomplete(native, Some(case))
     }
 
     /// The pixel at a place a test named. `None` outside the picture.

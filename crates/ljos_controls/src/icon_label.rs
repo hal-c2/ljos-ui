@@ -281,7 +281,7 @@ fn keep<T: QmlType + Default>(
             Ok(None)
         }
         (None, true) => {
-            let o = engine.create_native(T::default(), Some(label))?;
+            let o = engine.create_native_incomplete(T::default(), Some(label))?;
             set_parent_item(engine, o, Some(label))?;
             engine.complete(o)?;
             slot.set(Some(o));

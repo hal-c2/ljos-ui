@@ -988,8 +988,8 @@ fn init(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     // A validator of the box's own, unless the author has one.
     if is_unset(engine, obj, p.validator) {
         let made = match p.decimals {
-            Some(_) => engine.create_native(DoubleValidator::default(), Some(obj))?,
-            None => engine.create_native(IntValidator::default(), Some(obj))?,
+            Some(_) => engine.create_native_incomplete(DoubleValidator::default(), Some(obj))?,
+            None => engine.create_native_incomplete(IntValidator::default(), Some(obj))?,
         };
         engine.complete(made)?;
         engine.write_derived(obj, p.validator, Value::Object(made))?;

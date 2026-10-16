@@ -767,13 +767,15 @@ fn sync_timer(e: &Engine, sys: ObjectId) {
         (Some(t), _) => t,
         (None, false) => return,
         (None, true) => {
-            let made = e.create_native(Timer::default(), Some(sys)).and_then(|t| {
-                e.complete(t)?;
-                e.set(t, Timer::INTERVAL, (STEP * 1000.0).round() as i32)?;
-                e.set(t, Timer::REPEAT, true)?;
-                e.connect_by_name(t, "triggered", move |e, _| step_system(e, sys))?;
-                Ok(t)
-            });
+            let made = e
+                .create_native_incomplete(Timer::default(), Some(sys))
+                .and_then(|t| {
+                    e.complete(t)?;
+                    e.set(t, Timer::INTERVAL, (STEP * 1000.0).round() as i32)?;
+                    e.set(t, Timer::REPEAT, true)?;
+                    e.connect_by_name(t, "triggered", move |e, _| step_system(e, sys))?;
+                    Ok(t)
+                });
             match made {
                 Ok(t) => {
                     run.borrow_mut().timer = Some(t);
@@ -1214,7 +1216,7 @@ fn place(e: &Engine, pa: ObjectId, source: &Atom, sprites: &[Sprite]) {
     pool.retain(|s| e.is_alive(*s));
     while pool.len() < sprites.len() {
         let made = e
-            .create_native(ParticleSprite::default(), Some(pa))
+            .create_native_incomplete(ParticleSprite::default(), Some(pa))
             .and_then(|s| {
                 crate::tree::set_parent_item(e, s, Some(pa))?;
                 e.complete(s)?;

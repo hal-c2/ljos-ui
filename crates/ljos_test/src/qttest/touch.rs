@@ -43,7 +43,7 @@ impl TouchEventSequence {
             item: Some(item),
             ..TouchEventSequence::default()
         };
-        engine.create_native(native, Some(case))
+        engine.create_native_incomplete(native, Some(case))
     }
 
     /// The point a call means, in the window, and the finger's number.

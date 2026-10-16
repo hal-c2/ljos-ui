@@ -91,7 +91,7 @@ pub(super) fn ensure(engine: &Engine, top: ObjectId) -> Result<ObjectId, EngineE
         if let Some(layer) = ljos_quick::layer_of(engine, top) {
             return Ok(layer);
         }
-        let o = engine.create_native(OverlayItem::default(), Some(top))?;
+        let o = engine.create_native_incomplete(OverlayItem::default(), Some(top))?;
         // Before anything is written: a write runs the effects of other
         // popups, and one that looked for the overlay now would make a
         // second, which nothing would ever show.
@@ -186,7 +186,7 @@ fn make_shade(
     let shade = match component {
         Some(c) => engine.component_create(c, Some(popup), Vec::new())?,
         None => {
-            let r = engine.create_native(Rectangle::default(), Some(popup))?;
+            let r = engine.create_native_incomplete(Rectangle::default(), Some(popup))?;
             let colour = if modal { MODAL_SHADE } else { MODELESS_SHADE };
             engine.set(r, Rectangle::COLOR, colour)?;
             engine.complete(r)?;

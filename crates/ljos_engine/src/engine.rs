@@ -422,6 +422,9 @@ impl Engine {
     // ------------------------------------------------------------- objects
 
     /// Makes an object of `meta` with its constructor. `owner` destroys it.
+    /// The object is not complete: its `on_complete` hooks wait for
+    /// [`Engine::complete`], as they do for an object a component is still
+    /// building.
     pub fn create(
         &self,
         meta: impl Into<MetaRef>,
@@ -434,7 +437,10 @@ impl Engine {
         self.create_with(meta, make(), owner)
     }
 
-    /// Makes an object of a registered type.
+    /// Makes an object of a registered type, complete: its `on_complete`
+    /// hooks have run, so a `Timer` set running afterwards runs and a
+    /// `Connections` given a target connects. Calling
+    /// [`Engine::complete`] on it again does nothing.
     pub fn create_by_name(
         &self,
         uri: &str,
@@ -447,16 +453,46 @@ impl Engine {
                 uri: uri.into(),
                 name: name.into(),
             })?;
-        self.create(meta, owner)
+        let obj = self.create(meta, owner)?;
+        self.complete_made(obj)
     }
 
-    /// Adds a native value built in Rust.
+    /// Adds a native value built in Rust, complete: its `on_complete`
+    /// hooks have run with the fields it was given, so
+    /// `Timer { running: true, ..Default::default() }` runs from here on,
+    /// as a running `Timer` does once its component is complete.
     pub fn create_native<T: QmlType>(
         &self,
         native: T,
         owner: Option<ObjectId>,
     ) -> Result<ObjectId, EngineError> {
+        let obj = self.create_native_incomplete(native, owner)?;
+        self.complete_made(obj)
+    }
+
+    /// Adds a native value built in Rust without completing it, for code
+    /// that sets more on it (properties, children, a parent) before its
+    /// `on_complete` hooks may look: it calls [`Engine::complete`] when it
+    /// is done. Until then a `Timer` does not run and a `Connections`
+    /// does not connect.
+    pub fn create_native_incomplete<T: QmlType>(
+        &self,
+        native: T,
+        owner: Option<ObjectId>,
+    ) -> Result<ObjectId, EngineError> {
         self.create_with(MetaRef::Static(T::static_meta()), Box::new(native), owner)
+    }
+
+    /// Completes what was just made; an object whose hooks fail is not
+    /// handed out half set up.
+    fn complete_made(&self, obj: ObjectId) -> Result<ObjectId, EngineError> {
+        match self.complete(obj) {
+            Ok(()) => Ok(obj),
+            Err(e) => {
+                self.destroy_now(obj);
+                Err(e)
+            }
+        }
     }
 
     /// Adds an object whose description is `meta` (a QML type, say) and
@@ -1905,7 +1941,12 @@ impl Engine {
         self.invoke(obj, m, args)
     }
 
-    /// Runs the native `on_complete` hooks, base type first, once.
+    /// Runs the native `on_complete` hooks, base type first, once: for an
+    /// object made with [`Engine::create`], [`Engine::create_with`] or
+    /// [`Engine::create_native_incomplete`]. Objects a component makes
+    /// are completed when it is, and [`Engine::create_native`] and
+    /// [`Engine::create_by_name`] complete theirs, so calling it on those
+    /// does nothing.
     pub fn complete(&self, obj: ObjectId) -> Result<(), EngineError> {
         let hooks: SmallVec<[CompleteThunk; 4]> = {
             let mut store = self.inner.store.borrow_mut();

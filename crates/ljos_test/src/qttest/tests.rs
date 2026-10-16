@@ -129,7 +129,9 @@ fn a_test_case_shows_nothing_and_is_ready_at_once() {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     register(&engine);
-    let case = engine.create_native(TestCase::default(), None).unwrap();
+    let case = engine
+        .create_native_incomplete(TestCase::default(), None)
+        .unwrap();
     assert!(engine.get(case, TestCase::WHEN).unwrap());
     assert!(!engine.get(case, TestCase::COMPLETED).unwrap());
     assert!(!engine.get(case, ljos_quick::Item::VISIBLE).unwrap());
@@ -146,7 +148,9 @@ fn a_check_outside_a_run_is_an_error_and_not_a_crash() {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     register(&engine);
-    let case = engine.create_native(TestCase::default(), None).unwrap();
+    let case = engine
+        .create_native_incomplete(TestCase::default(), None)
+        .unwrap();
     // No run is in progress: there is no scene to wait on.
     let waited = engine.invoke_by_name(case, "wait", &[ljos_engine::Value::Int(10)]);
     assert!(waited.unwrap_err().to_string().contains("no test run"));
