@@ -1,0 +1,177 @@
+//! Where a frame's time goes, without a window: a QML project is shown in
+//! a `ShellApp` on an `egui::Context` driven at 60 Hz on a virtual clock,
+//! and each pass is timed in three parts: the pass (inbox, scene frame,
+//! encode into egui's shapes, egui's end of pass), tessellation, and the
+//! rest. With `--click` a 5 × 5 grid over the window is clicked meanwhile,
+//! as `ljos bench` does. Run it under `valgrind --tool=callgrind` to see
+//! the pass split by function.
+//!
+//! `cargo run --release -p ljos_shell --example frame_profile -- DIR ENTRY
+//! [--frames N] [--size WxH] [--click] [--warm N]`
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context as _, bail};
+use ljos_engine::MapSource;
+use ljos_runtime::VirtualClock;
+use ljos_shell::{ShellApp, ShellConfig};
+
+struct Args {
+    dir: PathBuf,
+    entry: String,
+    frames: u32,
+    warm: u32,
+    size: (f32, f32),
+    click: bool,
+}
+
+fn args() -> anyhow::Result<Args> {
+    let mut it = std::env::args().skip(1);
+    let dir = PathBuf::from(it.next().context("DIR")?);
+    let entry = it.next().unwrap_or_else(|| "Main.qml".into());
+    let mut a = Args {
+        dir,
+        entry,
+        frames: 600,
+        warm: 60,
+        size: (800.0, 600.0),
+        click: false,
+    };
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--frames" => a.frames = it.next().context("N")?.parse()?,
+            "--warm" => a.warm = it.next().context("N")?.parse()?,
+            "--click" => a.click = true,
+            "--size" => {
+                let s = it.next().context("WxH")?;
+                let (w, h) = s.split_once('x').context("WxH")?;
+                a.size = (w.parse()?, h.parse()?);
+            }
+            other => bail!("unknown argument {other}"),
+        }
+    }
+    Ok(a)
+}
+
+fn compile(dir: &std::path::Path) -> anyhow::Result<MapSource> {
+    let base = format!("file://{}", dir.to_string_lossy());
+    let mut source = MapSource::new().with_base_url(base);
+    for r in ljos_compiler::compile_project(dir)? {
+        match r.result {
+            Ok(c) if !c.has_errors() => source.insert(r.key, c.file),
+            _ => eprintln!("{} does not compile", r.key),
+        }
+    }
+    Ok(source)
+}
+
+fn main() -> anyhow::Result<()> {
+    let a = args()?;
+    let dir = a.dir.canonicalize()?;
+    let key = a.entry.trim_end_matches(".qml").to_owned();
+    let source = compile(&dir)?;
+    let ctx = egui::Context::default();
+    let clock = Arc::new(VirtualClock::new());
+    let config = ShellConfig::new("profile").with_size(a.size.0, a.size.1);
+    let mut app = ShellApp::<()>::new(&ctx, &config, clock.clone(), |setup| {
+        let engine = setup.engine();
+        ljos_localstorage::register(engine);
+        ljos_localstorage::set_storage(engine, ljos_localstorage::Storage::Memory);
+        engine.set_component_source(source);
+        Ok(engine
+            .create_from_url(&key, None, Vec::new())
+            .map_err(|e| e.to_string())?)
+    })?;
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(a.size.0, a.size.1));
+    let period = Duration::from_micros(16_667);
+    let total = a.warm + a.frames;
+    // One click every 24 frames (0.4 s), over the same 5 × 5 grid as the bench.
+    let click_at = |i: u32| -> Option<egui::Pos2> {
+        if !a.click || i < a.warm || !(i - a.warm).is_multiple_of(24) {
+            return None;
+        }
+        let n = ((i - a.warm) / 24) % 25;
+        let (row, col) = (n / 5, n % 5);
+        Some(egui::pos2(
+            a.size.0 * (2 * col + 1) as f32 / 10.0,
+            a.size.1 * (2 * row + 1) as f32 / 10.0,
+        ))
+    };
+    let (mut pass, mut tess, mut prims) = (Duration::ZERO, Duration::ZERO, 0usize);
+    let mut worst = Duration::ZERO;
+    let mut press: Option<egui::Pos2> = None;
+    let mut before = None;
+    for i in 0..total {
+        if i == a.warm {
+            before = Some(app.engine().graph().stats());
+        }
+        clock.advance(period);
+        let mut events = Vec::new();
+        if let Some(p) = press.take() {
+            events.push(egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        if let Some(p) = click_at(i) {
+            events.push(egui::Event::PointerMoved(p));
+            events.push(egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            press = Some(p);
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            focused: true,
+            time: Some(f64::from(i) * period.as_secs_f64()),
+            events,
+            ..Default::default()
+        };
+        let t0 = Instant::now();
+        let out = ctx.run_ui(input, |ui| {
+            app.begin_pass();
+            app.show(ui);
+        });
+        let t1 = Instant::now();
+        let p = ctx.tessellate(out.shapes, out.pixels_per_point);
+        let t2 = Instant::now();
+        if i >= a.warm {
+            pass += t1 - t0;
+            tess += t2 - t1;
+            worst = worst.max(t2 - t0);
+            prims += p.len();
+        }
+    }
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0 / f64::from(a.frames);
+    let stats = app.view().stats();
+    println!(
+        "{} frames: pass {:.3} ms, tessellate {:.3} ms, total {:.3} ms/frame (worst {:.2} ms); {} scene frames, {} changed; {:.0} primitives/frame",
+        a.frames,
+        ms(pass),
+        ms(tess),
+        ms(pass + tess),
+        worst.as_secs_f64() * 1000.0,
+        stats.frames,
+        stats.changed,
+        prims as f64 / f64::from(a.frames.max(1)),
+    );
+    if let Some(b) = before {
+        let s = app.engine().graph().stats();
+        let per = |x: u64, y: u64| (x - y) as f64 / f64::from(a.frames);
+        println!(
+            "per frame: {:.1} evaluations, {:.1} effect runs, {:.1} propagations, {:.2} flushes",
+            per(s.evaluations, b.evaluations),
+            per(s.effect_runs, b.effect_runs),
+            per(s.propagations, b.propagations),
+            per(s.flushes, b.flushes),
+        );
+    }
+    Ok(())
+}

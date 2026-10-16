@@ -76,6 +76,8 @@ ljos = { path = "../ljos" }
 # Only the demo_qml example compiles QML; the shell itself never links the
 # compiler.
 ljos_compiler = { path = "../ljos_compiler" }
+# examples/frame_profile.rs: a project that keeps scores in a database.
+ljos_localstorage = { path = "../ljos_localstorage" }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 anyhow.workspace = true
 png.workspace = true

@@ -3972,6 +3972,7 @@ dependencies = [
  "ljos_egui",
  "ljos_engine",
  "ljos_host",
+ "ljos_localstorage",
  "ljos_media",
  "ljos_platform",
  "ljos_quick",
