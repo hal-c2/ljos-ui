@@ -33,7 +33,7 @@ use ljos_host::{
 };
 use ljos_runtime::{MemoryPressure, SystemClock};
 
-use crate::present::LastPicture;
+use crate::present::{self, Frame, LastPicture};
 use crate::repaint::RepaintSchedule;
 use crate::surface::{self, Gpu, Painter, Starting, Surface};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, windows};
@@ -1055,22 +1055,32 @@ impl<M: Send + 'static> Desktop<M> {
         };
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
-        let textures = !slot.pending.set.is_empty() || !slot.pending.free.is_empty();
         let now = Instant::now();
-        if slot
-            .shown
-            .unchanged(&shapes, pixels_per_point, clear, textures)
-        {
+        let change = slot.shown.change(&shapes, pixels_per_point, clear);
+        let frame = painter.frame(change, &slot.pending, pixels_per_point);
+        if frame == Frame::Nothing {
+            painter.paint(
+                pixels_per_point,
+                clear,
+                frame,
+                &[],
+                &mut slot.pending,
+                &surface.window,
+            );
             slot.not_drawn(now, wake);
             return;
         }
         slot.shown.keep(&shapes, pixels_per_point, clear);
         let mut shapes = shapes;
+        if let Frame::Part(area) = frame {
+            present::clip_to(&mut shapes, area);
+        }
         painter.prepare(&mut shapes, pixels_per_point);
         let primitives = slot.ctx.tessellate(shapes, pixels_per_point);
         painter.paint(
             pixels_per_point,
             clear,
+            frame,
             &primitives,
             &mut slot.pending,
             &surface.window,

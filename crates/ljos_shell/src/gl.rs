@@ -10,6 +10,7 @@
 //! in its painter, in that context.
 
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -29,6 +30,12 @@ use glutin::config::{ConfigTemplateBuilder, GlConfig};
 use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentGlContext};
 use glutin::display::GlDisplay;
 use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
+
+use crate::present::{Change, Frame};
+
+/// How many frames back the areas drawn are remembered: a buffer older
+/// than that is drawn whole.
+const REMEMBERED: usize = 4;
 
 /// The display, the context and GL's functions all windows share.
 pub(crate) struct Gl {
@@ -165,6 +172,9 @@ struct GlWindow {
     id: u64,
     surface: Surface<WindowSurface>,
     px: [u32; 2],
+    /// The pixels each of the last frames drew, the last first (`None`:
+    /// all of them), for a buffer that holds an older frame.
+    drawn: VecDeque<Option<Px>>,
     // The surface draws into the window: it stays while the surface does.
     _window: Arc<Window>,
 }
@@ -218,6 +228,7 @@ impl GlPainter {
             id,
             surface,
             px,
+            drawn: VecDeque::new(),
             _window: Arc::clone(window),
         });
         Ok(())
@@ -236,14 +247,61 @@ impl GlPainter {
         if let Some(window) = self.window.as_mut() {
             window.surface.resize(&self.gl.context, w, h);
             window.px = [w.get(), h.get()];
+            window.drawn.clear();
         }
     }
 
-    /// Draws a frame into the window and shows it.
+    /// What of a picture that makes `change` is drawn. The buffer drawn
+    /// into still holds the frame shown `age` frames ago (when EGL can
+    /// say), so it is drawn again where this frame and the ones since
+    /// changed it. A picture handed over again under the same name may be
+    /// anywhere.
+    pub(crate) fn frame(
+        &mut self,
+        change: Change,
+        pending: &egui::TexturesDelta,
+        pixels_per_point: f32,
+    ) -> Frame {
+        let replaced = pending.set.iter().any(|(id, deltas)| {
+            self.painter.texture(*id).is_some() || deltas.iter().any(|d| d.pos.is_some())
+        });
+        let Some(gw) = self.window.as_mut() else {
+            return Frame::Whole;
+        };
+        let now = match change {
+            _ if replaced => None,
+            Change::None => return Frame::Nothing,
+            Change::Area(area) => Some(Px::around(area, pixels_per_point, gw.px)),
+            Change::All => None,
+        };
+        // Asked before the context is current with the surface: EGL
+        // answers for the surface either way.
+        let age = gw.surface.buffer_age() as usize;
+        gw.drawn.push_front(now);
+        gw.drawn.truncate(REMEMBERED);
+        if age == 0 || age > gw.drawn.len() {
+            return Frame::Whole;
+        }
+        let mut px = Px::EMPTY;
+        for drawn in gw.drawn.iter().take(age) {
+            match drawn {
+                Some(d) => px = px.union(*d),
+                None => return Frame::Whole,
+            }
+        }
+        if px.is_empty() {
+            Frame::Nothing
+        } else {
+            Frame::Part(px.points(pixels_per_point))
+        }
+    }
+
+    /// Draws `primitives` (all of `frame`) into the window and shows it.
     pub(crate) fn paint(
         &mut self,
         pixels_per_point: f32,
         clear: [f32; 4],
+        frame: Frame,
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Window,
@@ -254,13 +312,32 @@ impl GlPainter {
         if !self.gl.make_current(Some((gw.id, &gw.surface))) {
             return;
         }
-        self.painter.clear(gw.px, clear);
+        let part = match frame {
+            Frame::Nothing => {
+                // Only the pictures: nothing is shown.
+                self.painter
+                    .paint_and_update_textures(gw.px, pixels_per_point, &[], pending);
+                return;
+            }
+            Frame::Part(area) => Some(Px::around(area, pixels_per_point, gw.px)),
+            Frame::Whole => None,
+        };
+        match part {
+            Some(px) => px.clear(self.painter.gl(), gw.px, clear),
+            None => self.painter.clear(gw.px, clear),
+        }
         self.painter
             .paint_and_update_textures(gw.px, pixels_per_point, primitives, pending);
         window.pre_present_notify();
         // A lost frame is drawn again with the next change; there is
-        // nobody to tell.
-        let _ = gw.surface.swap_buffers(&self.gl.context);
+        // nobody to tell. The compositor is told what changed, so it can
+        // take only that.
+        let _ = match part {
+            Some(px) => gw
+                .surface
+                .swap_buffers_with_damage(&self.gl.context, &[px.egl(gw.px)]),
+            None => gw.surface.swap_buffers(&self.gl.context),
+        };
     }
 
     /// Gives back what `pending` frees, while the window is not open.
@@ -285,6 +362,71 @@ impl Drop for GlPainter {
             self.painter.destroy();
         }
         self.forget_window();
+    }
+}
+
+/// A rectangle of the window's pixels, from the top left: `[x0, y0, x1,
+/// y1)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Px([u32; 4]);
+
+impl Px {
+    const EMPTY: Px = Px([0; 4]);
+
+    /// The pixels `area` (in points) touches, in a window of `size`.
+    fn around(area: egui::Rect, pixels_per_point: f32, size: [u32; 2]) -> Px {
+        let lo = |v: f32, max: u32| ((v * pixels_per_point).floor().max(0.0) as u32).min(max);
+        let hi = |v: f32, max: u32| ((v * pixels_per_point).ceil().max(0.0) as u32).min(max);
+        Px([
+            lo(area.min.x, size[0]),
+            lo(area.min.y, size[1]),
+            hi(area.max.x, size[0]),
+            hi(area.max.y, size[1]),
+        ])
+    }
+
+    fn is_empty(self) -> bool {
+        let [x0, y0, x1, y1] = self.0;
+        x1 <= x0 || y1 <= y0
+    }
+
+    fn union(self, other: Px) -> Px {
+        if self.is_empty() {
+            return other;
+        }
+        if other.is_empty() {
+            return self;
+        }
+        let ([a0, b0, a1, b1], [c0, d0, c1, d1]) = (self.0, other.0);
+        Px([a0.min(c0), b0.min(d0), a1.max(c1), b1.max(d1)])
+    }
+
+    fn points(self, pixels_per_point: f32) -> egui::Rect {
+        let [x0, y0, x1, y1] = self.0.map(|v| v as f32 / pixels_per_point);
+        egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+    }
+
+    /// As EGL counts: from the bottom left.
+    fn egl(self, size: [u32; 2]) -> glutin::surface::Rect {
+        let [x0, y0, x1, y1] = self.0;
+        glutin::surface::Rect::new(
+            x0 as i32,
+            size[1].saturating_sub(y1) as i32,
+            (x1 - x0) as i32,
+            (y1 - y0) as i32,
+        )
+    }
+
+    fn clear(self, gl: &glow::Context, size: [u32; 2], color: [f32; 4]) {
+        let r = self.egl(size);
+        // SAFETY: the context is current; the painter sets the scissor
+        // again for every shape.
+        unsafe {
+            gl.enable(glow::SCISSOR_TEST);
+            gl.scissor(r.x, r.y, r.width, r.height);
+            gl.clear_color(color[0], color[1], color[2], color[3]);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+        }
     }
 }
 

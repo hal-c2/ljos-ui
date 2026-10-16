@@ -10,6 +10,7 @@
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
+use crate::present::{Change, Frame};
 use egui::ViewportId;
 use egui_wgpu::{
     RendererOptions, SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew,
@@ -150,12 +151,30 @@ impl Painter {
         let _ = (shapes, pixels_per_point);
     }
 
-    /// Draws `primitives` into `window`, with the pictures `pending`
-    /// hands over, and shows them.
+    /// What of a picture that makes `change` is drawn, with the pictures
+    /// `pending` hands over.
+    pub(crate) fn frame(
+        &mut self,
+        change: Change,
+        pending: &egui::TexturesDelta,
+        pixels_per_point: f32,
+    ) -> Frame {
+        match self {
+            // egui-wgpu draws every frame whole.
+            Painter::Wgpu(_) if change == Change::None && pending.is_empty() => Frame::Nothing,
+            Painter::Wgpu(_) => Frame::Whole,
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.frame(change, pending, pixels_per_point),
+        }
+    }
+
+    /// Draws `primitives` (all of `frame`) into `window`, with the
+    /// pictures `pending` hands over, and shows them.
     pub(crate) fn paint(
         &mut self,
         pixels_per_point: f32,
         clear: egui::Color32,
+        frame: Frame,
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Arc<Window>,
@@ -163,6 +182,7 @@ impl Painter {
         let clear = clear.to_normalized_gamma_f32();
         match self {
             Painter::Wgpu(painter) => {
+                let _ = frame;
                 painter.paint_and_update_textures(
                     ViewportId::ROOT,
                     pixels_per_point,
@@ -175,7 +195,7 @@ impl Painter {
             }
             #[cfg(gl_painter)]
             Painter::Gl(painter) => {
-                painter.paint(pixels_per_point, clear, primitives, pending, window);
+                painter.paint(pixels_per_point, clear, frame, primitives, pending, window);
             }
         }
     }

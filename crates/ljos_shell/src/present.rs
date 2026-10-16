@@ -1,4 +1,4 @@
-//! Whether a pass changed the picture in its window.
+//! Whether a pass changed the picture in its window, and where.
 //!
 //! A pass runs for every pointer event, timer and message, and most of
 //! them change nothing that is seen: the pointer moves over items that do
@@ -6,10 +6,13 @@
 //! moves something out of sight. Rasterising, submitting and presenting
 //! the same picture again is most of what a frame costs (all of it on a
 //! software rasteriser), so a window keeps what it last showed and is
-//! only drawn when that changes.
+//! only drawn when that changes. When it does, a painter that can keep
+//! the rest of the window (the GL painter) draws only where it changed: a
+//! logo animating over a still background costs the logo, not the window.
 
 use std::sync::Arc;
 
+use egui::Rect;
 use egui::epaint::{ClippedShape, Shape};
 
 /// What a window last showed.
@@ -28,28 +31,57 @@ struct Shown {
 }
 
 impl LastPicture {
-    /// Whether drawing `shapes` would show what the window shows already.
-    /// `textures` is whether there are pictures for the painter to take,
-    /// which only a drawn frame hands over.
-    pub(crate) fn unchanged(
+    /// What drawing `shapes` would change in what the window shows. Shapes
+    /// the same as the last picture's, in the same order, draw the same
+    /// pixels, so only where the others lie (before and now) can differ.
+    pub(crate) fn change(
         &self,
         shapes: &[ClippedShape],
         pixels_per_point: f32,
         clear: egui::Color32,
-        textures: bool,
-    ) -> bool {
+    ) -> Change {
         let Some(shown) = &self.shown else {
-            return false;
+            return Change::All;
         };
-        !textures
-            && shown.pixels_per_point == pixels_per_point
-            && shown.clear == clear
-            && shown.shapes.len() == shapes.len()
-            && shown
-                .shapes
+        if shown.pixels_per_point != pixels_per_point || shown.clear != clear {
+            return Change::All;
+        }
+        let (before, now) = (&shown.shapes[..], shapes);
+        let mut area = Rect::NOTHING;
+        if before.len() == now.len() {
+            for (a, b) in before.iter().zip(now) {
+                if !same_clipped(a, b) {
+                    area |= extent(a);
+                    area |= extent(b);
+                }
+            }
+        } else {
+            // Something came or went: what lies between the shapes both
+            // start with and those both end with.
+            let head = before
                 .iter()
-                .zip(shapes)
-                .all(|(a, b)| same_clipped(a, b))
+                .zip(now)
+                .take_while(|(a, b)| same_clipped(a, b))
+                .count();
+            let (before, now) = (&before[head..], &now[head..]);
+            let tail = before
+                .iter()
+                .rev()
+                .zip(now.iter().rev())
+                .take_while(|(a, b)| same_clipped(a, b))
+                .count();
+            let changed = before[..before.len() - tail]
+                .iter()
+                .chain(&now[..now.len() - tail]);
+            for shape in changed {
+                area |= extent(shape);
+            }
+        }
+        if area.is_positive() {
+            Change::Area(area)
+        } else {
+            Change::None
+        }
     }
 
     /// The window now shows `shapes`.
@@ -83,6 +115,43 @@ impl LastPicture {
     }
 }
 
+/// What drawing a picture changes in the window, in points.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Change {
+    None,
+    Area(Rect),
+    All,
+}
+
+/// What a painter draws of a picture.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Frame {
+    /// Nothing: the window shows it already (the pictures handed over are
+    /// still taken).
+    Nothing,
+    /// The area (in points, on whole pixels); what lies outside it in the
+    /// window's buffer is the picture already.
+    Part(Rect),
+    Whole,
+}
+
+/// Where `shape` can draw.
+fn extent(shape: &ClippedShape) -> Rect {
+    shape
+        .shape
+        .visual_bounding_rect()
+        .intersect(shape.clip_rect)
+}
+
+/// Draws `shapes` only inside `area`: every clip rectangle is cut to it,
+/// and what then has none is left out.
+pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, area: Rect) {
+    shapes.retain_mut(|s| {
+        s.clip_rect = s.clip_rect.intersect(area);
+        s.clip_rect.is_positive() && extent(s).is_positive()
+    });
+}
+
 fn same_clipped(a: &ClippedShape, b: &ClippedShape) -> bool {
     a.clip_rect == b.clip_rect && same_shape(&a.shape, &b.shape)
 }
@@ -106,7 +175,7 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
 #[cfg(test)]
 mod tests {
     use egui::epaint::{CornerRadius, Mesh, RectShape};
-    use egui::{Color32, Pos2, Rect, vec2};
+    use egui::{Color32, Pos2, vec2};
 
     use super::*;
 
@@ -133,7 +202,7 @@ mod tests {
         let mut last = LastPicture::default();
         let mut frames = 0;
         for shapes in passes {
-            if !last.unchanged(shapes, 1.0, Color32::WHITE, false) {
+            if last.change(shapes, 1.0, Color32::WHITE) != Change::None {
                 frames += 1;
                 last.keep(shapes, 1.0, Color32::WHITE);
             }
@@ -173,32 +242,70 @@ mod tests {
         );
     }
 
-    #[test]
-    fn new_pictures_for_the_painter_are_drawn() {
+    fn at(x: f32) -> Rect {
+        Rect::from_min_size(Pos2::new(x, 0.0), vec2(10.0, 10.0))
+    }
+
+    fn change(before: &[ClippedShape], now: &[ClippedShape]) -> Change {
         let mut last = LastPicture::default();
-        last.keep(&[rect(0.0)], 1.0, Color32::WHITE);
-        assert!(last.unchanged(&[rect(0.0)], 1.0, Color32::WHITE, false));
-        assert!(!last.unchanged(&[rect(0.0)], 1.0, Color32::WHITE, true));
+        last.keep(before, 1.0, Color32::WHITE);
+        last.change(now, 1.0, Color32::WHITE)
     }
 
     #[test]
-    fn another_scale_or_background_is_a_change() {
+    fn only_where_a_shape_moved_from_and_to_is_drawn_again() {
+        let before = [rect(0.0), rect(20.0), rect(40.0)];
+        assert_eq!(change(&before, &before), Change::None);
+        let now = [rect(0.0), rect(25.0), rect(40.0)];
+        assert_eq!(change(&before, &now), Change::Area(at(20.0) | at(25.0)));
+    }
+
+    #[test]
+    fn a_shape_that_comes_or_goes_changes_only_where_it_lies() {
+        let before = [rect(0.0), rect(40.0)];
+        let now = [rect(0.0), rect(20.0), rect(40.0)];
+        assert_eq!(change(&before, &now), Change::Area(at(20.0)));
+        assert_eq!(change(&now, &before), Change::Area(at(20.0)));
+    }
+
+    #[test]
+    fn a_shape_changes_only_what_its_clip_lets_through() {
+        let before = [rect(0.0)];
+        let mut now = [rect(5.0)];
+        now[0].clip_rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(12.0, 12.0));
+        let changed = Rect::from_min_max(Pos2::ZERO, Pos2::new(12.0, 10.0));
+        assert_eq!(change(&before, &now), Change::Area(changed));
+    }
+
+    #[test]
+    fn another_scale_background_or_first_picture_changes_everything() {
         let mut last = LastPicture::default();
+        assert_eq!(last.change(&[rect(0.0)], 1.0, Color32::WHITE), Change::All);
         last.keep(&[rect(0.0)], 1.0, Color32::WHITE);
-        assert!(!last.unchanged(&[rect(0.0)], 2.0, Color32::WHITE, false));
-        assert!(!last.unchanged(&[rect(0.0)], 1.0, Color32::BLACK, false));
+        assert_eq!(last.change(&[rect(0.0)], 2.0, Color32::WHITE), Change::All);
+        assert_eq!(last.change(&[rect(0.0)], 1.0, Color32::BLACK), Change::All);
+    }
+
+    #[test]
+    fn shapes_drawn_into_an_area_keep_to_it() {
+        let mut shapes = vec![rect(0.0), rect(20.0), rect(40.0)];
+        clip_to(
+            &mut shapes,
+            Rect::from_min_max(Pos2::new(15.0, 0.0), Pos2::new(35.0, 10.0)),
+        );
+        assert_eq!(shapes.len(), 1, "the shapes outside it are not drawn");
+        assert_eq!(
+            shapes[0].clip_rect,
+            Rect::from_min_max(Pos2::new(15.0, 0.0), Pos2::new(35.0, 10.0))
+        );
     }
 
     #[test]
     fn a_forgotten_picture_is_drawn_again() {
         let mut last = LastPicture::default();
-        assert!(
-            !last.unchanged(&[], 1.0, Color32::WHITE, false),
-            "nothing shown yet"
-        );
         last.keep(&[], 1.0, Color32::WHITE);
-        assert!(last.unchanged(&[], 1.0, Color32::WHITE, false));
+        assert_eq!(last.change(&[], 1.0, Color32::WHITE), Change::None);
         last.forget();
-        assert!(!last.unchanged(&[], 1.0, Color32::WHITE, false));
+        assert_eq!(last.change(&[], 1.0, Color32::WHITE), Change::All);
     }
 }
