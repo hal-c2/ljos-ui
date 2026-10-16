@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use egui::accesskit::{Action, TreeId};
 use egui::{
@@ -22,6 +23,9 @@ use crate::a11y;
 use crate::input::{WheelTrack, map_button, map_modifiers, map_wheel};
 use crate::keys::{Fallback, KeyTrack};
 use crate::text::{self, TextBridge};
+
+/// A frame of a display whose refresh rate the host never told.
+const SIXTY_HZ: Duration = Duration::from_micros(16_667);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
@@ -181,6 +185,8 @@ pub struct QmlView {
     /// The keyboard was the view's when the last pass ended.
     had_keyboard: bool,
     next_wake: Option<Time>,
+    /// How long the display shows a frame ([`QmlView::set_refresh_rate`]).
+    frame_period: Duration,
     size: Option<Vec2>,
     ppp: Option<f32>,
     painted_frame: Option<u64>,
@@ -249,6 +255,7 @@ impl QmlView {
             keyboard: KeyboardPolicy::default(),
             had_keyboard: false,
             next_wake: None,
+            frame_period: SIXTY_HZ,
             size: None,
             ppp: None,
             painted_frame: None,
@@ -519,8 +526,36 @@ impl QmlView {
     /// left it; `None` when it waits for nothing. egui shortens a delayed
     /// repaint by a frame, for a host whose drawing waits for the
     /// display; a host that did not draw a pass waits for this instead.
-    pub fn wakes_in(&self) -> Option<std::time::Duration> {
-        self.next_wake.map(|t| t.saturating_since(self.clock.now()))
+    /// It is early by as much as a pass may be (see
+    /// [`QmlView::set_refresh_rate`]), so that such a host asks for the
+    /// display's frame in time.
+    pub fn wakes_in(&self) -> Option<Duration> {
+        let early = self.clock.now() + self.early();
+        self.next_wake.map(|t| t.saturating_since(early))
+    }
+
+    /// The refresh rate of the display the view is on: an animation asks
+    /// for one frame per refresh, and a frame gives its creation jobs a
+    /// share of one. A host that never says is taken to show 60 frames a
+    /// second.
+    ///
+    /// A pass less than half a frame before what the scene waits for runs
+    /// it: a host that draws when the display asks for a frame then shows
+    /// every frame of an animation, also on a display a little faster
+    /// than it said, where waiting for the exact time would miss a frame
+    /// every few dozen. Timers still fire no earlier than they are due.
+    pub fn set_refresh_rate(&mut self, hz: f64) {
+        if !(hz.is_finite() && hz > 0.0) {
+            return;
+        }
+        self.frame_period = Duration::from_secs_f64(1.0 / hz);
+        self.scene.set_refresh_rate(hz);
+        ljos_quick::set_animation_frame_period(&self.engine, self.frame_period);
+    }
+
+    /// How much before its time a wake of the scene is taken as due.
+    fn early(&self) -> Duration {
+        self.frame_period / 2
     }
 
     /// The egui id of an item's accessibility node, if the item is exposed.
@@ -789,7 +824,7 @@ impl QmlView {
         self.sync_keyboard(ui);
 
         // 3-9. The pipeline, only when something asked for it.
-        let timer_due = self.next_wake.is_some_and(|t| t <= now);
+        let timer_due = self.next_wake.is_some_and(|t| t <= now + self.early());
         if self.scene.needs_frame() || timer_due || self.scene.snapshot().is_none() {
             let out = self.scene.frame(&self.engine, now);
             self.stats.frames += 1;
@@ -873,7 +908,7 @@ impl QmlView {
         }
     }
 
-    fn request_repaint(&mut self, ctx: &Context, after: Option<std::time::Duration>) {
+    fn request_repaint(&mut self, ctx: &Context, after: Option<Duration>) {
         self.stats.repaint_requests += 1;
         match after {
             None => ctx.request_repaint(),

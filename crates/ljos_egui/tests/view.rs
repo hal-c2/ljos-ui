@@ -514,3 +514,59 @@ fn a_timer_wakes_exactly_when_due() {
     h.run_steps(20);
     assert_eq!(h.state().view.stats().frames, frames_before + 3);
 }
+
+/// A scene animating something every frame of a 60 Hz display: it moves
+/// the button at every pass that runs it and asks for the next frame a
+/// period later. Returns how many times it moved.
+fn animate_every_frame(h: &mut Harness<'_, State>, s: &Scene) -> Rc<Cell<u32>> {
+    let moved = Rc::new(Cell::new(0u32));
+    let m = Rc::clone(&moved);
+    let button = s.button;
+    h.state_mut().view.set_refresh_rate(60.0);
+    h.state_mut()
+        .view
+        .set_timer_hook(Box::new(move |e, now: Time| {
+            m.set(m.get() + 1);
+            e.set(button, Item::X, f64::from(m.get())).unwrap();
+            Some(now + Duration::from_micros(16_667))
+        }));
+    // It never settles: one pass runs it.
+    h.step();
+    moved
+}
+
+#[test]
+fn a_display_a_little_faster_than_it_said_shows_every_animation_frame() {
+    let s = scene();
+    let clock = Arc::new(VirtualClock::new());
+    let mut h = harness(&s, Some(Arc::clone(&clock)));
+    let moved = animate_every_frame(&mut h, &s);
+    // The display asks for a frame every 16.1 ms (62 Hz), a little before
+    // the scene's 16.7: each pass still runs it, and none is skipped.
+    let start = moved.get();
+    for _ in 0..60 {
+        clock.advance(Duration::from_micros(16_100));
+        h.step();
+    }
+    assert_eq!(moved.get() - start, 60, "a display frame showed no step");
+}
+
+#[test]
+fn a_pass_more_than_half_a_frame_early_does_not_run_the_scene() {
+    let s = scene();
+    let clock = Arc::new(VirtualClock::new());
+    let mut h = harness(&s, Some(Arc::clone(&clock)));
+    let moved = animate_every_frame(&mut h, &s);
+    let frames = h.state().view.stats().frames;
+    let start = moved.get();
+    // A pointer event 5 ms after the last frame: the next is 11.7 ms off.
+    clock.advance_ms(5);
+    h.step();
+    assert_eq!(moved.get(), start);
+    assert_eq!(h.state().view.stats().frames, frames);
+    assert_eq!(
+        h.state().view.wakes_in(),
+        Some(Duration::from_micros(16_667 - 5_000 - 8_333)),
+        "a host that did not draw is asked back half a frame early"
+    );
+}

@@ -1287,13 +1287,13 @@ impl<M: Send + 'static> Desktop<M> {
                 && slot.refresh != Some(hz)
             {
                 slot.refresh = Some(hz);
-                // What a frame may spend on creating items follows how
-                // long the display shows one.
+                // Animations step, and a frame may spend on creating
+                // items, as often as the display shows one.
                 let view = match slot.view.as_mut() {
                     Some(view) => view,
                     None => app.view_mut(),
                 };
-                view.scene_mut().set_refresh_rate(hz);
+                view.set_refresh_rate(hz);
             }
         }
     }
