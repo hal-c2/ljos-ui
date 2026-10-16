@@ -26,6 +26,9 @@ ljos_shell = { path = "../ljos_shell", optional = true, default-features = false
 # application needs no second Ljós dependency to hold one. Default
 # features only: its tokio `tasks` feature stays off.
 ljos_runtime = { path = "../ljos_runtime" }
+# Only with `render`: the CPU reference renderer behind
+# `ljos::render`. Without B0, so the facade names no egui.
+ljos_render = { path = "../ljos_render", optional = true, default-features = false }
 # Only with `dev-qml` or `build`: compiles QML directories at start-up or
 # in a build script, which links the parser. A shipped application's own
 # `ljos` leaves both off and embeds compiled IR
@@ -40,8 +43,10 @@ qml_front = { path = "../qml_front", optional = true }
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
 tempfile.workspace = true
+# The render tests read back the PNG they are given.
+ljos_render = { path = "../ljos_render", default-features = false }
 # So the tests see the facade as an application with dev-qml does.
-ljos = { path = ".", features = ["dev-qml", "build"] }
+ljos = { path = ".", features = ["dev-qml", "build", "render"] }
 
 [features]
 default = ["shell", "media"]
@@ -57,6 +62,9 @@ dev-qml = ["dep:ljos_compiler", "dep:qml_front"]
 # own native types, into a pack the program embeds with
 # `ljos::include_qml!`. The program's own `ljos` leaves it off.
 build = ["dep:ljos_compiler", "dep:qml_front"]
+# Headless pictures (`ljos::render`): an application's UI drawn to a PNG
+# on a virtual clock, for screenshot tests and documentation.
+render = ["dep:ljos_render"]
 
 [lints]
 workspace = true

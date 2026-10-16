@@ -28,7 +28,7 @@ ljos_shell = { path = "../ljos_shell", features = ["dev", "mcp"] }
 # With `--example`, the native backends of a gallery example.
 ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 # The engine-backed type oracle for `--example` compiles.
-ljos = { path = "../ljos", default-features = false, features = ["dev-qml"] }
+ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "render"] }
 ljos_controls = { path = "../ljos_controls" }
 # QtQuick.LocalStorage, which `ljos render` and `ljos run` offer.
 ljos_localstorage = { path = "../ljos_localstorage" }

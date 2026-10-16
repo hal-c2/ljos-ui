@@ -90,6 +90,8 @@ pub mod build;
 mod compile;
 #[cfg(feature = "dev-qml")]
 pub mod dev;
+#[cfg(feature = "render")]
+pub mod render;
 pub mod task;
 
 pub use app::{App, create_root};

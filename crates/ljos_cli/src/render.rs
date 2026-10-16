@@ -13,25 +13,15 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
-    time::Duration,
 };
 
 use anyhow::Context as _;
 use clap::Args;
 use ljos::dev::{EngineOracle, EngineType};
 use ljos_compiler::{Severity, compile_project_with};
-use ljos_engine::{Engine, LogLevel, MapSource, QmlType};
-use ljos_quick::QuickScene;
-use ljos_render::{FrameView, RasterConfig, Rgba, VelloCpuReference, kurbo};
-use ljos_runtime::{Clock as _, Time, VirtualClock};
+use ljos_engine::{Engine, LogLevel, MapSource};
 use qml_front::TypeOracle;
 use serde_json::{Value, json};
-
-/// Frames a scene may need to come to rest before something is wrong with
-/// it, and timer firings before the settle time is given up on.
-const MAX_SETTLE_FRAMES: usize = 64;
-const MAX_TIMER_STEPS: usize = 100_000;
 
 #[derive(Args)]
 pub struct Render {
@@ -167,10 +157,10 @@ impl Render {
         let engine = Engine::new();
         // Before anything measures text: the engine is the thread's, and the
         // bundled one is made on first use.
-        ljos_quick::set_text_engine(if self.system_fonts {
-            ljos_quick::TextEngine::with_system_fonts()
+        ljos::render::set_fonts(if self.system_fonts {
+            ljos::render::Fonts::System
         } else {
-            ljos_quick::TextEngine::new()
+            ljos::render::Fonts::Bundled
         });
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
@@ -186,10 +176,17 @@ impl Render {
             Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
             None => compile(&dir, &key, notes, EngineOracle::table_only())?,
         };
-        let clock = Arc::new(VirtualClock::new());
-        engine.set_clock(Rc::new(clock.clone()));
-        engine.set_wall_clock_origin(self.now);
         let said = Said::default();
+        let sink = said.clone();
+        // The reference picture of a window is of its items: the window's
+        // own colour is not in it, and where no item paints the picture is
+        // transparent (corpus/harness/reference.qml).
+        let picture = ljos::render::Picture::new(self.size.0, self.size.1)
+            .settle(self.settle)
+            .on_scene_message(move |text| sink.add(text))
+            .without_window_colour();
+        picture.install(&engine);
+        engine.set_wall_clock_origin(self.now);
         let sink = said.clone();
         engine.set_log_handler(move |entry| {
             if matches!(entry.level, LogLevel::Warning | LogLevel::Critical) {
@@ -203,49 +200,11 @@ impl Render {
             .map_err(|e| anyhow::anyhow!("{e}"));
         notes.said.clear();
         let root = root.inspect_err(|_| notes.said = said.0.borrow().clone())?;
-
-        let (width, height) = self.size;
-        let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
-        let sink = said.clone();
-        scene
-            .log()
-            .set_handler(move |e| sink.add(first_line(&e.message)));
-        scene
-            .set_root(&engine, root)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        // A root window that leaves its size unsaid is as large as the
-        // picture, as the shell gives it the size of its platform window;
-        // without this its content item is empty and so is whatever is
-        // sized from it (a popup's `parent.width`).
-        let unsaid = |name| engine.read_by_name(root, name).to_number() <= 0.0;
-        if unsaid("width") || unsaid("height") {
-            let size = [f64::from(width), f64::from(height)];
-            ljos_controls::WindowSystem::of(&engine).resized(&engine, root, size);
-        }
-
-        let mut run = Run {
-            engine: &engine,
-            scene: &mut scene,
-            clock: &clock,
-            wake: None,
-        };
-        run.settle()?;
-        run.advance(self.settle)?;
-        // The reference picture of a window is of its items: the window's
-        // own colour is not in it, and where no item paints the picture is
-        // transparent (corpus/harness/reference.qml). A window is a
-        // Rectangle underneath here, so its fill is taken away before the
-        // picture is.
-        let window = engine
-            .meta_of(root)
-            .is_some_and(|m| m.inherits(ljos_controls::Window::static_meta()));
-        if window {
-            engine
-                .write_by_name(root, "color", ljos_engine::Value::from("transparent"))
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-        }
-        let png = run.picture(window)?;
+        let png = picture
+            .png(&engine, root)
+            .map_err(|e| anyhow::anyhow!("{e}"));
         notes.said = said.0.borrow().clone();
+        let png = png?;
         if let Some(parent) = self.out.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
@@ -398,76 +357,6 @@ fn compile<O: TypeOracle<Type = EngineType>>(
     notes.compile_errors = loaded.compile_errors.clone();
     notes.entry_compiles = loaded.entry_seen && loaded.entry_error.is_none();
     loaded.into_source(dir, entry)
-}
-
-/// The scene and the clock it runs on, being driven as a host drives them.
-struct Run<'a> {
-    engine: &'a Engine,
-    scene: &'a mut QuickScene,
-    clock: &'a Arc<VirtualClock>,
-    /// When the scene last said it next needs a frame.
-    wake: Option<Time>,
-}
-
-impl Run<'_> {
-    /// Frames until the scene is idle: layout, anchors, deferred deletes.
-    fn settle(&mut self) -> anyhow::Result<()> {
-        for _ in 0..MAX_SETTLE_FRAMES {
-            let now = self.clock.now();
-            let out = self.scene.frame(self.engine, now);
-            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
-                self.wake = out.next_wake;
-                return Ok(());
-            }
-        }
-        anyhow::bail!("the scene did not settle in {MAX_SETTLE_FRAMES} frames")
-    }
-
-    /// Lets `ms` pass, firing each timer at its own deadline and settling in
-    /// between, as a host woken at each deadline would.
-    fn advance(&mut self, ms: u64) -> anyhow::Result<()> {
-        let images = ljos_quick::ImageStore::of(self.engine);
-        images.finish(self.engine);
-        let end = self.clock.now() + Duration::from_millis(ms);
-        for _ in 0..MAX_TIMER_STEPS {
-            let next = [self.engine.next_timer_deadline(), self.wake]
-                .into_iter()
-                .flatten()
-                .min();
-            match next {
-                Some(t) if t <= end => {
-                    if t > self.clock.now() {
-                        self.clock.set(t);
-                    }
-                    self.engine.advance_timers(self.clock.now());
-                    self.settle()?;
-                }
-                _ => {
-                    self.clock.set(end);
-                    self.engine.advance_timers(end);
-                    images.finish(self.engine);
-                    return self.settle();
-                }
-            }
-        }
-        anyhow::bail!("timers fired more than {MAX_TIMER_STEPS} times in {ms} ms")
-    }
-
-    /// A PNG of the scene: on white, which is what the reference window
-    /// is, or on nothing for a window of the example's own.
-    fn picture(&mut self, window: bool) -> anyhow::Result<Vec<u8>> {
-        self.settle()?;
-        let out = self.scene.frame(self.engine, self.clock.now());
-        let backdrop = if window { 0.0 } else { 1.0 };
-        let mut r = VelloCpuReference::new(RasterConfig {
-            background: Rgba::from_straight(backdrop, backdrop, backdrop, backdrop),
-            ..RasterConfig::default()
-        });
-        let image = r
-            .render(&FrameView::new(&out.snapshot, 1.0))
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        image.to_png().map_err(|e| anyhow::anyhow!("{e}"))
-    }
 }
 
 #[cfg(test)]

@@ -316,6 +316,15 @@ runs the same start and then hands over the shell's full `Setup`
 message handler), and `ljos::run(config, setup)` is that shell loop
 without the builder. `App::build` makes the Engine and root
 headlessly, which is how an application tests its own start.
+With the facade's `render` feature it can look at the result too:
+`ljos::render::render_png(&engine, root, (width, height), settle_ms)`
+draws what `App::build` returned to a PNG after letting `settle_ms`
+pass on a virtual clock — a screenshot test, a visual regression
+check, a picture for documentation — and `ljos render` is a user of
+it. `ljos::render::Picture` installed before the root is made runs the
+root's own timers and animations on that clock, and
+`ljos::render::set_fonts` chooses the bundled font (the same picture
+on every machine) or the system's fonts.
 
 State the QML reads before it has items of its own goes in by name,
 the counterpart of `setContextProperty` — directly with
