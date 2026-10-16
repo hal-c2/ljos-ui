@@ -10,7 +10,7 @@
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use egui::{Event, Modifiers, PointerButton, Pos2, Vec2};
 use egui_kittest::Harness;
@@ -40,7 +40,13 @@ const BUTTON_CENTRE: Pos2 = Pos2::new(SIZE.x - 24.0 - 80.0, SIZE.y - 24.0 - 28.0
 ///
 /// Without a GPU adapter the pictures are skipped: a renderer that says
 /// it cannot draw.
+///
+/// Renderers are made one test at a time: two threads that start the
+/// Vulkan loader together can crash it (with the NVIDIA driver one calls
+/// into the driver before the other has finished loading it).
 fn sampling<S>(builder: egui_kittest::HarnessBuilder<S>) -> egui_kittest::HarnessBuilder<S> {
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let options = egui_wgpu::RendererOptions {
         predictable_texture_filtering: false,
         ..egui_wgpu::RendererOptions::PREDICTABLE

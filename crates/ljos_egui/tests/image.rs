@@ -2,6 +2,7 @@
 //! manager, and a picture decoded in the background wakes egui once.
 
 use std::rc::Rc;
+use std::sync::{Mutex, PoisonError};
 
 use egui::{Pos2, Rect, TextureId, Vec2};
 use egui_kittest::Harness;
@@ -74,10 +75,23 @@ fn state(e: &Rc<Engine>, root: ObjectId) -> State {
     }
 }
 
+/// Renderers are made one test at a time. Two threads that start the
+/// Vulkan loader together can crash it: with the NVIDIA driver one calls
+/// into the driver before the other has finished loading it, and the
+/// process dies in `vkEnumerateInstanceExtensionProperties`.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// kittest's renderer, which filters "predictably".
+fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+    egui_kittest::wgpu::WgpuTestRenderer::new()
+}
+
 fn scene(asynchronous: bool) -> (Rc<Engine>, ObjectId, Harness<'static, State>) {
     let (e, root, image) = items(asynchronous);
     let h = Harness::builder()
         .with_size(Vec2::new(200.0, 120.0))
+        .renderer(egui_kittest::LazyRenderer::new(renderer))
         .build_ui_state(
             |ui, st: &mut State| st.rect = st.view.show(ui).rect,
             state(&e, root),
@@ -158,6 +172,7 @@ fn a_picture_decoded_in_the_background_wakes_egui_and_then_it_idles() {
 /// Tiling and `smooth: false` are sampler settings, so they are checked
 /// with a renderer that samples as a window's does.
 fn sampling_renderer() -> Option<egui_kittest::wgpu::WgpuTestRenderer> {
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     // The default options are those of a window: hardware sampling.
     std::panic::catch_unwind(|| {
         egui_kittest::wgpu::WgpuTestRenderer::with_render_options(Default::default())

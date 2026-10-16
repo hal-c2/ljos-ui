@@ -3,6 +3,7 @@
 //! decoded pictures nothing shows. Shown again, it draws the same picture.
 
 use std::rc::Rc;
+use std::sync::{Mutex, PoisonError};
 
 use egui::{Pos2, Rect, TextureId, Vec2};
 use egui_kittest::Harness;
@@ -10,6 +11,16 @@ use ljos_egui::QmlView;
 use ljos_engine::{Engine, ObjectId, QmlType, Value};
 use ljos_quick::{Image, ImageStore, Item, Text, add_data};
 use ljos_runtime::MemoryPressure;
+
+/// kittest's renderer, made one test at a time. Two threads that start
+/// the Vulkan loader together can crash it: with the NVIDIA driver one
+/// calls into the driver before the other has finished loading it, and
+/// the process dies in `vkEnumerateInstanceExtensionProperties`.
+fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
+    egui_kittest::wgpu::WgpuTestRenderer::new()
+}
 
 /// A `w` by `h` PNG: the left half red, the right half blue.
 fn halves(w: u32, h: u32) -> Vec<u8> {
@@ -80,6 +91,7 @@ fn scene() -> (Rc<Engine>, Harness<'static, State>) {
     let view = QmlView::new(Rc::clone(&e), root).unwrap();
     let h = Harness::builder()
         .with_size(Vec2::new(200.0, 120.0))
+        .renderer(egui_kittest::LazyRenderer::new(renderer))
         .build_ui_state(
             |ui, st: &mut State| st.rect = st.view.show(ui).rect,
             State {
