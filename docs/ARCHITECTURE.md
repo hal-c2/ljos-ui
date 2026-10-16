@@ -681,6 +681,8 @@ These are initial values, enforced in CI by benchmarks (04 §3.7).
 
 Usable memory is the machine's (`MemTotal`), or the lowest `memory.max` of the cgroup the process is in and the groups above it when that is less: an application in a container or a systemd unit with a limit sizes its caches to the limit, not to the machine.
 
+What is freed goes back to the system. On Linux with glibc, `ljos_shell::run` fixes the allocator's mmap threshold at 1 MiB, so a picture, or the scratch it is decoded in, is mapped on its own and unmapped when dropped. By default glibc raises the threshold each time such a buffer is freed, and the buffers then come from per-thread heaps that keep the memory. On rssnews that held a quarter of a gigabyte for pictures long gone.
+
 **Memory pressure**
 - Caches implement `trait Evictable { fn evict(&mut self, level: MemoryPressure) -> usize }`.
 - `MemoryPressure` maps from Android trim levels, iOS memory warnings and suspension.

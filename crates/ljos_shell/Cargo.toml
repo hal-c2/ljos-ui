@@ -38,6 +38,10 @@ eframe = { workspace = true, optional = true }
 # (CLAUDE.md rule 5; tests/no_parser.rs keeps it so).
 ljos_dev = { path = "../ljos_dev", optional = true }
 
+# glibc's allocator is told to map large buffers from the system (`run`).
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc.workspace = true
+
 [features]
 default = ["media"]
 # QtMultimedia: sound through the system's output, video through the

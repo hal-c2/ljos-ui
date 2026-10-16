@@ -3919,6 +3919,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_kittest",
+ "libc",
  "ljos",
  "ljos_compiler",
  "ljos_controls",

@@ -418,5 +418,21 @@ pub fn run<M: Send + 'static>(
     config: ShellConfig,
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
+    large_buffers_from_the_system();
     desktop::run(config, setup)
+}
+
+/// Buffers of a mebibyte or more (decoded pictures and the scratch they
+/// are made in) are mapped from the system and given back when freed.
+/// glibc raises that threshold each time such a buffer is freed, after
+/// which they come from the heaps of the threads that decode, which keep
+/// the memory: on rssnews a quarter of a gigabyte of pictures long gone
+/// stayed resident. Setting the threshold stops it moving.
+fn large_buffers_from_the_system() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: mallopt only sets a parameter of the allocator, under its
+    // own lock.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
+    }
 }
