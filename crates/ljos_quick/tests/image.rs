@@ -1022,8 +1022,12 @@ fn a_result_for_a_source_left_behind_is_not_shown() {
     set(&e, picture, "source", Value::Url("blue.png".into()));
     store.finish(&e);
     assert_eq!(implicit(&e, picture), (60.0, 40.0));
-    // Red was decoded for nobody, and is cached all the same.
-    assert_eq!(store.cached_urls(), ["file:///red.png", "file:///blue.png"]);
+    // Red was decoded for nobody, and is cached all the same. The two
+    // decodes race on their own threads, so the order they were cached in
+    // is not part of what is tested.
+    let mut cached = store.cached_urls();
+    cached.sort();
+    assert_eq!(cached, ["file:///blue.png", "file:///red.png"]);
 
     set(&e, picture, "source", Value::Url("green.png".into()));
     set(&e, picture, "source", Value::Url("".into()));
