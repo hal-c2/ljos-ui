@@ -1093,6 +1093,22 @@ impl Engine {
         }
     }
 
+    /// The default property of type `ty`, as an index that holds on any
+    /// type derived from it.
+    fn children_default(
+        &self,
+        file: &Rc<LoadedFile>,
+        ty: &TypeRef,
+    ) -> Result<PropIndex, EngineError> {
+        let meta = self.type_meta(file, ty)?;
+        meta.default_property()
+            .and_then(|name| meta.property_index(name))
+            .ok_or_else(|| EngineError::UnknownProperty {
+                ty: meta.name.to_string(),
+                name: "default property".into(),
+            })
+    }
+
     /// `QtQuick` sees `QtQml`; the compiler's `QML` pseudo-module is
     /// `QtQml`.
     fn native_meta(&self, module: &str, name: &str) -> Result<MetaRef, EngineError> {
@@ -1187,6 +1203,15 @@ impl Engine {
                 self.apply_members(inst, id, &g.members, &g.path, id);
             }
         }
+        // Children written here go to the default property of the type
+        // this definition extends. One the definition declares itself is
+        // for its users' children: `default property alias content:
+        // body.data` must not take `body` from the file that declares it.
+        let mut memo = None;
+        let mut children_default = || {
+            memo.get_or_insert_with(|| self.children_default(&inst.file, &od.ty))
+                .clone()
+        };
         for v in &od.children {
             match v {
                 ObjectValue::Object(_) if list_model => {}
@@ -1197,7 +1222,8 @@ impl Engine {
                         self.apply_value_source(id, child, on);
                         continue;
                     }
-                    if let Err(e) = self.list_append_default(id, child) {
+                    let r = children_default().and_then(|prop| self.list_append(id, prop, child));
+                    if let Err(e) = r {
                         self.warn(format!(
                             "{}Cannot assign to non-existent default property ({e})",
                             self.location_of(child).unwrap_or_default()
@@ -1216,8 +1242,10 @@ impl Engine {
                         .is_some_and(|m| m.inherits(<Component as QmlType>::static_meta()))
                     {
                         self.set_template(id, t);
-                    } else if let Ok(c) = self.make_component_object(Some(id), t) {
-                        let _ = self.list_append_default(id, c);
+                    } else if let Ok(c) = self.make_component_object(Some(id), t)
+                        && let Ok(prop) = children_default()
+                    {
+                        let _ = self.list_append(id, prop, c);
                     }
                 }
             }
