@@ -24,6 +24,7 @@ use ljos_engine::{
     Atom, Color, Cx, Engine, EngineError, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject,
     QmlType, QtObject, Timer, Url, Value, qml_impl,
 };
+use ljos_render::ImageHandle;
 
 use self::sim::{Affected, Dir, Mask, Particle, Rng, SEED, STEP, Shape, Wandering};
 use crate::enums::EnumTable;
@@ -638,6 +639,9 @@ struct Registry {
     painters: RefCell<Vec<ObjectId>>,
     affectors: RefCell<Vec<ObjectId>>,
     pools: RefCell<HashMap<ObjectId, Vec<ObjectId>>>,
+    /// Each `MaskShape` picture's alpha, by URL, with the picture it was
+    /// read from: a new picture under the URL is read again.
+    masks: RefCell<HashMap<String, (ImageHandle, Rc<Mask>)>>,
 }
 
 fn registry(e: &Engine) -> Rc<Registry> {
@@ -818,8 +822,6 @@ fn reset(e: &Engine, sys: ObjectId) {
 /// What an emitter says for one step, read before the particles are touched.
 struct EmitterSpec {
     id: ObjectId,
-    emits: bool,
-    rate: f64,
     group: Rc<str>,
     life: f64,
     life_var: f64,
@@ -892,25 +894,34 @@ fn read_shape(e: &Engine, s: Option<ObjectId>) -> Shape {
             request: Default::default(),
         };
         match ImageStore::of(e).load_now(&key, true) {
-            Ok(img) => {
-                let (w, h) = (img.width(), img.height());
-                let mut alpha = Vec::with_capacity((w * h) as usize);
-                for y in 0..h {
-                    for x in 0..w {
-                        alpha.push(img.pixel(x, y)[3]);
-                    }
-                }
-                Shape::Mask(Rc::new(Mask {
-                    width: w,
-                    height: h,
-                    alpha,
-                }))
-            }
+            Ok(img) => Shape::Mask(mask_of(e, key.url, img)),
             Err(_) => Shape::Rect,
         }
     } else {
         Shape::Rect
     }
+}
+
+fn mask_of(e: &Engine, url: String, img: ImageHandle) -> Rc<Mask> {
+    let reg = registry(e);
+    if let Some((seen, mask)) = reg.masks.borrow().get(&url)
+        && *seen == img
+    {
+        return Rc::clone(mask);
+    }
+    let mask = Rc::new(Mask {
+        width: img.width(),
+        height: img.height(),
+        alpha: img
+            .data()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|px| px[3])
+            .collect(),
+    });
+    reg.masks.borrow_mut().insert(url, (img, Rc::clone(&mask)));
+    mask
 }
 
 fn read_emitter(e: &Engine, sys: ObjectId, em: ObjectId) -> EmitterSpec {
@@ -925,11 +936,8 @@ fn read_emitter(e: &Engine, sys: ObjectId, em: ObjectId) -> EmitterSpec {
         e.untrack(|| e.read(em, Emitter::ACCELERATION.index))
             .as_object(),
     );
-    let pulsing = emitter_run(e, em).is_some_and(|r| r.borrow().pulse_left > 0.0);
     EmitterSpec {
         id: em,
-        emits: pulsing || e.untrack(|| e.read(em, Item::ENABLED.index)).to_boolean(),
-        rate: num(Emitter::EMIT_RATE.index),
         group: Rc::from(
             e.untrack(|| e.read(em, Emitter::GROUP.index))
                 .to_js_string()
@@ -1066,26 +1074,32 @@ fn advance_system(e: &Engine, sys: ObjectId) {
         return;
     };
     let reaches = read_reaches(e, sys);
+    // Most emitters owe nothing on most steps (one on each of a hundred
+    // blocks that bursts when the block dies): only one that gives birth
+    // has the rest of what it says read.
     let emitters: Vec<(EmitterSpec, Vec<Burst>)> = emitters_of(e, sys)
         .into_iter()
-        .map(|em| {
-            let spec = read_emitter(e, sys, em);
-            let mut owed = Vec::new();
-            if let Some(r) = emitter_run(e, em) {
-                let mut r = r.borrow_mut();
-                owed = std::mem::take(&mut r.bursts);
+        .filter_map(|em| {
+            let run = emitter_run(e, em)?;
+            let enabled = e.untrack(|| e.read(em, Item::ENABLED.index)).to_boolean();
+            let rate = number(e, em, Emitter::EMIT_RATE.index);
+            let owed = {
+                let mut r = run.borrow_mut();
+                let emits = r.pulse_left > 0.0 || enabled;
+                let mut owed = std::mem::take(&mut r.bursts);
                 r.pulse_left = (r.pulse_left - STEP).max(0.0);
-                if spec.emits && spec.rate > 0.0 {
+                if emits && rate > 0.0 {
                     // The rate's carry lives with the emitter, across steps.
-                    r.carry += spec.rate * STEP;
+                    r.carry += rate * STEP;
                     let whole = r.carry.floor();
                     r.carry -= whole;
                     if whole >= 1.0 {
                         owed.push((whole as u32, None));
                     }
                 }
-            }
-            (spec, owed)
+                owed
+            };
+            (!owed.is_empty()).then(|| (read_emitter(e, sys, em), owed))
         })
         .collect();
     step_particles(&mut run.borrow_mut(), &reaches, &emitters);
