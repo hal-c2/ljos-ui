@@ -12,6 +12,11 @@
 # start and exec bring up what is not running. call fills in the app's pid, a shared session
 # label and foreground delivery where the tool takes them. Files go under LJOS_CUA_HOME,
 # default <target>/cua.
+#
+# The compositor renders in software (pixman), so its clients do too: Mesa's llvmpipe. With
+# LJOS_CUA_GPU=<render node> (/dev/dri/renderD128) it renders on that GPU and hands its
+# clients buffers there, which measures an app on the hardware it ships on; give that sandbox
+# its own LJOS_CUA_HOME.
 set -euo pipefail
 
 die() {
@@ -129,9 +134,14 @@ for_window [all] floating enable
 xwayland enable
 exec printenv DISPLAY > "$home/display"
 EOF
+  local renderer=(WLR_RENDERER=pixman)
+  if [[ -n ${LJOS_CUA_GPU:-} ]]; then
+    [[ -c $LJOS_CUA_GPU ]] || die "LJOS_CUA_GPU=$LJOS_CUA_GPU is not a render node"
+    renderer=(WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE="$LJOS_CUA_GPU")
+  fi
   # shellcheck disable=SC2016 # expanded by the sandbox's shell
   (cd "$home" && exec env -u WAYLAND_DISPLAY -u DISPLAY -u SWAYSOCK -u DBUS_SESSION_BUS_ADDRESS \
-    XDG_RUNTIME_DIR="$run" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+    XDG_RUNTIME_DIR="$run" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 "${renderer[@]}" \
     setsid dbus-run-session --config-file="$home/bus.config" -- sh -c 'echo "$DBUS_SESSION_BUS_ADDRESS" > bus; echo $$ > sway.raw; exec sway -c sway.config' \
     > "$home/sway.log" 2>&1) &
   wait_for 20 "sway (see $home/sway.log)" test -s "$home/sway.raw"

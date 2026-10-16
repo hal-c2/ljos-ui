@@ -92,5 +92,5 @@ exec "$target/release/ljos" bench --manifest "$manifest" \
   "${defaults[@]}" \
   --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --release (lto thin)" \
   --note "qt: $(qml6 --version 2>&1 | head -1), QT_QUICK_CONTROLS_STYLE=Basic" \
-  --note "both on the sandbox's headless sway (pixman), as Wayland clients" \
+  --note "both on the sandbox's headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \
   --out "$out" "${opts[@]}"
