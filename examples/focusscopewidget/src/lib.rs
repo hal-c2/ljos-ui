@@ -18,7 +18,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ljos::ljos_engine::{ComponentSource, Version};
+use ljos::ComponentSource;
+use ljos::prelude::Version;
 use ljos_ir::CompiledFile;
 
 /// What `build.rs` packed.

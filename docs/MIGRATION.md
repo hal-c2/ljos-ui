@@ -187,17 +187,15 @@ and the spelling before treating them as gaps.
 Write the native side against the `ljos` facade alone —
 `ljos::prelude` for the types, `ljos::App` to run — not against the
 engine crates behind it. What the prelude does not re-export may
-change without notice. One line belongs at the root of a crate that
-derives native types while depending on the facade alone, so the
-paths the derive generates resolve:
-
-```rust
-pub use ljos::ljos_engine;
-```
+change without notice. `use ljos::prelude::*;` is all a crate that
+derives native types needs: the derive, `qml_impl` and
+`qml_singleton` find the engine through the facade by themselves.
 
 Every code block in this section is compiled on every test run: the
 `Counter` is the doctest on the `ljos` crate's front page, and the
 rest is `crates/ljos/examples/counter.rs` and the `App` doctests.
+`crates/ljos_facade_app` is the same native module as a crate of its
+own whose only dependency is `ljos`, as an application's is.
 
 A native type is a Rust struct with `#[derive(QmlObject)]`. Fields
 are properties (`#[qml(notify)]` gives the change signal), and a
@@ -235,6 +233,11 @@ let counter = engine.create_by_name("Example", "Counter", None).unwrap();
 engine.invoke_by_name(counter, "increment", &[]).unwrap();
 assert_eq!(engine.get(counter, Counter::COUNT), Ok(1));
 ```
+
+A native singleton is the same kind of struct with `#[qml_singleton]`
+under its derive, registered with
+`engine.register_singleton::<T>("Example", Version::new(1, 0))`; the
+attribute and `Version` are in the prelude too.
 
 `register` is the one seam a native module sits at: a host calls it
 on its Engine, and nothing else about the module needs to be

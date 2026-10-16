@@ -126,6 +126,9 @@ libc = "0.2.190"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
 syn = { version = "3.0.7", features = ["full"] }
+# Which name the crate a macro expands in knows the engine by: its own
+# `ljos_engine` dependency, or the engine through the `ljos` facade.
+proc-macro-crate = "3.5.0"
 
 # Common
 arcstr = "1.2.0"

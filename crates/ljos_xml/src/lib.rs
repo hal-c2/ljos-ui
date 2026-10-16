@@ -64,21 +64,6 @@
 //! Nothing polls: work happens only when a load is asked for and
 //! when its answer arrives.
 
-// The `QmlObject` derive and `qml_impl` name everything they
-// generate through `::ljos_engine`, which only resolves in a crate
-// that depends on `ljos_engine` directly. This crate depends on the
-// `ljos` facade alone, so it stands in for that name itself and
-// re-exports exactly what the generated code names. Removing this
-// shim needs the macros to learn their crate's path through the
-// facade — a facade gap, reported with this crate.
-extern crate self as ljos_engine;
-#[doc(hidden)]
-pub use ljos::ljos_engine::{
-    __private, Atom, ConvertError, Cx, EngineError, ImplInfo, MetaBuilder, MetaObject, MetaRef,
-    MethodDecl, Prop, PropertyFlags, QmlImplInfo, QmlList, QmlObject, QmlType, QmlValue, Reset,
-    SignalDecl, SignalIndex, TypeTag, Value,
-};
-
 mod parse;
 
 use std::cell::RefCell;

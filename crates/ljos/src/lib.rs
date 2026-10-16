@@ -65,16 +65,17 @@
 //! [`FetchError::NoNetwork`](prelude::FetchError).
 
 /// What a native type is written with: the Engine and object model, the
-/// value types, the derive and its `qml_impl` companion, list models for
-/// Rust-owned rows, and the platform services (fetch, settings, dialogs)
-/// a type may ask the host for.
+/// value types, the derive and its `qml_impl` and `qml_singleton`
+/// companions (with the [`Version`](prelude::Version) a singleton is
+/// registered under), list models for Rust-owned rows, and the platform
+/// services (fetch, settings, dialogs) a type may ask the host for.
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_engine::{
         Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, LogEntry, LogLevel,
         ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList, QmlListModel, QmlObject,
-        QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Url, Value, list_model,
-        qml_impl,
+        QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Url, Value, Version,
+        list_model, qml_impl, qml_singleton,
     };
     pub use ljos_platform::{
         FetchError, Fetcher, Method, Platform, Request, Response, is_remote, url_path,
@@ -87,11 +88,11 @@ pub mod dev;
 pub mod task;
 
 pub use app::{App, create_root};
-/// The engine crate itself, for the paths the `QmlObject` derive and
-/// `qml_impl` generate (`::ljos_engine::…`): an application crate that
-/// depends on this facade alone re-exports it at its own root
-/// (`pub use ljos::ljos_engine;`) so the generated paths resolve.
-/// Writing code against it directly bypasses the curated surface.
+/// The engine crate itself, for the paths the `QmlObject` derive,
+/// `qml_impl` and `qml_singleton` generate in a crate that depends on
+/// this facade alone (`::ljos::ljos_engine::…`); such a crate needs no
+/// line of its own for them. Writing code against it directly bypasses
+/// the curated surface.
 #[doc(hidden)]
 pub use ljos_engine;
 #[doc(hidden)]

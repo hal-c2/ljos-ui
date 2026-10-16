@@ -22,16 +22,6 @@
 //! ljos_example_qtjennydemo::register(&engine);
 //! ```
 
-// See `ljos_example_colorpalette`: the derive names `::ljos_engine`,
-// which this facade-only crate stands in for.
-extern crate self as ljos_engine;
-#[doc(hidden)]
-pub use ljos::ljos_engine::{
-    __private, Atom, ConvertError, Cx, EngineError, ImplInfo, MetaBuilder, MetaObject, MetaRef,
-    MethodDecl, Prop, PropertyFlags, QmlImplInfo, QmlList, QmlObject, QmlType, QmlValue, Reset,
-    SignalDecl, SignalIndex, TypeTag, Value,
-};
-
 pub mod device;
 pub mod qml;
 

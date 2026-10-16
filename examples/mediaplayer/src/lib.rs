@@ -15,18 +15,8 @@
 //! let root = engine.create_from_url("MediaPlayer/Main", None, ljos_example_mediaplayer::initial_properties());
 //! ```
 
-// See `ljos_example_colorpalette`: the derive names `::ljos_engine`,
-// which this facade-only crate stands in for.
-extern crate self as ljos_engine;
-#[doc(hidden)]
-pub use ljos::ljos_engine::{
-    __private, Atom, ConvertError, Cx, EngineError, ImplInfo, MetaBuilder, MetaObject, MetaRef,
-    MethodDecl, Prop, PropertyFlags, QmlImplInfo, QmlList, QmlObject, QmlSingleton, QmlType,
-    QmlValue, Reset, SignalDecl, SignalIndex, SingletonScope, TypeTag, Value,
-};
-
 use ljos::Engine;
-use ljos::ljos_engine::{Version, qml_impl, qml_singleton};
+use ljos::prelude::*;
 
 /// The containers the player reads, in the dialog's words. The first
 /// is the one selected, as the demo prefers MPEG-4.

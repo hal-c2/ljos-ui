@@ -5,10 +5,6 @@
 //!
 //! `cargo run -p ljos --example counter`
 
-// The derive's generated `::ljos_engine::…` paths, resolved as an
-// application crate depending on the facade alone resolves them.
-pub use ljos::ljos_engine;
-
 use std::cell::RefCell;
 use std::rc::Rc;
 

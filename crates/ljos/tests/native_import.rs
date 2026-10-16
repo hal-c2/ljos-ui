@@ -9,10 +9,6 @@
 //! `register`ed before the `qml_dir` call) and compile against
 //! them, so `import Example` works with no oracle named by the user.
 
-// The derive's generated `::ljos_engine::…` paths, resolved as an
-// application crate depending on the facade alone resolves them.
-pub use ljos::ljos_engine;
-
 use ljos::prelude::*;
 
 #[derive(Debug, Default, QmlObject)]

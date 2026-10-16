@@ -11,10 +11,6 @@
 //! snapshots the registered natives, so the QML may `import` them —
 //! that path is `native_import.rs` (and `docs/MIGRATION.md` §6).
 
-// The derive's generated `::ljos_engine::…` paths, resolved as an
-// application crate depending on the facade alone resolves them.
-pub use ljos::ljos_engine;
-
 use ljos::prelude::*;
 
 #[derive(Debug, Default, QmlObject)]

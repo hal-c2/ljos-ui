@@ -1,7 +1,9 @@
 //! Proc-macros for `ljos_engine`: `#[derive(QmlObject)]` and `#[qml_impl]`.
 //!
-//! Generated code names everything through `::ljos_engine`, so the macros
-//! are only usable together with that crate (which re-exports them).
+//! Generated code names everything through the engine crate: as
+//! `::ljos_engine` in a crate that depends on it, and through the `ljos`
+//! facade in one that depends on the facade alone, so an application
+//! needs only `use ljos::prelude::*;` (see `engine_path`).
 //!
 //! # `#[derive(QmlObject)]`
 //!
@@ -147,9 +149,10 @@ fn singleton(attr: TokenStream2, input: &DeriveInput) -> Result<TokenStream2> {
     }
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let e = engine_path();
     Ok(quote! {
-        impl #impl_generics ::ljos_engine::QmlSingleton for #name #ty_generics #where_clause {
-            const SCOPE: ::ljos_engine::SingletonScope = ::ljos_engine::SingletonScope::Engine;
+        impl #impl_generics #e::QmlSingleton for #name #ty_generics #where_clause {
+            const SCOPE: #e::SingletonScope = #e::SingletonScope::Engine;
         }
     })
 }
@@ -165,6 +168,33 @@ pub fn qml_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     qml_impl_inner(item)
         .unwrap_or_else(Error::into_compile_error)
         .into()
+}
+
+/// The path generated code names the engine crate by, as the crate
+/// being compiled reaches it: `::ljos_engine` when it depends on the
+/// engine directly (or is the engine, which names itself so), else the
+/// engine through the `ljos` facade, under whatever name the crate gave
+/// that dependency. An application written against the facade alone
+/// needs no line of its own for the generated paths to resolve.
+///
+/// Dependencies and dev-dependencies are read alike, so a facade crate
+/// that takes `ljos_engine` as a dev-dependency only gets the direct
+/// path in its library too and must depend on the engine there as well.
+fn engine_path() -> TokenStream2 {
+    use proc_macro_crate::{FoundCrate, crate_name};
+    match (crate_name("ljos_engine"), crate_name("ljos")) {
+        (Ok(FoundCrate::Name(n)), _) => {
+            let n = Ident::new(&n, Span::call_site());
+            quote!(::#n)
+        }
+        // The facade's own library has the engine as a dependency of
+        // its own; only its tests and examples see `ljos` by name.
+        (Err(_), Ok(FoundCrate::Name(n))) => {
+            let n = Ident::new(&n, Span::call_site());
+            quote!(::#n::ljos_engine)
+        }
+        _ => quote!(::ljos_engine),
+    }
 }
 
 /// `snake_case` to `camelCase`. Leading underscores are kept.
@@ -336,8 +366,8 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
     };
     let c = container_attrs(&input.attrs)?;
     let ty = &input.ident;
-    let e = quote!(::ljos_engine);
-    let p = quote!(::ljos_engine::__private);
+    let e = engine_path();
+    let p = quote!(#e::__private);
     let qml_name = c.name.clone().unwrap_or_else(|| ty.to_string());
 
     // The base comes first in every table, so find it before numbering.
@@ -809,7 +839,7 @@ fn result_ok(t: &Type) -> Option<&Type> {
 
 /// The call expression for an exposed method, given argument idents.
 fn call(fn_ident: &Ident, s: &Shape, args: &[Ident]) -> TokenStream2 {
-    let e = quote!(::ljos_engine);
+    let e = engine_path();
     match (&s.receiver, s.cx) {
         (Receiver::Ref, _) => quote! {
             cx.with::<Self, _>(|this| this.#fn_ident(#(#args),*))?
@@ -839,8 +869,8 @@ fn qml_impl_inner(mut item: ItemImpl) -> Result<TokenStream2> {
             "#[qml_impl] does not support generic impls",
         ));
     }
-    let e = quote!(::ljos_engine);
-    let p = quote!(::ljos_engine::__private);
+    let e = engine_path();
+    let p = quote!(#e::__private);
     let self_ty = item.self_ty.clone();
 
     let mut signals = Vec::new();

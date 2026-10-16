@@ -3672,6 +3672,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_facade_app"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+]
+
+[[package]]
 name = "ljos_gallery_backends"
 version = "0.0.0"
 dependencies = [
@@ -3741,6 +3748,7 @@ dependencies = [
 name = "ljos_macros"
 version = "0.0.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 3.0.7",
