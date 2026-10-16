@@ -84,7 +84,7 @@ Feature: Eliding text that does not fit
           Text { id: one; objectName: "one"; text: "x" }
           Text { id: whole; objectName: "whole"; width: 100; text: root.words; wrapMode: Text.WordWrap }
           Text {
-            id: capped; objectName: "capped"; width: 100; text: root.words
+            id: capped; objectName: "capped"; width: 100; text: root.words + " " + root.words
             wrapMode: Text.WordWrap; elide: Text.ElideRight; maximumLineCount: 2
           }
           Text {
