@@ -966,6 +966,20 @@ fn system_shows_none(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+#[then(regex = r#"^the system was asked to open "([^"]*)"$"#)]
+fn system_opened(w: &mut LjosWorld, url: String) -> StepResult {
+    w.each(|b| {
+        let opened = b.opened_urls()?;
+        if opened.contains(&url) {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system was asked to open {opened:?}, not {url:?}"
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^the system asks the user for the "([^"]+)" permission$"#)]
 fn system_asks_permission(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| {

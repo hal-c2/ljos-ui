@@ -182,7 +182,8 @@ ljos-ui/
 │   ├── ljos_host/              PlatformHost, WinitHost, AndroidHost, (IosHost),
 │   │                           PlatformTextInput impls, clipboard, prefs backends
 │   ├── ljos_platform/          system services behind traits (clipboard, dialogs,
-│   │                           settings, fetch, permissions), QtCore, QtQuick.Dialogs
+│   │                           settings, fetch, permissions, opening URLs), QtCore,
+│   │                           QtQuick.Dialogs
 │   ├── ljos_media/             QtMultimedia playback: players, outputs, SoundEffect,
 │   │                           media clock, null sink [features decode, audio] (7.6)
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit loop, GL or wgpu (M2)
@@ -772,7 +773,7 @@ Source: 04 §3.1–3.2, §3.8–3.10.
 
 AccessKit on Android requires GameActivity. With native-activity it fails to compile (09 §2.3).
 
-**As built: system services (M2).** `ljos_platform` puts each service of the system behind a trait with an in-process stand-in that tests use: the clipboard (text, HTML, an image, the primary selection), the system's dialogs and `QtQuick.Dialogs` (drawn with QtQuick.Controls where the system shows none), `QtCore`'s `Settings` (written by a thread of its own) and `StandardPaths`, remote resources fetched and full HTTP requests sent off the Engine thread, drags from other applications, and `QtCore`'s permissions. `ljos_shell` gives the desktop ones (feature `native`). `FontLoader` and `SystemPalette` are in `ljos_quick`.
+**As built: system services (M2).** `ljos_platform` puts each service of the system behind a trait with an in-process stand-in that tests use: the clipboard (text, HTML, an image, the primary selection), the system's dialogs and `QtQuick.Dialogs` (drawn with QtQuick.Controls where the system shows none), `QtCore`'s `Settings` (written by a thread of its own) and `StandardPaths`, remote resources fetched and full HTTP requests sent off the Engine thread, drags from other applications, `QtCore`'s permissions, and opening a URL in the user's application for it (`Qt.openUrlExternally`; the stand-in records the URL and opens nothing). `ljos_shell` gives the desktop ones (feature `native`); the desktop opener starts `xdg-open`, `open` or the Windows URL handler and does not wait for it, and Android and iOS have none yet. `FontLoader` and `SystemPalette` are in `ljos_quick`.
 
 - **As built: naming a freeze (wave 9).** A host may set `Engine::set_slow_call_budget`: native calls are then timed (only then is a clock read), the ones over budget kept (last 64) and named in the log at most once a second per method. `ljos::task::spawn` is the facade's shape for heavy work: the global compute pool runs it, the platform inbox delivers its value on the Engine, and a `Task` cancels it. Native code still cannot be preempted; these make the offender visible and the async shape the easy one.
 

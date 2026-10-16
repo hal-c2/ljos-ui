@@ -217,6 +217,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the text file "X" does not exist` | the application has not written that file (`@ljos-only`) |
 | `Then the system shows a "kind" dialog titled "title"` | the system's own dialog is up: `"open file"`, `"open files"`, `"save file"`, `"folder"`, `"message"`, `"color"`, `"font"` (`@ljos-only`) |
 | `Then the system shows no dialog` | no dialog of the system's is up (`@ljos-only`) |
+| `Then the system was asked to open "url"` | the application handed the URL to the system's opener (`Qt.openUrlExternally`); a scenario's system opens nothing and answers false (`@ljos-only`: the oracle would open it) |
 | `Then the system asks the user for the "name" permission` | the system has asked the user for that permission and has no answer yet (`@ljos-only`) |
 | `Then the system asks the user for no permission` | no question about a permission is waiting (`@ljos-only`) |
 | `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |

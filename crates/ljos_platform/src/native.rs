@@ -1,6 +1,7 @@
-//! The desktop's own services: the system clipboard through arboard, and
+//! The desktop's own services: the system clipboard through arboard,
 //! file, folder and message dialogs through rfd (the XDG desktop portal on
-//! Linux, the system's panels on macOS and Windows).
+//! Linux, the system's panels on macOS and Windows), and the system's
+//! opener of URLs.
 //!
 //! Each dialog waits for its answer on a thread of its own, so the Engine
 //! thread never blocks on the user.
@@ -15,6 +16,7 @@ use crate::dialogs::{
     CANCEL, DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, NO, OK, YES,
     system_buttons,
 };
+use crate::open_url::OpenUrlService;
 
 /// The system clipboard. `None` inside when there is no clipboard to talk
 /// to (no display): then it holds nothing and copies go nowhere.
@@ -268,5 +270,52 @@ async fn message(request: DialogRequest) -> DialogReply {
         MessageDialogResult::No => DialogReply::Button(NO),
         MessageDialogResult::Cancel => DialogReply::Button(CANCEL),
         MessageDialogResult::Custom(_) => DialogReply::Dismissed,
+    }
+}
+
+/// Opens a URL with the system's own opener: `xdg-open` on Linux and the
+/// BSDs, `open` on macOS, the URL protocol handler on Windows. Android and
+/// iOS have no such program; there it opens nothing yet
+/// ([`SystemOpener::AVAILABLE`] is false).
+#[derive(Debug, Default)]
+pub struct SystemOpener;
+
+impl SystemOpener {
+    /// Whether this system has an opener to start.
+    pub const AVAILABLE: bool = !cfg!(any(target_os = "android", target_os = "ios"));
+}
+
+impl OpenUrlService for SystemOpener {
+    fn open(&self, url: &str) -> bool {
+        // An opener would read a leading dash as an option of its own.
+        if !Self::AVAILABLE || url.starts_with('-') {
+            return false;
+        }
+        let mut command = if cfg!(target_os = "windows") {
+            let mut c = std::process::Command::new("rundll32");
+            c.arg("url.dll,FileProtocolHandler");
+            c
+        } else if cfg!(target_os = "macos") {
+            std::process::Command::new("open")
+        } else {
+            std::process::Command::new("xdg-open")
+        };
+        command
+            .arg(url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        match command.spawn() {
+            Ok(mut child) => {
+                // Starting it is all the Engine thread waits for. Some
+                // openers stay until the application they start quits, so
+                // a thread of its own collects the exit.
+                let _ = std::thread::Builder::new()
+                    .name("ljos-open-url".to_owned())
+                    .spawn(move || child.wait());
+                true
+            }
+            Err(_) => false,
+        }
     }
 }

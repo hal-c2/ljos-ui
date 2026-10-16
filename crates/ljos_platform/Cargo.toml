@@ -1,6 +1,6 @@
 [package]
 name = "ljos_platform"
-description = "Ljós platform services behind traits (clipboard, dialogs, settings, standard paths, remote resources, drops from other applications), their fakes, and the QML modules QtCore and QtQuick.Dialogs"
+description = "Ljós platform services behind traits (clipboard, dialogs, settings, standard paths, remote resources, drops from other applications, opening URLs), their fakes, and the QML modules QtCore and QtQuick.Dialogs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,8 @@ publish.workspace = true
 build = "build.rs"
 
 [features]
-# The services of a desktop: the system clipboard (arboard) and native file
-# and message dialogs (rfd). Without it every service is the in-process one,
+# The services of a desktop: the system clipboard (arboard), native file
+# and message dialogs (rfd), and the system's opener of URLs. Without it every service is the in-process one,
 # which is what tests and headless hosts want.
 native = ["dep:arboard", "dep:rfd", "dep:futures"]
 # A fetcher that reaches the network (HttpFetcher): HTTP and HTTPS. Without

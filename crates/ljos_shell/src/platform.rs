@@ -1,6 +1,6 @@
 //! The desktop's platform services (ARCHITECTURE.md §15): the system
-//! clipboard and dialogs, an HTTPS fetcher, and the window system's
-//! name for `Qt.platform`.
+//! clipboard and dialogs, the system's opener of URLs, an HTTPS fetcher,
+//! and the window system's name for `Qt.platform`.
 //!
 //! Files dragged in from other applications are not handled here: winit's
 //! file events reach each window's egui input, and the window's `QmlView`
@@ -27,6 +27,18 @@ pub(crate) fn install(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) 
     platform.set_dialogs(std::rc::Rc::new(
         ljos_platform::native::SystemDialogs::default(),
     ));
+    if ljos_platform::native::SystemOpener::AVAILABLE {
+        platform.set_open_url(std::rc::Rc::new(ljos_platform::native::SystemOpener));
+    } else {
+        engine.log(
+            ljos_engine::LogLevel::Info,
+            ljos_platform::CATEGORY,
+            format!(
+                "Qt.openUrlExternally opens nothing on {}: there is no opener for it yet",
+                std::env::consts::OS
+            ),
+        );
+    }
     platform.set_fetcher(Arc::new(HttpFetcher::new()));
     platform.set_plugin_name(plugin_name());
 }

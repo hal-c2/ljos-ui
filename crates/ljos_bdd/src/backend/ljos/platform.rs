@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_engine::Engine;
-use ljos_platform::{FakeDialogs, FakePermissions, HttpFetcher, PathEnv, Platform};
+use ljos_platform::{FakeDialogs, FakePermissions, HttpFetcher, PathEnv, Platform, RecordedUrls};
 
 use super::{BackendError, Result, failed};
 use crate::backend::SystemDialogAnswer;
@@ -25,6 +25,8 @@ pub(super) struct Rig {
     /// A system that asks the user, when the scenario says so; otherwise
     /// nothing guards anything, as on desktop Linux.
     permissions: Option<FakePermissions>,
+    /// What the application asked the system to open; nothing is opened.
+    opened: RecordedUrls,
 }
 
 impl Rig {
@@ -54,6 +56,7 @@ impl Rig {
         let platform = Platform::of(engine);
         platform.set_env(PathEnv::sandbox(HOME, self.root()?));
         platform.set_dialogs(Rc::new(self.dialogs.clone()));
+        platform.set_open_url(Rc::new(self.opened.clone()));
         // A real network, as Qt has: a scenario reaches its own web server
         // on the loopback interface, and nothing else it names answers.
         platform.set_fetcher(Arc::new(HttpFetcher::new()));
@@ -62,6 +65,10 @@ impl Rig {
         }
         platform.set_held(true);
         Ok(())
+    }
+
+    pub(super) fn opened_urls(&self) -> Vec<String> {
+        self.opened.urls()
     }
 
     pub(super) fn dialogs_stay(&self) {

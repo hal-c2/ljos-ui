@@ -69,7 +69,8 @@
 /// companions (with the [`Version`](prelude::Version) a singleton is
 /// registered under), list models for Rust-owned rows, the `Timer` a
 /// host may run from Rust, and the platform
-/// services (fetch, settings, dialogs) a type may ask the host for.
+/// services (fetch, settings, dialogs, opening a URL) a type may ask the
+/// host for.
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_engine::{
@@ -79,7 +80,8 @@ pub mod prelude {
         list_model, qml_impl, qml_singleton,
     };
     pub use ljos_platform::{
-        FetchError, Fetcher, Method, Platform, Request, Response, is_remote, url_path,
+        FetchError, Fetcher, Method, OpenUrlService, Platform, RecordedUrls, Request, Response,
+        is_remote, url_path,
     };
 }
 

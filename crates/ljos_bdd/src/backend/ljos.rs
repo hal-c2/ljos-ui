@@ -1232,6 +1232,10 @@ impl Backend for LjosBackend {
         Ok(())
     }
 
+    fn opened_urls(&mut self) -> Result<Vec<String>> {
+        Ok(self.platform.opened_urls())
+    }
+
     fn permission_requests(&mut self) -> Result<Vec<String>> {
         Ok(self.platform.permission_requests())
     }

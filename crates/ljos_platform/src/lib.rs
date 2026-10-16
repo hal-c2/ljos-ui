@@ -11,12 +11,15 @@
 //! - drags from other applications ([`ExternalDrag`]);
 //! - the permissions of `QtCore` ([`PermissionService`]): `CameraPermission`
 //!   and the rest;
+//! - opening a URL in the user's application for it ([`OpenUrlService`],
+//!   `Qt.openUrlExternally`);
 //! - `Qt.platform`.
 //!
 //! Answers from other threads come back through one bounded inbox that the
 //! scene drains at the start of a frame ([`Platform::deliver`]); nothing
 //! here polls. A host with a desktop turns on the `native` feature and
-//! installs [`native::SystemClipboard`] and [`native::SystemDialogs`]; a
+//! installs [`native::SystemClipboard`], [`native::SystemDialogs`] and
+//! [`native::SystemOpener`]; a
 //! host with a network turns on `http` and installs `HttpFetcher`.
 
 mod clipboard;
@@ -31,6 +34,7 @@ mod library;
 use library::DialogLibrary;
 #[cfg(feature = "native")]
 pub mod native;
+mod open_url;
 mod paths;
 mod permissions;
 mod platform;
@@ -53,6 +57,7 @@ pub use fetch::{
 };
 #[cfg(feature = "http")]
 pub use http::HttpFetcher;
+pub use open_url::{OpenUrl, OpenUrlService, RecordedUrls};
 pub use paths::{Location, PathEnv, StandardPaths, file_url, url_path};
 pub use permissions::{
     BluetoothPermission, CalendarPermission, CameraPermission, ContactsPermission, FakePermissions,
@@ -66,7 +71,8 @@ pub use settings::{Settings, flush_writes};
 #[derive(Default)]
 struct Registered(Cell<bool>);
 
-/// Registers `QtQuick.Dialogs`, `QtCore` and `Qt.platform`. Calling it
+/// Registers `QtQuick.Dialogs`, `QtCore`, `Qt.platform` and
+/// `Qt.openUrlExternally`. Calling it
 /// again does nothing. The drawn dialogs are QtQuick.Controls, so a host
 /// registers those too.
 pub fn register(engine: &Engine) {
@@ -103,6 +109,7 @@ pub fn register(engine: &Engine) {
         );
     }
 
+    open_url::register(engine);
     engine.on_js_started(|e| {
         let platform = Platform::of(e);
         let installed = e.eval_js(INSTALL_PLATFORM).map(|install| {

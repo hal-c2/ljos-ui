@@ -364,6 +364,10 @@ pub trait Backend: fmt::Debug {
             "a system that asks for permissions",
         ))
     }
+    /// The URLs the application asked the system to open, in order.
+    fn opened_urls(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::NotImplemented("the system's opener of URLs"))
+    }
     /// The permissions (`"camera"`) the system is asking the user for.
     fn permission_requests(&mut self) -> Result<Vec<String>> {
         Err(BackendError::NotImplemented(

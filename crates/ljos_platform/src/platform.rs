@@ -20,6 +20,7 @@ use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
 use crate::drop::ExternalDrag;
 use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
+use crate::open_url::{OpenUrlService, RecordedUrls};
 use crate::paths::PathEnv;
 use crate::permissions::{PermissionService, UngatedPermissions};
 
@@ -171,6 +172,7 @@ pub struct Platform {
     dialogs: RefCell<Rc<dyn DialogService>>,
     permissions: RefCell<Rc<dyn PermissionService>>,
     fetcher: RefCell<Arc<dyn Fetcher>>,
+    open_url: RefCell<Rc<dyn OpenUrlService>>,
     env: RefCell<Rc<PathEnv>>,
     plugin_name: RefCell<Atom>,
     application: RefCell<Option<(String, String)>>,
@@ -212,6 +214,7 @@ impl Default for Platform {
             dialogs: RefCell::new(Rc::new(NoSystemDialogs)),
             permissions: RefCell::new(Rc::new(UngatedPermissions)),
             fetcher: RefCell::new(Arc::new(NoNetwork)),
+            open_url: RefCell::new(Rc::new(RecordedUrls::default())),
             env: RefCell::new(Rc::new(PathEnv::from_process())),
             // What a run without a window system is called (Qt.platform).
             plugin_name: RefCell::new(Atom::from("offscreen")),
@@ -393,6 +396,16 @@ impl Platform {
 
     pub fn set_fetcher(&self, fetcher: Arc<dyn Fetcher>) {
         *self.fetcher.borrow_mut() = fetcher;
+    }
+
+    /// What opens a URL in the user's application for it. Until a host
+    /// installs one it is a [`RecordedUrls`], which opens nothing.
+    pub fn open_url(&self) -> Rc<dyn OpenUrlService> {
+        Rc::clone(&self.open_url.borrow())
+    }
+
+    pub fn set_open_url(&self, service: Rc<dyn OpenUrlService>) {
+        *self.open_url.borrow_mut() = service;
     }
 
     /// Where the user's directories are.
