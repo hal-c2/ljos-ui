@@ -58,7 +58,7 @@ done
 Apps draw on the headless sway of `scripts/cua-sandbox.sh` as Wayland clients, never on the user's
 display:
 
-- Ljós uses wgpu's GL backend (llvmpipe on a headless compositor).
+- Ljós draws with egui's GL painter on EGL (llvmpipe on a headless compositor); `LJOS_PAINTER=wgpu` measures wgpu's GL backend instead.
 - Qt uses its Wayland platform with `QT_QUICK_CONTROLS_STYLE=Basic`, the style Ljós draws.
 
 ## Profiles
@@ -174,7 +174,8 @@ The instance dominates. On pixman, Vulkan cannot present (its surface is lost), 
 GL on llvmpipe; the Vulkan driver was loaded for nothing. EGL alone takes 100–265 ms.
 
 The shell starts the instance on a thread of its own as soon as the display is open, and the first
-window waits only for what is left of it. One instance per backend, each on its own thread, would
+window waits only for what is left of it. With the GL painter (the default where there is EGL) that
+thread starts only EGL's display, and no wgpu instance is made. One instance per backend, each on its own thread, would
 wait for the slowest rather than for both, but in the sandbox the drivers started side by side
 crashed (SIGSEGV) or hung the process. What is left is the drivers' own start. Qt Quick asks for
 OpenGL only on Linux by default.
@@ -263,5 +264,79 @@ at 60 frames a second against Qt's 7 %. Each frame it:
 - swaps the buffers;
 - makes the context current twice and waits on fences.
 
-None of that can be changed from Ljós. A GL painter that draws straight into the window, or a
-Vulkan software driver, would avoid the copy.
+None of that can be changed from Ljós, so on EGL the shell now draws with a GL painter of its own
+(next section).
+
+### A GL painter that draws only what changed (2026-10-16)
+
+Where there is EGL the shell now paints with egui_glow on one EGL context, straight into each
+window's surface, with swap interval 1. Three things make a frame cheaper on a software rasteriser:
+
+- **No offscreen copy.** The frame is drawn into the window's own buffer.
+- **Solid rectangles are clears.** An opaque square-cornered rectangle on whole pixels is filled
+  with a scissored clear rather than a blended mesh.
+- **Only what changed is drawn.** Each changed shape's place, where it lay and where it lies (with
+  the pixel its smoothed edge reaches), is an area of its own. The painter adds the areas changed
+  since the buffer it draws into was last shown (EGL's buffer age), clears and draws only those,
+  and tells the compositor the same. In `bench/animations.qml`, 200 bars move 11 500 of the
+  window's 1.92 million pixels a frame. Small areas' backdrop is drawn as one mesh, since a
+  software rasteriser draws each scissored clear on its own; areas of 64×64 pixels or more are
+  cleared.
+
+Two more things changed what the bench counts:
+
+- **Frames are not lost to an early pass.** On the sandbox's 62 Hz compositor the frame callback
+  came a little before the animation's next step was due; the pass found nothing to do and the frame
+  was lost (593 frames in 10 s, gaps of 32 ms, against Qt's 619). A pass less than half a frame
+  early now runs the scene: 619 frames, the slowest 16.8 ms.
+- **Animations step at the display's rate,** which the shell now tells the scene.
+
+Each cell is the median of three runs, Ljós before → after, with Qt from the after session. "Before"
+is the first run of this page (load average 37–66); "after" ran with nothing else on the machine but
+an unrelated test suite and the bench itself (load average 2–9, a few runs up to 22). CPU is % of
+one core.
+
+| App | Idle CPU, desktop | CPU clicked, desktop | Frames, desktop | Frames, pi-zero |
+|---|---|---|---|---|
+| animations | 86.7 → 19.5 (Qt 25.3) | 87.5 → 20.5 (Qt 25.1) | 61.9 → 61.8 (Qt 62.0) | 20.7 → 59.7 (Qt 61.8) |
+| listview | 72.3 → 22.9 (Qt 25.3) | 72.4 → 23.8 (Qt 25.2) | 62.2 → 62.2 (Qt 62.0) | 16.8 → 56.2 (Qt 62.1) |
+| clocks | 92.0 → 11.4 (Qt 22.5) | 96.5 → 11.4 (Qt 22.1) | 56.0 → 62.1 (Qt 61.9) | 18.0 → 61.7 (Qt 60.9) |
+| maroon | 61.5 → 47.2 (Qt 64.0) | 68.7 → 57.7 (Qt 70.3) | 62.2 → 62.2 (Qt 62.2) | 30.8 → 40.5 (Qt 28.0) |
+| samegame | 107 → 13.1 (Qt 28.1) | 161 → 105 (Qt 272) | 53.6 → 47.0 (Qt 62.2) | 12.4 → 42.1 (Qt 57.8) |
+| rectangles | 0 → 0 (Qt 0) | 37.1 → 0.41 (Qt 0.11) | 0 → 0 (Qt 0) | — |
+| calqlatr | 0 → 0 (Qt 0) | 9.83 → 0.67 (Qt 0.94) | 0 → 0 (Qt 0) | — |
+
+Ljós also showed its first frame sooner than Qt in every cell (desktop: 143–243 ms against
+254–314 ms).
+
+samegame's frames are not lost: its menu waits in a `PauseAnimation`, during which nothing changes
+and Ljós draws nothing (its slowest gap is that pause, 494 ms), where Qt keeps drawing.
+
+**On a real GPU.** `LJOS_CUA_GPU=/dev/dri/renderD128` puts the sandbox's compositor, and so the
+apps, on the machine's Radeon 8060S (radeonsi). Desktop profile, load average 2–8:
+
+| App | Idle CPU: GL / wgpu / Qt | CPU clicked: GL / wgpu / Qt | First frame, ms: GL / wgpu / Qt |
+|---|---|---|---|
+| animations | 6.8 / 4.3 / 3.8 | 8.1 / 5.4 / 4.0 | 45 / 607 / 72 |
+| listview | 14.1 / 10.4 / 4.7 | 12.7 / 11.4 / 4.4 | 50 / 633 / 87 |
+| clocks | 2.9 / 3.4 / 1.8 | 2.9 / 3.0 / 2.0 | 61 / 636 / 95 |
+| maroon | 4.3 / 4.7 / 2.2 | 4.9 / 4.5 / 2.7 | 70 / 659 / 113 |
+| samegame | 6.6 / 7.0 / 2.3 | 50.4 / 53.0 / 6.0 | 65 / 617 / 114 |
+
+The bench put wgpu ahead on animations and listview. The two painters were then run in turn, three
+times each, for 10 s: animations 7.3–7.8 % with GL and 7.2–8.0 % with wgpu, listview 16.0–18.7 %
+and 16.1–17.3 %. On a GPU they cost the same. GL stays the default: it costs the same on a GPU and a
+third on a software rasteriser, and it shows the first frame in a tenth of the time, since wgpu
+starts Vulkan first (on this machine that includes loading the NVIDIA driver; see "Where the first
+frame's time goes").
+
+**What is left.**
+
+- **On a GPU Qt uses half to a third of Ljós's CPU.** With the pixels free, what is left is the
+  scene's own work each frame. In listview that is making and dropping delegates as they scroll by
+  (the reactive graph, the incubator, text), spread thin with no single hot spot; the painter is
+  under 4 % of the main thread.
+- **Clicks in samegame** cost 105 % of a core on llvmpipe and 50 % on the GPU (Qt: 272 % and 6 %).
+- **pi-zero frames.** At a fifth of a core Ljós shows fewer frames than Qt in listview (56 against
+  62), animations (60 against 62) and samegame's game. It shows more in maroon (40 against 28).
+- **A click that changes nothing** costs Ljós 0.4 % in rectangles, Qt 0.1 %.

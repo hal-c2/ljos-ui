@@ -75,7 +75,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
  ┌──────────────┴───────────────┐  ┌───────────────────────────┐              │ TreeUpdate, IME
  │ tokio (2–4 workers): network,│  │ compute pool (2–4): image │   ┌──────────▼──────────────────┐
  │ SQLite, file watch, devtools │  │ decode, parse, shaping    │   │ ljos_egui / ljos_shell      │
- └──────────────────────────────┘  └───────────────────────────┘   │ egui + egui-wgpu + AccessKit│
+ └──────────────────────────────┘  └───────────────────────────┘   │ egui + glow/wgpu + AccessKit│
  ┌──────────────────────────────┐                                  │ ljos_host: PlatformHost     │
  │ pinned threads: plugins,     │                                  │ (winit / android-activity)  │
  │ WorkerScript (own runtimes)  │                                  └─────────────────────────────┘
@@ -182,7 +182,7 @@ ljos-ui/
 │   │                           settings, fetch, permissions), QtCore, QtQuick.Dialogs
 │   ├── ljos_media/             QtMultimedia playback: players, outputs, SoundEffect,
 │   │                           media clock, null sink [features decode, audio] (7.6)
-│   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit/wgpu loop (M2)
+│   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit loop, GL or wgpu (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
 │   ├── ljos_mcp_core/          McpSurface, ToolRegistry, caps/tokens, snapshot renderer (rmcp)
@@ -482,7 +482,7 @@ This is the canonical order, merging 01 §3.5, 02 §3.2 and 03 §3.3. It runs on
  9 compose    world transforms, subtree bounds, paint order, culling → FrameSnapshot
 10 a11y       TreeUpdate for A11Y-dirty nodes, only if an AT is active (update_if_active)
 11 encode     backend.encode(FrameView) → egui shapes / callbacks; IME rect; textures
-12 present    egui end → tessellate (B0) → egui-wgpu render → present (Fifo), only if the picture changed
+12 present    egui end → tessellate (B0) → egui_glow on EGL (egui-wgpu without it) → present (vsync), only if the picture changed
 13 idle       Idle lane while budget remains: QuickJS GC, cache trims; compute next wake
 ```
 
@@ -492,11 +492,11 @@ This is the canonical order, merging 01 §3.5, 02 §3.2 and 03 §3.3. It runs on
 ### 7.3 Shells
 
 - **M0–M1:** `ljos_shell` runs on eframe. This is the fastest route and gets Android early.
-- **From M2:** `ljos_shell` is Ljós's own loop on `ljos_host` + egui-winit + egui-wgpu. It owns the AccessKit adapter, which grafts its subtree into egui's tree, plus the surface lifecycle, present mode and devtools hooks.
+- **From M2:** `ljos_shell` is Ljós's own loop on `ljos_host` + egui-winit + egui_glow on EGL, with egui-wgpu where there is no EGL. It owns the AccessKit adapter, which grafts its subtree into egui's tree, plus the surface lifecycle, present mode and devtools hooks.
 - **`QmlView`** stays an `egui::Widget`, so QML can be embedded in any egui app. Embedded, it falls back to emitting a11y nodes through `ctx.accesskit_node_builder`.
 - **Native egui widgets inside QML.** An `EguiItem` gets a child `Ui` at its world bounding box, which allows translation and uniform scale only. QML items painted above it register occluders.
 
-**As built (M2).** `ljos_shell::run` is Ljós's own loop (`desktop.rs`) on `ljos_host`, egui-winit and egui-wgpu; `eframe` is an optional feature and a test proves the default build does not link it. There is one platform window for the root and one for every other QML `Window` that is shown, each with its own egui context, scene view, painter and, while open, surface; the graphics device is shared. All bookkeeping happens when the host is about to wait: what the application's windows want is compared with what the platform has, due passes are asked for, and the host is told the earliest time any window wants to be drawn. A window nobody asked about is not drawn, and neither is a pass whose shapes, scale, background and textures are those already shown (`present.rs`). Such a pass comes from a pointer event nothing reacts to, a click that changes nothing, or an animation of something out of sight. The next pass then waits for the scene's own next wake, not the frame-early time egui asks for, and from the second such pass in a row it waits at least one frame. The window is cleared to its background, which is not painted again, and an opaque square-cornered rectangle drawn first over the whole scene becomes the clear colour (`QmlView::set_fold_backdrop`). On a software rasteriser every full-window quad costs as much as the rest of the frame. Measured idle CPU over 10 s: 0 ticks for the QML demo and for `ljos run --watch`, 1 tick with `--watch --mcp --top`.
+**As built (M2).** `ljos_shell::run` is Ljós's own loop (`desktop.rs`) on `ljos_host`, egui-winit and a painter; `eframe` is an optional feature and a test proves the default build does not link it. There is one platform window for the root and one for every other QML `Window` that is shown, each with its own egui context, scene view, painter and, while open, surface; the graphics device is shared. All bookkeeping happens when the host is about to wait: what the application's windows want is compared with what the platform has, due passes are asked for, and the host is told the earliest time any window wants to be drawn. A window nobody asked about is not drawn, and neither is a pass whose shapes, scale, background and textures are those already shown (`present.rs`). Such a pass comes from a pointer event nothing reacts to, a click that changes nothing, or an animation of something out of sight. The next pass then waits for the scene's own next wake, not the frame-early time egui asks for, and from the second such pass in a row it waits at least one frame. The window is cleared to its background, which is not painted again, and an opaque square-cornered rectangle drawn first over the whole scene becomes the clear colour (`QmlView::set_fold_backdrop`). On a software rasteriser every full-window quad costs as much as the rest of the frame. Where the platform has EGL (Unix other than Apple's and Android) the painter is egui_glow on one EGL context shared by all windows, each with its own window surface and swap interval 1 (`gl.rs`). wgpu's GL backend draws every frame offscreen and copies it, flipped, into the window, which on a software rasteriser cost three times what the frame did (docs/BENCHMARKS.md). The GL painter also takes the scene's opaque square-cornered rectangles that lie on whole pixels as rectangles (`QmlView::set_solid_rects`; a hard-edged one is snapped to the pixels whose centres it holds) and fills each with a scissored clear, which a software rasteriser does at a fraction of what a blended mesh costs. The GL painter draws only where the picture changed: the last picture names the places a pass changes (each changed shape where it lay and where it lies, with the pixel its smoothed edge reaches), the painter adds what changed since the buffer it draws into was last shown (EGL's buffer age), clears and draws only those places, and tells the compositor the same (`swap_buffers_with_damage`). Places that overlap are joined, and past 256 they are drawn as one. A buffer of unknown age, a new scale or background draws the window whole. The drivers start on the `ljos-gpu` thread while the application is built, one start-up at a time: for GL that is EGL's display, and no wgpu instance is made. egui-wgpu draws where there is no EGL, where the first window cannot have it (the reason is logged), or when `LJOS_PAINTER=wgpu` asks for it. GL is the default because of what was measured (docs/BENCHMARKS.md): on llvmpipe a frame costs a third of what it does through wgpu, on a real GPU (a Radeon 8060S, through `LJOS_CUA_GPU`) the two cost the same, and GL shows the first frame in a tenth of the time, since wgpu starts Vulkan first. The shell tells the scene the display's refresh rate (`QmlView::set_refresh_rate`), so animations step at the display's rate, and a pass that comes less than half a frame before the scene's next wake runs it rather than losing the frame. Measured idle CPU over 10 s: 0 ticks for the QML demo and for `ljos run --watch`, 1 tick with `--watch --mcp --top`.
 - winit cannot express modality or a transient parent, so both are emulated in the shell; most window flags are ignored, and Wayland does not allow a window to place or activate itself.
 - A secondary window that is hidden runs no frames.
 - AccessKit's consumer (0.35 to 0.38) panics when focus moves to a node of a tree it has not seen; the graft releases focus first (`release_graft_focus`) and a `should_panic` test records the upstream fault.
@@ -1625,7 +1625,7 @@ All decided by the user on 2026-10-10. Every decision except D9 took the recomme
 | Area | Pin |
 |---|---|
 | Toolchain | Rust 1.98.1, edition 2024, resolver 3 |
-| egui stack | egui / eframe / egui-winit / egui-wgpu / egui_kittest 0.36.2 (wgpu 30, winit 0.30.13, kittest 0.4) |
+| egui stack | egui / eframe / egui-winit / egui-wgpu / egui_glow / egui_kittest 0.36.2 (wgpu 30, glow 0.17, glutin 0.32 with EGL only, winit 0.30.13, kittest 0.4). The shell paints with egui_glow on EGL and falls back to egui-wgpu (section 7.3) |
 | Accessibility | accesskit 0.24.1, the version egui 0.36 uses (accesskit_winit 0.32, android 0.7.5). Moving to 0.25 (android 0.9, ios 0.2) waits for egui; see spike 04 |
 | JS | rquickjs 0.14.0 (quickjs-ng 0.16.2, `BC_VERSION` 28), `parallel` off |
 | Text | parley + fontique (section 7.5 rule), skrifa 0.44 / harfrust 0.12 via egui, pulldown-cmark 0.13.4 |
