@@ -248,4 +248,7 @@ pub struct Stats {
     pub flushes: u64,
     /// Writes and notifications that propagated (value actually changed).
     pub propagations: u64,
+    /// Runs whose edges were rebuilt: what they read was not what their
+    /// last run read, in the same order.
+    pub source_rebuilds: u64,
 }

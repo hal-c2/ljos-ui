@@ -779,3 +779,51 @@ fn effects_waiting_in_one_flush_do_not_run_inside_each_other() {
     g.set(s, 1);
     assert!(deepest.get() <= 16, "nested {} deep", deepest.get());
 }
+
+/// A run that reads what the last one read keeps its edges as they are;
+/// only one that reads something else rebuilds them, and then it follows
+/// what it read this time.
+#[test]
+fn same_reads_keep_their_edges() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let props: Vec<NodeId> = (0..8).map(|i| g.property(r, i).unwrap()).collect();
+    let pick = g.property(r, 0).unwrap();
+    let extra = g.property(r, 100).unwrap();
+    let sum = Rc::new(Cell::new(0));
+    let (ps, s) = (props.clone(), sum.clone());
+    g.effect(r, move |g| {
+        // More sources than fit inline, and one more by choice.
+        let mut total: i64 = ps.iter().map(|p| g.get(*p)).sum();
+        if g.get(pick) == 1 {
+            total += g.get(extra);
+        }
+        s.set(total);
+    })
+    .unwrap();
+    let total = |g: &Graph<i64>| props.iter().map(|p| g.get(*p)).sum::<i64>();
+    let first = g.stats().source_rebuilds;
+    let runs = g.stats().effect_runs;
+    for i in 0..100 {
+        g.set(props[i % 8], i as i64 + 10);
+    }
+    assert_eq!(g.stats().effect_runs, runs + 100);
+    assert_eq!(g.stats().source_rebuilds, first);
+    assert_eq!(sum.get(), total(&g));
+
+    // The choice reads one more: rebuilt once, and that one is followed.
+    g.set(pick, 1);
+    assert_eq!(g.stats().source_rebuilds, first + 1);
+    g.set(extra, 7);
+    assert_eq!(sum.get(), total(&g) + 7);
+    g.set(props[2], 1);
+    assert_eq!(g.stats().source_rebuilds, first + 1);
+    assert_eq!(sum.get(), total(&g) + 7);
+
+    // And back: it is not followed any more.
+    g.set(pick, 0);
+    assert_eq!(g.stats().source_rebuilds, first + 2);
+    let runs = g.stats().effect_runs;
+    g.set(extra, 8);
+    assert_eq!(g.stats().effect_runs, runs);
+}

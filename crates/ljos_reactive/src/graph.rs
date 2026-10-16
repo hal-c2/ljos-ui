@@ -2358,6 +2358,14 @@ impl<V: Clone + 'static> Inner<V> {
     /// Replaces `n`'s sources with this run's reads, touching only edges
     /// that changed, and recomputes its height.
     fn diff_sources(&mut self, n: NodeId, reads: &[NodeId]) {
+        // Most runs read what the last one did, in the same order: an
+        // effect that follows a few properties of an item every frame.
+        // Then every edge stays where it is, and only the height may move.
+        if let Some(height) = self.same_sources(n, reads) {
+            self.nodes[n].height = height;
+            return;
+        }
+        self.stats.source_rebuilds += 1;
         self.tick += 1;
         let old_tag = self.tick;
         self.tick += 1;
@@ -2417,6 +2425,23 @@ impl<V: Clone + 'static> Inner<V> {
         let node = &mut self.nodes[n];
         node.sources = fresh;
         node.height = height.max(1);
+    }
+
+    /// `n`'s height if `reads` are its sources as they stand, in order and
+    /// all alive; `None` if they have to be rebuilt.
+    fn same_sources(&self, n: NodeId, reads: &[NodeId]) -> Option<u32> {
+        let old = &self.nodes[n].sources;
+        if old.len() != reads.len() {
+            return None;
+        }
+        let mut height = 0;
+        for (e, &r) in old.iter().zip(reads) {
+            if e.node != r {
+                return None;
+            }
+            height = height.max(self.nodes.get(r)?.height + 1);
+        }
+        Some(height.max(1))
     }
 
     /// Recomputes the effective frozen state of `scope` and its subtree
