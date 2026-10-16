@@ -480,6 +480,18 @@ pub(crate) fn is_window(engine: &Engine, root: ObjectId) -> bool {
     st.windows.iter().any(|w| w.root == root)
 }
 
+/// The top items of the trees a scene shows, in the order they were
+/// first shown. Not a tracked read.
+pub fn window_roots(engine: &Engine) -> Vec<ObjectId> {
+    let t = tree(engine);
+    let st = t.state.borrow();
+    st.windows
+        .iter()
+        .map(|w| w.root)
+        .filter(|r| engine.is_alive(*r))
+        .collect()
+}
+
 /// Whether the window of `root` has the keyboard. False for a tree that
 /// is no window.
 pub fn is_window_active(engine: &Engine, root: ObjectId) -> bool {

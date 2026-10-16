@@ -5,7 +5,8 @@
 //! that means. A host that owns platform windows ([`WindowSystem::set_host`],
 //! the shell) gives every window one of its own and reports back what the
 //! platform made of it. Without a host a window is an item of the scene it
-//! was put in, and everything a script can see of showing, closing and
+//! was put in (one made with no parent, of the first scene there is), and
+//! everything a script can see of showing, closing and
 //! activating happens here, so that an application behaves the same
 //! without a display.
 //!
@@ -27,7 +28,9 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, Font, MetaRef, ObjectId, QmlList, QmlObject, QmlType, QtObject,
     Value, WriteKind, qml_impl,
 };
-use ljos_quick::focus::{FocusReason, WindowAttached, active_focus_item, force_active_focus};
+use ljos_quick::focus::{
+    FocusReason, WindowAttached, active_focus_item, force_active_focus, window_roots,
+};
 use ljos_quick::{Item, Rectangle, set_parent_item, window_of};
 
 pub use app::{Application, ApplicationState, ScreenInfo, ScreenSpec};
@@ -632,6 +635,10 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
     if hosted && parent.is_some() {
         set_parent_item(e, win, None)?;
     }
+    if !hosted && parent.is_none() {
+        let st = st.clone();
+        e.call_at(e.now(), move |e| adopt_loose(e, win, &st));
+    }
 
     // `visible` and `visibility` say the same thing two ways.
     {
@@ -745,6 +752,31 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
     }
     sys.notify();
     Ok(())
+}
+
+/// Without a host, a window made with no parent (`createObject(null)`)
+/// that no scene shows is an item of the first tree a scene does show,
+/// as a window declared there would be: only in a scene are its items
+/// laid out. It is asked once the work that made the window is over,
+/// since whoever loads a file shows its root only after the root is
+/// complete; Qt too lays such a window out only after `createObject`
+/// returned.
+fn adopt_loose(engine: &Engine, win: ObjectId, st: &WinState) {
+    if !engine.is_alive(win) || WindowSystem::of(engine).is_hosted() {
+        return;
+    }
+    engine.untrack(|| {
+        if engine.visual_parent(win).is_some() || window_of(engine, win).is_some() {
+            return;
+        }
+        let Some(top) = window_roots(engine).into_iter().find(|r| *r != win) else {
+            return;
+        };
+        // It is not the root of what was loaded, which a scene shows
+        // whether it is shown or not.
+        st.root.set(false);
+        check(engine, "Window", set_parent_item(engine, win, Some(top)));
+    });
 }
 
 /// The window an item is in: the nearest one above it, through the layer

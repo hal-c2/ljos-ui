@@ -27,6 +27,7 @@ pub use scope::{FocusScope, is_focus_scope, register_focus_scope};
 pub use tab::{next_item_in_focus_chain, tab_order_builds};
 pub use tree::{
     active_focus_item, focus_reason, force_active_focus, is_window_active, scope_focus_item,
+    window_roots,
 };
 pub use window::{Window, WindowAttached};
 
