@@ -147,6 +147,7 @@ Conventions are copied from qml-solid:
 ljos-ui/
 ├── Cargo.toml  mise.toml  rust-toolchain via mise
 ├── vendor/oxc_parser/          oxc_parser 0.144.0 fork with QML mode            [shared]
+│                               (package ljos_oxc_parser, by path: no [patch])
 ├── crates/
 │   ├── qml_syntax/             re-exports + parse helpers + member-level recovery [shared]
 │   ├── qml_front/              discover, project (TypeOracle), types, scope, names [shared]

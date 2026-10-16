@@ -77,7 +77,8 @@ drives: `click`, `key`, `get`, `a11y_tree`, `advance` and the rest. It loads QML
 and `world.load`. An adapter never sees egui, the engine or the compiler.
 
 The repository's workspace is `crates/*`, so an adapter is a workspace of its own (its `Cargo.toml`
-says `[workspace]` and repeats the `oxc_parser` patch of the root one). The task seeds its
+says `[workspace]`; like any crate outside the repository it needs nothing else to build against
+Ljós, no `[patch]` included). The task seeds its
 `Cargo.lock` from the root one on first use, so both resolve the same versions; the copy is not
 committed. The adapter names `cucumber` itself because the step macros expand to paths in it; keep
 its version equal to the root pin.

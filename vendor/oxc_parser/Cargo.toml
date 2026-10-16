@@ -9,10 +9,14 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 
+# Ljós's fork of oxc_parser 0.144.0 (see ../FORK.md). Changed from the
+# published manifest: the package name, `description`, `publish` and the
+# `include`d LICENSE. The library keeps its name, `oxc_parser`.
+
 [package]
 edition = "2024"
 rust-version = "1.95.0"
-name = "oxc_parser"
+name = "ljos_oxc_parser"
 version = "0.144.0"
 authors = [
     "Boshen <boshenc@gmail.com>",
@@ -22,14 +26,15 @@ build = false
 include = [
     "/examples",
     "/src",
+    "/LICENSE",
 ]
-publish = true
+publish = false
 autolib = false
 autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "A collection of JavaScript tools written in Rust."
+description = "A fork of oxc_parser 0.144.0 with a QML mode, kept in Ljós; not the published oxc_parser."
 homepage = "https://oxc.rs"
 readme = "README.md"
 keywords = [

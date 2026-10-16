@@ -191,6 +191,17 @@ change without notice. `use ljos::prelude::*;` is all a crate that
 derives native types needs: the derive, `qml_impl` and
 `qml_singleton` find the engine through the facade by themselves.
 
+The facade is the one dependency, by path or by git, and nothing else
+goes in the application's manifest (no `[patch]` section: the parser
+fork Ljós builds its QML tools with is a package of its own,
+`ljos_oxc_parser`, reached by path). A shipped application turns the
+default features off where it brings its own loop:
+
+```toml
+[dependencies]
+ljos = { git = "https://github.com/olafura/ljos-ui", rev = "…" }
+```
+
 Every code block in this section is compiled on every test run: the
 `Counter` is the doctest on the `ljos` crate's front page, and the
 rest is `crates/ljos/examples/counter.rs` and the `App` doctests.

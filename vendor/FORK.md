@@ -1,13 +1,15 @@
 # The oxc_parser fork
 
-`vendor/oxc_parser` is [`oxc_parser`](https://crates.io/crates/oxc_parser) **0.144.0** from crates.io with a QML mode added. The root `Cargo.toml` puts it in place of the registry copy:
+`vendor/oxc_parser` is [`oxc_parser`](https://crates.io/crates/oxc_parser) **0.144.0** from crates.io with a QML mode added. It is a package of its own, `ljos_oxc_parser`, so it is never mistaken for the published crate; its library is still called `oxc_parser`. The root `Cargo.toml` names it by path:
 
 ```toml
-[patch.crates-io]
-oxc_parser = { path = "vendor/oxc_parser" }
+[workspace.dependencies]
+oxc_parser = { package = "ljos_oxc_parser", version = "0.144.0", path = "vendor/oxc_parser" }
 ```
 
-So every crate that names `oxc_parser = "0.144"` gets the fork, and the QML front end and anything else built on Oxc share one lexer, one arena and one AST. Nobody depends on the fork by path. `crates/qml_syntax` is its public face: callers write `qml_syntax::parse` and `qml_syntax::ast::QmlDocument`, so a rebase or a later rename of the fork (for example `oxc_parser_qml`, if it is ever published) only touches that crate.
+Crates write `oxc_parser.workspace = true` and `use oxc_parser::…` as before. Because the fork is reached by path and not by a `[patch.crates-io]`, a crate outside this repository that depends on Ljós (by path or by git) gets it with no line of its own: cargo applies `[patch]` only in the workspace being built, so a patch here would never reach it. No crate Ljós builds depends on the published `oxc_parser`; if one ever did, the two would be separate crates, and the `oxc_*` pins below must still match the fork's.
+
+`crates/qml_syntax` is its public face: callers write `qml_syntax::parse` and `qml_syntax::ast::QmlDocument`, so a rebase of the fork only touches that crate.
 
 This is the only copy of the fork. qml-solid will depend on `qml_syntax` from this repository by git `rev` and not keep its own copy (ARCHITECTURE.md §4, decision D7).
 
@@ -29,7 +31,7 @@ QML mode is a recursive-descent parser for QML's declarative shell (imports, pra
 | `src/qml/mod.rs` (new, 530 lines) | The parser: `parse_qml_document` reads pragmas and imports, then exactly one root object. Contextual keywords (`property`, `signal`, `required`, `readonly`, `default`, `component`, `enum`) are found by lookahead. `{ ... }` after a binding is an object literal or a block, decided by checkpoint and rewind. Calls `qml_recover` for every import, pragma and object member. |
 | `src/qml/recovery.rs` (new, 212 lines) | Member-level error recovery, see below. |
 
-`Cargo.toml` is byte-for-byte the published one (same name and version), so `[patch.crates-io]` accepts it.
+`Cargo.toml` is the published one except for four lines, marked at its top: the package name (`ljos_oxc_parser`), the `description` (which says it is a fork), `publish = false`, and `LICENSE` in `include`. `LICENSE` is oxc's own MIT licence, taken unchanged from the `crates_v0.144.0` tag of the oxc repository (the published crate does not carry it); keep it with the fork and update it on a rebase. `rustfmt.toml` (ours) turns formatting off: as a path dependency the fork is reached by the workspace's `cargo fmt --all`, and it keeps upstream's formatting so it diffs cleanly against the release.
 
 ### Error recovery
 
@@ -63,9 +65,9 @@ From 06 §3.4:
 ### How to rebase
 
 1. `mise run oxc:check` to see whether the patch applies and builds on the target release.
-2. Replace `vendor/oxc_parser` with the new release's crate contents (`Cargo.toml`, `Cargo.toml.orig`, `README.md`, `src/`, `examples/`).
+2. Replace `vendor/oxc_parser` with the new release's crate contents (`Cargo.toml`, `Cargo.toml.orig`, `README.md`, `src/`, `examples/`), and the oxc repository's `LICENSE` at the release's tag; keep `rustfmt.toml`. Make the four manifest changes again (name, description, `publish`, `include`).
 3. Re-apply the four-file patch (save `mise run oxc:diff` output from before step 2) and copy `src/qml/` back.
-4. Update the `oxc_*` pins in the root `[workspace.dependencies]` to the same release; they have to match exactly.
+4. Update the `oxc_*` pins in the root `[workspace.dependencies]`, the fork's `version` there included, to the same release; they have to match exactly.
 5. Fix `src/qml/mod.rs` where it touches parser internals.
 6. `cargo test -p qml_syntax -p qml_front` and `mise run parse` (495/495 on `corpus/qtdoc/examples`) must stay green.
 7. Update the version in this file.

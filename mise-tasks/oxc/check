@@ -15,8 +15,10 @@ fetch() { curl -sSfL "https://static.crates.io/crates/oxc_parser/oxc_parser-$1.c
 fetch "$base"
 [ "$latest" = "$base" ] || fetch "$latest"
 
-# The patch to oxc's own files, without the new qml/ directory.
-diff -ru -x qml -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock \
+# The patch to oxc's own files, without the new qml/ directory, the
+# manifest (the fork renames its package; the release's own manifest
+# builds the same code) and the licence the fork adds.
+diff -ru -x qml -x Cargo.toml -x LICENSE -x rustfmt.toml -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock \
   "$work/oxc_parser-$base" "$root/vendor/oxc_parser" > "$work/fork.patch" || [ $? -eq 1 ]
 sed -i -e "s|$work/oxc_parser-$base/|a/|g" -e "s|$root/vendor/oxc_parser/|b/|g" "$work/fork.patch"
 
