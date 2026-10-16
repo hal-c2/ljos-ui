@@ -11,13 +11,11 @@
 //! part, for everything the builder does not cover (a watcher, an
 //! inspector, a timer hook — development hosts keep those).
 //!
-//! ```no_run
-//! # mod my_module { pub fn register(_: &ljos::Engine) {} }
-//! # fn components() -> ljos::MapSource { todo!() }
+//! ```ignore
 //! ljos::App::new("Hello")
 //!     .size(640.0, 420.0)
 //!     .register(my_module::register)
-//!     .source(components())
+//!     .source(ljos::include_qml!("qml.pack"))
 //!     .root("Main")
 //!     .run()
 //!     .unwrap();
@@ -28,8 +26,10 @@
 //! interface as the running program, minus the window.
 //!
 //! A shipped application gives [`App::source`] components compiled
-//! ahead of time (a `build.rs`, as the toolkit's own styles do), so
-//! it links no QML parser. Compiling a directory of `.qml` files at
+//! ahead of time — its build script packs them with `ljos::build`
+//! (the `build` feature) and the program embeds the pack with
+//! [`include_qml!`](crate::include_qml), as above and as
+//! `crates/ljos_facade_aot` does — so it links no QML parser. Compiling a directory of `.qml` files at
 //! start-up is development-only: it is behind the non-default
 //! `dev-qml` feature as [`crate::dev::compile_dir`]. On the builder,
 //! [`App::qml_dir`] compiles against the application's own native

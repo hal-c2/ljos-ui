@@ -26,11 +26,12 @@ ljos_shell = { path = "../ljos_shell", optional = true, default-features = false
 # application needs no second Ljós dependency to hold one. Default
 # features only: its tokio `tasks` feature stays off.
 ljos_runtime = { path = "../ljos_runtime" }
-# Only with `dev-qml`: compiles QML directories at start-up, which links
-# the parser. A shipped application leaves it off and embeds compiled IR
+# Only with `dev-qml` or `build`: compiles QML directories at start-up or
+# in a build script, which links the parser. A shipped application's own
+# `ljos` leaves both off and embeds compiled IR
 # (ARCHITECTURE.md principle 5).
 ljos_compiler = { path = "../ljos_compiler", optional = true }
-# Only with `dev-qml`, for `dev::EngineOracle`: the compiler's oracle
+# Only with `dev-qml` or `build`, for `EngineOracle`: the compiler's oracle
 # interface the engine-backed oracle implements.
 qml_front = { path = "../qml_front", optional = true }
 
@@ -40,7 +41,7 @@ ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
 tempfile.workspace = true
 # So the tests see the facade as an application with dev-qml does.
-ljos = { path = ".", features = ["dev-qml"] }
+ljos = { path = ".", features = ["dev-qml", "build"] }
 
 [features]
 default = ["shell", "media"]
@@ -51,6 +52,11 @@ media = ["dep:ljos_media", "ljos_shell?/media"]
 # Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
 # directory of QML at start-up. Never in a shipped application.
 dev-qml = ["dep:ljos_compiler", "dep:qml_front"]
+# For an application's build script (`[build-dependencies]`):
+# `ljos::build::compile_dir` compiles its QML ahead of time, against its
+# own native types, into a pack the program embeds with
+# `ljos::include_qml!`. The program's own `ljos` leaves it off.
+build = ["dep:ljos_compiler", "dep:qml_front"]
 
 [lints]
 workspace = true

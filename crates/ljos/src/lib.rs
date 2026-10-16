@@ -84,11 +84,32 @@ pub mod prelude {
 }
 
 mod app;
+#[cfg(feature = "build")]
+pub mod build;
+#[cfg(any(feature = "dev-qml", feature = "build"))]
+mod compile;
 #[cfg(feature = "dev-qml")]
 pub mod dev;
 pub mod task;
 
 pub use app::{App, create_root};
+
+/// The components a build script packed with [`build::compile_dir`]
+/// (the `build` feature, in `[build-dependencies]`), embedded in the
+/// program: `include_qml!("qml.pack")` reads `$OUT_DIR/qml.pack` into a
+/// [`MapSource`] for [`App::source`]. The program links no parser.
+/// Panics only on a pack its own build did not write whole.
+#[macro_export]
+macro_rules! include_qml {
+    ($name:literal) => {
+        $crate::MapSource::from_pack(::core::include_bytes!(::core::concat!(
+            ::core::env!("OUT_DIR"),
+            "/",
+            $name
+        )))
+        .expect("the QML pack this build wrote")
+    };
+}
 /// The engine crate itself, for the paths the `QmlObject` derive,
 /// `qml_impl` and `qml_singleton` generate in a crate that depends on
 /// this facade alone (`::ljos::ljos_engine::…`); such a crate needs no

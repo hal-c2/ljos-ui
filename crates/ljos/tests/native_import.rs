@@ -121,3 +121,28 @@ fn qml_dir_before_register_fails_where_the_root_is_made() {
     assert!(err.contains("did not compile"), "{err}");
     assert!(err.contains("`Counter` is not a type"), "{err}");
 }
+
+#[test]
+fn build_compiles_ahead_of_time_against_the_natives_into_a_pack() {
+    let dir = qml_dir();
+    let out = tempfile::tempdir().unwrap();
+    let pack = out.path().join("qml.pack");
+    ljos::build::compile_dir(dir.path(), register, &pack).unwrap();
+    // What the program does with `include_qml!`, from the bytes.
+    let source = ljos::MapSource::from_pack(&std::fs::read(&pack).unwrap()).unwrap();
+    let (engine, root) = ljos::App::new("Test")
+        .register(register)
+        .source(source)
+        .root("Main")
+        .build()
+        .unwrap();
+    assert_eq!(number(&engine, root, "seen"), 41.0);
+
+    // What ships is clean: without the natives the build fails.
+    let err = ljos::build::compile_dir(dir.path(), |_| {}, &pack).unwrap_err();
+    assert!(err.contains("`Counter` is not a type"), "{err}");
+
+    // A pack cut short is a broken build, not an empty program.
+    let bytes = std::fs::read(&pack).unwrap();
+    assert!(ljos::MapSource::from_pack(&bytes[..bytes.len() - 1]).is_err());
+}

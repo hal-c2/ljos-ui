@@ -230,7 +230,7 @@ Sources: 06; 01 §3.4, §3.7.
 ### 5.2 Semantics (`qml_front`)
 
 - **What it contains:** module discovery (`qmldir`, CMake `qt_add_qml_module`), the project graph, type-name lookup, the id and context scope chain, and name lookup.
-- **Type knowledge** comes through a `TypeOracle` trait. Ljós implements it from its own registry (`ljostypes.json`, produced by the derive macros), not from Qt's tables.
+- **Type knowledge** comes through a `TypeOracle` trait. Ljós implements it from its own description of the types it implements (`crates/qt_types/src/ljos.txt`, written from the registry by a test) or a generated Qt table, and for an application's native types from the `MetaObject`s registered on an Engine (`EngineOracle`, section 5.5).
 - **Lookup order** follows Qt: JS locals → ids in the component → scope object → root object → ancestor contexts → globals. `pragma ComponentBehavior: Bound` restricts outer-context access (01 §2.1).
 - **Gaps to fill:** `depends`, `import`, `optional import`, `prefer`, `plugin`, and `typeinfo` in `qmldir`.
 
@@ -286,7 +286,7 @@ ljos::module! { "QtQuick" 2.15 => [Item, Rectangle, Text, …] }
   - the attached-type id.
 - **Final by default.** Properties declared in Rust are `final`, so the compiler can resolve them statically.
 - **Explicit registration** through `module!`, not `inventory` or linker sections. This keeps static linking on iOS deterministic and hot reload simple.
-- **Type dump.** The macros write `ljostypes.json`, which feeds the compiler, the LSP and the API ledger.
+- **Type dump.** `Engine::type_dump()` describes every registered type, and `to_json()` serialises it; the ledger and the type-tag tests read it from a live Engine. Nothing writes an `ljostypes.json` file: a build compiles an application's QML against its native types by registering them on a throwaway Engine (`ljos::build::compile_dir`, the facade's `build` feature, or `App::qml_dir` in development), which is why the build script needs the native module as a crate of its own. A dump file the compiler reads instead of a live Engine would lift that; it is not built.
 - **`MetaObject` lifetime.** For types defined in QML it is behind an `Arc`, not `'static`, because hot reload replaces it.
 - **As built: enums, flags and reset.** A property says in its attribute which enum it holds (`enumeration = "Name"`) or which flags (`flags = "Name"`); a flags property accepts and reports combinations, and a plain enum written with two keys is a compile error. Enum keys are reachable from scripts through a type or an import namespace (`Text.AlignHCenter`, `T.ScrollBar.AlwaysOff`, `Font.Bold`). A property takes `undefined` only when its type declares a reset (`#[qml(reset)]`, `ljos_engine::Reset`): the write restores the default or the value it follows, and a binding that yields `undefined` stays installed and holds the reset value. Every other property refuses `undefined` with Qt's wording. Two ratchet tests in `ljos_controls` compare the tags and the resets of every registered type with the local Qt's type description; the resets still missing are listed there (`NOT_YET`).
 - **As built: singletons.** A `pragma Singleton` file named by a `qmldir` `singleton` line or found through a directory import is made lazily, once per engine; native singletons are registered per engine. Their members resolve at tier 0 and run in tier 1 where the expression allows.

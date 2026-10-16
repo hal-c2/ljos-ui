@@ -1,0 +1,448 @@
+//! Compiling QML against the table of types and an Engine's native
+//! types: what [`crate::dev`] does at start-up and [`crate::build`]
+//! does in a build script. Either feature links the parser.
+
+use std::path::Path;
+
+use ljos_engine::{Engine, MapSource, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeTag};
+use qml_front::{Property as FrontProperty, QtType, QtTypeOracle, Special, TypeOracle};
+
+/// What a compile does with a file that has an error.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnError {
+    /// The file is noted as one that did not compile
+    /// ([`MapSource::insert_failure`]) and the rest of the directory
+    /// is used: making that component fails with the compiler's
+    /// message, as a QML engine fails a component only where it is
+    /// made. A file nothing makes does not stop the application.
+    #[default]
+    Record,
+    /// Any file with an error fails the whole compile, one error a
+    /// line: for a build step or CI that wants every file clean.
+    Fail,
+}
+
+/// Compiles every file under `dir` into a component source, against
+/// the table of types alone: an application's native types are not
+/// in the table (ARCHITECTURE.md D1), so a file that imports one is
+/// recorded as not compiling (an unknown type). Prints the
+/// diagnostics as a developer at a terminal expects; a file with an
+/// error is recorded, not fatal ([`OnError::Record`]).
+#[cfg(feature = "dev-qml")]
+pub fn compile_dir(dir: &Path) -> Result<MapSource, String> {
+    compile(dir, None, OnError::Record)
+}
+
+/// Compiles every file under `dir` into a component source, against
+/// the table of types plus the native types registered on `engine`
+/// that the table does not describe ([`EngineOracle::from_engine`]:
+/// a type the table knows stays the table's, natives fill the
+/// gaps). A file may `import` the application's own module and
+/// create objects of its types. Same diagnostics and recording as
+/// [`compile_dir`].
+#[cfg(feature = "dev-qml")]
+pub fn compile_dir_with(dir: &Path, engine: &Engine) -> Result<MapSource, String> {
+    compile(dir, Some(engine), OnError::Record)
+}
+
+/// Compiles every file under `dir`, against the table of types and,
+/// given an `engine`, its native types as [`compile_dir_with`] does;
+/// `on_error` says whether a file with an error is recorded or fails
+/// the compile. `Err` also when `dir` cannot be read.
+#[cfg(feature = "dev-qml")]
+pub fn compile(
+    dir: &Path,
+    engine: Option<&Engine>,
+    on_error: OnError,
+) -> Result<MapSource, String> {
+    compile_dirs(&[dir], engine, on_error)
+}
+
+/// [`compile`] over several QML roots, an application's import path:
+/// each root's files are keyed by their path from that root (the
+/// entry of `app/Main.qml` under the root `app` is `Main`), and a file
+/// of one root may import a module whose `qmldir` is in another.
+/// Where two roots have a file of the same key the earlier root's is
+/// used, as the first import path that has a module is.
+pub fn compile_dirs(
+    dirs: &[&Path],
+    engine: Option<&Engine>,
+    on_error: OnError,
+) -> Result<MapSource, String> {
+    match engine {
+        Some(engine) => compile_with_oracle(dirs, EngineOracle::from_engine(engine), on_error),
+        None => compile_with_oracle(dirs, QtTypeOracle, on_error),
+    }
+}
+
+fn compile_with_oracle<O: TypeOracle>(
+    dirs: &[&Path],
+    oracle: O,
+    on_error: OnError,
+) -> Result<MapSource, String> {
+    let named = || {
+        dirs.iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut source = MapSource::new();
+    let mut errors = Vec::new();
+    let files = ljos_compiler::compile_roots_with(dirs, oracle).map_err(|e| e.to_string())?;
+    for r in files {
+        let diagnostics = match &r.result {
+            Ok(c) => &c.diagnostics,
+            Err(ds) => ds,
+        };
+        for d in diagnostics {
+            eprintln!("{}: {:?}: {}", r.key, d.severity, d.message);
+        }
+        errors.extend(
+            diagnostics
+                .iter()
+                .filter(|d| d.severity == ljos_compiler::Severity::Error)
+                .map(|d| format!("{}: {}", r.key, d.message)),
+        );
+        match r.result {
+            Ok(c) if !c.has_errors() => source.insert(r.key, c.file),
+            // Compiled only as far as it could: not a file to run.
+            Ok(c) => source.insert_failure(r.key, ljos_compiler::failure_reason(&c.diagnostics)),
+            Err(ds) => source.insert_failure(r.key, ljos_compiler::failure_reason(&ds)),
+        }
+    }
+    if on_error == OnError::Fail && !errors.is_empty() {
+        return Err(format!(
+            "{} did not compile:\n{}",
+            named(),
+            errors.join("\n")
+        ));
+    }
+    Ok(source)
+}
+
+/// One type as the compiler sees it in a render with backends: of the
+/// table of types, or native (an index into the oracle's own list).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineType {
+    Qt(QtType),
+    Native(u32),
+}
+
+/// A [`TypeOracle`] over the table of types plus the native types of an
+/// Engine that the table does not describe. An application's native types
+/// do not reach the table (ARCHITECTURE.md D1), so a host that registers
+/// them and then compiles QML naming them has to say what they are itself:
+/// their `MetaObject`s, read here. A type the table knows stays the
+/// table's — its description is the fuller one (enum numbers, flags), and
+/// an example that uses no backend compiles exactly as before.
+#[derive(Clone)]
+pub struct EngineOracle {
+    /// The registered types the table lacks, and the group and attached
+    /// types reachable from them (with no module: reachable, not named).
+    natives: Vec<NativeType>,
+}
+
+#[derive(Clone)]
+struct NativeType {
+    module: String,
+    meta: MetaRef,
+    /// Registered as one object ([`Engine::register_singleton`]): a file
+    /// reads its members, it does not make one.
+    singleton: bool,
+}
+
+impl std::fmt::Debug for EngineOracle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineOracle")
+            .field("natives", &self.natives.len())
+            .finish()
+    }
+}
+
+impl EngineOracle {
+    /// The table of types alone: with no example a render compiles
+    /// exactly as it did before `--example` existed.
+    pub fn table_only() -> Self {
+        EngineOracle {
+            natives: Vec::new(),
+        }
+    }
+
+    pub fn from_engine(engine: &Engine) -> Self {
+        let qt = QtTypeOracle;
+        let mut natives: Vec<NativeType> = Vec::new();
+        let add = |natives: &mut Vec<NativeType>, module: String, meta: MetaRef| {
+            if !natives.iter().any(|n| MetaRef::ptr_eq(&n.meta, &meta)) {
+                let singleton = engine.is_native_singleton(&module, meta.name.as_str());
+                natives.push(NativeType {
+                    module,
+                    meta,
+                    singleton,
+                });
+            }
+        };
+        for module in engine.type_dump().modules {
+            for ty in &module.types {
+                if qt.module_type(&module.uri, &ty.name).is_some() {
+                    continue;
+                }
+                if let Some(meta) = engine.lookup_type(&module.uri, &ty.name) {
+                    add(&mut natives, module.uri.clone(), meta);
+                }
+            }
+        }
+        // What those types reach: a grouped property's type and an
+        // attached type are types the compiler is asked about too, and
+        // no module exports them by a name of their own.
+        let mut i = 0;
+        while i < natives.len() {
+            let meta = natives[i].meta.clone();
+            let mut reached: Vec<MetaRef> = meta
+                .properties
+                .iter()
+                .filter_map(|p| match p.access {
+                    PropertyAccess::Group { meta, .. } => Some(MetaRef::Static(meta)),
+                    _ => None,
+                })
+                .collect();
+            if let Some(attached) = meta.attached {
+                reached.push(attached());
+            }
+            for meta in reached {
+                add(&mut natives, String::new(), meta);
+            }
+            i += 1;
+        }
+        EngineOracle { natives }
+    }
+
+    fn meta(&self, index: u32) -> &MetaObject {
+        &self.natives[index as usize].meta
+    }
+
+    fn named(&self, name: &str) -> Option<EngineType> {
+        self.natives
+            .iter()
+            .position(|n| n.meta.name.as_str() == name)
+            .map(|i| EngineType::Native(i as u32))
+    }
+}
+
+fn qt_property(property: FrontProperty<QtType>) -> FrontProperty<EngineType> {
+    FrontProperty {
+        is_component: property.is_component,
+        is_url: property.is_url,
+        is_text: property.is_text,
+        is_script: property.is_script,
+        is_list: property.is_list,
+        is_readonly: property.is_readonly,
+        value: property.value.map(EngineType::Qt),
+    }
+}
+
+impl TypeOracle for EngineOracle {
+    type Type = EngineType;
+
+    fn has_module(&self, uri: &str) -> bool {
+        QtTypeOracle.has_module(uri) || self.natives.iter().any(|n| n.module == uri)
+    }
+
+    fn module_type(&self, uri: &str, name: &str) -> Option<EngineType> {
+        if let Some(ty) = QtTypeOracle.module_type(uri, name) {
+            return Some(EngineType::Qt(ty));
+        }
+        self.natives
+            .iter()
+            .position(|n| n.module == uri && n.meta.name.as_str() == name)
+            .map(|i| EngineType::Native(i as u32))
+    }
+
+    fn name(&self, ty: EngineType) -> &str {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.name(ty),
+            EngineType::Native(i) => self.meta(i).name.as_str(),
+        }
+    }
+
+    fn special(&self, ty: EngineType) -> Option<Special> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.special(ty),
+            EngineType::Native(_) => None,
+        }
+    }
+
+    fn is_singleton(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.is_singleton(ty),
+            EngineType::Native(i) => self.natives[i as usize].singleton,
+        }
+    }
+
+    fn property(&self, ty: EngineType, name: &str) -> Option<FrontProperty<EngineType>> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.property(ty, name).map(qt_property),
+            EngineType::Native(i) => {
+                let meta = self.meta(i);
+                let info = meta.property(meta.property_index(name)?)?;
+                Some(FrontProperty {
+                    is_component: matches!(&info.ty, TypeTag::Object(Some(n)) if n.as_str() == "Component"),
+                    is_url: info.ty == TypeTag::Url,
+                    is_text: info.ty == TypeTag::String,
+                    is_script: false,
+                    is_list: info.is_list() || matches!(info.ty, TypeTag::List(_)),
+                    is_readonly: info.is_readonly(),
+                    value: match &info.ty {
+                        TypeTag::Group(n) | TypeTag::Object(Some(n)) | TypeTag::List(Some(n)) => {
+                            self.named(n.as_str())
+                        }
+                        _ => None,
+                    },
+                })
+            }
+        }
+    }
+
+    fn signal(&self, ty: EngineType, name: &str) -> Option<Vec<String>> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.signal(ty, name),
+            EngineType::Native(i) => {
+                let meta = self.meta(i);
+                let signal = meta.signal(meta.signal_index(name)?)?;
+                Some(signal.params.iter().map(|(n, _)| n.to_string()).collect())
+            }
+        }
+    }
+
+    fn has_method(&self, ty: EngineType, name: &str) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.has_method(ty, name),
+            EngineType::Native(i) => self.meta(i).method_index(name).is_some(),
+        }
+    }
+
+    fn default_property(&self, ty: EngineType) -> Option<&str> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.default_property(ty),
+            EngineType::Native(i) => self.meta(i).default_property().map(|a| a.as_str()),
+        }
+    }
+
+    fn attached(&self, ty: EngineType) -> Option<EngineType> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.attached(ty).map(EngineType::Qt),
+            EngineType::Native(i) => {
+                let attached = self.meta(i).attached?();
+                self.natives
+                    .iter()
+                    .position(|n| MetaRef::ptr_eq(&n.meta, &attached))
+                    .map(|i| EngineType::Native(i as u32))
+            }
+        }
+    }
+
+    fn has_enum_key(&self, ty: EngineType, scope: Option<&str>, key: &str) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.has_enum_key(ty, scope, key),
+            EngineType::Native(i) => match scope {
+                Some(scope) => self
+                    .meta(i)
+                    .enumeration(scope)
+                    .is_some_and(|e| e.keys.iter().any(|(k, _)| k.as_str() == key)),
+                None => self.meta(i).enum_key(key).is_some(),
+            },
+        }
+    }
+
+    fn has_enum(&self, ty: EngineType, name: &str) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.has_enum(ty, name),
+            EngineType::Native(i) => self.meta(i).enumeration(name).is_some(),
+        }
+    }
+
+    fn enum_is_flags(&self, ty: EngineType, name: &str) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.enum_is_flags(ty, name),
+            // What a property of the type says it holds; a type that only
+            // has the enum may hold several keys, as the trait allows.
+            EngineType::Native(i) => !self
+                .meta(i)
+                .properties
+                .iter()
+                .any(|p| matches!(&p.ty, TypeTag::Enum(n) if n.as_str() == name)),
+        }
+    }
+
+    fn required(&self, ty: EngineType) -> Vec<String> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.required(ty),
+            EngineType::Native(i) => {
+                let mut required: Vec<String> = Vec::new();
+                for p in &self.meta(i).properties {
+                    if p.flags.contains(PropertyFlags::REQUIRED)
+                        && !required.iter().any(|n| n == p.name.as_str())
+                    {
+                        required.push(p.name.to_string());
+                    }
+                }
+                required
+            }
+        }
+    }
+
+    fn is_member_name(&self, name: &str) -> bool {
+        QtTypeOracle.is_member_name(name)
+            || self
+                .natives
+                .iter()
+                .any(|n| n.meta.property_index(name).is_some())
+    }
+
+    fn property_type(&self, ty: EngineType, name: &str) -> Option<String> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.property_type(ty, name),
+            EngineType::Native(i) => {
+                let meta = self.meta(i);
+                meta.property(meta.property_index(name)?)
+                    .map(|p| p.ty.name())
+            }
+        }
+    }
+
+    fn enum_value(&self, ty: EngineType, scope: Option<&str>, key: &str) -> Option<i64> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.enum_value(ty, scope, key),
+            EngineType::Native(i) => match scope {
+                Some(scope) => self
+                    .meta(i)
+                    .enumeration(scope)?
+                    .keys
+                    .iter()
+                    .find(|(k, _)| k.as_str() == key)
+                    .map(|(_, v)| *v),
+                None => self.meta(i).enum_key(key),
+            },
+        }
+    }
+
+    fn module(&self, ty: EngineType) -> Option<String> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.module(ty),
+            EngineType::Native(i) => {
+                let module = &self.natives[i as usize].module;
+                (!module.is_empty()).then(|| module.clone())
+            }
+        }
+    }
+
+    fn members_known(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.members_known(ty),
+            EngineType::Native(_) => true,
+        }
+    }
+
+    fn unknown_type_note(&self, name: &str) -> Option<&'static str> {
+        QtTypeOracle.unknown_type_note(name)
+    }
+}

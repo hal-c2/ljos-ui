@@ -3672,6 +3672,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_facade_aot"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_facade_app",
+]
+
+[[package]]
 name = "ljos_facade_app"
 version = "0.0.0"
 dependencies = [

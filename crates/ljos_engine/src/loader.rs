@@ -164,6 +164,65 @@ impl MapSource {
     pub fn insert_bytecode(&mut self, key: impl Into<String>, code: Bytecode) {
         self.bytecode.insert(key.into(), code);
     }
+
+    /// The compiled files as one pack, for a build step to write and a
+    /// shipped program to embed and read back with
+    /// [`from_pack`](Self::from_pack): a count, then per file its key
+    /// and its IR,
+    /// each preceded by its length as a little-endian `u32`, in key
+    /// order. Failures and bytecode are not packed.
+    pub fn to_pack(&self) -> Result<Vec<u8>, EngineError> {
+        let len = |n: usize| {
+            u32::try_from(n)
+                .map(u32::to_le_bytes)
+                .map_err(|_| EngineError::Load("a pack entry over 4 GiB".to_owned()))
+        };
+        let mut keys: Vec<&String> = self.files.keys().collect();
+        keys.sort();
+        let mut out = Vec::new();
+        out.extend_from_slice(&len(keys.len())?);
+        for key in keys {
+            let bytes = self.files[key]
+                .to_bytes()
+                .map_err(|e| EngineError::Load(format!("{key}: {e}")))?;
+            out.extend_from_slice(&len(key.len())?);
+            out.extend_from_slice(key.as_bytes());
+            out.extend_from_slice(&len(bytes.len())?);
+            out.extend_from_slice(&bytes);
+        }
+        Ok(out)
+    }
+
+    /// The files a [`to_pack`](Self::to_pack) pack holds. A pack that
+    /// is cut short, or an entry whose IR is of another version than
+    /// this engine reads, is an error: a shipped program embeds the
+    /// pack its own build wrote, so either means a broken build.
+    pub fn from_pack(pack: &[u8]) -> Result<Self, EngineError> {
+        fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8], EngineError> {
+            if rest.len() < n {
+                return Err(EngineError::Load("the pack is cut short".to_owned()));
+            }
+            let (head, tail) = rest.split_at(n);
+            *rest = tail;
+            Ok(head)
+        }
+        fn len(rest: &mut &[u8]) -> Result<usize, EngineError> {
+            let b = take(rest, 4)?;
+            Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        }
+        let mut rest = pack;
+        let mut source = Self::new();
+        for _ in 0..len(&mut rest)? {
+            let n = len(&mut rest)?;
+            let key = std::str::from_utf8(take(&mut rest, n)?)
+                .map_err(|_| EngineError::Load("a pack key is not UTF-8".to_owned()))?;
+            let n = len(&mut rest)?;
+            let file = CompiledFile::from_bytes(take(&mut rest, n)?)
+                .map_err(|e| EngineError::Load(format!("{key}: {e}")))?;
+            source.insert(key, file);
+        }
+        Ok(source)
+    }
 }
 
 impl std::fmt::Debug for MapSource {

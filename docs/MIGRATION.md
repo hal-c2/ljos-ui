@@ -204,9 +204,11 @@ ljos = { git = "https://github.com/olafura/ljos-ui", rev = "…" }
 
 Every code block in this section is compiled on every test run: the
 `Counter` is the doctest on the `ljos` crate's front page, and the
-rest is `crates/ljos/examples/counter.rs` and the `App` doctests.
-`crates/ljos_facade_app` is the same native module as a crate of its
-own whose only dependency is `ljos`, as an application's is.
+rest is `crates/ljos/examples/counter.rs`, the `App` doctests and
+`crates/ljos_facade_aot` (the ahead-of-time start and its build
+script). `crates/ljos_facade_app` is the same native module as a
+crate of its own whose only dependency is `ljos`, as an
+application's is.
 
 A native type is a Rust struct with `#[derive(QmlObject)]`. Fields
 are properties (`#[qml(notify)]` gives the change signal), and a
@@ -264,10 +266,40 @@ also how Rust code outside reads a property back
 
 An application runs through the `App` builder, which registers each
 module, hands the Engine its compiled components and creates the
-root. Components are compiled ahead of time (a `build.rs`, as the
-toolkit's own styles do), so a shipped application links no QML
-parser; compiling a directory at start-up exists for development
-behind the non-default `dev-qml` feature (`App::qml_dir`,
+root:
+
+```rust
+ljos::App::new("Hello")
+    .size(640.0, 420.0)
+    .register(natives::register)
+    .source(ljos::include_qml!("qml.pack"))
+    .root("Main")
+    .run()
+    .unwrap();
+```
+
+A shipped application's components are compiled ahead of time, so it
+links no QML parser. Its build script compiles the QML — imports of
+the application's own native modules included — into a pack in
+`OUT_DIR`, through the facade's `build` feature in
+`[build-dependencies]`; the program embeds the pack with
+`ljos::include_qml!`, as above:
+
+```rust
+// build.rs
+let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+ljos::build::compile_dir("qml".as_ref(), natives::register, &out.join("qml.pack")).unwrap();
+```
+
+The compile knows the native types from a throwaway Engine the
+`register` function fills, and a build script cannot use the types
+of the crate it builds, so the native module is a crate of its own
+(`natives` here) that both depend on. A file with an error fails the
+build. `crates/ljos_facade_aot` is this application, over
+`crates/ljos_facade_app`'s module.
+
+Compiling a directory at start-up exists for development behind the
+non-default `dev-qml` feature (`App::qml_dir`,
 `ljos::dev::compile_dir`) and is never in a shipped binary. As
 under Qt, a file with an error fails only where it is made: the
 directory compiles, the diagnostics are printed, and making the
@@ -276,17 +308,7 @@ broken component reports the compiler's message
 for a build step or CI). QML in several trees — the counterpart of
 `addImportPath` — goes in as `App::qml_dirs([app, shared], "Main")`:
 each tree's files are keyed from their own root, and a file of one
-may import a module whose `qmldir` is in another:
-
-```rust
-ljos::App::new("Hello")
-    .size(640.0, 420.0)
-    .register(my_module::register)
-    .source(components())
-    .root("Main")
-    .run()
-    .unwrap();
-```
+may import a module whose `qmldir` is in another.
 
 What the builder does not cover stays reachable: `App::run_with`
 runs the same start and then hands over the shell's full `Setup`
