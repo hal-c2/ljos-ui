@@ -182,49 +182,61 @@ pub(crate) fn read<'a>(
     }
 }
 
-/// About how many bytes decoding `bytes` for `request` takes at its
-/// height: the picture at four bytes a pixel, as its header says, or for
-/// a JPEG kept smaller the size its IDCT makes it. 0 for what has no
-/// header read here (a drawing).
+/// About how many bytes decoding `bytes` for `request` holds at its
+/// height, as the header says: the pixels kept, and what they are made
+/// from. That is the picture whole at up to four bytes a pixel, or for a
+/// JPEG decoded smaller the smaller pixels, plus for a progressive one
+/// the coefficients of the whole picture, which its decoder keeps until
+/// the last scan. 0 for what has no header read here (a drawing).
 pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
-    dimensions(bytes).map_or(0, |(w, h)| {
-        let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
-        let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
-        let s = if jpeg && asks_nothing {
-            halvings((w, h), kept_size((w, h), request.limit)).min(3)
-        } else {
-            0
-        };
-        let side = |n: u32| n.div_ceil(1 << s) as usize;
-        side(w).saturating_mul(side(h)).saturating_mul(4)
-    })
+    let Some((w, h)) = dimensions(bytes) else {
+        return 0;
+    };
+    let area = |(w, h): (u32, u32)| (w as usize).saturating_mul(h as usize);
+    let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
+    let kept = if asks_nothing {
+        kept_size((w, h), request.limit)
+    } else {
+        (w, h)
+    };
+    let held = area(kept).saturating_mul(4);
+    let k = halvings((w, h), kept).min(3);
+    let from = match jpeg_frame(bytes) {
+        Some(frame) if asks_nothing && k > 0 => {
+            let side = |n: u32| n.div_ceil(1 << k);
+            let smaller = area((side(w), side(h))).saturating_mul(3);
+            smaller.saturating_add(if frame.progressive {
+                frame.coefficients
+            } else {
+                0
+            })
+        }
+        _ => area((w, h)).saturating_mul(4),
+    };
+    held.saturating_add(from)
 }
 
-/// The size a PNG, JPEG or GIF says it has, read from its header alone.
-pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+/// What a JPEG's frame header says.
+struct JpegFrame {
+    width: u32,
+    height: u32,
+    progressive: bool,
+    /// Bytes of every component's coefficients for the whole picture,
+    /// two a sample, in whole blocks of 8 by 8.
+    coefficients: usize,
+}
+
+/// The frame header of a JPEG, found segment after segment.
+fn jpeg_frame(bytes: &[u8]) -> Option<JpegFrame> {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
     let be16 = |at: usize| {
         Some(u32::from(u16::from_be_bytes([
             *bytes.get(at)?,
             *bytes.get(at + 1)?,
         ])))
     };
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
-        return Some((be32(16)?, be32(20)?));
-    }
-    if bytes.starts_with(GIF) {
-        let le16 = |at: usize| {
-            Some(u32::from(u16::from_le_bytes([
-                *bytes.get(at)?,
-                *bytes.get(at + 1)?,
-            ])))
-        };
-        return Some((le16(6)?, le16(8)?));
-    }
-    if !bytes.starts_with(&[0xff, 0xd8]) {
-        return None;
-    }
-    // Segment after segment up to the frame header, which holds the size.
     let mut at = 2;
     loop {
         while *bytes.get(at)? != 0xff {
@@ -238,12 +250,52 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         match marker {
             0xd8 | 0x01 | 0xd0..=0xd7 => continue,
             0xc0..=0xcf if !matches!(marker, 0xc4 | 0xc8 | 0xcc) => {
-                return Some((be16(at + 5)?, be16(at + 3)?));
+                let (height, width) = (be16(at + 3)?, be16(at + 5)?);
+                let n = usize::from(*bytes.get(at + 7)?);
+                let factors: Vec<(u32, u32)> = (0..n)
+                    .map(|c| {
+                        let f = *bytes.get(at + 9 + 3 * c)?;
+                        Some((u32::from(f >> 4).max(1), u32::from(f & 15).max(1)))
+                    })
+                    .collect::<Option<_>>()?;
+                let most =
+                    |pick: fn(&(u32, u32)) -> u32| factors.iter().map(pick).max().unwrap_or(1);
+                let (hmax, vmax) = (most(|f| f.0), most(|f| f.1));
+                let blocks =
+                    |n: u32, f: u32, max: u32| ((n * f).div_ceil(max)).div_ceil(8) as usize * 8;
+                let coefficients = factors
+                    .iter()
+                    .map(|&(hf, vf)| blocks(width, hf, hmax) * blocks(height, vf, vmax) * 2)
+                    .sum();
+                return Some(JpegFrame {
+                    width,
+                    height,
+                    progressive: matches!(marker, 0xc2 | 0xc6 | 0xca | 0xce),
+                    coefficients,
+                });
             }
             0xd9 | 0xda => return None,
             _ => at += be16(at)? as usize,
         }
     }
+}
+
+/// The size a PNG, JPEG or GIF says it has, read from its header alone.
+pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+        return Some((be32(16)?, be32(20)?));
+    }
+    if bytes.starts_with(GIF) {
+        let le16 = |at: usize| {
+            Some(u32::from(u16::from_le_bytes([
+                *bytes.get(at)?,
+                *bytes.get(at + 1)?,
+            ])))
+        };
+        return Some((le16(6)?, le16(8)?));
+    }
+    jpeg_frame(bytes).map(|f| (f.width, f.height))
 }
 
 /// Decodes `bytes` of `url`, then scales and clips them to `request`.
@@ -1274,10 +1326,34 @@ mod tests {
     }
 
     #[test]
+    fn a_progressive_jpeg_costs_its_coefficients_too() {
+        let encode = |progressive: bool| {
+            let mut jpeg = Vec::new();
+            let mut enc = jpeg_encoder::Encoder::new(&mut jpeg, 90);
+            enc.set_progressive(progressive);
+            enc.set_sampling_factor(jpeg_encoder::SamplingFactor::R_4_4_4);
+            enc.encode(&[0; 64 * 32 * 3], 64, 32, jpeg_encoder::ColorType::Rgb)
+                .unwrap();
+            jpeg
+        };
+        let small = Request {
+            limit: 16,
+            ..Request::default()
+        };
+        // Kept 16 by 8 at four bytes a pixel, decoded 16 by 8 at three.
+        assert_eq!(cost(&encode(false), small), 16 * 8 * 4 + 16 * 8 * 3);
+        // And three components of 64 by 32 at two bytes a sample.
+        assert_eq!(
+            cost(&encode(true), small),
+            16 * 8 * 4 + 16 * 8 * 3 + 3 * 64 * 32 * 2
+        );
+    }
+
+    #[test]
     fn a_header_says_the_size_without_decoding() {
         let png = png_of(5, 3, png::ColorType::Rgb, &[0; 45]);
         assert_eq!(dimensions(&png), Some((5, 3)));
-        assert_eq!(cost(&png, Request::default()), 60);
+        assert_eq!(cost(&png, Request::default()), 120, "decoded and kept");
         assert_eq!(dimensions(&gif(&RGB, 10)), Some((3, 2)));
         let mut jpeg = Vec::new();
         jpeg_encoder::Encoder::new(&mut jpeg, 90)
