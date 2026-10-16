@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -15,6 +15,7 @@ use parley::{
     FontFamilyName, FontStyle, FontWeight, InlineBox, InlineBoxKind, LayoutContext, OverflowWrap,
     PositionedLayoutItem, StyleProperty, WordBreak,
 };
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::cache::FrameCache;
 use crate::edit::CaretCluster;
@@ -317,7 +318,7 @@ pub struct TextEngine {
     shapes: FrameCache<u64, ShapedEntry>,
     layouts: FrameCache<u64, LayoutEntry>,
     paragraphs: FrameCache<u64, edit::ParagraphEntry>,
-    styles: HashMap<TextStyle, StyleMetrics>,
+    styles: FxHashMap<TextStyle, StyleMetrics>,
     frame: u64,
     keep_frames: u64,
     generation: u64,
@@ -364,9 +365,9 @@ fn ceil64(v: f32) -> f64 {
 }
 
 fn key_hash(text: &str, style: &TextStyle, extra: impl Hash) -> u64 {
-    // DefaultHasher::new() has fixed keys: the same text hashes the same in
-    // every run, so cache behaviour is reproducible.
-    let mut h = DefaultHasher::new();
+    // Fixed keys, so cache behaviour is reproducible; a hit is checked
+    // against the whole key, so a collision costs only a miss.
+    let mut h = FxHasher::default();
     text.hash(&mut h);
     style.hash(&mut h);
     extra.hash(&mut h);
@@ -844,7 +845,7 @@ impl TextEngine {
             shapes: FrameCache::new(MAX_SHAPES),
             layouts: FrameCache::new(MAX_LAYOUTS),
             paragraphs: FrameCache::new(MAX_PARAGRAPHS),
-            styles: HashMap::new(),
+            styles: FxHashMap::default(),
             frame: 0,
             keep_frames: KEEP_FRAMES,
             generation: 0,

@@ -1,7 +1,8 @@
 //! A cache that forgets what recent frames did not use.
 
-use std::collections::HashMap;
 use std::hash::Hash;
+
+use rustc_hash::FxHashMap;
 
 struct Entry<V> {
     value: V,
@@ -12,14 +13,14 @@ struct Entry<V> {
 /// [`FrameCache::trim`] drops those that sat unused for too long, and the least
 /// recently used ones beyond the capacity. Nothing is dropped between frames.
 pub(crate) struct FrameCache<K, V> {
-    map: HashMap<K, Entry<V>>,
+    map: FxHashMap<K, Entry<V>>,
     capacity: usize,
 }
 
 impl<K: Hash + Eq, V> FrameCache<K, V> {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            map: HashMap::new(),
+            map: FxHashMap::default(),
             capacity,
         }
     }
