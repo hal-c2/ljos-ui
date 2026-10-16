@@ -320,3 +320,41 @@ Item {
     h.engine.set(settings, Settings::VOLUME, 3).unwrap();
     assert_eq!(h.num(root, "volume"), 3.0);
 }
+
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Store", uncreatable)]
+#[qml_singleton]
+pub struct Store {
+    #[qml(constant, readonly)]
+    pub n: i32,
+}
+
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Plain")]
+#[qml_singleton]
+pub struct Plain {
+    #[qml(constant, readonly)]
+    pub n: i32,
+}
+
+#[test]
+fn an_uncreatable_singleton_is_still_made_by_the_engine() {
+    let h = engine();
+    h.engine
+        .register_singleton::<Store>("Example", Version::new(1, 0));
+    h.engine
+        .register_singleton::<Plain>("Example", Version::new(1, 0));
+    assert!(h.engine.singleton::<Plain>().is_ok());
+    let store = h.engine.singleton::<Store>().unwrap();
+    assert_eq!(h.engine.singleton::<Store>().unwrap(), store);
+
+    let root = h.load(
+        r#"import QtQuick
+import Example
+Item {
+    property int n: Store.n + 1
+}
+"#,
+    );
+    assert_eq!(h.num(root, "n"), 1.0);
+}

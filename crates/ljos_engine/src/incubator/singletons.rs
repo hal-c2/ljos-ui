@@ -21,7 +21,7 @@ use crate::error::EngineError;
 use crate::ids::ObjectId;
 use crate::loader::LoadedFile;
 use crate::meta::{MetaObject, MetaRef};
-use crate::object::QmlType;
+use crate::object::{QmlObject, QmlType};
 use crate::registry::Version;
 use crate::value::Value;
 
@@ -60,7 +60,7 @@ pub trait QmlSingleton: QmlType {
 enum Kind {
     /// The QML file of that key.
     File(String),
-    Native(&'static MetaObject),
+    Native(Native),
     /// A type the compiler's type table calls a singleton and the engine
     /// has no object of: its name still reaches its enums.
     Keys(Option<MetaRef>),
@@ -96,23 +96,38 @@ pub(crate) struct Singletons {
     entries: RefCell<Vec<Entry>>,
     index: RefCell<HashMap<TypeRef, usize>>,
     /// Native singleton types, by module and name.
-    natives: RefCell<HashMap<(String, String), &'static MetaObject>>,
+    natives: RefCell<HashMap<(String, String), Native>>,
     /// Bumped when the files the engine loads from change: the file of a
     /// singleton may have.
     sources: Cell<u64>,
 }
 
+/// A native singleton type and how its one object is made. Its own
+/// constructor, not the type's QML-facing one: a type QML may not write
+/// (`uncreatable`) is still made by the engine.
+#[derive(Clone)]
+struct Native {
+    meta: &'static MetaObject,
+    make: Make,
+}
+
+type Make = Rc<dyn Fn(&Engine) -> Box<dyn QmlObject>>;
+
 impl Engine {
     /// Registers `T` as a singleton type of the module `uri`. The engine's
-    /// one `T` is made when it is first read, from QML by the type's name
-    /// or from Rust by [`Engine::singleton`].
-    pub fn register_singleton<T: QmlSingleton>(&self, uri: &str, version: Version) {
+    /// one `T` is made with `T::default()` when it is first read, from QML
+    /// by the type's name or from Rust by [`Engine::singleton`]. It is made
+    /// even if `T` is `uncreatable`: that only keeps QML from writing
+    /// `T {}`.
+    pub fn register_singleton<T: QmlSingleton + Default>(&self, uri: &str, version: Version) {
         let meta = T::static_meta();
         self.register_type(uri, version, MetaRef::Static(meta));
         let all = self.extension::<Singletons>();
-        all.natives
-            .borrow_mut()
-            .insert((uri.to_owned(), meta.name.to_string()), meta);
+        let make: Make = Rc::new(|_| Box::new(T::default()));
+        all.natives.borrow_mut().insert(
+            (uri.to_owned(), meta.name.to_string()),
+            Native { meta, make },
+        );
         // A script may have asked for the name before the type was there.
         for e in all.entries.borrow_mut().iter_mut() {
             if matches!(e.state, State::Keys(_)) {
@@ -138,7 +153,7 @@ impl Engine {
             let natives = all.natives.borrow();
             natives
                 .iter()
-                .find(|(_, m)| std::ptr::eq(**m, meta))
+                .find(|(_, n)| std::ptr::eq(n.meta, meta))
                 .map(|((module, name), _)| TypeRef::Native {
                     module: module.clone(),
                     name: name.clone(),
@@ -262,10 +277,10 @@ impl Engine {
                                 .iter()
                                 .find_map(|((_, n), m)| (n == name).then_some(m))
                         })
-                        .copied()
+                        .cloned()
                 };
-                if let Some(meta) = native {
-                    return Kind::Native(meta);
+                if let Some(native) = native {
+                    return Kind::Native(native);
                 }
                 // A type of a module written in QML (a style's file).
                 if let Some(key) = self.qml_type_key(module, name)
@@ -336,8 +351,8 @@ impl Engine {
                 self.create_from_template_noting(&template, None, Vec::new(), allocated)
                     .map(|obj| (obj, Some(file)))
             }
-            Kind::Native(meta) => self
-                .create(MetaRef::Static(meta), None)
+            Kind::Native(native) => self
+                .create_with(MetaRef::Static(native.meta), (native.make)(self), None)
                 .map(|obj| (obj, None)),
             Kind::Keys(_) => unreachable!("returned above"),
         });

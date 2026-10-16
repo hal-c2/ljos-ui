@@ -248,7 +248,9 @@ assert_eq!(engine.get(counter, Counter::COUNT), Ok(1));
 A native singleton is the same kind of struct with `#[qml_singleton]`
 under its derive, registered with
 `engine.register_singleton::<T>("Example", Version::new(1, 0))`; the
-attribute and `Version` are in the prelude too.
+attribute and `Version` are in the prelude too. The engine makes its
+one object with `T::default()`, also when the type is `uncreatable`:
+that only keeps QML from making a `T {}` of its own.
 
 `register` is the one seam a native module sits at: a host calls it
 on its Engine, and nothing else about the module needs to be
