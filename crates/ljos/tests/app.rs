@@ -220,3 +220,32 @@ fn a_module_closure_captures_its_configuration_and_may_run_twice() {
     assert_eq!(runs.get(), 2);
     assert_eq!(number(&engine, root, "seen"), 41.0);
 }
+
+#[test]
+fn qml_dirs_names_several_roots_each_keyed_from_its_own() {
+    let top = tempfile::tempdir().unwrap();
+    let app = top.path().join("app");
+    let lib = top.path().join("shared/Lib");
+    std::fs::create_dir_all(&app).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(
+        app.join("Main.qml"),
+        "import QtQuick\nimport Lib\nItem { width: 10; height: 10; property Item brick: Brick {} }\n",
+    )
+    .unwrap();
+    std::fs::write(lib.join("qmldir"), "module Lib\nBrick 1.0 Brick.qml\n").unwrap();
+    std::fs::write(
+        lib.join("Brick.qml"),
+        "import QtQuick\nRectangle { width: 5; height: 5 }\n",
+    )
+    .unwrap();
+    // The entry is `Main`, from its own root; `Lib` is found in the
+    // other root, and nothing above the two trees is read.
+    let (engine, root) = ljos::App::new("Test")
+        .qml_dirs([app.as_path(), &top.path().join("shared")], "Main")
+        .unwrap()
+        .build()
+        .unwrap();
+    let brick = engine.read_by_name(root, "brick").as_object().unwrap();
+    assert_eq!(engine.read_by_name(brick, "width").to_number(), 5.0);
+}

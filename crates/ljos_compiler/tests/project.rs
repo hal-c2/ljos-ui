@@ -88,3 +88,42 @@ fn a_file_with_errors_is_kept_and_says_what_was_wrong() {
             .all(|error| error.code == qml_front::Code::Syntax)
     );
 }
+
+#[test]
+fn several_roots_are_keyed_each_from_its_own_and_the_earlier_wins() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let app = dir.path().join("app");
+    let shared = dir.path().join("shared");
+    std::fs::create_dir_all(&app).expect("app");
+    std::fs::create_dir_all(shared.join("Lib")).expect("Lib");
+    std::fs::write(
+        app.join("Main.qml"),
+        "import QtQuick\nimport Lib\nItem { Brick {} }\n",
+    )
+    .expect("Main");
+    std::fs::write(
+        shared.join("Lib/qmldir"),
+        "module Lib\nBrick 1.0 Brick.qml\n",
+    )
+    .expect("qmldir");
+    std::fs::write(
+        shared.join("Lib/Brick.qml"),
+        "import QtQuick\nRectangle {}\n",
+    )
+    .expect("Brick");
+    // The same key in the later root is not the one used.
+    std::fs::write(shared.join("Main.qml"), "import QtQuick\nText {}\n").expect("shadowed");
+
+    let results =
+        ljos_compiler::compile_roots_with(&[&app, &shared], Runtime::new()).expect("readable");
+    let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+    assert_eq!(keys, ["Lib/Brick", "Main"]);
+    let main = results[1].usable().expect("Main compiles");
+    assert_eq!(
+        main.file.components[0].objects[1].ty,
+        TypeRef::Component {
+            file: "Lib/Brick".into(),
+            inline: None
+        }
+    );
+}

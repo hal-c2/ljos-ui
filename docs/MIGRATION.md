@@ -273,7 +273,10 @@ under Qt, a file with an error fails only where it is made: the
 directory compiles, the diagnostics are printed, and making the
 broken component reports the compiler's message
 (`App::qml_errors(OnError::Fail)` fails the whole directory instead,
-for a build step or CI):
+for a build step or CI). QML in several trees — the counterpart of
+`addImportPath` — goes in as `App::qml_dirs([app, shared], "Main")`:
+each tree's files are keyed from their own root, and a file of one
+may import a module whose `qmldir` is in another:
 
 ```rust
 ljos::App::new("Hello")

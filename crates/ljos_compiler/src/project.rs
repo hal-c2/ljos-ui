@@ -165,11 +165,31 @@ impl<O: TypeOracle> Project<O> {
     /// Every `.qml` file under `root`, and the modules its `qmldir` and
     /// `CMakeLists.txt` files describe.
     pub fn load(root: &Path, oracle: O) -> Result<Self, Error> {
+        Self::load_roots(&[root], oracle)
+    }
+
+    /// Every file under each of `roots`, keyed by its path from its own
+    /// root, as [`load`](Self::load) reads one: the import path of an
+    /// application whose QML is in more than one tree. A file of one root
+    /// may import a module another root's `qmldir` describes. Where two
+    /// roots have a file of the same key the earlier root's is kept, as
+    /// the first import path that has a module is the one used.
+    pub fn load_roots(roots: &[&Path], oracle: O) -> Result<Self, Error> {
+        let mut project = Self::new(oracle);
+        for root in roots {
+            project.load_root(root)?;
+        }
+        Ok(project)
+    }
+
+    fn load_root(&mut self, root: &Path) -> Result<(), Error> {
         let dirs = scan(root).map_err(|source| Error::Io {
             path: root.to_owned(),
             source,
         })?;
-        let mut project = Self::new(oracle);
+        // What earlier roots gave; those keys are not replaced.
+        let earlier: HashSet<String> = self.sources.keys().cloned().collect();
+        let earlier_scripts: HashSet<String> = self.scripts.keys().cloned().collect();
         for (dir, names) in &dirs {
             for name in names.iter().filter(|name| name.ends_with(".qml")) {
                 let path = dir.join(name);
@@ -177,7 +197,9 @@ impl<O: TypeOracle> Project<O> {
                 else {
                     continue;
                 };
-                project.add(&key, text);
+                if !earlier.contains(&key) {
+                    self.add(&key, text);
+                }
             }
             for name in names
                 .iter()
@@ -188,7 +210,9 @@ impl<O: TypeOracle> Project<O> {
                 else {
                     continue;
                 };
-                project.add_script(&key, text);
+                if !earlier_scripts.contains(&key) {
+                    self.add_script(&key, text);
+                }
             }
         }
         for (dir, names) in &dirs {
@@ -207,10 +231,10 @@ impl<O: TypeOracle> Project<O> {
                 continue;
             };
             for module in &modules {
-                project.add_module(&dir_key, module);
+                self.add_module(&dir_key, module);
             }
         }
-        Ok(project)
+        Ok(())
     }
 
     /// The files, by key, in order.

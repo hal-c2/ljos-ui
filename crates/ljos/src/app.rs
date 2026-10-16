@@ -196,8 +196,25 @@ impl<M> App<M> {
     /// the directory cannot be read.
     #[cfg(feature = "dev-qml")]
     pub fn qml_dir(
-        mut self,
+        self,
         dir: impl AsRef<std::path::Path>,
+        root: impl Into<String>,
+    ) -> Result<Self, String> {
+        self.qml_dirs([dir], root)
+    }
+
+    /// [`qml_dir`](App::qml_dir) over several QML roots, as an import
+    /// path names them: an application's own tree, a shared library
+    /// of components, a dependency's modules. Each root's files are
+    /// keyed by their path from that root, so `root` is named from
+    /// its own tree (`Main` for `app/Main.qml` under the root `app`),
+    /// and a file may `import` a module whose `qmldir` is in another
+    /// root. Where two roots have a file of the same key, the earlier
+    /// root's is used.
+    #[cfg(feature = "dev-qml")]
+    pub fn qml_dirs(
+        mut self,
+        dirs: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
         root: impl Into<String>,
     ) -> Result<Self, String> {
         // The same throwaway snapshot the BDD backend and the
@@ -208,8 +225,11 @@ impl<M> App<M> {
         for module in &self.modules {
             module(&snapshot);
         }
-        self.source = Some(crate::dev::compile(
-            dir.as_ref(),
+        let dirs: Vec<std::path::PathBuf> =
+            dirs.into_iter().map(|d| d.as_ref().to_owned()).collect();
+        let dirs: Vec<&std::path::Path> = dirs.iter().map(|d| d.as_path()).collect();
+        self.source = Some(crate::dev::compile_dirs(
+            &dirs,
             Some(&snapshot),
             self.qml_errors,
         )?);
@@ -217,7 +237,8 @@ impl<M> App<M> {
         Ok(self)
     }
 
-    /// What a later [`qml_dir`](App::qml_dir) does with a file that
+    /// What a later [`qml_dir`](App::qml_dir) or
+    /// [`qml_dirs`](App::qml_dirs) does with a file that
     /// has an error: record it (the default) or fail with every
     /// error, for a run that wants the whole directory clean.
     #[cfg(feature = "dev-qml")]

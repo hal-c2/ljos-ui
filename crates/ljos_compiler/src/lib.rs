@@ -163,7 +163,16 @@ pub fn compile_project_with<O: TypeOracle>(
     dir: &Path,
     oracle: O,
 ) -> Result<Vec<FileResult>, Error> {
-    let project = Project::load(dir, oracle)?;
+    compile_roots_with(&[dir], oracle)
+}
+
+/// Compiles every QML file under each of `roots` against the types
+/// `oracle` knows, each keyed from its own root ([`Project::load_roots`]).
+pub fn compile_roots_with<O: TypeOracle>(
+    roots: &[&Path],
+    oracle: O,
+) -> Result<Vec<FileResult>, Error> {
+    let project = Project::load_roots(roots, oracle)?;
     Ok(project
         .files()
         .map(|key| FileResult {

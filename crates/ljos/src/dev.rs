@@ -59,21 +59,40 @@ pub fn compile(
     engine: Option<&Engine>,
     on_error: OnError,
 ) -> Result<MapSource, String> {
+    compile_dirs(&[dir], engine, on_error)
+}
+
+/// [`compile`] over several QML roots, an application's import path:
+/// each root's files are keyed by their path from that root (the
+/// entry of `app/Main.qml` under the root `app` is `Main`), and a file
+/// of one root may import a module whose `qmldir` is in another.
+/// Where two roots have a file of the same key the earlier root's is
+/// used, as the first import path that has a module is.
+pub fn compile_dirs(
+    dirs: &[&Path],
+    engine: Option<&Engine>,
+    on_error: OnError,
+) -> Result<MapSource, String> {
     match engine {
-        Some(engine) => compile_with_oracle(dir, EngineOracle::from_engine(engine), on_error),
-        None => compile_with_oracle(dir, QtTypeOracle, on_error),
+        Some(engine) => compile_with_oracle(dirs, EngineOracle::from_engine(engine), on_error),
+        None => compile_with_oracle(dirs, QtTypeOracle, on_error),
     }
 }
 
 fn compile_with_oracle<O: TypeOracle>(
-    dir: &Path,
+    dirs: &[&Path],
     oracle: O,
     on_error: OnError,
 ) -> Result<MapSource, String> {
+    let named = || {
+        dirs.iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let mut source = MapSource::new();
     let mut errors = Vec::new();
-    let files = ljos_compiler::compile_project_with(dir, oracle)
-        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    let files = ljos_compiler::compile_roots_with(dirs, oracle).map_err(|e| e.to_string())?;
     for r in files {
         let diagnostics = match &r.result {
             Ok(c) => &c.diagnostics,
@@ -98,7 +117,7 @@ fn compile_with_oracle<O: TypeOracle>(
     if on_error == OnError::Fail && !errors.is_empty() {
         return Err(format!(
             "{} did not compile:\n{}",
-            dir.display(),
+            named(),
             errors.join("\n")
         ));
     }
