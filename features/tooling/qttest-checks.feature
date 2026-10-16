@@ -248,6 +248,39 @@ Feature: The checks of a TestCase
         PASS   : Arrives::test_verify()
         """
 
+  Rule: waitForItemPolished waits for the layout an item still has to do
+
+    Scenario: A Row places a child that grew once it is polished
+      Given the file "tst_polished.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        Item {
+          width: 200; height: 100
+          Row {
+            id: row
+            Rectangle { id: a; width: 10; height: 10 }
+            Rectangle { id: b; width: 10; height: 10 }
+          }
+          TestCase {
+            name: "Polished"
+            when: windowShown
+            function test_exists() { verify(typeof waitForItemPolished === "function") }
+            function test_waits() {
+              a.width = 30
+              verify(waitForItemPolished(row, 1000))
+              compare(b.x, 30)
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Polished::test_exists()
+        PASS   : Polished::test_waits()
+        """
+
   Rule: A SignalSpy counts the emissions of a signal and keeps their arguments
 
     Scenario: Emissions are counted and their arguments kept in order

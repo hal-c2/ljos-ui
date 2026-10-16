@@ -61,6 +61,7 @@ fn the_module_describes_its_types_for_a_compiler() {
         "createTemporaryQmlObject",
         "findChild",
         "waitForRendering",
+        "waitForItemPolished",
         "mouseClick",
         "mousePress",
         "mouseRelease",

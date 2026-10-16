@@ -6129,6 +6129,7 @@ module QtTest
 		method waitForRendering
 		method isPolishScheduled
 		method waitForPolish
+		method waitForItemPolished
 		method createTemporaryObject
 		method createTemporaryQmlObject
 		method findChild

@@ -418,6 +418,12 @@ impl TestCase {
         Ok(true)
     }
 
+    /// `waitForPolish` by the name it had before Qt 6.5, which Qt keeps.
+    #[qml(invokable, name = "waitForItemPolished")]
+    fn wait_for_item_polished(cx: &Cx, item: Value, timeout: Value) -> Result<bool, EngineError> {
+        Self::wait_for_polish(cx, item, timeout)
+    }
+
     // ----------------------------------------------------------- objects
 
     /// Makes an object of `component` that is destroyed when the test
