@@ -188,3 +188,112 @@ Feature: JavaScript files imported by name
 
     Scenario: The name is the script's own, not a member of it
       Then the property "alias" of "root" is "undefined"
+
+  Rule: A script can import another script under a name
+
+    Background:
+      Given the file "js/lib.js":
+        """
+        .pragma library
+        var total = 0
+        function bump() { total = total + 1; return total }
+        function dbl(n) { return n * 2 }
+        """
+      And the file "js/own.js":
+        """
+        var total = 0
+        function bump() { total = total + 1; return total }
+        """
+      And the file "js/user.js":
+        """
+        .import "lib.js" as L
+        .import "own.js" as O
+
+        function twice(n) { return L.dbl(n) }
+        function bumpLib() { return L.bump() }
+        function bumpOwn() { return O.bump() }
+        """
+      And the file "User.qml":
+        """qml
+        import QtQuick
+        import "js/user.js" as U
+        Item {
+          function bumpLib() { return U.bumpLib() }
+          function bumpOwn() { return U.bumpOwn() }
+        }
+        """
+
+    Scenario: The imported script's functions are called through its name
+      Given the QML:
+        """qml
+        import QtQuick
+        import "js/user.js" as U
+        Item {
+          objectName: "root"
+          property int twice: U.twice(21)
+          property string imported: typeof U.L
+        }
+        """
+      Then the property "twice" of "root" is 42
+      And the property "imported" of "root" is "undefined"
+
+    Scenario: A library a script imports is the one every importer has
+      Given the QML:
+        """qml
+        import QtQuick
+        import "js/lib.js" as L
+        Item {
+          objectName: "root"
+          User { id: one }
+          User { id: two }
+          property var counts: [one.bumpLib(), one.bumpLib(), two.bumpLib(), L.bump()]
+        }
+        """
+      Then the property "counts" of "root" is [1, 2, 3, 4]
+
+    Scenario: A script that is not a library is the importing script's own
+      Given the QML:
+        """qml
+        import QtQuick
+        import "js/own.js" as O
+        Item {
+          objectName: "root"
+          User { id: one }
+          User { id: two }
+          property var counts: [one.bumpOwn(), one.bumpOwn(), two.bumpOwn(), O.bump()]
+        }
+        """
+      Then the property "counts" of "root" is [1, 2, 1, 1]
+
+    Scenario: A script that imports a script that is not there does not load
+      Given the file "js/broken.js":
+        """
+        .import "missing.js" as M
+        function f() { return 1 }
+        """
+      And the file "Broken.qml":
+        """qml
+        import QtQuick
+        import "js/broken.js" as B
+        Item { property int f: B.f() }
+        """
+      Then loading "Broken.qml" is rejected
+
+    Scenario: Two scripts that import each other do not load
+      Given the file "js/x.js":
+        """
+        .import "y.js" as Y
+        function fx() { return "x" }
+        """
+      And the file "js/y.js":
+        """
+        .import "x.js" as X
+        function fy() { return "y" }
+        """
+      And the file "Cycle.qml":
+        """qml
+        import QtQuick
+        import "js/x.js" as X
+        Item { property string f: X.fx() }
+        """
+      Then loading "Cycle.qml" is rejected

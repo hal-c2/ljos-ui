@@ -66,32 +66,82 @@ impl Engine {
             root = outer;
         }
         let owner = (!script.library).then_some(root.context);
-        let all = self.extension::<ScriptObjects>();
-        let key = (owner, script.key.clone());
-        if let Some((text, held)) = all.made.borrow().get(&key)
-            && *text == script.source
-        {
-            return JsValue::Handle(held.clone());
-        }
         // Beside the file that imports it, as its own `path` says.
         let url = crate::loader::join_url(&inst.file.url, &script.path);
-        match self.evaluate_script(s, script, &url) {
-            Some(held) => {
-                all.made
-                    .borrow_mut()
-                    .insert(key, (script.source.clone(), held.clone()));
-                JsValue::Handle(held)
-            }
+        match self.made_script(s, &inst.file.ir.scripts, script, &url, owner) {
+            Some(held) => JsValue::Handle(held),
             None => JsValue::Undefined,
         }
     }
 
-    fn evaluate_script(&self, s: &Scope<'_>, script: &Script, url: &str) -> Option<JsRef> {
-        // The source is a function of the script's own address.
+    /// The object of `script` for `owner`, made now unless it was made
+    /// from the same text before.
+    fn made_script(
+        &self,
+        s: &Scope<'_>,
+        all: &[Script],
+        script: &Script,
+        url: &str,
+        owner: Option<ContextId>,
+    ) -> Option<JsRef> {
+        let objects = self.extension::<ScriptObjects>();
+        let key = (owner, script.key.clone());
+        if let Some((text, held)) = objects.made.borrow().get(&key)
+            && *text == script.source
+        {
+            return Some(held.clone());
+        }
+        let held = self.evaluate_script(s, all, script, url, &mut Vec::new())?;
+        objects
+            .made
+            .borrow_mut()
+            .insert(key, (script.source.clone(), held.clone()));
+        Some(held)
+    }
+
+    /// Makes `script` and what it imports: a library is the one the engine
+    /// has, any other script a copy of the importing script's own (as qml6
+    /// does). `chain` is what is being made, which the compiler keeps from
+    /// going round; a project changed under it gets a warning instead.
+    fn evaluate_script(
+        &self,
+        s: &Scope<'_>,
+        all: &[Script],
+        script: &Script,
+        url: &str,
+        chain: &mut Vec<String>,
+    ) -> Option<JsRef> {
+        let imports = ljos_js::rquickjs::Array::new(s.ctx().clone()).ok()?;
+        chain.push(script.key.clone());
+        for (index, import) in script.imports.iter().enumerate() {
+            let at = crate::loader::join_url(url, &import.path);
+            let made = match all.iter().find(|sc| sc.key == import.key) {
+                _ if chain.contains(&import.key) => None,
+                Some(inner) if inner.library => self.made_script(s, all, inner, &at, None),
+                Some(inner) => self.evaluate_script(s, all, inner, &at, chain),
+                None => None,
+            };
+            match made.map(|held| s.restore(&held)) {
+                Some(Ok(object)) => {
+                    let _ = imports.set(index, object);
+                }
+                _ => self.log(
+                    LogLevel::Warning,
+                    "qml",
+                    format!(
+                        "{}: the script \"{}\" is not available",
+                        script.key, import.path
+                    ),
+                ),
+            }
+        }
+        chain.pop();
+        // The source is a function of the script's own address and of
+        // what it imports.
         let made: Result<ljos_js::rquickjs::Value, _> = s
             .ctx()
             .eval::<ljos_js::rquickjs::Function, _>(script.source.as_bytes())
-            .and_then(|f| f.call((url,)));
+            .and_then(|f| f.call((url, imports)));
         match made {
             Ok(object) => Some(s.keep(object)),
             Err(error) => {

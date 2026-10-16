@@ -384,6 +384,10 @@ fn sample() -> CompiledFile {
             key: "app/calc.js".into(),
             library: false,
             source: "(function () { return {}; })()".into(),
+            imports: vec![ScriptImport {
+                path: "util.js".into(),
+                key: "app/util.js".into(),
+            }],
         }],
     }
 }

@@ -4,7 +4,7 @@
 //! here: the names the file declares at its top level, which are the
 //! members of the name it is imported as.
 
-use ljos_ir::Script;
+use ljos_ir::{Script, ScriptImport};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{BindingPattern, Statement};
 use oxc_parser::Parser;
@@ -22,7 +22,8 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
     let names = declared(&text);
     // Declared after the names are taken: what a script imports is its
     // own, not a member of the name it is imported as.
-    let text = with_modules(source, &text);
+    let mut imports = Vec::new();
+    let text = with_imports(source, &text, key, &mut imports);
     // Read and written through, so that a `var` the script changes is what
     // the importer reads next.
     let members: Vec<String> = names
@@ -43,7 +44,7 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
         ""
     };
     let source = format!(
-        "(function (__ljos_url) {{{qt}{text}\n;return {{ {} }};\n}})",
+        "(function (__ljos_url, __ljos_imports) {{{qt}{text}\n;return {{ {} }};\n}})",
         members.join(", ")
     );
     Script {
@@ -51,13 +52,17 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
         key: key.to_string(),
         library,
         source,
+        imports,
     }
 }
 
-/// `text` with each `.import Module as Name` line of `source` (blank in
-/// `text`) declaring `Name`: the module's types, each read as a script
-/// reads a type, by its enums. On the line it was, so lines stay put.
-fn with_modules(source: &str, text: &str) -> String {
+/// `text` with each `.import` line of `source` (blank in `text`) declaring
+/// its name, on the line it was, so lines stay put. `.import Module as Name`
+/// is the module's types, each read as a script reads a type, by its enums;
+/// `.import "file.js" as Name` the object of that script, which the runtime
+/// hands the script in the order of `imports`.
+fn with_imports(source: &str, text: &str, key: &str, imports: &mut Vec<ScriptImport>) -> String {
+    let directory = qml_front::project::directory(key);
     source
         .split_inclusive('\n')
         .zip(text.split_inclusive('\n'))
@@ -76,10 +81,25 @@ fn with_modules(source: &str, text: &str) -> String {
                     && w.split('.')
                         .all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'))
             };
-            if module.starts_with('"') || !named(module) || !named(alias) || alias.contains('.') {
+            if !named(alias) || alias.contains('.') {
                 return blank.to_string();
             }
             let end = if line.ends_with('\n') { "\n" } else { "" };
+            if let Some(path) = module
+                .strip_prefix('"')
+                .and_then(|m| m.strip_suffix('"'))
+                .filter(|p| p.ends_with(".js"))
+            {
+                let index = imports.len();
+                imports.push(ScriptImport {
+                    path: path.to_string(),
+                    key: qml_front::project::join(directory, path),
+                });
+                return format!("const {alias} = __ljos_imports[{index}];{end}");
+            }
+            if module.starts_with('"') || !named(module) {
+                return blank.to_string();
+            }
             format!("const {alias} = __ljos_module(\"{module}\");{end}")
         })
         .collect()

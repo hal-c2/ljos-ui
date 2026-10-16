@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 9;
+pub const IR_VERSION: u32 = 10;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -87,7 +87,8 @@ pub struct CompiledFile {
 /// has no parser, so what it needs of the file is worked out here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Script {
-    /// As the import writes it, which is what an [`Arg::Namespace`] names.
+    /// As the import writes it, which is what an [`Arg::Namespace`] names;
+    /// empty for a script only other scripts import.
     pub path: String,
     /// Where the file is from the project's root: two imports of one file
     /// name the same script.
@@ -97,8 +98,21 @@ pub struct Script {
     pub library: bool,
     /// An expression that makes the script's object when evaluated: its
     /// top-level names as members, read and written through to the
-    /// script's own variables.
+    /// script's own variables. It is a function of the script's address
+    /// and of the objects of [`Script::imports`], in that order.
     pub source: String,
+    /// The scripts this one imports itself (`.import "other.js" as Other`),
+    /// each among the file's [`CompiledFile::scripts`].
+    pub imports: Vec<ScriptImport>,
+}
+
+/// One `.import "path" as Name` line of a script.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptImport {
+    /// As the line writes it: from the importing script's directory.
+    pub path: String,
+    /// The imported script's [`Script::key`].
+    pub key: String,
 }
 
 /// The functions of a singleton another file is, each with a tier-1 program

@@ -1964,7 +1964,82 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
 
     // ---- the file ---------------------------------------------------------
 
+    /// The scripts the file imports by path, then those they import, each
+    /// once. A script that leads to one that is not there, or back to
+    /// itself, does not load, nor does the file: Qt says the script is
+    /// unavailable.
+    fn scripts(&mut self, document: &QmlDocument<'a>) -> Vec<Script> {
+        let mut scripts: Vec<Script> = Vec::new();
+        for import in &document.imports {
+            let QmlImportSource::Path(path) = &import.source else {
+                continue;
+            };
+            if !(path.ends_with(".js") || path.ends_with(".mjs")) {
+                continue;
+            }
+            let key = qml_front::project::join(qml_front::project::directory(self.key), path);
+            let Some(text) = self.project.script(&key) else {
+                continue;
+            };
+            let script = crate::script::lower(path, &key, text);
+            if let Some(trouble) = self.unavailable(&script, &mut vec![key.clone()]) {
+                self.diagnostics.push(Diagnostic::error(
+                    format!("the script \"{path}\" is unavailable: {trouble}"),
+                    self.span(import.span),
+                ));
+            }
+            scripts.push(script);
+        }
+        // Those only scripts import, after the file's own, so a lookup by
+        // the path the file writes finds its own first.
+        let mut next = 0;
+        while next < scripts.len() {
+            let wanted: Vec<String> = scripts[next]
+                .imports
+                .iter()
+                .map(|i| i.key.clone())
+                .collect();
+            next += 1;
+            for key in wanted {
+                if scripts.iter().any(|s| s.key == key) {
+                    continue;
+                }
+                if let Some(text) = self.project.script(&key) {
+                    scripts.push(crate::script::lower("", &key, text));
+                }
+            }
+        }
+        scripts
+    }
+
+    /// Why `script` cannot be made, if it cannot: a script it leads to is
+    /// not in the project, or leads back to one of `chain`.
+    fn unavailable(&self, script: &Script, chain: &mut Vec<String>) -> Option<String> {
+        for import in &script.imports {
+            if let Some(at) = chain.iter().position(|key| *key == import.key) {
+                let mut cycle = chain[at..].to_vec();
+                cycle.push(import.key.clone());
+                return Some(format!("its imports go round: {}", cycle.join(" -> ")));
+            }
+            let Some(text) = self.project.script(&import.key) else {
+                return Some(format!(
+                    "\"{}\" imports \"{}\", which is not there",
+                    script.key, import.path
+                ));
+            };
+            let inner = crate::script::lower("", &import.key, text);
+            chain.push(import.key.clone());
+            let trouble = self.unavailable(&inner, chain);
+            chain.pop();
+            if trouble.is_some() {
+                return trouble;
+            }
+        }
+        None
+    }
+
     fn finish(mut self, document: &QmlDocument<'a>) -> Compiled {
+        let scripts = self.scripts(document);
         let tree = self.tree;
         let mut inline = Vec::new();
         for (index, context) in tree.contexts.iter().enumerate() {
@@ -2044,19 +2119,6 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 }
             }
         }
-        let scripts: Vec<Script> = document
-            .imports
-            .iter()
-            .filter_map(|import| match &import.source {
-                QmlImportSource::Path(path) if path.ends_with(".js") || path.ends_with(".mjs") => {
-                    let key =
-                        qml_front::project::join(qml_front::project::directory(self.key), path);
-                    let text = self.project.script(&key)?;
-                    Some(crate::script::lower(path, &key, text))
-                }
-                _ => None,
-            })
-            .collect();
         let mut file = CompiledFile {
             version: IR_VERSION,
             file: self.key.to_string(),
