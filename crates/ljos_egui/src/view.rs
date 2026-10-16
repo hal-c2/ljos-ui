@@ -186,6 +186,9 @@ pub struct QmlView {
     painted_frame: Option<u64>,
     /// Passes paint; off while the window is hidden ([`QmlView::set_drawn`]).
     drawn: bool,
+    /// See [`QmlView::set_fold_backdrop`].
+    fold_backdrop: bool,
+    backdrop: Option<egui::Color32>,
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
@@ -248,6 +251,8 @@ impl QmlView {
             ppp: None,
             painted_frame: None,
             drawn: true,
+            fold_backdrop: false,
+            backdrop: None,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
             graft: None,
@@ -481,6 +486,29 @@ impl QmlView {
     /// builds nothing that [`QmlView::trim`] gave back until it is shown.
     pub fn set_drawn(&mut self, drawn: bool) {
         self.drawn = drawn;
+    }
+
+    /// Whether an opaque rectangle that is painted first and covers the
+    /// whole window may be left out of the shapes and said by
+    /// [`QmlView::backdrop`] instead. A host that clears its window to
+    /// that colour then draws the same picture with one full-window pass
+    /// less. Off by default: the host has to clear to it.
+    pub fn set_fold_backdrop(&mut self, fold: bool) {
+        self.fold_backdrop = fold;
+    }
+
+    /// The colour the last pass left for the host to clear its window to
+    /// (see [`QmlView::set_fold_backdrop`]).
+    pub fn backdrop(&self) -> Option<egui::Color32> {
+        self.backdrop
+    }
+
+    /// How long until the scene wants its next pass, as the last pass
+    /// left it; `None` when it waits for nothing. egui shortens a delayed
+    /// repaint by a frame, for a host whose drawing waits for the
+    /// display; a host that did not draw a pass waits for this instead.
+    pub fn wakes_in(&self) -> Option<std::time::Duration> {
+        self.next_wake.map(|t| t.saturating_since(self.clock.now()))
     }
 
     /// The egui id of an item's accessibility node, if the item is exposed.
@@ -770,6 +798,7 @@ impl QmlView {
 
         // Paint. egui keeps no retained shapes, so every pass re-emits the
         // snapshot; B0 caches meshes per node, so this is mostly Arc clones.
+        self.backdrop = None;
         if self.drawn
             && let Some(snap) = self.scene.snapshot().cloned()
         {
@@ -778,9 +807,20 @@ impl QmlView {
                 self.backend.sync(&view);
                 self.painted_frame = Some(snap.frame);
             }
+            let painter = ui.painter_at(rect);
             let mut sink = EguiSink::new(Some(&ctx), rect.min);
+            // Only a scene that is the whole window can be its background.
+            let window = ctx.viewport_rect();
+            let scene = Rect::from_min_size(
+                rect.min,
+                Vec2::new(snap.viewport.width() as f32, snap.viewport.height() as f32),
+            );
+            sink.fold_backdrop = self.fold_backdrop
+                && scene.contains_rect(window)
+                && painter.clip_rect().contains_rect(window);
             self.backend.encode(&view, &mut sink);
-            sink.paint(&ui.painter_at(rect));
+            sink.paint(&painter);
+            self.backdrop = sink.backdrop;
         }
 
         // Accessibility. Like the shapes, egui keeps no nodes between
