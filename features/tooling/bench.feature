@@ -123,7 +123,7 @@ Feature: Measuring an application under a limit
         shift
         exec "$@"
         """
-      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
       Then the command exits with status 2
       And the command's output mentions "is not inside the limit"
       And the command's output does not mention "report.json"
