@@ -3627,6 +3627,7 @@ dependencies = [
  "ljos_runtime",
  "proptest",
  "qml_front",
+ "rustc-hash 2.1.3",
  "serde",
  "serde_json",
  "slotmap",

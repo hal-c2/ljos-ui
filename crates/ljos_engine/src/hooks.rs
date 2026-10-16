@@ -20,8 +20,9 @@
 
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
+
+use rustc_hash::FxHashMap;
 
 use crate::engine::{Engine, Tracking};
 use crate::ids::{ObjectId, PropIndex};
@@ -56,12 +57,12 @@ type JsStartedListener = Rc<dyn Fn(&Engine)>;
 
 #[derive(Default)]
 pub(crate) struct Hooks {
-    extensions: RefCell<HashMap<TypeId, Rc<dyn Any>>>,
+    extensions: RefCell<FxHashMap<TypeId, Rc<dyn Any>>>,
     /// Per object, as an object has at most a few and they go together.
-    interceptors: RefCell<HashMap<ObjectId, Vec<(PropIndex, Interceptor)>>>,
+    interceptors: RefCell<FxHashMap<ObjectId, Vec<(PropIndex, Interceptor)>>>,
     value_sources: RefCell<Vec<ValueSourceListener>>,
     script_props: RefCell<Vec<(&'static MetaObject, PropIndex)>>,
-    scripts: RefCell<HashMap<ObjectId, Vec<(PropIndex, Script)>>>,
+    scripts: RefCell<FxHashMap<ObjectId, Vec<(PropIndex, Script)>>>,
     /// Called when the JS host has started.
     js_started: RefCell<Vec<JsStartedListener>>,
 }

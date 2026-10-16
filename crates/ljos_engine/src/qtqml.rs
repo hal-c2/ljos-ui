@@ -7,13 +7,13 @@
 //! calls [`Engine::advance_timers`] then; tests use a `VirtualClock` and
 //! call it directly.
 
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
 use ljos_js::{JsRef, JsValue, Scope};
 use ljos_reactive::NodeState;
 use ljos_runtime::{Clock, FrameScheduler, SystemClock, Time, TimerId, TimerKind};
+use rustc_hash::FxHashMap;
 
 use crate::atom::Atom;
 use crate::builtins::QtObject;
@@ -324,7 +324,7 @@ impl Engine {
         if told.is_empty() {
             return;
         }
-        let mut farewells: HashMap<ContextId, Farewell> = rooted
+        let mut farewells: FxHashMap<ContextId, Farewell> = rooted
             .iter()
             .filter_map(|c| {
                 let (parent, serial) = self.context_lineage(*c)?;
@@ -530,14 +530,14 @@ enum Pending {
 pub(crate) struct TimerState {
     sched: FrameScheduler,
     clock: Rc<dyn Clock>,
-    pending: HashMap<TimerId, Pending>,
-    by_timer: HashMap<ObjectId, TimerId>,
-    by_start: HashMap<ObjectId, TimerId>,
+    pending: FxHashMap<TimerId, Pending>,
+    by_timer: FxHashMap<ObjectId, TimerId>,
+    by_start: FxHashMap<ObjectId, TimerId>,
     /// When each entry of `by_timer` is due.
-    due_at: HashMap<ObjectId, Time>,
+    due_at: FxHashMap<ObjectId, Time>,
     /// Running timers of frozen objects (§8.3) and when they were due:
     /// armed again on thaw.
-    parked: HashMap<ObjectId, Time>,
+    parked: FxHashMap<ObjectId, Time>,
     /// `Qt.callLater` queue: one entry per function, with its last args.
     calls: Vec<(JsRef, Vec<JsValue>)>,
     quit: bool,
@@ -552,11 +552,11 @@ impl Default for TimerState {
         Self {
             sched: FrameScheduler::new(),
             clock: Rc::new(SystemClock::new()),
-            pending: HashMap::new(),
-            by_timer: HashMap::new(),
-            by_start: HashMap::new(),
-            due_at: HashMap::new(),
-            parked: HashMap::new(),
+            pending: FxHashMap::default(),
+            by_timer: FxHashMap::default(),
+            by_start: FxHashMap::default(),
+            due_at: FxHashMap::default(),
+            parked: FxHashMap::default(),
             calls: Vec::new(),
             quit: false,
             wake: None,
@@ -745,7 +745,7 @@ impl Engine {
     /// `Qt.callLater` queue. A repeating timer due several times fires
     /// several times, as if the host had woken for each.
     pub fn advance_timers(&self, now: Time) {
-        let mut fired: HashMap<ObjectId, u32> = HashMap::new();
+        let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
                 let mut st = self.inner.timers.borrow_mut();

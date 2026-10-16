@@ -1034,7 +1034,11 @@ impl Engine {
         self.make_if_due(obj, prop);
         let got = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            // Every binding's read comes here: the error is built only
+            // when the object is gone.
+            let Some(h) = store.objects.get(obj) else {
+                return Err(EngineError::DeadObject(obj));
+            };
             let p = h
                 .meta
                 .property(prop)

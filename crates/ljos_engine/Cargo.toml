@@ -18,6 +18,9 @@ ljos_runtime = { path = "../ljos_runtime" }
 # `.ljl`, not Qt Linguist XML.
 ljos_i18n = { path = "../ljos_i18n", default-features = false }
 slotmap.workspace = true
+# Timers, hooks and type tables are looked up for every object made and
+# dropped: no SipHash.
+rustc-hash.workspace = true
 smallvec.workspace = true
 bitflags.workspace = true
 serde.workspace = true

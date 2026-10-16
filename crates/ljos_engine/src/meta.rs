@@ -18,11 +18,12 @@
 //! looked up.
 
 use std::any::TypeId;
-use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
+
+use rustc_hash::FxHashMap;
 
 use crate::atom::Atom;
 use crate::cx::Cx;
@@ -283,9 +284,9 @@ impl fmt::Debug for MethodInfo {
 
 #[derive(Default)]
 struct Lookup {
-    props: HashMap<Atom, PropIndex>,
-    signals: HashMap<Atom, SignalIndex>,
-    methods: HashMap<Atom, MethodIndex>,
+    props: FxHashMap<Atom, PropIndex>,
+    signals: FxHashMap<Atom, SignalIndex>,
+    methods: FxHashMap<Atom, MethodIndex>,
     /// The properties with a [`Reset::Absent`] or a
     /// [`Reset::FollowFromCreation`], and what gives each its first value.
     /// Empty for nearly every type.
