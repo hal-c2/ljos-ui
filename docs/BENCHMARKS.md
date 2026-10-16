@@ -340,3 +340,49 @@ frame's time goes").
 - **pi-zero frames.** At a fifth of a core Ljós shows fewer frames than Qt in listview (56 against
   62), animations (60 against 62) and samegame's game. It shows more in maroon (40 against 28).
 - **A click that changes nothing** costs Ljós 0.4 % in rectangles, Qt 0.1 %.
+
+### rssnews: pictures after the first frame (2026-10-16)
+
+rssnews was measured against a local mirror of its feed and pictures, so the network was not a
+variable. The mirror was a Python HTTP server that logged when each request came in. The manifest
+pointed the app's feed at the mirror, and `WAYLAND_DEBUG` timed when the window was made and its
+first buffer committed. Before this change, the times in ms from the start of the process were:
+
+| | Ljós | Qt |
+|---|---:|---:|
+| Feed fetched | 71 | 64 |
+| Window (toplevel) made | 71 | 239 |
+| First picture asked for | 247 | 325 |
+| First buffer committed | 278 | 312 |
+| Last picture received | 363 | 343 |
+
+Neither runtime's first frame waited on the network. Ljós made the delegates in its first pass, and
+their fetches and decodes started then. That cost about 80 ms of CPU before the first frame and
+about 28 MiB of peak memory. Qt asks for pictures after it has drawn.
+
+Three changes followed:
+
+- **Pictures start after the frame is drawn.** The desktop shell holds the image store's
+  background loads until the pass that asked for them has been drawn. Pictures then fill in after
+  the window is up, as in Qt.
+- **Fetched bodies are bounded.** The decode gate counts a fetched body from the moment it arrives
+  until it is decoded. A new fetch starts only while the gate has room.
+- **PNGs shrink as they decode.** A PNG kept smaller than its size is made smaller row by row as it
+  is decoded, and is never whole in memory.
+
+Medians of 3 runs, before → after. The load average was 6–39 during the runs.
+
+| | desktop | pi-zero |
+|---|---|---|
+| rssnews mirrored, first frame (ms) | 225 → 207 (Qt 278–288) | 1207 → 1075 (Qt 1169–1309, OOM) |
+| rssnews mirrored, CPU to first frame (ms) | 256 → 184 (Qt 228) | 242 → 215 (Qt 225–253) |
+| rssnews mirrored, peak memory (MiB) | 107 → 82 (Qt 113) | 110 → 70 (Qt 100–108, OOM) |
+| rssnews mirrored, settled memory (MiB) | 120 → 118 (Qt 262) | 120 → 113 |
+| rssnews live, first frame (ms) | 211 → 234 (Qt 286–299) | 921 → 1093 (Qt 1257–1572, OOM) |
+| rssnews live, peak memory (MiB) | 78.5 → 78.2 (Qt 115) | 68.8 → 68.9 (Qt 111, OOM) |
+
+The live feed changes from run to run, and the live first frames moved with the load (Qt's moved
+with it). The maroon and samegame controls changed within noise.
+
+**What is left.** In 6 s Ljós asked for 21–24 of the feed's pictures and Qt for 7. Ljós makes
+delegates for more of the list than Qt does, and loads a picture for each of them.
