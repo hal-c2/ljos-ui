@@ -317,6 +317,7 @@ impl ItemPaint for FramePaint {
             tile: None,
             mirror: [self.mirrored, false],
             smooth: true,
+            opacity: 1.0,
         });
     }
 }

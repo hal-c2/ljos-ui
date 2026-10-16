@@ -559,9 +559,10 @@ impl VelloCpuReference {
                 tile,
                 mirror,
                 smooth,
+                opacity: own,
             } => {
                 let blit = image_blit(*src, *dst, *tile, *mirror);
-                self.draw_blit(ctx, image, &blit, *smooth, opacity, warned);
+                self.draw_blit(ctx, image, &blit, *smooth, opacity * own, warned);
             }
             DrawOp::NinePatch {
                 image,

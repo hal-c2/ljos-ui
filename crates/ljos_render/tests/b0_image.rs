@@ -75,6 +75,7 @@ fn whole(image: &ImageHandle, dst: Rect, smooth: bool) -> DrawOp {
         tile: None,
         mirror: [false; 2],
         smooth,
+        opacity: 1.0,
     }
 }
 
@@ -111,6 +112,40 @@ fn an_image_is_one_textured_quad_where_its_node_is() {
 }
 
 #[test]
+fn many_pictures_of_one_image_in_a_node_are_one_mesh_each_as_faded_as_it_is() {
+    let ctx = Context::default();
+    let image = picture(8, 8);
+    let mut s = Scene::new(200.0, 100.0);
+    let n = s.node(0.0, 0.0, 200.0, 100.0);
+    let mut b = DisplayListBuilder::new();
+    for i in 0..50 {
+        let x = f64::from(i) * 4.0;
+        b.push(DrawOp::Image {
+            image: image.clone(),
+            src: image.rect(),
+            dst: Rect::new(x, 0.0, x + 4.0, 4.0),
+            tile: None,
+            mirror: [false; 2],
+            smooth: true,
+            opacity: if i == 0 { 0.5 } else { 1.0 },
+        });
+    }
+    s.tree.set_content(n, Some(b.finish_arc()));
+    let mut be = EpaintBackend::new();
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes.len(), 1, "one mesh for fifty quads");
+    let m = &meshes[0];
+    assert_eq!((m.vertices.len(), m.indices.len()), (200, 300));
+    let first = m.vertices[0].color;
+    assert_eq!(first, egui::Color32::WHITE.gamma_multiply(0.5));
+    assert!(
+        m.vertices[4..]
+            .iter()
+            .all(|v| v.color == egui::Color32::WHITE)
+    );
+}
+
+#[test]
 fn a_part_of_the_picture_and_a_flip_are_texture_coordinates() {
     let ctx = Context::default();
     let image = picture(40, 20);
@@ -125,6 +160,7 @@ fn a_part_of_the_picture_and_a_flip_are_texture_coordinates() {
             tile: None,
             mirror: [true, false],
             smooth: false,
+            opacity: 1.0,
         },
     );
     let mut be = EpaintBackend::new();
@@ -180,6 +216,7 @@ fn sampling_modes_have_their_own_textures() {
             tile: Some(Rect::new(0.0, 0.0, 8.0, 8.0)),
             mirror: [false; 2],
             smooth: true,
+            opacity: 1.0,
         },
     );
     let mut be = EpaintBackend::new();

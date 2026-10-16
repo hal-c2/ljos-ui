@@ -102,6 +102,7 @@ fn placed(
         tile: p.tile,
         mirror,
         smooth: false,
+        opacity: 1.0,
     }
 }
 
@@ -320,6 +321,7 @@ fn a_source_rectangle_draws_that_part_of_the_picture() {
                 tile: None,
                 mirror: [false; 2],
                 smooth,
+                opacity: 1.0,
             },
         );
         s.render(1.0)
@@ -354,6 +356,7 @@ fn nearest_keeps_hard_edges_and_smooth_blends_them() {
                 tile: None,
                 mirror: [false; 2],
                 smooth,
+                opacity: 1.0,
             },
         );
         s.render(1.0)
@@ -397,6 +400,7 @@ fn opacity_and_transparent_pixels_blend_with_what_is_below() {
                 tile: None,
                 mirror: [false; 2],
                 smooth: false,
+                opacity: 1.0,
             },
         );
     }
@@ -410,6 +414,36 @@ fn opacity_and_transparent_pixels_blend_with_what_is_below() {
     assert!((126..=129).contains(&half[1]), "{half:?}");
     assert_eq!(half[1], half[2]);
     assert_eq!(img.pixel(6, 0), WHITE);
+}
+
+#[test]
+fn a_picture_fades_by_its_own_opacity_within_its_nodes() {
+    let image = ImageHandle::filled(4, 4, [255, 0, 0, 255]).unwrap();
+    let mut s = Scene::new(8.0, 4.0);
+    let a = s.node(0.0, 0.0, 4.0, 4.0);
+    let b = s.node(4.0, 0.0, 4.0, 4.0);
+    for n in [a, b] {
+        s.op(
+            n,
+            DrawOp::Image {
+                image: image.clone(),
+                src: image.rect(),
+                dst: Rect::new(0.0, 0.0, 4.0, 4.0),
+                tile: None,
+                mirror: [false; 2],
+                smooth: false,
+                opacity: 0.5,
+            },
+        );
+    }
+    s.tree.set_opacity(b, 0.5);
+    let img = s.render(1.0);
+    // Half-opaque red over white, then a quarter.
+    let half = img.pixel(0, 0);
+    assert_eq!(half[0], 255);
+    assert!((126..=129).contains(&half[1]), "{half:?}");
+    let quarter = img.pixel(4, 0);
+    assert!((189..=193).contains(&quarter[1]), "{quarter:?}");
 }
 
 #[test]

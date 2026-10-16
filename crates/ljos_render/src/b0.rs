@@ -1098,12 +1098,13 @@ impl EpaintBackend {
                     tile,
                     mirror,
                     smooth,
+                    opacity,
                 } => {
                     if !cur.is_empty() {
                         segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
                     }
                     let blit = image_blit(*src, *dst, *tile, *mirror);
-                    if !image_segs(&mut segs, image, &[blit], *smooth) {
+                    if !image_segs(&mut segs, image, &[blit], *smooth, *opacity) {
                         warn("an image is tiled too finely; some tiles are not drawn");
                     }
                 }
@@ -1120,7 +1121,7 @@ impl EpaintBackend {
                     }
                     let size = (image.width(), image.height());
                     let blits = nine_patch_blits(size, *insets, *dst, *tile, *mirror);
-                    if !image_segs(&mut segs, image, &blits, *smooth) {
+                    if !image_segs(&mut segs, image, &blits, *smooth, 1.0) {
                         warn("a border image is tiled too finely; some tiles are not drawn");
                     }
                 }
@@ -1260,13 +1261,16 @@ fn map_mesh(m: &Mesh, to_screen: Affine, opacity: f32) -> Mesh {
     out
 }
 
-/// Append the quads of `blits`, at most one segment per sampling mode.
+/// Append the quads of `blits`, faded by `opacity`, at most one segment
+/// per sampling mode. Quads of the texture the last segment draws join
+/// it, so many pictures of one image (a particle system's) are one mesh.
 /// Returns false when a blit hit the tile limit.
 fn image_segs(
     segs: &mut Vec<LocalSeg>,
     image: &ImageHandle,
     blits: &[ImageBlit],
     smooth: bool,
+    opacity: f32,
 ) -> bool {
     let size = (image.width(), image.height());
     let (mut clamp, mut repeat) = (Mesh::default(), Mesh::default());
@@ -1274,18 +1278,32 @@ fn image_segs(
     for blit in blits {
         complete &= blit_quads(blit, size, smooth, &mut clamp, &mut repeat);
     }
-    for (mesh, repeat) in [(clamp, false), (repeat, true)] {
-        if !mesh.is_empty() {
-            segs.push(LocalSeg::Image(ImageSeg {
-                key: TextureKey {
-                    image: image.id(),
-                    smooth,
-                    repeat,
-                },
-                image: image.downgrade(),
-                mesh: Arc::new(mesh),
-            }));
+    for (mut mesh, repeat) in [(clamp, false), (repeat, true)] {
+        if mesh.is_empty() {
+            continue;
         }
+        if opacity < 1.0 {
+            for v in &mut mesh.vertices {
+                v.color = v.color.gamma_multiply(opacity);
+            }
+        }
+        let key = TextureKey {
+            image: image.id(),
+            smooth,
+            repeat,
+        };
+        if let Some(LocalSeg::Image(last)) = segs.last_mut()
+            && last.key == key
+            && let Some(joined) = Arc::get_mut(&mut last.mesh)
+        {
+            joined.append(mesh);
+            continue;
+        }
+        segs.push(LocalSeg::Image(ImageSeg {
+            key,
+            image: image.downgrade(),
+            mesh: Arc::new(mesh),
+        }));
     }
     complete
 }

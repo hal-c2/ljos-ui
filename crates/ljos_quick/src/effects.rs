@@ -611,6 +611,7 @@ impl EffectPaint {
             tile: None,
             mirror: [false; 2],
             smooth: true,
+            opacity: 1.0,
         });
     }
 }

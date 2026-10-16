@@ -568,6 +568,10 @@ pub enum DrawOp {
         mirror: [bool; 2],
         /// Smooth (bilinear) sampling; otherwise nearest neighbour.
         smooth: bool,
+        /// How opaque the picture is drawn, within the node's own opacity:
+        /// 1 shows it as it is. One node can draw many pictures, each as
+        /// faded as it should be (a particle system's).
+        opacity: f32,
     },
     /// An image cut into nine parts: the corners keep their size, the edges
     /// and the middle stretch or repeat to fill `dst`.
@@ -864,6 +868,7 @@ impl DisplayListBuilder {
             tile: None,
             mirror: [false, false],
             smooth: true,
+            opacity: 1.0,
         })
     }
 

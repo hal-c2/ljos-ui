@@ -1141,6 +1141,7 @@ impl ImagePaint {
                         tile: p.tile,
                         mirror: *mirror,
                         smooth: self.smooth,
+                        opacity: 1.0,
                     });
                 }
             }
