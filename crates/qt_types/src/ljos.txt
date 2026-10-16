@@ -3301,10 +3301,21 @@ module QtQuick
 		signal targetIndexesChanged
 	type QtQuick.WindowAttached WindowAttached
 		is uncreatable
+		enum Visibility Hidden=0 AutomaticVisibility=1 Windowed=2 Minimized=3 Maximized=4 FullScreen=5
 		prop activeFocusItem QtQml.QtObject named pointer readonly
 		prop active QtQml.bool named readonly
+		prop window QtQml.QtObject named pointer readonly
+		prop contentItem QtQml.QtObject named pointer readonly
+		prop width QtQml.int named readonly
+		prop height QtQml.int named readonly
+		prop visibility Visibility readonly
 		signal activeFocusItemChanged
 		signal activeChanged
+		signal windowChanged
+		signal contentItemChanged
+		signal widthChanged
+		signal heightChanged
+		signal visibilityChanged
 	type QtQuick.Palette Palette
 		is uncreatable
 		prop accent QtQuick.color named reset

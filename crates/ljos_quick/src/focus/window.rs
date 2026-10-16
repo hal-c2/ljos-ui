@@ -1,8 +1,10 @@
 //! The attached `Window`: what an item can ask about the window it is in.
 //!
-//! Only what focus needs: `Window.activeFocusItem` and `Window.active`
-//! (doc.qt.io/qt-6/qml-qtquick-window.html, attached properties). A scene
-//! is the window; the type cannot be created.
+//! What focus needs, `Window.activeFocusItem` and `Window.active`, is
+//! bound here (doc.qt.io/qt-6/qml-qtquick-window.html, attached
+//! properties). A scene is the window; the type cannot be created. The
+//! rest (`window`, `contentItem`, `width`, `height`, `visibility`) is bound
+//! by whoever provides the `Window` type, which knows what a window is.
 
 use ljos_engine::{Engine, LogLevel, ObjectId, QmlObject, Value};
 
@@ -21,7 +23,7 @@ pub struct Window {}
 
 /// What `Window.` attaches to an item.
 #[derive(Debug, Default, QmlObject)]
-#[qml(name = "WindowAttached")]
+#[qml(name = "WindowAttached", enums = visibility_enum)]
 pub struct WindowAttached {
     /// The item with active focus in the item's window; null when there
     /// is none, the window is inactive or the item is in no window.
@@ -30,6 +32,35 @@ pub struct WindowAttached {
     /// Whether the item's window has the keyboard.
     #[qml(notify, readonly)]
     pub active: bool,
+    /// The window the item is in; null when it is in none.
+    #[qml(notify, readonly)]
+    pub window: Option<ObjectId>,
+    /// Where the window's items are.
+    #[qml(notify, readonly)]
+    pub content_item: Option<ObjectId>,
+    #[qml(notify, readonly)]
+    pub width: i32,
+    #[qml(notify, readonly)]
+    pub height: i32,
+    /// How the window is shown, a `Window.Visibility`.
+    #[qml(notify, readonly, enumeration = "Visibility")]
+    pub visibility: i32,
+}
+
+/// `Window.Visibility`, which `visibility` holds; the `Window` type that
+/// is created declares it too.
+fn visibility_enum() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![(
+        "Visibility",
+        vec![
+            ("Hidden", 0),
+            ("AutomaticVisibility", 1),
+            ("Windowed", 2),
+            ("Minimized", 3),
+            ("Maximized", 4),
+            ("FullScreen", 5),
+        ],
+    )]
 }
 
 /// Binds the attached properties to the window the item is in. The

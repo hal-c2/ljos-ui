@@ -31,7 +31,7 @@ use ljos_engine::{
 use ljos_quick::focus::{
     FocusReason, WindowAttached, active_focus_item, force_active_focus, window_roots,
 };
-use ljos_quick::{Item, Rectangle, set_parent_item, window_of};
+use ljos_quick::{Item, Rectangle, is_item, set_parent_item, window_of};
 
 pub use app::{Application, ApplicationState, ScreenInfo, ScreenSpec};
 pub use screen::{Screen, ScreenAttached};
@@ -850,7 +850,54 @@ fn activity(engine: &Engine) {
     }
 }
 
+/// The window `item` is in: the nearest `Window` above it, or else the top
+/// of the tree a scene shows it in, which is the window then (tracked).
+fn window_for(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+    window_above(engine, item).or_else(|| window_of(engine, item))
+}
+
+/// Binds what `Window.` tells an item of its window beyond focus, which
+/// `ljos_quick` binds. A window that is no `Window` (the top of what a
+/// scene shows) is its own content item and reads as shown while it is.
+fn bind_attached(engine: &Engine, item: ObjectId, att: ObjectId) -> Result<(), EngineError> {
+    let e = engine;
+    e.bind_initial(att, WindowAttached::WINDOW.index, move |e| {
+        window_for(e, item).map_or(Value::Null, Value::Object)
+    })?;
+    e.bind_initial(att, WindowAttached::CONTENT_ITEM.index, move |e| {
+        match window_for(e, item) {
+            Some(w) if is_a::<Window>(e, w) => {
+                object(e, w, Window::CONTENT_ITEM.index).map_or(Value::Null, Value::Object)
+            }
+            Some(w) => Value::Object(w),
+            None => Value::Null,
+        }
+    })?;
+    for (prop, size) in [
+        (WindowAttached::WIDTH.index, Item::WIDTH.index),
+        (WindowAttached::HEIGHT.index, Item::HEIGHT.index),
+    ] {
+        e.bind_initial(att, prop, move |e| {
+            Value::Int(window_for(e, item).map_or(0, |w| num(e, w, size) as i32))
+        })?;
+    }
+    e.bind_initial(att, WindowAttached::VISIBILITY.index, move |e| {
+        Value::Int(match window_for(e, item) {
+            Some(w) if is_a::<Window>(e, w) => num(e, w, Window::VISIBILITY.index) as i32,
+            Some(_) => WINDOWED,
+            None => HIDDEN,
+        })
+    })?;
+    Ok(())
+}
+
 pub(crate) fn register(engine: &Engine) {
+    engine.on_attached_created(|e, item, att| {
+        if is_a::<WindowAttached>(e, att) && is_item(e, item) {
+            check(e, "Window", bind_attached(e, item, att));
+        }
+        true
+    });
     engine.register_type(
         "QtQuick",
         ljos_engine::Version::new(2, 15),
