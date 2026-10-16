@@ -12,17 +12,11 @@ Feature: A removed Repeater delegate goes without running against a missing pare
       """qml
       import QtQuick
       Item {
-        id: root
-        objectName: "root"
-        width: 200; height: 100
-        property bool flag: false
-        property string log: ""
-        property int kids: children.length
-        property var gone
-        property string seen: ""
+        id: root; objectName: "root"; width: 200; height: 100
+        property bool flag: false; property string log: ""
+        property int kids: children.length; property var gone; property string seen: ""
         function removeFirst() {
-          lm.remove(0)
-          width = 300
+          lm.remove(0); width = 300
           seen = gone.parent + " " + gone.w + " " + gone.row
         }
         ListModel {
@@ -32,16 +26,10 @@ Feature: A removed Repeater delegate goes without running against a missing pare
         }
         Repeater {
           model: lm
-          onItemRemoved: (i, item) => {
-            root.log += "-" + (item.parent === root)
-            root.gone = item
-          }
+          onItemRemoved: (i, item) => { root.log += "-" + (item.parent === root); root.gone = item }
           Item {
-            objectName: "d-" + model.name
-            width: parent.width
-            height: 10
-            property int row: index
-            property real w: parent ? parent.width : -5
+            objectName: "d-" + model.name; width: parent.width; height: 10
+            property int row: index; property real w: parent ? parent.width : -5
             anchors.top: root.flag ? undefined : parent.top
             Component.onDestruction: root.log += "~" + (parent === root)
           }
