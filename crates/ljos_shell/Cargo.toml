@@ -1,6 +1,6 @@
 [package]
 name = "ljos_shell"
-description = "Desktop shell for Ljós: its own loop on ljos_host with egui-winit and egui-wgpu, one Engine, a platform window for every QML Window, and the UI inbox"
+description = "Desktop shell for Ljós: its own loop on ljos_host with egui-winit, egui's GL painter on EGL (egui-wgpu where there is none), one Engine, a platform window for every QML Window, and the UI inbox"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,8 +23,9 @@ ljos_media = { path = "../ljos_media", optional = true }
 ljos_platform = { path = "../ljos_platform", features = ["native", "http"] }
 egui.workspace = true
 # The loop is the shell's own (ARCHITECTURE.md §7.3): winit through
-# ljos_host, egui's input translation and its wgpu painter. Not in the
-# workspace pins; the versions are egui's.
+# ljos_host, egui's input translation and its painters. Not in the
+# workspace pins; the versions are egui's. wgpu draws where there is no
+# EGL, or where GL cannot be had (LJOS_PAINTER=wgpu asks for it).
 egui-winit = { version = "0.36.2", features = ["accesskit"] }
 egui-wgpu = { version = "0.36.2", features = ["winit", "wayland", "x11"] }
 # Surface creation is asynchronous in wgpu and immediate on the desktop.
@@ -41,6 +42,14 @@ ljos_dev = { path = "../ljos_dev", optional = true }
 # glibc's allocator is told to map large buffers from the system (`run`).
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc.workspace = true
+
+# GL on EGL (src/gl.rs; build.rs says where): wgpu's GL present copies
+# every frame once more, which on a software rasteriser is most of what a
+# frame costs. The versions eframe's glow painter brings.
+[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+egui_glow = "0.36.2"
+glow = "0.17.0"
+glutin = { version = "0.32.3", default-features = false, features = ["egl", "wayland", "x11"] }
 
 [features]
 default = ["media"]

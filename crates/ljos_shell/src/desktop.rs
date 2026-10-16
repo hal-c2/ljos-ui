@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 
 use egui::ViewportId;
 use egui::accesskit::{TreeId, Uuid};
-use egui_wgpu::winit::Painter;
 use egui_winit::accesskit_winit;
 use egui_winit::winit::event::WindowEvent as RawEvent;
 use egui_winit::winit::event_loop::EventLoopProxy;
@@ -36,7 +35,7 @@ use ljos_runtime::{MemoryPressure, SystemClock};
 
 use crate::present::LastPicture;
 use crate::repaint::RepaintSchedule;
-use crate::surface::{self, Gpu, Starting, Surface};
+use crate::surface::{self, Gpu, Painter, Starting, Surface};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, windows};
 
 /// The log category of what the shell has to say.
@@ -427,6 +426,8 @@ struct Desktop<M> {
     /// The graphics instances made while the application starts, until
     /// the first window takes one.
     starting: Option<Starting>,
+    /// What draws the windows: GL, unless `LJOS_PAINTER` says wgpu.
+    painter_choice: surface::Choice,
     /// Why the loop ended, when it was not asked to.
     failure: Rc<RefCell<Option<ShellError>>>,
     screens: Vec<Screen>,
@@ -474,6 +475,7 @@ impl<M: Send + 'static> Desktop<M> {
             proxy,
             dirty,
             gpu: None,
+            painter_choice: starting.choice(),
             starting: Some(starting),
             failure,
             screens: Vec::new(),
@@ -791,21 +793,33 @@ impl<M: Send + 'static> Desktop<M> {
                 .take()
                 .and_then(|starting| starting.device_for(&window));
         }
-        let gpu = self.gpu.clone();
         let slot = &mut self.slots[i];
-        let painter = slot
-            .painter
-            .get_or_insert_with(|| surface::painter(&slot.ctx, gpu.as_ref(), display));
-        let surfaced =
-            pollster::block_on(painter.set_window(ViewportId::ROOT, Some(Arc::clone(&window))));
-        if let Err(e) = surfaced {
-            drop(window);
-            host.destroy_window(id);
-            return self.fail(host, i, ShellError::Gpu(e.to_string()), engine);
-        }
-        if self.gpu.is_none() {
-            self.gpu = Gpu::of(painter);
-        }
+        let attached = surface::attach(
+            &mut slot.painter,
+            &slot.ctx,
+            &mut self.gpu,
+            display,
+            &window,
+            self.painter_choice,
+        );
+        let painter = match (attached, slot.painter.as_ref()) {
+            (Ok(why), Some(painter)) => {
+                if let Some(why) = why {
+                    engine.log(
+                        LogLevel::Warning,
+                        CATEGORY,
+                        format!("drawing with wgpu: GL could not be had ({why})"),
+                    );
+                }
+                painter
+            }
+            (Err(e), _) => {
+                drop(window);
+                host.destroy_window(id);
+                return self.fail(host, i, ShellError::Gpu(e), engine);
+            }
+            (Ok(_), None) => return,
+        };
         let mut state = egui_winit::State::new(
             slot.ctx.clone(),
             ViewportId::ROOT,
@@ -823,10 +837,16 @@ impl<M: Send + 'static> Desktop<M> {
         note_size(slot, engine, sys, false);
         self.repaints.request(slot.key, Instant::now());
         self.screens_stale = true;
-        match self.slots[i].view.as_mut() {
-            Some(view) => view.set_drawn(true),
-            None => self.app.view_mut().set_drawn(true),
-        }
+        let fills = self.slots[i]
+            .painter
+            .as_ref()
+            .is_some_and(Painter::fills_rects);
+        let view = match self.slots[i].view.as_mut() {
+            Some(view) => view,
+            None => self.app.view_mut(),
+        };
+        view.set_drawn(true);
+        view.set_solid_rects(fills);
     }
 
     /// The platform refused a window. Without the root's there is no
@@ -854,7 +874,7 @@ impl<M: Send + 'static> Desktop<M> {
             return;
         };
         if let Some(painter) = slot.painter.as_mut() {
-            painter.gc_viewports(&egui::ViewportIdSet::default());
+            painter.forget_window();
         }
         let id = surface.id;
         drop(surface);
@@ -973,7 +993,7 @@ impl<M: Send + 'static> Desktop<M> {
 
         let Some(surface) = slot.surface.as_mut() else {
             surface::forget_freed(&mut slot.pending);
-            surface::free_now(slot.painter.as_ref(), &mut slot.pending);
+            surface::free_now(slot.painter.as_mut(), &mut slot.pending);
             return;
         };
         surface.info.events.clear();
@@ -1045,14 +1065,14 @@ impl<M: Send + 'static> Desktop<M> {
             return;
         }
         slot.shown.keep(&shapes, pixels_per_point, clear);
+        let mut shapes = shapes;
+        painter.prepare(&mut shapes, pixels_per_point);
         let primitives = slot.ctx.tessellate(shapes, pixels_per_point);
-        painter.paint_and_update_textures(
-            ViewportId::ROOT,
+        painter.paint(
             pixels_per_point,
-            clear.to_normalized_gamma_f32(),
+            clear,
             &primitives,
             &mut slot.pending,
-            Vec::new(),
             &surface.window,
         );
         if !surface.shown {
@@ -1476,7 +1496,8 @@ pub(crate) fn run<M: Send + 'static>(
 ) -> Result<(), ShellError> {
     let host = WinitHost::<ShellEvent>::new()?;
     // The drivers start while the application is built.
-    let starting = Starting::start(host.display_handle());
+    let painter_choice = surface::Choice::from_env(std::env::var("LJOS_PAINTER").ok().as_deref());
+    let starting = Starting::start(host.display_handle(), painter_choice);
     // Before `setup`: bindings may measure text while the root is being
     // built.
     if config.system_fonts {

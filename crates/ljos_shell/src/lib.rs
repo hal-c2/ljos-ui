@@ -28,6 +28,8 @@ pub use ljos_dev::{TopRow, TopView};
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
 mod desktop;
+#[cfg(gl_painter)]
+mod gl;
 mod platform;
 mod present;
 mod repaint;

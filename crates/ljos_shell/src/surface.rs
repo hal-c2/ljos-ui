@@ -11,7 +11,6 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
 use egui::ViewportId;
-use egui_wgpu::winit::Painter;
 use egui_wgpu::{
     RendererOptions, SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew,
     WgpuSetupExisting, wgpu,
@@ -20,14 +19,42 @@ use egui_winit::winit::event_loop::OwnedDisplayHandle;
 use egui_winit::winit::window::Window;
 use ljos_host::{WindowId, WindowState};
 
+#[cfg(gl_painter)]
+use crate::gl::{Gl, GlPainter};
+
+/// What the windows are drawn with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Choice {
+    /// GL through EGL, and wgpu where that cannot be had.
+    Gl,
+    Wgpu,
+}
+
+impl Choice {
+    /// From `LJOS_PAINTER` (`gl` or `wgpu`); GL where the platform has
+    /// EGL, unless that says otherwise.
+    pub(crate) fn from_env(value: Option<&str>) -> Choice {
+        match value.map(str::trim) {
+            Some(v) if v.eq_ignore_ascii_case("wgpu") => Choice::Wgpu,
+            Some(v) if v.eq_ignore_ascii_case("gl") => Choice::Gl,
+            _ if cfg!(gl_painter) => Choice::Gl,
+            _ => Choice::Wgpu,
+        }
+    }
+}
+
 /// The device the first window was given. Every later window draws with
 /// the same one: a second device would be a second set of everything.
 #[derive(Clone)]
-pub(crate) struct Gpu {
-    instance: wgpu::Instance,
-    adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+pub(crate) enum Gpu {
+    Wgpu {
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+    },
+    #[cfg(gl_painter)]
+    Gl(std::rc::Rc<Gl>),
 }
 
 impl std::fmt::Debug for Gpu {
@@ -39,30 +66,144 @@ impl std::fmt::Debug for Gpu {
 impl Gpu {
     /// The device of a painter that has drawn into a window; `None`
     /// before its first window.
-    pub(crate) fn of(painter: &Painter) -> Option<Gpu> {
-        let state = painter.render_state()?;
-        Some(Gpu {
-            instance: state.instance,
-            adapter: state.adapter,
-            device: state.device,
-            queue: state.queue,
-        })
+    fn of(painter: &Painter) -> Option<Gpu> {
+        match painter {
+            Painter::Wgpu(painter) => {
+                let state = painter.render_state()?;
+                Some(Gpu::Wgpu {
+                    instance: state.instance,
+                    adapter: state.adapter,
+                    device: state.device,
+                    queue: state.queue,
+                })
+            }
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => Some(Gpu::Gl(painter.gl())),
+        }
     }
 }
 
-/// The graphics instance being made while the application starts, on a
-/// thread of its own. Making it loads and starts the drivers, which takes
-/// longer than building most applications (hundreds of milliseconds for
-/// EGL on Mesa, more for Vulkan's loader and its layers); the first window
-/// only waits for what is left of it. One instance for every backend, as
-/// the painter makes it: drivers started side by side, an instance for
-/// each on a thread of its own, crashed and hung the process.
+/// What draws the pictures of one window's context.
+// One per context, made once: its size does not matter.
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Painter {
+    Wgpu(egui_wgpu::winit::Painter),
+    #[cfg(gl_painter)]
+    Gl(GlPainter),
+}
+
+impl Painter {
+    async fn set_window(&mut self, window: &Arc<Window>) -> Result<(), String> {
+        match self {
+            Painter::Wgpu(painter) => painter
+                .set_window(ViewportId::ROOT, Some(Arc::clone(window)))
+                .await
+                .map_err(|e| e.to_string()),
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.set_window(window),
+        }
+    }
+
+    pub(crate) fn max_texture_side(&self) -> Option<usize> {
+        match self {
+            Painter::Wgpu(painter) => painter.max_texture_side(),
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => Some(painter.max_texture_side()),
+        }
+    }
+
+    /// The window is going: what draws into it goes first.
+    pub(crate) fn forget_window(&mut self) {
+        match self {
+            Painter::Wgpu(painter) => painter.gc_viewports(&egui::ViewportIdSet::default()),
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.forget_window(),
+        }
+    }
+
+    fn resized(&mut self, w: NonZeroU32, h: NonZeroU32) {
+        match self {
+            Painter::Wgpu(painter) => painter.on_window_resized(ViewportId::ROOT, w, h),
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.resized(w, h),
+        }
+    }
+
+    /// Whether the painter fills plain rectangles cheaper than meshes
+    /// (`QmlView::set_solid_rects`).
+    pub(crate) fn fills_rects(&self) -> bool {
+        match self {
+            Painter::Wgpu(_) => false,
+            #[cfg(gl_painter)]
+            Painter::Gl(_) => true,
+        }
+    }
+
+    /// The shapes as this painter draws them best.
+    pub(crate) fn prepare(&self, shapes: &mut [egui::epaint::ClippedShape], pixels_per_point: f32) {
+        match self {
+            Painter::Wgpu(_) => {}
+            #[cfg(gl_painter)]
+            Painter::Gl(_) => crate::gl::fill_rects(shapes, pixels_per_point),
+        }
+        #[cfg(not(gl_painter))]
+        let _ = (shapes, pixels_per_point);
+    }
+
+    /// Draws `primitives` into `window`, with the pictures `pending`
+    /// hands over, and shows them.
+    pub(crate) fn paint(
+        &mut self,
+        pixels_per_point: f32,
+        clear: egui::Color32,
+        primitives: &[egui::ClippedPrimitive],
+        pending: &mut egui::TexturesDelta,
+        window: &Arc<Window>,
+    ) {
+        let clear = clear.to_normalized_gamma_f32();
+        match self {
+            Painter::Wgpu(painter) => {
+                painter.paint_and_update_textures(
+                    ViewportId::ROOT,
+                    pixels_per_point,
+                    clear,
+                    primitives,
+                    pending,
+                    Vec::new(),
+                    window,
+                );
+            }
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => {
+                painter.paint(pixels_per_point, clear, primitives, pending, window);
+            }
+        }
+    }
+}
+
+/// The graphics drivers being started while the application is built, on
+/// a thread of its own. Starting them takes longer than building most
+/// applications (hundreds of milliseconds for EGL on Mesa, more for
+/// Vulkan's loader and its layers); the first window only waits for what
+/// is left of it. One start-up at a time, for what the windows will be
+/// drawn with: EGL's display for GL, else one wgpu instance for every
+/// backend. Drivers started side by side, each on a thread of its own,
+/// crashed and hung the process.
 pub(crate) struct Starting {
-    instance: mpsc::Receiver<wgpu::Instance>,
-    setup: WgpuSetupCreateNew,
+    choice: Choice,
+    started: Started,
     /// Waited for when the application ends before its first window: a
     /// process that ends while a driver is starting can hang in its exit.
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+enum Started {
+    Wgpu {
+        instance: mpsc::Receiver<wgpu::Instance>,
+        setup: Box<WgpuSetupCreateNew>,
+    },
+    #[cfg(gl_painter)]
+    Gl(mpsc::Receiver<Result<crate::gl::Display, String>>),
 }
 
 impl Drop for Starting {
@@ -75,60 +216,99 @@ impl Drop for Starting {
 
 impl std::fmt::Debug for Starting {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Starting")
-            .field("backends", &self.setup.instance_descriptor.backends)
-            .finish_non_exhaustive()
+        let mut f = f.debug_struct("Starting");
+        match &self.started {
+            Started::Wgpu { setup, .. } => f.field("backends", &setup.instance_descriptor.backends),
+            #[cfg(gl_painter)]
+            Started::Gl(_) => f.field("backends", &"EGL"),
+        }
+        .finish_non_exhaustive()
     }
 }
 
 impl Starting {
-    /// Starts making the instance wgpu would be asked for.
-    pub(crate) fn start(display: OwnedDisplayHandle) -> Self {
+    /// Starts the drivers `choice` draws with.
+    pub(crate) fn start(display: OwnedDisplayHandle, choice: Choice) -> Self {
+        let spawn = |run: Box<dyn FnOnce() + Send>| {
+            std::thread::Builder::new()
+                .name("ljos-gpu".into())
+                .spawn(run)
+                .ok()
+        };
+        // Without the thread the first window's painter starts them.
+        #[cfg(gl_painter)]
+        if choice == Choice::Gl {
+            let (tx, display_rx) = mpsc::sync_channel(1);
+            let thread = spawn(Box::new(move || {
+                let _ = tx.send(crate::gl::Display::start(&display));
+            }));
+            return Self {
+                choice,
+                started: Started::Gl(display_rx),
+                thread,
+            };
+        }
         let setup = create_new(display);
         let (tx, instance) = mpsc::sync_channel(1);
         let new = WgpuSetup::CreateNew(setup.clone());
-        // Without the thread the first window's painter makes the instance.
-        let thread = std::thread::Builder::new()
-            .name("ljos-gpu".into())
-            .spawn(move || {
-                let _ = tx.send(pollster::block_on(new.new_instance()));
-            })
-            .ok();
+        let thread = spawn(Box::new(move || {
+            let _ = tx.send(pollster::block_on(new.new_instance()));
+        }));
         Self {
-            instance,
-            setup,
+            choice,
+            started: Started::Wgpu {
+                instance,
+                setup: Box::new(setup),
+            },
             thread,
         }
     }
 
-    /// The device for `window`: the adapter wgpu ranks first among those
-    /// that can draw into it. `None` when the instance could not be made
-    /// or has none.
+    /// What the windows are drawn with.
+    pub(crate) fn choice(&self) -> Choice {
+        self.choice
+    }
+
+    /// The device for `window`: GL's context on the display started, or
+    /// the adapter wgpu ranks first among those that can draw into it.
+    /// `None` when there is none; the painter then starts its own and says
+    /// why.
     pub(crate) fn device_for(self, window: &Arc<Window>) -> Option<Gpu> {
-        let instance = self.instance.recv().ok()?;
-        let surface = instance.create_surface(Arc::clone(window)).ok()?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: self.setup.power_preference,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            apply_limit_buckets: false,
-        }));
-        // The painter makes the window's own surface.
-        drop(surface);
-        let adapter = adapter.ok()?;
-        let descriptor = (self.setup.device_descriptor)(&adapter);
-        let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).ok()?;
-        Some(Gpu {
-            instance,
-            adapter,
-            device,
-            queue,
-        })
+        match &self.started {
+            #[cfg(gl_painter)]
+            Started::Gl(display) => {
+                let display = display.recv().ok()?.ok()?;
+                Gl::with_display(display, window).ok().map(Gpu::Gl)
+            }
+            Started::Wgpu { instance, setup } => {
+                let instance = instance.recv().ok()?;
+                let surface = instance.create_surface(Arc::clone(window)).ok()?;
+                let adapter =
+                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: setup.power_preference,
+                        force_fallback_adapter: false,
+                        compatible_surface: Some(&surface),
+                        apply_limit_buckets: false,
+                    }));
+                // The painter makes the window's own surface.
+                drop(surface);
+                let adapter = adapter.ok()?;
+                let descriptor = (setup.device_descriptor)(&adapter);
+                let (device, queue) =
+                    pollster::block_on(adapter.request_device(&descriptor)).ok()?;
+                Some(Gpu::Wgpu {
+                    instance,
+                    adapter,
+                    device,
+                    queue,
+                })
+            }
+        }
     }
 }
 
-/// How a device is asked for: every backend wgpu was built with (or those
-/// `WGPU_BACKEND` names), on the window system's display.
+/// How a wgpu device is asked for: every backend wgpu was built with (or
+/// those `WGPU_BACKEND` names), on the window system's display.
 fn create_new(display: OwnedDisplayHandle) -> WgpuSetupCreateNew {
     let mut new = WgpuSetupCreateNew::from_display_handle(display);
     // A debug build turns wgpu's validation on, and on GL that hands
@@ -144,21 +324,82 @@ fn create_new(display: OwnedDisplayHandle) -> WgpuSetupCreateNew {
     new
 }
 
-/// A painter for the windows of `ctx`. The first one (`gpu` is `None`)
-/// picks the device when it is given its window.
-pub(crate) fn painter(
+/// Gives `painter` the window `window`, making the painter (and with the
+/// first, the device) if there is none yet. `Ok(Some(why))`: GL was asked
+/// for and could not be had, and wgpu draws.
+pub(crate) fn attach(
+    painter: &mut Option<Painter>,
+    ctx: &egui::Context,
+    gpu: &mut Option<Gpu>,
+    display: OwnedDisplayHandle,
+    window: &Arc<Window>,
+    choice: Choice,
+) -> Result<Option<String>, String> {
+    if let Some(painter) = painter {
+        return pollster::block_on(painter.set_window(window)).map(|()| None);
+    }
+    let mut why = None;
+    #[cfg(gl_painter)]
+    {
+        let gl = match gpu {
+            Some(Gpu::Gl(gl)) => Some(Ok(std::rc::Rc::clone(gl))),
+            None if choice == Choice::Gl => Some(Gl::new(&display, window)),
+            _ => None,
+        };
+        if let Some(gl) = gl {
+            let made = gl.and_then(|gl| {
+                let mut painter = GlPainter::new(gl)?;
+                painter.set_window(window)?;
+                Ok(painter)
+            });
+            match made {
+                Ok(made) => {
+                    let made = Painter::Gl(made);
+                    if gpu.is_none() {
+                        *gpu = Gpu::of(&made);
+                    }
+                    *painter = Some(made);
+                    return Ok(None);
+                }
+                // Only the first window picks; a later one that cannot
+                // have GL is drawn by wgpu on its own device.
+                Err(e) => why = Some(e),
+            }
+        }
+    }
+    #[cfg(not(gl_painter))]
+    if choice == Choice::Gl {
+        why = Some("this platform has no EGL".to_owned());
+    }
+    let mut made = Painter::Wgpu(wgpu_painter(ctx, gpu.as_ref(), display));
+    pollster::block_on(made.set_window(window))?;
+    if gpu.is_none() {
+        *gpu = Gpu::of(&made);
+    }
+    *painter = Some(made);
+    Ok(why)
+}
+
+/// A wgpu painter for the windows of `ctx`. The first one (`gpu` is
+/// `None`) picks the device when it is given its window.
+fn wgpu_painter(
     ctx: &egui::Context,
     gpu: Option<&Gpu>,
     display: OwnedDisplayHandle,
-) -> Painter {
+) -> egui_wgpu::winit::Painter {
     let wgpu_setup = match gpu {
-        Some(gpu) => WgpuSetup::Existing(WgpuSetupExisting {
-            instance: gpu.instance.clone(),
-            adapter: gpu.adapter.clone(),
-            device: gpu.device.clone(),
-            queue: gpu.queue.clone(),
+        Some(Gpu::Wgpu {
+            instance,
+            adapter,
+            device,
+            queue,
+        }) => WgpuSetup::Existing(WgpuSetupExisting {
+            instance: instance.clone(),
+            adapter: adapter.clone(),
+            device: device.clone(),
+            queue: queue.clone(),
         }),
-        None => WgpuSetup::CreateNew(create_new(display)),
+        _ => WgpuSetup::CreateNew(create_new(display)),
     };
     let config = WgpuConfiguration {
         surface: SurfaceConfig {
@@ -180,7 +421,12 @@ pub(crate) fn painter(
     // window is, is said when the window is opened (and an opaque one
     // clears to an opaque colour), while the painter outlives it.
     let see_through = true;
-    pollster::block_on(Painter::new(ctx.clone(), config, see_through, options))
+    pollster::block_on(egui_wgpu::winit::Painter::new(
+        ctx.clone(),
+        config,
+        see_through,
+        options,
+    ))
 }
 
 /// An open platform window and what egui needs to be shown in it.
@@ -226,7 +472,7 @@ impl Surface {
         let (w, h) = (NonZeroU32::new(px.width)?, NonZeroU32::new(px.height)?);
         if self.px != Some([px.width, px.height]) {
             self.px = Some([px.width, px.height]);
-            painter.on_window_resized(ViewportId::ROOT, w, h);
+            painter.resized(w, h);
         }
         let ppp = f64::from(egui_winit::pixels_per_point(ctx, &self.window));
         Some([f64::from(px.width) / ppp, f64::from(px.height) / ppp])
@@ -262,16 +508,23 @@ pub(crate) fn forget_freed(pending: &mut egui::TexturesDelta) {
 /// Gives the GPU memory of what `pending` frees back now, for a window
 /// that is not on the screen: its next picture may be far off, and a
 /// trimmed view frees most of what it drew (ARCHITECTURE §8.5).
-pub(crate) fn free_now(painter: Option<&Painter>, pending: &mut egui::TexturesDelta) {
-    let Some(state) = painter.and_then(Painter::render_state) else {
-        return;
-    };
+pub(crate) fn free_now(painter: Option<&mut Painter>, pending: &mut egui::TexturesDelta) {
     if pending.free.is_empty() {
         return;
     }
-    let mut renderer = state.renderer.write();
-    for id in std::mem::take(&mut pending.free) {
-        renderer.free_texture(&id);
+    match painter {
+        Some(Painter::Wgpu(painter)) => {
+            let Some(state) = painter.render_state() else {
+                return;
+            };
+            let mut renderer = state.renderer.write();
+            for id in std::mem::take(&mut pending.free) {
+                renderer.free_texture(&id);
+            }
+        }
+        #[cfg(gl_painter)]
+        Some(Painter::Gl(painter)) => painter.free(pending),
+        None => {}
     }
 }
 
@@ -281,6 +534,21 @@ mod tests {
     use egui::{ColorImage, TextureId, TextureOptions};
 
     use super::*;
+
+    #[test]
+    fn the_painter_is_gl_where_there_is_egl_unless_asked_otherwise() {
+        let default = if cfg!(gl_painter) {
+            Choice::Gl
+        } else {
+            Choice::Wgpu
+        };
+        assert_eq!(Choice::from_env(None), default);
+        assert_eq!(Choice::from_env(Some("")), default);
+        assert_eq!(Choice::from_env(Some("vulkan")), default);
+        assert_eq!(Choice::from_env(Some("wgpu")), Choice::Wgpu);
+        assert_eq!(Choice::from_env(Some(" WGPU ")), Choice::Wgpu);
+        assert_eq!(Choice::from_env(Some("gl")), Choice::Gl);
+    }
 
     fn picture() -> ImageDelta {
         ImageDelta::full(
