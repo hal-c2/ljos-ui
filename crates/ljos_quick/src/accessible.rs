@@ -14,7 +14,6 @@
 //! Behaviour follows doc.qt.io/qt-6/qml-qtquick-accessible.html.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use ljos_a11y::accesskit::{Role as AkRole, Toggled};
@@ -25,6 +24,7 @@ use ljos_engine::{
 };
 use ljos_render::kurbo;
 use ljos_runtime::Time;
+use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::{Key, KeyData};
 
 use crate::input::PointerEvent;
@@ -600,15 +600,15 @@ fn item_of(key: NodeKey) -> ObjectId {
 struct Pending {
     active: bool,
     /// The latest description of an item; `None`: it is not exposed.
-    described: HashMap<ObjectId, Option<NodeData>>,
-    bounds: HashMap<ObjectId, Bounds>,
+    described: FxHashMap<ObjectId, Option<NodeData>>,
+    bounds: FxHashMap<ObjectId, Bounds>,
     /// Items that got their `Accessible` object after their effect looked
     /// for it.
     late: Vec<ObjectId>,
     /// What items announced since the last sync, in order.
     announced: Vec<(ObjectId, String, Politeness)>,
     /// The latest parts of an item ([`register_accessible_parts`]).
-    parts: HashMap<ObjectId, Vec<PlacedPart>>,
+    parts: FxHashMap<ObjectId, Vec<PlacedPart>>,
 }
 
 impl Pending {
@@ -640,12 +640,12 @@ pub(crate) struct A11yPass {
     pending: PendingRc,
     /// Asks the host for a frame.
     wake: Rc<dyn Fn()>,
-    items: HashMap<ObjectId, ItemState>,
+    items: FxHashMap<ObjectId, ItemState>,
     tree: Tree,
     /// Whether the engine tells this pass about new `Accessible` objects.
     listening: bool,
     /// Items whose visual children changed.
-    restructure: HashSet<ObjectId>,
+    restructure: FxHashSet<ObjectId>,
     /// Items that joined the tree and are in no child list yet.
     fresh: Vec<ObjectId>,
     /// The layer above the root item: a second child of the scene.
@@ -654,7 +654,7 @@ pub(crate) struct A11yPass {
     top_dirty: bool,
     /// The item behind the node of a part, and the point of the scene a
     /// press on the part lands on.
-    part_owner: HashMap<NodeKey, (ObjectId, (f64, f64))>,
+    part_owner: FxHashMap<NodeKey, (ObjectId, (f64, f64))>,
     /// How many part nodes were ever made: their keys are never reused.
     next_part: u64,
 }
@@ -664,14 +664,14 @@ impl A11yPass {
         A11yPass {
             pending: PendingRc::default(),
             wake,
-            items: HashMap::new(),
+            items: FxHashMap::default(),
             tree: Tree::new(),
             listening: false,
-            restructure: HashSet::new(),
+            restructure: FxHashSet::default(),
             fresh: Vec::new(),
             layer: None,
             top_dirty: false,
-            part_owner: HashMap::new(),
+            part_owner: FxHashMap::default(),
             next_part: 0,
         }
     }
@@ -1038,7 +1038,7 @@ impl A11yPass {
         if self.restructure.is_empty() && self.fresh.is_empty() && !top_dirty {
             return;
         }
-        let mut targets: HashSet<Option<ObjectId>> = HashSet::new();
+        let mut targets: FxHashSet<Option<ObjectId>> = FxHashSet::default();
         if top_dirty {
             targets.insert(None);
         }

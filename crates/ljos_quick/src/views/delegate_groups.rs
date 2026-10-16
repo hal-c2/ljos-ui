@@ -20,13 +20,13 @@
 //! needs a model whose rows have children.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use ljos_engine::{
     Atom, Engine, ItemModel, MetaRef, ModelChange, ModelListener, ModelListeners, ObjectId,
     QmlObject, QmlType, RowKey, Value,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::models::{DelegateModel, DelegateModelAttached, DelegateModelGroup};
 use crate::item::write_computed;
@@ -62,7 +62,7 @@ enum Src {
 struct Entry {
     key: u64,
     src: Src,
-    groups: HashSet<String>,
+    groups: FxHashSet<String>,
 }
 
 #[derive(Default)]
@@ -82,7 +82,7 @@ struct Inner {
     last_keys: Vec<RowKey>,
     /// The rows a removal is about, while the model still has them.
     pending_removed: Option<Vec<RowKey>>,
-    model_map: Option<HashMap<RowKey, usize>>,
+    model_map: Option<FxHashMap<RowKey, usize>>,
     cached_count: Option<usize>,
     extra_roles: Vec<Atom>,
 }
@@ -132,7 +132,7 @@ impl Inner {
         self.entries.iter().filter(|e| self.in_filter(e)).nth(row)
     }
 
-    fn default_groups(&self) -> HashSet<String> {
+    fn default_groups(&self) -> FxHashSet<String> {
         self.defs
             .iter()
             .filter(|d| d.include_by_default)
@@ -244,9 +244,9 @@ type Ranges = Vec<(i32, i32)>;
 /// index each range had once the ranges before it are gone, and then the
 /// entries put in, at the index each has when it is there.
 fn ranges(before: &[u64], after: &[u64]) -> (Ranges, Ranges) {
-    let after_set: HashSet<u64> = after.iter().copied().collect();
-    let before_set: HashSet<u64> = before.iter().copied().collect();
-    let runs = |seq: &[u64], keep: &HashSet<u64>| -> Vec<(usize, usize)> {
+    let after_set: FxHashSet<u64> = after.iter().copied().collect();
+    let before_set: FxHashSet<u64> = before.iter().copied().collect();
+    let runs = |seq: &[u64], keep: &FxHashSet<u64>| -> Vec<(usize, usize)> {
         let mut out: Vec<(usize, usize)> = Vec::new();
         for (i, k) in seq.iter().enumerate() {
             if keep.contains(k) {
@@ -369,7 +369,7 @@ impl GroupState {
             self.listeners.emit(e, &change);
         }
         retell_all(e, self);
-        let old: HashMap<&str, &Vec<u64>> = before
+        let old: FxHashMap<&str, &Vec<u64>> = before
             .groups
             .iter()
             .map(|(n, _, k)| (n.as_str(), k))
@@ -434,10 +434,10 @@ impl GroupState {
         filter: String,
     ) {
         self.mutate(e, move |inner| {
-            let was: HashMap<Option<ObjectId>, Def> =
+            let was: FxHashMap<Option<ObjectId>, Def> =
                 inner.defs.drain(..).map(|d| (d.object, d)).collect();
             let mut added: Vec<String> = Vec::new();
-            let mut kept: HashSet<String> = HashSet::new();
+            let mut kept: FxHashSet<String> = FxHashSet::default();
             for (object, name, include) in defs {
                 if let Some(old) = was.get(&object) {
                     if old.name != name {
@@ -550,7 +550,7 @@ impl GroupState {
                         return;
                     };
                     let keys = scan_keys(m.as_ref());
-                    let have: HashSet<RowKey> = inner
+                    let have: FxHashSet<RowKey> = inner
                         .entries
                         .iter()
                         .filter_map(|en| match en.src {
@@ -586,7 +586,7 @@ impl GroupState {
                 let (first, count) = (*first, *count);
                 self.mutate(e, move |inner| {
                     inner.model_map = None;
-                    let gone: HashSet<RowKey> = match inner.pending_removed.take() {
+                    let gone: FxHashSet<RowKey> = match inner.pending_removed.take() {
                         Some(keys) if !keys.is_empty() => keys.into_iter().collect(),
                         _ => inner
                             .last_keys
@@ -650,7 +650,7 @@ impl GroupState {
                 let range = {
                     let inner = self.inner.borrow();
                     let Some(m) = &inner.underlying else { return };
-                    let changed: HashSet<RowKey> = (*first..first + count)
+                    let changed: FxHashSet<RowKey> = (*first..first + count)
                         .filter(|r| *r < m.row_count())
                         .map(|r| m.row_key(r))
                         .collect();
@@ -688,7 +688,7 @@ impl GroupState {
                 self.mutate(e, move |inner| {
                     inner.model_map = None;
                     inner.pending_removed = None;
-                    let was: HashMap<RowKey, HashSet<String>> = inner
+                    let was: FxHashMap<RowKey, FxHashSet<String>> = inner
                         .entries
                         .iter()
                         .filter_map(|en| match &en.src {
@@ -883,7 +883,7 @@ impl GroupState {
     ) {
         let fresh_roles: Vec<Atom> = {
             let inner = self.inner.borrow();
-            let known: HashSet<String> = inner
+            let known: FxHashSet<String> = inner
                 .underlying
                 .as_ref()
                 .map(|m| m.role_names().iter().map(ToString::to_string).collect())
@@ -922,7 +922,7 @@ impl GroupState {
             } else {
                 inner.entries.len()
             };
-            let groups: HashSet<String> = match &names {
+            let groups: FxHashSet<String> = match &names {
                 Some(n) => inner.known(n).into_iter().collect(),
                 None => [group].into_iter().collect(),
             };
@@ -964,7 +964,7 @@ impl GroupState {
     pub(crate) fn set_groups_of(self: &Rc<Self>, e: &Engine, key: u64, names: Vec<String>) {
         let same = {
             let inner = self.inner.borrow();
-            let known: HashSet<String> = inner.known(&names).into_iter().collect();
+            let known: FxHashSet<String> = inner.known(&names).into_iter().collect();
             inner
                 .entries
                 .iter()
@@ -985,7 +985,7 @@ impl GroupState {
         if inner.model_map.is_none() {
             let map = match &inner.underlying {
                 Some(m) => (0..m.row_count()).map(|r| (m.row_key(r), r)).collect(),
-                None => HashMap::new(),
+                None => FxHashMap::default(),
             };
             inner.model_map = Some(map);
         }
@@ -1034,7 +1034,7 @@ type KnownDelegate = (ObjectId, Rc<GroupState>, u64);
 /// it is, and a delegate is told when the answer changes.
 #[derive(Default)]
 struct Registry {
-    delegates: RefCell<HashMap<ObjectId, KnownDelegate>>,
+    delegates: RefCell<FxHashMap<ObjectId, KnownDelegate>>,
 }
 
 pub(crate) fn register_delegate(

@@ -26,13 +26,13 @@ pub(crate) mod state;
 pub(crate) mod view_transition;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
     Atom, Cx, Engine, EngineError, LogLevel, MetaRef, ObjectId, QmlObject, QmlType, Value, Version,
     ViewDelegates, WriteKind, qml_impl,
 };
+use rustc_hash::FxHashMap;
 
 use crate::enums::{EnumTable, layout_direction};
 use crate::flickable::{self, Flickable};
@@ -496,7 +496,7 @@ pub(crate) enum Part {
 /// for `ListView.view`, and the accessibility pass its place in the set.
 #[derive(Default)]
 struct Registry {
-    items: RefCell<HashMap<ObjectId, (ObjectId, Part)>>,
+    items: RefCell<FxHashMap<ObjectId, (ObjectId, Part)>>,
 }
 
 pub(crate) fn enrol(e: &Engine, item: ObjectId, view: ObjectId, part: Part) {

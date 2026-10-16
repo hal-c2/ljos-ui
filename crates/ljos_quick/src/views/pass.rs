@@ -13,12 +13,13 @@
 //! layout depends on, and directly whenever the engine tells the view
 //! something (a model change, a delegate that is ready, a method).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use ljos_engine::{
     Atom, Engine, Made, ObjectId, OverrideContent, PropIndex, RestoreMode, RowKey, Urgency, Value,
     ViewDelegates,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::state::{Extra, Geo, Slot, ViewState, average};
 use super::{
@@ -380,7 +381,7 @@ struct Sections {
     first_character: bool,
     delegate: Option<ObjectId>,
     /// Asked once a pass per row.
-    seen: HashMap<usize, String>,
+    seen: FxHashMap<usize, String>,
 }
 
 impl Sections {
@@ -397,7 +398,7 @@ impl Sections {
             property,
             first_character: rd(e, view, criteria) as i32 == section_criteria::FIRST_CHARACTER,
             delegate: e.read(view, delegate).as_object(),
-            seen: HashMap::new(),
+            seen: FxHashMap::default(),
         })
     }
 
@@ -455,7 +456,7 @@ struct Fill<'a> {
     items: Vec<(usize, ObjectId, f64, f64)>,
     /// Section headings, with where each starts and how long it is.
     heads: Vec<(ObjectId, f64, f64)>,
-    used_heads: HashSet<RowKey>,
+    used_heads: FxHashSet<RowKey>,
 }
 
 impl Fill<'_> {
@@ -856,7 +857,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         guess: st.avg.get(),
         items: Vec::new(),
         heads: Vec::new(),
-        used_heads: HashSet::new(),
+        used_heads: FxHashSet::default(),
     };
     let avg_before = st.avg.get();
     let mut slots: VecDeque<Slot> = VecDeque::new();
@@ -1063,7 +1064,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
             }
         }
     }
-    let running_to: HashMap<ObjectId, [Option<f64>; 2]> = st.vt_places.borrow().clone();
+    let running_to: FxHashMap<ObjectId, [Option<f64>; 2]> = st.vt_places.borrow().clone();
     e.batch(|| {
         for &(row, o, pos, size) in &items {
             let dest = dest_of(row, o, pos, size);
@@ -1154,7 +1155,7 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         }
         let mut sizes = st.sizes.borrow_mut();
         if sizes.len() > MAX_SIZES {
-            let keep: HashSet<RowKey> = slots.iter().filter_map(|s| d.key_at(s.line)).collect();
+            let keep: FxHashSet<RowKey> = slots.iter().filter_map(|s| d.key_at(s.line)).collect();
             sizes.retain(|k, _| keep.contains(k));
         }
     }
@@ -1246,7 +1247,7 @@ fn announce(
         }
     }
     // A row whose delegate is still being made is told when it is there.
-    let waiting: HashSet<RowKey> = d
+    let waiting: FxHashSet<RowKey> = d
         .pending()
         .into_iter()
         .filter_map(|row| d.key_at(row))

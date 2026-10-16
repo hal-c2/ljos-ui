@@ -2,10 +2,10 @@
 //! needs no engine.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use ljos_engine::{NodeId, ObjectId, OverrideId, PropIndex, RowKey, ViewDelegates};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// One line of what a view laid out: a row of a list, or the cells of a
 /// grid that share a place along the direction it scrolls in. Positions
@@ -190,7 +190,7 @@ pub(crate) struct PendingOp {
     pub kind: OpKind,
     /// The rows the change is about, by key: the ones that arrived or
     /// moved. Of a removal there are none left to key.
-    pub target_keys: HashSet<RowKey>,
+    pub target_keys: FxHashSet<RowKey>,
     /// Their indexes as `ViewTransition.targetIndexes` reads them: where
     /// they are after an insertion or a move, where they were before a
     /// removal.
@@ -229,10 +229,10 @@ pub(crate) struct ViewState {
     /// what stays put when rows come and go before it.
     pub anchor: Cell<(usize, f64)>,
     /// How long each row measured, by model key.
-    pub sizes: RefCell<HashMap<RowKey, f64>>,
+    pub sizes: RefCell<FxHashMap<RowKey, f64>>,
     /// Where each row was last laid out, until the model changes: a row
     /// the view comes back to is where it was.
-    pub places: RefCell<HashMap<RowKey, f64>>,
+    pub places: RefCell<FxHashMap<RowKey, f64>>,
     pub avg: Cell<f64>,
     pub heading: Cell<f64>,
     pub slots: RefCell<Vec<Slot>>,
@@ -245,7 +245,7 @@ pub(crate) struct ViewState {
     pub footer: Cell<Extra>,
     pub highlight: Cell<Extra>,
     /// Section headings by the key of the row each is before.
-    pub sections: RefCell<HashMap<RowKey, (String, ObjectId)>>,
+    pub sections: RefCell<FxHashMap<RowKey, (String, ObjectId)>>,
     pub section_delegate: Cell<Option<ObjectId>>,
     pub section_props: Cell<Option<[PropIndex; 3]>>,
     pub current: Cell<Option<ObjectId>>,
@@ -268,13 +268,13 @@ pub(crate) struct ViewState {
     /// the content inside.
     pub bounds: Cell<(f64, f64, f64)>,
     /// Rows that arrived since the last pass.
-    pub added: RefCell<HashSet<RowKey>>,
+    pub added: RefCell<FxHashSet<RowKey>>,
     /// The first rows of a model are still to be shown.
     pub populate: Cell<bool>,
     /// Delegates of rows that left and are still shown.
     pub leaving: RefCell<Vec<ObjectId>>,
     /// Pooled delegates and what hides each.
-    pub hidden: RefCell<HashMap<ObjectId, OverrideId>>,
+    pub hidden: RefCell<FxHashMap<ObjectId, OverrideId>>,
     /// Transitions that are running, and on which item.
     pub running: RefCell<Vec<(ObjectId, ObjectId)>>,
     /// The change of rows the last word from the model was about, until
@@ -282,14 +282,14 @@ pub(crate) struct ViewState {
     pub pending: RefCell<Option<PendingOp>>,
     /// Where each row's delegate was put by the last pass, in content
     /// coordinates by the row's key: what a row pushed aside moves from.
-    pub last_places: RefCell<HashMap<RowKey, (ObjectId, [f64; 2])>>,
+    pub last_places: RefCell<FxHashMap<RowKey, (ObjectId, [f64; 2])>>,
     /// The delegates a move or displaced transition is on the way to
     /// their place with, and where that place is per axis: a pass does
     /// not put them there before the transition does.
-    pub vt_places: RefCell<HashMap<ObjectId, [Option<f64>; 2]>>,
+    pub vt_places: RefCell<FxHashMap<ObjectId, [Option<f64>; 2]>>,
     /// How many items each such transition is running on, for its
     /// `running`.
-    pub vt_counts: RefCell<HashMap<ObjectId, usize>>,
+    pub vt_counts: RefCell<FxHashMap<ObjectId, usize>>,
     /// The animations that move the highlight, and where each is going.
     pub movers: [Cell<Option<ObjectId>>; 2],
     pub mover_to: Cell<[Option<f64>; 2]>,
