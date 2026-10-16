@@ -3,8 +3,8 @@
 //!
 //! The compiler's table of types does not know an application's
 //! natives (ARCHITECTURE.md D1), so the table-only
-//! `ljos::dev::compile_dir` still cannot compile this directory —
-//! pinned below. `compile_dir_with` and `App::qml_dir` snapshot the
+//! `ljos::dev::compile_dir` still cannot compile this directory's
+//! root — pinned below. `compile_dir_with` and `App::qml_dir` snapshot the
 //! natives an Engine has registered (for `App`, the modules
 //! `register`ed before the `qml_dir` call) and compile against
 //! them, so `import Example` works with no oracle named by the user.
@@ -83,19 +83,39 @@ fn compile_dir_with_compiles_against_the_engines_natives() {
 #[test]
 fn compile_dir_stays_table_only_and_does_not_know_the_native_type() {
     let dir = qml_dir();
-    let err = ljos::dev::compile_dir(dir.path()).err().unwrap();
+    // The file is recorded as not compiling; making it says why.
+    let source = ljos::dev::compile_dir(dir.path()).unwrap();
+    let engine = ljos::engine();
+    register(&engine);
+    let err = ljos::create_root(&engine, source, "Main")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("`Counter` is not a type"), "{err}");
+
+    let err = ljos::dev::compile(dir.path(), None, ljos::dev::OnError::Fail).unwrap_err();
     assert!(err.contains("did not compile"), "{err}");
     assert!(err.contains("`Counter` is not a type"), "{err}");
 }
 
 #[test]
-fn qml_dir_before_register_fails_as_a_compile_error() {
+fn qml_dir_before_register_fails_where_the_root_is_made() {
     let dir = qml_dir();
-    // The module is registered only after `qml_dir` would run, so
-    // the snapshot has no `Example` in it: an ordinary compile
-    // error, not a panic.
-    let err = match ljos::App::new("Test").qml_dir(dir.path(), "Main") {
-        Ok(_) => panic!("qml_dir before register compiled"),
+    // The module is registered only after `qml_dir` runs, so the
+    // snapshot has no `Example` in it: an ordinary compile error,
+    // recorded, which making the root reports — not a panic.
+    let app = ljos::App::new("Test")
+        .qml_dir(dir.path(), "Main")
+        .unwrap()
+        .register(register);
+    let err = app.build().err().unwrap().to_string();
+    assert!(err.contains("`Counter` is not a type"), "{err}");
+
+    // Strict, the same mistake fails `qml_dir` itself.
+    let err = match ljos::App::new("Test")
+        .qml_errors(ljos::dev::OnError::Fail)
+        .qml_dir(dir.path(), "Main")
+    {
+        Ok(_) => panic!("a strict qml_dir before register compiled"),
         Err(err) => err,
     };
     assert!(err.contains("did not compile"), "{err}");

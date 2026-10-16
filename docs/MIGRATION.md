@@ -268,7 +268,12 @@ root. Components are compiled ahead of time (a `build.rs`, as the
 toolkit's own styles do), so a shipped application links no QML
 parser; compiling a directory at start-up exists for development
 behind the non-default `dev-qml` feature (`App::qml_dir`,
-`ljos::dev::compile_dir`) and is never in a shipped binary:
+`ljos::dev::compile_dir`) and is never in a shipped binary. As
+under Qt, a file with an error fails only where it is made: the
+directory compiles, the diagnostics are printed, and making the
+broken component reports the compiler's message
+(`App::qml_errors(OnError::Fail)` fails the whole directory instead,
+for a build step or CI):
 
 ```rust
 ljos::App::new("Hello")
@@ -308,8 +313,8 @@ compiles against a snapshot of the modules `register`ed before the
 `qml_dir` call, so `.register(m).qml_dir(dir, root)` just works when
 the QML in `dir` imports `m`'s module — and the same snapshot is
 available directly as `ljos::dev::compile_dir_with(dir, &engine)`.
-The table-only tools still do not know them: `ljos::dev::compile_dir`
-fails on such an import as an unknown type, and `check --port` will
+The table-only tools still do not know them: to `ljos::dev::compile_dir`
+such an import is an unknown type, and `check --port` will
 not know them from a table; give the ones your QML uses `supported`
 ledger rows (section 3). Created objects (context properties, list
 models) remain the other way across. Where the shape is

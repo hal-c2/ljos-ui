@@ -145,8 +145,48 @@ fn qml_dir_compiles_a_directory_for_development() {
         "import QtQuick\nItem {\n  width: 20 +\n}\n",
     )
     .unwrap();
-    let err = ljos::dev::compile_dir(dir.path()).err().unwrap();
+    let err = ljos::dev::compile(dir.path(), None, ljos::dev::OnError::Fail)
+        .err()
+        .unwrap();
     assert!(err.contains("did not compile"), "{err}");
+}
+
+#[test]
+fn a_file_that_does_not_compile_fails_only_where_it_is_made() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Main.qml"),
+        "import QtQuick\nItem { width: 10; height: 10 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("Unused.qml"),
+        "import QtQuick\nItem { NotAType {} }\n",
+    )
+    .unwrap();
+    // `Main` never makes `Unused`: the application starts.
+    let (engine, root) = ljos::App::new("Test")
+        .qml_dir(dir.path(), "Main")
+        .unwrap()
+        .build()
+        .unwrap();
+    assert_eq!(engine.read_by_name(root, "width").to_number(), 10.0);
+    // Making the broken file fails with the compiler's message.
+    let err = engine
+        .create_from_url("Unused", None, Vec::new())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("NotAType"), "{err}");
+
+    // A build step that wants every file clean asks for it.
+    let err = match ljos::App::new("Test")
+        .qml_errors(ljos::dev::OnError::Fail)
+        .qml_dir(dir.path(), "Main")
+    {
+        Ok(_) => panic!("a strict qml_dir compiled a broken file"),
+        Err(err) => err,
+    };
+    assert!(err.contains("Unused: "), "{err}");
 }
 
 #[test]

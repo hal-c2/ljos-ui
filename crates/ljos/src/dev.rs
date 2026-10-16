@@ -14,14 +14,29 @@ use std::path::Path;
 use ljos_engine::{Engine, MapSource, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeTag};
 use qml_front::{Property as FrontProperty, QtType, QtTypeOracle, Special, TypeOracle};
 
+/// What a compile does with a file that has an error.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnError {
+    /// The file is noted as one that did not compile
+    /// ([`MapSource::insert_failure`]) and the rest of the directory
+    /// is used: making that component fails with the compiler's
+    /// message, as a QML engine fails a component only where it is
+    /// made. A file nothing makes does not stop the application.
+    #[default]
+    Record,
+    /// Any file with an error fails the whole compile, one error a
+    /// line: for a build step or CI that wants every file clean.
+    Fail,
+}
+
 /// Compiles every file under `dir` into a component source, against
 /// the table of types alone: an application's native types are not
-/// in the table (ARCHITECTURE.md D1), so a file that imports one
-/// fails here as an unknown type. Printing the diagnostics as a
-/// developer at a terminal expects and failing with them, one a
-/// line, if any file has an error.
+/// in the table (ARCHITECTURE.md D1), so a file that imports one is
+/// recorded as not compiling (an unknown type). Prints the
+/// diagnostics as a developer at a terminal expects; a file with an
+/// error is recorded, not fatal ([`OnError::Record`]).
 pub fn compile_dir(dir: &Path) -> Result<MapSource, String> {
-    compile_dir_with_oracle(dir, QtTypeOracle)
+    compile(dir, None, OnError::Record)
 }
 
 /// Compiles every file under `dir` into a component source, against
@@ -29,50 +44,65 @@ pub fn compile_dir(dir: &Path) -> Result<MapSource, String> {
 /// that the table does not describe ([`EngineOracle::from_engine`]:
 /// a type the table knows stays the table's, natives fill the
 /// gaps). A file may `import` the application's own module and
-/// create objects of its types. Same diagnostics and failure as
+/// create objects of its types. Same diagnostics and recording as
 /// [`compile_dir`].
 pub fn compile_dir_with(dir: &Path, engine: &Engine) -> Result<MapSource, String> {
-    compile_dir_with_oracle(dir, EngineOracle::from_engine(engine))
+    compile(dir, Some(engine), OnError::Record)
 }
 
-fn compile_dir_with_oracle<O: TypeOracle>(dir: &Path, oracle: O) -> Result<MapSource, String> {
+/// Compiles every file under `dir`, against the table of types and,
+/// given an `engine`, its native types as [`compile_dir_with`] does;
+/// `on_error` says whether a file with an error is recorded or fails
+/// the compile. `Err` also when `dir` cannot be read.
+pub fn compile(
+    dir: &Path,
+    engine: Option<&Engine>,
+    on_error: OnError,
+) -> Result<MapSource, String> {
+    match engine {
+        Some(engine) => compile_with_oracle(dir, EngineOracle::from_engine(engine), on_error),
+        None => compile_with_oracle(dir, QtTypeOracle, on_error),
+    }
+}
+
+fn compile_with_oracle<O: TypeOracle>(
+    dir: &Path,
+    oracle: O,
+    on_error: OnError,
+) -> Result<MapSource, String> {
     let mut source = MapSource::new();
     let mut errors = Vec::new();
     let files = ljos_compiler::compile_project_with(dir, oracle)
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     for r in files {
+        let diagnostics = match &r.result {
+            Ok(c) => &c.diagnostics,
+            Err(ds) => ds,
+        };
+        for d in diagnostics {
+            eprintln!("{}: {:?}: {}", r.key, d.severity, d.message);
+        }
+        errors.extend(
+            diagnostics
+                .iter()
+                .filter(|d| d.severity == ljos_compiler::Severity::Error)
+                .map(|d| format!("{}: {}", r.key, d.message)),
+        );
         match r.result {
-            Ok(c) => {
-                for d in &c.diagnostics {
-                    eprintln!("{}: {:?}: {}", r.key, d.severity, d.message);
-                }
-                if c.has_errors() {
-                    errors.extend(
-                        c.diagnostics
-                            .iter()
-                            .filter(|d| d.severity == ljos_compiler::Severity::Error)
-                            .map(|d| format!("{}: {}", r.key, d.message)),
-                    );
-                }
-                source.insert(r.key, c.file);
-            }
-            Err(ds) => {
-                for d in &ds {
-                    eprintln!("{}: {}", r.key, d.message);
-                }
-                errors.extend(ds.iter().map(|d| format!("{}: {}", r.key, d.message)));
-            }
+            Ok(c) if !c.has_errors() => source.insert(r.key, c.file),
+            // Compiled only as far as it could: not a file to run.
+            Ok(c) => source.insert_failure(r.key, ljos_compiler::failure_reason(&c.diagnostics)),
+            Err(ds) => source.insert_failure(r.key, ljos_compiler::failure_reason(&ds)),
         }
     }
-    if errors.is_empty() {
-        Ok(source)
-    } else {
-        Err(format!(
+    if on_error == OnError::Fail && !errors.is_empty() {
+        return Err(format!(
             "{} did not compile:\n{}",
             dir.display(),
             errors.join("\n")
-        ))
+        ));
     }
+    Ok(source)
 }
 
 /// One type as the compiler sees it in a render with backends: of the

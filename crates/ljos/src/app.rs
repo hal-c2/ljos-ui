@@ -36,6 +36,9 @@
 //! types too — the ones [`App::register`] collected before the
 //! `qml_dir` call — so the QML may `import` the application's
 //! modules; the bare `compile_dir` knows the table of types alone.
+//! A file that does not compile is recorded, not fatal: only making
+//! that component fails ([`crate::dev::OnError`] has the strict
+//! choice).
 //!
 //! Neither the builder nor its parameters name an egui type; the
 //! shell's loop, and its 0 % CPU idle, stay the shell's business.
@@ -60,6 +63,8 @@ pub struct App<M = ()> {
     size: [f32; 2],
     #[cfg(feature = "shell")]
     shell_config: Option<crate::ShellConfig>,
+    #[cfg(feature = "dev-qml")]
+    qml_errors: crate::dev::OnError,
     modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
@@ -92,6 +97,8 @@ impl App<()> {
             size: [800.0, 600.0],
             #[cfg(feature = "shell")]
             shell_config: None,
+            #[cfg(feature = "dev-qml")]
+            qml_errors: crate::dev::OnError::Record,
             modules: Vec::new(),
             source: None,
             root: None,
@@ -177,7 +184,16 @@ impl<M> App<M> {
     /// every module collected so far, so a module's `register`
     /// function runs once for the snapshot and again on the real
     /// Engine). A module registered afterwards is, to this
-    /// compile, an unknown type and fails as compile errors do.
+    /// compile, an unknown type, and a file naming it has an error.
+    ///
+    /// A file with an error does not stop the application: it is
+    /// recorded, its diagnostics are printed, and making that
+    /// component (the root included) fails with the compiler's
+    /// message, as a QML engine fails a component only where it is
+    /// made. [`qml_errors`](App::qml_errors) set to
+    /// [`OnError::Fail`](crate::dev::OnError::Fail) before this
+    /// call makes any error fail `qml_dir` instead. `Err` also when
+    /// the directory cannot be read.
     #[cfg(feature = "dev-qml")]
     pub fn qml_dir(
         mut self,
@@ -192,9 +208,23 @@ impl<M> App<M> {
         for module in &self.modules {
             module(&snapshot);
         }
-        self.source = Some(crate::dev::compile_dir_with(dir.as_ref(), &snapshot)?);
+        self.source = Some(crate::dev::compile(
+            dir.as_ref(),
+            Some(&snapshot),
+            self.qml_errors,
+        )?);
         self.root = Some(root.into());
         Ok(self)
+    }
+
+    /// What a later [`qml_dir`](App::qml_dir) does with a file that
+    /// has an error: record it (the default) or fail with every
+    /// error, for a run that wants the whole directory clean.
+    #[cfg(feature = "dev-qml")]
+    #[must_use]
+    pub fn qml_errors(mut self, on_error: crate::dev::OnError) -> Self {
+        self.qml_errors = on_error;
+        self
     }
 
     /// Puts `name` in scope for the root and everything made after
@@ -239,6 +269,8 @@ impl<M> App<M> {
             size,
             #[cfg(feature = "shell")]
             shell_config,
+            #[cfg(feature = "dev-qml")]
+            qml_errors,
             modules,
             source,
             root,
@@ -250,6 +282,8 @@ impl<M> App<M> {
             size,
             #[cfg(feature = "shell")]
             shell_config,
+            #[cfg(feature = "dev-qml")]
+            qml_errors,
             modules,
             source,
             root,
