@@ -37,6 +37,16 @@ use crate::present::{Change, Frame};
 /// than that is drawn whole.
 const REMEMBERED: usize = 4;
 
+/// How many separate areas a frame draws at most. Each costs a scissored
+/// clear and a draw of every shape that reaches it, which is cheap next to
+/// the pixels it spares; past this, they are drawn as one area around them
+/// all, so a frame never spends long working out where to draw.
+const AREAS: usize = 256;
+
+/// Areas of at least this many pixels are cleared to the background;
+/// smaller ones are drawn together as one mesh.
+const CLEARED: u32 = 64 * 64;
+
 /// The display, the context and GL's functions all windows share.
 pub(crate) struct Gl {
     // Field order is drop order: the context goes before its display.
@@ -174,7 +184,7 @@ struct GlWindow {
     px: [u32; 2],
     /// The pixels each of the last frames drew, the last first (`None`:
     /// all of them), for a buffer that holds an older frame.
-    drawn: VecDeque<Option<Px>>,
+    drawn: VecDeque<Option<Damage>>,
     // The surface draws into the window: it stays while the surface does.
     _window: Arc<Window>,
 }
@@ -271,7 +281,13 @@ impl GlPainter {
         let now = match change {
             _ if replaced => None,
             Change::None => return Frame::Nothing,
-            Change::Area(area) => Some(Px::around(area, pixels_per_point, gw.px)),
+            Change::Area(areas) => {
+                let mut damage = Damage::default();
+                for area in areas {
+                    damage.add(Px::around(area, pixels_per_point, gw.px));
+                }
+                Some(damage)
+            }
             Change::All => None,
         };
         // Asked before the context is current with the surface: EGL
@@ -282,17 +298,23 @@ impl GlPainter {
         if age == 0 || age > gw.drawn.len() {
             return Frame::Whole;
         }
-        let mut px = Px::EMPTY;
+        let mut damage = Damage::default();
         for drawn in gw.drawn.iter().take(age) {
             match drawn {
-                Some(d) => px = px.union(*d),
+                Some(d) => d.0.iter().for_each(|px| damage.add(*px)),
                 None => return Frame::Whole,
             }
         }
-        if px.is_empty() {
+        if damage.0.is_empty() {
             Frame::Nothing
         } else {
-            Frame::Part(px.points(pixels_per_point))
+            Frame::Part(
+                damage
+                    .0
+                    .iter()
+                    .map(|px| px.points(pixels_per_point))
+                    .collect(),
+            )
         }
     }
 
@@ -300,8 +322,8 @@ impl GlPainter {
     pub(crate) fn paint(
         &mut self,
         pixels_per_point: f32,
-        clear: [f32; 4],
-        frame: Frame,
+        clear: egui::Color32,
+        frame: &Frame,
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Window,
@@ -319,12 +341,44 @@ impl GlPainter {
                     .paint_and_update_textures(gw.px, pixels_per_point, &[], pending);
                 return;
             }
-            Frame::Part(area) => Some(Px::around(area, pixels_per_point, gw.px)),
+            Frame::Part(areas) => Some(
+                areas
+                    .iter()
+                    .map(|area| Px::around(*area, pixels_per_point, gw.px))
+                    .collect::<Vec<_>>(),
+            ),
             Frame::Whole => None,
         };
-        match part {
-            Some(px) => px.clear(self.painter.gl(), gw.px, clear),
-            None => self.painter.clear(gw.px, clear),
+        let gamma = clear.to_normalized_gamma_f32();
+        match &part {
+            Some(areas) => {
+                // A clear costs a software rasteriser next to nothing per
+                // pixel but is a draw of its own; a quad costs per pixel.
+                // Large areas are cleared, small ones are one mesh.
+                let mut mesh = egui::Mesh::default();
+                for px in areas {
+                    if clear.is_opaque() && px.pixels() < CLEARED {
+                        mesh.add_colored_rect(px.points(pixels_per_point), clear);
+                    } else {
+                        px.clear(self.painter.gl(), gw.px, gamma);
+                    }
+                }
+                if !mesh.is_empty() {
+                    let backdrop = egui::ClippedPrimitive {
+                        clip_rect: egui::Rect::EVERYTHING,
+                        primitive: egui::epaint::Primitive::Mesh(mesh),
+                    };
+                    let free = std::mem::take(&mut pending.free);
+                    self.painter.paint_and_update_textures(
+                        gw.px,
+                        pixels_per_point,
+                        &[backdrop],
+                        pending,
+                    );
+                    pending.free = free;
+                }
+            }
+            None => self.painter.clear(gw.px, gamma),
         }
         self.painter
             .paint_and_update_textures(gw.px, pixels_per_point, primitives, pending);
@@ -333,9 +387,11 @@ impl GlPainter {
         // nobody to tell. The compositor is told what changed, so it can
         // take only that.
         let _ = match part {
-            Some(px) => gw
-                .surface
-                .swap_buffers_with_damage(&self.gl.context, &[px.egl(gw.px)]),
+            Some(areas) => {
+                let rects: Vec<_> = areas.iter().map(|px| px.egl(gw.px)).collect();
+                gw.surface
+                    .swap_buffers_with_damage(&self.gl.context, &rects)
+            }
             None => gw.surface.swap_buffers(&self.gl.context),
         };
     }
@@ -371,8 +427,6 @@ impl Drop for GlPainter {
 struct Px([u32; 4]);
 
 impl Px {
-    const EMPTY: Px = Px([0; 4]);
-
     /// The pixels `area` (in points) touches, in a window of `size`.
     fn around(area: egui::Rect, pixels_per_point: f32, size: [u32; 2]) -> Px {
         let lo = |v: f32, max: u32| ((v * pixels_per_point).floor().max(0.0) as u32).min(max);
@@ -391,14 +445,18 @@ impl Px {
     }
 
     fn union(self, other: Px) -> Px {
-        if self.is_empty() {
-            return other;
-        }
-        if other.is_empty() {
-            return self;
-        }
         let ([a0, b0, a1, b1], [c0, d0, c1, d1]) = (self.0, other.0);
         Px([a0.min(c0), b0.min(d0), a1.max(c1), b1.max(d1)])
+    }
+
+    fn pixels(self) -> u32 {
+        let [x0, y0, x1, y1] = self.0;
+        (x1 - x0) * (y1 - y0)
+    }
+
+    fn overlaps(self, other: Px) -> bool {
+        let ([a0, b0, a1, b1], [c0, d0, c1, d1]) = (self.0, other.0);
+        a0 < c1 && c0 < a1 && b0 < d1 && d0 < b1
     }
 
     fn points(self, pixels_per_point: f32) -> egui::Rect {
@@ -427,6 +485,29 @@ impl Px {
             gl.clear_color(color[0], color[1], color[2], color[3]);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
+    }
+}
+
+/// Where a frame draws: rectangles of pixels, none overlapping another
+/// (a shape drawn in two would be blended twice where they meet), at most
+/// [`AREAS`] of them.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Damage(Vec<Px>);
+
+impl Damage {
+    fn add(&mut self, px: Px) {
+        if px.is_empty() {
+            return;
+        }
+        let mut px = px;
+        // What it overlaps becomes part of it; that may overlap more.
+        while let Some(i) = self.0.iter().position(|d| d.overlaps(px)) {
+            px = px.union(self.0.swap_remove(i));
+        }
+        if self.0.len() == AREAS {
+            px = self.0.drain(..).fold(px, Px::union);
+        }
+        self.0.push(px);
     }
 }
 
@@ -514,6 +595,53 @@ mod tests {
             .iter()
             .map(|s| matches!(s.shape, Shape::Callback(_)))
             .collect()
+    }
+
+    fn disjoint(damage: &Damage) -> bool {
+        let d = &damage.0;
+        (0..d.len()).all(|i| (i + 1..d.len()).all(|j| !d[i].overlaps(d[j])))
+    }
+
+    #[test]
+    fn areas_apart_stay_apart_and_overlapping_ones_join() {
+        let mut damage = Damage::default();
+        damage.add(Px([0, 0, 10, 10]));
+        damage.add(Px([100, 0, 110, 10]));
+        damage.add(Px([10, 0, 20, 10]));
+        assert_eq!(damage.0.len(), 3, "areas that only touch are not joined");
+        // Overlaps the first and, once joined, reaches the third.
+        damage.add(Px([5, 5, 12, 12]));
+        assert!(disjoint(&damage));
+        assert_eq!(damage.0.len(), 2);
+        assert!(damage.0.contains(&Px([0, 0, 20, 12])));
+        assert!(damage.0.contains(&Px([100, 0, 110, 10])));
+    }
+
+    #[test]
+    fn many_small_areas_each_draw_only_themselves() {
+        // Two hundred bars across a window, each in a row of its own.
+        let mut damage = Damage::default();
+        for row in 0..200 {
+            let x = row * 37 % 776;
+            damage.add(Px([x, row * 6, x + 24, row * 6 + 6]));
+        }
+        assert_eq!(damage.0.len(), 200);
+        assert!(disjoint(&damage));
+        let drawn: u32 = damage
+            .0
+            .iter()
+            .map(|Px([x0, y0, x1, y1])| (x1 - x0) * (y1 - y0))
+            .sum();
+        assert_eq!(drawn, 200 * 24 * 6);
+    }
+
+    #[test]
+    fn more_areas_than_the_cap_are_drawn_as_one_around_them() {
+        let mut damage = Damage::default();
+        for i in 0..AREAS as u32 + 1 {
+            damage.add(Px([i * 3, 0, i * 3 + 2, 2]));
+        }
+        assert_eq!(damage.0, [Px([0, 0, AREAS as u32 * 3 + 2, 2])]);
     }
 
     #[test]

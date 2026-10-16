@@ -8,7 +8,9 @@
 //! software rasteriser), so a window keeps what it last showed and is
 //! only drawn when that changes. When it does, a painter that can keep
 //! the rest of the window (the GL painter) draws only where it changed: a
-//! logo animating over a still background costs the logo, not the window.
+//! logo animating over a still background costs the logo, not the window,
+//! and two things moving in opposite corners cost the two, not all that
+//! lies between them.
 
 use std::sync::Arc;
 
@@ -33,7 +35,8 @@ struct Shown {
 impl LastPicture {
     /// What drawing `shapes` would change in what the window shows. Shapes
     /// the same as the last picture's, in the same order, draw the same
-    /// pixels, so only where the others lie (before and now) can differ.
+    /// pixels, so only where the others lie (before and now) can differ:
+    /// each of those places is one of the areas.
     pub(crate) fn change(
         &self,
         shapes: &[ClippedShape],
@@ -47,12 +50,18 @@ impl LastPicture {
             return Change::All;
         }
         let (before, now) = (&shown.shapes[..], shapes);
-        let mut area = Rect::NOTHING;
+        let mut areas = Vec::new();
+        let mut add = |shape: &ClippedShape| {
+            let area = extent(shape, pixels_per_point);
+            if area.is_positive() {
+                areas.push(area);
+            }
+        };
         if before.len() == now.len() {
             for (a, b) in before.iter().zip(now) {
                 if !same_clipped(a, b) {
-                    area |= extent(a);
-                    area |= extent(b);
+                    add(a);
+                    add(b);
                 }
             }
         } else {
@@ -73,14 +82,12 @@ impl LastPicture {
             let changed = before[..before.len() - tail]
                 .iter()
                 .chain(&now[..now.len() - tail]);
-            for shape in changed {
-                area |= extent(shape);
-            }
+            changed.for_each(add);
         }
-        if area.is_positive() {
-            Change::Area(area)
-        } else {
+        if areas.is_empty() {
             Change::None
+        } else {
+            Change::Area(areas)
         }
     }
 
@@ -116,40 +123,69 @@ impl LastPicture {
 }
 
 /// What drawing a picture changes in the window, in points.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Change {
     None,
-    Area(Rect),
+    /// Inside these areas, which may overlap.
+    Area(Vec<Rect>),
     All,
 }
 
 /// What a painter draws of a picture.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Frame {
     /// Nothing: the window shows it already (the pictures handed over are
     /// still taken).
     Nothing,
-    /// The area (in points, on whole pixels); what lies outside it in the
-    /// window's buffer is the picture already.
-    Part(Rect),
+    /// These areas (in points, on whole pixels, none overlapping another);
+    /// what lies outside them in the window's buffer is the picture
+    /// already.
+    Part(Vec<Rect>),
     Whole,
 }
 
-/// Where `shape` can draw.
-fn extent(shape: &ClippedShape) -> Rect {
+/// Where `shape` can draw: its edges are smoothed a pixel out.
+fn extent(shape: &ClippedShape, pixels_per_point: f32) -> Rect {
     shape
         .shape
         .visual_bounding_rect()
+        .expand(1.0 / pixels_per_point)
         .intersect(shape.clip_rect)
 }
 
-/// Draws `shapes` only inside `area`: every clip rectangle is cut to it,
-/// and what then has none is left out.
-pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, area: Rect) {
-    shapes.retain_mut(|s| {
-        s.clip_rect = s.clip_rect.intersect(area);
-        s.clip_rect.is_positive() && extent(s).is_positive()
-    });
+/// Draws `shapes` only inside `areas`, which do not overlap: a shape is
+/// drawn once in each area it reaches, its clip rectangle cut to it, and
+/// not at all if it reaches none. Each area gets its shapes in their
+/// order. A shape wholly inside one area keeps its own clip rectangle, so
+/// shapes that shared one are still drawn together.
+pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, areas: &[Rect], pixels_per_point: f32) {
+    let all = std::mem::take(shapes);
+    for s in all {
+        let reach = extent(&s, pixels_per_point);
+        if areas.iter().any(|area| area.contains_rect(reach)) {
+            shapes.push(s);
+            continue;
+        }
+        let mut inside = areas
+            .iter()
+            .map(|area| s.clip_rect.intersect(*area))
+            .filter(|clip| clip.is_positive() && reach.intersect(*clip).is_positive())
+            .peekable();
+        while let Some(clip_rect) = inside.next() {
+            if inside.peek().is_none() {
+                // The last one takes the shape itself.
+                shapes.push(ClippedShape {
+                    clip_rect,
+                    shape: s.shape,
+                });
+                break;
+            }
+            shapes.push(ClippedShape {
+                clip_rect,
+                shape: s.shape.clone(),
+            });
+        }
+    }
 }
 
 fn same_clipped(a: &ClippedShape, b: &ClippedShape) -> bool {
@@ -242,8 +278,9 @@ mod tests {
         );
     }
 
+    /// Where `rect(x)` draws, its smoothed edge with it.
     fn at(x: f32) -> Rect {
-        Rect::from_min_size(Pos2::new(x, 0.0), vec2(10.0, 10.0))
+        Rect::from_min_size(Pos2::new(x - 1.0, -1.0), vec2(12.0, 12.0))
     }
 
     fn change(before: &[ClippedShape], now: &[ClippedShape]) -> Change {
@@ -257,15 +294,18 @@ mod tests {
         let before = [rect(0.0), rect(20.0), rect(40.0)];
         assert_eq!(change(&before, &before), Change::None);
         let now = [rect(0.0), rect(25.0), rect(40.0)];
-        assert_eq!(change(&before, &now), Change::Area(at(20.0) | at(25.0)));
+        assert_eq!(
+            change(&before, &now),
+            Change::Area(vec![at(20.0), at(25.0)])
+        );
     }
 
     #[test]
     fn a_shape_that_comes_or_goes_changes_only_where_it_lies() {
         let before = [rect(0.0), rect(40.0)];
         let now = [rect(0.0), rect(20.0), rect(40.0)];
-        assert_eq!(change(&before, &now), Change::Area(at(20.0)));
-        assert_eq!(change(&now, &before), Change::Area(at(20.0)));
+        assert_eq!(change(&before, &now), Change::Area(vec![at(20.0)]));
+        assert_eq!(change(&now, &before), Change::Area(vec![at(20.0)]));
     }
 
     #[test]
@@ -273,8 +313,8 @@ mod tests {
         let before = [rect(0.0)];
         let mut now = [rect(5.0)];
         now[0].clip_rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(12.0, 12.0));
-        let changed = Rect::from_min_max(Pos2::ZERO, Pos2::new(12.0, 10.0));
-        assert_eq!(change(&before, &now), Change::Area(changed));
+        let now_seen = Rect::from_min_max(Pos2::new(4.0, 0.0), Pos2::new(12.0, 11.0));
+        assert_eq!(change(&before, &now), Change::Area(vec![at(0.0), now_seen]));
     }
 
     #[test]
@@ -287,17 +327,56 @@ mod tests {
     }
 
     #[test]
+    fn two_shapes_far_apart_change_only_where_they_are() {
+        let before = [rect(0.0), rect(20.0), rect(40.0), rect(60.0)];
+        let now = [rect(1.0), rect(20.0), rect(40.0), rect(61.0)];
+        let Change::Area(areas) = change(&before, &now) else {
+            panic!("a change");
+        };
+        assert!(
+            areas.iter().all(|a| !a.intersects(at(20.0).shrink(1.5))),
+            "what lies between them is not drawn: {areas:?}"
+        );
+    }
+
+    #[test]
     fn shapes_drawn_into_an_area_keep_to_it() {
         let mut shapes = vec![rect(0.0), rect(20.0), rect(40.0)];
-        clip_to(
-            &mut shapes,
-            Rect::from_min_max(Pos2::new(15.0, 0.0), Pos2::new(35.0, 10.0)),
-        );
+        let area = Rect::from_min_max(Pos2::new(15.0, 0.0), Pos2::new(35.0, 10.0));
+        clip_to(&mut shapes, &[area], 1.0);
         assert_eq!(shapes.len(), 1, "the shapes outside it are not drawn");
+        assert_eq!(shapes[0].clip_rect, area);
+    }
+
+    #[test]
+    fn a_shape_is_drawn_in_each_area_it_reaches_in_paint_order() {
+        let wide = ClippedShape {
+            clip_rect: Rect::EVERYTHING,
+            shape: Shape::Rect(RectShape::filled(
+                Rect::from_min_size(Pos2::ZERO, vec2(100.0, 10.0)),
+                CornerRadius::ZERO,
+                Color32::BLUE,
+            )),
+        };
+        let mut shapes = vec![wide, rect(0.0), rect(80.0)];
+        let left = Rect::from_min_max(Pos2::ZERO, Pos2::new(10.0, 10.0));
+        let right = Rect::from_min_max(Pos2::new(80.0, 0.0), Pos2::new(90.0, 10.0));
+        clip_to(&mut shapes, &[left, right], 1.0);
+        let clips: Vec<Rect> = shapes.iter().map(|s| s.clip_rect).collect();
         assert_eq!(
-            shapes[0].clip_rect,
-            Rect::from_min_max(Pos2::new(15.0, 0.0), Pos2::new(35.0, 10.0))
+            clips,
+            [left, right, left, right],
+            "the wide one in both, under the ones on top of it"
         );
+    }
+
+    #[test]
+    fn shapes_wholly_inside_an_area_keep_their_clip() {
+        let mut shapes = vec![rect(0.0), rect(20.0), rect(40.0)];
+        let area = Rect::from_min_max(Pos2::new(-5.0, -5.0), Pos2::new(35.0, 15.0));
+        clip_to(&mut shapes, &[area], 1.0);
+        let clips: Vec<Rect> = shapes.iter().map(|s| s.clip_rect).collect();
+        assert_eq!(clips, [Rect::EVERYTHING; 2]);
     }
 
     #[test]

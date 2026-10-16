@@ -174,19 +174,18 @@ impl Painter {
         &mut self,
         pixels_per_point: f32,
         clear: egui::Color32,
-        frame: Frame,
+        frame: &Frame,
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Arc<Window>,
     ) {
-        let clear = clear.to_normalized_gamma_f32();
         match self {
             Painter::Wgpu(painter) => {
                 let _ = frame;
                 painter.paint_and_update_textures(
                     ViewportId::ROOT,
                     pixels_per_point,
-                    clear,
+                    clear.to_normalized_gamma_f32(),
                     primitives,
                     pending,
                     Vec::new(),

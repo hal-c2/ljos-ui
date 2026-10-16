@@ -1062,7 +1062,7 @@ impl<M: Send + 'static> Desktop<M> {
             painter.paint(
                 pixels_per_point,
                 clear,
-                frame,
+                &frame,
                 &[],
                 &mut slot.pending,
                 &surface.window,
@@ -1072,15 +1072,15 @@ impl<M: Send + 'static> Desktop<M> {
         }
         slot.shown.keep(&shapes, pixels_per_point, clear);
         let mut shapes = shapes;
-        if let Frame::Part(area) = frame {
-            present::clip_to(&mut shapes, area);
+        if let Frame::Part(areas) = &frame {
+            present::clip_to(&mut shapes, areas, pixels_per_point);
         }
         painter.prepare(&mut shapes, pixels_per_point);
         let primitives = slot.ctx.tessellate(shapes, pixels_per_point);
         painter.paint(
             pixels_per_point,
             clear,
-            frame,
+            &frame,
             &primitives,
             &mut slot.pending,
             &surface.window,
