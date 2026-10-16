@@ -815,26 +815,24 @@ fn sharp_pixels(e: &Engine, me: ObjectId, on_screen: bool) -> Option<ImageHandle
         }
         request
     } else {
-        let kept = decode::halvings(natural, key.request.limit);
+        let longest = |(w, h): (u32, u32)| w.max(h);
+        let kept = longest(decode::kept_size(natural, key.request.limit));
         let limit = if on_screen {
             wanted_limit(e, me, natural, store.device_scale(e))
         } else {
             0
         };
-        let wanted = decode::halvings(natural, limit);
-        if wanted > kept {
+        let wanted = longest(decode::kept_size(natural, limit));
+        // Made smaller only when that saves at least half the bytes.
+        if wanted * 3 <= kept * 2 {
             return shrunk(e, me, &key, natural, limit);
         }
-        if wanted == kept {
+        if wanted <= kept {
             return None;
         }
         // A limit the picture is no longer than is no limit: one key for
         // the whole picture.
-        let limit = if decode::halvings(natural, limit) == 0 {
-            0
-        } else {
-            limit
-        };
+        let limit = if wanted >= longest(natural) { 0 } else { limit };
         Request {
             limit,
             ..key.request
@@ -908,12 +906,11 @@ fn shrunk(
     let source = pixels(e, me)?;
     // Painting may have found them kept for another limit.
     let key = with_run(e, me, |r| r.key.clone()).flatten()?;
-    let by = decode::halvings(natural, limit)
-        .saturating_sub(decode::halvings(natural, key.request.limit));
-    if by == 0 {
+    let kept = decode::kept_size(natural, limit);
+    if kept.0 >= source.width() || kept.1 >= source.height() {
         return Some(source);
     }
-    let image = match decode::Raw::of(&source).reduced(by, &key.url) {
+    let image = match decode::Raw::of(&source).shrunk_to(kept, &key.url) {
         Ok(image) => image,
         Err(_) => return Some(source),
     };
@@ -969,11 +966,7 @@ fn wanted_limit(e: &Engine, me: ObjectId, natural: (u32, u32), device: f32) -> u
     let factor = (shown.width / picture.width).max(shown.height / picture.height)
         * f64::from(device)
         * scale;
-    let need = picture.width.max(picture.height) * factor;
-    if !(need.is_finite() && need >= 1.0) {
-        return 1;
-    }
-    (need.ceil().min(f64::from(1u32 << 30)) as u32).next_power_of_two()
+    decode::step_up(picture.width.max(picture.height) * factor)
 }
 
 /// The scene stopped painting `me` (hidden, scrolled away): pixels kept

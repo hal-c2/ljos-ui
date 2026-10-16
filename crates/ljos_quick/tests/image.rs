@@ -1504,11 +1504,12 @@ Item {
     // What QML sees is the picture's own size.
     assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
     assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
-    // What is kept is enough for a view 256 long.
+    // What is kept is enough for the view, 200 long rounded up to a
+    // quarter octave.
     let image = painted(&s, picture).unwrap();
-    assert_eq!((image.width(), image.height()), (256, 128));
+    assert_eq!((image.width(), image.height()), (224, 112));
     assert_eq!(image.pixel(10, 10), BLUE);
-    assert_eq!(store.bytes(), 256 * 128 * 4);
+    assert_eq!(store.bytes(), 224 * 112 * 4);
 }
 
 #[test]
@@ -1530,18 +1531,18 @@ Item {
     frame(&mut s, &e);
     set(&e, picture, "source", Value::Url("file:///big.png".into()));
     frame(&mut s, &e);
-    assert_eq!(painted(&s, picture).unwrap().width(), 256);
+    assert_eq!(painted(&s, picture).unwrap().width(), 224);
     // Four times as wide on screen needs four times the pixels.
     set(&e, picture, "scale", Value::from(4.0));
     for _ in 0..50 {
         frame(&mut s, &e);
-        if painted(&s, picture).is_some_and(|i| i.width() > 256) {
+        if painted(&s, picture).is_some_and(|i| i.width() > 224) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let image = painted(&s, picture).unwrap();
-    assert_eq!((image.width(), image.height()), (1024, 512));
+    assert_eq!((image.width(), image.height()), (896, 448));
     assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
 }
 
@@ -1566,12 +1567,12 @@ Item {
     let mut s = scene(&e, root, 400.0, 300.0);
     frame(&mut s, &e);
     let image = painted(&s, picture).unwrap();
-    assert_eq!((image.width(), image.height()), (128, 64));
+    assert_eq!((image.width(), image.height()), (112, 56));
     assert_eq!(image.pixel(5, 5), BLUE);
     assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
     assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
     // The whole picture is no longer kept, and nothing was read again.
-    assert_eq!(store.bytes(), 128 * 64 * 4);
+    assert_eq!(store.bytes(), 112 * 56 * 4);
     assert_eq!(store.decodes(), 1);
 
     // Another Image of it starts from what is kept, and is made sharper
@@ -1582,6 +1583,6 @@ Item {
     assert_eq!(implicit(&e, other), (2048.0, 1024.0));
     frame(&mut s, &e);
     let image = painted(&s, other).unwrap();
-    assert_eq!((image.width(), image.height()), (512, 256));
+    assert_eq!((image.width(), image.height()), (448, 224));
     assert_eq!(store.decodes(), 2);
 }

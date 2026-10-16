@@ -191,7 +191,7 @@ pub(crate) fn cost(bytes: &[u8], request: Request) -> usize {
         let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
         let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
         let s = if jpeg && asks_nothing {
-            halvings((w, h), request.limit).min(3)
+            halvings((w, h), kept_size((w, h), request.limit)).min(3)
         } else {
             0
         };
@@ -282,10 +282,11 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
     let asks_nothing = request.width == 0 && request.height == 0 && request.clip.is_none();
     if asks_nothing
         && let Some(natural) = dimensions(bytes)
-        && let k @ 1.. = halvings(natural, request.limit)
-        && let Some((raw, done)) = decode_jpeg_smaller(bytes, natural, k)
+        && let kept = kept_size(natural, request.limit)
+        && let k @ 1.. = halvings(natural, kept)
+        && let Some((raw, _)) = decode_jpeg_smaller(bytes, natural, k)
     {
-        let image = raw.reduced(k - done, url)?;
+        let image = raw.shrunk_to(kept, url)?;
         return Ok(Loaded {
             image,
             natural,
@@ -298,7 +299,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
         // Straight from the decoder's pixels: neither a copy at full size
         // with four bytes a pixel nor one premultiplied comes in between.
         let natural = (raw.width, raw.height);
-        let image = raw.reduced(halvings(natural, request.limit), url)?;
+        let image = raw.shrunk_to(kept_size(natural, request.limit), url)?;
         return Ok(Loaded {
             image,
             natural,
@@ -308,9 +309,11 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
     }
     let image = fitted(url, raw.reduced(0, url)?, request)?;
     let natural = (image.width(), image.height());
-    let image = match halvings(natural, request.limit) {
-        0 => image,
-        k => Raw::of(&image).reduced(k, url)?,
+    let kept = kept_size(natural, request.limit);
+    let image = if kept == natural {
+        image
+    } else {
+        Raw::of(&image).shrunk_to(kept, url)?
     };
     Ok(Loaded {
         image,
@@ -320,18 +323,83 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
     })
 }
 
-/// How many times a picture of `natural` size is halved for `limit`: as
-/// often as its longest side stays at least `limit` long.
-pub(crate) fn halvings(natural: (u32, u32), limit: u32) -> u32 {
+/// The pixels a picture of `natural` size keeps for `limit`: its own
+/// shape with the longest side `limit` long, or all of it when that is no
+/// longer than `limit` (or `limit` is 0).
+pub(crate) fn kept_size(natural: (u32, u32), limit: u32) -> (u32, u32) {
     let longest = natural.0.max(natural.1);
-    if limit == 0 {
-        return 0;
+    if limit == 0 || longest <= limit {
+        return natural;
     }
+    let side = |n: u32| {
+        ((u64::from(n) * u64::from(limit) + u64::from(longest) / 2) / u64::from(longest)).max(1)
+            as u32
+    };
+    (side(natural.0), side(natural.1))
+}
+
+/// How many times a picture of `natural` size can be halved and still
+/// cover `kept` on both sides.
+pub(crate) fn halvings(natural: (u32, u32), kept: (u32, u32)) -> u32 {
     let mut k = 0;
-    while k < 16 && (1 << k) < longest && longest.div_ceil(1 << (k + 1)) >= limit {
+    while k < 16
+        && natural.0.div_ceil(1 << (k + 1)) >= kept.0
+        && natural.1.div_ceil(1 << (k + 1)) >= kept.1
+        && (1 << k) < natural.0.max(natural.1)
+    {
         k += 1;
     }
     k
+}
+
+/// `need` pixels rounded up to a quarter octave (…, 512, 640, 768, 896,
+/// 1024, 1280, …): the limits pictures are kept at, so that a window
+/// resized a little shares pictures with what it was, and a picture is
+/// kept at most a quarter larger than it is shown.
+pub(crate) fn step_up(need: f64) -> u32 {
+    if !(need.is_finite() && need >= 1.0) {
+        return 1;
+    }
+    let n = need.ceil().min(f64::from(1u32 << 30)) as u32;
+    if n <= 4 {
+        return n.next_power_of_two();
+    }
+    let quarter = (1u32 << (31 - n.leading_zeros())) / 4;
+    n.div_ceil(quarter) * quarter
+}
+
+/// Which pixels of a side `from` long each pixel of the same side made
+/// `to` long covers, and by how much (a share of the larger pixel, so the
+/// shares of one sum to 1). For `to <= from`.
+struct Spans {
+    scale: f64,
+    to: usize,
+}
+
+impl Spans {
+    fn new(from: usize, to: usize) -> Self {
+        Spans {
+            scale: from as f64 / to as f64,
+            to,
+        }
+    }
+
+    /// The smaller pixels source pixel `i` falls in, with its share of
+    /// each: one, or two when it straddles their border.
+    fn of(&self, i: usize) -> impl Iterator<Item = (usize, f32)> {
+        let (start, end) = (i as f64 / self.scale, (i + 1) as f64 / self.scale);
+        let first = (start.floor() as usize).min(self.to - 1);
+        let last = ((end.ceil() as usize).max(first + 1) - 1).min(self.to - 1);
+        (first..=last).filter_map(move |o| {
+            let covered = end.min((o + 1) as f64) - start.max(o as f64);
+            (covered > 0.0).then_some((o, covered as f32))
+        })
+    }
+
+    /// The last source pixel smaller pixel `o` takes from.
+    fn ends_at(&self, o: usize) -> usize {
+        (((o + 1) as f64 * self.scale).ceil() as usize).max(1) - 1
+    }
 }
 
 /// Decoded pixels as the decoder gave them: RGB, straight RGBA, or RGBA
@@ -345,6 +413,74 @@ pub(crate) struct Raw<'a> {
 }
 
 impl<'a> Raw<'a> {
+    /// The pixels made `kept` large, every pixel the average of the area
+    /// it covers, partly covered pixels by how much of them it covers. An
+    /// even halving goes through [`Raw::reduced`]. Like it, it keeps only
+    /// the result and a couple of rows besides.
+    pub(crate) fn shrunk_to(self, kept: (u32, u32), url: &str) -> Result<ImageHandle, LoadError> {
+        let k = halvings((self.width, self.height), kept);
+        let halved = (self.width.div_ceil(1 << k), self.height.div_ceil(1 << k));
+        if halved == kept || (kept.0 >= self.width && kept.1 >= self.height) {
+            return self.reduced(k, url);
+        }
+        let bad = |err: ljos_render::ImageError| LoadError::decode(url, err.to_string());
+        let (w, n) = (self.width as usize, self.channels);
+        let (ow, oh) = (kept.0 as usize, kept.1 as usize);
+        let xs = Spans::new(w, ow);
+        let ys = Spans::new(self.height as usize, oh);
+        let mut out = Vec::new();
+        out.try_reserve_exact(ow * oh * 4)
+            .map_err(|_| too_large(url))?;
+        // Output rows being summed: the one a source row ends in and the
+        // next, which a row straddling the border starts.
+        let mut rows = [vec![0f32; ow * 4], vec![0f32; ow * 4]];
+        let mut across = vec![0f32; ow * 4];
+        let mut oy = 0;
+        for (y, line) in self.data.chunks_exact(w * n).enumerate() {
+            across.fill(0.0);
+            for (x, px) in line.chunks_exact(n).enumerate() {
+                let (r, g, b, a) = match n {
+                    3 => (px[0], px[1], px[2], 255),
+                    _ => (px[0], px[1], px[2], px[3]),
+                };
+                let px = if self.premultiplied || a == 255 {
+                    [r, g, b, a].map(f32::from)
+                } else {
+                    let a = f32::from(a);
+                    [
+                        f32::from(r) * a / 255.0,
+                        f32::from(g) * a / 255.0,
+                        f32::from(b) * a / 255.0,
+                        a,
+                    ]
+                };
+                for (o, share) in xs.of(x) {
+                    for (sum, v) in across[o * 4..o * 4 + 4].iter_mut().zip(px) {
+                        *sum += v * share;
+                    }
+                }
+            }
+            for (o, share) in ys.of(y) {
+                let row = &mut rows[o - oy];
+                for (sum, v) in row.iter_mut().zip(&across) {
+                    *sum += v * share;
+                }
+            }
+            // The last source row of output row `oy`: it is complete.
+            while oy < oh && ys.ends_at(oy) == y {
+                out.extend(rows[0].as_chunks::<4>().0.iter().flat_map(|px| {
+                    let a = px[3].round().clamp(0.0, 255.0);
+                    // Colour never above alpha: the pixels stay premultiplied.
+                    [px[0], px[1], px[2], px[3]].map(|v| v.round().clamp(0.0, a) as u8)
+                }));
+                rows.swap(0, 1);
+                rows[1].fill(0.0);
+                oy += 1;
+            }
+        }
+        ImageHandle::from_premultiplied(kept.0, kept.1, out).map_err(bad)
+    }
+
     pub(crate) fn of(image: &'a ImageHandle) -> Self {
         Raw {
             width: image.width(),
@@ -1152,14 +1288,68 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_is_halved_while_it_stays_as_long_as_the_limit() {
-        assert_eq!(halvings((3000, 2000), 0), 0);
-        assert_eq!(halvings((3000, 2000), 4096), 0);
-        assert_eq!(halvings((3000, 2000), 1024), 1);
-        assert_eq!(halvings((3000, 2000), 512), 2);
-        assert_eq!(halvings((1024, 10), 512), 1);
-        assert_eq!(halvings((1022, 10), 512), 0);
-        assert_eq!(halvings((1, 1), 1), 0);
+    fn a_picture_is_kept_as_long_as_the_limit() {
+        assert_eq!(kept_size((3000, 2000), 0), (3000, 2000));
+        assert_eq!(kept_size((3000, 2000), 4096), (3000, 2000));
+        assert_eq!(kept_size((3000, 2000), 3000), (3000, 2000));
+        assert_eq!(kept_size((3000, 2000), 1024), (1024, 683));
+        assert_eq!(kept_size((2000, 3000), 896), (597, 896));
+        assert_eq!(kept_size((4000, 1), 512), (512, 1), "never empty");
+    }
+
+    #[test]
+    fn a_picture_is_halved_while_it_covers_what_is_kept() {
+        assert_eq!(halvings((3000, 2000), (3000, 2000)), 0);
+        assert_eq!(halvings((3000, 2000), (1500, 1000)), 1);
+        assert_eq!(halvings((3000, 2000), (1024, 683)), 1);
+        assert_eq!(halvings((3000, 2000), (375, 250)), 3);
+        assert_eq!(halvings((1023, 10), (512, 5)), 1);
+        assert_eq!(halvings((1021, 10), (512, 5)), 0);
+        assert_eq!(halvings((1, 1), (1, 1)), 0);
+    }
+
+    #[test]
+    fn limits_go_up_by_quarter_octaves() {
+        let steps: Vec<u32> = [0.5, 1.0, 3.0, 4.0, 5.0, 6.5, 800.0, 1024.0, 1024.5, 1500.0]
+            .into_iter()
+            .map(step_up)
+            .collect();
+        assert_eq!(steps, [1, 1, 4, 4, 5, 7, 896, 1024, 1280, 1536]);
+    }
+
+    #[test]
+    fn shrinking_to_a_size_averages_the_area_each_pixel_covers() {
+        let raw = Raw {
+            width: 30,
+            height: 20,
+            channels: 3,
+            premultiplied: false,
+            data: std::borrow::Cow::Owned((0..30 * 20).flat_map(|_| [40, 80, 120]).collect()),
+        };
+        let image = raw.shrunk_to((12, 8), "file:///a.png").unwrap();
+        assert_eq!((image.width(), image.height()), (12, 8));
+        assert!(image.data().chunks(4).all(|px| px == [40, 80, 120, 255]));
+
+        // Four pixels made three: each takes three quarters of one and a
+        // quarter of its neighbour, the transparent one adding no colour.
+        let raw = Raw {
+            width: 4,
+            height: 1,
+            channels: 4,
+            premultiplied: false,
+            data: std::borrow::Cow::Owned(
+                [0, 60, 120]
+                    .iter()
+                    .flat_map(|&v| [v, v, v, 255])
+                    .chain([180, 180, 180, 0])
+                    .collect(),
+            ),
+        };
+        let image = raw.shrunk_to((3, 1), "file:///a.png").unwrap();
+        assert_eq!(
+            image.data(),
+            &[15, 15, 15, 255, 90, 90, 90, 255, 30, 30, 30, 64]
+        );
     }
 
     #[test]
@@ -1236,9 +1426,9 @@ mod tests {
             (8, 4, 3),
             "an eighth at most"
         );
-        for (k, size) in [(1, (32, 16)), (3, (8, 4)), (4, (4, 2))] {
+        for (limit, size) in [(32, (32, 16)), (24, (24, 12)), (8, (8, 4)), (4, (4, 2))] {
             let request = Request {
-                limit: 64 >> k,
+                limit,
                 ..Request::default()
             };
             let loaded = load_bytes("file:///a.jpg", &bytes, request).unwrap();

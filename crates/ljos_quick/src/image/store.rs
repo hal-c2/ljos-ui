@@ -487,16 +487,16 @@ impl ImageStore {
     }
 
     /// The `limit` a picture loaded now is kept at: the longest side of
-    /// the largest view, rounded up to a power of two so that a window
-    /// resized a little shares pictures with what it was. 0, for all of
-    /// it, while no scene has said how large it is.
+    /// the largest view, rounded up to a quarter octave
+    /// ([`decode::step_up`]). 0, for all of it, while no scene has said
+    /// how large it is.
     pub(crate) fn limit(&self) -> u32 {
         let s = self.state.borrow();
         let side = s.sides.values().copied().fold(0.0, f64::max);
         if side < 1.0 {
             return 0;
         }
-        (side.ceil().min(f64::from(1u32 << 30)) as u32).next_power_of_two()
+        decode::step_up(side)
     }
 
     /// The scale drawings are made at (tracked: a paint that reads it runs
