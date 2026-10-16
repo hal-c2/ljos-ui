@@ -358,3 +358,36 @@ Item {
     );
     assert_eq!(h.num(root, "n"), 1.0);
 }
+
+#[derive(Debug, QmlObject)]
+#[qml(module = "Example", name = "Wired", uncreatable)]
+#[qml_singleton]
+pub struct Wired {
+    #[qml(constant, readonly)]
+    pub limit: i32,
+}
+
+#[test]
+fn a_singleton_is_made_by_the_constructor_it_was_registered_with() {
+    let h = engine();
+    let made = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = made.clone();
+    h.engine
+        .register_singleton_with("Example", Version::new(1, 0), move |_| {
+            count.set(count.get() + 1);
+            Wired { limit: 40 }
+        });
+    assert_eq!(made.get(), 0, "made when first read, not when registered");
+    let root = h.load(
+        r#"import QtQuick
+import Example
+Item {
+    property int limit: Wired.limit
+}
+"#,
+    );
+    assert_eq!(h.num(root, "limit"), 40.0);
+    let wired = h.engine.singleton::<Wired>().unwrap();
+    assert_eq!(h.engine.with::<Wired, _>(wired, |w| w.limit).ok(), Some(40));
+    assert_eq!(made.get(), 1);
+}

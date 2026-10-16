@@ -250,7 +250,10 @@ under its derive, registered with
 `engine.register_singleton::<T>("Example", Version::new(1, 0))`; the
 attribute and `Version` are in the prelude too. The engine makes its
 one object with `T::default()`, also when the type is `uncreatable`:
-that only keeps QML from making a `T {}` of its own.
+that only keeps QML from making a `T {}` of its own. A singleton that is
+handed what it depends on, or is not `Default`, is registered with
+`engine.register_singleton_with("Example", Version::new(1, 0), |engine| T { .. })`
+instead; the closure runs when the singleton is first read.
 
 `register` is the one seam a native module sits at: a host calls it
 on its Engine, and nothing else about the module needs to be

@@ -67,3 +67,40 @@ fn qml_cannot_make_an_uncreatable_singleton() {
         other => panic!("Store {{}} was made: {other:?}"),
     }
 }
+
+/// A singleton handed what it depends on, which `Default` cannot give.
+#[derive(Debug, QmlObject)]
+#[qml(module = "Example", name = "Library", uncreatable)]
+#[qml_singleton]
+pub struct Library {
+    #[qml(constant, readonly)]
+    pub books: i32,
+}
+
+#[test]
+fn a_singleton_is_made_by_the_factory_it_was_registered_with() {
+    let shelf = std::rc::Rc::new(vec!["a", "b", "c"]);
+    let engine = ljos::engine();
+    let made = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = made.clone();
+    engine.register_singleton_with("Example", Version::new(1, 0), move |_| {
+        count.set(count.get() + 1);
+        Library {
+            books: shelf.len() as i32,
+        }
+    });
+    let source = compile(
+        &engine,
+        "import QtQuick\nimport Example\nItem { property int books: Library.books }\n",
+    )
+    .unwrap();
+    assert_eq!(made.get(), 0, "made when first read, not when registered");
+    let root = ljos::create_root(&engine, source, "Main").unwrap();
+    assert_eq!(engine.read_by_name(root, "books").to_number(), 3.0);
+    let library = engine.singleton::<Library>().unwrap();
+    assert_eq!(
+        engine.with::<Library, _>(library, |l| l.books).ok(),
+        Some(3)
+    );
+    assert_eq!(made.get(), 1);
+}

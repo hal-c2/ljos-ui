@@ -67,8 +67,10 @@
 //!
 //! On a struct that derives `QmlObject`: the type is a singleton, one
 //! object per engine, made when a script first reads its name. It is
-//! registered with `Engine::register_singleton`. `scope = "engine"` says
-//! the same; `scope = "window"` is not built.
+//! registered with `Engine::register_singleton` (made with `Default`)
+//! or `Engine::register_singleton_with` (made by a closure, for one that
+//! is handed what it depends on). `scope = "engine"` says the same;
+//! `scope = "window"` is not built (ARCHITECTURE.md §6.4).
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -137,7 +139,8 @@ fn singleton(attr: TokenStream2, input: &DeriveInput) -> Result<TokenStream2> {
             return Err(Error::new(
                 scope.span(),
                 "a singleton per window is not built yet: only `scope = \"engine\"` \
-                 (the default) is supported",
+                 (the default) is supported; keep per-window state in an engine \
+                 singleton, keyed by the window (`Window.window` in QML)",
             ));
         }
         Some(other) => {

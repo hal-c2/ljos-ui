@@ -398,7 +398,8 @@ Creation is a resumable state machine, the `Incubator`. Its phases:
 **Decision (D2): one Engine per app.**
 - Each `Window` is a root with its own `ProcId` boundary and its own a11y and focus trees.
 - Singletons are per Engine by default.
-- `#[qml_singleton(scope = "window")]` provides per-window singletons. This serves apps that are used to a `QQmlEngine` per window, HAL-C2 among them.
+- Per-window singletons (`#[qml_singleton(scope = "window")]`) are planned, not built: the macro rejects the scope. They are for apps that are used to a `QQmlEngine` per window, HAL-C2 among them. Until then such an app keeps its per-window state in one engine singleton, keyed by the window object: QML passes `Window.window` to the singleton's methods, and the host fills a window's entry when it opens the window.
+- A singleton is made when first read, by `T::default()` (`Engine::register_singleton`) or by a closure given the Engine (`Engine::register_singleton_with`), which hands it what it depends on. `uncreatable` keeps QML from making one of its own and nothing else.
 - Windows that are really independent apps can run separate Engines that talk through messages.
 
 This keeps models and singletons shared without proxies (01 §4.8, 03 §3.1, 07 P1-27).
@@ -1032,7 +1033,7 @@ Many QML apps are a thin QML view over native controllers. The QML reads state f
 **What Ljós provides:**
 - **`PropertyMap`**, the equivalent of `QQmlPropertyMap`. It has per-key reactivity and accepts whole-object assignment.
 - **The `QmlListModel` trait.** It has roles and the full row-signal set: `rowsAboutToBeInserted`, `rowsInserted`, `rowsRemoved`, `rowsMoved`, `dataChanged` and `modelReset`. `ListView`, `Repeater`, `Instantiator` and `TreeView` consume it, and so do JS arrays and ints.
-- **Native QML types written in Rust:** per-Engine and per-window singletons, creatable types and enums.
+- **Native QML types written in Rust:** per-Engine singletons (per-window ones are planned, §6.4), creatable types and enums.
 - **Module registration:** native modules from Rust, and QML modules from a directory with `qmldir`.
 - **Runtime creation:** `Qt.createQmlObject`, `Qt.createComponent` and `Component.createObject`.
 - **The `QtTest` module (`ljos_test`),** so existing `tst_*.qml` suites keep running. It supports:
@@ -1497,7 +1498,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 - States, transitions and the `Binding` element.
 
 **Platform**
-- Multi-window with window-scoped singletons.
+- Multi-window; window-scoped singletons are still planned (§6.4).
 - `ljos_shell` on its own loop with the AccessKit graft.
 - File dialogs (rfd), clipboard and drag-and-drop.
 
@@ -1589,7 +1590,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 | Incubation budget | 01: 4 ms at 60 Hz, 2 ms at 120 Hz. 04: 3 ms. | 3 ms at 60 Hz, scaled with the refresh period; configurable. |
 | Polish pass cap | 01: 10. 02: 8. | 10, then a warning. |
 | Parley version | 02: 0.12 shares egui's font crates. 05: pin 0.11.1. | Pick the newest version without duplicate skrifa/harfrust under the current egui, checked with `cargo tree -d`. egui tracks the latest release (D9). |
-| Engine per window | 01: open. 03: one per app. 07: HAL-C2 uses an engine per window. | One per app, with window-scoped singletons (D2). |
+| Engine per window | 01: open. 03: one per app. 07: HAL-C2 uses an engine per window. | One per app, with window-scoped singletons (D2; planned, §6.4). |
 | egui_mobius | Brief: use it for slots and message passing. 03: its implementation does not fit. | Use the idea, not the crate (section 3.3). |
 | External ledger tag | Early plan: a Ljós surface tag. 09: an allowlist instead. | Allowlist plus ratchet; `@backlog-ljos` only for scenarios that cannot be ported. |
 | `qsTr` count | 05: 4,132. 07: 1,562. | 1,562 in 109 files. 05's figure included `build/` copies, as did its `Accessible.name` and `elide` counts. |
@@ -1604,7 +1605,7 @@ All decided by the user on 2026-10-10. Every decision except D9 took the recomme
 | # | Decision | Outcome |
 |---|---|---|
 | D1 | Licensing of `types.txt` and the Qt reference PNGs, which are derived from a Qt install | **Generate locally and git-ignore.** Publish only Ljós's own type dump. |
-| D2 | One Engine per app or one per window | **One per app,** with window-scoped singletons. |
+| D2 | One Engine per app or one per window | **One per app,** with window-scoped singletons (planned, §6.4). |
 | D3 | *(Consumer)* HAL-C2's 52k lines of C++ controllers | **Port to a shared Rust core (`hal-c2-core`) over time.** The shell double and FakeMc stand in meanwhile. |
 | D4 | *(Consumer)* May `HalC2.Bricks` be adapted? | **Yes, targeted adaptations** that keep the same contract and pass the same tests on Qt and Ljós. |
 | D5 | Plugin trust | **Trusted in v1, isolated by supervision;** sandboxing later. |

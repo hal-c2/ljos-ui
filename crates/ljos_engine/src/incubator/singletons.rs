@@ -25,7 +25,9 @@ use crate::object::{QmlObject, QmlType};
 use crate::registry::Version;
 use crate::value::Value;
 
-/// How many objects a singleton type has.
+/// How many objects a singleton type has. A singleton per window is not
+/// built (ARCHITECTURE.md §6.4): per-window state lives in an engine
+/// singleton, keyed by the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SingletonScope {
@@ -120,10 +122,45 @@ impl Engine {
     /// even if `T` is `uncreatable`: that only keeps QML from writing
     /// `T {}`.
     pub fn register_singleton<T: QmlSingleton + Default>(&self, uri: &str, version: Version) {
+        self.register_singleton_with(uri, version, |_| T::default());
+    }
+
+    /// Registers `T` as a singleton type of the module `uri`, made by
+    /// `make` when it is first read: for a singleton that is handed what
+    /// it depends on (a service, a channel to a worker) or is not
+    /// `Default`. `make` runs on the Engine's thread, once, unless the
+    /// object is destroyed and read again.
+    ///
+    /// ```
+    /// use std::rc::Rc;
+    /// use ljos_engine::{Engine, QmlObject, Version, qml_singleton};
+    ///
+    /// #[derive(QmlObject)]
+    /// #[qml(module = "Example", name = "Store", uncreatable)]
+    /// #[qml_singleton]
+    /// pub struct Store {
+    ///     #[qml(constant, readonly)]
+    ///     limit: i32,
+    /// }
+    ///
+    /// let limit = Rc::new(40);
+    /// let engine = Engine::new();
+    /// engine.register_singleton_with("Example", Version::new(1, 0), move |_| Store {
+    ///     limit: *limit,
+    /// });
+    /// let store = engine.singleton::<Store>().unwrap();
+    /// assert_eq!(engine.with::<Store, _>(store, |s| s.limit).ok(), Some(40));
+    /// ```
+    pub fn register_singleton_with<T: QmlSingleton>(
+        &self,
+        uri: &str,
+        version: Version,
+        make: impl Fn(&Engine) -> T + 'static,
+    ) {
         let meta = T::static_meta();
         self.register_type(uri, version, MetaRef::Static(meta));
         let all = self.extension::<Singletons>();
-        let make: Make = Rc::new(|_| Box::new(T::default()));
+        let make: Make = Rc::new(move |engine| Box::new(make(engine)));
         all.natives.borrow_mut().insert(
             (uri.to_owned(), meta.name.to_string()),
             Native { meta, make },
