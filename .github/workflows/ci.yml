@@ -8,6 +8,8 @@ on:
   # types to Qt's description need an installed Qt, so both run nightly.
   schedule:
     - cron: "17 3 * * *"
+  # The nightly jobs, on demand: after a change to them, or to see whether a fix holds.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -62,7 +64,7 @@ jobs:
     # The same gates as `check`, in a build that reads QML against a table of Qt's types. It is
     # where the tests run that compare Ljós's types with Qt's description of them (they print
     # `SKIPPED` in `check`), and where a type Qt has and Ljós lacks is told from a slip.
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -85,6 +87,9 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.11.2"
+          # QtMultimedia is an add-on: without it the table has no module for Ljós's own to be
+          # compared with.
+          modules: qtmultimedia
           cache: true
       - run: mise run types -- --qt "$QT_ROOT_DIR/qml"
       - run: mise run check
@@ -95,7 +100,7 @@ jobs:
 
   gallery:
     # Needs the corpus/qtdoc submodule and qml6 (a black box, offscreen). See corpus/README.md.
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -106,13 +111,19 @@ jobs:
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
       # Font discovery links fontconfig and the audio sink ALSA, as in the other jobs.
-      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev pkg-config qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-window qml6-module-qtquick-layouts qml6-module-qtqml-workerscript qml6-module-qtmultimedia qt6-declarative-dev-tools qml-qt6
-      # The scripts run `qml6`; Ubuntu may install the runner only as Qt's own `qml`.
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev pkg-config
+      # The Qt the floors were set against, as in `qt-types`. Ubuntu's own is older and splits
+      # Qt Quick into packages: without Particles, XmlListModel, folderlistmodel and the Controls
+      # styles half the reference pictures could not be taken.
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.11.2"
+          modules: qtmultimedia
+          cache: true
+      # The scripts run `qml6`; Qt's own install names the runner `qml`.
       - run: |
-          if ! command -v qml6 >/dev/null; then
-            mkdir -p "$HOME/.local/bin"
-            ln -s /usr/lib/qt6/bin/qml "$HOME/.local/bin/qml6"
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          fi
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$QT_ROOT_DIR/bin/qml" "$HOME/.local/bin/qml6"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: mise run gallery:reference
       - run: mise run gallery
