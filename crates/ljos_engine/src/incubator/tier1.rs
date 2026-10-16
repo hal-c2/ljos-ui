@@ -60,6 +60,8 @@ mod builtins;
 mod ops;
 mod vm;
 
+pub(crate) use vm::field as member_of;
+
 /// What tier 1 has done in one engine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tier1Stats {

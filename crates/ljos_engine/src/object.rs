@@ -202,7 +202,7 @@ impl ObjectHeader {
             .aliases
             .iter()
             .find(|(p, _)| *p == prop)
-            .map(|(_, t)| *t)
+            .map(|(_, t)| t.clone())
     }
 }
 
@@ -210,11 +210,13 @@ impl ObjectHeader {
 /// arguments; the JS host runs it.
 pub type ScriptMethod = Rc<dyn Fn(&Engine, ObjectId, &[Value]) -> Result<Value, EngineError>>;
 
-/// Where an alias points: an object, or one of its properties.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where an alias points: an object, one of its properties, or one member
+/// of a property whose value has members (`label.font.family`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AliasTarget {
     pub(crate) object: ObjectId,
     pub(crate) prop: Option<PropIndex>,
+    pub(crate) member: Option<Atom>,
 }
 
 /// A source position, for Qt-style messages.

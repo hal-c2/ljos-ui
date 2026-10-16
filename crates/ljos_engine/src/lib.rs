@@ -70,6 +70,7 @@ mod listmodel;
 mod loader;
 mod log;
 mod made_on_read;
+mod member_aliases;
 mod meta;
 mod model;
 mod number;

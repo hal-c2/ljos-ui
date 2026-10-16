@@ -54,7 +54,7 @@ pub(crate) type BindingFn = Box<dyn FnMut(&Engine) -> Option<Value>>;
 
 /// Which values of a binding no interceptor sees.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Free {
+pub(crate) enum Free {
     Never,
     /// The first: the value the property is created with.
     First,
@@ -1058,8 +1058,19 @@ impl Engine {
             Got::Alias(Some(AliasTarget {
                 object,
                 prop: Some(p),
+                member: None,
             })) => return self.try_read(object, p),
-            Got::Alias(Some(AliasTarget { object, prop: None })) => Value::Object(object),
+            Got::Alias(Some(AliasTarget {
+                object,
+                prop: Some(p),
+                member: Some(m),
+            })) => {
+                let whole = self.try_read(object, p)?;
+                crate::incubator::tier1::member_of(&whole, &m).unwrap_or_default()
+            }
+            Got::Alias(Some(AliasTarget {
+                object, prop: None, ..
+            })) => Value::Object(object),
             // Not wired yet (still being created).
             Got::Alias(None) => Value::Undefined,
         };
@@ -1090,6 +1101,36 @@ impl Engine {
         target: ObjectId,
         target_prop: Option<PropIndex>,
     ) -> Result<(), EngineError> {
+        self.set_alias_to(obj, prop, target, target_prop, None)
+    }
+
+    /// Points the alias property `prop` of `obj` at the member `member` of
+    /// `target`'s property `target_prop` (`label.font.family`).
+    pub(crate) fn set_member_alias(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        target: ObjectId,
+        target_prop: PropIndex,
+        member: &str,
+    ) -> Result<(), EngineError> {
+        self.set_alias_to(
+            obj,
+            prop,
+            target,
+            Some(target_prop),
+            Some(Atom::new(member)),
+        )
+    }
+
+    fn set_alias_to(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        target: ObjectId,
+        target_prop: Option<PropIndex>,
+        member: Option<Atom>,
+    ) -> Result<(), EngineError> {
         let mut store = self.inner.store.borrow_mut();
         let h = store
             .objects
@@ -1105,6 +1146,7 @@ impl Engine {
         let t = AliasTarget {
             object: target,
             prop: target_prop,
+            member,
         };
         if target_prop.is_none() {
             // An alias of an object never changes; its slot holds it so a
@@ -1134,6 +1176,7 @@ impl Engine {
                     Some(AliasTarget {
                         object,
                         prop: Some(tp),
+                        ..
                     }) => cur = (object, tp),
                     _ => return cur,
                 },
@@ -1231,7 +1274,7 @@ impl Engine {
         Ok(p.ty.clone())
     }
 
-    fn write_impl(
+    pub(crate) fn write_impl(
         &self,
         obj: ObjectId,
         prop: PropIndex,
@@ -1239,6 +1282,9 @@ impl Engine {
         how: WriteKind,
         internal: bool,
     ) -> Result<(), EngineError> {
+        if let Some(target) = self.alias_member(obj, prop) {
+            return self.write_member(target, &v, how, internal);
+        }
         let (obj, prop) = self.redirect(obj, prop);
         self.drop_maker(obj, prop);
         // `x = undefined` takes a property with a reset back, and so does
@@ -1471,7 +1517,7 @@ impl Engine {
         self.bind_free(obj, prop, f, internal, free)
     }
 
-    fn bind_free(
+    pub(crate) fn bind_free(
         &self,
         obj: ObjectId,
         prop: PropIndex,
@@ -1479,6 +1525,9 @@ impl Engine {
         internal: bool,
         free: Free,
     ) -> Result<(), EngineError> {
+        if let Some(target) = self.alias_member(obj, prop) {
+            return self.bind_member(target, f, internal, free);
+        }
         let (obj, prop) = self.redirect(obj, prop);
         self.drop_maker(obj, prop);
         let ty = {

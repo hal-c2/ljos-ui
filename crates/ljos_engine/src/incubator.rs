@@ -1158,15 +1158,22 @@ impl Engine {
                 let Ok(me) = self.property_index(id, &p.name) else {
                     continue;
                 };
-                let r = if alias.path.is_empty() {
-                    self.set_alias(id, me, target, None)
-                } else {
-                    match self.member_target(target, &alias.path[..alias.path.len() - 1], {
-                        alias.path.last().expect("not empty")
-                    }) {
+                let r = match alias.path.split_last() {
+                    None => self.set_alias(id, me, target, None),
+                    Some((name, through)) => match self.member_target(target, through, name) {
                         Ok(t) => self.set_alias(id, me, t.obj, Some(t.prop)),
-                        Err(e) => Err(e),
-                    }
+                        // `label.font.family`: a member of a value.
+                        Err(e) => match self.value_target(target, through) {
+                            Some((t, ty))
+                                if Value::Undefined
+                                    .with_member(&ty, name, &Value::Undefined)
+                                    .is_some() =>
+                            {
+                                self.set_member_alias(id, me, t.obj, t.prop, name)
+                            }
+                            _ => Err(e),
+                        },
+                    },
                 };
                 if let Err(e) = r {
                     self.warn(format!(

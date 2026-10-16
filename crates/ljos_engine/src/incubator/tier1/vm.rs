@@ -575,7 +575,7 @@ fn element(obj: &Value, index: &Value) -> Option<Value> {
 }
 
 /// A member of a value that is not an object.
-fn field(v: &Value, name: &str) -> Option<Value> {
+pub(crate) fn field(v: &Value, name: &str) -> Option<Value> {
     let d = |x: f64| Some(Value::Real(x + 0.0));
     let s = |x: f32| Some(Value::Real(f64::from(x + 0.0)));
     match v {
