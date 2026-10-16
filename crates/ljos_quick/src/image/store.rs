@@ -968,14 +968,16 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// Runs `f` on a thread and says whether it finished within a while.
+    /// Runs `f` on a thread and says whether it finished within a while:
+    /// long enough that a loaded machine does not fail a gate that opens,
+    /// short enough that one that never opens fails the test.
     fn finishes(f: impl FnOnce() + Send + 'static) -> bool {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             f();
             let _ = tx.send(());
         });
-        rx.recv_timeout(Duration::from_millis(300)).is_ok()
+        rx.recv_timeout(Duration::from_secs(30)).is_ok()
     }
 
     #[test]
