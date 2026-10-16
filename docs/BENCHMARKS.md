@@ -386,3 +386,74 @@ with it). The maroon and samegame controls changed within noise.
 
 **What is left.** In 6 s Ljós asked for 21–24 of the feed's pictures and Qt for 7. Ljós makes
 delegates for more of the list than Qt does, and loads a picture for each of them.
+
+### The scene's own work each frame (2026-10-17)
+
+With the pixels free on a GPU, what was left was the engine's work each frame: the reactive graph,
+delegates, text and the scene. These changes cut it:
+
+- **A rerun that reads what the last run read keeps its edges.** The graph compares the new reads
+  with the old ones in place, instead of dropping every edge and making it again.
+- **An item that only moves reads only where it is.** Its position (x, y) is an effect of its
+  own. An item animated along x used to read all thirteen of its geometry properties every frame.
+  Now a frame that only moves it sets only its transform.
+- **Per-frame maps hash with FxHash, not SipHash.** This covers the render backend, the scene's
+  sets of drawn items, a view's per-row maps, the accessibility pass, the engine's maps, and the
+  text layout and shape caches.
+- **A read that finds its object builds no error.** The error, with its formatted name, is built
+  only when the object is gone.
+- **A particle system steps only the emitters that give birth,** and an `ImageParticle` paints all
+  its particles into its own display list, as one mesh per image. It no longer makes an item for
+  each particle with its own bindings.
+- **An item's anchor lines (`left`, `top`, …) are made only when read.** Every item used to
+  write its seven lines as it was made, each a newly allocated list, whether or not anything
+  anchored to it.
+
+`crates/ljos_shell/examples/frame_profile.rs` drives a project at 60 Hz on a virtual clock without a
+window, so a frame can be split by function under callgrind. A samegame click went from 156 G to
+2.6 G instructions.
+
+The tables below are medians of 3 runs. The GPU runs had a load average of 6–58. The llvmpipe
+runs had 3.6–199: a few runs fell in other workers' builds, so samegame and rssnews are the
+noisiest cells. CPU is % of one core. "Before" is the GPU table above.
+
+| App | Idle CPU, GPU | CPU clicked, GPU | Idle CPU, llvmpipe | CPU clicked, llvmpipe |
+|---|---|---|---|---|
+| animations | 6.8 → 6.2 (Qt 2.7) | 8.1 → 5.4 (Qt 3.5) | 20.4 (Qt 25.9) | 19.0 (Qt 26.2) |
+| listview | 14.1 → 14.8 (Qt 5.3) | 12.7 → 15.9 (Qt 5.5) | 23.7 (Qt 24.0) | 24.1 (Qt 25.9) |
+| clocks | 2.9 → 4.1 (Qt 1.9) | 2.9 → 4.0 (Qt 2.5) | 10.2 (Qt 23.4) | 9.9 (Qt 23.7) |
+| maroon | 4.3 → 3.2 (Qt 3.5) | 4.9 → 4.8 (Qt 3.9) | 50.3 (Qt 69.9) | 58.8 (Qt 74.1) |
+| samegame | 6.6 → 2.3 (Qt 2.4) | 50.4 → 14.1 (Qt 4.4) | 10.1 (Qt 26.0) | 121 (Qt 224) |
+| rssnews | 3.7 (Qt 0) | 2.7 (Qt 1.0) | 2.6 (Qt 0) | 107 → 4.2 (Qt 9.1) |
+
+The first frame came sooner than Qt's in every desktop cell: 45–85 ms against 77–140 ms on the
+GPU, and 210–267 ms against 264–326 ms on llvmpipe. In the pi-zero profile on llvmpipe, Ljós
+shows 61.7 frames a second in animations (it was 60; Qt 61.9) and 60.1 in listview (it was 56;
+Qt 62.0). samegame's lower count is its menu's `PauseAnimation`, as above.
+
+**How many delegates a ListView keeps.** qml6 was run as a black box (`QT_QPA_PLATFORM=offscreen`)
+next to Ljós on the same list: 100 000 rows of 20 px in a 300 px view with `cacheBuffer: 320`.
+
+- **At start and while scrolling,** both keep the same delegates: 32 at the top, 33 while
+  scrolling a little at a time.
+- **After a jump to the middle,** Qt makes none of the buffer before the first visible row. It
+  fills the buffer before the visible rows only as it scrolls back over them, and fills the
+  buffer after them at once. Ljós fills both sides: 49 live against Qt's 33, and 16 more made per
+  jump.
+
+The Qt documentation does not promise either behaviour, so it was not changed. A list that only
+starts and scrolls makes no more delegates than Qt's. The pictures rssnews asks for beyond Qt's 7
+are not explained by the buffer.
+
+**What is left.**
+
+- **listview on a GPU** costs about three times Qt's CPU. Nearly all of it is making and dropping
+  the 8 delegates a frame that scroll past. Each costs about 680 k instructions: making it 185 k,
+  adding it to the scene 125 k, dropping it 61 k, text layout 57 k and anchors 51 k. About 8 % is
+  graph nodes made by a delegate's first tracked reads, about 46 per item, and another 9 % is
+  freeing them. Sharing one node for all of an object's unread properties loses which property a
+  binding depends on: bindings rerun when nothing they read changed, and the counting tests fail.
+- **animations and clocks on a GPU** still cost Ljós 2× Qt's CPU.
+- **samegame clicks on a GPU** cost 14 % against Qt's 4 %.
+- **rssnews keeps working after it settles.** It uses 3–4 % with no frames and no wakeups, while
+  pictures are still fetched and decoded. Qt has finished by then.
