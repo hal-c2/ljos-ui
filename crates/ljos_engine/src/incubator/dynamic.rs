@@ -164,7 +164,7 @@ impl Engine {
     /// with `Qt.binding` is a binding. `url` is the component's.
     pub(crate) fn initial_props(&self, url: &Atom, root: ObjectId, props: &[(String, Value)]) {
         for (name, v) in props {
-            let Ok(p) = self.property_index(root, name) else {
+            let Some((obj, p, member)) = self.initial_target(root, name) else {
                 let ty = self
                     .meta_of(root)
                     .map(|m| m.name.to_string())
@@ -174,22 +174,80 @@ impl Engine {
                 ));
                 continue;
             };
-            let fits = self
-                .meta_of(root)
-                .and_then(|m| m.property(p).map(|i| initial_fits(&i.ty, v)))
-                .unwrap_or(true);
-            let set = match self.initial_binding(root, p, v) {
-                Some(bound) => bound.is_ok(),
+            let set = match member {
+                Some(member) => self.initial_member(obj, p, &member, v),
                 None => {
-                    fits && self
-                        .write_internal(root, p, v.clone(), WriteKind::Imperative)
-                        .is_ok()
+                    let fits = self
+                        .meta_of(obj)
+                        .and_then(|m| m.property(p).map(|i| initial_fits(&i.ty, v)))
+                        .unwrap_or(true);
+                    match self.initial_binding(obj, p, v) {
+                        Some(bound) => bound.is_ok(),
+                        None => {
+                            fits && self
+                                .write_internal(obj, p, v.clone(), WriteKind::Imperative)
+                                .is_ok()
+                        }
+                    }
                 }
             };
             if !set {
                 self.warn(format!("{url}: Could not set initial property {name}"));
             }
         }
+    }
+
+    /// Where the name of an initial property leads, as it would in the
+    /// declaration: a property of the new object, of a group or an object on
+    /// the way (`border.width`), of what a type attaches to it
+    /// (`Accessible.name`), or a member of a value (`font.pixelSize`), whose
+    /// name is then given too.
+    fn initial_target(
+        &self,
+        root: ObjectId,
+        name: &str,
+    ) -> Option<(ObjectId, PropIndex, Option<String>)> {
+        if let Ok(p) = self.property_index(root, name) {
+            return Some((root, p, None));
+        }
+        let mut path: Vec<String> = name.split('.').map(str::to_owned).collect();
+        if path.len() < 2 {
+            return None;
+        }
+        let mut obj = root;
+        if path[0].starts_with(|c: char| c.is_ascii_uppercase()) {
+            // The component's imports are not at hand here; the type is
+            // looked for in every module, as a script's `Qt` does.
+            obj = self.attached_by_name(root, "", &path[0])?;
+            path.remove(0);
+        }
+        let (leaf, through) = path.split_last()?;
+        if !through.is_empty()
+            && let Some((t, _)) = self.value_target(obj, through)
+        {
+            return Some((t.obj, t.prop, Some(leaf.clone())));
+        }
+        let t = self.member_target(obj, through, leaf).ok()?;
+        Some((t.obj, t.prop, None))
+    }
+
+    /// Sets the member `member` of the value `obj`'s `prop` holds. What
+    /// `Qt.binding` gave is not a value of a member.
+    fn initial_member(&self, obj: ObjectId, prop: PropIndex, member: &str, v: &Value) -> bool {
+        if matches!(v, Value::Js(_)) {
+            return false;
+        }
+        let Some(ty) = self
+            .meta_of(obj)
+            .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
+        else {
+            return false;
+        };
+        let whole = self.untrack(|| self.read(obj, prop));
+        whole.with_member(&ty, member, v).is_some_and(|whole| {
+            self.write_internal(obj, prop, whole, WriteKind::Imperative)
+                .is_ok()
+        })
     }
 
     /// An object declaration names a property its type does not have.
