@@ -45,11 +45,11 @@ libc.workspace = true
 
 # GL on EGL (src/gl.rs; build.rs says where): wgpu's GL present copies
 # every frame once more, which on a software rasteriser is most of what a
-# frame costs. The versions eframe's glow painter brings.
+# frame costs.
 [target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
-egui_glow = "0.36.2"
-glow = "0.17.0"
-glutin = { version = "0.32.3", default-features = false, features = ["egl", "wayland", "x11"] }
+egui_glow.workspace = true
+glow.workspace = true
+glutin.workspace = true
 
 [features]
 default = ["media"]
