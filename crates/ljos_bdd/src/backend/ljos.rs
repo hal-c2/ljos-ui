@@ -621,6 +621,12 @@ impl Live {
                 "x": num(r.x), "y": num(r.y), "width": num(r.width), "height": num(r.height)
             }),
             QmlValue::List(items) => Value::Array(items.iter().map(|i| self.to_json(i)).collect()),
+            QmlValue::Map(fields) => Value::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), self.to_json(v)))
+                    .collect(),
+            ),
             QmlValue::Font(_)
             | QmlValue::Vector2d(_)
             | QmlValue::Vector3d(_)

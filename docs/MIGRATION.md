@@ -257,6 +257,16 @@ handed what it depends on, or is not `Default`, is registered with
 `engine.register_singleton_with("Example", Version::new(1, 0), |engine| T { .. })`
 instead; the closure runs when the singleton is first read.
 
+Structured data crosses as Qt's `QVariantMap` and `QVariantList` do,
+without JSON text. A field, parameter or return of `Vec<T>`,
+`Option<T>` (`None` is `null`), `HashMap<String, T>` or
+`serde_json::Value` is data: an invokable returning
+`Vec<HashMap<String, Value>>` gives QML a list of plain objects
+(`rows[1].path`), and a `serde_json::Value` parameter receives the
+script's nested object whole. `Value::map([("path", ..), ("size", ..)])`
+builds one record, and `engine.deep_copy(&v)` reads a `var` a method
+was handed. A `Serialize` type goes through `serde_json::to_value`.
+
 `register` is the one seam a native module sits at: a host calls it
 on its Engine, and nothing else about the module needs to be
 public. Methods read and write through the `Cx` they are handed and

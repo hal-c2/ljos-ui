@@ -91,7 +91,7 @@ fn object(e: &Engine, a: Option<&JsValue>) -> Option<ObjectId> {
 /// number is not 0 (Qt 6.11.2, by running qml6).
 fn initial_fits(ty: &TypeTag, v: &Value) -> bool {
     match (ty, v) {
-        (TypeTag::Var, _) => true,
+        (TypeTag::Var | TypeTag::Data, _) => true,
         (_, Value::Undefined) => false,
         (TypeTag::Int | TypeTag::Real, Value::String(s)) => s.trim().parse::<f64>().is_ok(),
         (TypeTag::Int | TypeTag::Real, v) => {

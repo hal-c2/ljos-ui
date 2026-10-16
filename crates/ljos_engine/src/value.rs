@@ -5,7 +5,7 @@
 //!
 //! `Value` is 16 bytes: a tag plus an 8-byte payload. Payloads that would
 //! not fit inline are shared behind an `Arc` (`Point`, `Size`, `Rect`,
-//! `Font`, `Vector4d`, `Quaternion`, `List`); they are immutable, so a
+//! `Font`, `Vector4d`, `Quaternion`, `List`, `Map`); they are immutable, so a
 //! clone is a reference-count bump and a write builds a new one, which is
 //! what QML's value-type write-back does anyway. The two small vectors are
 //! single precision and fit beside the tag. Strings are [`Atom`]s (8 bytes, see
@@ -16,8 +16,8 @@
 //! # Equality
 //!
 //! - [`Value::strict_equals`] is JS `===`: NaN is unequal to itself, `+0`
-//!   equals `-0`, `Int` and `Real` compare as numbers, lists and JS handles
-//!   compare by identity. Value types (`color`, `point`, `url`, …) compare
+//!   equals `-0`, `Int` and `Real` compare as numbers, lists, maps and JS
+//!   handles compare by identity. Value types (`color`, `point`, `url`, …) compare
 //!   by value with their own kind only, so `url === string` is false.
 //! - `PartialEq` (`==` in Rust) is the reactive graph's change detection.
 //!   It differs from `===` in one place: NaN equals NaN, so writing NaN
@@ -389,6 +389,11 @@ pub enum Value {
     Url(Atom),
     Object(ObjectId),
     List(Arc<Vec<Value>>),
+    /// A record made in Rust (`{ path, size }`): a script is given a new
+    /// plain object with these fields, in this order, as a [`Value::List`]
+    /// gives it a new array. A value going to a data type
+    /// ([`TypeTag::Data`]) brings a script's plain object back as one.
+    Map(Arc<Vec<(Atom, Value)>>),
     Enum(EnumValue),
     Js(JsHandle),
 }
@@ -594,6 +599,45 @@ impl Value {
         Value::List(Arc::new(items))
     }
 
+    /// A record of these fields, in this order.
+    ///
+    /// ```
+    /// use ljos_engine::Value;
+    ///
+    /// let row = Value::map([("path", Value::from("/a")), ("size", Value::Int(3))]);
+    /// assert_eq!(row.get("size"), Some(&Value::Int(3)));
+    /// ```
+    pub fn map<K: Into<Atom>>(fields: impl IntoIterator<Item = (K, Value)>) -> Self {
+        Value::Map(Arc::new(
+            fields.into_iter().map(|(k, v)| (k.into(), v)).collect(),
+        ))
+    }
+
+    /// The items, if this is a list.
+    pub fn as_list(&self) -> Option<&[Value]> {
+        match self {
+            Value::List(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// The fields, if this is a record ([`Value::Map`]).
+    pub fn as_map(&self) -> Option<&[(Atom, Value)]> {
+        match self {
+            Value::Map(fields) => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// The field `key` of a record; `None` for a record without it and
+    /// for any other value.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.as_map()?
+            .iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v)
+    }
+
     /// `null` or `undefined`.
     pub fn is_nullish(&self) -> bool {
         matches!(self, Value::Undefined | Value::Null)
@@ -638,7 +682,8 @@ impl Value {
             | Value::Quaternion(_)
             | Value::Url(_)
             | Value::Object(_)
-            | Value::List(_) => "object",
+            | Value::List(_)
+            | Value::Map(_) => "object",
             // Could be a function; only the JS host knows.
             Value::Js(_) => "object",
         }
@@ -671,6 +716,7 @@ impl Value {
             | Value::Quaternion(_)
             | Value::Object(_)
             | Value::List(_)
+            | Value::Map(_)
             | Value::IntPoint(_)
             | Value::Js(_) => true,
         }
@@ -702,6 +748,7 @@ impl Value {
             | Value::Vector4d(_)
             | Value::Quaternion(_)
             | Value::Object(_)
+            | Value::Map(_)
             | Value::IntPoint(_)
             | Value::Js(_) => f64::NAN,
         }
@@ -755,7 +802,7 @@ impl Value {
                 }
                 Atom::from(out)
             }
-            Value::Object(_) | Value::Js(_) => Atom::intern("[object Object]"),
+            Value::Object(_) | Value::Map(_) | Value::Js(_) => Atom::intern("[object Object]"),
         }
     }
 
@@ -798,6 +845,7 @@ impl Value {
             (Value::Object(a), Value::Object(b)) => a == b,
             // Arrays are references in JS.
             (Value::List(a), Value::List(b)) => Arc::ptr_eq(a, b),
+            (Value::Map(a), Value::Map(b)) => Arc::ptr_eq(a, b),
             (Value::Js(a), Value::Js(b)) => a == b,
             _ => false,
         }
@@ -833,6 +881,10 @@ impl fmt::Debug for Value {
             Value::Url(u) => write!(f, "url({u:?})"),
             Value::Object(o) => write!(f, "{o:?}"),
             Value::List(l) => f.debug_list().entries(l.iter()).finish(),
+            Value::Map(m) => f
+                .debug_map()
+                .entries(m.iter().map(|(k, v)| (k.as_str(), v)))
+                .finish(),
             Value::Enum(e) => write!(f, "enum({}:{})", e.ty, e.value),
             Value::Js(h) => write!(f, "{h:?}"),
         }

@@ -319,8 +319,9 @@ pub struct ObjectHeader {
   - `Undefined`, `Null`, `Bool`, `Int`, `Real`;
   - `String` (an interned `Atom`), `Color`;
   - `Point`/`Size`/`Rect`, `Font`, `Url`;
-  - `Object(ObjectId)`, `List`, `Enum`;
+  - `Object(ObjectId)`, `List`, `Map` (a record made in Rust; a script gets a new plain object, as it gets a new array for a `List`), `Enum`;
   - `Js(JsHandle)`, used for `var` properties that hold JS objects.
+- **Data at the Rust boundary.** A Rust property, argument or return of `Vec<T>`, `Option<T>`, `HashMap<String, T>`, `BTreeMap<String, T>` or `serde_json::Value` has the type `TypeTag::Data`, which QML sees as `var`. A script's plain objects and arrays are copied into it as `Map`s and `List`s all the way down, once, where a `var` keeps the script's own object. `Engine::deep_copy` makes that copy of a `var` a Rust method was handed. No JS source is made for either direction.
 - **Value types.** Ljós follows the Qt 6.8+ write-back reference behaviour for value types and tests it (01 §4.7).
 - **Re-entrancy rule.** A read can run a binding, which can call JS, which can call back into Rust. So the Engine never holds a `RefCell` borrow across a JS call. State is split into separately borrowed parts (graph, objects, JS), and every API uses short borrows.
 

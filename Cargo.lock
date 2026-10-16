@@ -3429,6 +3429,7 @@ dependencies = [
  "ljos_runtime",
  "ljos_shell",
  "qml_front",
+ "serde_json",
  "tempfile",
 ]
 

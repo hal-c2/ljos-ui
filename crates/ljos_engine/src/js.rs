@@ -425,10 +425,20 @@ impl HostObjects for EngineHost {
             return Ok(JsValue::Undefined);
         }
         // A function declared in QML gets the caller's array; a native
-        // method gets a list of it (`Engine::invoke`).
+        // method gets a list of it (`Engine::invoke`), and a copy of a
+        // plain object where it takes data.
+        let meta = engine.meta_of(id);
+        let params = meta
+            .as_ref()
+            .and_then(|m| m.method(MethodIndex(method)))
+            .map_or(&[][..], |m| &m.params[..]);
         let vals: Vec<Value> = args
             .iter()
-            .map(|a| engine.js_to_value_kept(scope, a.clone(), &TypeTag::Var))
+            .enumerate()
+            .map(|(i, a)| match params.get(i) {
+                Some((_, ty @ TypeTag::Data)) => engine.js_to_value(scope, a.clone(), ty),
+                _ => engine.js_to_value_kept(scope, a.clone(), &TypeTag::Var),
+            })
             .collect();
         // An exception in a QML function called from JS is the caller's to
         // catch: it is left pending instead of being logged where it left
@@ -596,6 +606,20 @@ fn group_proxy<'js>(
     scope.from_value(&v)
 }
 
+/// Whether `v` is or holds a script's own value.
+fn holds_js(v: &Value) -> bool {
+    match v {
+        Value::Js(_) => true,
+        Value::List(items) => items.iter().any(holds_js),
+        Value::Map(fields) => fields.iter().any(|(_, v)| holds_js(v)),
+        _ => false,
+    }
+}
+
+/// How deep [`Engine::deep_copy`] goes: past it an object is left to the
+/// script, which is where a cycle ends.
+const DATA_DEPTH: usize = 64;
+
 impl Engine {
     /// The JS host, started on first use.
     pub(crate) fn js(&self) -> Result<Rc<JsState>, EngineError> {
@@ -716,6 +740,12 @@ impl Engine {
             Value::Object(id) if self.is_alive(*id) => JsValue::Object(obj_to_u64(*id)),
             Value::Object(_) => JsValue::Null,
             Value::List(items) => JsValue::Array(items.iter().map(|i| self.to_js(i)).collect()),
+            Value::Map(fields) => JsValue::Map(
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), self.to_js(v)))
+                    .collect(),
+            ),
             Value::Enum(e) => JsValue::Number(f64::from(e.value)),
             Value::Js(h) => JsValue::Handle(h.0.clone()),
         }
@@ -724,6 +754,9 @@ impl Engine {
     /// A JS value as an engine value. `ty` is the type it is going to, so a
     /// plain `{x, y}` can become a `point`.
     pub(crate) fn js_to_value(&self, scope: &Scope<'_>, v: JsValue, ty: &TypeTag) -> Value {
+        if matches!(ty, TypeTag::Data) {
+            return self.js_to_data(scope, v, 0);
+        }
         match v {
             JsValue::Undefined => Value::Undefined,
             JsValue::Null => Value::Null,
@@ -821,6 +854,56 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// A JS value as data ([`TypeTag::Data`]): a plain object is copied
+    /// into a [`Value::Map`] and an array into a [`Value::List`], all the
+    /// way down. A function, and what lies deeper than [`DATA_DEPTH`] (a
+    /// cycle), stays the script's own.
+    fn js_to_data(&self, scope: &Scope<'_>, v: JsValue, depth: usize) -> Value {
+        let deeper = |v| self.js_to_data(scope, v, depth + 1);
+        match v {
+            JsValue::Handle(r) if depth < DATA_DEPTH && !scope.is_function(&r) => {
+                if let Some(list) = self.face_list(&r) {
+                    return list;
+                }
+                if r.is_array() {
+                    let items = scope.array_items(&r).unwrap_or_default();
+                    Value::list(items.into_iter().map(deeper).collect())
+                } else {
+                    let fields = scope.entries(&r).unwrap_or_default();
+                    Value::map(fields.into_iter().map(|(k, v)| (k, deeper(v))))
+                }
+            }
+            JsValue::Array(items) => Value::list(items.into_iter().map(deeper).collect()),
+            JsValue::Map(fields) => Value::map(fields.into_iter().map(|(k, v)| (k, deeper(v)))),
+            v => self.js_to_value(scope, v, &TypeTag::Var),
+        }
+    }
+
+    /// A copy of `v` as data: a script's plain objects become
+    /// [`Value::Map`]s and its arrays [`Value::List`]s, all the way down,
+    /// as an argument or property of a data type ([`TypeTag::Data`]:
+    /// `Vec<T>`, `HashMap<String, T>`, `serde_json::Value`) receives them.
+    /// For a `var` a Rust method was handed, which holds the script's own
+    /// object.
+    pub fn deep_copy(&self, v: &Value) -> Value {
+        if !holds_js(v) {
+            return v.clone();
+        }
+        match v {
+            Value::Js(_) => {}
+            Value::List(items) => {
+                return Value::list(items.iter().map(|i| self.deep_copy(i)).collect());
+            }
+            Value::Map(fields) => {
+                return Value::map(fields.iter().map(|(k, v)| (k.clone(), self.deep_copy(v))));
+            }
+            _ => return v.clone(),
+        }
+        let js = self.to_js(v);
+        self.run_js("deep copy", |s| Ok(self.js_to_data(s, js, 0)))
+            .unwrap_or_else(|| v.clone())
     }
 
     /// [`Engine::js_to_value`] for a value going where a script's array is

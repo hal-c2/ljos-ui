@@ -492,6 +492,11 @@ pub(super) fn normal(e: &Engine, v: Value) -> Value {
             }
         }
         Value::List(items) => Value::list(items.iter().map(|i| normal(e, i.clone())).collect()),
+        Value::Map(fields) => Value::map(
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), normal(e, v.clone()))),
+        ),
         Value::Point(p) => {
             if negative_zero(p.x) || negative_zero(p.y) {
                 Value::point(p.x + 0.0, p.y + 0.0)

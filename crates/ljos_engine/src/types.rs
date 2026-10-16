@@ -42,6 +42,11 @@ use crate::value_types::{IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, are
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeTag {
     Var,
+    /// A `var` that a Rust type reads as data (`Vec<T>`, `Option<T>`,
+    /// `HashMap<String, T>`, `serde_json::Value`): a script's plain object
+    /// arrives as a [`Value::Map`] and its array as a [`Value::List`], all
+    /// the way down, where a `var` keeps the script's own object.
+    Data,
     Bool,
     Int,
     Real,
@@ -79,7 +84,7 @@ impl TypeTag {
     /// The name as QML writes it and the type dump records it.
     pub fn name(&self) -> String {
         match self {
-            TypeTag::Var => "var".into(),
+            TypeTag::Var | TypeTag::Data => "var".into(),
             TypeTag::Bool => "bool".into(),
             TypeTag::Int => "int".into(),
             TypeTag::Real => "real".into(),
@@ -140,7 +145,7 @@ impl TypeTag {
     /// The value a property of this type has before anything is assigned.
     pub fn default_value(&self) -> Value {
         match self {
-            TypeTag::Var | TypeTag::Group(_) | TypeTag::Void => Value::Undefined,
+            TypeTag::Var | TypeTag::Data | TypeTag::Group(_) | TypeTag::Void => Value::Undefined,
             TypeTag::Bool => Value::Bool(false),
             TypeTag::Int => Value::Int(0),
             TypeTag::Real => Value::Real(0.0),
@@ -171,7 +176,7 @@ impl TypeTag {
                 to: self.name(),
             })
         };
-        if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var) {
+        if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var | TypeTag::Data) {
             return fail();
         }
         let numeric = |v: &Value| match v {
@@ -184,7 +189,7 @@ impl TypeTag {
             _ => None,
         };
         Ok(match self {
-            TypeTag::Var => v.clone(),
+            TypeTag::Var | TypeTag::Data => v.clone(),
             TypeTag::Bool => match v {
                 Value::Bool(_) => v.clone(),
                 _ => Value::Bool(v.to_boolean()),
@@ -335,7 +340,7 @@ pub(crate) fn describe(v: &Value) -> String {
         Value::Quaternion(_) => "QQuaternion".into(),
         Value::Url(_) => "QUrl".into(),
         Value::Object(_) => "QObject*".into(),
-        Value::List(_) => "QJSValue".into(),
+        Value::List(_) | Value::Map(_) => "QJSValue".into(),
         Value::Enum(_) => "int".into(),
         Value::Js(_) => "QJSValue".into(),
     }
@@ -420,12 +425,6 @@ qml_value!(Vector3d, TypeTag::Vector3d, |s| Value::Vector3d(*s), Value::Vector3d
 qml_value!(Vector4d, TypeTag::Vector4d, |s| Value::Vector4d(Arc::new(*s)), Value::Vector4d(v) => *v);
 qml_value!(Quaternion, TypeTag::Quaternion, |s| Value::Quaternion(Arc::new(*s)), Value::Quaternion(q) => *q);
 qml_value!(EnumValue, TypeTag::Enum(Atom::intern("enum")), |s| Value::Enum(*s), Value::Enum(e) => e);
-qml_value!(
-    Vec<Value>,
-    TypeTag::List(None),
-    |s| Value::List(Arc::new(s.clone())),
-    Value::List(l) => (*l).clone()
-);
 
 impl QmlValue for Value {
     fn type_tag() -> TypeTag {
@@ -439,20 +438,165 @@ impl QmlValue for Value {
     }
 }
 
-impl QmlValue for Option<ObjectId> {
+impl QmlValue for ObjectId {
     fn type_tag() -> TypeTag {
         TypeTag::Object(None)
     }
     fn to_value(&self) -> Value {
-        self.map_or(Value::Null, Value::Object)
+        Value::Object(*self)
     }
     fn from_value(v: &Value) -> Result<Self, ConvertError> {
-        // A property refuses `undefined`; an argument or a value read out
-        // of a `var` that holds none is no object.
-        if matches!(v, Value::Undefined) {
-            return Ok(None);
+        Self::type_tag()
+            .coerce(v)?
+            .as_object()
+            .ok_or_else(|| convert_error(v, "QObject*"))
+    }
+}
+
+fn convert_error(v: &Value, to: &str) -> ConvertError {
+    ConvertError {
+        from: describe(v),
+        to: to.into(),
+    }
+}
+
+/// A list: `list` for a `Vec<Value>`, which keeps a script's objects as
+/// the script's own; for any other item type data ([`TypeTag::Data`]),
+/// so a list of records arrives as one.
+impl<T: QmlValue> QmlValue for Vec<T> {
+    fn type_tag() -> TypeTag {
+        match T::type_tag() {
+            TypeTag::Var => TypeTag::List(None),
+            _ => TypeTag::Data,
         }
-        Ok(Self::type_tag().coerce(v)?.as_object())
+    }
+    fn to_value(&self) -> Value {
+        Value::list(self.iter().map(T::to_value).collect())
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        match TypeTag::List(None).coerce(v)? {
+            Value::List(items) => items.iter().map(T::from_value).collect(),
+            _ => unreachable!("coerce returns the tag's own variant"),
+        }
+    }
+}
+
+/// `None` is `null`, and `null` or `undefined` is `None`. An object stays
+/// an object type; any other is data, so `null` is not made a `T`.
+impl<T: QmlValue> QmlValue for Option<T> {
+    fn type_tag() -> TypeTag {
+        match T::type_tag() {
+            t @ (TypeTag::Object(_) | TypeTag::Var) => t,
+            _ => TypeTag::Data,
+        }
+    }
+    fn to_value(&self) -> Value {
+        self.as_ref().map_or(Value::Null, T::to_value)
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        match v {
+            Value::Undefined | Value::Null => Ok(None),
+            _ => T::from_value(v).map(Some),
+        }
+    }
+}
+
+/// A record as a map of its fields. A script's plain object arrives as
+/// one; a script is given a new plain object with the fields in key
+/// order.
+impl<T: QmlValue, S: std::hash::BuildHasher + Default + 'static> QmlValue
+    for std::collections::HashMap<String, T, S>
+{
+    fn type_tag() -> TypeTag {
+        TypeTag::Data
+    }
+    fn to_value(&self) -> Value {
+        let mut fields: Vec<(&String, &T)> = self.iter().collect();
+        fields.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        Value::map(fields.into_iter().map(|(k, v)| (k.as_str(), v.to_value())))
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        record_fields(v)?
+            .iter()
+            .map(|(k, v)| Ok((k.to_string(), T::from_value(v)?)))
+            .collect()
+    }
+}
+
+/// As the `HashMap`, in key order.
+impl<T: QmlValue> QmlValue for std::collections::BTreeMap<String, T> {
+    fn type_tag() -> TypeTag {
+        TypeTag::Data
+    }
+    fn to_value(&self) -> Value {
+        Value::map(self.iter().map(|(k, v)| (k.as_str(), v.to_value())))
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        record_fields(v)?
+            .iter()
+            .map(|(k, v)| Ok((k.to_string(), T::from_value(v)?)))
+            .collect()
+    }
+}
+
+fn record_fields(v: &Value) -> Result<&[(Atom, Value)], ConvertError> {
+    v.as_map().ok_or_else(|| convert_error(v, "QVariantMap"))
+}
+
+/// JSON as data: objects are records, arrays lists, numbers that fit an
+/// `int` are one. Coming back, a whole number is a JSON integer, a
+/// number JSON cannot write (NaN, an infinity) is `null` as
+/// `JSON.stringify` writes it, `undefined` is `null`, and a url, colour or
+/// enum is its string or number. An object or a value type is refused.
+impl QmlValue for serde_json::Value {
+    fn type_tag() -> TypeTag {
+        TypeTag::Data
+    }
+    fn to_value(&self) -> Value {
+        use serde_json::Value as J;
+        match self {
+            J::Null => Value::Null,
+            J::Bool(b) => Value::Bool(*b),
+            J::Number(n) => match n.as_i64().and_then(|i| i32::try_from(i).ok()) {
+                Some(i) => Value::Int(i),
+                None => Value::Real(n.as_f64().unwrap_or(f64::NAN)),
+            },
+            J::String(s) => Value::from(s.as_str()),
+            J::Array(items) => Value::list(items.iter().map(Self::to_value).collect()),
+            J::Object(fields) => Value::map(fields.iter().map(|(k, v)| (k.as_str(), v.to_value()))),
+        }
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        use serde_json::Value as J;
+        let number = |n: f64| {
+            if n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_992.0 {
+                J::from(n as i64)
+            } else {
+                serde_json::Number::from_f64(n).map_or(J::Null, J::Number)
+            }
+        };
+        Ok(match v {
+            Value::Undefined | Value::Null => J::Null,
+            Value::Bool(b) => J::Bool(*b),
+            Value::Int(i) => J::from(*i),
+            Value::Real(r) => number(*r),
+            Value::Enum(e) => J::from(e.value),
+            Value::String(s) | Value::Url(s) => J::String(s.to_string()),
+            Value::Color(_) => J::String(v.to_js_string().to_string()),
+            Value::List(items) => J::Array(
+                items
+                    .iter()
+                    .map(Self::from_value)
+                    .collect::<Result<_, _>>()?,
+            ),
+            Value::Map(fields) => J::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| Ok((k.to_string(), Self::from_value(v)?)))
+                    .collect::<Result<_, ConvertError>>()?,
+            ),
+            _ => return Err(convert_error(v, "QJsonValue")),
+        })
     }
 }
 

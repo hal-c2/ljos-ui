@@ -1879,7 +1879,7 @@ impl Engine {
         args: &[Value],
     ) -> Result<Value, EngineError> {
         let budget = self.inner.slow.budget();
-        let (thunk, slow_names) = {
+        let (thunk, slow_names, data) = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
             let m = h
@@ -1902,7 +1902,18 @@ impl Engine {
                     .map(|(_, f)| f.clone())
                     .ok_or_else(|| EngineError::NotNative(m.name.to_string()))?),
             };
-            (thunk, slow_names)
+            // Which parameters take data, for a method with any.
+            let data = m
+                .params
+                .iter()
+                .any(|(_, t)| matches!(t, TypeTag::Data))
+                .then(|| {
+                    m.params
+                        .iter()
+                        .map(|(_, t)| matches!(t, TypeTag::Data))
+                        .collect::<Vec<_>>()
+                });
+            (thunk, slow_names, data)
         };
         let thunk = match thunk {
             Ok(t) => t,
@@ -1913,8 +1924,20 @@ impl Engine {
         // caller's to catch, and a panic in it ends only this call
         // (fault.rs).
         self.inner.faults.propagate.set(false);
-        // Native code reads lists, not a script's arrays.
-        let args = self.plain_args(args);
+        // Native code reads lists, not a script's arrays, and data where
+        // it takes data, not a script's objects.
+        let args = match data {
+            Some(data) => std::borrow::Cow::Owned(
+                args.iter()
+                    .enumerate()
+                    .map(|(i, a)| match data.get(i) {
+                        Some(true) => self.deep_copy(a),
+                        _ => self.plain(a),
+                    })
+                    .collect(),
+            ),
+            None => self.plain_args(args),
+        };
         // Only the thunk call below is timed, not the lookup or the
         // argument conversion above. This is `Instant`, not the engine
         // Clock: the virtual clock does not move during a call, and the

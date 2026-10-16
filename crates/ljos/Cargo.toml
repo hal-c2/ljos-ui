@@ -45,6 +45,8 @@ qml_front = { path = "../qml_front" }
 tempfile.workspace = true
 # The render tests read back the PNG they are given.
 ljos_render = { path = "../ljos_render", default-features = false }
+# An application that hands QML JSON (`records.rs`).
+serde_json.workspace = true
 # So the tests see the facade as an application with dev-qml does.
 ljos = { path = ".", features = ["dev-qml", "build", "render"] }
 

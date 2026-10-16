@@ -241,7 +241,8 @@ fn type_of(v: &Value) -> Option<&'static str> {
         | Value::Vector4d(_)
         | Value::Quaternion(_)
         | Value::Object(_)
-        | Value::List(_) => "object",
+        | Value::List(_)
+        | Value::Map(_) => "object",
         Value::Js(_) => return None,
     })
 }
