@@ -1700,7 +1700,7 @@ impl Engine {
     /// equal.
     pub fn notify(&self, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
-        let (node, cur) = {
+        let (n, cur) = {
             let store = self.inner.store.borrow();
             let h = store
                 .objects
@@ -1710,11 +1710,11 @@ impl Engine {
                 .meta
                 .property(prop)
                 .ok_or_else(|| unknown_index(&h.meta, prop))?;
-            (h.node(prop), read_access(&*h.native, &h.dynamic, &p.access))
-        };
-        let Some(n) = node else {
-            // Nothing observes it.
-            return Ok(());
+            let Some(n) = h.node(prop) else {
+                // Nothing observes it.
+                return Ok(());
+            };
+            (n, read_access(&*h.native, &h.dynamic, &p.access))
         };
         let g = &self.inner.graph;
         if g.is_bound(n) || g.override_count(n) > 0 {

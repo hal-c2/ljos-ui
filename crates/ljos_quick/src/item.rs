@@ -5,8 +5,9 @@ use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, EnumValue, LogLevel, ObjectId, Point, PropIndex, QmlList,
-    QmlObject, QmlType, QtObject, Rect, Reset, Value, WriteKind, qml_impl,
+    Atom, ConvertError, Cx, Engine, EngineError, EnumValue, LogLevel, ObjectId, Point, PropIndex,
+    QmlList, QmlObject, QmlType, QmlValue, QtObject, Rect, Reset, TypeTag, Value, WriteKind,
+    qml_impl,
 };
 use ljos_render::kurbo::{self, Affine};
 
@@ -90,19 +91,19 @@ pub struct Item {
     // Anchor lines (`parent.left`). Set in `on_complete`, when the object
     // knows its own id.
     #[qml(notify, readonly)]
-    pub left: Value,
+    pub left: LineOf,
     #[qml(notify, readonly)]
-    pub right: Value,
+    pub right: LineOf,
     #[qml(notify, readonly)]
-    pub top: Value,
+    pub top: LineOf,
     #[qml(notify, readonly)]
-    pub bottom: Value,
+    pub bottom: LineOf,
     #[qml(notify, readonly)]
-    pub horizontal_center: Value,
+    pub horizontal_center: LineOf,
     #[qml(notify, readonly)]
-    pub vertical_center: Value,
+    pub vertical_center: LineOf,
     #[qml(rename = "baseline", notify, readonly)]
-    pub baseline_line: Value,
+    pub baseline_line: LineOf,
     /// Whether the item is its focus scope's focus item (see
     /// [`crate::focus`]).
     #[qml(notify)]
@@ -174,13 +175,13 @@ impl Default for Item {
             antialiasing: false,
             smooth: true,
             anchors: Anchors::default(),
-            left: Value::Undefined,
-            right: Value::Undefined,
-            top: Value::Undefined,
-            bottom: Value::Undefined,
-            horizontal_center: Value::Undefined,
-            vertical_center: Value::Undefined,
-            baseline_line: Value::Undefined,
+            left: LineOf::default(),
+            right: LineOf::default(),
+            top: LineOf::default(),
+            bottom: LineOf::default(),
+            horizontal_center: LineOf::default(),
+            vertical_center: LineOf::default(),
+            baseline_line: LineOf::default(),
             focus: false,
             active_focus: false,
             active_focus_on_tab: false,
@@ -529,6 +530,24 @@ pub struct AnchorLine {
     pub edge: Edge,
 }
 
+/// One of an item's own anchor lines, as its field holds it: the line
+/// becomes a value only when it is read, so an item that nobody anchors to
+/// makes none of its seven.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LineOf(pub Option<AnchorLine>);
+
+impl QmlValue for LineOf {
+    fn type_tag() -> TypeTag {
+        TypeTag::Var
+    }
+    fn to_value(&self) -> Value {
+        self.0.map_or(Value::Undefined, AnchorLine::to_value)
+    }
+    fn from_value(v: &Value) -> Result<Self, ConvertError> {
+        Ok(LineOf(AnchorLine::from_value(v)))
+    }
+}
+
 impl AnchorLine {
     pub fn to_value(self) -> Value {
         Value::list(vec![
@@ -614,19 +633,36 @@ impl Item {
 /// What `on_complete` does, for trees built natively before completion or
 /// when the hook did not run. Idempotent.
 pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
-    let line = |edge| AnchorLine { item: obj, edge }.to_value();
-    let already = engine.untrack(|| engine.with(obj, |i: &Item| !i.left.is_nullish()))?;
+    let line = |edge| LineOf(Some(AnchorLine { item: obj, edge }));
+    let already = engine.with_mut(obj, |i: &mut Item| {
+        if i.left.0.is_some() {
+            return true;
+        }
+        i.left = line(Edge::Left);
+        i.right = line(Edge::Right);
+        i.top = line(Edge::Top);
+        i.bottom = line(Edge::Bottom);
+        i.horizontal_center = line(Edge::HorizontalCenter);
+        i.vertical_center = line(Edge::VerticalCenter);
+        i.baseline_line = line(Edge::Baseline);
+        false
+    })?;
     if already {
         return Ok(());
     }
     engine.batch(|| -> Result<(), EngineError> {
-        engine.set_internal(obj, Item::LEFT, line(Edge::Left))?;
-        engine.set_internal(obj, Item::RIGHT, line(Edge::Right))?;
-        engine.set_internal(obj, Item::TOP, line(Edge::Top))?;
-        engine.set_internal(obj, Item::BOTTOM, line(Edge::Bottom))?;
-        engine.set_internal(obj, Item::HORIZONTAL_CENTER, line(Edge::HorizontalCenter))?;
-        engine.set_internal(obj, Item::VERTICAL_CENTER, line(Edge::VerticalCenter))?;
-        engine.set_internal(obj, Item::BASELINE_LINE, line(Edge::Baseline))?;
+        // Only a line read before the item was complete has observers.
+        for p in [
+            Item::LEFT.index,
+            Item::RIGHT.index,
+            Item::TOP.index,
+            Item::BOTTOM.index,
+            Item::HORIZONTAL_CENTER.index,
+            Item::VERTICAL_CENTER.index,
+            Item::BASELINE_LINE.index,
+        ] {
+            engine.notify(obj, p)?;
+        }
         // An item whose size was never given follows its implicit size.
         // Assigning `width` replaces this binding, as in Qt.
         let unset = |p| is_unset(engine, obj, p);

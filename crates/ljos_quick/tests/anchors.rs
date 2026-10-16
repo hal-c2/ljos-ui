@@ -204,3 +204,22 @@ fn anchors_wait_for_the_scene() {
     let _s = scene(&e, root, 300.0, 300.0);
     assert_eq!(num(&e, c, "width"), 200.0);
 }
+
+#[test]
+fn a_line_read_before_its_item_is_complete_follows_it() {
+    let e = engine();
+    let root = make::<Item>(&e, None);
+    // Made, not complete: its lines are not there yet.
+    let early = e
+        .create_native_incomplete(Item::default(), Some(root))
+        .unwrap();
+    let known = std::rc::Rc::new(std::cell::Cell::new(false));
+    let k = known.clone();
+    let left = e.meta_of(early).unwrap().property_index("left").unwrap();
+    let _effect = e
+        .effect(move |e| k.set(!e.read(early, left).is_nullish()))
+        .unwrap();
+    assert!(!known.get());
+    e.complete(early).unwrap();
+    assert!(known.get(), "the reader is told when the line is there");
+}
