@@ -23,13 +23,13 @@ use egui_winit::accesskit_winit;
 use egui_winit::winit::event::WindowEvent as RawEvent;
 use egui_winit::winit::event_loop::EventLoopProxy;
 use ljos_controls::{
-    ApplicationState, Modality, ScreenSpec, WindowRequest, WindowSpec, WindowSystem,
+    ApplicationState, Modality, ResizeEdges, ScreenSpec, WindowRequest, WindowSpec, WindowSystem,
 };
 use ljos_egui::{QmlView, ResizeMode};
 use ljos_engine::{Engine, LogLevel, ObjectId};
 use ljos_host::{
-    AppState, ButtonState, Event, HostApp, HostControl, PlatformHost, PointerKind, Screen, Wake,
-    WindowChange, WindowEvent, WindowId, WindowState, WinitControl, WinitHost,
+    AppState, ButtonState, Event, HostApp, HostControl, PlatformHost, PointerKind, ResizeEdge,
+    Screen, Wake, WindowChange, WindowEvent, WindowId, WindowState, WinitControl, WinitHost,
 };
 use ljos_runtime::{MemoryPressure, SystemClock};
 
@@ -1322,6 +1322,10 @@ impl<M: Send + 'static> Desktop<M> {
                 WindowRequest::Alert => host.change_window(surface.id, WindowChange::Alert),
                 // No desktop host restacks a window.
                 WindowRequest::Raise | WindowRequest::Lower => {}
+                WindowRequest::StartMove => host.change_window(surface.id, WindowChange::StartMove),
+                WindowRequest::StartResize(edges) => {
+                    host.change_window(surface.id, WindowChange::StartResize(resize_edge(edges)));
+                }
             }
         }
     }
@@ -1546,6 +1550,20 @@ pub(crate) fn run<M: Send + 'static>(
     match failure.borrow_mut().take() {
         Some(error) => Err(error),
         None => Ok(()),
+    }
+}
+
+/// `edges` is one edge or a corner; `ResizeEdges::from_qt` refused the rest.
+fn resize_edge(edges: ResizeEdges) -> ResizeEdge {
+    match (edges.top, edges.bottom, edges.left, edges.right) {
+        (true, _, true, _) => ResizeEdge::NorthWest,
+        (true, _, _, true) => ResizeEdge::NorthEast,
+        (true, ..) => ResizeEdge::North,
+        (_, true, true, _) => ResizeEdge::SouthWest,
+        (_, true, _, true) => ResizeEdge::SouthEast,
+        (_, true, ..) => ResizeEdge::South,
+        (_, _, true, _) => ResizeEdge::West,
+        _ => ResizeEdge::East,
     }
 }
 

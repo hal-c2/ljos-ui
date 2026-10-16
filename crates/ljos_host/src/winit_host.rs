@@ -17,7 +17,7 @@ use winit::event::{
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, PhysicalKey};
 use winit::monitor::MonitorHandle;
-use winit::window::{Fullscreen, Theme, UserAttentionType, Window};
+use winit::window::{Fullscreen, ResizeDirection, Theme, UserAttentionType, Window};
 
 use crate::event::{
     AppState, ButtonState, Event, Key, KeyEvent, Modifiers, PointerButton, PointerEvent,
@@ -284,6 +284,14 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             WindowChange::Level(l) => w.set_window_level(level(l)),
             WindowChange::Activate => w.focus_window(),
             WindowChange::Alert => w.request_user_attention(Some(UserAttentionType::Informational)),
+            // A platform that cannot says so here; the application was
+            // answered already, as Qt's methods answer before the move.
+            WindowChange::StartMove => {
+                let _ = w.drag_window();
+            }
+            WindowChange::StartResize(edge) => {
+                let _ = w.drag_resize_window(resize_direction(edge));
+            }
         }
     }
 
@@ -643,6 +651,20 @@ mod platform {
     }
 
     pub(crate) use imp::{HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, with_app_id, with_kind};
+}
+
+fn resize_direction(edge: crate::ResizeEdge) -> ResizeDirection {
+    use crate::ResizeEdge as E;
+    match edge {
+        E::North => ResizeDirection::North,
+        E::NorthEast => ResizeDirection::NorthEast,
+        E::East => ResizeDirection::East,
+        E::SouthEast => ResizeDirection::SouthEast,
+        E::South => ResizeDirection::South,
+        E::SouthWest => ResizeDirection::SouthWest,
+        E::West => ResizeDirection::West,
+        E::NorthWest => ResizeDirection::NorthWest,
+    }
 }
 
 #[cfg(test)]

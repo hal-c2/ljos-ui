@@ -68,6 +68,41 @@ pub enum WindowRequest {
     Lower,
     /// `alert(msec)`: ask for the user's attention.
     Alert,
+    /// `startSystemMove()`: let the user move the window with the pointer
+    /// that is pressed.
+    StartMove,
+    /// `startSystemResize(edges)`: the same for resizing it by the edge or
+    /// the corner [`ResizeEdges`] names.
+    StartResize(ResizeEdges),
+}
+
+/// One edge of a window, or two that meet in a corner: a `Qt.Edges` that
+/// `startSystemResize` accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResizeEdges {
+    pub top: bool,
+    pub left: bool,
+    pub right: bool,
+    pub bottom: bool,
+}
+
+impl ResizeEdges {
+    /// From `Qt.TopEdge` (1), `LeftEdge` (2), `RightEdge` (4) and
+    /// `BottomEdge` (8). `None` for no edge, for opposite edges and for
+    /// anything else.
+    pub fn from_qt(edges: u32) -> Option<ResizeEdges> {
+        if edges & !0xf != 0 {
+            return None;
+        }
+        let e = ResizeEdges {
+            top: edges & 1 != 0,
+            left: edges & 2 != 0,
+            right: edges & 4 != 0,
+            bottom: edges & 8 != 0,
+        };
+        let opposite = (e.top && e.bottom) || (e.left && e.right);
+        (edges != 0 && !opposite).then_some(e)
+    }
 }
 
 /// What a host shows of one window. Sizes and positions are in logical

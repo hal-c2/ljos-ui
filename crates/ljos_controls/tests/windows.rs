@@ -5,8 +5,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos_controls::{
-    ApplicationState, FRAMELESS, Modality, STAYS_ON_TOP, ScreenSpec, WindowRequest, WindowShow,
-    WindowSystem,
+    ApplicationState, FRAMELESS, Modality, ResizeEdges, STAYS_ON_TOP, ScreenSpec, WindowRequest,
+    WindowShow, WindowSystem,
 };
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::QuickScene;
@@ -262,6 +262,37 @@ fn what_is_no_property_reaches_the_host_as_a_request() {
         ]
     );
     assert!(sys.take_requests().is_empty());
+}
+
+#[test]
+fn a_host_is_asked_to_move_or_resize_from_the_press() {
+    let (e, _) = hosted();
+    let main = load(&e, TWO);
+    let sys = WindowSystem::of(&e);
+    assert_eq!(call(&e, main, "startSystemMove"), Value::Bool(true));
+    let resize = |edges: i32| {
+        e.invoke_by_name(main, "startSystemResize", &[Value::Int(edges)])
+            .unwrap()
+    };
+    // Qt.TopEdge | Qt.LeftEdge: a corner.
+    assert_eq!(resize(1 | 2), Value::Bool(true));
+    // No edge, opposite edges and bits that are no edge ask for nothing.
+    for refused in [0, 1 | 8, 2 | 4, 16] {
+        assert_eq!(resize(refused), Value::Bool(false), "{refused}");
+    }
+    let corner = ResizeEdges {
+        top: true,
+        left: true,
+        right: false,
+        bottom: false,
+    };
+    assert_eq!(
+        sys.take_requests(),
+        vec![
+            (main, WindowRequest::StartMove),
+            (main, WindowRequest::StartResize(corner))
+        ]
+    );
 }
 
 #[test]

@@ -30,8 +30,8 @@ pub use event::{
 };
 pub use schedule::{Schedule, Sleep};
 pub use window::{
-    Capabilities, Screen, WindowAttributes, WindowChange, WindowId, WindowKind, WindowLevel,
-    WindowState,
+    Capabilities, ResizeEdge, Screen, WindowAttributes, WindowChange, WindowId, WindowKind,
+    WindowLevel, WindowState,
 };
 #[cfg(feature = "winit")]
 pub use winit_host::{WinitControl, WinitHost};

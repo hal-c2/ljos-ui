@@ -37,8 +37,8 @@ pub use app::{Application, ApplicationState, ScreenInfo, ScreenSpec};
 pub use screen::{Screen, ScreenAttached};
 use system::NO_MAXIMUM;
 pub use system::{
-    FRAMELESS, KIND_MASK, Modality, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowRequest, WindowShow,
-    WindowSpec, WindowSystem,
+    FRAMELESS, KIND_MASK, Modality, ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowRequest,
+    WindowShow, WindowSpec, WindowSystem,
 };
 
 use crate::containers::{Host, bar_height, host_append, host_complete};
@@ -320,6 +320,38 @@ impl Window {
     fn alert(cx: &Cx, _msec: Value) -> Result<(), EngineError> {
         WindowSystem::of(cx.engine).request(cx.this, WindowRequest::Alert);
         Ok(())
+    }
+
+    /// Asks the window system to let the user move the window with the
+    /// pointer that is pressed (a title bar of the application's own).
+    /// Whether there was one to ask: without a host nothing moves.
+    #[qml(invokable, name = "startSystemMove")]
+    fn start_system_move(cx: &Cx) -> Result<bool, EngineError> {
+        let sys = WindowSystem::of(cx.engine);
+        if !sys.is_hosted() {
+            return Ok(false);
+        }
+        sys.request(cx.this, WindowRequest::StartMove);
+        Ok(true)
+    }
+
+    /// The same for resizing the window by `edges`, a `Qt.Edges` of one
+    /// edge or two that meet; anything else is refused.
+    #[qml(invokable, name = "startSystemResize")]
+    fn start_system_resize(cx: &Cx, edges: Value) -> Result<bool, EngineError> {
+        let sys = WindowSystem::of(cx.engine);
+        let edges = edges.to_number();
+        let Some(edges) = (edges >= 0.0 && edges.fract() == 0.0)
+            .then(|| ResizeEdges::from_qt(edges as u32))
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        if !sys.is_hosted() {
+            return Ok(false);
+        }
+        sys.request(cx.this, WindowRequest::StartResize(edges));
+        Ok(true)
     }
 
     #[qml(on_complete)]
@@ -864,15 +896,17 @@ fn bind_attached(engine: &Engine, item: ObjectId, att: ObjectId) -> Result<(), E
     e.bind_initial(att, WindowAttached::WINDOW.index, move |e| {
         window_for(e, item).map_or(Value::Null, Value::Object)
     })?;
-    e.bind_initial(att, WindowAttached::CONTENT_ITEM.index, move |e| {
-        match window_for(e, item) {
+    e.bind_initial(
+        att,
+        WindowAttached::CONTENT_ITEM.index,
+        move |e| match window_for(e, item) {
             Some(w) if is_a::<Window>(e, w) => {
                 object(e, w, Window::CONTENT_ITEM.index).map_or(Value::Null, Value::Object)
             }
             Some(w) => Value::Object(w),
             None => Value::Null,
-        }
-    })?;
+        },
+    )?;
     for (prop, size) in [
         (WindowAttached::WIDTH.index, Item::WIDTH.index),
         (WindowAttached::HEIGHT.index, Item::HEIGHT.index),

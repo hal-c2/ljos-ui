@@ -106,6 +106,24 @@ pub enum WindowChange {
     Activate,
     /// Ask for the user's attention without taking the keyboard.
     Alert,
+    /// Let the user move the window with the pointer that is pressed now;
+    /// the platform ends the move when the button is released.
+    StartMove,
+    /// The same for resizing the window by an edge or a corner.
+    StartResize(ResizeEdge),
+}
+
+/// An edge or a corner of a window, by the compass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResizeEdge {
+    North,
+    NorthEast,
+    East,
+    SouthEast,
+    South,
+    SouthWest,
+    West,
+    NorthWest,
 }
 
 /// A display.
