@@ -9,6 +9,16 @@
 //! runs on the Engine thread with the value `work` made. Nothing
 //! polls: no delivery happens until the host delivers, as with fetch.
 //!
+//! `done` hears how the task ended: `Ok` with the value, or `Err` with
+//! a [`TaskPanic`] when `work` panicked. A panic is a bug, not an
+//! expected failure (those belong in `T`, as a `Result` of its own),
+//! but the state set before spawning (a spinner, a disabled button)
+//! still has to be put back, so `done` runs either way. The panic is
+//! also a fault of the engine, as one on the Engine thread would be:
+//! it is logged, kept in `Engine::faults` and reaches the fault
+//! handler. A cancelled task's `done` never runs, whatever its work
+//! did.
+//!
 //! Write the two closures to their threads:
 //!
 //! - Capture plain data into `work` — strings, numbers, bytes. It
@@ -45,7 +55,11 @@
 //!         if latest.get() != generation {
 //!             return; // a newer request superseded this one
 //!         }
-//!         *put.borrow_mut() = text; // QML state is touched here
+//!         // QML state is touched here; a panicking work says why.
+//!         *put.borrow_mut() = match text {
+//!             Ok(text) => text,
+//!             Err(panic) => format!("failed: {}", panic.message()),
+//!         };
 //!     },
 //! )
 //! .expect("queued");
@@ -63,13 +77,13 @@
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use ljos_engine::Engine;
 use ljos_platform::{Platform, Reply};
-use ljos_runtime::ComputePool;
+use ljos_runtime::{ComputePool, Fault};
 
 pub use ljos_runtime::{Lane, PoolFull};
 
@@ -98,12 +112,38 @@ impl Task {
     }
 }
 
+/// Why a task ended without a value: its work panicked. What the panic
+/// said is [`TaskPanic::message`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskPanic {
+    message: String,
+}
+
+impl TaskPanic {
+    /// The panic's payload, when it was a string.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for TaskPanic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "task panicked: {}", self.message)
+    }
+}
+
+impl std::error::Error for TaskPanic {}
+
+/// What crosses back from the pool: the value, type-erased, or the
+/// panic that took its place.
+type Outcome = Result<Box<dyn Any + Send>, TaskPanic>;
+
 /// A `done` waiting for its value, type-erased over that value: the
 /// closure stays here, on the Engine thread, and only the value its
 /// work made crosses back through the inbox. That is why `done`
 /// need not be `Send` where the inbox's jobs must be — the same
 /// reason `Platform::fetch` keeps its callbacks engine-side.
-type Done = Box<dyn FnOnce(&Engine, Box<dyn Any + Send>)>;
+type Done = Box<dyn FnOnce(&Engine, Outcome)>;
 
 /// The `done`s of one engine's tasks that have not been delivered.
 #[derive(Default)]
@@ -131,7 +171,9 @@ fn discard(reply: Reply, id: u64) {
 }
 
 /// Runs `work` on the compute pool and, when the host delivers the
-/// answer, runs `done` on the Engine thread with its value. In the
+/// answer, runs `done` on the Engine thread with its value, or with a
+/// [`TaskPanic`] when `work` panicked (also reported as a fault of the
+/// engine; see the module documentation). In the
 /// [`Lane::Deferred`] lane; [`spawn_in`] names another. A full pool
 /// queue is [`PoolFull`] and neither closure runs.
 ///
@@ -141,7 +183,7 @@ pub fn spawn<T, F, D>(engine: &Engine, work: F, done: D) -> Result<Task, PoolFul
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
-    D: FnOnce(&Engine, T) + 'static,
+    D: FnOnce(&Engine, Result<T, TaskPanic>) + 'static,
 {
     spawn_in(engine, Lane::Deferred, work, done)
 }
@@ -152,7 +194,7 @@ pub fn spawn_in<T, F, D>(engine: &Engine, lane: Lane, work: F, done: D) -> Resul
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
-    D: FnOnce(&Engine, T) + 'static,
+    D: FnOnce(&Engine, Result<T, TaskPanic>) + 'static,
 {
     let cancelled = Arc::new(AtomicBool::new(false));
     let waiting = callbacks(engine);
@@ -160,11 +202,13 @@ where
     waiting.next.set(id + 1);
     waiting.pending.borrow_mut().insert(
         id,
-        Box::new(move |engine: &Engine, value: Box<dyn Any + Send>| {
-            let value = value
-                .downcast::<T>()
-                .unwrap_or_else(|_| unreachable!("a task delivers the value its own work made"));
-            done(engine, *value);
+        Box::new(move |engine: &Engine, outcome: Outcome| {
+            let outcome = outcome.map(|value| {
+                *value
+                    .downcast::<T>()
+                    .unwrap_or_else(|_| unreachable!("a task delivers the value its own work made"))
+            });
+            done(engine, outcome);
         }),
     );
     let reply = Platform::of(engine).expect();
@@ -176,29 +220,38 @@ where
             discard(reply, id);
             return;
         }
-        // Caught here so a panicking work still drops its `done` on
-        // the Engine thread; the pool would otherwise only drop the
-        // promise, and the stored closure would outlive its answer.
-        let value = match catch_unwind(AssertUnwindSafe(work)) {
-            Ok(value) => value,
+        // Caught here so a panicking work still answers on the Engine
+        // thread: the pool would only drop the promise, and the
+        // application would never hear that its task ended.
+        let outcome: Outcome = match catch_unwind(AssertUnwindSafe(work)) {
+            Ok(value) => Ok(Box::new(value)),
             Err(panic) => {
-                discard(reply, id);
-                resume_unwind(panic);
+                let Fault::Panic(message) = Fault::from_panic(panic) else {
+                    unreachable!("a caught panic is a panic fault")
+                };
+                Err(TaskPanic {
+                    message: message.into_owned(),
+                })
             }
         };
-        if flag.load(Ordering::SeqCst) {
+        if outcome.is_ok() && flag.load(Ordering::SeqCst) {
             discard(reply, id);
             return;
         }
         reply.send(move |engine| {
             let done = callbacks(engine).take(id);
+            if let Err(panic) = &outcome {
+                // A bug in the work, reported as one in a handler would
+                // be, cancelled or not.
+                engine.report_fault(None, Fault::Panic(panic.message.clone().into()));
+            }
             // Once more at delivery: a cancel that landed while the
             // answer waited in the inbox still discards it.
             if flag.load(Ordering::SeqCst) {
                 return;
             }
             if let Some(done) = done {
-                done(engine, Box::new(value));
+                done(engine, outcome);
             }
         });
     });

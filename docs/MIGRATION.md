@@ -384,6 +384,10 @@ a 404 is a `Response`, only transport failures are `Err`.
 Heavy work of your own follows the same shape: `ljos::task::spawn`
 runs a closure on the bounded compute pool and runs its `done` with the
 value on the Engine thread, so nothing heavy ever runs where QML lives.
+`done` gets `Ok(value)`, or `Err(TaskPanic)` when the work panicked:
+the panic is also reported to the engine's fault handler, and `done`
+still runs so the application can put back what it set before
+spawning.
 Cancelling the returned `Task` before the work starts keeps it from
 running; cancelling later discards the result. And because a native
 method called from QML still runs on the UI thread, a development host

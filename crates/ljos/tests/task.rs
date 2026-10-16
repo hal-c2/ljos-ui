@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::ThreadId;
 
 use ljos::prelude::*;
-use ljos::task::{Lane, spawn, spawn_in};
+use ljos::task::{Lane, TaskPanic, spawn, spawn_in};
 
 fn finish(engine: &Engine) {
     Platform::of(engine).finish(engine);
@@ -33,7 +33,7 @@ fn a_value_comes_back_only_after_delivery() {
         },
         move |_, value| {
             counted.set(counted.get() + 1);
-            *seen.borrow_mut() = Some(value);
+            *seen.borrow_mut() = Some(value.expect("work made a value"));
         },
     )
     .expect("queued");
@@ -71,7 +71,7 @@ fn done_runs_on_the_engine_thread_and_work_does_not() {
         move || {
             *in_work.lock().expect("not poisoned") = Some(std::thread::current().id());
         },
-        move |_, ()| in_done.set(Some(std::thread::current().id())),
+        move |_, _: Result<(), _>| in_done.set(Some(std::thread::current().id())),
     )
     .expect("queued");
 
@@ -98,7 +98,7 @@ fn cancel_before_start_never_runs_the_work() {
             move || {
                 let _ = gate.lock().expect("not poisoned").recv();
             },
-            |_, ()| {},
+            |_, _: Result<(), _>| {},
         )
         .expect("blocker queued");
     }
@@ -113,7 +113,7 @@ fn cancel_before_start_never_runs_the_work() {
             in_work.store(true, Ordering::SeqCst);
             7
         },
-        move |_, _: i32| in_done.set(true),
+        move |_, _: Result<i32, _>| in_done.set(true),
     )
     .expect("queued");
 
@@ -144,7 +144,7 @@ fn cancel_while_running_lets_it_finish_but_discards_the_result() {
             in_work.store(true, Ordering::SeqCst);
             9
         },
-        move |_, _: i32| in_done.set(true),
+        move |_, _: Result<i32, _>| in_done.set(true),
     )
     .expect("queued");
 
@@ -167,7 +167,7 @@ fn dropping_the_handle_still_delivers() {
     let task = spawn(
         &engine,
         || "fire and forget".to_owned(),
-        move |_, value| *seen.borrow_mut() = Some(value),
+        move |_, value| *seen.borrow_mut() = value.ok(),
     )
     .expect("queued");
     drop(task);
@@ -183,9 +183,89 @@ fn spawn_in_runs_in_the_named_lane_and_the_prelude_holds_the_handle() {
     let seen = Rc::clone(&got);
     // `Task` is the one task type the prelude names; the functions stay
     // behind the module.
-    let task: Task =
-        spawn_in(&engine, Lane::Idle, || 3 + 4, move |_, v| seen.set(v)).expect("queued");
+    let task: Task = spawn_in(
+        &engine,
+        Lane::Idle,
+        || 3 + 4,
+        move |_, v| seen.set(v.unwrap_or(0)),
+    )
+    .expect("queued");
     assert!(!task.is_cancelled());
     finish(&engine);
     assert_eq!(got.get(), 7);
+}
+
+#[test]
+fn a_panicking_work_reaches_done_and_the_fault_handler() {
+    let engine = ljos::engine();
+    let heard = Rc::new(RefCell::new(Vec::<String>::new()));
+    let told = Rc::clone(&heard);
+    engine.set_fault_handler(move |_, report| told.borrow_mut().push(report.message()));
+    let got = Rc::new(RefCell::new(None::<Result<i32, TaskPanic>>));
+    let seen = Rc::clone(&got);
+    spawn(
+        &engine,
+        || -> i32 { panic!("work panicked") },
+        move |_, outcome| *seen.borrow_mut() = Some(outcome),
+    )
+    .expect("queued");
+
+    finish(&engine);
+    let outcome = got.borrow_mut().take().expect("done ran");
+    let panic = outcome.expect_err("the task ended without a value");
+    assert_eq!(panic.message(), "work panicked");
+    assert_eq!(panic.to_string(), "task panicked: work panicked");
+
+    let faults = engine.faults();
+    assert_eq!(faults.len(), 1);
+    assert_eq!(faults[0].kind(), "Panic");
+    assert_eq!(faults[0].message(), "work panicked");
+    engine.deliver_faults();
+    assert_eq!(*heard.borrow(), vec!["work panicked".to_owned()]);
+}
+
+#[test]
+fn a_cancelled_task_whose_work_panicked_is_a_fault_but_done_stays_quiet() {
+    let engine = ljos::engine();
+    let (started_tx, started_rx) = mpsc::channel::<()>();
+    let (gate_tx, gate_rx) = mpsc::channel::<()>();
+    let done_ran = Rc::new(Cell::new(false));
+    let in_done = Rc::clone(&done_ran);
+    let task = spawn(
+        &engine,
+        move || -> i32 {
+            started_tx.send(()).expect("test is listening");
+            gate_rx.recv().expect("test releases the work");
+            panic!("cancelled work panicked")
+        },
+        move |_, _| in_done.set(true),
+    )
+    .expect("queued");
+    started_rx.recv().expect("work started");
+    task.cancel();
+    gate_tx.send(()).expect("work is waiting");
+
+    finish(&engine);
+    assert!(!done_ran.get(), "a cancelled task's done never runs");
+    assert_eq!(engine.faults().len(), 1, "but the bug is still reported");
+}
+
+#[test]
+fn a_panicking_done_is_a_fault_and_other_answers_still_arrive() {
+    let engine = ljos::engine();
+    let got = Rc::new(Cell::new(0));
+    let seen = Rc::clone(&got);
+    spawn(
+        &engine,
+        || 1,
+        |_, _: Result<i32, _>| panic!("done panicked"),
+    )
+    .expect("queued");
+    spawn(&engine, || 2, move |_, v| seen.set(v.unwrap_or(0))).expect("queued");
+
+    finish(&engine);
+    assert_eq!(got.get(), 2);
+    let faults = engine.faults();
+    assert_eq!(faults.len(), 1);
+    assert_eq!(faults[0].message(), "done panicked");
 }
