@@ -2537,6 +2537,7 @@ module QtQuick
 		signal cursorSelectionChanged
 		signal linkActivated link
 		signal linkHovered link
+		method linkAt
 		method append
 		method remove
 		method getFormattedText

@@ -88,6 +88,16 @@ impl TextEdit {
     #[qml(signal, name = "linkHovered")]
     fn link_hovered(link: String);
 
+    /// `linkAt(x, y)`: the address of the link of the rich text at a
+    /// point of the item, or an empty string.
+    #[qml(invokable, name = "linkAt")]
+    fn link_at(cx: &Cx, x: f64, y: f64) -> String {
+        ops::ready(cx.engine, cx.this)
+            .and_then(|st| super::rich::link_at(&st, ljos_render::kurbo::Point::new(x, y)))
+            .map(|href| href.to_string())
+            .unwrap_or_default()
+    }
+
     /// `append(text)`: a new paragraph at the end. Rich text is read as
     /// the editor reads its text.
     #[qml(invokable)]

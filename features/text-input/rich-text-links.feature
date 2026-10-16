@@ -1,6 +1,7 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-textedit.html#hoveredLink-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-textedit.html#linkActivated-signal
+#   https://doc.qt.io/qt-6/qml-qtquick-textedit.html#linkAt-method
 #   https://doc.qt.io/qt-6/qml-qtquick-textedit.html#positionToRectangle-method
 # Verified on Qt 6.11.2 (qml6, offscreen; pointer input over its vnc platform).
 
@@ -19,6 +20,8 @@ Feature: Links and images in an editable rich text
         Item {
           id: root; objectName: "root"; width: 300; height: 200
           property string activated
+          property string found: "none"
+          function look(x, y) { found = edit.linkAt(x, y) }
           TextEdit {
             id: edit; objectName: "edit"; width: 280; height: 100
             textFormat: TextEdit.RichText
@@ -55,6 +58,14 @@ Feature: Links and images in an editable rich text
       And the user moves the pointer to 8, 8
       Then the property "hoveredLink" of "edit" is "http://example.org"
       And the property "length" of "edit" is 11
+
+    Scenario: linkAt names the link at a point
+      When the method "look" of "root" is called with 8, 8
+      Then the property "found" of "root" is "http://example.org"
+
+    Scenario: linkAt is empty away from a link
+      When the method "look" of "root" is called with 250, 8
+      Then the property "found" of "root" is ""
 
   Rule: Images
 
