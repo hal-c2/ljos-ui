@@ -85,6 +85,12 @@ pub struct EguiSink<'a> {
     /// The colour of the rectangle folded away, when there was one: what
     /// the host clears the viewport to.
     pub backdrop: Option<Color32>,
+    /// Hand over an opaque rectangle with square corners and no border
+    /// that lies on whole device pixels as a [`Shape::Rect`] instead of a
+    /// mesh. It covers the same pixels either way; a host whose painter
+    /// can fill one without blending or sampling (a scissored clear) may
+    /// turn it on. Off by default.
+    pub solid_rects: bool,
 }
 
 impl<'a> EguiSink<'a> {
@@ -96,6 +102,7 @@ impl<'a> EguiSink<'a> {
             shapes: Vec::new(),
             fold_backdrop: false,
             backdrop: None,
+            solid_rects: false,
         }
     }
 
@@ -643,13 +650,21 @@ fn backdrop(
     clip: ERect,
     viewport: ERect,
 ) -> Option<Color32> {
+    let (rect, color, _) = solid(list, to_screen, opacity)?;
+    (rect.contains_rect(viewport) && clip.contains_rect(viewport)).then_some(color)
+}
+
+/// Where `list` lands on the screen, its colour and whether its edges are
+/// antialiased, when it is one opaque upright rectangle with square
+/// corners and no border.
+fn solid(list: &DisplayList, to_screen: Affine, opacity: f32) -> Option<(ERect, Color32, bool)> {
     let [
         DrawOp::Rect {
             rect,
             radii,
             fill: Paint::Solid(color),
             border: None,
-            ..
+            aa,
         },
     ] = list.ops()
     else {
@@ -658,10 +673,54 @@ fn backdrop(
     let [sx, ky, kx, sy, _, _] = to_screen.as_coeffs();
     let fill = color.with_opacity(opacity);
     let upright = ky == 0.0 && kx == 0.0 && sx > 0.0 && sy > 0.0;
-    let covers = erect(to_screen.transform_rect_bbox(*rect)).contains_rect(viewport)
-        && clip.contains_rect(viewport);
     let square = radii.iter().all(|r| *r <= 0.0);
-    (upright && covers && square && Paint::Solid(fill).is_opaque()).then(|| color32(fill))
+    (upright && square && Paint::Solid(fill).is_opaque()).then(|| {
+        (
+            erect(to_screen.transform_rect_bbox(*rect)),
+            color32(fill),
+            *aa,
+        )
+    })
+}
+
+/// The pixels a solid rectangle covers, as a rectangle on whole device
+/// pixels, when they are the pixels of a rectangle: a hard-edged one
+/// covers the pixels whose centres it holds; an antialiased one only
+/// covers whole pixels when its edges lie between them.
+fn pixels_of(rect: ERect, aa: bool, ppp: f32) -> Option<ERect> {
+    let snapped = if aa {
+        rect
+    } else {
+        // A pixel is in when its centre is: x0 <= i + 0.5 < x1.
+        let edge = |v: f32| ((v * ppp - 0.5).ceil()) / ppp;
+        ERect::from_min_max(
+            Pos2::new(edge(rect.min.x), edge(rect.min.y)),
+            Pos2::new(edge(rect.max.x), edge(rect.max.y)),
+        )
+    };
+    on_pixels(snapped, ppp).then_some(snapped)
+}
+
+/// Whether every edge of `rect` (in points) lies on a device pixel's
+/// edge, where a feathered edge and a hard one cover the same pixels.
+fn on_pixels(rect: ERect, ppp: f32) -> bool {
+    let whole = |v: f32| {
+        let px = v * ppp;
+        (px - px.round()).abs() < 1e-3
+    };
+    rect.is_positive()
+        && whole(rect.min.x)
+        && whole(rect.min.y)
+        && whole(rect.max.x)
+        && whole(rect.max.y)
+}
+
+/// What is drawn, in paint order.
+enum Drawn {
+    /// A node's shapes, in its clip rectangle.
+    Node(NodeId, ERect),
+    /// A rectangle handed over as one ([`EguiSink::solid_rects`]).
+    Solid(ClippedShape),
 }
 
 fn erect(r: Rect) -> ERect {
@@ -1107,11 +1166,14 @@ impl EpaintBackend {
     }
 
     /// Put every glyph this frame draws into the atlas, then upload it.
-    fn fill_atlas(&mut self, ctx: &Context, order: &[(NodeId, ERect)], stats: &mut EncodeStats) {
+    fn fill_atlas(&mut self, ctx: &Context, order: &[Drawn], stats: &mut EncodeStats) {
         let max_side = GlyphAtlas::max_side(ctx);
         for attempt in 0..2 {
             let mut full = false;
-            for (node, clip) in order {
+            for drawn in order {
+                let Drawn::Node(node, clip) = drawn else {
+                    continue;
+                };
                 let Some(ne) = self.nodes.get(node) else {
                     continue;
                 };
@@ -1288,7 +1350,7 @@ impl RenderBackend for EpaintBackend {
         // Nodes to draw, in paint order, each with its clip rectangle. Shapes
         // are emitted after the loop, once the glyph atlas is complete: adding
         // a glyph can grow the atlas, which moves every texture coordinate.
-        let mut order: Vec<(NodeId, ERect)> = Vec::new();
+        let mut order: Vec<Drawn> = Vec::new();
         let mut has_glyphs = false;
 
         for item in &snap.items {
@@ -1332,6 +1394,16 @@ impl RenderBackend for EpaintBackend {
                 sink.backdrop = Some(color);
                 continue;
             }
+            if sink.solid_rects
+                && let Some((rect, color, aa)) = solid(list, to_screen, item.opacity)
+                && let Some(rect) = pixels_of(rect, aa, self.ppp)
+            {
+                order.push(Drawn::Solid(ClippedShape {
+                    clip_rect: clip,
+                    shape: Shape::Rect(RectShape::filled(rect, CornerRadius::ZERO, color)),
+                }));
+                continue;
+            }
             let sig = Sig {
                 list: list.id(),
                 to_screen: coeffs_f32(to_screen),
@@ -1370,7 +1442,7 @@ impl RenderBackend for EpaintBackend {
             let ne = self.nodes.get_mut(&item.node).expect("present");
             ne.last_used = self.frame;
             has_glyphs |= ne.segs.iter().any(|s| matches!(s, WorldSeg::Glyphs(_)));
-            order.push((item.node, clip));
+            order.push(Drawn::Node(item.node, clip));
         }
 
         if has_glyphs {
@@ -1383,9 +1455,15 @@ impl RenderBackend for EpaintBackend {
             }
         }
 
-        for (node, clip) in &order {
-            let clip = *clip;
-            let ne = self.nodes.get_mut(node).expect("present");
+        for drawn in order {
+            let (node, clip) = match drawn {
+                Drawn::Node(node, clip) => (node, clip),
+                Drawn::Solid(shape) => {
+                    sink.shapes.push(shape);
+                    continue;
+                }
+            };
+            let ne = self.nodes.get_mut(&node).expect("present");
             for seg in &mut ne.segs {
                 match seg {
                     WorldSeg::Mesh(m) => sink.shapes.push(ClippedShape {
@@ -1425,7 +1503,7 @@ impl RenderBackend for EpaintBackend {
                             &mut stats.warnings,
                         );
                         if s.has_texture() {
-                            self.textured.insert(*node);
+                            self.textured.insert(node);
                         }
                         if let Some(mesh) = mesh {
                             sink.shapes.push(ClippedShape {

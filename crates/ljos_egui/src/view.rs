@@ -189,6 +189,8 @@ pub struct QmlView {
     /// See [`QmlView::set_fold_backdrop`].
     fold_backdrop: bool,
     backdrop: Option<egui::Color32>,
+    /// See [`QmlView::set_solid_rects`].
+    solid_rects: bool,
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
@@ -253,6 +255,7 @@ impl QmlView {
             drawn: true,
             fold_backdrop: false,
             backdrop: None,
+            solid_rects: false,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
             graft: None,
@@ -495,6 +498,15 @@ impl QmlView {
     /// less. Off by default: the host has to clear to it.
     pub fn set_fold_backdrop(&mut self, fold: bool) {
         self.fold_backdrop = fold;
+    }
+
+    /// Whether an opaque rectangle with square corners and no border that
+    /// lies on whole pixels is handed to egui as a `Shape::Rect` rather
+    /// than a mesh (`EguiSink::solid_rects`). For a host whose painter
+    /// fills such a rectangle cheaper than it draws a mesh. Off by
+    /// default.
+    pub fn set_solid_rects(&mut self, on: bool) {
+        self.solid_rects = on;
     }
 
     /// The colour the last pass left for the host to clear its window to
@@ -818,6 +830,7 @@ impl QmlView {
             sink.fold_backdrop = self.fold_backdrop
                 && scene.contains_rect(window)
                 && painter.clip_rect().contains_rect(window);
+            sink.solid_rects = self.solid_rects;
             self.backend.encode(&view, &mut sink);
             sink.paint(&painter);
             self.backdrop = sink.backdrop;

@@ -11,8 +11,8 @@ use egui::{Context, Pos2};
 use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::kurbo::{Affine, BezPath, Point, Rect, Size};
 use ljos_render::{
-    ClipSpec, DisplayListBuilder, FrameView, GradientStop, LinearGradient, MemoryPressure, NodeId,
-    Paint, PathStyle, RenderBackend, RenderTree, Rgba, TextAlign,
+    ClipSpec, DisplayListBuilder, DrawOp, FrameView, GradientStop, LinearGradient, MemoryPressure,
+    NodeId, Paint, PathStyle, RenderBackend, RenderTree, Rgba, TextAlign,
 };
 
 const RED: Rgba = Rgba::from_premul(1.0, 0.0, 0.0, 1.0);
@@ -637,4 +637,114 @@ fn only_what_covers_the_view_opaquely_and_first_is_folded() {
         assert_eq!(backdrop, None, "x {x} w {w} under {under}");
         assert_eq!(shapes, if under { 2 } else { 1 });
     }
+}
+
+fn run_solid(s: &mut Scene, be: &mut EpaintBackend) -> Vec<egui::epaint::ClippedShape> {
+    s.frame += 1;
+    let snap = s.tree.compose(s.vp, s.frame);
+    let view = FrameView::new(&snap, 1.0);
+    be.sync(&view);
+    let mut sink = EguiSink::new(None, Pos2::ZERO);
+    sink.solid_rects = true;
+    be.encode(&view, &mut sink);
+    sink.shapes
+}
+
+fn rect_of(list: &mut DisplayListBuilder, x: f64, w: f64, radius: f32, color: Rgba, aa: bool) {
+    list.push(DrawOp::Rect {
+        rect: Rect::new(x, 0.0, x + w, 10.0),
+        radii: [radius; 4],
+        fill: Paint::Solid(color),
+        border: None,
+        aa,
+    });
+}
+
+/// One node holding one rectangle, encoded with `solid_rects` on: the
+/// rectangle it was handed over as, if it was not a mesh.
+fn solid_of(x: f64, w: f64, radius: f32, color: Rgba, aa: bool) -> Option<egui::Rect> {
+    let mut s = Scene::new(100.0, 50.0);
+    let n = s.node(None, 0.0, 0.0, 100.0, 50.0);
+    let mut b = DisplayListBuilder::new();
+    rect_of(&mut b, x, w, radius, color, aa);
+    s.tree.set_content(n, Some(b.finish_arc()));
+    let mut be = EpaintBackend::new();
+    let shapes = run_solid(&mut s, &mut be);
+    assert_eq!(shapes.len(), 1);
+    match &shapes[0].shape {
+        Shape::Rect(r) => Some(r.rect),
+        Shape::Mesh(_) => None,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn opaque_square_rectangles_on_whole_pixels_are_handed_over_as_rectangles() {
+    assert_eq!(
+        solid_of(10.0, 20.0, 0.0, RED, true),
+        Some(egui::Rect::from_min_max(
+            Pos2::new(10.0, 0.0),
+            Pos2::new(30.0, 10.0)
+        ))
+    );
+    // Without the host's say-so it stays a mesh.
+    let mut s = Scene::new(100.0, 50.0);
+    let n = s.node(None, 10.0, 0.0, 20.0, 10.0);
+    s.fill(n, RED);
+    let (shapes, _) = run(&mut s, &mut EpaintBackend::new(), None, Pos2::ZERO);
+    assert!(matches!(shapes[0].shape, Shape::Mesh(_)));
+}
+
+#[test]
+fn a_hard_edged_rectangle_between_pixels_covers_the_pixels_its_centres_hold() {
+    // 10.4..30.4 holds the centres of pixels 10 to 29.
+    assert_eq!(
+        solid_of(10.4, 20.0, 0.0, RED, false),
+        Some(egui::Rect::from_min_max(
+            Pos2::new(10.0, 0.0),
+            Pos2::new(30.0, 10.0)
+        ))
+    );
+    // 10.6.. starts with pixel 11.
+    assert_eq!(
+        solid_of(10.6, 20.0, 0.0, RED, false).map(|r| r.min.x),
+        Some(11.0)
+    );
+}
+
+#[test]
+fn what_a_rectangle_cannot_draw_stays_a_mesh() {
+    let half = Rgba::from_premul(0.5, 0.0, 0.0, 0.5);
+    assert_eq!(solid_of(10.4, 20.0, 0.0, RED, true), None, "feathered edge");
+    assert_eq!(solid_of(10.0, 20.0, 3.0, RED, false), None, "rounded");
+    assert_eq!(solid_of(10.0, 20.0, 0.0, half, false), None, "translucent");
+    assert_eq!(
+        solid_of(10.2, 0.2, 0.0, RED, false),
+        None,
+        "covers no pixel"
+    );
+}
+
+#[test]
+fn rectangles_handed_over_keep_their_place_in_paint_order() {
+    let mut s = Scene::new(100.0, 50.0);
+    let a = s.node(None, 0.0, 0.0, 10.0, 10.0);
+    let b = s.node(None, 0.0, 0.0, 20.0, 20.0);
+    let c = s.node(None, 0.0, 0.0, 10.0, 10.0);
+    s.fill(a, RED);
+    let mut list = DisplayListBuilder::new();
+    list.rounded_rect(
+        Rect::new(0.0, 0.0, 20.0, 20.0),
+        [4.0; 4],
+        Paint::Solid(BLUE),
+        None,
+    );
+    s.tree.set_content(b, Some(list.finish_arc()));
+    s.fill(c, BLUE);
+    let shapes = run_solid(&mut s, &mut EpaintBackend::new());
+    let kinds: Vec<_> = shapes
+        .iter()
+        .map(|c| matches!(c.shape, Shape::Rect(_)))
+        .collect();
+    assert_eq!(kinds, [true, false, true]);
 }
