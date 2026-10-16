@@ -13,7 +13,7 @@
 //! `color` binding.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1040,7 +1040,7 @@ impl QuickScene {
                 .into_iter()
                 .filter(|c| engine.is_alive(*c) && is_item(engine, *c))
                 .collect();
-            let mut seen = HashSet::new();
+            let mut seen = FxHashSet::default();
             want.retain(|c| seen.insert(*c));
             for (i, c) in want.iter().enumerate() {
                 match self.entries.get_mut(c) {
@@ -1191,7 +1191,7 @@ impl QuickScene {
         }
         let entries = &self.entries;
         self.effect_base.retain(|o, _| entries.contains_key(o));
-        let mut parents: HashSet<ObjectId> = HashSet::new();
+        let mut parents: FxHashSet<ObjectId> = FxHashSet::default();
         for e in self.entries.values() {
             if let Some(p) = e.parent {
                 parents.insert(p);
@@ -1229,14 +1229,14 @@ impl QuickScene {
 
     /// The items that are drawn as part of a `MultiEffect`'s source: the
     /// source and what is below it, shown or not.
-    fn effect_drawn(&self) -> HashSet<ObjectId> {
-        let sources: HashSet<ObjectId> = self
+    fn effect_drawn(&self) -> FxHashSet<ObjectId> {
+        let sources: FxHashSet<ObjectId> = self
             .effect_base
             .values()
             .filter_map(|(b, _)| b.source())
             .collect();
         if sources.is_empty() {
-            return HashSet::new();
+            return FxHashSet::default();
         }
         self.entries
             .iter()
@@ -1257,7 +1257,7 @@ impl QuickScene {
     /// Installs paint effects for painting items in `snap` and drops them
     /// for items that left it. Returns whether any were installed.
     fn sync_content_effects(&mut self, engine: &Engine, snap: &FrameSnapshot) -> bool {
-        let mut visible: HashSet<ObjectId> = snap
+        let mut visible: FxHashSet<ObjectId> = snap
             .items
             .iter()
             .filter_map(|i| self.by_node.get(i.node).copied())
@@ -1872,7 +1872,6 @@ impl QuickScene {
 }
 
 // ---------------------------------------------------------------- effects
-
 
 fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if !e.is_alive(obj) {

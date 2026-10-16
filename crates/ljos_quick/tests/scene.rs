@@ -65,7 +65,14 @@ fn an_item_that_only_moves_reads_only_where_it_is() {
     let root = make::<Item>(&e, None);
     geom(&e, root, 0.0, 0.0, 400.0, 400.0);
     let items: Vec<ObjectId> = (0..50)
-        .map(|i| rect_item(&e, Some(root), (0.0, f64::from(i) * 4.0, 10.0, 4.0), rgb(9, 9, 9)))
+        .map(|i| {
+            rect_item(
+                &e,
+                Some(root),
+                (0.0, f64::from(i) * 4.0, 10.0, 4.0),
+                rgb(9, 9, 9),
+            )
+        })
         .collect();
     let mut s = scene(&e, root, 400.0, 400.0);
     frame(&mut s, &e);
