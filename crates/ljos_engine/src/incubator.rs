@@ -1825,6 +1825,7 @@ impl Engine {
         if let Ok(prop) = self.property_index(obj, &dotted) {
             return Ok(Target { obj, prop });
         }
+        self.make_when_reached(obj, path);
         let mut cur = obj;
         for seg in path {
             cur = self
@@ -1846,6 +1847,7 @@ impl Engine {
     /// objects. None where a step is a group of `obj`'s own (`border`), or
     /// holds no object.
     fn object_at_path(&self, obj: ObjectId, path: &[String]) -> Option<ObjectId> {
+        self.make_when_reached(obj, path);
         let mut cur = obj;
         for seg in path {
             let p = self.property_index(cur, seg).ok()?;

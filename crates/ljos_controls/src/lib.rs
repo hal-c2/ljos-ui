@@ -161,6 +161,17 @@ pub fn register(engine: &Engine) {
     tooltip::register(engine);
     combobox::register(engine);
     menu_bar::register(engine);
+    parts::register(
+        engine,
+        &[
+            Control::static_meta(),
+            Label::static_meta(),
+            Popup::static_meta(),
+            ApplicationWindow::static_meta(),
+            TextField::static_meta(),
+            TextArea::static_meta(),
+        ],
+    );
     for meta in [
         ScrollBar::static_meta(),
         ScrollIndicator::static_meta(),

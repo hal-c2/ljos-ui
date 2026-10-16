@@ -65,7 +65,8 @@ pub fn derive(module: &str, type_name: &str, member: Option<&str>) -> Option<Led
             None
         };
     };
-    if let Some(kind) = ours.and_then(|ty| own.member_path(ty, member)) {
+    let qt = qt_type(module, type_name);
+    if let Some(kind) = ours.and_then(|ty| own.member_path(ty, qt, member)) {
         return Some(row(kind, ApiStatus::Supported, IN_TABLE));
     }
     let kind = qt_member(module, type_name, member)?;
@@ -440,19 +441,40 @@ impl Own {
     }
 
     /// A member that may be a path through value types: `font.pixelSize`.
-    fn member_path(&self, ty: &Ty, path: &str) -> Option<MemberKind> {
+    /// `qt` is the type in Qt's table, when this build has it.
+    fn member_path(
+        &self,
+        ty: &Ty,
+        qt: Option<&'static qt_types::Type>,
+        path: &str,
+    ) -> Option<MemberKind> {
         let mut names = path.split('.');
         let first = names.next()?;
         let kind = self.member_or_attached(ty, first)?;
+        let held = |qt: Option<&'static qt_types::Type>, name: &str| {
+            qt?.property(name).and_then(qt_types::Property::value_type)
+        };
         let mut value = self.value_type(ty, first);
+        let mut qt_value = held(qt, first);
         for name in names {
             // A value whose type this table does not describe cannot be
             // told to lack the name.
             let Some(next) = value else {
                 return Some(kind);
             };
-            self.member(next, name)?;
+            // This table may say less of what a property holds than Qt's
+            // (`ComboBox.popup` is a `QtObject` here, a `Popup` in Qt's):
+            // the member is then looked for on Ljós's type of that name.
+            let next = if self.member(next, name).is_some() {
+                next
+            } else {
+                let qt = qt_value?;
+                let named = self.type_named(qt.module, qt.name)?;
+                self.member(named, name)?;
+                named
+            };
             value = self.value_type(next, name);
+            qt_value = held(qt_value, name);
         }
         Some(kind)
     }
@@ -527,6 +549,22 @@ mod tests {
         assert!(derive("QtQuick", "Nope", Some("width")).is_none());
         assert!(derive("QtQuick", "Rectangle", Some("colr")).is_none());
         assert!(derive("Nowhere", "Item", None).is_none());
+    }
+
+    /// Ljós's table says `ComboBox.popup` holds a `QtObject`; Qt's says a
+    /// `Popup`, and that is where the rest of the path is looked for.
+    #[test]
+    fn a_path_through_an_object_follows_the_type_qt_says_it_holds() {
+        if !qt_types::test_has_qt_table(
+            "a_path_through_an_object_follows_the_type_qt_says_it_holds",
+        ) {
+            return;
+        }
+        for member in ["popup.width", "popup.topMargin", "indicator.visible"] {
+            let row = derive("QtQuick.Controls", "ComboBox", Some(member)).unwrap();
+            assert_eq!(row.status, ApiStatus::Supported, "{member}");
+        }
+        assert!(derive("QtQuick.Controls", "ComboBox", Some("popup.widht")).is_none());
     }
 
     /// Only with Qt's table can a type or member Ljós lacks be told from a

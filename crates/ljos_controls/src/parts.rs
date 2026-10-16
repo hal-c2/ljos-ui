@@ -245,38 +245,7 @@ fn holds_components(engine: &Engine, control: ObjectId, prop: PropIndex) -> bool
 pub(crate) fn settle_parts(engine: &Engine, control: ObjectId) {
     engine.untrack(|| {
         for name in PART_PROPERTIES {
-            let Ok(prop) = engine.property_index(control, name) else {
-                continue;
-            };
-            if holds_components(engine, control, prop) {
-                // A split view's `handle` is what each handle is made from.
-                continue;
-            }
-            let Some(component) =
-                object(engine, control, prop).filter(|c| is_a::<Component>(engine, *c))
-            else {
-                continue;
-            };
-            let made = engine.component_create_owned(component, control, |e, root| {
-                // Its bindings may ask for its parent as they first run.
-                if is_item(e, root) && is_item(e, control) {
-                    check(e, name, set_parent_item(e, root, Some(control)));
-                }
-            });
-            let value = match made {
-                Ok(part) => Value::Object(part),
-                Err(err) => {
-                    warn(engine, format!("{name}: {err}"));
-                    Value::Null
-                }
-            };
-            check(
-                engine,
-                name,
-                engine.write_internal(control, prop, value, WriteKind::Initial),
-            );
-            // The template lives on in what was made of it.
-            engine.destroy_now(component);
+            make_part(engine, control, name);
         }
         let current: Vec<ObjectId> = PART_PROPERTIES
             .iter()
@@ -293,4 +262,53 @@ pub(crate) fn settle_parts(engine: &Engine, control: ObjectId) {
             }
         }
     });
+}
+
+/// Makes the part `name` of `control` from the component the style gave,
+/// when the property still holds that component.
+fn make_part(engine: &Engine, control: ObjectId, name: &str) {
+    let Ok(prop) = engine.property_index(control, name) else {
+        return;
+    };
+    if holds_components(engine, control, prop) {
+        // A split view's `handle` is what each handle is made from.
+        return;
+    }
+    let Some(component) = object(engine, control, prop).filter(|c| is_a::<Component>(engine, *c))
+    else {
+        return;
+    };
+    let made = engine.component_create_owned(component, control, |e, root| {
+        // Its bindings may ask for its parent as they first run.
+        if is_item(e, root) && is_item(e, control) {
+            check(e, name, set_parent_item(e, root, Some(control)));
+        }
+    });
+    let value = match made {
+        Ok(part) => Value::Object(part),
+        Err(err) => {
+            warn(engine, format!("{name}: {err}"));
+            Value::Null
+        }
+    };
+    check(
+        engine,
+        name,
+        engine.write_internal(control, prop, value, WriteKind::Initial),
+    );
+    // The template lives on in what was made of it.
+    engine.destroy_now(component);
+}
+
+/// A member written through a part (`popup.width: 77`,
+/// `background.opacity: 0.5`) is the part's, so the part the style gave
+/// is made then rather than when the control completes.
+pub(crate) fn register(engine: &Engine, metas: &[&'static ljos_engine::MetaObject]) {
+    for meta in metas {
+        engine.register_made_when_reached(meta, |e, control, name| {
+            if PART_PROPERTIES.contains(&name) {
+                e.untrack(|| make_part(e, control, name));
+            }
+        });
+    }
 }
