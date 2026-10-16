@@ -10,10 +10,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::thread::ThreadId;
 use std::time::Duration;
 
 use ljos_engine::{Atom, Engine, LogLevel, ObjectId};
-use ljos_runtime::{DrainBudget, SystemClock, UiHandle, UiInbox};
+use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
 
 use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
@@ -29,7 +30,9 @@ pub const CATEGORY: &str = "ljos.platform";
 pub type Job = Box<dyn FnOnce(&Engine) + Send>;
 
 /// Answers that may wait in the inbox at once. A sender that finds it full
-/// waits its turn: answers are few and none may be lost.
+/// waits its turn: answers are few and none may be lost. The Engine thread
+/// cannot wait for itself, so what it answers past the bound waits in
+/// [`Signal::local`] instead.
 const INBOX: usize = 256;
 
 /// How long [`Platform::finish`] waits for an answer before it gives up.
@@ -44,6 +47,11 @@ struct Signal {
     sent: Mutex<u64>,
     arrived: Condvar,
     waker: Mutex<Option<Waker>>,
+    /// Answers the Engine thread sent while the inbox was full. Only that
+    /// thread adds to it, once per [`Platform::expect`] it made itself, so
+    /// it grows with the engine's own work and never with another
+    /// thread's: senders elsewhere still wait for room.
+    local: Mutex<Vec<Job>>,
 }
 
 impl Signal {
@@ -76,6 +84,8 @@ impl Signal {
 pub struct Reply {
     tx: UiHandle<Job>,
     signal: Arc<Signal>,
+    /// Where [`Platform::expect`] ran: the one thread that drains the inbox.
+    engine: ThreadId,
     kept: bool,
 }
 
@@ -99,9 +109,42 @@ impl Reply {
         // Off the Engine thread waiting costs the UI nothing, and the frame
         // that drains wakes it. An error is only ever a gone engine, and
         // with it whoever wanted the answer.
-        if self.tx.send_blocking(job).is_ok() {
-            self.signal.sent_one();
+        if std::thread::current().id() != self.engine {
+            if self.tx.send_blocking(job).is_ok() {
+                self.signal.sent_one();
+            }
+            return;
         }
+        // On the Engine thread a full inbox would wait for itself. The
+        // answer is not run here either: it may be dropped in the middle
+        // of the engine's own work, and an answer runs at the next frame.
+        let mut local = self
+            .signal
+            .local
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Behind what already waits there, so this thread's answers keep
+        // their order.
+        let job = if local.is_empty() {
+            match self.tx.send(job) {
+                Ok(()) => {
+                    drop(local);
+                    self.signal.sent_one();
+                    return;
+                }
+                Err(SendError::Full(job)) => job,
+                Err(SendError::Disconnected(_)) => return,
+            }
+        } else {
+            job
+        };
+        if self.tx.is_closed() {
+            return;
+        }
+        local.push(job);
+        drop(local);
+        self.signal.sent_one();
+        self.signal.wake();
     }
 }
 
@@ -194,6 +237,7 @@ impl Platform {
         Reply {
             tx: self.tx.clone(),
             signal: Arc::clone(&self.signal),
+            engine: std::thread::current().id(),
             kept: false,
         }
     }
@@ -209,7 +253,17 @@ impl Platform {
 
     /// Whether answers wait for a frame to deliver them.
     pub fn has_answers(&self) -> bool {
-        !self.held.get() && !self.inbox.is_empty()
+        !self.held.get() && self.has_arrived()
+    }
+
+    fn has_arrived(&self) -> bool {
+        !self.inbox.is_empty()
+            || !self
+                .signal
+                .local
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
     }
 
     /// Called when an answer arrives, from the thread that sent it. A host
@@ -220,7 +274,7 @@ impl Platform {
             .waker
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(waker));
-        if !self.inbox.is_empty() {
+        if self.has_arrived() {
             self.signal.wake();
         }
     }
@@ -252,6 +306,15 @@ impl Platform {
             .drain(DrainBudget::UNLIMITED, &SystemClock::new(), |j| {
                 jobs.push(j)
             });
+        // The Engine thread's own answers past the bound came after the
+        // inbox filled.
+        jobs.append(
+            &mut self
+                .signal
+                .local
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
         let count = jobs.len();
         // Each job is a turn of its own: one that panics is reported as a
         // fault and counts as done, and the jobs after it still run. A
@@ -632,6 +695,36 @@ mod tests {
         let faults = engine.faults();
         assert_eq!(faults.len(), 1);
         assert_eq!(faults[0].message(), "the fetch callback panicked");
+    }
+
+    #[test]
+    fn the_engine_thread_answers_past_a_full_inbox_without_waiting() {
+        // The engine lives on a thread of its own, so a hang is a test
+        // failure after the guard's timeout instead of a stuck run.
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let engine = Engine::new();
+            let platform = Platform::of(&engine);
+            let order = Arc::new(Mutex::new(Vec::new()));
+            for i in 0..INBOX + 3 {
+                let order = Arc::clone(&order);
+                platform
+                    .expect()
+                    .send(move |_| order.lock().unwrap().push(i));
+            }
+            // Dropped unkept on a full inbox: still counts as answered.
+            drop(platform.expect());
+            assert_eq!(platform.pending(), INBOX + 4);
+            assert!(platform.has_answers());
+            assert_eq!(platform.deliver(&engine), INBOX + 4);
+            assert_eq!(platform.pending(), 0);
+            let ran = order.lock().unwrap().clone();
+            done.send(ran).unwrap();
+        });
+        let ran = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the Engine thread waited for its own inbox");
+        assert_eq!(ran, (0..INBOX + 3).collect::<Vec<_>>());
     }
 
     #[test]

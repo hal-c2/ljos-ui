@@ -109,6 +109,7 @@ Rejected:
   - `send` is bounded and fails fast with `Full`.
   - `send_coalesced(key, msg)` keeps only the latest value per key. The first message of a key still needs a free slot.
   - `send_blocking` and `send_async` wait for room instead, for an ordered stream that must not lose messages. A drain signals them as it frees slots (a condvar, a task waker), so nothing spins; only senders wait, never the UI thread.
+  - A platform `Reply` kept or dropped on the Engine thread itself never waits: with the inbox full it is queued past the bound, behind that thread's earlier answers, and delivered at the next frame. Only the Engine thread adds there, once per answer it promised, so the overflow grows with the engine's own work, while other threads still wait for room.
   - The first message sets an `AtomicBool` wake flag and calls `request_repaint`.
 - **Draining.** The UI drains messages under the frame budget. Overflow stays queued, which pushes back on senders. Drain time appears in `FrameReport`.
 - **egui_mobius.** Its idea is adopted: typed slots and signals across threads. Its implementation is not, for four reasons:
