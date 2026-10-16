@@ -29,6 +29,7 @@ pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
 mod desktop;
 mod platform;
+mod present;
 mod repaint;
 mod surface;
 mod windows;

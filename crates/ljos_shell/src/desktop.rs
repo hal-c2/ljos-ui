@@ -34,6 +34,7 @@ use ljos_host::{
 };
 use ljos_runtime::{MemoryPressure, SystemClock};
 
+use crate::present::LastPicture;
 use crate::repaint::RepaintSchedule;
 use crate::surface::{self, Gpu, Starting, Surface};
 use crate::{Hosting, Setup, SetupError, ShellApp, ShellConfig, ShellError, windows};
@@ -199,6 +200,14 @@ struct Slot {
     /// egui's time for this window counts from here.
     started: Instant,
     clear: egui::Color32,
+    /// What the window shows, so that a pass that changes none of it is
+    /// not drawn.
+    shown: LastPicture,
+    /// Passes in a row since the window was last drawn.
+    undrawn: u32,
+    /// Passes that were not drawn asked for the next at once: it waits
+    /// until here, a frame later, as a drawn one waits for the display.
+    held: Option<Instant>,
 }
 
 impl std::fmt::Debug for Slot {
@@ -248,6 +257,9 @@ impl Slot {
             refresh: None,
             started: Instant::now(),
             clear: egui::Color32::WHITE,
+            shown: LastPicture::default(),
+            undrawn: 0,
+            held: None,
         }
     }
 
@@ -292,6 +304,38 @@ impl Slot {
         self.told_state = None;
         self.activate = false;
         self.screen = None;
+        self.shown.forget();
+        self.undrawn = 0;
+        self.held = None;
+    }
+
+    /// A pass changed nothing to draw; the scene wants the next in
+    /// `wake`. Drawn passes are paced by the display, which this one did
+    /// not wait for: the next waits for the scene, whose request egui
+    /// made a frame early. One that comes at once is let through (egui
+    /// runs one more pass after one that asked for another at once),
+    /// and from the second in a row they wait a frame, so that a scene
+    /// whose animations show nothing does not spin.
+    fn not_drawn(&mut self, now: Instant, wake: Option<Duration>) {
+        self.undrawn += 1;
+        let least = if self.undrawn > 1 {
+            self.frame_interval()
+        } else {
+            Duration::ZERO
+        };
+        let wait = wake.map_or(least, |w| w.max(least));
+        self.held = (wait > Duration::ZERO).then(|| now + wait);
+    }
+
+    /// A pass was drawn.
+    fn drawn(&mut self) {
+        self.undrawn = 0;
+        self.held = None;
+    }
+
+    /// How long a frame is shown on the window's display.
+    fn frame_interval(&self) -> Duration {
+        Duration::from_secs_f64(1.0 / self.refresh.filter(|hz| *hz > 0.0).unwrap_or(60.0))
     }
 }
 
@@ -520,7 +564,15 @@ impl<M: Send + 'static> Desktop<M> {
                 } else {
                     ResizeMode::RootToView
                 });
-            self.app.set_backdrop(root_window.is_none());
+            // The window is cleared to an opaque background (`apply`):
+            // painting it again is one more pass over every pixel, which
+            // a software rasteriser pays for in every frame.
+            let opaque = self.config.background.to_rgba8()[3] == 255;
+            let backdrop = root_window.is_none() && !opaque;
+            self.app.set_backdrop(backdrop);
+            // The window is cleared to what the view leaves for it, unless
+            // a backdrop is painted between the two.
+            self.app.view_mut().set_fold_backdrop(!backdrop);
         }
 
         let windows = sys.windows(engine);
@@ -602,6 +654,8 @@ impl<M: Send + 'static> Desktop<M> {
                     .with_resize_mode(ResizeMode::Fill)
                     .with_accessibility_graft(tree_id(key));
                 view.bind_context(&ctx);
+                // The window is cleared to what the view leaves for it.
+                view.set_fold_backdrop(true);
                 // Binding made this context the one a decoded picture
                 // wakes, and that too stays the root's.
                 let root_ctx = self.slots[0].ctx.clone();
@@ -858,6 +912,11 @@ impl<M: Send + 'static> Desktop<M> {
         // delayed repaint with every pass too, and is asked again.
         repaints.forget(slot.key);
         if paint {
+            // A redraw the shell did not ask for is the platform's: what
+            // the window showed may be gone (exposed, resized).
+            if slot.redraw_asked.is_none() {
+                slot.shown.forget();
+            }
             slot.redraw_asked = None;
             slot.stalled = false;
         } else {
@@ -970,11 +1029,27 @@ impl<M: Send + 'static> Desktop<M> {
             surface::forget_freed(&mut slot.pending);
             return;
         };
+        let view = match slot.view.as_ref() {
+            Some(view) => view,
+            None => app.view(),
+        };
+        let clear = view.backdrop().unwrap_or(slot.clear);
+        let wake = view.wakes_in();
+        let textures = !slot.pending.set.is_empty() || !slot.pending.free.is_empty();
+        let now = Instant::now();
+        if slot
+            .shown
+            .unchanged(&shapes, pixels_per_point, clear, textures)
+        {
+            slot.not_drawn(now, wake);
+            return;
+        }
+        slot.shown.keep(&shapes, pixels_per_point, clear);
         let primitives = slot.ctx.tessellate(shapes, pixels_per_point);
         painter.paint_and_update_textures(
             ViewportId::ROOT,
             pixels_per_point,
-            slot.clear.to_normalized_gamma_f32(),
+            clear.to_normalized_gamma_f32(),
             &primitives,
             &mut slot.pending,
             Vec::new(),
@@ -989,6 +1064,7 @@ impl<M: Send + 'static> Desktop<M> {
             // Only now does the platform say which display it is on.
             *screens_stale = true;
         }
+        slot.drawn();
     }
 
     fn window_event(
@@ -1042,6 +1118,8 @@ impl<M: Send + 'static> Desktop<M> {
         }
         match *event {
             WindowEvent::Resized { .. } => {
+                slot.shown.forget();
+                slot.held = None;
                 note_size(slot, &engine, &sys, false);
                 note_state(slot, &engine, &sys);
                 self.repaints.request(slot.key, Instant::now());
@@ -1076,6 +1154,7 @@ impl<M: Send + 'static> Desktop<M> {
             }
             WindowEvent::Occluded(hidden) => {
                 slot.occluded = hidden;
+                slot.shown.forget();
                 surface.info.occluded = Some(hidden);
                 note_state(slot, &engine, &sys);
                 self.repaints.request(slot.key, Instant::now());
@@ -1250,17 +1329,20 @@ impl<M: Send + 'static> Desktop<M> {
             let Some(slot) = self.slots.iter_mut().find(|s| s.key == key) else {
                 continue;
             };
-            match slot.surface.as_ref() {
-                Some(surface) if !slot.out_of_sight() => {
+            let held = slot.held.filter(|t| *t > now);
+            match (slot.surface.as_ref(), held) {
+                // The display would have held a drawn frame this long.
+                (Some(_), Some(until)) if !slot.out_of_sight() => self.repaints.request(key, until),
+                (Some(surface), _) if !slot.out_of_sight() => {
                     host.request_redraw(surface.id);
                     slot.redraw_asked.get_or_insert(now);
                 }
-                Some(_) => slot.want_headless(now),
+                (Some(_), _) => slot.want_headless(now),
                 // The root's scene runs without a window: it is where
                 // the timers and the messages are.
-                None if slot.is_root() => slot.want_headless(now),
+                (None, _) if slot.is_root() => slot.want_headless(now),
                 // Another window's scene waits until it is shown.
-                None => {}
+                (None, _) => {}
             }
         }
         let mut due = Vec::new();
@@ -1490,5 +1572,31 @@ mod tests {
         // A later request does not push an earlier one back.
         root.want_headless(t + Duration::from_millis(500));
         assert_eq!(root.headless_due, Some(t + HEARTBEAT));
+    }
+
+    #[test]
+    fn passes_that_are_not_drawn_wait_for_the_scene_or_a_frame_from_the_second_in_a_row() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        // egui's pass after the drawn one runs when it asks.
+        slot.not_drawn(t, None);
+        assert_eq!(slot.held, None);
+        // The next waits a frame, and each after it.
+        slot.not_drawn(t + ms(1), Some(Duration::ZERO));
+        assert_eq!(slot.held, Some(t + ms(21)));
+        slot.not_drawn(t + ms(21), None);
+        assert_eq!(slot.held, Some(t + ms(41)));
+        // A drawn pass lets the next one run at once again.
+        slot.drawn();
+        assert_eq!(slot.held, None);
+        slot.not_drawn(t + ms(50), None);
+        assert_eq!(slot.held, None);
+        // An animation's next frame is when the scene said, not the
+        // frame earlier egui made of it.
+        slot.drawn();
+        slot.not_drawn(t + ms(60), Some(ms(15)));
+        assert_eq!(slot.held, Some(t + ms(75)));
     }
 }
