@@ -78,8 +78,10 @@ pub struct ItemSelectionModel {
     pub current_index: Value,
     #[qml(notify, readonly, rename = "selectedIndexes")]
     pub selected_indexes: Vec<Value>,
-    /// One range per selected item.
-    #[qml(notify, readonly)]
+    /// One range per selected item. Its change is told by the declared
+    /// `selectionChanged(selected, deselected)`, as Qt's is: a notify of its
+    /// own would declare a second `selectionChanged` without the arguments.
+    #[qml(readonly)]
     pub selection: Vec<Value>,
     #[qml(skip)]
     state: Rc<RefCell<Selection>>,

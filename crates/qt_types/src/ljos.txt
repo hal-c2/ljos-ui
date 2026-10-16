@@ -671,7 +671,6 @@ module QtQml.Models
 		signal hasSelectionChanged
 		signal currentIndexChanged
 		signal selectedIndexesChanged
-		signal selectionChanged
 		signal selectionChanged selected deselected
 		signal currentChanged current previous
 		signal currentRowChanged current previous
