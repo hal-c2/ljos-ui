@@ -24,6 +24,8 @@ png.workspace = true
 gif.workspace = true
 # ObjectId is a slotmap key; an accessibility node is named by its number.
 slotmap.workspace = true
+# The scene's maps of items, looked up many times a frame: no SipHash.
+rustc-hash.workspace = true
 # RegularExpressionValidator: a DFA says whether a text can still become a
 # match (Intermediate), which a backtracking matcher cannot.
 regex-automata.workspace = true

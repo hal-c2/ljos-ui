@@ -3902,6 +3902,7 @@ dependencies = [
  "qml_front",
  "regex-automata",
  "resvg",
+ "rustc-hash 2.1.3",
  "slotmap",
  "smallvec",
  "thiserror 2.0.21",

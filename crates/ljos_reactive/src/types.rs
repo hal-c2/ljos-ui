@@ -251,4 +251,7 @@ pub struct Stats {
     /// Runs whose edges were rebuilt: what they read was not what their
     /// last run read, in the same order.
     pub source_rebuilds: u64,
+    /// Reads recorded as dependencies: the first read of each node by
+    /// each run.
+    pub reads: u64,
 }

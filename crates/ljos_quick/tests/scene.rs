@@ -60,6 +60,40 @@ fn a_second_frame_with_nothing_to_do_is_idle() {
 }
 
 #[test]
+fn an_item_that_only_moves_reads_only_where_it_is() {
+    let e = engine();
+    let root = make::<Item>(&e, None);
+    geom(&e, root, 0.0, 0.0, 400.0, 400.0);
+    let items: Vec<ObjectId> = (0..50)
+        .map(|i| rect_item(&e, Some(root), (0.0, f64::from(i) * 4.0, 10.0, 4.0), rgb(9, 9, 9)))
+        .collect();
+    let mut s = scene(&e, root, 400.0, 400.0);
+    frame(&mut s, &e);
+    let reads = e.graph().stats().reads;
+    for (i, o) in items.iter().enumerate() {
+        set(&e, *o, "x", Value::Real(i as f64 + 1.0));
+    }
+    let out = s.frame(&e, Time::from_millis(16));
+    assert!(out.changed);
+    // `x` and `y`; not the eleven other inputs of the node's geometry.
+    let per_item = (e.graph().stats().reads - reads) as f64 / items.len() as f64;
+    assert!(per_item <= 2.0, "{per_item} reads per moved item");
+    for (i, o) in items.iter().enumerate() {
+        let n = s.render_tree().node(s.node_of(*o).unwrap()).unwrap();
+        let at = n.local().translation();
+        assert_eq!((at.x, at.y), (i as f64 + 1.0, i as f64 * 4.0));
+    }
+
+    // Moved and resized together: both reach the node.
+    set(&e, items[0], "y", Value::Real(100.0));
+    set(&e, items[0], "width", Value::Real(30.0));
+    s.frame(&e, Time::from_millis(32));
+    let n = s.render_tree().node(s.node_of(items[0]).unwrap()).unwrap();
+    assert_eq!(n.local().translation().y, 100.0);
+    assert_eq!(n.size().width, 30.0);
+}
+
+#[test]
 fn off_viewport_items_never_pull_their_paint_bindings() {
     let e = engine();
     let root = make::<Item>(&e, None);

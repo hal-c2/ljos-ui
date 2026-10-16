@@ -24,6 +24,8 @@ use ljos_engine::{
 };
 use ljos_render::{ClipSpec, FrameSnapshot, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
+use rustc_hash::{FxHashMap, FxHashSet};
+use slotmap::SecondaryMap;
 
 use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
@@ -147,11 +149,11 @@ impl Kind {
     }
 }
 
-/// The geometry of one item, as its render node needs it.
+/// The geometry of one item, as its render node needs it, but for where
+/// it is (`Place`): an item that only moves, as an animated or flicked one
+/// does, reads two properties a frame instead of all of these.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Geom {
-    x: f64,
-    y: f64,
     z: f64,
     w: f64,
     h: f64,
@@ -167,11 +169,15 @@ struct Geom {
     list: crate::transform::Projective,
 }
 
+/// The transform of an item at `place` with geometry `g`.
+fn local_transform(place: Place, g: &Geom) -> kurbo::Affine {
+    let (x, y) = place;
+    crate::transform::compose(x, y, g.w, g.h, g.rotation, g.scale, g.origin, &g.list)
+}
+
 impl Geom {
     fn read(e: &Engine, obj: ObjectId) -> Geom {
         Geom {
-            x: num(e, obj, Item::X.index),
-            y: num(e, obj, Item::Y.index),
             z: num(e, obj, Item::Z.index),
             w: num(e, obj, Item::WIDTH.index),
             h: num(e, obj, Item::HEIGHT.index),
@@ -202,10 +208,11 @@ enum Paint {
 /// Dirty state written by effects and drained by `frame`.
 #[derive(Default)]
 struct Shared {
-    geom: HashMap<ObjectId, Geom>,
-    content: HashMap<ObjectId, Paint>,
-    structure: HashSet<ObjectId>,
-    polish: HashSet<ObjectId>,
+    geom: FxHashMap<ObjectId, Geom>,
+    place: FxHashMap<ObjectId, Place>,
+    content: FxHashMap<ObjectId, Paint>,
+    structure: FxHashSet<ObjectId>,
+    polish: FxHashSet<ObjectId>,
     dead: Vec<ObjectId>,
     /// Set from the first mark until the frame that drains it.
     dirty: bool,
@@ -215,6 +222,7 @@ struct Shared {
 impl Shared {
     fn pending(&self) -> bool {
         !(self.geom.is_empty()
+            && self.place.is_empty()
             && self.content.is_empty()
             && self.structure.is_empty()
             && self.polish.is_empty()
@@ -259,7 +267,14 @@ struct Entry {
     anchors: Rc<RefCell<AnchorState>>,
     inherit: Rc<RefCell<Inherit>>,
     size: kurbo::Size,
+    /// The last geometry and place applied; the node's transform takes
+    /// both, and either may change alone.
+    geom: Option<Geom>,
+    place: Place,
 }
+
+/// Where an item is in its parent: `x` and `y`.
+type Place = (f64, f64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Grab {
@@ -293,9 +308,9 @@ pub struct QuickScene {
     shared: SharedRc,
     #[allow(deprecated)]
     log: QuickLog,
-    entries: HashMap<ObjectId, Entry>,
-    by_node: HashMap<NodeId, ObjectId>,
-    paint: HashMap<ObjectId, Paint>,
+    entries: FxHashMap<ObjectId, Entry>,
+    by_node: SecondaryMap<NodeId, ObjectId>,
+    paint: FxHashMap<ObjectId, Paint>,
     /// Each `MultiEffect` as read, before it is given the picture of a
     /// source with children, and a fingerprint of the picture it was given
     /// with what it was made from (held, so no display list it names is
@@ -370,9 +385,9 @@ impl QuickScene {
             tree: RenderTree::new(),
             shared,
             log: QuickLog::default(),
-            entries: HashMap::new(),
-            by_node: HashMap::new(),
-            paint: HashMap::new(),
+            entries: FxHashMap::default(),
+            by_node: SecondaryMap::new(),
+            paint: FxHashMap::default(),
             effect_base: HashMap::new(),
             root: None,
             layer: None,
@@ -594,7 +609,7 @@ impl QuickScene {
     }
 
     pub fn item_of(&self, node: NodeId) -> Option<ObjectId> {
-        self.by_node.get(&node).copied()
+        self.by_node.get(node).copied()
     }
 
     /// The last composed snapshot.
@@ -912,17 +927,21 @@ impl QuickScene {
                 anchors: Rc::clone(&anchors),
                 inherit: Rc::clone(&inherit),
                 size: kurbo::Size::ZERO,
+                geom: None,
+                place: (0.0, 0.0),
             },
         );
         self.by_node.insert(node, obj);
 
-        let mut effects = Vec::with_capacity(5);
+        let mut effects = Vec::with_capacity(6);
         let shared = Rc::clone(&self.shared);
         // Root-scoped: an effect scoped to `obj` dies with it silently, and
         // this one has to see the death to drop the render node.
         effects.push(engine.effect(move |e| structure_effect(e, obj, &shared))?);
         effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, &inherit))?);
         effects.push(engine.effect_in(obj, move |e| anchors::run(e, obj, &anchors))?);
+        let shared = Rc::clone(&self.shared);
+        effects.push(engine.effect_in(obj, move |e| place_effect(e, obj, &shared))?);
         let shared = Rc::clone(&self.shared);
         effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shared))?);
         if kind.polishes() {
@@ -978,17 +997,18 @@ impl QuickScene {
             .map(|n| n.children().to_vec())
             .unwrap_or_default();
         for k in kids {
-            if let Some(c) = self.by_node.get(&k).copied() {
+            if let Some(c) = self.by_node.get(k).copied() {
                 self.unadopt(engine, c, false);
             }
         }
-        self.by_node.remove(&entry.node);
+        self.by_node.remove(entry.node);
         self.paint.remove(&obj);
         if remove_node {
             let _ = self.tree.remove(entry.node);
         }
         let mut s = self.shared.borrow_mut();
         s.geom.remove(&obj);
+        s.place.remove(&obj);
         s.content.remove(&obj);
         s.structure.remove(&obj);
         s.polish.remove(&obj);
@@ -1054,7 +1074,7 @@ impl QuickScene {
             }
             if let Some(n) = self.tree.node(pnode) {
                 for extra in n.children().iter().skip(want.len()) {
-                    if let Some(o) = self.by_node.get(extra) {
+                    if let Some(o) = self.by_node.get(*extra) {
                         orphans.push((*o, p));
                     }
                 }
@@ -1071,20 +1091,27 @@ impl QuickScene {
 
     /// Step 8b.
     fn apply_geometry(&mut self) {
-        let mut geoms: Vec<(ObjectId, Geom)> = self.shared.borrow_mut().geom.drain().collect();
+        let (mut geoms, mut places) = {
+            let mut s = self.shared.borrow_mut();
+            let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
+            let places: Vec<(ObjectId, Place)> = s.place.drain().collect();
+            (geoms, places)
+        };
         geoms.sort_unstable_by_key(|g| g.0);
-        for (obj, g) in geoms {
+        places.sort_unstable_by_key(|p| p.0);
+        for &(obj, place) in &places {
+            if let Some(e) = self.entries.get_mut(&obj) {
+                e.place = place;
+            }
+        }
+        for (obj, g) in geoms.iter().copied() {
             let Some(e) = self.entries.get_mut(&obj) else {
                 continue;
             };
+            e.geom = Some(g);
             let node = e.node;
             let size = kurbo::Size::new(g.w.max(0.0), g.h.max(0.0));
-            self.tree.set_local(
-                node,
-                crate::transform::compose(
-                    g.x, g.y, g.w, g.h, g.rotation, g.scale, g.origin, &g.list,
-                ),
-            );
+            self.tree.set_local(node, local_transform(e.place, &g));
             if size != e.size {
                 e.size = size;
                 if e.kind.paints() && e.content_effect.is_some() {
@@ -1103,6 +1130,17 @@ impl QuickScene {
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
             self.tree.set_z(node, g.z as f32);
+        }
+        // What only moved: its transform, and nothing else.
+        for (obj, _) in places {
+            if geoms.binary_search_by_key(&obj, |g| g.0).is_ok() {
+                continue;
+            }
+            if let Some(e) = self.entries.get(&obj)
+                && let Some(g) = &e.geom
+            {
+                self.tree.set_local(e.node, local_transform(e.place, g));
+            }
         }
     }
 
@@ -1125,7 +1163,7 @@ impl QuickScene {
         let by_node = &self.by_node;
         let mut te = self.text.borrow_mut();
         self.tree.rebuild_content(self.scale_factor, |cx, b| {
-            let Some(p) = by_node.get(&cx.node).and_then(|o| paint.get(o)) else {
+            let Some(p) = by_node.get(cx.node).and_then(|o| paint.get(o)) else {
                 return;
             };
             match p {
@@ -1222,7 +1260,7 @@ impl QuickScene {
         let mut visible: HashSet<ObjectId> = snap
             .items
             .iter()
-            .filter_map(|i| self.by_node.get(&i.node).copied())
+            .filter_map(|i| self.by_node.get(i.node).copied())
             .collect();
         // A hidden source is still drawn by its effect.
         visible.extend(self.effect_drawn());
@@ -1344,7 +1382,7 @@ impl QuickScene {
             return Vec::new();
         };
         let mut hits: Vec<ObjectId> = hit_test(snap, pos)
-            .filter_map(|n| self.by_node.get(&n).copied())
+            .filter_map(|n| self.by_node.get(n).copied())
             .filter(|o| engine.is_alive(*o))
             // A Shape that takes points by its fill lets the rest through.
             .filter(|o| crate::shapes::takes_pointer(engine, *o, || local_point(engine, *o, pos)))
@@ -1835,6 +1873,7 @@ impl QuickScene {
 
 // ---------------------------------------------------------------- effects
 
+
 fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if !e.is_alive(obj) {
         mark(shared, |s| s.dead.push(obj));
@@ -1852,6 +1891,16 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     e.watch_incubations();
     mark(shared, |s| {
         s.structure.insert(obj);
+    });
+}
+
+fn place_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+    if !e.is_alive(obj) {
+        return;
+    }
+    let place = (num(e, obj, Item::X.index), num(e, obj, Item::Y.index));
+    mark(shared, |s| {
+        s.place.insert(obj, place);
     });
 }
 

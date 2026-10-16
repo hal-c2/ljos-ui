@@ -2265,7 +2265,12 @@ impl<V: Clone + 'static> Inner<V> {
 
     /// Records a read of `n` in the innermost tracking frame.
     fn record_read(&mut self, n: NodeId) {
-        let Inner { nodes, frames, .. } = self;
+        let Inner {
+            nodes,
+            frames,
+            stats,
+            ..
+        } = self;
         let node = &mut nodes[n];
         let Some(frame) = frames.last_mut() else {
             return;
@@ -2276,6 +2281,7 @@ impl<V: Clone + 'static> Inner<V> {
             Some(_) if node.read_stamp != frame.stamp => {
                 node.read_stamp = frame.stamp;
                 frame.reads.push(n);
+                stats.reads += 1;
             }
             Some(_) => {}
         }
