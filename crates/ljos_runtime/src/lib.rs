@@ -35,7 +35,9 @@ pub use frame_scheduler::{
     CURSOR_BLINK_PERIOD, Due, DueTimer, FrameScheduler, MAX_TIMER_SLACK, TIMER_GRANULARITY,
     TimerId, TimerKind, WakeReasons,
 };
-pub use inbox::{CoalesceKey, DrainBudget, DrainReport, SendError, UiHandle, UiInbox, WakeHook};
+pub use inbox::{
+    CoalesceKey, DrainBudget, DrainReport, SendAsync, SendError, UiHandle, UiInbox, WakeHook,
+};
 pub use job::{FnJob, Job, JobCx, JobPoll};
 pub use lane::{Lane, ProcId, ProcIdAllocator};
 pub use memory::{

@@ -107,7 +107,8 @@ Rejected:
 - **One `UiMsg` enum** with variants `Service`, `Model`, `Resolve`, `Plugin`, `Supervision`, `Reload` and `Lifecycle`.
 - **Sending.** Senders hold a `UiHandle`.
   - `send` is bounded and fails fast with `Full`.
-  - `send_coalesced(key, msg)` keeps only the latest value per key.
+  - `send_coalesced(key, msg)` keeps only the latest value per key. The first message of a key still needs a free slot.
+  - `send_blocking` and `send_async` wait for room instead, for an ordered stream that must not lose messages. A drain signals them as it frees slots (a condvar, a task waker), so nothing spins; only senders wait, never the UI thread.
   - The first message sets an `AtomicBool` wake flag and calls `request_repaint`.
 - **Draining.** The UI drains messages under the frame budget. Overflow stays queued, which pushes back on senders. Drain time appears in `FrameReport`.
 - **egui_mobius.** Its idea is adopted: typed slots and signals across threads. Its implementation is not, for four reasons:

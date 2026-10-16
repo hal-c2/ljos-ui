@@ -145,8 +145,10 @@ pub fn run<M: Send + 'static>(
 
 /// The thread-safe handle a worker thread posts messages to the
 /// Engine through: what [`Setup::handle`] hands out. Its `send`
-/// fails fast on a full inbox with a [`SendError`].
+/// fails fast on a full inbox with a [`SendError`]; `send_blocking`
+/// and `send_async` ([`SendAsync`]) wait for room instead, for a
+/// stream that must not lose messages.
 #[cfg(feature = "shell")]
-pub use ljos_runtime::{SendError, UiHandle};
+pub use ljos_runtime::{SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
 pub use ljos_shell::{Setup, SetupError, ShellConfig, ShellError};

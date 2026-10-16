@@ -11,12 +11,23 @@
 //! tens of nanoseconds. The UI thread takes the lock once per message and never
 //! while running a handler, so senders are never blocked behind user code. A
 //! lock-free queue would not add anything for this hold time and could not
-//! support in-place coalescing. Nothing waits on a condvar or polls: the UI
-//! thread sleeps in the shell's event loop and the [`WakeHook`] is the only
-//! thing that wakes it. A poisoned lock is recovered, because every mutation
+//! support in-place coalescing. The UI thread never waits on a condvar or
+//! polls: it sleeps in the shell's event loop and the [`WakeHook`] is the
+//! only thing that wakes it. A poisoned lock is recovered, because every mutation
 //! leaves the queue consistent and a sender's panic must not take the UI down.
 //! Replaced or rejected payloads are dropped outside the lock, since `M::drop`
 //! is arbitrary code.
+//!
+//! # Waiting for room
+//!
+//! A sender that must not lose a message (an ordered event stream, a file
+//! watcher, a child process's output) has no right answer to
+//! [`SendError::Full`] except to wait. [`UiHandle::send_blocking`] waits on a
+//! condvar and [`UiHandle::send_async`] registers a task waker, both under the
+//! queue's lock, and [`UiInbox::drain`] signals them as it frees slots. Only
+//! senders wait; a drain that finds no one waiting pays one length check per
+//! message. A sender that would rather drop keeps [`UiHandle::send`]'s fast
+//! failure, and a latest-value stream keeps [`UiHandle::send_coalesced`].
 //!
 //! # Wake protocol
 //!
@@ -27,8 +38,11 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use thiserror::Error;
@@ -101,6 +115,10 @@ struct Queue<M> {
     front_seq: u64,
     keyed: HashMap<CoalesceKey, u64>,
     closed: bool,
+    /// Threads in [`UiHandle::send_blocking`] waiting for a free slot.
+    blocked: usize,
+    /// Tasks in [`UiHandle::send_async`] waiting for a free slot.
+    wakers: Vec<Waker>,
 }
 
 impl<M> Queue<M> {
@@ -124,6 +142,9 @@ impl<M> Queue<M> {
 
 struct Shared<M> {
     queue: Mutex<Queue<M>>,
+    /// Signalled when a slot frees up or the inbox closes, for blocked
+    /// senders.
+    room: Condvar,
     capacity: usize,
     /// Mirrors `Queue::closed` for lock-free `is_closed`.
     closed: AtomicBool,
@@ -140,10 +161,68 @@ impl<M> Shared<M> {
             w();
         }
     }
+
+    /// Pushes `msg` if there is room, under the lock the caller holds.
+    /// `Ok(true)` when the queue was empty before, so the UI needs waking.
+    fn try_push(
+        &self,
+        q: &mut Queue<M>,
+        key: Option<CoalesceKey>,
+        msg: M,
+    ) -> Result<Pushed<M>, SendError<M>> {
+        // Checked under the lock: `UiInbox::drop` closes under the same lock,
+        // so a message is either delivered to a live inbox or rejected.
+        if q.closed {
+            return Err(SendError::Disconnected(msg));
+        }
+        if let Some(k) = key
+            && let Some(&seq) = q.keyed.get(&k)
+        {
+            let idx = (seq - q.front_seq) as usize;
+            let old = std::mem::replace(&mut q.slots[idx].msg, msg);
+            return Ok(Pushed::Replaced(old));
+        }
+        if q.slots.len() >= self.capacity {
+            return Err(SendError::Full(msg));
+        }
+        let was_empty = q.slots.is_empty();
+        q.push_back(key, msg);
+        Ok(Pushed::Queued { was_empty })
+    }
+
+    /// Takes the front message and tells waiting senders a slot is free.
+    fn pop(&self) -> Option<M> {
+        let mut q = self.lock();
+        let m = q.pop_front();
+        if m.is_none() || (q.blocked == 0 && q.wakers.is_empty()) {
+            return m;
+        }
+        if q.blocked > 0 {
+            self.room.notify_one();
+        }
+        // Every task is woken, not one: a woken future may have been
+        // dropped, and its wake-up must not be the only one there was.
+        let wakers = std::mem::take(&mut q.wakers);
+        drop(q);
+        for w in wakers {
+            w.wake();
+        }
+        m
+    }
 }
 
-/// Sending side. `Clone + Send + Sync`; works from std threads and tokio tasks
-/// alike because sends never block and never `.await`.
+/// What a successful push did.
+enum Pushed<M> {
+    Queued {
+        was_empty: bool,
+    },
+    /// The message waiting under the same key, to drop outside the lock.
+    Replaced(M),
+}
+
+/// Sending side. `Clone + Send + Sync`; works from std threads and async tasks
+/// alike. [`UiHandle::send`] and [`UiHandle::send_coalesced`] never block;
+/// [`UiHandle::send_blocking`] and [`UiHandle::send_async`] wait for room.
 pub struct UiHandle<M> {
     shared: Arc<Shared<M>>,
 }
@@ -172,8 +251,10 @@ impl<M> UiHandle<M> {
     }
 
     /// Enqueues `msg` under `key`. If a message with this key is still queued
-    /// it is replaced in place, so a flood of updates occupies one slot and
-    /// never reports `Full`.
+    /// it is replaced in place, so a flood of updates occupies one slot: once
+    /// the first message of a key is queued, the ones after it never report
+    /// `Full`. That first one needs a free slot like any other message, and on
+    /// a full inbox it reports `Full`.
     ///
     /// Replacement keeps the *position* of the first message, so a coalesced
     /// message may be handled before a plain message sent after it. Use it only
@@ -190,32 +271,103 @@ impl<M> UiHandle<M> {
     fn push(&self, key: Option<CoalesceKey>, msg: M) -> Result<(), SendError<M>> {
         let shared = &*self.shared;
         let mut q = shared.lock();
-        // Checked under the lock: `UiInbox::drop` closes under the same lock,
-        // so a message is either delivered to a live inbox or rejected.
-        if q.closed {
-            drop(q);
-            return Err(SendError::Disconnected(msg));
-        }
-        if let Some(k) = key
-            && let Some(&seq) = q.keyed.get(&k)
-        {
-            let idx = (seq - q.front_seq) as usize;
-            let old = std::mem::replace(&mut q.slots[idx].msg, msg);
-            drop(q);
-            drop(old);
-            return Ok(());
-        }
-        if q.slots.len() >= shared.capacity {
-            drop(q);
-            return Err(SendError::Full(msg));
-        }
-        let was_empty = q.slots.is_empty();
-        q.push_back(key, msg);
+        let pushed = shared.try_push(&mut q, key, msg);
         drop(q);
-        if was_empty {
-            shared.fire_wake();
+        self.pushed(pushed)
+    }
+
+    /// The part of a push done outside the lock: wake the UI, drop what
+    /// was replaced or rejected.
+    fn pushed(&self, pushed: Result<Pushed<M>, SendError<M>>) -> Result<(), SendError<M>> {
+        match pushed? {
+            Pushed::Queued { was_empty: true } => self.shared.fire_wake(),
+            Pushed::Queued { was_empty: false } => {}
+            Pushed::Replaced(old) => drop(old),
         }
         Ok(())
+    }
+
+    /// Enqueues `msg`, waiting for a free slot when the inbox is full. For a
+    /// sender that must not lose messages and has a thread to spare: it sleeps
+    /// on a condvar that [`UiInbox::drain`] signals, without spinning. The
+    /// only error is [`SendError::Disconnected`], also when the inbox is
+    /// dropped while this waits.
+    ///
+    /// Never call it on the thread that drains the inbox (the UI thread): with
+    /// the inbox full it would wait for itself.
+    pub fn send_blocking(&self, msg: M) -> Result<(), SendError<M>> {
+        let shared = &*self.shared;
+        let mut q = shared.lock();
+        let mut msg = msg;
+        loop {
+            match shared.try_push(&mut q, None, msg) {
+                Err(SendError::Full(back)) => msg = back,
+                other => {
+                    drop(q);
+                    return self.pushed(other);
+                }
+            }
+            q.blocked += 1;
+            q = shared.room.wait(q).unwrap_or_else(|e| e.into_inner());
+            q.blocked -= 1;
+        }
+    }
+
+    /// Enqueues `msg`, waiting without a thread for a free slot when the inbox
+    /// is full: the future's waker is woken when [`UiInbox::drain`] frees one.
+    /// Works on any executor. The only error is [`SendError::Disconnected`].
+    /// Dropping the future before it completes drops `msg` unsent.
+    pub fn send_async(&self, msg: M) -> SendAsync<'_, M> {
+        SendAsync {
+            handle: self,
+            msg: Some(msg),
+        }
+    }
+}
+
+/// The future of [`UiHandle::send_async`].
+#[must_use = "a future does nothing unless awaited"]
+pub struct SendAsync<'a, M> {
+    handle: &'a UiHandle<M>,
+    msg: Option<M>,
+}
+
+// The message is moved out by value, never pinned in place.
+impl<M> Unpin for SendAsync<'_, M> {}
+
+impl<M> fmt::Debug for SendAsync<'_, M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SendAsync")
+            .field("sent", &self.msg.is_none())
+            .finish()
+    }
+}
+
+impl<M> Future for SendAsync<'_, M> {
+    type Output = Result<(), SendError<M>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let Some(msg) = self.msg.take() else {
+            panic!("SendAsync polled after it completed");
+        };
+        let shared = &*self.handle.shared;
+        let mut q = shared.lock();
+        match shared.try_push(&mut q, None, msg) {
+            Err(SendError::Full(back)) => {
+                // Registered under the lock a drain pops under: a slot freed
+                // after this check finds the waker.
+                if !q.wakers.iter().any(|w| w.will_wake(cx.waker())) {
+                    q.wakers.push(cx.waker().clone());
+                }
+                drop(q);
+                self.msg = Some(back);
+                Poll::Pending
+            }
+            other => {
+                drop(q);
+                Poll::Ready(self.handle.pushed(other))
+            }
+        }
     }
 }
 
@@ -282,7 +434,10 @@ impl<M> UiInbox<M> {
                 front_seq: 0,
                 keyed: HashMap::new(),
                 closed: false,
+                blocked: 0,
+                wakers: Vec::new(),
             }),
+            room: Condvar::new(),
             capacity: capacity.max(1),
             closed: AtomicBool::new(false),
             wake: OnceLock::new(),
@@ -353,7 +508,7 @@ impl<M> UiInbox<M> {
                 remaining = self.len();
                 break;
             }
-            let next = self.shared.lock().pop_front();
+            let next = self.shared.pop();
             match next {
                 Some(m) => {
                     handle(m);
@@ -380,12 +535,21 @@ impl<M> UiInbox<M> {
 
 impl<M> Drop for UiInbox<M> {
     fn drop(&mut self) {
-        let (slots, keyed) = {
+        let (slots, keyed, wakers) = {
             let mut q = self.shared.lock();
             q.closed = true;
             self.shared.closed.store(true, Ordering::Release);
-            (std::mem::take(&mut q.slots), std::mem::take(&mut q.keyed))
+            (
+                std::mem::take(&mut q.slots),
+                std::mem::take(&mut q.keyed),
+                std::mem::take(&mut q.wakers),
+            )
         };
+        // Waiting senders learn they are disconnected.
+        self.shared.room.notify_all();
+        for w in wakers {
+            w.wake();
+        }
         // Dropped outside the lock: arbitrary `M::drop` code.
         drop(slots);
         drop(keyed);
@@ -693,5 +857,104 @@ mod tests {
             t.await.unwrap();
         }
         assert_eq!(drain_all(&inbox).len(), 40);
+    }
+
+    #[test]
+    fn a_new_coalesce_key_needs_a_free_slot() {
+        let (inbox, tx) = UiInbox::channel(1);
+        tx.send(0).unwrap();
+        assert!(tx.send_coalesced(CoalesceKey(7), 1).unwrap_err().is_full());
+        assert_eq!(drain_all(&inbox), vec![0]);
+        tx.send_coalesced(CoalesceKey(7), 2).unwrap();
+        tx.send_coalesced(CoalesceKey(7), 3).unwrap();
+        assert_eq!(drain_all(&inbox), vec![3]);
+    }
+
+    #[test]
+    fn a_blocking_sender_waits_for_the_drain_and_loses_nothing() {
+        const N: u32 = 200;
+        let (wake, _) = counting_wake();
+        let (inbox, tx) = UiInbox::channel_with_wake(4, wake);
+        let (sent_tx, sent_rx) = std::sync::mpsc::channel();
+        let sender = std::thread::spawn(move || {
+            for i in 0..N {
+                tx.send_blocking(i).unwrap();
+                sent_tx.send(i).unwrap();
+            }
+        });
+        // The sender fills the inbox and then waits: nothing more arrives
+        // until this thread drains.
+        for i in 0..4 {
+            assert_eq!(sent_rx.recv().unwrap(), i);
+        }
+        assert!(
+            sent_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "a full inbox holds the sender back"
+        );
+        let mut got = Vec::new();
+        let clock = VirtualClock::new();
+        while got.len() < N as usize {
+            inbox.drain(DrainBudget::count(3), &clock, |m| got.push(m));
+            // Wait for the sender to have had its turn, on a channel.
+            if got.len() < N as usize {
+                let _ = sent_rx.recv();
+            }
+        }
+        sender.join().unwrap();
+        assert_eq!(got, (0..N).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn dropping_the_inbox_releases_a_blocked_sender() {
+        let (inbox, tx) = UiInbox::channel(1);
+        tx.send(0).unwrap();
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+        let sender = std::thread::spawn(move || {
+            waiting_tx.send(()).unwrap();
+            tx.send_blocking(1)
+        });
+        waiting_rx.recv().unwrap();
+        drop(inbox);
+        let err = sender.join().unwrap().unwrap_err();
+        assert!(err.is_disconnected());
+        assert_eq!(err.into_inner(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_async_sender_waits_for_the_drain_and_loses_nothing() {
+        const N: u32 = 100;
+        let (inbox, tx) = UiInbox::<u32>::channel(2);
+        let (sent_tx, sent_rx) = std::sync::mpsc::channel();
+        let task = tokio::spawn(async move {
+            for i in 0..N {
+                tx.send_async(i).await.unwrap();
+                sent_tx.send(i).unwrap();
+            }
+        });
+        let got = tokio::task::spawn_blocking(move || {
+            let mut got = Vec::new();
+            let clock = VirtualClock::new();
+            while got.len() < N as usize {
+                inbox.drain(DrainBudget::count(1), &clock, |m| got.push(m));
+                if got.len() < N as usize {
+                    let _ = sent_rx.recv();
+                }
+            }
+            got
+        })
+        .await
+        .unwrap();
+        task.await.unwrap();
+        assert_eq!(got, (0..N).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn an_async_send_to_a_dropped_inbox_is_disconnected() {
+        let (inbox, tx) = UiInbox::<u32>::channel(1);
+        tx.send(0).unwrap();
+        let waiting = tokio::spawn(async move { tx.send_async(1).await });
+        tokio::task::yield_now().await;
+        drop(inbox);
+        assert!(waiting.await.unwrap().unwrap_err().is_disconnected());
     }
 }

@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use ljos_engine::{Atom, Engine, LogLevel, ObjectId};
-use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
+use ljos_runtime::{DrainBudget, SystemClock, UiHandle, UiInbox};
 
 use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
@@ -95,22 +95,12 @@ impl Reply {
         }));
     }
 
-    fn post(&self, mut job: Job) {
-        loop {
-            match self.tx.send(job) {
-                Ok(()) => {
-                    self.signal.sent_one();
-                    return;
-                }
-                Err(SendError::Full(j)) => {
-                    // Off the Engine thread: waiting here costs the UI
-                    // nothing, and the frame that drains is coming.
-                    job = j;
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-                // The engine is gone; so is whoever wanted the answer.
-                Err(SendError::Disconnected(_)) => return,
-            }
+    fn post(&self, job: Job) {
+        // Off the Engine thread waiting costs the UI nothing, and the frame
+        // that drains wakes it. An error is only ever a gone engine, and
+        // with it whoever wanted the answer.
+        if self.tx.send_blocking(job).is_ok() {
+            self.signal.sent_one();
         }
     }
 }
@@ -608,7 +598,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(platform.deliver(&engine), 2);
-        assert!(ran.load(std::sync::atomic::Ordering::SeqCst), "the second job ran");
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "the second job ran"
+        );
         assert_eq!(platform.pending(), 0);
         let faults = engine.faults();
         assert_eq!(faults.len(), 1);
@@ -639,5 +632,29 @@ mod tests {
         let faults = engine.faults();
         assert_eq!(faults.len(), 1);
         assert_eq!(faults[0].message(), "the fetch callback panicked");
+    }
+
+    #[test]
+    fn more_answers_than_the_inbox_holds_wait_their_turn() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let replies: Vec<Reply> = (0..INBOX * 2 + 3).map(|_| platform.expect()).collect();
+        let total = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sum = Arc::clone(&total);
+        let sender = std::thread::spawn(move || {
+            for reply in replies {
+                let sum = Arc::clone(&sum);
+                reply.send(move |_| {
+                    sum.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                });
+            }
+        });
+        platform.finish(&engine);
+        sender.join().unwrap();
+        assert_eq!(
+            total.load(std::sync::atomic::Ordering::SeqCst),
+            INBOX * 2 + 3
+        );
+        assert_eq!(platform.pending(), 0);
     }
 }
