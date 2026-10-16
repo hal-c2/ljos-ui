@@ -386,8 +386,17 @@ pub struct TapHandler {
     pub accepted_modifiers: i32,
     #[qml(notify, reset, enumeration = "Qt.CursorShape")]
     pub cursor_shape: i32,
+    /// Seconds; 0 turns long presses off. Unset or negative, it is the
+    /// system's press-and-hold interval (`crate::long_press`).
     #[qml(notify, reset)]
     pub long_press_threshold: f64,
+    /// Seconds the press has been held; -1 while nothing is pressed. It
+    /// changes when the press begins, when it becomes a long press and
+    /// when it ends, not while it is held.
+    #[qml(notify, readonly)]
+    pub time_held: f64,
+    #[qml(skip)]
+    pub(crate) long_press: std::rc::Rc<crate::long_press::LongPress>,
 }
 
 impl Default for TapHandler {
@@ -410,6 +419,8 @@ impl Default for TapHandler {
             accepted_modifiers: -0x0200_0000,
             cursor_shape: 0,
             long_press_threshold: 0.5,
+            time_held: -1.0,
+            long_press: Default::default(),
         }
     }
 }
@@ -431,6 +442,9 @@ impl TapHandler {
     fn double_tapped(event_point: Point, button: i32);
     #[qml(signal)]
     fn canceled(event_point: Point);
+    /// The press was held for `longPressThreshold`.
+    #[qml(signal, name = "longPressed")]
+    fn long_pressed();
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {

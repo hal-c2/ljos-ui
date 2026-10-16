@@ -32,6 +32,7 @@ mod layer;
 mod layouts;
 mod loader;
 mod log;
+mod long_press;
 mod metrics;
 mod mirroring;
 mod mouse_drag;

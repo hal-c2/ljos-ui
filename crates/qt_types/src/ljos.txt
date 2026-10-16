@@ -2410,6 +2410,7 @@ module QtQuick
 		prop acceptedModifiers Qt::KeyboardModifiers
 		prop cursorShape Qt::CursorShape reset
 		prop longPressThreshold QtQml.real named reset
+		prop timeHeld QtQml.real named readonly
 		signal enabledChanged
 		signal pressedChanged
 		signal tapCountChanged
@@ -2424,11 +2425,13 @@ module QtQuick
 		signal acceptedModifiersChanged
 		signal cursorShapeChanged
 		signal longPressThresholdChanged
+		signal timeHeldChanged
 		signal pointChanged
 		signal tapped eventPoint button
 		signal singleTapped eventPoint button
 		signal doubleTapped eventPoint button
 		signal canceled eventPoint
+		signal longPressed
 	type QtQuick.Text Text
 		prototype QtQuick.Item named
 		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8

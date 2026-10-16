@@ -394,6 +394,15 @@ pub fn start_drag_distance(engine: &Engine) -> f64 {
     f64::from(state(engine).drag_distance.get())
 }
 
+/// `Qt.styleHints.mousePressAndHoldInterval` in seconds, for what decides
+/// at a press how long it waits. Not tracked.
+pub(crate) fn press_and_hold_seconds(engine: &Engine) -> f64 {
+    style_hints(engine).map_or(0.5, |hints| {
+        let p = StyleHints::MOUSE_PRESS_AND_HOLD_INTERVAL.index;
+        engine.untrack(|| engine.read(hints, p)).to_number() / 1000.0
+    })
+}
+
 /// [`reduced_motion`] for the animation driver, which asks once per run
 /// per frame and follows nothing: a change of the setting wakes it.
 pub(crate) fn reduced_motion_now(engine: &Engine) -> bool {

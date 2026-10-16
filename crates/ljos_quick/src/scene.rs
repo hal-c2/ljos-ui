@@ -1409,6 +1409,7 @@ impl QuickScene {
                 crate::input::tap_point_pressed(engine, h, ev);
                 set(engine, h, TapHandler::PRESSED.index, Value::Bool(true));
                 crate::input::tap_point_changed(engine, h);
+                crate::long_press::pressed(engine, h);
                 let policy = num(engine, h, TapHandler::GESTURE_POLICY.index) as i32;
                 if policy == gesture_policy::DRAG_THRESHOLD {
                     self.pointer.passive.push(h);
@@ -1520,6 +1521,10 @@ impl QuickScene {
             // A drag is not a tap.
             for h in std::mem::take(&mut self.pointer.passive) {
                 cancel_tap(engine, h, ev.pos);
+            }
+            // Nor a long press, for a handler that keeps the press.
+            if let Some(Grab::Tap(h)) = self.pointer.grab {
+                crate::long_press::moved_away(engine, h);
             }
         }
         for h in &self.pointer.passive {
@@ -1709,6 +1714,15 @@ impl QuickScene {
     }
 
     fn tap(&mut self, engine: &Engine, h: ObjectId, ev: &PointerEvent) {
+        // A press that was a long press is no tap when it is let go.
+        if crate::long_press::ended(engine, h) {
+            crate::input::tap_point_moved(engine, h, ev);
+            set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
+            if engine.is_alive(h) && crate::input::tap_point_clear(engine, h) {
+                crate::input::tap_point_changed(engine, h);
+            }
+            return;
+        }
         let button = ev.button.unwrap_or(MouseButtons::LEFT);
         let count = match self.pointer.taps.get(&h) {
             Some((t, p, b, c))
@@ -2116,6 +2130,7 @@ fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point) {
     if !engine.is_alive(h) {
         return;
     }
+    crate::long_press::ended(engine, h);
     set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
     // As in Qt a handler that held the press alone has an empty point when
     // it says `canceled`; one that only watched still has the point.
