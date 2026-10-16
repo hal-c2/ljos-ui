@@ -153,6 +153,15 @@ impl<M> Setup<'_, M> {
         &self.clock
     }
 
+    /// The font families the windows will lay text out with, sorted:
+    /// under [`run`] the [`ShellConfig::system_fonts`] choice is already
+    /// applied, so a family picked from here is one the text will use.
+    /// A host that builds a [`ShellApp`] itself gets its thread's text
+    /// engine (see [`ljos_quick::font_families`]).
+    pub fn font_families(&self) -> Vec<String> {
+        ljos_quick::font_families()
+    }
+
     /// Runs on the UI thread for every message, at the start of a frame.
     pub fn on_message(&mut self, f: impl FnMut(&Engine, M) + 'static) {
         self.on_message = Some(Box::new(f));

@@ -137,8 +137,8 @@ pub use system_prefs::{
     start_drag_distance, style_hints, system_prefs, update_system_prefs,
 };
 pub use text::{
-    DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, set_text_engine, text_engine,
-    text_style,
+    DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, font_families, set_text_engine,
+    text_engine, text_style,
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{

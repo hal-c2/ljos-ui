@@ -112,6 +112,21 @@ pub fn engine() -> Engine {
     engine
 }
 
+/// The font families text is laid out with on this thread, sorted:
+/// what `Qt.fontFamilies()` answers, for choosing a UI font from Rust
+/// (a configured family, else the first of a list that is installed).
+///
+/// The answer depends on whether the text engine reads the system's
+/// fonts, which [`run`] and [`App::run`] switch on
+/// ([`ShellConfig::system_fonts`]) before anything of the application
+/// runs. Ask from inside the application — a closure given to
+/// [`App::register`], the setup closure ([`Setup::font_families`] is the
+/// same) or later — not before `run`: there only the bundled font is
+/// visible.
+pub fn font_families() -> Vec<String> {
+    ljos_quick::font_families()
+}
+
 /// Opens the application's windows and runs until the last of them is
 /// closed, on the desktop shell. `setup` receives the shell's setup
 /// (the Engine — already holding the standard modules — and the

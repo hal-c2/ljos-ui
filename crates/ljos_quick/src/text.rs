@@ -63,6 +63,14 @@ pub fn text_engine() -> SharedTextEngine {
     })
 }
 
+/// Every font family the UI thread's text engine can lay text out with,
+/// sorted, once each: what `Qt.fontFamilies()` answers. With system fonts
+/// (the desktop shell's default) that is the bundled families, the ones
+/// `FontLoader` added and the system's; without, the bundled ones only.
+pub fn font_families() -> Vec<String> {
+    text_engine().borrow_mut().family_names()
+}
+
 /// Makes `engine` the UI thread's text engine, for example one made by
 /// [`TextEngine::with_system_fonts`]. A scene picks it up on its next frame
 /// and lays its text out again; install it before the first frame, or call

@@ -15,7 +15,7 @@ use ljos_platform::{FetchError, Platform, is_remote, url_path};
 
 use crate::enums::{EnumTable, loader_status as status};
 use crate::item::write_computed;
-use crate::text::text_engine;
+use crate::text::{font_families, text_engine};
 
 const CATEGORY: &str = "qml";
 
@@ -178,7 +178,7 @@ pub struct FontFamilies {}
 impl FontFamilies {
     #[qml(invokable, name = "families")]
     fn families(_cx: &Cx) -> Value {
-        let names = text_engine().borrow_mut().family_names();
+        let names = font_families();
         Value::List(
             names
                 .into_iter()
