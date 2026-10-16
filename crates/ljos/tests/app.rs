@@ -148,3 +148,35 @@ fn qml_dir_compiles_a_directory_for_development() {
     let err = ljos::dev::compile_dir(dir.path()).err().unwrap();
     assert!(err.contains("did not compile"), "{err}");
 }
+
+#[test]
+fn a_module_closure_captures_its_configuration_and_may_run_twice() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    // What a module is configured with at start-up, captured rather
+    // than passed through a static.
+    let start = String::from("41");
+    let runs = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&runs);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Main.qml"),
+        "import QtQuick\nimport Example\nItem {\n  property Counter counter: Counter { count: start }\n  property int seen: counter.count\n}\n",
+    )
+    .unwrap();
+    let (engine, root) = ljos::App::new("Test")
+        .register(move |engine: &Engine| {
+            counted.set(counted.get() + 1);
+            register(engine);
+            let count = start.parse::<i32>().unwrap();
+            engine.set_context_property(engine.root_context(), "start", Value::from(count));
+        })
+        .qml_dir(dir.path(), "Main")
+        .unwrap()
+        .build()
+        .unwrap();
+    // Once on the Engine the QML was compiled against, once on the
+    // Engine the application runs on.
+    assert_eq!(runs.get(), 2);
+    assert_eq!(number(&engine, root, "seen"), 41.0);
+}

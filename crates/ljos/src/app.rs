@@ -44,6 +44,8 @@ use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value};
 
 /// Puts one context property in scope on the Engine being built.
 type PutContext = Box<dyn FnOnce(&Engine)>;
+/// Registers one native module on an Engine; may run more than once.
+type Module = Box<dyn Fn(&Engine)>;
 /// Handles one message from a worker thread, on the Engine thread.
 type MessageHandler<M> = Box<dyn FnMut(&Engine, M) + 'static>;
 
@@ -58,7 +60,7 @@ pub struct App<M = ()> {
     size: [f32; 2],
     #[cfg(feature = "shell")]
     shell_config: Option<crate::ShellConfig>,
-    modules: Vec<fn(&Engine)>,
+    modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
     context: Vec<PutContext>,
@@ -120,11 +122,28 @@ impl<M> App<M> {
 
     /// Registers one native module when the Engine is built. A
     /// module is a `register` function — the one seam every native
-    /// module sits at, the toolkit's own included — and an
-    /// application calls this once per module it is made of.
+    /// module sits at, the toolkit's own included — or a closure
+    /// that captures what the module is configured with (a path, a
+    /// client handle, a flag), and an application calls this once
+    /// per module it is made of:
+    ///
+    /// ```no_run
+    /// # mod my_module { pub fn register(_: &ljos::Engine) {} }
+    /// # mod store { pub fn register(_: &ljos::Engine, _: &str) {} }
+    /// let data_dir = String::from("/var/lib/example");
+    /// let app = ljos::App::new("Hello")
+    ///     .register(my_module::register)
+    ///     .register(move |engine| store::register(engine, &data_dir));
+    /// ```
+    ///
+    /// The module may run more than once, so it is `Fn`: once on
+    /// each Engine the builder makes, and with
+    /// [`qml_dir`](App::qml_dir) also once on the throwaway Engine
+    /// the QML is compiled against. Keep it to registering; state
+    /// it must make only once belongs outside it.
     #[must_use]
-    pub fn register(mut self, module: fn(&Engine)) -> Self {
-        self.modules.push(module);
+    pub fn register(mut self, module: impl Fn(&Engine) + 'static) -> Self {
+        self.modules.push(Box::new(module));
         self
     }
 
@@ -335,7 +354,7 @@ impl<M> App<M> {
 /// the root — made next — sees all of it.
 fn prepare(
     engine: &Engine,
-    modules: Vec<fn(&Engine)>,
+    modules: Vec<Module>,
     source: Option<MapSource>,
     context: Vec<PutContext>,
 ) {
