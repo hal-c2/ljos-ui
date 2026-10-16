@@ -263,6 +263,9 @@ impl<M: Send + 'static> ShellApp<M> {
             // binding may ask `Qt.platform`, while the root is built.
             let wake_ctx = ctx.clone();
             platform::install(&engine, move || wake_ctx.request_repaint());
+            // Pictures fill in after the window is drawn, as they do in
+            // Qt: their fetches and decodes never hold up a frame.
+            ljos_quick::ImageStore::of(&engine).set_start_after_frame(true);
         }
         let wake_ctx = ctx.clone();
         let (inbox, handle) = UiInbox::channel_with_wake(

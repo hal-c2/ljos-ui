@@ -267,12 +267,15 @@ struct State {
     cache: ByteLru<ImageKey, Picture>,
     /// Decodes asked for and not delivered yet, with who waits for each.
     jobs: HashMap<ImageKey, Vec<Waiter>>,
-    /// Jobs not started yet because [`MAX_IN_FLIGHT`] are under way.
+    /// Jobs not started yet because [`MAX_IN_FLIGHT`] are under way, or
+    /// because they wait for the frame to be drawn.
     queue: VecDeque<ImageKey>,
     /// Jobs started whose result has not been delivered.
     in_flight: usize,
     decodes: u64,
     held: bool,
+    /// Whether jobs wait for [`ImageStore::frame_drawn`] to start.
+    after_frame: bool,
     /// The URLs whose last decode was a drawing, which is made again at
     /// each display scale. Outlives the cache, which may drop the pixels.
     vectors: HashSet<String>,
@@ -336,6 +339,7 @@ impl Default for ImageStore {
                 in_flight: 0,
                 decodes: 0,
                 held: false,
+                after_frame: false,
                 vectors: HashSet::new(),
                 scales: HashMap::new(),
                 sides: HashMap::new(),
@@ -455,6 +459,35 @@ impl ImageStore {
         self.state.borrow().held
     }
 
+    /// While on, a background load asked for in a frame starts once the
+    /// host has drawn that frame ([`ImageStore::frame_drawn`]) rather than
+    /// at once: fetching and decoding pictures then never compete with
+    /// drawing the frame that asked for them, the first one above all,
+    /// and pictures fill in after the window is up. Off by default: a host
+    /// that turns it on calls `frame_drawn` after each frame it draws.
+    pub fn set_start_after_frame(&self, on: bool) {
+        self.state.borrow_mut().after_frame = on;
+    }
+
+    /// Starts the background loads that wait for a drawn frame, as many
+    /// as may run at once; the rest start as those come back. The host
+    /// calls it after each frame it draws.
+    pub fn frame_drawn(&self, engine: &Engine) {
+        loop {
+            let next = {
+                let mut s = self.state.borrow_mut();
+                if s.in_flight >= MAX_IN_FLIGHT {
+                    return;
+                }
+                s.next_wanted(|item| engine.is_alive(item))
+            };
+            match next {
+                Some(key) => self.start(engine, key),
+                None => return,
+            }
+        }
+    }
+
     /// Hands the results that have arrived to the items waiting for them
     /// and returns how many there were. The scene calls it at the start of
     /// a frame; it never waits.
@@ -471,6 +504,7 @@ impl ImageStore {
     pub fn finish(&self, engine: &Engine) {
         loop {
             let seen = self.signal.count();
+            self.frame_drawn(engine);
             self.deliver_now(engine);
             if self.pending() == 0 {
                 return;
@@ -712,22 +746,24 @@ impl ImageStore {
     /// a later [`ImageStore::deliver`]. Several waiters for one key share
     /// one decode.
     pub(crate) fn request(&self, engine: &Engine, key: ImageKey, waiter: Waiter) {
-        let start = {
+        let (start, after_frame) = {
             let mut s = self.state.borrow_mut();
             if let Some(waiters) = s.jobs.get_mut(&key) {
                 waiters.push(waiter);
                 return;
             }
             s.jobs.insert(key.clone(), vec![waiter]);
-            if s.in_flight >= MAX_IN_FLIGHT {
+            let start = !s.after_frame && s.in_flight < MAX_IN_FLIGHT;
+            if !start {
                 s.queue.push_back(key.clone());
-                false
-            } else {
-                true
             }
+            (start, s.after_frame)
         };
         if start {
             self.start(engine, key);
+        } else if after_frame {
+            // Asked for outside a frame, it still needs one drawn to start.
+            engine.request_wake();
         }
     }
 
@@ -861,7 +897,7 @@ impl ImageStore {
                     s.decodes += 1;
                 }
                 let waiters = s.jobs.remove(&key).unwrap_or_default();
-                let next = if s.in_flight < MAX_IN_FLIGHT {
+                let next = if !s.after_frame && s.in_flight < MAX_IN_FLIGHT {
                     s.next_wanted(|item| engine.is_alive(item))
                 } else {
                     None

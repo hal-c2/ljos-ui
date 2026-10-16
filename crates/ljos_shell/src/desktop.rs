@@ -915,8 +915,15 @@ impl<M: Send + 'static> Desktop<M> {
     /// One pass of slot `i`: input, the scene, and (`paint`) the picture
     /// into its window. A pass that is not painted is for a window that
     /// cannot be seen, or that the root does not have: its scene runs all
-    /// the same.
+    /// the same. Then the pictures the pass asked for start loading,
+    /// drawn or not, so that none waits for a frame that never comes.
     fn pass(&mut self, host: &mut Control<'_>, i: usize, paint: bool) {
+        self.run_pass(host, i, paint);
+        let engine = self.app.engine();
+        ljos_quick::ImageStore::of(engine).frame_drawn(engine);
+    }
+
+    fn run_pass(&mut self, host: &mut Control<'_>, i: usize, paint: bool) {
         let engine = Rc::clone(self.app.engine());
         let sys = WindowSystem::of(&engine);
         let Self {

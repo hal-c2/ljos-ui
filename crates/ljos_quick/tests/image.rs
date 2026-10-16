@@ -915,6 +915,48 @@ fn a_held_store_keeps_images_loading_until_finish() {
 }
 
 #[test]
+fn a_store_that_starts_after_the_frame_loads_once_the_host_has_drawn() {
+    let (e, store) = pictures();
+    store.set_start_after_frame(true);
+    let woken = std::rc::Rc::new(std::cell::Cell::new(0));
+    let w = std::rc::Rc::clone(&woken);
+    e.set_timer_wake(move || w.set(w.get() + 1));
+    let (tx, rx) = mpsc::channel::<()>();
+    store.set_waker(move || {
+        let _ = tx.send(());
+    });
+    let root = load(&e, ASYNC);
+    let picture = find(&e, root, "picture");
+    // Asked for, the load waits and asks the host for a frame to draw.
+    assert_eq!(store.pending(), 1);
+    assert!(woken.get() > 0, "the host is asked for a frame");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    frame(&mut s, &e);
+    ljos_runtime::ComputePool::global().wait_idle();
+    assert!(
+        !store.has_results(),
+        "nothing started before the frame was drawn"
+    );
+    assert_eq!(status(&e, picture), image_status::LOADING);
+    // Drawn, it starts, and its result asks for the next frame.
+    store.frame_drawn(&e);
+    rx.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("a wake");
+    frame(&mut s, &e);
+    assert_eq!(status(&e, picture), image_status::READY);
+    assert!(painted(&s, picture).is_some());
+}
+
+#[test]
+fn a_store_that_starts_after_the_frame_still_finishes() {
+    let (e, store) = pictures();
+    store.set_start_after_frame(true);
+    let root = load(&e, ASYNC);
+    store.finish(&e);
+    assert_eq!(status(&e, find(&e, root, "picture")), image_status::READY);
+}
+
+#[test]
 fn asynchronous_images_share_one_decode_and_the_cache() {
     let (e, store) = pictures();
     store.set_held(true);
