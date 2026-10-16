@@ -51,6 +51,33 @@ Feature: Overlay
       When the method "open" of "p" is called
       Then the property "contentItem.parent.parent.z" of "p" is 1000001
 
+    Scenario: A popup whose parent is the overlay gets it once there is a window
+      Given the file "tst_parent.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtTest
+        Item {
+          id: root
+          width: 300; height: 200
+          Popup { id: p; parent: Overlay.overlay; width: 50; height: 50 }
+          TestCase {
+            name: "Parent"
+            when: windowShown
+            function test_parent() {
+              verify(p.parent !== null)
+              compare(p.parent, root.Overlay.overlay)
+              compare(p.parent.width, 300)
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : Parent::test_parent()
+        """
+
   Rule: A popup that dims has a shade under it
 
     Background:

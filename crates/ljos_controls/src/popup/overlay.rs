@@ -407,9 +407,16 @@ pub(super) fn register(engine: &Engine) {
             return true;
         }
         let bound = e.bind_initial(att, OverlayAttached::OVERLAY.index, move |e| {
-            // On a popup it is the overlay the popup is shown in.
+            // On a popup it is the overlay the popup is shown in. Its
+            // parent is peeked, not read: `parent: Overlay.overlay` is
+            // this binding's reader. A popup with no parent yet (before
+            // there is a window) goes by where it is declared, so the
+            // window that appears there is what gives it one.
             let from = if is_a::<Popup>(e, owner) {
-                object(e, owner, Popup::PARENT.index)
+                e.peek(owner, Popup::PARENT.index)
+                    .as_object()
+                    .filter(|p| e.is_alive(*p))
+                    .or_else(|| super::default_parent(e, owner))
             } else {
                 Some(owner)
             };

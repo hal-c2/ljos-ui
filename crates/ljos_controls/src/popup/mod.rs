@@ -495,7 +495,7 @@ pub(crate) fn move_to(engine: &Engine, popup: ObjectId, x: f64, y: f64) -> Resul
 
 /// What a popup declared in `owner` is placed from: the item it is
 /// declared in, the content item of a popup or of a window.
-fn default_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+pub(super) fn default_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
     let mut cur = engine.owner(popup);
     for _ in 0..64 {
         let o = cur?;
