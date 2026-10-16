@@ -404,6 +404,22 @@ impl Own {
         None
     }
 
+    /// Whether the type or what it inherits declares the signal. A name can
+    /// be a property and a signal at once (`MouseArea.pressed`,
+    /// `Popup.opened`), and [`kind_in`](Self::kind_in) answers the
+    /// property.
+    fn has_signal(&self, ty: &Ty, name: &str) -> bool {
+        self.chain(ty).any(|t| {
+            t.signals.contains(name)
+                || t.extension.is_some_and(|(link, namespace)| {
+                    !namespace
+                        && self
+                            .resolve(link)
+                            .is_some_and(|ext| self.has_signal(ext, name))
+                })
+        })
+    }
+
     /// `name` on the type or what it inherits; a handler (`onClicked`) is its
     /// signal, and a property's `Changed` signal needs no line of its own.
     fn member(&self, ty: &Ty, name: &str) -> Option<MemberKind> {
@@ -413,8 +429,7 @@ impl Own {
             let changed = signal
                 .strip_suffix("Changed")
                 .is_some_and(|p| self.kind_in(ty, p) == Some(MemberKind::Property));
-            return (self.kind_in(ty, &signal) == Some(MemberKind::Signal) || changed)
-                .then_some(MemberKind::Signal);
+            return (self.has_signal(ty, &signal) || changed).then_some(MemberKind::Signal);
         }
         if let Some(kind) = self.kind_in(ty, name) {
             return Some(kind);
@@ -531,6 +546,23 @@ mod tests {
                 (row.status, row.kind),
                 (ApiStatus::Supported, kind),
                 "{member}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_handler_of_a_signal_named_as_a_property_is_a_signal() {
+        for (module, ty, member) in [
+            ("QtQuick", "MouseArea", "onPressed"),
+            ("QtQuick.Controls", "Popup", "onOpened"),
+            ("QtQuick.Controls", "Dialog", "onOpened"),
+            ("QtQuick.Controls", "Popup", "onOpenedChanged"),
+        ] {
+            let row = derive(module, ty, Some(member)).unwrap();
+            assert_eq!(
+                (row.status, row.kind),
+                (ApiStatus::Supported, MemberKind::Signal),
+                "{ty}.{member}"
             );
         }
     }

@@ -418,6 +418,41 @@ mod tests {
         );
     }
 
+    /// A signal that shares its name with a property (`MouseArea.pressed`,
+    /// `Popup.opened`) is had: its handler runs.
+    #[test]
+    fn handlers_of_signals_named_as_properties_are_had() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Main.qml"),
+            "import QtQuick\nimport QtQuick.Controls\n\
+             Item {\n\
+                 Popup { onOpened: console.log(\"opened\"); onClosed: console.log(\"closed\") }\n\
+                 Dialog { onOpened: console.log(\"dopened\") }\n\
+                 MouseArea { anchors.fill: parent; onPressed: mouse => console.log(mouse.x) }\n\
+             }\n",
+        )
+        .unwrap();
+        let mut report = Report::default();
+        report.project(dir.path(), "", None).unwrap();
+        for member in ["onOpened", "onPressed"] {
+            assert!(
+                report
+                    .items
+                    .iter()
+                    .any(|((_, _, m), _)| m.as_deref() == Some(member)),
+                "{member} is not counted: {report:?}"
+            );
+        }
+        let missing: Vec<_> = report
+            .items
+            .iter()
+            .filter(|(_, item)| matches!(item.verdict, Verdict::Missing(_)))
+            .map(|(key, _)| name(key))
+            .collect();
+        assert!(missing.is_empty(), "{missing:?}");
+    }
+
     /// Only with Qt's table can a type Ljós lacks be had at all; the name
     /// is found from the tables rather than fixed, as in `api`'s own tests,
     /// so implementing the type does not break the test.
