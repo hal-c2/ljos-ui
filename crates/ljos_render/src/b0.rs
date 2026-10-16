@@ -78,6 +78,13 @@ pub struct EguiSink<'a> {
     pub origin: Pos2,
     /// Output, back to front.
     pub shapes: Vec<ClippedShape>,
+    /// Let an opaque rectangle that is drawn first and covers the whole
+    /// viewport be [`Self::backdrop`] instead of a shape. Off by default:
+    /// only a host that clears its surface to that colour may turn it on.
+    pub fold_backdrop: bool,
+    /// The colour of the rectangle folded away, when there was one: what
+    /// the host clears the viewport to.
+    pub backdrop: Option<Color32>,
 }
 
 impl<'a> EguiSink<'a> {
@@ -87,6 +94,8 @@ impl<'a> EguiSink<'a> {
             ctx,
             origin,
             shapes: Vec::new(),
+            fold_backdrop: false,
+            backdrop: None,
         }
     }
 
@@ -623,6 +632,36 @@ fn tessellator(ppp: f32, feathering: bool) -> Tessellator {
 fn color32(c: Rgba) -> Color32 {
     let [r, g, b, a] = c.to_premul_u8();
     Color32::from_rgba_premultiplied(r, g, b, a)
+}
+
+/// The colour of `list` when it is one opaque rectangle with square
+/// corners and no border that covers all of `viewport`.
+fn backdrop(
+    list: &DisplayList,
+    to_screen: Affine,
+    opacity: f32,
+    clip: ERect,
+    viewport: ERect,
+) -> Option<Color32> {
+    let [
+        DrawOp::Rect {
+            rect,
+            radii,
+            fill: Paint::Solid(color),
+            border: None,
+            ..
+        },
+    ] = list.ops()
+    else {
+        return None;
+    };
+    let [sx, ky, kx, sy, _, _] = to_screen.as_coeffs();
+    let fill = color.with_opacity(opacity);
+    let upright = ky == 0.0 && kx == 0.0 && sx > 0.0 && sy > 0.0;
+    let covers = erect(to_screen.transform_rect_bbox(*rect)).contains_rect(viewport)
+        && clip.contains_rect(viewport);
+    let square = radii.iter().all(|r| *r <= 0.0);
+    (upright && covers && square && Paint::Solid(fill).is_opaque()).then(|| color32(fill))
 }
 
 fn erect(r: Rect) -> ERect {
@@ -1245,6 +1284,7 @@ impl RenderBackend for EpaintBackend {
             egui::Vec2::new(snap.viewport.width() as f32, snap.viewport.height() as f32),
         );
         sink.shapes.clear();
+        sink.backdrop = None;
         // Nodes to draw, in paint order, each with its clip rectangle. Shapes
         // are emitted after the loop, once the glyph atlas is complete: adding
         // a glyph can grow the atlas, which moves every texture coordinate.
@@ -1282,6 +1322,16 @@ impl RenderBackend for EpaintBackend {
             }
 
             let to_screen = shift * item.world;
+            if sink.fold_backdrop
+                && order.is_empty()
+                && sink.backdrop.is_none()
+                && let Some(color) = backdrop(list, to_screen, item.opacity, clip, screen_viewport)
+            {
+                // Clearing to the colour draws the same pixels, without
+                // one more pass over all of them.
+                sink.backdrop = Some(color);
+                continue;
+            }
             let sig = Sig {
                 list: list.id(),
                 to_screen: coeffs_f32(to_screen),

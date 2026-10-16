@@ -587,3 +587,54 @@ fn perf_300_text_nodes_and_1000_rects() {
         moved.unwrap()
     );
 }
+
+fn run_folding(s: &mut Scene, be: &mut EpaintBackend) -> (usize, Option<egui::Color32>) {
+    s.frame += 1;
+    let snap = s.tree.compose(s.vp, s.frame);
+    let view = FrameView::new(&snap, 1.0);
+    be.sync(&view);
+    let mut sink = EguiSink::new(None, Pos2::ZERO);
+    sink.fold_backdrop = true;
+    be.encode(&view, &mut sink);
+    (sink.shapes.len(), sink.backdrop)
+}
+
+#[test]
+fn an_opaque_rectangle_under_everything_becomes_the_backdrop() {
+    let mut s = Scene::new(100.0, 50.0);
+    let back = s.node(None, 0.0, 0.0, 100.0, 50.0);
+    let front = s.node(None, 10.0, 10.0, 20.0, 20.0);
+    s.fill(back, BLUE);
+    s.fill(front, RED);
+    let mut be = EpaintBackend::new();
+    assert_eq!(
+        run_folding(&mut s, &mut be),
+        (1, Some(egui::Color32::BLUE)),
+        "the blue rectangle is the clear colour, the red one a shape"
+    );
+    // Without the host's say-so it stays a shape.
+    let (shapes, _) = run(&mut s, &mut be, None, Pos2::ZERO);
+    assert_eq!(shapes.len(), 2);
+}
+
+#[test]
+fn only_what_covers_the_view_opaquely_and_first_is_folded() {
+    let half = Rgba::from_premul(0.0, 0.0, 0.5, 0.5);
+    for (x, w, color, under) in [
+        (10.0, 90.0, BLUE, false), // leaves a strip uncovered
+        (0.0, 100.0, half, false), // lets through what is behind
+        (0.0, 100.0, BLUE, true),  // drawn over something
+    ] {
+        let mut s = Scene::new(100.0, 50.0);
+        if under {
+            let first = s.node(None, 0.0, 0.0, 5.0, 5.0);
+            s.fill(first, RED);
+        }
+        let back = s.node(None, x, 0.0, w, 50.0);
+        s.fill(back, color);
+        let mut be = EpaintBackend::new();
+        let (shapes, backdrop) = run_folding(&mut s, &mut be);
+        assert_eq!(backdrop, None, "x {x} w {w} under {under}");
+        assert_eq!(shapes, if under { 2 } else { 1 });
+    }
+}
