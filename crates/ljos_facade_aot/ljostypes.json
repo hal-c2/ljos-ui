@@ -1,0 +1,52 @@
+{
+  "format": 2,
+  "modules": [
+    {
+      "uri": "Example",
+      "versions": [
+        "1.0"
+      ],
+      "types": [
+        {
+          "name": "Counter",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "bumped",
+              "parameters": []
+            }
+          ],
+          "methods": [
+            {
+              "name": "increment",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unnamed": []
+}

@@ -15,7 +15,7 @@ use qml_front::{
     names::{self, Global, Names, Resolution, Target},
     project::Source,
     scope::{Tree, alias_target, handled, is_group},
-    types::{Found, Kind, Origin, Types},
+    types::{Found, Kind, Lookup, Origin, Types},
 };
 use qml_syntax::{
     Allocator, GetSpan, Span,
@@ -366,6 +366,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     if path == ["id"] {
                         continue;
                     }
+                    self.check_member(owner, &path, binding.name.span);
                     let (slot, name) = self.slot(&path, binding.name.span);
                     self.value(owner, slot, name, binding.name.span, &binding.value, true);
                 }
@@ -405,6 +406,83 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 }
             }
         }
+    }
+
+    /// A binding of a member the object's type does not have, where the
+    /// type says that is an error ([`TypeOracle::members_checked`]) and
+    /// not a name for the running program to look for.
+    fn check_member(&mut self, owner: usize, path: &[&str], span: Span) {
+        let [name] = path else { return };
+        let object = &self.tree.objects[owner];
+        let Some(kind) = &object.kind else { return };
+        if !self
+            .types
+            .base(kind)
+            .is_some_and(|ty| self.types.oracle.members_checked(ty))
+            || !matches!(self.tree.lookup(self.types, owner, name), Lookup::Missing)
+        {
+            return;
+        }
+        let message = match handled(name) {
+            Some(signal) => {
+                if !matches!(
+                    self.tree.lookup_signal(self.types, owner, &signal),
+                    Lookup::Missing
+                ) {
+                    return;
+                }
+                format!(
+                    "`{name}` handles the signal `{signal}`, which `{}` does not have",
+                    object.name
+                )
+            }
+            None => format!("`{name}` is not a property of `{}`", object.name),
+        };
+        self.diagnostics
+            .push(Diagnostic::error(message, self.span(span)));
+    }
+
+    /// `Type.Key` or `Singleton.member` naming what the type does not
+    /// have, where the type says that is an error.
+    fn check_type_member(
+        &mut self,
+        name: &str,
+        found: &Found<O::Type>,
+        chain: &[String],
+        offset: u32,
+    ) {
+        let Kind::Builtin(ty) = found.kind else {
+            return;
+        };
+        let Some(first) = chain.first() else { return };
+        if !self.types.oracle.members_checked(ty) {
+            return;
+        }
+        let missing = if first.starts_with(|c: char| c.is_ascii_uppercase()) {
+            match self.types.declared_enum(&found.kind, first) {
+                None => Some(first.clone()),
+                Some(true) => chain
+                    .get(1)
+                    .filter(|key| !self.types.is_key(&found.kind, Some(first), key))
+                    .map(|key| format!("{first}.{key}")),
+                Some(false) => None,
+            }
+        } else if self.types.is_singleton(&found.kind)
+            && matches!(self.types.lookup(&found.kind, first), Lookup::Missing)
+        {
+            Some(first.clone())
+        } else {
+            None
+        };
+        let Some(member) = missing else { return };
+        if !self.warned.insert(format!("{offset}:{name}.{member}")) {
+            return;
+        }
+        let span = Span::new(offset, offset + name.len() as u32);
+        self.diagnostics.push(Diagnostic::error(
+            format!("`{name}.{member}`: `{name}` has no member `{member}`"),
+            self.span(span),
+        ));
     }
 
     /// An object written where a value goes: one of the component, or the
@@ -1673,6 +1751,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 replace: None,
             };
         };
+        if let Some(Target::Type(found)) = &resolution.target {
+            self.check_type_member(name, found, chain, offset);
+        }
         let base = resolution
             .target
             .as_ref()

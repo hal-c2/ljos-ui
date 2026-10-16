@@ -3678,7 +3678,6 @@ name = "ljos_facade_aot"
 version = "0.0.0"
 dependencies = [
  "ljos",
- "ljos_facade_app",
 ]
 
 [[package]]

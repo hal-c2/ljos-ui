@@ -142,8 +142,8 @@ pub use object::{
 pub use property_map::PropertyMap;
 pub use qtqml::{Component, ComponentAttached, Connections, Timer};
 pub use registry::{
-    MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, Registry, SignalEntry, TypeDump,
-    TypeEntry, Version,
+    EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, PropertyKind,
+    Registry, SignalEntry, TypeDump, TypeEntry, Version,
 };
 pub use signal::Handler;
 pub use slow::SlowCall;

@@ -95,6 +95,7 @@ pub mod dev;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod task;
+pub mod types;
 
 pub use app::{App, create_root};
 

@@ -205,10 +205,10 @@ ljos = { git = "https://github.com/olafura/ljos-ui", rev = "…" }
 Every code block in this section is compiled on every test run: the
 `Counter` is the doctest on the `ljos` crate's front page, and the
 rest is `crates/ljos/examples/counter.rs`, the `App` doctests and
-`crates/ljos_facade_aot` (the ahead-of-time start and its build
-script). `crates/ljos_facade_app` is the same native module as a
-crate of its own whose only dependency is `ljos`, as an
-application's is.
+`crates/ljos_facade_aot` (the ahead-of-time start, its build
+script and its type dump file). `crates/ljos_facade_app` is the same
+native module as a crate of its own whose only dependency is `ljos`,
+as an application's is.
 
 A native type is a Rust struct with `#[derive(QmlObject)]`. Fields
 are properties (`#[qml(notify)]` gives the change signal), and a
@@ -293,20 +293,50 @@ links no QML parser. Its build script compiles the QML — imports of
 the application's own native modules included — into a pack in
 `OUT_DIR`, through the facade's `build` feature in
 `[build-dependencies]`; the program embeds the pack with
-`ljos::include_qml!`, as above:
+`ljos::include_qml!`, as above.
+
+A build script cannot run the code of the crate it builds, so the
+compiler learns the native types from a file instead: the type dump
+`ljostypes.json`, which the application's own test writes from its
+`register` function and checks on every run after that:
+
+```rust
+// tests/types.rs
+#[test]
+fn the_type_dump_file_is_current() {
+    ljos::types::check_file("ljostypes.json".as_ref(), my_app::register).unwrap();
+}
+```
 
 ```rust
 // build.rs
 let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-ljos::build::compile_dir("qml".as_ref(), natives::register, &out.join("qml.pack")).unwrap();
+ljos::build::compile_dir_with_types(
+    "qml".as_ref(),
+    "ljostypes.json".as_ref(),
+    &out.join("qml.pack"),
+)
+.unwrap();
 ```
 
-The compile knows the native types from a throwaway Engine the
-`register` function fills, and a build script cannot use the types
-of the crate it builds, so the native module is a crate of its own
-(`natives` here) that both depend on. A file with an error fails the
-build. `crates/ljos_facade_aot` is this application, over
-`crates/ljos_facade_app`'s module.
+```sh
+LJOS_TYPES=write cargo test --no-fail-fast   # writes ljostypes.json; commit it
+cargo test                    # fails, naming that command, when it is stale
+```
+
+The natives stay in the application's crate, and only `ljos` with
+`build` is a build dependency. A file with an error fails the build,
+and so does a binding of a property or signal handler a native type
+does not have (`lable: 1`, `onBumpd:`) or an enum key it lacks
+(`Counter.Eleven`). While `LJOS_TYPES=write` is set the build lets
+such files through as components that fail when made, so that the
+test can run and write the file. `crates/ljos_facade_aot` is this
+application.
+
+A native module that is a crate of its own can skip the file:
+`ljos::build::compile_dir("qml".as_ref(), natives::register, &out)`
+registers it on a throwaway Engine in the build script, with the
+same checks. `crates/ljos_facade_app` is such a module.
 
 Compiling a directory at start-up exists for development behind the
 non-default `dev-qml` feature (`App::qml_dir`,

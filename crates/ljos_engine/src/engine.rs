@@ -328,7 +328,13 @@ impl Engine {
 
     /// The `ljostypes.json` content for everything registered.
     pub fn type_dump(&self) -> TypeDump {
-        self.inner.registry.borrow().dump()
+        let mut dump = self.inner.registry.borrow().dump();
+        for module in &mut dump.modules {
+            for ty in &mut module.types {
+                ty.singleton = self.is_native_singleton(&module.uri, &ty.name);
+            }
+        }
+        dump
     }
 
     // ------------------------------------------------------------ warnings

@@ -60,8 +60,9 @@ media = ["dep:ljos_media", "ljos_shell?/media"]
 # directory of QML at start-up. Never in a shipped application.
 dev-qml = ["dep:ljos_compiler", "dep:qml_front"]
 # For an application's build script (`[build-dependencies]`):
-# `ljos::build::compile_dir` compiles its QML ahead of time, against its
-# own native types, into a pack the program embeds with
+# `ljos::build::compile_dir_with_types` compiles its QML ahead of time,
+# against its own native types as its type dump file describes them
+# (`ljos::types`), into a pack the program embeds with
 # `ljos::include_qml!`. The program's own `ljos` leaves it off.
 build = ["dep:ljos_compiler", "dep:qml_front"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG

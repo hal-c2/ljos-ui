@@ -99,6 +99,16 @@ pub trait TypeOracle {
         true
     }
 
+    /// Whether a name written as a member of the type that it does not
+    /// have is an error where it is written, not something left for the
+    /// running program to find. The oracle says so of a type it describes
+    /// in full and the runtime holds to the description (an application's
+    /// native type, whose members are all registered); Qt's table, which a
+    /// back end's types may outgrow, does not.
+    fn members_checked(&self, _ty: Self::Type) -> bool {
+        false
+    }
+
     /// What a message about `name`, a type that no import of the file has,
     /// should add: set when the oracle cannot tell a type nobody has from
     /// one it was not told about.

@@ -1,6 +1,6 @@
 [package]
 name = "ljos_facade_aot"
-description = "An application whose QML imports its own native module and is compiled ahead of time by its build script, as docs/MIGRATION.md section 6 describes: the program embeds the pack and links no parser."
+description = "An application whose QML imports its own native module and is compiled ahead of time by its build script, as docs/MIGRATION.md section 6 describes: the build script reads the type dump file the application's test writes, and the program embeds the pack and links no parser."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,16 +8,14 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# The program: the facade with no parser, and the native module.
+# The program and its native module: the facade with no parser.
 [dependencies]
 ljos = { path = "../ljos", default-features = false }
-ljos_facade_app = { path = "../ljos_facade_app" }
 
-# The build script: the facade's `build` feature, and the same native
-# module, which is why the natives are a crate of their own.
+# The build script: the facade's `build` feature alone. It reads the
+# native types from `ljostypes.json`, so they stay in this crate.
 [build-dependencies]
 ljos = { path = "../ljos", default-features = false, features = ["build"] }
-ljos_facade_app = { path = "../ljos_facade_app" }
 
 [lints]
 workspace = true
