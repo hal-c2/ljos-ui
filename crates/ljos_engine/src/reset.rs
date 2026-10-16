@@ -43,7 +43,10 @@ impl Engine {
         let (obj, prop) = self.redirect(obj, prop);
         let reset = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let p = h
                 .meta
                 .property(prop)
@@ -161,7 +164,7 @@ impl Engine {
             let h = store
                 .objects
                 .get_mut(obj)
-                .ok_or(EngineError::DeadObject(obj))?;
+                .ok_or_else(|| EngineError::dead(obj))?;
             match h.node(prop) {
                 Some(n) => n,
                 None => {

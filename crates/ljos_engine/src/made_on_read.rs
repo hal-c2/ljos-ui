@@ -38,7 +38,7 @@ impl Engine {
         let h = store
             .objects
             .get_mut(obj)
-            .ok_or(EngineError::DeadObject(obj))?;
+            .ok_or_else(|| EngineError::dead(obj))?;
         let makers = &mut h.ext_mut().made_on_read;
         makers.retain(|(p, _)| *p != prop);
         makers.push((prop, Box::new(make)));

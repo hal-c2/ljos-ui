@@ -522,7 +522,7 @@ impl Engine {
                 store
                     .objects
                     .get(o)
-                    .ok_or(EngineError::DeadObject(o))?
+                    .ok_or_else(|| EngineError::dead(o))?
                     .context
             }
             None => self.inner.root_context,
@@ -764,7 +764,7 @@ impl Engine {
         if let Some(o) = owner {
             let mut cur = Some(o);
             while let Some(c) = cur {
-                let h = store.objects.get(c).ok_or(EngineError::DeadObject(c))?;
+                let h = store.objects.get(c).ok_or_else(|| EngineError::dead(c))?;
                 if c == obj {
                     return Err(EngineError::WrongType {
                         ty: "owner".into(),
@@ -888,7 +888,10 @@ impl Engine {
     fn parent_node(&self, obj: ObjectId) -> Result<NodeId, EngineError> {
         let current = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             if let Some(n) = h.ext.as_ref().and_then(|e| e.parent_node) {
                 return Ok(n);
             }
@@ -910,7 +913,10 @@ impl Engine {
     pub(crate) fn ensure_scope(&self, obj: ObjectId) -> Result<ScopeId, EngineError> {
         let owner = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             if let Some(s) = h.scope {
                 return Ok(s);
             }
@@ -963,7 +969,10 @@ impl Engine {
         f: impl FnOnce(&T) -> R,
     ) -> Result<R, EngineError> {
         let store = self.inner.store.borrow();
-        let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+        let h = store
+            .objects
+            .get(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
         let t = downcast_chain::<T>(&*h.native).ok_or_else(|| EngineError::WrongType {
             ty: h.meta.name.to_string(),
             expected: T::static_meta().name.to_string(),
@@ -982,7 +991,7 @@ impl Engine {
         let h = store
             .objects
             .get_mut(obj)
-            .ok_or(EngineError::DeadObject(obj))?;
+            .ok_or_else(|| EngineError::dead(obj))?;
         let name = h.meta.name.clone();
         let t = downcast_chain_mut::<T>(&mut *h.native).ok_or_else(|| EngineError::WrongType {
             ty: name.to_string(),
@@ -995,7 +1004,10 @@ impl Engine {
 
     pub fn property_index(&self, obj: ObjectId, name: &str) -> Result<PropIndex, EngineError> {
         let store = self.inner.store.borrow();
-        let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+        let h = store
+            .objects
+            .get(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
         h.meta
             .property_index(name)
             .ok_or_else(|| EngineError::UnknownProperty {
@@ -1145,7 +1157,7 @@ impl Engine {
         let h = store
             .objects
             .get_mut(obj)
-            .ok_or(EngineError::DeadObject(obj))?;
+            .ok_or_else(|| EngineError::dead(obj))?;
         let is_alias = h.meta.property(prop).is_some_and(|p| p.is_alias());
         if !is_alias {
             return Err(EngineError::WrongType {
@@ -1252,7 +1264,7 @@ impl Engine {
             let h = store
                 .objects
                 .get_mut(obj)
-                .ok_or(EngineError::DeadObject(obj))?;
+                .ok_or_else(|| EngineError::dead(obj))?;
             if h.node(prop).is_none() {
                 // Nobody observes it: the field is the only copy, and it
                 // is not marked assigned.
@@ -1309,7 +1321,10 @@ impl Engine {
         let v = self.for_slot(obj, prop, v);
         let (v, node, hook) = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let ty = self.check_writable(h, prop, internal)?;
             let hook = match &h.ext {
                 Some(ext) if !internal => ext.write_hook.clone(),
@@ -1338,7 +1353,7 @@ impl Engine {
                 let h = store
                     .objects
                     .get_mut(obj)
-                    .ok_or(EngineError::DeadObject(obj))?;
+                    .ok_or_else(|| EngineError::dead(obj))?;
                 store_in(h, prop, &v)?;
                 h.mark_assigned(prop);
                 return Ok(());
@@ -1388,7 +1403,10 @@ impl Engine {
 
     pub(crate) fn check_owner(&self, obj: ObjectId, owner: &MetaObject) -> Result<(), EngineError> {
         let store = self.inner.store.borrow();
-        let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+        let h = store
+            .objects
+            .get(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
         if h.meta.inherits(owner) {
             Ok(())
         } else {
@@ -1409,7 +1427,10 @@ impl Engine {
         let (obj, prop) = self.redirect(obj, prop);
         let (scope, value, assigned) = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             if let Some(n) = h.node(prop) {
                 return Ok(n);
             }
@@ -1542,7 +1563,10 @@ impl Engine {
         self.drop_maker(obj, prop);
         let ty = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             self.check_writable(h, prop, internal)?
         };
         let n = self.ensure_node(obj, prop)?;
@@ -1678,7 +1702,10 @@ impl Engine {
         let (obj, prop) = self.redirect(obj, prop);
         let (node, cur) = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let p = h
                 .meta
                 .property(prop)
@@ -1774,7 +1801,10 @@ impl Engine {
         let (obj, prop) = self.redirect(obj, prop);
         let ty = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             self.check_writable(h, prop, true)?
         };
         let n = self.ensure_node(obj, prop)?;
@@ -1815,12 +1845,15 @@ impl Engine {
             store
                 .objects
                 .get(obj)
-                .ok_or(EngineError::DeadObject(obj))?
+                .ok_or_else(|| EngineError::dead(obj))?
                 .node(prop)
         };
-        let n = node.ok_or(EngineError::Reactive(
-            ljos_reactive::ReactiveError::UnknownOverride(NodeId::null(), id),
-        ))?;
+        let n = node.ok_or_else(|| {
+            EngineError::Reactive(ljos_reactive::ReactiveError::UnknownOverride(
+                NodeId::null(),
+                id,
+            ))
+        })?;
         let g = &self.inner.graph;
         g.batch(|| {
             g.remove_override(n, id, mode)?;
@@ -1919,7 +1952,10 @@ impl Engine {
 
     pub fn method_index(&self, obj: ObjectId, name: &str) -> Result<MethodIndex, EngineError> {
         let store = self.inner.store.borrow();
-        let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+        let h = store
+            .objects
+            .get(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
         h.meta
             .method_index(name)
             .ok_or_else(|| EngineError::UnknownMethod {
@@ -1940,7 +1976,10 @@ impl Engine {
         let budget = self.inner.slow.budget();
         let (thunk, slow_names, data) = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let m = h
                 .meta
                 .method(method)
@@ -2023,7 +2062,7 @@ impl Engine {
         let h = store
             .objects
             .get_mut(obj)
-            .ok_or(EngineError::DeadObject(obj))?;
+            .ok_or_else(|| EngineError::dead(obj))?;
         let ext = h.ext_mut();
         match ext.methods.iter_mut().find(|(i, _)| *i == method) {
             Some(e) => e.1 = f,
@@ -2054,7 +2093,7 @@ impl Engine {
             let h = store
                 .objects
                 .get_mut(obj)
-                .ok_or(EngineError::DeadObject(obj))?;
+                .ok_or_else(|| EngineError::dead(obj))?;
             if h.flags.contains(ObjectFlags::COMPLETED) {
                 return Ok(());
             }
@@ -2081,7 +2120,10 @@ impl Engine {
             .ok_or_else(|| EngineError::NoAttachedType(attacher.name.to_string()))?;
         {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             if let Some((_, a)) = h.attached.iter().find(|(k, _)| *k == key) {
                 return Ok(*a);
             }
@@ -2310,7 +2352,7 @@ impl Engine {
         store
             .objects
             .get_mut(obj)
-            .ok_or(EngineError::DeadObject(obj))?
+            .ok_or_else(|| EngineError::dead(obj))?
             .context = ctx;
         Ok(())
     }

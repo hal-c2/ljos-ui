@@ -586,7 +586,7 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     let (e, me) = (cx.engine, cx.this);
     let st = e.with(me, |v: &ItemView| v.state.clone())?;
     st.grid.set(grid);
-    let scope = e.object_scope(me).ok_or(EngineError::DeadObject(me))?;
+    let scope = e.object_scope(me).ok_or_else(|| EngineError::dead(me))?;
     st.trigger
         .set(Some(e.graph().property(scope, Value::Int(0))?));
     let delegates = ViewDelegates::new(me, Rc::new(changes::Host(me)));

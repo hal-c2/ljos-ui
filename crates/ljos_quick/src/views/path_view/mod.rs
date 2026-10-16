@@ -462,8 +462,8 @@ pub(crate) fn bump(e: &Engine, st: &State) {
 /// Makes the view lay out its rows from now on.
 fn start(cx: &Cx) -> Result<(), EngineError> {
     let (e, me) = (cx.engine, cx.this);
-    let st = state_of(e, me).ok_or(EngineError::DeadObject(me))?;
-    let scope = e.object_scope(me).ok_or(EngineError::DeadObject(me))?;
+    let st = state_of(e, me).ok_or_else(|| EngineError::dead(me))?;
+    let scope = e.object_scope(me).ok_or_else(|| EngineError::dead(me))?;
     st.trigger
         .set(Some(e.graph().property(scope, Value::Int(0))?));
     let delegates = ViewDelegates::new(me, Rc::new(layout::Host(me)));

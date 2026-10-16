@@ -919,7 +919,7 @@ impl Engine {
         let h = store
             .objects
             .get_mut(obj)
-            .ok_or(EngineError::DeadObject(obj))?;
+            .ok_or_else(|| EngineError::dead(obj))?;
         h.ext_mut().model = model;
         Ok(())
     }
@@ -967,7 +967,7 @@ impl Engine {
             let h = store
                 .objects
                 .get_mut(obj)
-                .ok_or(EngineError::DeadObject(obj))?;
+                .ok_or_else(|| EngineError::dead(obj))?;
             if MetaRef::ptr_eq(&h.meta, &meta) {
                 return Ok(());
             }

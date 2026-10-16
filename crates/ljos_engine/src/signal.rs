@@ -94,7 +94,10 @@ impl Signals {
 impl Engine {
     pub fn signal_index(&self, obj: ObjectId, name: &str) -> Result<SignalIndex, EngineError> {
         let store = self.inner.store.borrow();
-        let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+        let h = store
+            .objects
+            .get(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
         h.meta
             .signal_index(name)
             .ok_or_else(|| EngineError::UnknownSignal {
@@ -147,7 +150,10 @@ impl Engine {
     ) -> Result<ConnectionId, EngineError> {
         let notify_of = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let s = h
                 .meta
                 .signal(signal)
@@ -215,7 +221,10 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let (notify_of, args) = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let s = h
                 .meta
                 .signal(signal)

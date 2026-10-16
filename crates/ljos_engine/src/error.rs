@@ -64,6 +64,16 @@ pub enum EngineError {
 
 /// Lets a native method return `Result<T, String>` (or `&str`): the
 /// message becomes an [`EngineError::Invoke`].
+impl EngineError {
+    /// [`EngineError::DeadObject`], for `ok_or_else`: built eagerly, the
+    /// error is dropped on every lookup that finds its object, and the hot
+    /// lookups run hundreds of thousands of times a second.
+    #[cold]
+    pub fn dead(obj: ObjectId) -> Self {
+        Self::DeadObject(obj)
+    }
+}
+
 impl From<String> for EngineError {
     fn from(s: String) -> Self {
         EngineError::Invoke(s)

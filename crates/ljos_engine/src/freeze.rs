@@ -24,7 +24,7 @@ impl Engine {
             let h = store
                 .objects
                 .get_mut(obj)
-                .ok_or(EngineError::DeadObject(obj))?;
+                .ok_or_else(|| EngineError::dead(obj))?;
             if h.flags.contains(ObjectFlags::FROZEN) == frozen {
                 return Ok(());
             }

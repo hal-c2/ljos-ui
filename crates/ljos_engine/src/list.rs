@@ -112,7 +112,10 @@ impl Engine {
         let (obj, prop) = self.redirect(obj, prop);
         let hook = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             let p = h
                 .meta
                 .property(prop)
@@ -219,7 +222,7 @@ impl Engine {
             let h = store
                 .objects
                 .get_mut(obj)
-                .ok_or(EngineError::DeadObject(obj))?;
+                .ok_or_else(|| EngineError::dead(obj))?;
             let node = h.node(prop);
             let Some(slot) = list_slot(h, prop) else {
                 // Not a list kept where the engine can reach it.
@@ -283,7 +286,10 @@ impl Engine {
     pub fn default_property(&self, obj: ObjectId) -> Result<PropIndex, EngineError> {
         let name = {
             let store = self.inner.store.borrow();
-            let h = store.objects.get(obj).ok_or(EngineError::DeadObject(obj))?;
+            let h = store
+                .objects
+                .get(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
             h.meta
                 .default_property()
                 .cloned()
