@@ -87,6 +87,17 @@ pub(crate) enum Waiter {
     Canvas { item: ObjectId },
 }
 
+impl Waiter {
+    fn item(&self) -> ObjectId {
+        match self {
+            Waiter::Load { item, .. }
+            | Waiter::Reshow { item }
+            | Waiter::Sharpen { item }
+            | Waiter::Canvas { item } => *item,
+        }
+    }
+}
+
 type Slot = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
 
 /// Runs the work in `slot` unless it has run already.
@@ -202,6 +213,22 @@ struct State {
     /// A graph node holding the largest of `scales`, read by the paint of
     /// an item that shows a drawing, so that it follows a change.
     scale_node: Option<NodeId>,
+}
+
+impl State {
+    /// The next queued job an item that is `alive` still waits for. The
+    /// others are dropped unstarted.
+    fn next_wanted(&mut self, alive: impl Fn(ObjectId) -> bool) -> Option<ImageKey> {
+        while let Some(key) = self.queue.pop_front() {
+            let waiters = self.jobs.entry(key.clone()).or_default();
+            waiters.retain(|w| alive(w.item()));
+            if !waiters.is_empty() {
+                return Some(key);
+            }
+            self.jobs.remove(&key);
+        }
+        None
+    }
 }
 
 /// The pictures of one engine. See the module documentation.
@@ -635,16 +662,14 @@ impl ImageStore {
     }
 
     /// Takes `item` off the waiting lists: it was destroyed or loads
-    /// something else. The decode itself runs on; another item may wait
-    /// for it, and its result is worth caching anyway.
+    /// something else. A decode under way runs on; another item may wait
+    /// for it, and its result is worth caching anyway. One still queued
+    /// that nothing waits for any more is not started (a list's delegates
+    /// pushed out of view before their pictures came); destroyed items are
+    /// taken off when its turn comes.
     pub(crate) fn forget(&self, item: ObjectId) {
         for waiters in self.state.borrow_mut().jobs.values_mut() {
-            waiters.retain(|w| match w {
-                Waiter::Load { item: i, .. }
-                | Waiter::Reshow { item: i }
-                | Waiter::Sharpen { item: i }
-                | Waiter::Canvas { item: i } => *i != item,
-            });
+            waiters.retain(|w| w.item() != item);
         }
     }
 
@@ -757,9 +782,11 @@ impl ImageStore {
                     s.decodes += 1;
                 }
                 let waiters = s.jobs.remove(&key).unwrap_or_default();
-                let next = (s.in_flight < MAX_IN_FLIGHT)
-                    .then(|| s.queue.pop_front())
-                    .flatten();
+                let next = if s.in_flight < MAX_IN_FLIGHT {
+                    s.next_wanted(|item| engine.is_alive(item))
+                } else {
+                    None
+                };
                 (waiters, next)
             };
             if let Some(next) = next {

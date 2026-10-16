@@ -1003,6 +1003,34 @@ fn a_result_for_a_source_left_behind_is_not_shown() {
 }
 
 #[test]
+fn a_queued_picture_nobody_waits_for_any_more_is_not_decoded() {
+    let (e, store) = pictures();
+    store.set_held(true);
+    // More pictures than run at once: the last ones wait in the queue.
+    let names: Vec<String> = (0..12).map(|i| format!("p{i}")).collect();
+    for name in &names {
+        store.register_resource(format!("file:///{name}.png"), png(4, 4, RED));
+    }
+    let images: String = names
+        .iter()
+        .map(|n| {
+            format!("Image {{ objectName: \"{n}\"; asynchronous: true; source: \"{n}.png\" }}\n")
+        })
+        .collect();
+    let root = load(&e, &format!("import QtQuick\nItem {{\n{images}}}\n"));
+    assert_eq!(store.pending(), 12);
+    // All leave before their pictures come, as delegates scrolled away do:
+    // the decodes under way run on, those still queued never start.
+    for name in &names {
+        e.destroy(find(&e, root, name));
+    }
+    e.process_deferred_deletes();
+    store.finish(&e);
+    assert_eq!(store.decodes(), 8);
+    assert_eq!(store.pending(), 0);
+}
+
+#[test]
 fn an_asynchronous_failure_is_an_error_when_it_arrives() {
     let (e, store) = pictures();
     store.set_held(true);
