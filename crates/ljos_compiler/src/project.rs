@@ -3,7 +3,7 @@
 
 use std::{
     cell::{Cell, OnceCell, RefCell},
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -42,6 +42,25 @@ pub struct Project<O> {
     callable: RefCell<HashMap<String, Arc<Vec<String>>>>,
     /// One of those is being worked out: it is not to ask for another.
     summarising: Cell<bool>,
+    /// For a project [`open`](Self::open)ed: what is known of the tree
+    /// before its files are read.
+    tree: Option<Tree>,
+}
+
+/// A project's tree as a program loads it: the modules are known from the
+/// start, a directory's files once something reaches them.
+#[derive(Debug)]
+struct Tree {
+    root: PathBuf,
+    /// What the `qmldir` and `CMakeLists.txt` files describe, with the key
+    /// of the directory each is in.
+    modules: Vec<(String, Module)>,
+    /// The directories each of those has its types in.
+    module_dirs: Vec<BTreeSet<String>>,
+    /// The directories read, by key.
+    read: HashSet<String>,
+    /// The modules told to the front end, by their place in `modules`.
+    told: HashSet<usize>,
 }
 
 impl<O: TypeOracle> Project<O> {
@@ -55,6 +74,7 @@ impl<O: TypeOracle> Project<O> {
             dynamic: OnceCell::new(),
             callable: RefCell::new(HashMap::new()),
             summarising: Cell::new(false),
+            tree: None,
         }
     }
 
@@ -225,10 +245,7 @@ impl<O: TypeOracle> Project<O> {
                     self.paths.insert(key, path);
                 }
             }
-            for name in names
-                .iter()
-                .filter(|name| name.ends_with(".js") || name.ends_with(".mjs"))
-            {
+            for name in names.iter().filter(|name| is_script(name)) {
                 let path = dir.join(name);
                 let (Some(key), Ok(text)) = (key(root, &path), std::fs::read_to_string(&path))
                 else {
@@ -240,25 +257,182 @@ impl<O: TypeOracle> Project<O> {
             }
         }
         for (dir, names) in &dirs {
-            let mut modules: Vec<Module> = Vec::new();
-            if names.iter().any(|name| name == "qmldir")
-                && let Ok(text) = std::fs::read_to_string(dir.join("qmldir"))
-            {
-                modules.extend(discover::qmldir(&text));
-            }
-            if names.iter().any(|name| name == "CMakeLists.txt")
-                && let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt"))
-            {
-                modules.extend(discover::cmake(&text));
-            }
             let Some(dir_key) = key(root, dir) else {
                 continue;
             };
-            for module in &modules {
+            for module in &modules_in(dir, names) {
                 self.add_module(&dir_key, module);
             }
         }
         Ok(())
+    }
+
+    /// The project under `root` as a program loads it: no QML file is
+    /// read until something [`reach`](Self::reach)es it, so a file
+    /// nothing reaches costs nothing. What the `qmldir` and
+    /// `CMakeLists.txt` files describe is known from the start, as Qt
+    /// knows the modules on its import path, and so are the JavaScript
+    /// files, as a script may import one from anywhere.
+    pub fn open(root: &Path, oracle: O) -> Result<Self, Error> {
+        let dirs = scan(root).map_err(|source| Error::Io {
+            path: root.to_owned(),
+            source,
+        })?;
+        let mut project = Self::new(oracle);
+        let mut modules = Vec::new();
+        for (dir, names) in &dirs {
+            let Some(dir_key) = key(root, dir) else {
+                continue;
+            };
+            for name in names.iter().filter(|name| is_script(name)) {
+                let path = dir.join(name);
+                if let (Some(key), Ok(text)) = (key(root, &path), std::fs::read_to_string(&path)) {
+                    project.add_script(&key, text);
+                }
+            }
+            modules.extend(
+                modules_in(dir, names)
+                    .into_iter()
+                    .map(|m| (dir_key.clone(), m)),
+            );
+        }
+        let module_dirs = modules
+            .iter()
+            .map(|(dir, module)| {
+                let types = module.types.iter();
+                types
+                    .map(|ty| project::directory(&join(dir, &ty.path)).to_owned())
+                    .collect()
+            })
+            .collect();
+        project.tree = Some(Tree {
+            root: root.to_owned(),
+            modules,
+            module_dirs,
+            read: HashSet::new(),
+            told: HashSet::new(),
+        });
+        project.front.set_controls_style(controls_style(
+            |name| std::env::var(name).ok(),
+            |path| std::fs::read_to_string(path).ok(),
+        ));
+        Ok(project)
+    }
+
+    /// Reads what the file `key` needs to be compiled, in a project
+    /// [`open`](Self::open)ed: the files of its directory, which are its
+    /// types, and what they import (directories, the project's modules,
+    /// the style the controls are), until nothing new is needed. A module
+    /// is read whole, as its files see each other. The file itself is
+    /// followed again, as a save may have given it an import.
+    ///
+    /// The keys of the files read. A project read whole reads nothing.
+    pub fn reach(&mut self, key: &str) -> Vec<String> {
+        let Some(mut tree) = self.tree.take() else {
+            return Vec::new();
+        };
+        let mut read = Vec::new();
+        let mut dirs = vec![project::directory(key).to_owned()];
+        let mut follow: Vec<String> = Vec::new();
+        if self.front.has(key) {
+            follow.push(key.to_owned());
+        }
+        let mut wanted: BTreeSet<usize> = BTreeSet::new();
+        loop {
+            if let Some(dir) = dirs.pop() {
+                // A directory outside the tree is not the project's.
+                if dir.starts_with("..") || dir.starts_with('/') || !tree.read.insert(dir.clone()) {
+                    continue;
+                }
+                let new = self.read_dir(&tree.root, &dir);
+                follow.extend(new.iter().cloned());
+                read.extend(new);
+                for (i, at) in tree.module_dirs.iter().enumerate() {
+                    if at.contains(&dir) && wanted.insert(i) {
+                        dirs.extend(at.iter().cloned());
+                    }
+                }
+                continue;
+            }
+            let Some(file) = follow.pop() else {
+                break;
+            };
+            let Some(summary) = self.front.summary(&file) else {
+                continue;
+            };
+            let here = project::directory(&file);
+            for import in &summary.imports {
+                let uri = match &import.source {
+                    project::Source::Path(path) if !is_script(path) => {
+                        dirs.push(join(here, path));
+                        continue;
+                    }
+                    project::Source::Path(_) => continue,
+                    project::Source::Module(uri) => uri.as_str(),
+                };
+                // `import QtQuick.Controls` is the style's types first.
+                let style = self.front.controls_style().map(|s| s.name.as_str());
+                let style = style.filter(|_| uri == "QtQuick.Controls");
+                for (i, (_, module)) in tree.modules.iter().enumerate() {
+                    if (module.uri == uri || Some(module.uri.as_str()) == style) && wanted.insert(i)
+                    {
+                        dirs.extend(tree.module_dirs[i].iter().cloned());
+                    }
+                }
+            }
+        }
+        for i in wanted {
+            if tree.told.insert(i) {
+                let (dir, module) = &tree.modules[i];
+                self.add_module(dir, module);
+            }
+        }
+        self.tree = Some(tree);
+        read
+    }
+
+    /// Whether the directory `dir` (a key) of an [`open`](Self::open)ed
+    /// project was read. Every directory of one read whole was.
+    pub fn has_read(&self, dir: &str) -> bool {
+        self.tree
+            .as_ref()
+            .is_none_or(|tree| tree.read.contains(dir))
+    }
+
+    /// The QML files directly in the directory `dir` that are not in the
+    /// project yet, added: their keys.
+    fn read_dir(&mut self, root: &Path, dir: &str) -> Vec<String> {
+        let at = if dir.is_empty() {
+            root.to_owned()
+        } else {
+            root.join(dir)
+        };
+        let Ok(entries) = std::fs::read_dir(&at) else {
+            return Vec::new();
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "qml"))
+            .collect();
+        paths.sort();
+        let mut added = Vec::new();
+        for path in paths {
+            let Some(key) = key(root, &path) else {
+                continue;
+            };
+            if self.sources.contains_key(&key) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            self.add(&key, text);
+            self.paths.insert(key.clone(), path);
+            added.push(key);
+        }
+        added
     }
 
     /// The files, by key, in order.
@@ -316,6 +490,26 @@ pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     }
     out.retain(|(_, path)| path.is_file());
     Ok(out)
+}
+
+/// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe.
+fn modules_in(dir: &Path, names: &[String]) -> Vec<Module> {
+    let mut modules: Vec<Module> = Vec::new();
+    if names.iter().any(|name| name == "qmldir")
+        && let Ok(text) = std::fs::read_to_string(dir.join("qmldir"))
+    {
+        modules.extend(discover::qmldir(&text));
+    }
+    if names.iter().any(|name| name == "CMakeLists.txt")
+        && let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt"))
+    {
+        modules.extend(discover::cmake(&text));
+    }
+    modules
+}
+
+fn is_script(name: &str) -> bool {
+    name.ends_with(".js") || name.ends_with(".mjs")
 }
 
 /// A file's key: its path from the root without `.qml`, with forward
