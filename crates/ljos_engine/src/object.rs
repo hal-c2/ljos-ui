@@ -124,8 +124,57 @@ pub struct ObjectHeader {
     pub(crate) assigned: Vec<u64>,
 }
 
+/// A native whose type builds on `QtObject` without a field for it (the
+/// derive's implied base), with that part stored beside it. It is the
+/// native to everything that looks at it: the chain walks to its
+/// `QtObject` part as to a base field.
+struct ImpliedBase {
+    native: Box<dyn QmlObject>,
+    base: crate::QtObject,
+}
+
+impl QmlObject for ImpliedBase {
+    fn meta(&self) -> &'static MetaObject {
+        self.native.meta()
+    }
+    fn as_any(&self) -> &dyn Any {
+        self.native.as_any()
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self.native.as_any_mut()
+    }
+    fn base(&self) -> Option<&dyn QmlObject> {
+        Some(&self.base)
+    }
+    fn base_mut(&mut self) -> Option<&mut dyn QmlObject> {
+        Some(&mut self.base)
+    }
+}
+
+/// `native`, with its `QtObject` part when its type has one only by the
+/// derive's implied base.
+fn with_implied_base(native: Box<dyn QmlObject>) -> Box<dyn QmlObject> {
+    let qt_object = TypeId::of::<crate::QtObject>();
+    let implied = native.base().is_none()
+        && native.as_any().type_id() != qt_object
+        && native
+            .meta()
+            .base
+            .as_ref()
+            .is_some_and(|b| b.native == Some(qt_object));
+    if implied {
+        Box::new(ImpliedBase {
+            native,
+            base: crate::QtObject::default(),
+        })
+    } else {
+        native
+    }
+}
+
 impl ObjectHeader {
     pub(crate) fn new(meta: MetaRef, native: Box<dyn QmlObject>, context: ContextId) -> Self {
+        let native = with_implied_base(native);
         let dynamic = meta
             .properties
             .iter()

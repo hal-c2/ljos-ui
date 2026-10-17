@@ -12,7 +12,11 @@
 //! - `name = "Rectangle"`: the QML type name (default: the struct name);
 //! - `module = "QtQuick"`: the exporting module, for the type dump;
 //! - `extends = Item`: the base type. It must match the `#[qml(base)]`
-//!   field, which is how the base's part of the object is stored;
+//!   field, which is how the base's part of the object is stored. A type
+//!   QML can write by name (a `module` and not `uncreatable`) without a
+//!   base field builds on `QtObject`, as every QML object does: the engine
+//!   stores that part beside the struct (`object::with_implied_base`), so
+//!   the type has `objectName` without a field for it;
 //! - `default = "data"`: the default property;
 //! - `attached = KeysAttached`: the type `Name.` attaches;
 //! - `uncreatable`: not creatable from QML. Otherwise the type must
@@ -392,8 +396,16 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         }
         base = Some((ident, field.ty.clone()));
     }
+    // A group's or an attached type's struct is not an object the engine
+    // stores, so only a type QML makes by name has the implied base.
+    let implied_base = base.is_none()
+        && c.extends.is_none()
+        && c.module.is_some()
+        && !c.uncreatable
+        && qml_name != "QtObject";
     let base_count = match &base {
         Some((_, b)) => quote!(<#b as #e::QmlType>::PROPERTY_COUNT),
+        None if implied_base => quote!(<#e::QtObject as #e::QmlType>::PROPERTY_COUNT),
         None => quote!(0u32),
     };
 
@@ -578,6 +590,7 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             ));
         }
         (None, Some((_, fty))) => Some(fty.clone()),
+        (None, None) if implied_base => Some(syn::parse_quote!(#e::QtObject)),
         (None, None) => None,
     };
 

@@ -10,8 +10,8 @@
         {
           "name": "Counter",
           "since": "1.0",
-          "base": null,
-          "baseModule": null,
+          "base": "QtObject",
+          "baseModule": "QtQml",
           "singleton": false,
           "enums": [],
           "creatable": true,

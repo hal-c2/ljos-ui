@@ -18,14 +18,18 @@ fn rect(e: &ljos_engine::Engine) -> ljos_engine::ObjectId {
 
 #[test]
 fn meta_tables_are_flattened() {
-    assert_eq!(Item::PROPERTY_COUNT, 6);
+    // QtObject's objectName, which a type QML makes by name builds on
+    // without a field for it, and Item's own five.
+    assert_eq!(Item::PROPERTY_COUNT, 7);
+    assert_eq!(Item::static_meta().base.as_ref().unwrap().name, "QtObject");
     // Own: color, radius, border, border.width, border.color, antialiasing.
-    assert_eq!(Rectangle::PROPERTY_COUNT, 12);
+    assert_eq!(Rectangle::PROPERTY_COUNT, 13);
+    // A group's type is not an object of its own and has no base.
     assert_eq!(Border::PROPERTY_COUNT, 2);
 
     let m = Rectangle::static_meta();
-    assert_eq!(m.properties.len(), 12);
-    assert_eq!(m.property_offset, 6);
+    assert_eq!(m.properties.len(), 13);
+    assert_eq!(m.property_offset, 7);
     assert_eq!(m.base.as_ref().unwrap().name, "Item");
     assert!(m.inherits(Item::static_meta()));
     assert!(m.inherits_name("Item"));
@@ -38,7 +42,7 @@ fn meta_tables_are_flattened() {
         Some(Item::WIDTH.index)
     );
     assert_eq!(m.property_index("radius"), Some(Rectangle::RADIUS.index));
-    assert_eq!(Rectangle::RADIUS.index, PropIndex(7));
+    assert_eq!(Rectangle::RADIUS.index, PropIndex(8));
     assert_eq!(
         m.property_index("antialiasing"),
         Some(Rectangle::SMOOTH_EDGES.index)
@@ -49,9 +53,9 @@ fn meta_tables_are_flattened() {
         m.property_index("implicitWidth"),
         Some(Item::IMPLICIT_WIDTH.index)
     );
-    assert_eq!(m.property_index("border.width"), Some(PropIndex(9)));
+    assert_eq!(m.property_index("border.width"), Some(PropIndex(10)));
 
-    let border = m.property(PropIndex(8)).unwrap();
+    let border = m.property(PropIndex(9)).unwrap();
     assert!(border.flags.contains(PropertyFlags::GROUP));
     assert_eq!(border.ty, TypeTag::Group("Border".into()));
     let iw = m.property(Item::IMPLICIT_WIDTH.index).unwrap();
