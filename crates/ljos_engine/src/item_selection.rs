@@ -13,10 +13,11 @@
 //! known, so whole rows and columns are selected and read at every
 //! level; in other models only at the top.
 //!
-//! Not there: selections of ranges (`select(selection, command)`),
-//! `Current`'s separate current selection (it selects as `Select`
-//! does), and following the model: rows inserted into or removed from
-//! the model leave the selection where it was until it is cleared.
+//! The selection is kept as Qt keeps it: ranges that do not overlap, in
+//! the order they were made, and a selection being made (a command with
+//! `Current` replaces it) with its command, which the next command
+//! without `Current` merges into the ranges. Rows the model gains, loses
+//! or moves take the ranges and the current item along, as qml6 does.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -26,6 +27,8 @@ use crate::builtins::QtObject;
 use crate::cx::Cx;
 use crate::engine::Engine;
 use crate::ids::ObjectId;
+use crate::model::{ItemModel, ModelChange};
+use crate::tree::{ItemTree, TreeChange};
 use crate::value::Value;
 use crate::{QmlObject, qml_impl};
 
@@ -35,6 +38,7 @@ mod flag {
     pub const SELECT: i64 = 0x2;
     pub const DESELECT: i64 = 0x4;
     pub const TOGGLE: i64 = 0x8;
+    pub const CURRENT: i64 = 0x10;
     pub const ROWS: i64 = 0x20;
     pub const COLUMNS: i64 = 0x40;
 }
@@ -46,7 +50,7 @@ fn selection_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
         ("Select", flag::SELECT),
         ("Deselect", flag::DESELECT),
         ("Toggle", flag::TOGGLE),
-        ("Current", 0x10),
+        ("Current", flag::CURRENT),
         ("Rows", flag::ROWS),
         ("Columns", flag::COLUMNS),
         ("SelectCurrent", 0x12),
@@ -117,8 +121,163 @@ impl std::fmt::Debug for ItemSelectionModel {
 struct Selection {
     /// The model the places are in; another model starts afresh.
     model: Option<ObjectId>,
-    selected: BTreeSet<Place>,
+    /// The ranges made part of the selection.
+    ranges: Vec<Range>,
+    /// The selection being made, and what its command does with it.
+    pending: Vec<Range>,
+    pending_command: i64,
+    /// `ranges` with `pending` merged in: the selection scripts see.
+    shown: Vec<Range>,
     current: Option<Place>,
+    /// The subscription to the model's changes.
+    following: Option<Following>,
+}
+
+/// A subscription to the changes of the model a selection is in.
+enum Following {
+    List(Rc<dyn ItemModel>, u64),
+    Tree(Rc<dyn ItemTree>, u64),
+}
+
+impl std::fmt::Debug for Following {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Following::List(..) => "List",
+            Following::Tree(..) => "Tree",
+        })
+    }
+}
+
+impl Following {
+    fn stop(self) {
+        match self {
+            Following::List(model, id) => model.unsubscribe(id),
+            Following::Tree(tree, id) => tree.unsubscribe(id),
+        }
+    }
+}
+
+/// Items from `top` to `bottom` and `left` to `right` under one parent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Range {
+    parent: Place,
+    top: i32,
+    left: i32,
+    bottom: i32,
+    right: i32,
+}
+
+impl Range {
+    fn rows(&self, top: i32, bottom: i32) -> Range {
+        Range {
+            top,
+            bottom,
+            ..self.clone()
+        }
+    }
+
+    fn contains(&self, place: &[(i32, i32)]) -> bool {
+        place.split_last().is_some_and(|(last, parent)| {
+            parent == self.parent.as_slice()
+                && (self.top..=self.bottom).contains(&last.0)
+                && (self.left..=self.right).contains(&last.1)
+        })
+    }
+
+    fn intersects(&self, o: &Range) -> bool {
+        self.parent == o.parent
+            && self.top <= o.bottom
+            && o.top <= self.bottom
+            && self.left <= o.right
+            && o.left <= self.right
+    }
+
+    /// What is left of the range with `o` taken out: the rows above it,
+    /// the rows below it, then the columns left and right of it.
+    fn minus(&self, o: &Range) -> Vec<Range> {
+        if !self.intersects(o) {
+            return vec![self.clone()];
+        }
+        let piece = |top, left, bottom, right| Range {
+            parent: self.parent.clone(),
+            top,
+            left,
+            bottom,
+            right,
+        };
+        let mut out = Vec::new();
+        if self.top < o.top {
+            out.push(piece(self.top, self.left, o.top - 1, self.right));
+        }
+        if o.bottom < self.bottom {
+            out.push(piece(o.bottom + 1, self.left, self.bottom, self.right));
+        }
+        let (top, bottom) = (self.top.max(o.top), self.bottom.min(o.bottom));
+        if self.left < o.left {
+            out.push(piece(top, self.left, bottom, o.left - 1));
+        }
+        if o.right < self.right {
+            out.push(piece(top, o.right + 1, bottom, self.right));
+        }
+        out
+    }
+
+    fn places(&self) -> impl Iterator<Item = Place> + '_ {
+        (self.top..=self.bottom).flat_map(move |r| {
+            (self.left..=self.right).map(move |c| {
+                let mut p = self.parent.clone();
+                p.push((r, c));
+                p
+            })
+        })
+    }
+}
+
+/// `a` with what `b` has taken out, as Qt merges: the ranges `b` does
+/// not touch keep their order, and what is left of the others follows.
+fn take_out(a: &[Range], b: &[Range]) -> Vec<Range> {
+    let mut kept = Vec::new();
+    let mut pieces = Vec::new();
+    for r in a {
+        if b.iter().any(|o| r.intersects(o)) {
+            let mut left = vec![r.clone()];
+            for o in b {
+                left = left.iter().flat_map(|x| x.minus(o)).collect();
+            }
+            pieces.extend(left);
+        } else {
+            kept.push(r.clone());
+        }
+    }
+    kept.extend(pieces);
+    kept
+}
+
+/// The ranges of `b`, none overlapping another.
+fn distinct(b: &[Range]) -> Vec<Range> {
+    let mut out: Vec<Range> = Vec::new();
+    for r in b {
+        let new = take_out(std::slice::from_ref(r), &out);
+        out.extend(new);
+    }
+    out
+}
+
+/// `b` merged into `a` as `command` says.
+fn merge(a: &[Range], b: &[Range], command: i64) -> Vec<Range> {
+    if b.is_empty() {
+        return a.to_vec();
+    }
+    let b = distinct(b);
+    let mut out = take_out(a, &b);
+    if command & flag::SELECT != 0 {
+        out.extend(b);
+    } else if command & flag::TOGGLE != 0 {
+        out.extend(take_out(&b, a));
+    } else if command & flag::DESELECT == 0 {
+        return a.to_vec();
+    }
+    out
 }
 
 #[qml_impl]
@@ -139,26 +298,45 @@ impl ItemSelectionModel {
     fn completed(cx: &Cx) -> Result<(), crate::EngineError> {
         let current = invalid_index(cx.engine);
         cx.engine
-            .set_internal(cx.this, Self::CURRENT_INDEX, current)
+            .set_internal(cx.this, Self::CURRENT_INDEX, current)?;
+        let _ = state_of(cx);
+        let me = cx.this;
+        cx.engine.watch(me, Self::MODEL.index, move |e, _| {
+            let _ = state_of(&Cx::new(e, me));
+        })?;
+        cx.engine.connect_by_name(me, "destroyed", move |e, _| {
+            let state = e.with::<ItemSelectionModel, _>(me, |m| m.state.clone());
+            if let Ok(state) = state
+                && let Some(f) = state.borrow_mut().following.take()
+            {
+                f.stop();
+            }
+        })?;
+        Ok(())
     }
 
+    /// `select(index, command)`, or `select(selection, command)` with the
+    /// ranges of a selection.
     #[qml(invokable)]
-    fn select(cx: &Cx, index: Value, command: Value) {
-        let place = place_in(cx, &index);
-        apply(cx, place.as_ref(), flags(&command));
+    fn select(cx: &Cx, what: Value, command: Value) {
+        let command = flags(&command);
+        let ranges = ranges_in(cx, &what, command);
+        apply(cx, ranges, command);
     }
 
     #[qml(invokable, name = "setCurrentIndex")]
     fn set_current_index(cx: &Cx, index: Value, command: Value) {
+        let command = flags(&command);
         let place = place_in(cx, &index);
-        apply(cx, place.as_ref(), flags(&command));
+        let ranges = place.as_deref().map(|p| expand(cx, p, p, command));
+        apply(cx, ranges.into_iter().flatten().collect(), command);
         make_current(cx, place);
     }
 
     /// The selection and the current item go, and both are told.
     #[qml(invokable)]
     fn clear(cx: &Cx) {
-        apply(cx, None, flag::CLEAR);
+        apply(cx, Vec::new(), flag::CLEAR);
         make_current(cx, None);
     }
 
@@ -166,11 +344,7 @@ impl ItemSelectionModel {
     #[qml(invokable)]
     fn reset(cx: &Cx) {
         let Some(state) = state_of(cx) else { return };
-        {
-            let mut s = state.borrow_mut();
-            s.selected.clear();
-            s.current = None;
-        }
+        forget(&mut state.borrow_mut());
         publish(cx, &state);
         let _ = cx
             .engine
@@ -179,7 +353,7 @@ impl ItemSelectionModel {
 
     #[qml(invokable, name = "clearSelection")]
     fn clear_selection(cx: &Cx) {
-        apply(cx, None, flag::CLEAR);
+        apply(cx, Vec::new(), flag::CLEAR);
     }
 
     #[qml(invokable, name = "clearCurrentIndex")]
@@ -189,10 +363,10 @@ impl ItemSelectionModel {
 
     #[qml(invokable, name = "isSelected")]
     fn is_selected(cx: &Cx, index: Value) -> bool {
-        let (Some(state), Some(place)) = (state_of(cx), place_in(cx, &index)) else {
+        let Some(place) = place_in(cx, &index) else {
             return false;
         };
-        state.borrow().selected.contains(&place)
+        selected_all(cx, &[place])
     }
 
     /// Whether every column of the row is selected.
@@ -244,22 +418,352 @@ impl ItemSelectionModel {
     }
 }
 
+fn forget(s: &mut Selection) {
+    s.ranges.clear();
+    s.pending.clear();
+    s.shown.clear();
+    s.current = None;
+}
+
+/// The selection, in step with the model: a selection belongs to the
+/// model it was made in, and follows that model's changes.
 fn state_of(cx: &Cx) -> Option<Rc<RefCell<Selection>>> {
     let state = cx
         .engine
         .with::<ItemSelectionModel, _>(cx.this, |m| m.state.clone())
         .ok()?;
-    // A selection belongs to the model it was made in.
     let model = model_of(cx);
-    let mut s = state.borrow_mut();
-    if s.model != model {
-        *s = Selection {
-            model,
-            ..Selection::default()
-        };
+    let moved = {
+        let mut s = state.borrow_mut();
+        let moved = s.model != model;
+        if moved {
+            forget(&mut s);
+            s.model = model;
+            if let Some(f) = s.following.take() {
+                f.stop();
+            }
+        }
+        moved
+    };
+    if moved {
+        let following = model.and_then(|m| follow(cx.engine, cx.this, m));
+        state.borrow_mut().following = following;
+        publish(cx, &state);
+        let _ = cx.engine.set_internal(
+            cx.this,
+            ItemSelectionModel::CURRENT_INDEX,
+            invalid_index(cx.engine),
+        );
     }
-    drop(s);
     Some(state)
+}
+
+fn follow(engine: &Engine, me: ObjectId, model: ObjectId) -> Option<Following> {
+    let items = engine.object_model(model)?;
+    if let Some(tree) = items.tree() {
+        let id = tree.subscribe(Rc::new(move |e: &Engine, change: &TreeChange| {
+            let cx = Cx::new(e, me);
+            match change {
+                TreeChange::RowsInserted {
+                    parent,
+                    first,
+                    count,
+                } => inserted(&cx, parent, *first, *count),
+                TreeChange::RowsRemoved {
+                    parent,
+                    first,
+                    count,
+                } => removed(&cx, parent, *first, *count),
+                TreeChange::ModelReset => model_reset(&cx),
+                TreeChange::DataChanged { .. } => {}
+            }
+        }));
+        return Some(Following::Tree(tree, id));
+    }
+    let id = items.subscribe(Rc::new(move |e: &Engine, change: &ModelChange| {
+        let cx = Cx::new(e, me);
+        match change {
+            ModelChange::RowsInserted { first, count } => inserted(&cx, &[], *first, *count),
+            ModelChange::RowsRemoved { first, count } => removed(&cx, &[], *first, *count),
+            ModelChange::RowsMoved { from, to, count } => moved(&cx, *from, *to, *count),
+            ModelChange::ModelReset => model_reset(&cx),
+            _ => {}
+        }
+    }));
+    Some(Following::List(items, id))
+}
+
+/// The selection as it is when its model told a change; `None` when the
+/// selection model is gone or now has another model.
+fn following(cx: &Cx) -> Option<Rc<RefCell<Selection>>> {
+    if !cx.engine.is_alive(cx.this) {
+        return None;
+    }
+    let state = cx
+        .engine
+        .with::<ItemSelectionModel, _>(cx.this, |m| m.state.clone())
+        .ok()?;
+    let ours = state.borrow().model == model_of(cx);
+    ours.then_some(state)
+}
+
+/// Whether a range's parent is the row at `at` (rows hang under the
+/// first column of their parent).
+fn is_at(parent: &[(i32, i32)], at: &[usize]) -> bool {
+    parent.len() == at.len() && under(parent, at)
+}
+
+/// Whether `place` goes through the row at `at`.
+fn under(place: &[(i32, i32)], at: &[usize]) -> bool {
+    place.len() >= at.len()
+        && place
+            .iter()
+            .zip(at)
+            .all(|(&(r, c), &a)| c == 0 && usize::try_from(r).is_ok_and(|r| r == a))
+}
+
+fn to_i32(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
+/// Rows were inserted under the row at `at`: the ranges and the current
+/// item below them move down, and a range they land in is split.
+fn inserted(cx: &Cx, at: &[usize], first: usize, count: usize) {
+    let Some(state) = following(cx) else { return };
+    let (first, count) = (to_i32(first), to_i32(count));
+    let k = at.len();
+    let mut shifted = false;
+    let mut map = |list: &[Range]| -> Vec<Range> {
+        let mut out = Vec::new();
+        for r in list {
+            if is_at(&r.parent, at) {
+                if r.bottom < first {
+                    out.push(r.clone());
+                } else if r.top >= first {
+                    shifted = true;
+                    out.push(r.rows(r.top + count, r.bottom + count));
+                } else {
+                    out.push(r.rows(r.top, first - 1));
+                    out.push(r.rows(first + count, r.bottom + count));
+                }
+            } else if r.parent.len() > k && under(&r.parent, at) && r.parent[k].0 >= first {
+                shifted = true;
+                let mut r = r.clone();
+                r.parent[k].0 += count;
+                out.push(r);
+            } else {
+                out.push(r.clone());
+            }
+        }
+        out
+    };
+    let current = {
+        let mut s = state.borrow_mut();
+        s.ranges = map(&s.ranges);
+        s.pending = map(&s.pending);
+        s.shown = merge(&s.ranges, &s.pending, s.pending_command);
+        if let Some(c) = s.current.as_mut()
+            && c.len() > k
+            && under(c, at)
+            && c[k].0 >= first
+        {
+            c[k].0 += count;
+        }
+        s.current.clone()
+    };
+    settle(cx, &state, current);
+    if shifted {
+        tell(cx, &[], &[]);
+    }
+}
+
+/// Rows under the row at `at` are gone: the selected items among them
+/// leave the selection, the rest below them move up, and a current item
+/// among them hands over to the row above them, else the row below them,
+/// else their parent.
+fn removed(cx: &Cx, at: &[usize], first: usize, count: usize) {
+    let Some(state) = following(cx) else { return };
+    let rows_now = rows_under(cx, at);
+    let (first, count) = (to_i32(first), to_i32(count));
+    let last = first + count - 1;
+    let k = at.len();
+    let gone_row = |row: i32| (first..=last).contains(&row);
+    let mut gone: Vec<Range> = Vec::new();
+    for r in &state.borrow().shown {
+        if is_at(&r.parent, at) {
+            let (top, bottom) = (r.top.max(first), r.bottom.min(last));
+            if top <= bottom {
+                gone.push(r.rows(top, bottom));
+            }
+        } else if r.parent.len() > k && under(&r.parent, at) && gone_row(r.parent[k].0) {
+            gone.push(r.clone());
+        }
+    }
+    let mut shifted = false;
+    let mut map = |list: &[Range]| -> Vec<Range> {
+        let mut out = Vec::new();
+        for r in list {
+            if is_at(&r.parent, at) {
+                if r.bottom < first {
+                    out.push(r.clone());
+                } else if r.top > last {
+                    shifted = true;
+                    out.push(r.rows(r.top - count, r.bottom - count));
+                } else {
+                    if r.top < first {
+                        out.push(r.rows(r.top, first - 1));
+                    }
+                    if r.bottom > last {
+                        out.push(r.rows(first, r.bottom - count));
+                    }
+                }
+            } else if r.parent.len() > k && under(&r.parent, at) {
+                let row = r.parent[k].0;
+                if gone_row(row) {
+                    continue;
+                }
+                let mut r = r.clone();
+                if row > last {
+                    shifted = true;
+                    r.parent[k].0 -= count;
+                }
+                out.push(r);
+            } else {
+                out.push(r.clone());
+            }
+        }
+        out
+    };
+    let (handed, current) = {
+        let mut s = state.borrow_mut();
+        s.ranges = map(&s.ranges);
+        s.pending = map(&s.pending);
+        s.shown = merge(&s.ranges, &s.pending, s.pending_command);
+        let mut handed = None;
+        if let Some(c) = s.current.clone()
+            && c.len() > k
+            && under(&c, at)
+        {
+            let row = c[k].0;
+            if gone_row(row) {
+                let parent: Place = c[..k].to_vec();
+                let column = c[k].1;
+                let at_row = |r: i32| {
+                    let mut p = parent.clone();
+                    p.push((r, column));
+                    p
+                };
+                // Told in the rows as they were; kept in the rows as they are.
+                let (told, kept) = if first > 0 {
+                    (Some(at_row(first - 1)), Some(at_row(first - 1)))
+                } else if last + 1 < rows_now + count {
+                    (Some(at_row(last + 1)), Some(at_row(first)))
+                } else {
+                    let p = (!parent.is_empty()).then_some(parent);
+                    (p.clone(), p)
+                };
+                handed = Some((c.clone(), told));
+                s.current = kept;
+            } else if row > last {
+                s.current.as_mut().expect("there is a current item")[k].0 -= count;
+            }
+        }
+        (handed, s.current.clone())
+    };
+    if let Some((previous, told)) = handed {
+        tell_current(cx, &told, &Some(previous));
+    }
+    settle(cx, &state, current);
+    if !gone.is_empty() {
+        tell(cx, &[], &gone);
+    } else if shifted {
+        tell(cx, &[], &[]);
+    }
+}
+
+/// How many rows are under the row at `at` now.
+fn rows_under(cx: &Cx, at: &[usize]) -> i32 {
+    let Some(model) = model_of(cx).and_then(|m| cx.engine.object_model(m)) else {
+        return 0;
+    };
+    match model.tree() {
+        Some(tree) => to_i32(tree.row_count(at)),
+        None => to_i32(model.row_count()),
+    }
+}
+
+/// Rows of a list moved: the selection and the current item go with
+/// them, and nothing is told, as on qml6.
+fn moved(cx: &Cx, from: usize, to: usize, count: usize) {
+    let Some(state) = following(cx) else { return };
+    let (from, to, count) = (to_i32(from), to_i32(to), to_i32(count));
+    let row = |r: i32| {
+        if (from..from + count).contains(&r) {
+            return to + (r - from);
+        }
+        let r = if r >= from + count { r - count } else { r };
+        if r >= to { r + count } else { r }
+    };
+    let map = |list: &[Range]| -> Vec<Range> {
+        let mut out = Vec::new();
+        for r in list {
+            if !r.parent.is_empty() {
+                out.push(r.clone());
+                continue;
+            }
+            let rows: Vec<i32> = (r.top..=r.bottom).map(row).collect();
+            if rows.windows(2).all(|w| w[1] == w[0] + 1) {
+                out.push(r.rows(rows[0], rows[rows.len() - 1]));
+                continue;
+            }
+            // The rows of the range are apart now: one range per run.
+            let mut rows = rows;
+            rows.sort_unstable();
+            let mut start = rows[0];
+            for (i, &x) in rows.iter().enumerate() {
+                let next = rows.get(i + 1);
+                if next != Some(&(x + 1)) {
+                    out.push(r.rows(start, x));
+                    if let Some(&n) = next {
+                        start = n;
+                    }
+                }
+            }
+        }
+        out
+    };
+    let current = {
+        let mut s = state.borrow_mut();
+        s.ranges = map(&s.ranges);
+        s.pending = map(&s.pending);
+        s.shown = merge(&s.ranges, &s.pending, s.pending_command);
+        if let Some(c) = s.current.as_mut()
+            && let Some(first) = c.first_mut()
+        {
+            first.0 = row(first.0);
+        }
+        s.current.clone()
+    };
+    settle(cx, &state, current);
+}
+
+/// The model was reset: nothing is selected or current, untold.
+fn model_reset(cx: &Cx) {
+    let Some(state) = following(cx) else { return };
+    forget(&mut state.borrow_mut());
+    settle(cx, &state, None);
+}
+
+/// Brings the properties in step after the model changed.
+fn settle(cx: &Cx, state: &RefCell<Selection>, current: Option<Place>) {
+    publish(cx, state);
+    let index = match &current {
+        Some(p) => make_index(cx.engine, model_of(cx), p),
+        None => invalid_index(cx.engine),
+    };
+    let _ = cx
+        .engine
+        .set_internal(cx.this, ItemSelectionModel::CURRENT_INDEX, index);
 }
 
 fn model_of(cx: &Cx) -> Option<ObjectId> {
@@ -272,7 +776,6 @@ fn model_of(cx: &Cx) -> Option<ObjectId> {
 /// model can say; a list has one column.
 fn extent(cx: &Cx, parent: &[(i32, i32)]) -> Option<(i32, i32)> {
     let model = cx.engine.object_model(model_of(cx)?)?;
-    let count = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
     if let Some(tree) = model.tree() {
         // A tree's rows hang under the first column of their parent.
         let mut path = Vec::with_capacity(parent.len());
@@ -282,12 +785,12 @@ fn extent(cx: &Cx, parent: &[(i32, i32)]) -> Option<(i32, i32)> {
             }
             path.push(usize::try_from(row).ok()?);
         }
-        return Some((count(tree.row_count(&path)), count(tree.column_count())));
+        return Some((to_i32(tree.row_count(&path)), to_i32(tree.column_count())));
     }
     if !parent.is_empty() {
         return None;
     }
-    Some((count(model.row_count()), 1))
+    Some((to_i32(model.row_count()), 1))
 }
 
 /// Where `index` is in this model; `None` for an index that is not valid,
@@ -349,77 +852,98 @@ fn int_or(v: &Value, default: i32) -> i32 {
     }
 }
 
-/// Selects, deselects or toggles the item at `place` (or its whole row or
-/// column) as `command` says, after clearing when it says `Clear`, and
-/// tells what changed.
-fn apply(cx: &Cx, place: Option<&Place>, command: i64) {
+/// The range from `top_left` to `bottom_right`, made whole rows or whole
+/// columns when `command` says `Rows` or `Columns`.
+fn expand(
+    cx: &Cx,
+    top_left: &[(i32, i32)],
+    bottom_right: &[(i32, i32)],
+    command: i64,
+) -> Option<Range> {
+    let (tl, parent) = top_left.split_last()?;
+    let (br, other) = bottom_right.split_last()?;
+    if parent != other {
+        return None;
+    }
+    let mut r = Range {
+        parent: parent.to_vec(),
+        top: tl.0.min(br.0),
+        left: tl.1.min(br.1),
+        bottom: tl.0.max(br.0),
+        right: tl.1.max(br.1),
+    };
+    let (rows, columns) = extent(cx, parent).unwrap_or((r.bottom + 1, r.right + 1));
+    if command & flag::ROWS != 0 {
+        (r.left, r.right) = (0, columns - 1);
+    }
+    if command & flag::COLUMNS != 0 {
+        (r.top, r.bottom) = (0, rows - 1);
+    }
+    (r.top <= r.bottom && r.left <= r.right).then_some(r)
+}
+
+/// The ranges `what` names: an index, a range, or a list of ranges (a
+/// selection).
+fn ranges_in(cx: &Cx, what: &Value, command: i64) -> Vec<Range> {
+    let e = cx.engine;
+    let model = model_of(cx);
+    let one = |v: &Value| -> Option<Range> {
+        if let Some(tl) = e.js_member(v, "topLeft") {
+            let br = e.js_member(v, "bottomRight")?;
+            let (tl, br) = (place_of(e, &tl, model)?, place_of(e, &br, model)?);
+            return expand(cx, &tl, &br, command);
+        }
+        let place = place_in(cx, v)?;
+        expand(cx, &place, &place, command)
+    };
+    if e.js_member(what, "valid").is_some() {
+        return one(what).into_iter().collect();
+    }
+    match e.plain(what) {
+        Value::List(items) => items.iter().filter_map(one).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Changes the selection as `command` says, with `items` the ranges it
+/// names, and tells what changed.
+fn apply(cx: &Cx, items: Vec<Range>, command: i64) {
     let Some(state) = state_of(cx) else { return };
-    let mut items: Vec<Place> = Vec::new();
-    if let Some(place) = place {
-        let (last, parent) = place.split_last().expect("a place has a last step");
-        let (rows, columns) = extent(cx, parent).unwrap_or((last.0 + 1, last.1 + 1));
-        let at = |r, c| {
-            let mut p = parent.to_vec();
-            p.push((r, c));
-            p
-        };
-        if command & flag::ROWS != 0 {
-            items.extend((0..columns).map(|c| at(last.0, c)));
-        } else if command & flag::COLUMNS != 0 {
-            items.extend((0..rows).map(|r| at(r, last.1)));
-        } else {
-            items.push(place.clone());
-        }
+    let changes = flag::CLEAR | flag::SELECT | flag::DESELECT | flag::TOGGLE;
+    if command & changes == 0 {
+        return;
     }
-    let (mut added, mut removed) = (Vec::new(), Vec::new());
-    {
+    let (old, new) = {
         let mut s = state.borrow_mut();
+        let old = s.shown.clone();
         if command & flag::CLEAR != 0 {
-            let keep: BTreeSet<&Place> = if command & flag::SELECT != 0 {
-                items.iter().collect()
-            } else {
-                BTreeSet::new()
-            };
-            let gone: Vec<Place> = s
-                .selected
-                .iter()
-                .filter(|p| !keep.contains(p))
-                .cloned()
-                .collect();
-            for p in gone {
-                s.selected.remove(&p);
-                removed.push(p);
-            }
+            s.ranges.clear();
+            s.pending.clear();
+        } else if command & flag::CURRENT == 0 {
+            s.ranges = merge(&s.ranges, &s.pending, s.pending_command);
+            s.pending.clear();
         }
-        for item in items {
-            let has = s.selected.contains(&item);
-            let select = if command & flag::SELECT != 0 {
-                true
-            } else if command & flag::DESELECT != 0 {
-                false
-            } else if command & flag::TOGGLE != 0 {
-                !has
-            } else {
-                has
-            };
-            if select && !has {
-                s.selected.insert(item.clone());
-                added.push(item);
-            } else if !select && has {
-                s.selected.remove(&item);
-                removed.push(item);
-            }
+        if command & (flag::SELECT | flag::DESELECT | flag::TOGGLE) != 0 {
+            s.pending = items;
+            s.pending_command = command;
         }
-    }
+        s.shown = merge(&s.ranges, &s.pending, s.pending_command);
+        (old, s.shown.clone())
+    };
+    let (added, removed) = (take_out(&new, &old), take_out(&old, &new));
     if added.is_empty() && removed.is_empty() {
         return;
     }
     publish(cx, &state);
+    tell(cx, &added, &removed);
+}
+
+/// `selectionChanged(selected, deselected)`.
+fn tell(cx: &Cx, added: &[Range], removed: &[Range]) {
     let model = model_of(cx);
     let ranges =
-        |places: &[Place]| Value::list(places.iter().map(|p| range(cx.engine, model, p)).collect());
-    let (added, removed) = (ranges(&added), ranges(&removed));
-    let _ = ItemSelectionModel::emit_selection_changed(cx, added, removed);
+        |list: &[Range]| Value::list(list.iter().map(|r| range(cx.engine, model, r)).collect());
+    let _ = ItemSelectionModel::emit_selection_changed(cx, ranges(added), ranges(removed));
 }
 
 /// Makes `place` the current item (none for `None`) and tells of it when
@@ -433,18 +957,23 @@ fn make_current(cx: &Cx, place: Option<Place>) {
         }
         std::mem::replace(&mut s.current, place.clone())
     };
+    tell_current(cx, &place, &previous);
+}
+
+/// Shows `place` as the current index and tells that it was `previous`.
+fn tell_current(cx: &Cx, place: &Option<Place>, previous: &Option<Place>) {
     let model = model_of(cx);
     let index = |p: &Option<Place>| match p {
         Some(p) => make_index(cx.engine, model, p),
         None => invalid_index(cx.engine),
     };
-    let (now, before) = (index(&place), index(&previous));
+    let (now, before) = (index(place), index(previous));
     let _ = cx
         .engine
         .set_internal(cx.this, ItemSelectionModel::CURRENT_INDEX, now.clone());
     let _ = ItemSelectionModel::emit_current_changed(cx, now.clone(), before.clone());
     let last = |p: &Option<Place>| p.as_ref().and_then(|p| p.last().copied());
-    let (a, b) = (last(&place), last(&previous));
+    let (a, b) = (last(place), last(previous));
     if a.map(|x| x.0) != b.map(|x| x.0) {
         let _ = ItemSelectionModel::emit_current_row_changed(cx, now.clone(), before.clone());
     }
@@ -456,17 +985,18 @@ fn make_current(cx: &Cx, place: Option<Place>) {
 /// Brings `hasSelection`, `selectedIndexes` and `selection` in step.
 fn publish(cx: &Cx, state: &RefCell<Selection>) {
     let model = model_of(cx);
-    let places: Vec<Place> = state.borrow().selected.iter().cloned().collect();
-    let indexes: Vec<Value> = places
+    let shown = state.borrow().shown.clone();
+    let indexes: Vec<Value> = shown
         .iter()
-        .map(|p| make_index(cx.engine, model, p))
+        .flat_map(Range::places)
+        .map(|p| make_index(cx.engine, model, &p))
         .collect();
-    let ranges = places.iter().map(|p| range(cx.engine, model, p)).collect();
+    let ranges = shown.iter().map(|r| range(cx.engine, model, r)).collect();
     cx.engine.batch(|| {
         let me = cx.this;
         let _ = cx
             .engine
-            .set_internal(me, ItemSelectionModel::HAS_SELECTION, !places.is_empty());
+            .set_internal(me, ItemSelectionModel::HAS_SELECTION, !shown.is_empty());
         let _ = cx
             .engine
             .set_internal(me, ItemSelectionModel::SELECTED_INDEXES, indexes);
@@ -500,12 +1030,16 @@ fn line(cx: &Cx, parent: &Value, line: Line) -> Option<Vec<Place>> {
     })
 }
 
+fn is_shown(s: &Selection, place: &[(i32, i32)]) -> bool {
+    s.shown.iter().any(|r| r.contains(place))
+}
+
 fn selected_all(cx: &Cx, places: &[Place]) -> bool {
     let Some(state) = state_of(cx) else {
         return false;
     };
     let s = state.borrow();
-    !places.is_empty() && places.iter().all(|p| s.selected.contains(p))
+    !places.is_empty() && places.iter().all(|p| is_shown(&s, p))
 }
 
 fn selected_any(cx: &Cx, places: &[Place]) -> bool {
@@ -513,7 +1047,7 @@ fn selected_any(cx: &Cx, places: &[Place]) -> bool {
         return false;
     };
     let s = state.borrow();
-    places.iter().any(|p| s.selected.contains(p))
+    places.iter().any(|p| is_shown(&s, p))
 }
 
 /// The whole rows (or columns) of the selection, as indexes at `at`.
@@ -522,7 +1056,12 @@ fn whole_lines(cx: &Cx, rows: bool, at: i32) -> Value {
         return Value::list(Vec::new());
     };
     let model = model_of(cx);
-    let selected: Vec<Place> = state.borrow().selected.iter().cloned().collect();
+    let selected: Vec<Place> = state
+        .borrow()
+        .shown
+        .iter()
+        .flat_map(Range::places)
+        .collect();
     let mut seen: BTreeSet<Place> = BTreeSet::new();
     let mut out = Vec::new();
     for place in selected {
@@ -535,18 +1074,16 @@ fn whole_lines(cx: &Cx, rows: bool, at: i32) -> Value {
         let Some((nrows, ncolumns)) = extent(cx, parent) else {
             continue;
         };
+        let at_cell = |r, c| {
+            let mut p = parent.to_vec();
+            p.push((r, c));
+            p
+        };
+        let s = state.borrow();
         let whole = if rows {
-            (0..ncolumns).all(|c| {
-                let mut p = parent.to_vec();
-                p.push((last.0, c));
-                state.borrow().selected.contains(&p)
-            })
+            (0..ncolumns).all(|c| is_shown(&s, &at_cell(last.0, c)))
         } else {
-            (0..nrows).all(|r| {
-                let mut p = parent.to_vec();
-                p.push((r, last.1));
-                state.borrow().selected.contains(&p)
-            })
+            (0..nrows).all(|r| is_shown(&s, &at_cell(r, last.1)))
         };
         if whole {
             out.push(make_index(cx.engine, model, &key));
@@ -574,13 +1111,22 @@ const MAKERS: &str = r#"(function () {
     }
     return at;
   }
-  function range(model, place) {
-    const at = index(model, place);
-    return Object.freeze({ top: at.row, left: at.column, bottom: at.row, right: at.column,
-      width: 1, height: 1, topLeft: at, bottomRight: at, parent: at.parent, valid: true,
-      empty: false, model: model,
-      contains(i) { return !!i && i.valid && i.row === at.row && i.column === at.column },
-      toString() { return "QItemSelectionRange(" + at + "," + at + ")" } });
+  function same(a, b) {
+    for (; a.valid && b.valid; a = a.parent, b = b.parent)
+      if (a.row !== b.row || a.column !== b.column) return false;
+    return a.valid === b.valid;
+  }
+  function range(model, parent, top, left, bottom, right) {
+    const tl = index(model, parent.concat([[top, left]]));
+    const br = index(model, parent.concat([[bottom, right]]));
+    return Object.freeze({ top: top, left: left, bottom: bottom, right: right,
+      width: right - left + 1, height: bottom - top + 1, topLeft: tl, bottomRight: br,
+      parent: tl.parent, valid: true, empty: false, model: model,
+      contains(i) {
+        return !!i && !!i.valid && i.row >= top && i.row <= bottom && i.column >= left
+          && i.column <= right && same(i.parent, tl.parent)
+      },
+      toString() { return "QItemSelectionRange(" + tl + "," + br + ")" } });
   }
   return [invalid, index, range];
 })()"#;
@@ -630,13 +1176,19 @@ pub(crate) fn make_index(engine: &Engine, model: Option<ObjectId>, place: &[(i32
         .unwrap_or(Value::Undefined)
 }
 
-fn range(engine: &Engine, model: Option<ObjectId>, place: &[(i32, i32)]) -> Value {
+fn range(engine: &Engine, model: Option<ObjectId>, r: &Range) -> Value {
     let Some((_, _, range)) = makers(engine) else {
         return Value::Undefined;
     };
-    engine
-        .call_js(&range, &[model_value(model), place_value(place)])
-        .unwrap_or(Value::Undefined)
+    let args = [
+        model_value(model),
+        place_value(&r.parent),
+        Value::Int(r.top),
+        Value::Int(r.left),
+        Value::Int(r.bottom),
+        Value::Int(r.right),
+    ];
+    engine.call_js(&range, &args).unwrap_or(Value::Undefined)
 }
 
 /// `index(row, column)` of a model of one level: the index of the item,
