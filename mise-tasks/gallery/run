@@ -64,8 +64,15 @@ project=(--project "$root/corpus/qtdoc/$dir")
 # gallery:drive builds once before its examples (GALLERY_BUILT=1): a build here, after a source
 # changed or behind another cargo's lock on the target, would take the time the driver gives
 # the example to start, and its examples would not all run the same build.
+# GALLERY_PROFILE=release measures what a user gets; the default builds
+# fastest.
+profile="${GALLERY_PROFILE:-debug}"
 if [ -z "${GALLERY_BUILT:-}" ]; then
-  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+  if [ "$profile" = debug ]; then
+    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+  else
+    cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --profile "$profile"
+  fi
 fi
-exec "$target/debug/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
+exec "$target/$profile/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
   "${project[@]}" --size "$size" --example "$id" "$@"
