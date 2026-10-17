@@ -555,3 +555,74 @@ was left running to stop. It asks for 9 pictures with no screen reader and 14 wi
 - **Memory outside Rust**, chiefly llvmpipe and Mesa, is about half of anon PSS.
 - **The binary's resident text** (36–43 MiB of PSS) is above Qt's shared libraries. On a system that
   runs several Ljós apps, it is shared like theirs.
+
+### The script and binding side (2026-10-18)
+
+`frame_profile` now runs Timers and JS `Date` on its virtual clock, so a profiled clock ticks and
+a Timer fires. It also says how many frames asked for the next one at once. The main thread was
+profiled with callgrind over the egui passes only (`--toggle-collect=*run_ui_dyn*`). Each figure
+is the difference between a 1200-frame run and a 600-frame run, divided by 600, so start-up and
+the first script are left out.
+
+| Per frame | Before | After |
+|---|---:|---:|
+| animations: the pass | 1 224 k | 1 152 k |
+| animations: `QuickScene::frame` | 900 k | 829 k |
+| animations: 200 animation steps (`animation::tick`) | 675 k | 640 k |
+| animations: the steps' 200 writes (`write_impl`) | 298 k | 262 k |
+| clocks: the pass | 221 k | 220 k |
+
+- **A write** first checked for an alias, a redirect and a value still to be made, looking the
+  object up again for each. It now looks once. It borrows the property's type instead of cloning
+  it, and refreshes the field cache from `Graph::settled`, which records no read. A read makes a
+  value that is still to be made in its own lookup. An animation step's write costs about 12 % less.
+- **Geometry** no longer sorts what moved each frame.
+
+samegame was left out of the instruction table. Its boards are random, so two runs remove
+different blocks. Under callgrind its click handler also ran past the script budget and was cut
+short; `frame_profile` now lifts the budget.
+
+**CPU, as % of one core.** Desktop profile, medians of 3. "Before" is ec5b08a, run again
+straight after "after" so that both met the same load. Qt's figure is in parentheses.
+
+| GPU (`renderD128`) | Idle, before | Idle, after | Clicked, before | Clicked, after |
+|---|---:|---:|---:|---:|
+| animations | 2.2 (2.1) | 2.6 (2.1) | 3.2 (1.7) | 2.6 (1.9) |
+| clocks | 2.3 (1.7) | 2.0 (2.0) | 2.1 (3.3) | 2.4 (1.9) |
+| samegame | 1.8 (1.8) | 1.1 (1.1) | 9.0 (3.5) | 7.6 (3.5) |
+
+| llvmpipe (sway on pixman) | Idle, before | Idle, after | Clicked, before | Clicked, after |
+|---|---:|---:|---:|---:|
+| animations | 14.3 (21.6) | 15.4 (23.1) | 13.3 (23.1) | 15.2 (22.3) |
+| clocks | 11.2 (21.1) | 12.3 (22.0) | 11.2 (20.6) | 13.8 (22.5) |
+| samegame | 8.1 (26.2) | 8.4 (32.0) | 91.3 (234.4) | 114.2 (269.5) |
+
+The machine was not quiet. The load average during the runs was 3–98 on the GPU and 5–107 on
+llvmpipe. Qt's own figures moved by up to 20 % between the two sets, so these differences are
+within the noise. The earlier "before" set, at a load of 35–140, read 3.4 / 2.0 / 8.0 on the GPU.
+
+**Where a frame's CPU goes.** Measured with `frame_profile`, without a profiler. At 60 frames a
+second:
+
+- **animations:** the pass takes 0.08 ms a frame, about 0.5 % of a core.
+- **clocks:** the pass takes 0.017 ms a frame, about 0.1 %.
+- **samegame:** about 0.3–0.5 ms a frame while it is clicked, 2–3 %. More than half of that is
+  composing and encoding the scene. The script and its animation, particle and binding work is
+  about 1.3 % of a core.
+
+Every frame of animations and clocks asks for the next one, so neither is drawing frames it does
+not need. The script and binding side cannot account for the gap on a GPU. It is in what each frame
+costs past the pass: painting, submitting and presenting.
+
+**What is left.**
+
+- **animations and clocks on a GPU.** The gap to Qt is outside the scene's pass, in the GL
+  painter, the submit and the present. That is renderer work.
+- **samegame clicks on a GPU.** About 55 % of the pass is render compose and encode: growing the
+  clip stack, and hashing texture keys with SipHash. The rest is QuickJS (about 284 k
+  instructions a frame), animation steps (280 k) and particles (175 k). A script property write
+  with what it sets off costs about 28 k instructions. Its cascade, not the write, is what costs.
+- **An effect rerun** costs about 1.4 k instructions besides what it reads: the heap pop, the
+  finish and the edge diff. A rotated item's whole geometry effect reruns while only its transform
+  list moves (7 a frame in clocks, 48 k). Giving the transform list an effect of its own would add
+  an effect to every item.
