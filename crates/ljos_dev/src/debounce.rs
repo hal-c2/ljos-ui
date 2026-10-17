@@ -10,6 +10,11 @@ use std::{ops::Add, time::Duration};
 /// ARCHITECTURE.md §12.1: 120 ms without a file event.
 pub const QUIET: Duration = Duration::from_millis(120);
 
+/// The quiet time once every file written was closed or renamed into
+/// place: the save is whole, and this is only for the other files of a
+/// "save all".
+pub const FINISHED_QUIET: Duration = Duration::from_millis(15);
+
 /// One deadline that every event pushes back. `I` is an instant of
 /// whatever clock the owner has: `std::time::Instant` on the watcher's
 /// thread, `ljos_runtime::Time` where time is virtual.
@@ -43,6 +48,12 @@ impl<I: Copy + Ord + Add<Duration, Output = I>> Debounce<I> {
     /// Something changed at `now`: the quiet time starts again.
     pub fn touch(&mut self, now: I) {
         self.due = Some(now + self.quiet);
+    }
+
+    /// As [`touch`](Self::touch), with a quiet time of at most `quiet`
+    /// from `now` on.
+    pub fn touch_within(&mut self, now: I, quiet: Duration) {
+        self.due = Some(now + quiet.min(self.quiet));
     }
 
     /// When the owner must look again; None while nothing is waiting, and

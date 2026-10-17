@@ -495,6 +495,11 @@ pub trait Backend: fmt::Debug {
     fn change_file(&mut self, _name: &str, _source: Option<&str>) -> Result<()> {
         Err(self.no_reload())
     }
+    /// The editor closed the file it saved last (`change_file`): the save
+    /// is whole, and the quiet time is a short one.
+    fn finish_save(&mut self, _name: &str) -> Result<()> {
+        Err(self.no_reload())
+    }
     /// A file that is not QML ([`Backend::resource`]) is saved again
     /// while the application runs. It is shown when the files have been
     /// quiet.

@@ -40,7 +40,7 @@ pub mod text;
 pub mod top;
 pub mod watch;
 
-pub use debounce::{Debounce, QUIET};
+pub use debounce::{Debounce, FINISHED_QUIET, QUIET};
 pub use fingerprint::Fingerprints;
 pub use host::{
     DevError, DevSession, Host, ReloadStats, Report, STATE_PROPERTIES, apply, component_source,

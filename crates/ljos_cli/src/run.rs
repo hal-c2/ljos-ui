@@ -260,6 +260,9 @@ pub fn describe(report: &Report) -> String {
                 s.fresh,
                 s.remounted
             );
+            if let Some(shown) = s.shown {
+                line.push_str(&format!("; shown {:.1} ms after the save", ms(shown)));
+            }
             for w in &s.warnings {
                 line.push_str(&format!("\n  {w}"));
             }
@@ -727,10 +730,13 @@ mod tests {
             fresh: 2,
             remounted: 0,
             warnings: Vec::new(),
+            saved: std::time::Instant::now(),
+            shown: Some(Duration::from_micros(48_300)),
         }));
         assert_eq!(
             line,
-            "reloaded in 12.3 ms (compile 9.1 ms, apply 3.2 ms): 41 kept, 2 new, 0 made again"
+            "reloaded in 12.3 ms (compile 9.1 ms, apply 3.2 ms): 41 kept, 2 new, 0 made again; \
+             shown 48.3 ms after the save"
         );
         assert_eq!(describe(&Report::Cleared), "the files are what runs again");
         assert_eq!(

@@ -55,6 +55,9 @@ pub(crate) struct Dev {
     /// window to show why.
     placeholder: Option<ObjectId>,
     on_report: Option<ReportHandler>,
+    /// Reloads applied in this pass, told once the frame that shows them
+    /// is painted, with the time from the save to it.
+    unshown: Vec<Report>,
 }
 
 impl<M> Setup<'_, M> {
@@ -129,6 +132,7 @@ impl<M> Setup<'_, M> {
             session,
             placeholder,
             on_report: None,
+            unshown: Vec::new(),
         });
         Ok(root)
     }
@@ -226,6 +230,7 @@ impl<M> ShellApp<M> {
             session,
             placeholder,
             on_report,
+            unshown,
         } = dev;
         let reports = view.without_wake(|view| {
             let engine = Rc::clone(view.engine());
@@ -233,9 +238,26 @@ impl<M> ShellApp<M> {
             let mut host = ViewHost { view, placeholder };
             session.pump(&engine, &*clock, &mut host)
         });
-        if let Some(f) = on_report.as_mut() {
-            for report in &reports {
-                f(report);
+        for report in reports {
+            if matches!(report, Report::Reloaded(_)) {
+                unshown.push(report);
+            } else if let Some(f) = on_report.as_mut() {
+                f(&report);
+            }
+        }
+    }
+
+    /// At the end of a pass: the reloads it applied are painted now.
+    pub(crate) fn tell_shown(&mut self) {
+        let Some(dev) = &mut self.dev else {
+            return;
+        };
+        for mut report in dev.unshown.drain(..) {
+            if let Report::Reloaded(stats) = &mut report {
+                stats.shown = Some(stats.saved.elapsed());
+            }
+            if let Some(f) = dev.on_report.as_mut() {
+                f(&report);
             }
         }
     }

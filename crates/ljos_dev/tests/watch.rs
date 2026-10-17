@@ -670,3 +670,51 @@ Item {
     reloaded(&app.wait());
     assert_eq!(source(&app), "file:///clip.ogv");
 }
+
+/// A save the editor finished (the file closed after writing, or renamed
+/// over the old one) is built at once: the quiet time is for a write that
+/// is still going on, which a finished save is not.
+#[test]
+fn a_finished_save_does_not_wait_the_quiet_time() {
+    use std::io::Write as _;
+    use std::time::Instant;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    write(&dir, "Main.qml", MAIN);
+    let mut reloader = ljos_dev::Reloader::open(&dir, QtTypeOracle).unwrap();
+    reloader.start();
+    let (tx, rx) = mpsc::channel();
+    let quiet = Duration::from_secs(5);
+    let watcher = ljos_dev::Watcher::spawn_with_quiet(reloader, quiet, move |m| {
+        tx.send((Instant::now(), m)).is_ok()
+    })
+    .unwrap();
+
+    // Renamed over the old file.
+    let saved = Instant::now();
+    write(&dir, "Main.qml", &MAIN.replace("10;", "12;"));
+    let (at, msg) = rx.recv_timeout(PATIENCE).expect("a build");
+    assert!(matches!(msg, ljos_dev::DevMsg::Reload { .. }), "{msg:?}");
+    assert!(at - saved < quiet, "took {:?}", at - saved);
+    let ljos_dev::DevMsg::Reload { patch, .. } = msg else {
+        unreachable!()
+    };
+    watcher.ack(patch.generation);
+
+    // Written in place: nothing is built while the file is open, and the
+    // build follows its closing.
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(dir.join("Main.qml"))
+        .unwrap();
+    file.write_all(MAIN.replace("10;", "14;").as_bytes()).unwrap();
+    file.flush().unwrap();
+    assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
+    let closed = Instant::now();
+    drop(file);
+    let (at, msg) = rx.recv_timeout(PATIENCE).expect("a build");
+    assert!(matches!(msg, ljos_dev::DevMsg::Reload { .. }), "{msg:?}");
+    assert!(at - closed < quiet, "took {:?}", at - closed);
+}

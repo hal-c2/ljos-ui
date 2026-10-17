@@ -889,7 +889,7 @@ Sources: 03 §2.5, §3.5–3.6; 07 §2.2.
 ### 12.1 Development
 
 ```
-notify watcher (120 ms debounce, BLAKE3 fingerprint of qml/js/qmldir/theme)
+notify watcher (120 ms debounce, 15 ms once every file written is closed; BLAKE3 fingerprint of qml/js/qmldir/theme)
   → incremental compile (salsa) → IR → diff(prev, new) → ReloadPatch{generation, ops}
   → devtools WebSocket (loopback; `adb reverse` on Android; loopback on the iOS simulator)
   → device: UiMsg::Reload → applied at a frame boundary as one transaction

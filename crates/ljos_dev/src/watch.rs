@@ -28,7 +28,7 @@ use notify::{
 use qml_front::TypeOracle;
 
 use crate::{
-    debounce::{Debounce, QUIET},
+    debounce::{Debounce, FINISHED_QUIET, QUIET},
     reloader::{Build, Reloader, Touch, classify, project_dirs},
 };
 
@@ -48,6 +48,8 @@ pub enum DevMsg {
         warnings: Vec<CompileFault>,
         /// How long reading and compiling took.
         build: Duration,
+        /// When the first file event of the saves it brings came.
+        saved: Instant,
     },
     /// The files do not compile; the application goes on as it is.
     Failed(Vec<CompileFault>),
@@ -89,14 +91,25 @@ pub enum WatchError {
 }
 
 enum Cmd {
-    /// A path, whether it is a directory, and whether what it holds is a
-    /// whole save: its writer closed it, or it was renamed into place.
-    Touched(PathBuf, bool, bool),
+    /// A path, whether it is a directory, and how far its save is.
+    Touched(PathBuf, bool, Save),
     Rescan,
     Flush,
     Ack(u64),
     Reject(u64),
     Stop,
+}
+
+/// What an event says of the save of a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Save {
+    /// Being written: more is to come, and the event that ends it.
+    Writing,
+    /// What it holds is a whole save: its writer closed it, or it was
+    /// renamed into place.
+    Whole,
+    /// Removed, or its metadata changed: nothing more is coming of it.
+    Other,
 }
 
 /// A running watcher. Dropping it stops the thread.
@@ -194,6 +207,8 @@ impl Watcher {
             overflow,
             wakes: wakes.clone(),
             debounce: Debounce::with_quiet(quiet),
+            writing: BTreeSet::new(),
+            saved: None,
             in_flight: None,
             flushing: false,
         };
@@ -265,19 +280,22 @@ impl Events {
             self.post(Cmd::Rescan);
             return;
         }
-        let (is_dir, whole) = match event.kind {
+        let (is_dir, save) = match event.kind {
             EventKind::Access(AccessKind::Close(AccessMode::Write))
-            | EventKind::Modify(ModifyKind::Name(_)) => (false, true),
+            | EventKind::Modify(ModifyKind::Name(_)) => (false, Save::Whole),
             // Reading is no change, and the watcher itself reads.
             EventKind::Access(_) | EventKind::Other => return,
             EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder) => {
-                (true, false)
+                (true, Save::Other)
             }
-            _ => (false, false),
+            EventKind::Create(_)
+            | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Any | ModifyKind::Other)
+            | EventKind::Any => (false, Save::Writing),
+            _ => (false, Save::Other),
         };
         for path in event.paths {
             if classify(&self.root, &path, is_dir) != Touch::Ignore {
-                self.post(Cmd::Touched(path, is_dir, whole));
+                self.post(Cmd::Touched(path, is_dir, save));
             }
         }
     }
@@ -308,6 +326,11 @@ struct Run<O> {
     overflow: Arc<AtomicBool>,
     wakes: Arc<AtomicU64>,
     debounce: Debounce<Instant>,
+    /// Files written since the last build and not closed yet: while there
+    /// is one, the build waits the whole quiet time.
+    writing: BTreeSet<PathBuf>,
+    /// The first event of the saves the next build takes.
+    saved: Option<Instant>,
     /// The generation of the patch the application has not answered.
     in_flight: Option<u64>,
     /// A [`Watcher::flush`] waits for the build; it waits for the patch
@@ -335,19 +358,28 @@ impl<O: TypeOracle + Clone> Run<O> {
             };
             self.wakes.fetch_add(1, Ordering::Relaxed);
             match cmd {
-                Some(Cmd::Touched(path, is_dir, whole)) => {
-                    let touched = if whole {
+                Some(Cmd::Touched(path, is_dir, save)) => {
+                    let touched = if save == Save::Whole {
                         lock(&self.reloader).closed(&path)
                     } else {
                         lock(&self.reloader).touch(&path, is_dir)
                     };
+                    match save {
+                        Save::Writing => {
+                            self.writing.insert(path);
+                        }
+                        Save::Whole => {
+                            self.writing.remove(&path);
+                        }
+                        Save::Other => {}
+                    }
                     if touched {
-                        self.debounce.touch(Instant::now());
+                        self.touched(self.writing.is_empty());
                     }
                 }
                 Some(Cmd::Rescan) => {
                     lock(&self.reloader).touch_all();
-                    self.debounce.touch(Instant::now());
+                    self.touched(false);
                 }
                 Some(Cmd::Flush) => {
                     // Events may be late or lost; the directory is read.
@@ -371,7 +403,7 @@ impl<O: TypeOracle + Clone> Run<O> {
             }
             if self.overflow.swap(false, Ordering::AcqRel) {
                 lock(&self.reloader).touch_all();
-                self.debounce.touch(Instant::now());
+                self.touched(false);
             }
             if self.in_flight.is_none() {
                 let due = self.debounce.fire(Instant::now());
@@ -382,8 +414,23 @@ impl<O: TypeOracle + Clone> Run<O> {
         }
     }
 
+    /// A file event that a build has to look at: the quiet time starts
+    /// again, a short one when every file written was finished.
+    fn touched(&mut self, finished: bool) {
+        let now = Instant::now();
+        self.saved.get_or_insert(now);
+        if finished {
+            self.debounce.touch_within(now, FINISHED_QUIET);
+        } else {
+            self.debounce.touch(now);
+        }
+    }
+
     /// False when nobody listens any more.
     fn build(&mut self) -> bool {
+        // A file left open as long has had its last write, or was
+        // removed while being written.
+        self.writing.clear();
         let flushed = std::mem::take(&mut self.flushing);
         if flushed {
             // What is asked for is built now, so the quiet time has
@@ -416,15 +463,26 @@ impl<O: TypeOracle + Clone> Run<O> {
         };
         match built {
             // The file's next event brings the build again.
-            Build::NoChange | Build::Waiting => true,
-            Build::UpToDate => (self.sink)(DevMsg::Cleared),
-            Build::Failed(faults) => (self.sink)(DevMsg::Failed(faults)),
+            Build::Waiting => true,
+            Build::NoChange => {
+                self.saved = None;
+                true
+            }
+            Build::UpToDate => {
+                self.saved = None;
+                (self.sink)(DevMsg::Cleared)
+            }
+            Build::Failed(faults) => {
+                self.saved = None;
+                (self.sink)(DevMsg::Failed(faults))
+            }
             Build::Patch { patch, warnings } => {
                 self.in_flight = Some(patch.generation);
                 (self.sink)(DevMsg::Reload {
                     patch,
                     warnings,
                     build: started.elapsed(),
+                    saved: self.saved.take().unwrap_or(started),
                 })
             }
         }

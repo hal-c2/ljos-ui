@@ -442,6 +442,8 @@ impl<M: Send + 'static> ShellApp<M> {
         self.show_dev(ui);
         #[cfg(feature = "dev")]
         self.end_tools(ui);
+        #[cfg(feature = "dev")]
+        self.tell_shown();
     }
 
     /// Whether the background is painted behind the root.

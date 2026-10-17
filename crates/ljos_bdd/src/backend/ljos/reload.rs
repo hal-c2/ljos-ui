@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use ljos_dev::{Build, Debounce, Reloader, component_source, fault_of};
+use ljos_dev::{Build, Debounce, FINISHED_QUIET, Reloader, component_source, fault_of};
 use ljos_engine::{ReloadError, ReloadFault};
 use ljos_runtime::{Clock as _, Time};
 
@@ -90,6 +90,15 @@ impl Live {
         let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
         rig.reloader.save(key_of(name), source.map(str::to_owned));
         rig.quiet.touch(now);
+        Ok(())
+    }
+
+    /// The save of the last file changed is finished: the editor closed
+    /// it. A file being written since keeps the whole quiet time.
+    pub(super) fn finish_save(&mut self) -> Result<()> {
+        let now = self.clock.now();
+        let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
+        rig.quiet.touch_within(now, FINISHED_QUIET);
         Ok(())
     }
 

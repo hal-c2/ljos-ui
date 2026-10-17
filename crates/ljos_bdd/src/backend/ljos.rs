@@ -1662,6 +1662,10 @@ impl Backend for LjosBackend {
         self.live()?.empty_file(name)
     }
 
+    fn finish_save(&mut self, _name: &str) -> Result<()> {
+        self.live()?.finish_save()
+    }
+
     fn change_resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
         let url = format!("file:///{name}");
         let live = self.live()?;

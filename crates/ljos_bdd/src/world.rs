@@ -72,6 +72,16 @@ impl LjosWorld {
         self.each(|b| b.change_file(name, source))
     }
 
+    /// As [`change_file`](Self::change_file), by an editor that closes
+    /// the file it wrote: the save is whole.
+    ///
+    /// # Errors
+    /// A backend cannot change files under a running application.
+    pub fn save_file_whole(&mut self, name: &str, source: &str) -> Result<(), String> {
+        self.change_file(name, Some(source))?;
+        self.each(|b| b.finish_save(name))
+    }
+
     /// A file of the running application is emptied by a save that has not
     /// finished.
     ///

@@ -719,6 +719,11 @@ fn file_changed(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.change_file(&name, Some(&docstring(step)?))
 }
 
+#[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is saved and closed as:$"#)]
+fn file_saved_whole(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    w.save_file_whole(&name, &docstring(step)?)
+}
+
 #[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is removed$"#)]
 fn file_removed(w: &mut LjosWorld, name: String) -> StepResult {
     w.change_file(&name, None)

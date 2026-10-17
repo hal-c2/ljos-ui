@@ -180,6 +180,11 @@ pub struct ReloadStats {
     pub fresh: usize,
     pub remounted: usize,
     pub warnings: Vec<CompileFault>,
+    /// When the first file event of the saves it applied came.
+    pub saved: Instant,
+    /// From that event to the end of the first frame that shows the
+    /// result: filled in by a host that paints, once it has.
+    pub shown: Option<Duration>,
 }
 
 /// What [`DevSession::pump`] did, for a host that tells the developer.
@@ -474,7 +479,8 @@ impl DevSession {
                     patch,
                     warnings,
                     build,
-                } => out.push(self.reload(engine, host, &patch, warnings, build)),
+                    saved,
+                } => out.push(self.reload(engine, host, &patch, warnings, build, saved)),
             }
         }
         out
@@ -487,6 +493,7 @@ impl DevSession {
         patch: &ReloadPatch,
         warnings: Vec<CompileFault>,
         build: Duration,
+        saved: Instant,
     ) -> Report {
         let started = Instant::now();
         let roots: Vec<ObjectId> = self.root.into_iter().collect();
@@ -570,6 +577,8 @@ impl DevSession {
             fresh: done.fresh,
             remounted: done.remounted,
             warnings,
+            saved,
+            shown: None,
         })
     }
 }

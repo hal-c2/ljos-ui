@@ -7,8 +7,9 @@
 Feature: When a changed file is reloaded
   The files of a running application are watched while it is developed. A
   change is applied once the files have been quiet for 120 milliseconds, so
-  an editor that saves in several steps causes one reload. A save that
-  changes nothing causes none.
+  an editor that saves in several steps causes one reload. A save the editor
+  finished, closing the file or renaming it into place, waits 15
+  milliseconds only. A save that changes nothing causes none.
 
   Rule: A change is applied once the files have been quiet for 120 milliseconds
 
@@ -58,6 +59,60 @@ Feature: When a changed file is reloaded
         }
         """
       And 100 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 30
+        }
+        """
+      And 100 milliseconds pass
+      Then the property "width" of "root" is 10
+      When 20 milliseconds pass
+      Then the property "width" of "root" is 30
+      And 1 reload has happened
+
+  Rule: A finished save is applied once the files have been quiet for 15 milliseconds
+
+    # The quiet time is there for a write still going on. Once the editor
+    # closed the file, or renamed it into place, its save is whole; the
+    # short wait is for the other files of a "save all".
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+        }
+        """
+
+    Scenario: A finished save is applied after 15 milliseconds
+      When the file "Scenario.qml" is saved and closed as:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 20
+        }
+        """
+      And 10 milliseconds pass
+      Then the property "width" of "root" is 10
+      When 5 milliseconds pass
+      Then the property "width" of "root" is 20
+      And 1 reload has happened
+
+    Scenario: A file still being written keeps the whole quiet time
+      When the file "Scenario.qml" is saved and closed as:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 20
+        }
+        """
       And the file "Scenario.qml" is changed to:
         """qml
         import QtQuick
