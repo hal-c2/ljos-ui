@@ -61,3 +61,31 @@ Feature: What a TreeView gives a delegate and what it starts with
       """
     Then the property "out" of "tv" is "0 0 false true true -1 true"
     And the property "nav" of "tv" is "8 2 2 true true"
+
+  @api-QtQuick.TreeView.rootIndex
+  Scenario: The root a TreeView starts with is not a change
+    Given the QML:
+      """qml
+      import QtQuick
+      import Qt.labs.qmlmodels
+      TreeView {
+        id: tv; objectName: "tv"; width: 200; height: 300
+        property int changes: 0
+        property string out: ""
+        onRootIndexChanged: changes++
+        model: TreeModel {
+          TableModelColumn { display: "name" }
+          rows: [ { name: "docs", rows: [ { name: "a" } ] }, { name: "bin" } ]
+        }
+        delegate: Item { implicitWidth: 60; implicitHeight: 20 }
+        function root() { rootIndex = index(0, 0) }
+        function report() { out = [changes, rootIndex.valid, rows].join(" ") }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "report" of "tv" is called
+    Then the property "out" of "tv" is "0 false 2"
+    When the method "root" of "tv" is called
+    And 50 milliseconds pass
+    And the method "report" of "tv" is called
+    Then the property "out" of "tv" is "1 true 1"

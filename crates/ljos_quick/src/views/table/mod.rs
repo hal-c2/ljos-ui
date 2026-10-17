@@ -26,6 +26,8 @@ use ljos_engine::{
     OverrideId, QmlObject, QmlType, Value, Version, ViewDelegates, ViewHost, WriteKind, qml_impl,
 };
 
+use ljos_reactive::NodeKind;
+
 use super::{models, stack, warn};
 use crate::enums::EnumTable;
 use crate::flickable::{self, Flickable};
@@ -458,13 +460,23 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
     let delegates = ViewDelegates::new(me, Rc::new(Host(me)));
     *st.delegates.borrow_mut() = Some(delegates.clone());
 
+    // The root a tree starts with is no change of it (qml6): the invalid
+    // index is what it reads as, not what it is set to. A binding that read
+    // it while the view was made read nothing, though, and is told.
     if is_tree && crate::item::is_unset(e, me, TreeView::ROOT_INDEX.index) {
+        let p = TreeView::ROOT_INDEX.index;
+        let g = e.graph();
+        let read = e
+            .observers_of(me, p)
+            .iter()
+            .any(|o| g.kind(*o) != Some(NodeKind::Effect));
         let none = e.invalid_model_index();
-        warn(
-            e,
-            "rootIndex",
-            e.write_internal(me, TreeView::ROOT_INDEX.index, none, WriteKind::Initial),
-        );
+        let made = if read {
+            e.write_internal(me, p, none, WriteKind::Initial)
+        } else {
+            e.make_on_read(me, p, move |_| none)
+        };
+        warn(e, "rootIndex", made);
     }
 
     // A new model, delegate or root: every cell is made again.
