@@ -195,7 +195,8 @@ Feature: The dialogs of QtQuick.Dialogs
       When the property "fileMode" of "d" is set to 1
       And the method "open" of "d" is called
       And the user chooses the files "/a.txt, /b c.txt" in the system dialog
-      Then the property "selectedFiles" of "d" is ["file:///a.txt", "file:///b%20c.txt"]
+      # A URL reads back as Qt writes it for a person, the space kept.
+      Then the property "selectedFiles" of "d" is ["file:///a.txt", "file:///b c.txt"]
       And the property "selectedFile" of "d" is "file:///a.txt"
 
     Scenario: Closing the dialog from QML takes the system's dialog away
