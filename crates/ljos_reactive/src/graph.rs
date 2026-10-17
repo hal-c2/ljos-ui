@@ -866,6 +866,20 @@ impl<V: Clone + 'static> Graph<V> {
         self.inner.borrow().nodes.get(n)?.value.clone()
     }
 
+    /// What [`Graph::try_get`] gives without recording a read, at the cost
+    /// of a [`Graph::peek`] when the node is up to date: after a write it
+    /// nearly always is.
+    pub fn settled(&self, n: NodeId) -> Option<V> {
+        {
+            let i = self.inner.borrow();
+            let node = i.nodes.get(n)?;
+            if node.state == NodeState::Clean {
+                return node.value.clone();
+            }
+        }
+        self.untrack(|| self.try_get(n))
+    }
+
     fn try_get_untracked(&self, n: NodeId) -> Result<V, ReactiveError> {
         {
             let i = self.inner.borrow();

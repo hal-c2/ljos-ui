@@ -711,3 +711,39 @@ fn a_reset_property_is_unset_again() {
     assert_eq!(g.reset(e, 0), Err(ReactiveError::NotAProperty(e)));
     g.check_invariants().unwrap();
 }
+
+#[test]
+fn settled_reads_what_try_get_does_and_records_nothing() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let a = g.property(r, 1).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(a) * 10).unwrap();
+    let runs = Rc::new(Cell::new(0));
+    let seen = Rc::new(Cell::new(0));
+    let (n, s) = (runs.clone(), seen.clone());
+    g.effect(r, move |g| {
+        n.set(n.get() + 1);
+        s.set(g.settled(a).unwrap() + g.settled(b).unwrap());
+    })
+    .unwrap();
+    assert_eq!(
+        (runs.get(), seen.get()),
+        (1, 11),
+        "a dirty binding is brought up to date"
+    );
+
+    // An up-to-date node is a copy of its value: no evaluation, no read.
+    let before = g.stats();
+    assert_eq!(g.settled(a), Some(1));
+    assert_eq!(g.settled(b), Some(10));
+    let after = g.stats();
+    assert_eq!(after.reads, before.reads);
+    assert_eq!(after.evaluations, before.evaluations);
+
+    // The effect read through `settled`, so it follows neither.
+    g.set(a, 2);
+    assert_eq!(runs.get(), 1);
+    assert_eq!(g.settled(b), Some(20));
+    let e = g.effect(r, |_| {}).unwrap();
+    assert_eq!(g.settled(e), None, "an effect has no value");
+}
