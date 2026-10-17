@@ -74,6 +74,32 @@ impl Signals {
         Some(c)
     }
 
+    /// Takes out the `destroyed` connections of `objects`, in their
+    /// order and then in connection order, so that each runs once.
+    pub(crate) fn take_destroyed(&mut self, objects: &[ObjectId]) -> Vec<(ObjectId, Handler)> {
+        let mut out = Vec::new();
+        for obj in objects {
+            let ids: SmallVec<[ConnectionId; 2]> = match self.by_object.get(*obj) {
+                Some(ids) => ids
+                    .iter()
+                    .copied()
+                    .filter(|id| {
+                        self.conns
+                            .get(*id)
+                            .is_some_and(|c| c.sender == *obj && c.signal == SignalIndex::DESTROYED)
+                    })
+                    .collect(),
+                None => continue,
+            };
+            for id in ids {
+                if let Some(c) = self.remove(id) {
+                    out.push((*obj, c.handler));
+                }
+            }
+        }
+        out
+    }
+
     /// Drops every connection that involves one of `objects`.
     pub(crate) fn remove_objects(&mut self, objects: &[ObjectId]) -> Vec<Connection> {
         let mut out = Vec::new();
@@ -100,13 +126,16 @@ impl Engine {
             .ok_or_else(|| EngineError::dead(obj))?;
         h.meta
             .signal_index(name)
+            .or((name == "destroyed").then_some(SignalIndex::DESTROYED))
             .ok_or_else(|| EngineError::UnknownSignal {
                 ty: h.meta.name.to_string(),
                 name: name.into(),
             })
     }
 
-    /// Connects `handler` to `obj`'s `signal`.
+    /// Connects `handler` to `obj`'s `signal`. Every object has
+    /// [`SignalIndex::DESTROYED`] (`"destroyed"` by name), whose handler
+    /// runs once as the object is destroyed.
     pub fn connect(
         &self,
         obj: ObjectId,
@@ -154,14 +183,16 @@ impl Engine {
                 .objects
                 .get(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            let s = h
-                .meta
-                .signal(signal)
-                .ok_or_else(|| EngineError::UnknownSignal {
-                    ty: h.meta.name.to_string(),
-                    name: format!("#{}", signal.0),
-                })?;
-            s.notify_of
+            match h.meta.signal(signal) {
+                Some(s) => s.notify_of,
+                None if signal == SignalIndex::DESTROYED => None,
+                None => {
+                    return Err(EngineError::UnknownSignal {
+                        ty: h.meta.name.to_string(),
+                        name: format!("#{}", signal.0),
+                    });
+                }
+            }
         };
         let watch = match notify_of {
             Some(prop) => {

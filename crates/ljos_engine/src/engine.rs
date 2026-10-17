@@ -594,13 +594,41 @@ impl Engine {
         }
     }
 
+    /// Runs the `destroyed` handlers of `obj` and what it owns, owners
+    /// first.
+    fn tell_destroyed(&self, obj: ObjectId) {
+        let handlers = {
+            let store = self.inner.store.borrow();
+            let mut order = Vec::new();
+            let mut stack = vec![obj];
+            while let Some(id) = stack.pop() {
+                if let Some(h) = store.objects.get(id) {
+                    order.push(id);
+                    stack.extend(h.children.iter().rev().copied());
+                }
+            }
+            drop(store);
+            self.inner.signals.borrow_mut().take_destroyed(&order)
+        };
+        for (id, handler) in handlers {
+            let arg = [Value::Object(id)];
+            // A panic ends this handler only (fault.rs).
+            self.guarded(id, || handler(self, &arg));
+        }
+    }
+
     /// Destroys `obj` and everything it owns, children first. Its reactive
     /// nodes are disposed, so bindings that read it re-run and see `null`;
     /// its connections, as sender or receiver, are dropped.
     /// `Component.onDestruction` handlers run first, while everything is
-    /// still alive ([`Engine::announce_destruction`]).
+    /// still alive ([`Engine::announce_destruction`]), and then the
+    /// handlers connected to `destroyed` ([`SignalIndex::DESTROYED`](crate::SignalIndex::DESTROYED)):
+    /// an owner's before what it owns, as in Qt, where an object says
+    /// it is destroyed before it deletes its children. Each is handed
+    /// the object, still alive, and runs once.
     pub fn destroy_now(&self, obj: ObjectId) -> bool {
         self.tell_destruction(obj, false);
+        self.tell_destroyed(obj);
         // Post-order: children before their owner.
         let order = {
             let store = self.inner.store.borrow();

@@ -21,6 +21,17 @@ pub struct PropIndex(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SignalIndex(pub u32);
 
+impl SignalIndex {
+    /// Every object's `destroyed`, as `QObject::destroyed`: a type that
+    /// declares no `destroyed` of its own answers this index for the
+    /// name. Its handlers run once, from [`Engine::destroy_now`], with the
+    /// object as the argument and the object still alive; it is never
+    /// emitted by hand.
+    ///
+    /// [`Engine::destroy_now`]: crate::Engine::destroy_now
+    pub const DESTROYED: SignalIndex = SignalIndex(u32::MAX);
+}
+
 /// Index of a method in a type's flattened method table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MethodIndex(pub u32);
