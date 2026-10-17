@@ -342,6 +342,16 @@ impl ShapeCache {
         }
     }
 
+    /// Drop the triangles of paths only this cache holds. A node whose
+    /// render node was replaced leaves without handing its shapes over, so
+    /// nothing else would ever let them go.
+    pub(crate) fn forget_orphans(&mut self) {
+        self.geoms.retain(|_, entries| {
+            entries.retain(|e| Arc::strong_count(&e.cmd.path) > 1);
+            !entries.is_empty()
+        });
+    }
+
     /// Keep only the triangles of the shapes `keep` says yes to, and no
     /// scratch memory.
     pub(crate) fn retain(&mut self, keep: impl Fn(&ShapeCmd) -> bool) {

@@ -763,6 +763,26 @@ fn changing_one_shape_of_a_node_cuts_only_that_one() {
 }
 
 #[test]
+fn a_node_made_again_leaves_nothing_of_the_old_one_behind() {
+    // A reload makes the render nodes of the items it keeps again, and the
+    // tree hands the new ones the slots of the old: nothing tells the
+    // backend the old ones went, and few frames follow in an idle window.
+    let mut s = Scene::new(200.0, 200.0);
+    let mut n = s.node(0.0, 0.0);
+    let mut be = EpaintBackend::new();
+    for _ in 0..5 {
+        s.content(n, |b| {
+            b.shape(star(), stroked(stroke(2.0)), BLUE.into());
+        });
+        s.b0(&mut be, None);
+        assert_eq!(be.shape_geometries(), 1);
+        assert_eq!(be.display_lists(), 1);
+        s.tree.remove(n).unwrap();
+        n = s.node(0.0, 0.0);
+    }
+}
+
+#[test]
 fn a_shape_out_of_sight_builds_nothing() {
     let mut s = Scene::new(100.0, 100.0);
     let n = s.node(500.0, 0.0);

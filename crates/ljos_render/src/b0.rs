@@ -43,7 +43,7 @@
 //! drawn for a while.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use egui::epaint::{
     ClippedShape, CornerRadius, Mesh, PaintCallback, PathShape, PathStroke, RectShape, Shadow,
@@ -607,6 +607,10 @@ struct ListEntry {
     segs: Arc<[LocalSeg]>,
     warnings: u32,
     last_used: u64,
+    /// The list, while the tree has it: one it let go of (its node gone or
+    /// painted again) is drawn by no one, and an idle window draws too few
+    /// frames for the age of an entry to say so soon.
+    owner: Weak<DisplayList>,
 }
 
 #[derive(PartialEq)]
@@ -978,6 +982,11 @@ impl EpaintBackend {
         self.tessellations
     }
 
+    /// How many display lists are held now.
+    pub fn display_lists(&self) -> usize {
+        self.lists.len()
+    }
+
     /// How many per-node world meshes were re-mapped so far.
     pub fn world_rebuilds(&self) -> u64 {
         self.world_rebuilds
@@ -996,7 +1005,7 @@ impl EpaintBackend {
         }
     }
 
-    fn build_list(&mut self, list: &DisplayList) -> ListEntry {
+    fn build_list(&mut self, list: &Arc<DisplayList>) -> ListEntry {
         self.tessellations += 1;
         let mut segs: Vec<LocalSeg> = Vec::new();
         let mut cur = Mesh::default();
@@ -1222,6 +1231,7 @@ impl EpaintBackend {
             segs: segs.into(),
             warnings,
             last_used: self.frame,
+            owner: Arc::downgrade(list),
         }
     }
 
@@ -1419,7 +1429,8 @@ impl RenderBackend for EpaintBackend {
         self.set_ppp(view.scale_factor);
         self.frame = view.snapshot.frame;
         let keep_after = self.frame.saturating_sub(KEEP_FRAMES);
-        self.lists.retain(|_, e| e.last_used >= keep_after);
+        self.lists
+            .retain(|_, e| e.owner.strong_count() > 0 && e.last_used >= keep_after);
         self.retain_nodes(keep_after);
         // A texture outlives neither its image nor a long stretch unseen.
         self.textures
@@ -1732,6 +1743,11 @@ impl RenderBackend for EpaintBackend {
                 false
             }
         });
+        // A node the tree made again in the slot of one it removed has
+        // just replaced that one's entry: what only it used goes now, not
+        // frames later.
+        self.lists.retain(|_, e| e.owner.strong_count() > 0);
+        self.shapes.forget_orphans();
         stats.shapes = sink.shapes.len() as u32;
         stats
     }

@@ -486,6 +486,40 @@ fn scale_factor_change_drops_caches_and_trim_empties_them() {
     );
 }
 
+#[test]
+fn a_list_no_node_draws_any_more_is_let_go_at_once() {
+    // An idle window draws a frame now and then, so a cache that ages by
+    // frames would hold every list a repaint replaced for a long time.
+    let mut s = Scene::new(40.0, 20.0);
+    let a = s.node(None, 0.0, 0.0, 20.0, 20.0);
+    let b = s.node(None, 20.0, 0.0, 20.0, 20.0);
+    let mut be = EpaintBackend::new();
+    for i in 0..10 {
+        s.fill(a, if i % 2 == 0 { RED } else { BLUE });
+        run(&mut s, &mut be, None, Pos2::ZERO);
+        assert_eq!(be.display_lists(), 1);
+    }
+
+    // A list two nodes draw stays while either does.
+    let mut list = DisplayListBuilder::new();
+    list.fill_rect(Rect::new(0.0, 0.0, 20.0, 20.0), RED);
+    let shared = list.finish_arc();
+    s.tree.set_content(a, Some(shared.clone()));
+    s.tree.set_content(b, Some(shared));
+    run(&mut s, &mut be, None, Pos2::ZERO);
+    assert_eq!(be.display_lists(), 1);
+    let built = be.tessellations();
+    s.fill(a, BLUE);
+    run(&mut s, &mut be, None, Pos2::ZERO);
+    assert_eq!(be.display_lists(), 2);
+    s.tree.set_pos(b, 21.0, 0.0);
+    run(&mut s, &mut be, None, Pos2::ZERO);
+    assert_eq!(be.tessellations(), built + 1, "only the new list is built");
+    s.fill(b, RED);
+    run(&mut s, &mut be, None, Pos2::ZERO);
+    assert_eq!(be.display_lists(), 2);
+}
+
 /// Release-mode numbers for the report:
 /// `cargo test -p ljos_render --release --test b0 -- --ignored --nocapture`.
 #[test]
