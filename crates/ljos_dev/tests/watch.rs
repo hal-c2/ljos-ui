@@ -79,10 +79,17 @@ fn app(files: &[(&str, &str)]) -> App {
     app
 }
 
+/// Saves as most editors do, beside the file and renamed over it: the
+/// file is never half written, so a build that runs between two events
+/// of one save reads all of it or none of it.
 fn write(dir: &Path, name: &str, text: &str) {
     let path = dir.join(name);
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, text).unwrap();
+    let parent = path.parent().unwrap();
+    fs::create_dir_all(parent).unwrap();
+    let file = path.file_name().unwrap().to_string_lossy();
+    let saving = parent.join(format!(".{file}.saving"));
+    fs::write(&saving, text).unwrap();
+    fs::rename(saving, path).unwrap();
 }
 
 impl App {
@@ -303,18 +310,27 @@ fn a_project_that_starts_broken_gets_its_root_when_it_compiles() {
 }
 
 #[test]
-fn saves_within_the_quiet_time_are_one_reload() {
+fn saves_while_a_reload_is_out_are_one_reload() {
     let mut app = app(&[("Main.qml", MAIN)]);
-    // Back to back: a pause between the saves would be stretched past the
-    // quiet time on a loaded machine. That every change restarts the quiet
-    // time is the debouncer's own test, on a clock it controls.
+    // The watcher builds nothing while the application has a patch it has
+    // not answered, so the saves made then are one build however the
+    // machine schedules them; on a clock they could fall either side of
+    // the quiet time. That every change restarts the quiet time is the
+    // debouncer's own test, on a clock it controls.
     app.save("Main.qml", &MAIN.replace("width: 10;", "width: 20;"));
+    app.woke
+        .recv_timeout(PATIENCE)
+        .expect("the watcher woke the host");
+    app.save("Main.qml", &MAIN.replace("width: 10;", "width: 30;"));
     app.save("Main.qml", "import QtQuick\nItem {");
     app.save("Main.qml", &MAIN.replace("width: 10;", "width: 70;"));
+    assert_eq!(reloaded(&app.pump()).generation, 1);
+    assert_eq!(app.num("box", "width"), 20.0);
+
     let reports = app.wait();
-    assert_eq!(reloaded(&reports).generation, 1);
+    assert_eq!(reloaded(&reports).generation, 2);
     assert_eq!(app.num("box", "width"), 70.0);
-    assert!(app.sleeps(QUIET * 3), "one save, one reload");
+    assert!(app.sleeps(QUIET * 3), "three saves, one reload");
 }
 
 #[test]
