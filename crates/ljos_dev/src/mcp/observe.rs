@@ -555,7 +555,12 @@ mod tests {
     #[test]
     fn this_thread_is_among_the_threads() {
         let me = current_tid().unwrap();
-        let mine = threads().into_iter().find(|t| t.tid == me).unwrap();
+        // The kernel walks a task directory by position, so a thread that
+        // ends meanwhile (another test's) can make one listing skip a
+        // living thread.
+        let mine = (0..20)
+            .find_map(|_| threads().into_iter().find(|t| t.tid == me))
+            .unwrap();
         assert_eq!(mine.state, 'R');
         assert!(!mine.name.is_empty());
     }
