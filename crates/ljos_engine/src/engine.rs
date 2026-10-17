@@ -1108,8 +1108,9 @@ impl Engine {
             /// Tracked, without a node: the read is kept on the object.
             Field(Value),
             Alias(Option<AliasTarget>),
+            /// To be made first.
+            Due,
         }
-        self.make_if_due(obj, prop);
         let got = {
             let store = self.inner.store.borrow();
             // Every binding's read comes here: the error is built only
@@ -1121,7 +1122,9 @@ impl Engine {
                 .meta
                 .property(prop)
                 .ok_or_else(|| unknown_index(&h.meta, prop))?;
-            if p.is_alias() {
+            if h.makes_on_read(prop) {
+                Got::Due
+            } else if p.is_alias() {
                 Got::Alias(h.alias(prop))
             } else {
                 match h.node(prop) {
@@ -1168,6 +1171,11 @@ impl Engine {
             })) => Value::Object(object),
             // Not wired yet (still being created).
             Got::Alias(None) => Value::Undefined,
+            // The maker goes as it runs, so this reads on once.
+            Got::Due => {
+                self.make_if_due(obj, prop);
+                return self.try_read(obj, prop);
+            }
         };
         Ok(self.live(v))
     }
@@ -1391,12 +1399,12 @@ impl Engine {
         self.write_impl(obj, prop, v, WriteKind::Animation, true)
     }
 
-    fn check_writable(
+    fn check_writable<'h>(
         &self,
-        h: &ObjectHeader,
+        h: &'h ObjectHeader,
         prop: PropIndex,
         internal: bool,
-    ) -> Result<TypeTag, EngineError> {
+    ) -> Result<&'h TypeTag, EngineError> {
         let p = h
             .meta
             .property(prop)
@@ -1409,7 +1417,7 @@ impl Engine {
         if !internal && (p.is_readonly() || constant) {
             return Err(EngineError::ReadOnly(p.name.to_string()));
         }
-        Ok(p.ty.clone())
+        Ok(&p.ty)
     }
 
     pub(crate) fn write_impl(
@@ -1420,11 +1428,23 @@ impl Engine {
         how: WriteKind,
         internal: bool,
     ) -> Result<(), EngineError> {
-        if let Some(target) = self.alias_member(obj, prop) {
-            return self.write_member(target, &v, how, internal);
-        }
-        let (obj, prop) = self.redirect(obj, prop);
-        self.drop_maker(obj, prop);
+        // Nearly every write is to a property that is no alias and has
+        // nothing still to be made: one look says so.
+        let (obj, prop) = match self.write_look(obj, prop) {
+            WriteLook::Alias => {
+                if let Some(target) = self.alias_member(obj, prop) {
+                    return self.write_member(target, &v, how, internal);
+                }
+                let (obj, prop) = self.redirect(obj, prop);
+                self.drop_maker(obj, prop);
+                (obj, prop)
+            }
+            WriteLook::Maker => {
+                self.drop_maker(obj, prop);
+                (obj, prop)
+            }
+            WriteLook::Plain => (obj, prop),
+        };
         // `x = undefined` takes a property with a reset back, and so does
         // a value that stands for none.
         if matches!(how, WriteKind::Imperative | WriteKind::Initial)
@@ -1443,7 +1463,7 @@ impl Engine {
                 .ok_or_else(|| EngineError::dead(obj))?;
             let ty = self.check_writable(h, prop, internal)?;
             let (node, hook) = node_and_hook(h, prop, internal);
-            let v = coerce_for(&store, Some(obj), &ty, &v)?;
+            let v = coerce_for(&store, Some(obj), ty, &v)?;
             // The type's own say comes before anything hears of it, as a
             // setter's does in Qt.
             (filter_in(h, prop, v)?, node, hook)
@@ -1503,7 +1523,7 @@ impl Engine {
         // Batched so effects run after the field cache is updated.
         g.batch(|| {
             g.write(n, v, how)?;
-            if let Some(cur) = g.untrack(|| g.try_get(n)) {
+            if let Some(cur) = g.settled(n) {
                 self.store_value(obj, prop, &cur);
             }
             Ok(())
@@ -1540,6 +1560,22 @@ impl Engine {
         self.inner.setters.borrow_mut().push((obj, prop));
         let _running = Running(&self.inner.setters);
         Ok(self.untrack(|| setter(&Cx::new(self, obj), &v))?)
+    }
+
+    /// What a write to `prop` of `obj` has to see to before the value is
+    /// its own: a dead object is plain, and the write finds it dead.
+    fn write_look(&self, obj: ObjectId, prop: PropIndex) -> WriteLook {
+        let store = self.inner.store.borrow();
+        let Some(h) = store.objects.get(obj) else {
+            return WriteLook::Plain;
+        };
+        if h.meta.property(prop).is_some_and(|p| p.is_alias()) {
+            WriteLook::Alias
+        } else if h.makes_on_read(prop) {
+            WriteLook::Maker
+        } else {
+            WriteLook::Plain
+        }
     }
 
     /// Updates the field cache; a no-op for a dead object.
@@ -1786,7 +1822,7 @@ impl Engine {
                 .objects
                 .get(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            self.check_writable(h, prop, internal)?
+            self.check_writable(h, prop, internal)?.clone()
         };
         let n = self.ensure_node(obj, prop)?;
         let g = &self.inner.graph;
@@ -2042,7 +2078,7 @@ impl Engine {
                 .objects
                 .get(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            self.check_writable(h, prop, true)?
+            self.check_writable(h, prop, true)?.clone()
         };
         let n = self.ensure_node(obj, prop)?;
         let g = &self.inner.graph;
@@ -2856,6 +2892,13 @@ fn write_access(
             Ok(())
         }
     }
+}
+
+/// See [`Engine::write_look`].
+enum WriteLook {
+    Plain,
+    Alias,
+    Maker,
 }
 
 pub(crate) fn store_in(

@@ -338,6 +338,14 @@ impl ObjectHeader {
         self.field_reads.as_ref().is_some_and(|r| r.has(prop))
     }
 
+    /// Whether `prop` has a value still to be made on its next read
+    /// ([`Engine::make_on_read`]).
+    pub(crate) fn makes_on_read(&self, prop: PropIndex) -> bool {
+        self.ext
+            .as_ref()
+            .is_some_and(|x| x.made_on_read.iter().any(|(p, _)| *p == prop))
+    }
+
     pub(crate) fn set_node(&mut self, prop: PropIndex, n: NodeId) {
         let len = self.meta.properties.len();
         let nodes = self
