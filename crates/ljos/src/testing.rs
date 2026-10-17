@@ -24,7 +24,7 @@ use std::sync::Arc;
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::QuickScene;
 use ljos_render::{DisplayList, kurbo};
-use ljos_runtime::{Clock as _, Time, VirtualClock};
+use ljos_runtime::{Clock as _, TIMER_GRANULARITY, Time, VirtualClock};
 
 pub use ljos_a11y::{Contrast, SystemPrefs};
 pub use ljos_controls::ScreenSpec;
@@ -59,7 +59,11 @@ impl TestWindow {
     /// Make it before the root is made, for the root's timers and
     /// animations to start on its clock.
     pub fn new(engine: &Engine, width: f64, height: f64) -> Self {
-        let clock = Arc::new(VirtualClock::starting_at(engine.now()));
+        // On the timer grid: a timer started off it is due at the next
+        // whole step, after `advance` by its interval would end. Rounding
+        // up keeps what is already scheduled from going back in time.
+        let start = engine.now().round_up_to(TIMER_GRANULARITY);
+        let clock = Arc::new(VirtualClock::starting_at(start));
         engine.set_clock(std::rc::Rc::new(Arc::clone(&clock)));
         Self {
             engine: engine.clone(),
