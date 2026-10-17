@@ -98,7 +98,7 @@ pub use slider::{RangeSlider, RangeSliderNode, Slider};
 pub use spin_box::{DoubleSpinBox, SpinBox, SpinButton};
 pub use split_view::{SplitHandle, SplitHandleAttached, SplitView, SplitViewAttached};
 pub use stack_view::{StackView, StackViewAttached};
-pub use swipe_delegate::{SwipeDelegate, SwipeDelegateSwipe};
+pub use swipe_delegate::{SwipeDelegate, SwipeDelegateAttached, SwipeDelegateSwipe};
 pub use swipe_view::{SwipeView, SwipeViewAttached};
 pub use tab_bar::{TabBar, TabBarAttached, TabButton};
 pub use text_area::TextArea;

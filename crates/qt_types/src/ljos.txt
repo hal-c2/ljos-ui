@@ -6116,6 +6116,7 @@ module QtQuick.Templates
 		method find
 	type QtQuick.Templates.SwipeDelegate SwipeDelegate
 		prototype QtQuick.Templates.ItemDelegate named
+		attached QtQuick.Templates.SwipeDelegateAttached
 		enum Side Left=1 Right=-1
 		prop swipe QtQuick.Templates.SwipeDelegateSwipe named pointer readonly
 	type QtQuick.Templates.SwipeDelegateSwipe SwipeDelegateSwipe
@@ -6512,6 +6513,11 @@ module QtQuick.Templates
 		signal deactivated
 		signal deactivating
 		signal removed
+	type QtQuick.Templates.SwipeDelegateAttached SwipeDelegateAttached
+		is uncreatable
+		prop pressed QtQml.bool named readonly
+		signal pressedChanged
+		signal clicked
 	type QtQuick.Templates.SwipeViewAttached SwipeViewAttached
 		is uncreatable
 		prop index QtQml.int named readonly

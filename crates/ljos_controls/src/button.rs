@@ -615,6 +615,7 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) ->
     );
     set_pressed(engine, obj, true);
     emit(engine, obj, "pressed");
+    crate::swipe_delegate::press_taken(engine, obj, at);
     if double {
         emit(engine, obj, "doubleClicked");
     }

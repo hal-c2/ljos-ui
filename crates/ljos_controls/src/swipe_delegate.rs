@@ -20,25 +20,30 @@
 //! go, the row opens to the side it was swiped to if it went more than
 //! half the way, or if the pointer went that way at more than
 //! [`FLICK_SPEED`] on average since the press; otherwise it closes. A
-//! click on an open row says `opened` again and is not a click either.
+//! click on an open row says `opened` again and is not a click either,
+//! nor is one on a row partly swiped (a position written directly).
+//! On an open row, the left or right item shown takes the presses on it
+//! (not the item behind): its attached `SwipeDelegate.pressed` is true
+//! while held, and let go on it, it says `SwipeDelegate.clicked`, after
+//! which the row says it was pressed and open once more, as Qt's does. A
+//! swipe that starts there lets go of it.
 //! Read off Qt 6.11.2 (qml6 and qmltestrunner) as a black box; pinned by
 //! `features/controls/swipe-delegate.feature` and
-//! `swipe-delegate-release.feature`. Documentation:
-//! doc.qt.io/qt-6/qml-qtquick-controls-swipedelegate.html.
-//!
-//! Not built: the attached `SwipeDelegate.pressed` and `clicked` of the
-//! side items.
+//! `swipe-delegate-release.feature` and `swipe-delegate-attached.feature`.
+//! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-swipedelegate.html.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, ObjectId, PropIndex, QmlObject, Value, WriteKind, qml_impl,
+    Cx, Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value, WriteKind,
+    qml_impl,
 };
 use ljos_quick::{Item, is_item, run_transition_to, set_parent_item, stop_transition};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
+use crate::button::AbstractButton;
 use crate::combobox::ItemDelegate;
 use crate::util::{check, is_a, is_unset, num, object, set_computed, warn};
 
@@ -68,7 +73,8 @@ fn swipe_delegate_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     module = "QtQuick.Templates",
     name = "SwipeDelegate",
     extends = ItemDelegate,
-    enums = swipe_delegate_enums
+    enums = swipe_delegate_enums,
+    attached = SwipeDelegateAttached
 )]
 pub struct SwipeDelegate {
     #[qml(base)]
@@ -84,6 +90,25 @@ impl SwipeDelegate {
         make_swipe(cx.engine, cx.this);
         Ok(())
     }
+}
+
+/// What `SwipeDelegate.pressed` and `SwipeDelegate.onClicked` attach to a
+/// side item.
+#[derive(Debug, Default, QmlObject)]
+#[qml(name = "SwipeDelegateAttached")]
+pub struct SwipeDelegateAttached {
+    #[qml(notify, readonly)]
+    pub pressed: bool,
+}
+
+#[qml_impl]
+impl SwipeDelegateAttached {
+    #[qml(signal)]
+    fn clicked();
+}
+
+fn attacher() -> MetaRef {
+    MetaRef::Static(SwipeDelegate::static_meta())
 }
 
 /// What a swipe remembers that QML does not see.
@@ -104,6 +129,8 @@ struct Drag {
     /// The position when the press came.
     start: f64,
     swiping: bool,
+    /// What is attached to the side item the press is on.
+    side: Option<ObjectId>,
 }
 
 /// The `swipe` of a `SwipeDelegate`.
@@ -410,7 +437,64 @@ pub(crate) fn pressed(engine: &Engine, delegate: ObjectId, x: f64, time: Time) {
         time,
         start,
         swiping: false,
+        side: None,
     }));
+}
+
+/// The press `pressed` was told of took the row, at `at`: on an open row
+/// the side item shown under it takes it too.
+pub(crate) fn press_taken(engine: &Engine, delegate: ObjectId, at: kurbo::Point) {
+    engine.untrack(|| {
+        let Some(swipe) = swipe_of(engine, delegate) else {
+            return;
+        };
+        let Some(st) = state_of(engine, swipe) else {
+            return;
+        };
+        let Some(mut d) = st.drag.get() else {
+            return;
+        };
+        let position = num(engine, swipe, Swipe::POSITION.index);
+        let open = engine.read(swipe, Swipe::COMPLETE.index).to_boolean();
+        if !open || object(engine, swipe, Swipe::BEHIND.index).is_some() {
+            return;
+        }
+        let item_p = if position > 0.0 {
+            Swipe::LEFT_ITEM.index
+        } else if position < 0.0 {
+            Swipe::RIGHT_ITEM.index
+        } else {
+            return;
+        };
+        let Some(item) = object(engine, swipe, item_p).filter(|i| holds(engine, *i, at)) else {
+            return;
+        };
+        let Some(att) = engine.existing_attached_object(item, &attacher()) else {
+            return;
+        };
+        d.side = Some(att);
+        st.drag.set(Some(d));
+        side_pressed(engine, att, true);
+    });
+}
+
+/// Whether `at`, in the delegate's coordinates, is on its child `item`.
+fn holds(engine: &Engine, item: ObjectId, at: kurbo::Point) -> bool {
+    let n = |p: PropIndex| num(engine, item, p);
+    let (x, y) = (n(Item::X.index), n(Item::Y.index));
+    (x..x + n(Item::WIDTH.index)).contains(&at.x) && (y..y + n(Item::HEIGHT.index)).contains(&at.y)
+}
+
+fn side_pressed(engine: &Engine, att: ObjectId, on: bool) {
+    if engine.is_alive(att) {
+        let r = set_computed(
+            engine,
+            att,
+            SwipeDelegateAttached::PRESSED.index,
+            Value::Bool(on),
+        );
+        check(engine, "SwipeDelegate.pressed", r);
+    }
 }
 
 /// The position the pointer `dx` across from the press puts the row at,
@@ -453,6 +537,9 @@ pub(crate) fn moved(engine: &Engine, delegate: ObjectId, at: kurbo::Point) -> bo
                 return false;
             }
             d.swiping = true;
+            if let Some(att) = d.side.take() {
+                side_pressed(engine, att, false);
+            }
             st.drag.set(Some(d));
         }
         let p = position_at(engine, swipe, d.start, dx);
@@ -483,7 +570,8 @@ fn goes_to(position: f64, speed: f64) -> f64 {
 
 /// The press on `delegate` was let go at `at`, after `pressed` went false.
 /// True when the swipe has dealt with it, and it is no click: a swipe
-/// goes to where it is let go to, and an open row says it is open.
+/// goes to where it is let go to, an open row says it is open, and a row
+/// that is not closed is canceled.
 pub(crate) fn released(engine: &Engine, delegate: ObjectId, at: kurbo::Point, time: Time) -> bool {
     let Some(swipe) = engine.untrack(|| swipe_of(engine, delegate)) else {
         return false;
@@ -500,14 +588,42 @@ pub(crate) fn released(engine: &Engine, delegate: ObjectId, at: kurbo::Point, ti
         go(engine, swipe, goes_to(position, speed));
         return true;
     }
-    if engine.untrack(|| num(engine, swipe, Swipe::POSITION.index)) != 0.0
-        && engine.untrack(|| engine.read(swipe, Swipe::COMPLETE.index).to_boolean())
-    {
-        emit(engine, swipe, "opened");
-        emit(engine, delegate, "canceled");
-        return true;
+    // A row that is not closed is no click; one that is open says so.
+    if engine.untrack(|| num(engine, swipe, Swipe::POSITION.index)) == 0.0 {
+        return false;
     }
-    false
+    if engine.untrack(|| engine.read(swipe, Swipe::COMPLETE.index).to_boolean()) {
+        emit(engine, swipe, "opened");
+    }
+    let on_side = d.side.filter(|att| {
+        engine.untrack(|| {
+            engine
+                .owner(*att)
+                .is_some_and(|item| holds(engine, item, at))
+        })
+    });
+    if let Some(att) = on_side {
+        side_pressed(engine, att, false);
+        emit(engine, att, "clicked");
+    }
+    emit(engine, delegate, "canceled");
+    if let Some(att) = d.side {
+        // Qt's row is pressed and said open once more.
+        let pressed = |on| {
+            let r = set_computed(
+                engine,
+                delegate,
+                AbstractButton::PRESSED.index,
+                Value::Bool(on),
+            );
+            check(engine, "pressed", r);
+        };
+        pressed(true);
+        emit(engine, swipe, "opened");
+        pressed(false);
+        side_pressed(engine, att, false);
+    }
+    true
 }
 
 /// The press was taken away: a swipe goes back to where it started.
@@ -518,6 +634,9 @@ pub(crate) fn canceled(engine: &Engine, delegate: ObjectId) {
     let Some(d) = state_of(engine, swipe).and_then(|st| st.drag.take()) else {
         return;
     };
+    if let Some(att) = d.side {
+        side_pressed(engine, att, false);
+    }
     if d.swiping {
         go(
             engine,
