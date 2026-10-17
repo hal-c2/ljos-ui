@@ -1047,6 +1047,9 @@ impl Engine {
         if let Some(state) = self.tree_model_state(obj) {
             return Some(state);
         }
+        if let Some(state) = self.table_model_state(obj) {
+            return Some(state);
+        }
         let store = self.inner.store.borrow();
         store.objects.get(obj)?.ext.as_ref()?.model.clone()
     }

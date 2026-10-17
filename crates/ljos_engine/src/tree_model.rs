@@ -24,6 +24,7 @@ use crate::list::QmlList;
 use crate::model::ItemModel;
 use crate::tree::{ItemTree, TreeChange, TreeListener, TreeListeners, tree_model};
 use crate::value::Value;
+use crate::{PropIndex, WriteKind};
 use crate::{QmlObject, qml_impl};
 
 /// The key of a row that holds the rows under it.
@@ -132,14 +133,14 @@ impl std::fmt::Debug for TreeModel {
 
 /// A row: its keys but `rows`, and the rows under it.
 #[derive(Clone, Debug, Default)]
-struct Node {
-    fields: Vec<(Atom, Value)>,
-    children: Vec<Node>,
+pub(crate) struct Node {
+    pub(crate) fields: Vec<(Atom, Value)>,
+    pub(crate) children: Vec<Node>,
 }
 
 impl Node {
     /// The row a script gave, already a copy as data.
-    fn parse(v: &Value) -> Node {
+    pub(crate) fn parse(v: &Value) -> Node {
         let mut node = Node::default();
         for (key, value) in v.as_map().unwrap_or_default() {
             if &**key == CHILDREN {
@@ -152,7 +153,7 @@ impl Node {
     }
 
     /// The row as a script sees it; `rows` only when there are some.
-    fn to_value(&self) -> Value {
+    pub(crate) fn to_value(&self) -> Value {
         let mut fields = self.fields.clone();
         if !self.children.is_empty() {
             fields.push((Atom::intern(CHILDREN), rows_value(&self.children)));
@@ -168,7 +169,7 @@ impl Node {
     }
 }
 
-fn parse_rows(v: &Value) -> Vec<Node> {
+pub(crate) fn parse_rows(v: &Value) -> Vec<Node> {
     v.as_list()
         .unwrap_or_default()
         .iter()
@@ -176,7 +177,7 @@ fn parse_rows(v: &Value) -> Vec<Node> {
         .collect()
 }
 
-fn rows_value(nodes: &[Node]) -> Value {
+pub(crate) fn rows_value(nodes: &[Node]) -> Value {
     Value::list(nodes.iter().map(Node::to_value).collect())
 }
 
@@ -200,16 +201,37 @@ fn at_mut<'a>(nodes: &'a mut [Node], path: &[usize]) -> Option<&'a mut Node> {
     }
 }
 
-/// The rows of a `TreeModel` and what its columns read.
-#[derive(Default)]
-struct TreeState {
-    me: Cell<Option<ObjectId>>,
-    nodes: RefCell<Vec<Node>>,
+/// The rows of a `TreeModel` (or a `TableModel`, whose rows have none
+/// under them) and what its columns read.
+pub(crate) struct TreeState {
+    pub(crate) me: Cell<Option<ObjectId>>,
+    pub(crate) nodes: RefCell<Vec<Node>>,
     /// For each column, the key of the row each role reads.
-    columns: RefCell<Vec<Vec<(Atom, Atom)>>>,
-    listeners: TreeListeners,
+    pub(crate) columns: RefCell<Vec<Vec<(Atom, Atom)>>>,
+    pub(crate) listeners: TreeListeners,
     /// Set while the model writes `rows` itself, which is not a new tree.
-    writing: Cell<bool>,
+    pub(crate) writing: Cell<bool>,
+    /// The type's name, for warnings.
+    pub(crate) name: &'static str,
+    /// The `rows` property, written back after every change, and the
+    /// `rowCount` one when the type has it.
+    pub(crate) rows_prop: PropIndex,
+    pub(crate) count_prop: Option<PropIndex>,
+}
+
+impl Default for TreeState {
+    fn default() -> Self {
+        Self {
+            me: Cell::default(),
+            nodes: RefCell::default(),
+            columns: RefCell::default(),
+            listeners: TreeListeners::default(),
+            writing: Cell::default(),
+            name: "TreeModel",
+            rows_prop: TreeModel::ROWS.index,
+            count_prop: None,
+        }
+    }
 }
 
 impl TreeState {
@@ -235,31 +257,43 @@ impl TreeState {
             .map(|(_, k)| k.clone())
     }
 
-    fn warn(&self, engine: &Engine, what: &str) {
+    pub(crate) fn warn(&self, engine: &Engine, what: &str) {
         let at = self
             .me
             .get()
             .and_then(|o| engine.location_of(o))
             .unwrap_or_default();
-        engine.warn(format!("{at}QML TreeModel: {what}"));
+        engine.warn(format!("{at}QML {}: {what}", self.name));
     }
 
     /// Writes `rows` back, so scripts read the tree as it is now.
-    fn publish(&self, engine: &Engine) {
+    pub(crate) fn publish(&self, engine: &Engine) {
         let Some(me) = self.me.get() else { return };
+        self.count(engine);
         let rows = rows_value(&self.nodes.borrow());
         self.writing.set(true);
-        let _ = engine.set_internal(me, TreeModel::ROWS, rows);
+        let _ = engine.write_internal(me, self.rows_prop, rows, WriteKind::Imperative);
         self.writing.set(false);
     }
 
-    fn changed(&self, engine: &Engine, change: TreeChange) {
+    /// Writes `rowCount` when the type has it and it changed.
+    pub(crate) fn count(&self, engine: &Engine) {
+        let (Some(me), Some(p)) = (self.me.get(), self.count_prop) else {
+            return;
+        };
+        let n = Value::Int(self.nodes.borrow().len() as i32);
+        if engine.untrack(|| engine.read(me, p)) != n {
+            let _ = engine.write_internal(me, p, n, WriteKind::Imperative);
+        }
+    }
+
+    pub(crate) fn changed(&self, engine: &Engine, change: TreeChange) {
         self.publish(engine);
         self.listeners.emit(engine, &change);
     }
 
     /// Reads the columns' roles again; true when they changed.
-    fn read_columns(&self, engine: &Engine, columns: &[ObjectId]) -> bool {
+    pub(crate) fn read_columns(&self, engine: &Engine, columns: &[ObjectId]) -> bool {
         let read: Vec<Vec<(Atom, Atom)>> = columns
             .iter()
             .map(|&c| {
@@ -390,7 +424,7 @@ fn index_value(engine: &Engine, model: ObjectId, path: &[usize], column: usize) 
     crate::item_selection::make_index(engine, Some(model), &place)
 }
 
-fn role_or_display(role: &Value) -> Atom {
+pub(crate) fn role_or_display(role: &Value) -> Atom {
     match role {
         Value::String(r) => r.clone(),
         _ => Atom::intern("display"),

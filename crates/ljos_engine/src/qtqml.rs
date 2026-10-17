@@ -599,6 +599,7 @@ pub(crate) fn register(engine: &Engine) {
         crate::chooser::DelegateChooser,
         crate::chooser::DelegateChoice,
         crate::tree_model::TreeModel,
+        crate::table_model::TableModel,
         crate::tree_model::TableModelColumn
     ]));
     engine.register_module(crate::module!("Qt.labs.synchronizer" 1.0 => [

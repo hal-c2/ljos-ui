@@ -71,8 +71,29 @@ module Ljos
 module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
 	DelegateChooser QtQml.Models.DelegateChooser
+	TableModel Qt.labs.qmlmodels.TableModel
 	TableModelColumn Qt.labs.qmlmodels.TableModelColumn
 	TreeModel Qt.labs.qmlmodels.TreeModel
+	type Qt.labs.qmlmodels.TableModel TableModel
+		prototype QtQml.QtObject named
+		default columns
+		prop columns QtQml.var named list readonly
+		prop columnCount QtQml.int named readonly
+		prop rowCount QtQml.int named readonly
+		prop rows QtQml.var named
+		signal columnCountChanged
+		signal rowCountChanged
+		signal rowsChanged
+		method index
+		method data
+		method setData
+		method getRow
+		method setRow
+		method appendRow
+		method insertRow
+		method removeRow
+		method moveRow
+		method clear
 	type Qt.labs.qmlmodels.TableModelColumn TableModelColumn
 		prototype QtQml.QtObject named
 		prop display QtQml.var named
