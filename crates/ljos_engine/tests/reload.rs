@@ -269,6 +269,33 @@ Item {
 }
 
 #[test]
+fn the_replaced_object_of_a_kept_one_does_not_work_out_what_it_owes() {
+    let src = |word: &str| {
+        format!(
+            r#"import QtQuick
+Item {{
+  id: root
+  objectName: "root"
+  property int n: 0
+  property int seen: {{ console.log("{word} read " + n); return n }}
+}}
+"#
+        )
+    };
+    let mut r = rig(&[("Main", &src("old"))]);
+    assert_eq!(r.num("root", "seen"), 0.0);
+    // Written between frames: nothing has read `seen` since.
+    r.h.set(r.find("root"), "n", Value::from(3.0));
+    let _ = r.h.log();
+    r.edit("Main", &src("new")).unwrap();
+    assert_eq!(r.num("root", "seen"), 3.0);
+    assert!(
+        !r.h.log().iter().any(|l| l.starts_with("old")),
+        "the old tree evaluated a binding as it went"
+    );
+}
+
+#[test]
 fn a_patch_that_cannot_be_applied_changes_nothing() {
     let src = r#"import QtQuick
 Item {

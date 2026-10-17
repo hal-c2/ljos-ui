@@ -301,6 +301,13 @@ impl Engine {
                     continue;
                 }
                 ids.push(id);
+                // An object a reload replaces by one that goes on is not
+                // heard from as it goes, so what it still owes is not
+                // worked out.
+                if self.reload_muted(id) {
+                    stack.extend_from_slice(&h.children);
+                    continue;
+                }
                 due.extend(
                     h.nodes
                         .iter()
