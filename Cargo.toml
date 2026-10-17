@@ -137,6 +137,11 @@ libc = "0.2.190"
 # on the session bus, sent by zbus, pure Rust: the version accesskit_unix
 # already brings. On macOS the Dock tile: the versions arboard and rfd bring.
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
+# The thread pool zbus opens a connection on. 1.7.0 keeps its last idle
+# thread parked with a half-second timeout for good, which wakes every
+# application twice a second; 1.6.1 lets an idle thread end
+# (crates/ljos_shell/tests/idle_wakes.rs).
+blocking = "=1.6.1"
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }

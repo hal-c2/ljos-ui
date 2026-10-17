@@ -50,6 +50,9 @@ libc.workspace = true
 # the desktop's settings portal.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus.workspace = true
+# Not used directly: holds zbus's thread pool at a version whose idle
+# threads end (see the workspace's Cargo.toml).
+blocking.workspace = true
 
 # The application's badge: the Dock tile. The workspace's accessibility
 # display options and their change notification.

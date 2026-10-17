@@ -639,7 +639,7 @@ A single `FrameScheduler` computes the next wake time:
 
     next_wake = min(animation deadlines, timers, request_repaint_after, messages)
 
-- **When idle:** 0 wakeups per second.
+- **When idle:** 0 wakeups per second, on every thread of the process. As built: the session-bus connections (screen reader, settings portal, badge, accessibility bridge) are opened on `blocking`'s thread pool, held at 1.6.1, whose idle threads end; 1.7.0 keeps one parked with a half-second timeout for good, which woke every application twice a second (`crates/ljos_shell/tests/idle_wakes.rs`). What still wakes an idle application is a message: with AT-SPI on, its registry pings each application on the accessibility bus every 20 to 30 seconds, and the bridge answers. `ljos bench` counts the wakes of its idle phase by thread name (`woken`).
 - **Cursor blink:** at most 2 wakeups per second, and none while the window is unfocused.
 - **Timer coalescing:** timers are coalesced to 1 ms granularity, with up to 4 ms slack for timers that are not animations.
 - **Animation timing:** animations follow vsync, using Choreographer timestamps on Android, never wall-clock sleeps.
