@@ -117,6 +117,22 @@ def grid_clicks(app, w, d):
     app.call("app_screenshot", {}, os.path.join(d, "grid.png"))
 
 
+def why_it_ended(d, p):
+    """What the example said when it ended before the driver could use it: Ljós's own lines
+    (`ljos: setup: …`, a panic) from its stderr, and the exit status."""
+    try:
+        status = p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        status = None
+    text = re.sub(r"\x1b\[[0-9;]*m", "", open(os.path.join(d, "stderr.log"), errors="replace").read())
+    own = [l for l in text.splitlines()
+           if (l.startswith("ljos: ") and "inspector (" not in l) or "panicked at" in l]
+    if not own:
+        own = [l for l in text.splitlines() if re.search(r"\berror\b", l, re.I)][-3:]
+    ended = "it is still running" if status is None else f"it ended with exit status {status}"
+    return [l.replace(CORPUS, "") for l in own[:5]] + [ended]
+
+
 def drive(out, eid):
     d = os.path.join(out, eid)
     os.makedirs(d, exist_ok=True)
@@ -146,10 +162,21 @@ def drive(out, eid):
             break
     try:
         if not path:
-            last = [l for l in open(os.path.join(d, "stderr.log")).read().splitlines() if "error" in l]
-            return {"id": eid, "started": False, "why": last[:3]}
-        time.sleep(2)
-        app = Inspector(path)
+            return {"id": eid, "started": False, "why": why_it_ended(d, p)}
+        # The inspector is up before the QML is made; an example that does not load ends here,
+        # and its inspector file goes with it.
+        for _ in range(8):
+            time.sleep(0.25)
+            if p.poll() is not None:
+                break
+        try:
+            if p.poll() is not None:
+                raise FileNotFoundError(path)
+            app = Inspector(path)
+        except (OSError, urllib.error.URLError, ValueError):
+            if p.poll() is None and os.path.exists(path):
+                raise
+            return {"id": eid, "started": False, "why": why_it_ended(d, p)}
         print("== first snapshot\n" + app.call("app_snapshot"), file=rep, flush=True)
         app.call("app_screenshot", {}, os.path.join(d, "0-start.png"))
         w("== logged while starting", *app.new_logs())
