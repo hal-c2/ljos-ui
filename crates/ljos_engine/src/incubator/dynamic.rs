@@ -270,8 +270,8 @@ impl Engine {
     }
 
     /// The C++ type Qt's engine names a property's type by: an object
-    /// type is a pointer to its class.
-    fn qt_type(&self, ty: &TypeTag) -> String {
+    /// type is a pointer to its class, a list of values a sequence.
+    pub(crate) fn qt_type(&self, ty: &TypeTag) -> String {
         let name = match ty {
             TypeTag::Var | TypeTag::Data => "QVariant",
             TypeTag::Bool => "bool",
@@ -293,7 +293,15 @@ impl Engine {
             TypeTag::Object(Some(n)) => return format!("{}*", self.class_named(n)),
             TypeTag::List(None) => "QQmlListProperty<QObject>",
             TypeTag::List(Some(n)) => {
-                return format!("QQmlListProperty<{}>", self.class_named(n));
+                return match TypeTag::parse(n) {
+                    TypeTag::Object(None) => "QQmlListProperty<QObject>".to_owned(),
+                    TypeTag::Object(Some(n)) => {
+                        format!("QQmlListProperty<{}>", self.class_named(&n))
+                    }
+                    TypeTag::Var => "QVariantList".to_owned(),
+                    TypeTag::String => "QStringList".to_owned(),
+                    item => format!("QList<{}>", self.qt_type(&item)),
+                };
             }
             TypeTag::Group(n) => return n.to_string(),
         };

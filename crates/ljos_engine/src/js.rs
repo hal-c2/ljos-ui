@@ -468,27 +468,6 @@ impl EngineHost {
     }
 }
 
-/// The name of a value type in the error a script catches when an
-/// assignment is refused: Qt's engine names the class that holds the
-/// value, not the QML type. None for a type it names as this engine does.
-fn class_name(ty: &TypeTag) -> Option<&'static str> {
-    Some(match ty {
-        TypeTag::Real => "double",
-        TypeTag::String => "QString",
-        TypeTag::Color => "QColor",
-        TypeTag::Url => "QUrl",
-        TypeTag::Font => "QFont",
-        TypeTag::Point => "QPointF",
-        TypeTag::Size => "QSizeF",
-        TypeTag::Rect => "QRectF",
-        TypeTag::Vector2d => "QVector2D",
-        TypeTag::Vector3d => "QVector3D",
-        TypeTag::Vector4d => "QVector4D",
-        TypeTag::Quaternion => "QQuaternion",
-        _ => return None,
-    })
-}
-
 fn host_err(e: EngineError) -> HostError {
     HostError::msg(e.to_string())
 }
@@ -575,6 +554,23 @@ impl HostObjects for EngineHost {
                 })
                 .map_err(host_err);
         }
+        // What Qt's engine calls the value when it is refused, where that
+        // is not what the conversion calls it.
+        let from = match &value {
+            JsValue::Number(n) if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) => Some("int"),
+            JsValue::Null => Some("std::nullptr_t"),
+            JsValue::Object(_) => Some("QObject*"),
+            // No property but a var takes a function.
+            JsValue::Handle(r)
+                if !matches!(ty, TypeTag::Var | TypeTag::Data) && scope.is_function(r) =>
+            {
+                return Err(HostError::msg(format!(
+                    "Cannot assign JavaScript function to {}",
+                    engine.qt_type(&ty)
+                )));
+            }
+            _ => None,
+        };
         let v = engine.js_to_value_kept(scope, value, &ty);
         if engine.tier1_spying() {
             // Tier 1 would write a list where the script wrote its array.
@@ -587,16 +583,16 @@ impl HostObjects for EngineHost {
                 EngineError::ReadOnly(name) => {
                     HostError::type_error(format!("Cannot assign to read-only property \"{name}\""))
                 }
+                // A binding's warning says "null" where a script is told
+                // std::nullptr_t (Qt 6.11.2).
                 EngineError::Convert(c) => HostError::msg(format!(
                     "Cannot assign {} to {}",
-                    // A script's `null` is named as C++ names it; a
-                    // binding's warning says "null" (Qt 6.11.2).
-                    if c.from == "null" {
-                        "std::nullptr_t"
-                    } else {
-                        &c.from
-                    },
-                    class_name(&ty).unwrap_or(&c.to)
+                    from.unwrap_or(&c.from),
+                    // An enum is named as its type declares it.
+                    match ty {
+                        TypeTag::Enum(_) | TypeTag::Flags(_) => c.to,
+                        _ => engine.qt_type(&ty),
+                    }
                 )),
                 e => host_err(e),
             })?;
