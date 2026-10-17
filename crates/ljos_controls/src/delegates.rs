@@ -214,8 +214,9 @@ impl SwitchDelegate {
 /// Documentation: doc.qt.io/qt-6/qml-qtquick-controls-treeviewdelegate.html;
 /// pinned by `features/controls/tree-view-delegate.feature`.
 ///
-/// The properties the view gives are required in Qt; here they are
-/// plain properties the view writes before the delegate's bindings run.
+/// The properties the view gives are required, as in Qt: the view
+/// writes them before the delegate's bindings run, and a delegate made
+/// without a view must be given them.
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "QtQuick.Templates", name = "TreeViewDelegate", extends = ItemDelegate)]
 pub struct TreeViewDelegate {
@@ -228,20 +229,20 @@ pub struct TreeViewDelegate {
     pub left_margin: f64,
     #[qml(notify)]
     pub right_margin: f64,
-    #[qml(notify, rename = "treeView", object = "TreeView")]
+    #[qml(notify, required, rename = "treeView", object = "TreeView")]
     pub tree_view: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub is_tree_node: bool,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub has_children: bool,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub expanded: bool,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub depth: i32,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub current: bool,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub selected: bool,
-    #[qml(notify)]
+    #[qml(notify, required)]
     pub editing: bool,
 }

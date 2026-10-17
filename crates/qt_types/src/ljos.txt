@@ -6026,14 +6026,14 @@ module QtQuick.Templates
 		prop indentation QtQml.real named
 		prop leftMargin QtQml.real named
 		prop rightMargin QtQml.real named
-		prop treeView QtQuick.TreeView named pointer
-		prop isTreeNode QtQml.bool named
-		prop hasChildren QtQml.bool named
-		prop expanded QtQml.bool named
-		prop depth QtQml.int named
-		prop current QtQml.bool named
-		prop selected QtQml.bool named
-		prop editing QtQml.bool named
+		prop treeView QtQuick.TreeView named pointer required
+		prop isTreeNode QtQml.bool named required
+		prop hasChildren QtQml.bool named required
+		prop expanded QtQml.bool named required
+		prop depth QtQml.int named required
+		prop current QtQml.bool named required
+		prop selected QtQml.bool named required
+		prop editing QtQml.bool named required
 		signal indentationChanged
 		signal leftMarginChanged
 		signal rightMarginChanged
