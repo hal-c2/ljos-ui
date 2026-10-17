@@ -283,6 +283,12 @@ impl Engine {
 /// `Component.incubateObject` as the method sees it.
 pub(crate) fn incubate_object(cx: &Cx, parent: Value, props: Value, mode: Value) -> Value {
     let e = cx.engine;
+    // A component a createObject left in Error makes nothing until one
+    // succeeds.
+    if e.component_failed(cx.this) {
+        e.warn("QQmlComponent: Component is not ready".to_owned());
+        return Value::Null;
+    }
     let props = e.js_object_entries(&props);
     let synchronous =
         !matches!(mode, Value::Undefined | Value::Null) && mode.to_number() == SYNCHRONOUS;

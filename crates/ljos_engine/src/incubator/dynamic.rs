@@ -573,12 +573,14 @@ impl Engine {
                 if !refused.is_empty() {
                     return Err(at(refused.into_iter().map(|m| located(&url, m)).collect()));
                 }
-                let message = match e {
-                    // The message is whole already.
-                    EngineError::RequiredNotSet(m) => m,
-                    e => e.to_string(),
-                };
-                Err(at(vec![located(&url, message)]))
+                Err(at(match e {
+                    // The message is whole already, a line for each
+                    // property.
+                    EngineError::RequiredNotSet(m) => {
+                        m.lines().map(|l| located(&url, l.to_owned())).collect()
+                    }
+                    e => vec![located(&url, e.to_string())],
+                }))
             }
         }
     }

@@ -585,7 +585,11 @@ impl Engine {
         Ok(())
     }
 
+    /// Every required property left unset, one line each, as Qt tells
+    /// them: at its `required property` declaration, or at the object
+    /// for `required name` of a property it inherits.
     fn check_required(&self, cr: &Creation) -> Result<(), EngineError> {
+        let mut unset = Vec::new();
         for &o in &cr.all {
             let Some(meta) = self.meta_of(o) else {
                 continue;
@@ -600,15 +604,22 @@ impl Engine {
                         .provenance(o, prop)
                         .is_some_and(|p| p != Provenance::Default);
                 if !set {
-                    let at = self.location_of(o).unwrap_or_default();
-                    return Err(EngineError::RequiredNotSet(format!(
+                    let at = match meta.required_at(prop) {
+                        Some(at) => at.to_string(),
+                        None => self.location_of(o).unwrap_or_default(),
+                    };
+                    unset.push(format!(
                         "{at}Required property {} was not initialized",
                         p.name
-                    )));
+                    ));
                 }
             }
         }
-        Ok(())
+        if unset.is_empty() {
+            Ok(())
+        } else {
+            Err(EngineError::RequiredNotSet(unset.join("\n")))
+        }
     }
 
     fn finalize(
@@ -1063,6 +1074,10 @@ impl Engine {
                     flags |= PropertyFlags::DEFAULT;
                 }
                 b = b.property(&p.name, ty, flags, true);
+                if p.is_required {
+                    let at = format!("{}:{}:{}: ", file.url, p.span.line, p.span.column);
+                    b = b.required_at(Atom::new(&at));
+                }
                 if p.is_default {
                     b = b.default_property(&p.name);
                 }

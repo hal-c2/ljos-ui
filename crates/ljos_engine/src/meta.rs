@@ -342,6 +342,9 @@ pub struct MetaObject {
     pub on_complete: Option<CompleteThunk>,
     /// Enums, inherited first.
     pub enums: Vec<EnumInfo>,
+    /// Where this type's own `required property` declarations are
+    /// written: `url:line:column: `, by property index.
+    pub required_at: Vec<(PropIndex, Atom)>,
     lookup: OnceLock<Lookup>,
 }
 
@@ -395,6 +398,22 @@ impl MetaObject {
 
     pub fn property(&self, i: PropIndex) -> Option<&PropertyInfo> {
         self.properties.get(i.0 as usize)
+    }
+
+    /// Where the `required property` `i` is declared, in this type or the
+    /// one that declares it: `url:line:column: `.
+    pub fn required_at(&self, i: PropIndex) -> Option<&Atom> {
+        let mut m = self;
+        loop {
+            if i.0 >= m.property_offset {
+                return m
+                    .required_at
+                    .iter()
+                    .find(|(p, _)| *p == i)
+                    .map(|(_, at)| at);
+            }
+            m = m.base.as_ref()?;
+        }
     }
 
     pub fn signal_index(&self, name: &str) -> Option<SignalIndex> {
@@ -721,6 +740,7 @@ impl MetaBuilder {
                 create: None,
                 on_complete: None,
                 enums: Vec::new(),
+                required_at: Vec::new(),
                 lookup: OnceLock::new(),
             },
         }
@@ -950,6 +970,15 @@ impl MetaBuilder {
             .find(|p| p.name == name)
         {
             p.flags |= PropertyFlags::REQUIRED;
+        }
+        self
+    }
+
+    /// Notes where the `required property` just added, the last property,
+    /// is declared: `at` is `url:line:column: `.
+    pub fn required_at(mut self, at: Atom) -> Self {
+        if let Some(last) = self.meta.properties.len().checked_sub(1) {
+            self.meta.required_at.push((PropIndex(last as u32), at));
         }
         self
     }

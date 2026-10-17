@@ -155,10 +155,17 @@ impl Component {
             .engine
             .create_from_template_for_script(&template, parent, props, Initial::Created)
         {
-            Ok(o) => Value::Object(o),
-            // Qt's words, which say where; the message is whole already.
+            Ok(o) => {
+                cx.engine.component_made(cx.this, None);
+                Value::Object(o)
+            }
+            // Qt's words, which say where, a line for each property; the
+            // message is whole already.
             Err(EngineError::RequiredNotSet(e)) => {
-                cx.engine.warn(e);
+                for line in e.lines() {
+                    cx.engine.warn(line.to_owned());
+                }
+                cx.engine.component_made(cx.this, Some(&e));
                 Value::Null
             }
             Err(e) => {
@@ -1059,6 +1066,30 @@ impl Engine {
     ) -> Result<ObjectId, EngineError> {
         let template = self.component_template(component)?;
         self.create_from_template(&template, parent, props)
+    }
+
+    /// What a `createObject` of `component` left it in: Error with
+    /// `failed` for `errorString()` when it could not set a required
+    /// property, Ready again once one succeeds. Qt changes the status
+    /// without saying so, and so does this.
+    fn component_made(&self, component: ObjectId, failed: Option<&str>) {
+        let _ = self.with_mut::<Component, _>(component, |c| match failed {
+            Some(why) => {
+                c.status = 3;
+                c.error = Atom::new(&format!("{why}\n"));
+            }
+            None if c.status == 3 && c.template.is_some() => {
+                c.status = 1;
+                c.error = Atom::default();
+            }
+            None => {}
+        });
+    }
+
+    /// Whether `component` is in Error ([`Component::status`]).
+    pub(crate) fn component_failed(&self, component: ObjectId) -> bool {
+        self.with::<Component, _>(component, |c| c.status == 3)
+            .unwrap_or(false)
     }
 
     pub(crate) fn component_template(

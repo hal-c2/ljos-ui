@@ -472,11 +472,14 @@ impl Shared {
                     "qml",
                     "QML Component: Cannot create delegate",
                 );
-                engine.warn(match e {
-                    // The message is whole already.
-                    EngineError::RequiredNotSet(m) => m,
-                    e => e.to_string(),
-                });
+                match e {
+                    // The message is whole already, a line for each
+                    // property.
+                    EngineError::RequiredNotSet(m) => {
+                        m.lines().for_each(|l| engine.warn(l.to_owned()))
+                    }
+                    e => engine.warn(e.to_string()),
+                }
             }
         }
     }
@@ -1451,11 +1454,14 @@ impl ViewShared {
                     "qml",
                     "QML Component: Cannot create delegate",
                 );
-                engine.warn(match e {
-                    // The message is whole already.
-                    EngineError::RequiredNotSet(m) => m,
-                    e => e.to_string(),
-                });
+                match e {
+                    // The message is whole already, a line for each
+                    // property.
+                    EngineError::RequiredNotSet(m) => {
+                        m.lines().for_each(|l| engine.warn(l.to_owned()))
+                    }
+                    e => engine.warn(e.to_string()),
+                }
                 None
             }
         }

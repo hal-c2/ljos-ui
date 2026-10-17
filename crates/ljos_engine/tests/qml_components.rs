@@ -131,7 +131,7 @@ fn a_missing_required_property_is_an_error() {
     let err = h.engine.create_from_url("Main", None, vec![]).unwrap_err();
     assert!(
         matches!(&err, EngineError::RequiredNotSet(m)
-            if m == "file:///Main.qml:2:1: Required property n was not initialized"),
+            if m == "file:///Main.qml:3:3: Required property n was not initialized"),
         "{err:?}"
     );
     assert_eq!(h.engine.object_count(), before);
