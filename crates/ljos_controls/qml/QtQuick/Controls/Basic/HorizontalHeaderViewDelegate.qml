@@ -5,7 +5,7 @@ import QtQuick.Controls.impl
 import QtQuick.Templates as T
 
 // The section's role named by the header's textRole, centred on the
-// button colour.
+// light colour in a midlight frame.
 T.HeaderViewDelegate {
     id: control
 
@@ -21,7 +21,8 @@ T.HeaderViewDelegate {
 
     background: Component {
         Rectangle {
-            color: control.palette.button
+            color: control.palette.light
+            border.color: control.palette.midlight
         }
     }
 
@@ -29,7 +30,7 @@ T.HeaderViewDelegate {
         Label {
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            color: control.palette.buttonText
+            color: control.palette.windowText
             text: control.model[control.headerView.textRole] ?? ""
         }
     }

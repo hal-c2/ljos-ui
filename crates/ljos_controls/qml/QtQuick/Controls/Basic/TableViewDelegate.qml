@@ -23,7 +23,7 @@ T.TableViewDelegate {
     background: Component {
         Rectangle {
             border.width: control.current ? 2 : 0
-            border.color: control.palette.highlight
+            border.color: control.current ? control.palette.highlight : control.palette.windowText
             color: control.highlighted ? control.palette.highlight
                  : (control.tableView && control.tableView.alternatingRows && row % 2 !== 0)
                    ? control.palette.alternateBase : control.palette.base
@@ -35,7 +35,7 @@ T.TableViewDelegate {
             text: model.display ?? ""
             elide: Text.ElideRight
             color: control.highlighted ? control.palette.highlightedText
-                                       : control.palette.text
+                                       : control.palette.windowText
         }
     }
 }
