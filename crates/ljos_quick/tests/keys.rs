@@ -365,3 +365,76 @@ Item {
     s.set_window_active(&e, false);
     assert!(s.text_input_target(&e).is_none());
 }
+
+#[test]
+fn a_key_filter_sees_every_key_first_and_may_keep_it() {
+    use ljos_quick::KeyKind;
+    use ljos_quick::keys::{add_key_filter, remove_key_filter};
+    use std::cell::RefCell;
+
+    const K: i32 = 0x4b;
+    const X: i32 = 0x58;
+    let e = engine();
+    let (root, mut s) = ready(
+        &e,
+        r#"
+import QtQuick
+Item {
+    id: root
+    property string log: ""
+    Shortcut { sequence: "Ctrl+K"; onActivated: root.log += "shortcut " }
+    Item {
+        focus: true
+        Keys.onPressed: (event) => root.log += "item" + (event.isAutoRepeat ? "-repeat " : " ")
+        Keys.onReleased: root.log += "up "
+    }
+}
+"#,
+    );
+    let seen: Rc<RefCell<Vec<String>>> = Rc::default();
+    let into = seen.clone();
+    // Keeps Ctrl+K and the X key, lets everything else through.
+    let id = add_key_filter(&e, move |_, window, ev| {
+        assert_eq!(window, root);
+        let kind = match (ev.kind, ev.auto_repeat) {
+            (KeyKind::Release, _) => "release",
+            (_, true) => "repeat",
+            _ => "press",
+        };
+        into.borrow_mut().push(format!("{kind}:{}", ev.key));
+        ev.key == K || ev.key == X
+    });
+    assert!(hit(&mut s, &e, ctrl(K)));
+    assert!(s.key_event(&e, &KeyEvent::press(X)));
+    assert!(s.key_event(&e, &KeyEvent::press(X).repeated()));
+    assert!(s.key_event(&e, &KeyEvent::release(X)));
+    assert_eq!(log(&e, root), "");
+    hit(&mut s, &e, KeyEvent::press(key::A));
+    assert_eq!(log(&e, root), "item up");
+    let (k, x, a) = (K, X, key::A);
+    assert_eq!(
+        seen.borrow().join(" "),
+        format!("press:{k} release:{k} press:{x} repeat:{x} release:{x} press:{a} release:{a}")
+    );
+
+    // The one installed last is asked first, and once one keeps a key
+    // the rest are not asked.
+    let order: Rc<RefCell<String>> = Rc::default();
+    let first = order.clone();
+    let later = add_key_filter(&e, move |_, _, ev| {
+        first.borrow_mut().push('L');
+        ev.key == key::A
+    });
+    seen.borrow_mut().clear();
+    assert!(hit(&mut s, &e, KeyEvent::press(key::A)));
+    assert_eq!(order.borrow().as_str(), "LL");
+    assert!(seen.borrow().is_empty());
+    assert_eq!(log(&e, root), "item up");
+
+    // Taken out, the keys reach the scene again.
+    assert!(remove_key_filter(&e, id));
+    assert!(remove_key_filter(&e, later));
+    assert!(!remove_key_filter(&e, id));
+    hit(&mut s, &e, ctrl(K));
+    assert_eq!(log(&e, root), "item up shortcut up");
+}

@@ -355,12 +355,16 @@ fn bubble(
 /// Delivers a key event to the window whose content is `root`. Returns
 /// whether anything took it; the host passes on what nothing took.
 ///
-/// A window that does not have the keyboard gets no keys.
+/// A window that does not have the keyboard gets no keys. The key
+/// filters ([`super::add_key_filter`]) see the event first.
 pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
     // Focus asked for while the tree was being made counts from now.
     focus::settle(engine);
     if !focus::is_window_active(engine, root) {
         return false;
+    }
+    if super::filter::keeps(engine, root, ev) {
+        return true;
     }
     let item = focus::active_focus_item(engine, root);
     if ev.kind == KeyKind::Release {
@@ -425,8 +429,9 @@ pub fn tab_target(
 }
 
 impl QuickScene {
-    /// Delivers a key event (ARCHITECTURE §11): shortcuts first, then the
-    /// item with active focus and its parents. Returns whether anything
+    /// Delivers a key event (ARCHITECTURE §11): the application's key
+    /// filters first ([`crate::keys::add_key_filter`]), then shortcuts,
+    /// then the item with active focus and its parents. Returns whether anything
     /// accepted it, so the host knows which keys are still its own.
     pub fn key_event(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
         self.root()

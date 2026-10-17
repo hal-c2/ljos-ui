@@ -10,6 +10,7 @@
 mod attached;
 mod dispatch;
 mod event;
+mod filter;
 pub mod key;
 mod sequence;
 mod shortcut;
@@ -19,6 +20,7 @@ mod text_input;
 pub use attached::{KeyNavigation, KeyNavigationAttached, Keys, KeysAttached, priority};
 pub use dispatch::{KeyItem, deliver_key, register_key_item, tab_target};
 pub use event::KeyEventObject;
+pub use filter::{KeyFilter, KeyFilterId, add_key_filter, remove_key_filter};
 pub use sequence::{KeyChord, KeySequence, MAX_CHORDS, Platform};
 pub use shortcut::{Shortcut, shortcut_context};
 pub use standard::{

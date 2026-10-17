@@ -171,6 +171,17 @@ impl<M> Setup<'_, M> {
         self.on_message = Some(Box::new(f));
     }
 
+    /// Installs an application-wide key filter: `filter` sees every key
+    /// event a window is given (presses, auto-repeats, releases) before
+    /// its shortcuts and focused item, with the window's root, and true
+    /// keeps it. See [`ljos_quick::keys::add_key_filter`].
+    pub fn add_key_filter(
+        &mut self,
+        filter: impl Fn(&Engine, ObjectId, &ljos_quick::KeyEvent) -> bool + 'static,
+    ) -> ljos_quick::keys::KeyFilterId {
+        ljos_quick::keys::add_key_filter(self.engine, filter)
+    }
+
     /// See [`ljos_quick::TimerHook`]; times come from [`Setup::clock`].
     pub fn set_timer_hook(&mut self, hook: TimerHook) {
         self.timer_hook = Some(hook);

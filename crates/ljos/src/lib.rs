@@ -100,6 +100,13 @@ pub mod types;
 
 pub use app::{App, create_root};
 
+/// Key events as a host delivers them, and the application-wide key
+/// filters that see each before a window's shortcuts and focused item.
+pub mod keys {
+    pub use ljos_quick::keys::{KeyFilter, KeyFilterId, add_key_filter, key, remove_key_filter};
+    pub use ljos_quick::{KeyEvent, KeyKind, Modifiers};
+}
+
 /// The components a build script packed with [`build::compile_dir`]
 /// (the `build` feature, in `[build-dependencies]`), embedded in the
 /// program: `include_qml!("qml.pack")` reads `$OUT_DIR/qml.pack` into a
