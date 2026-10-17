@@ -3,7 +3,8 @@
 //! does in a build script. Either feature links the parser.
 
 use std::collections::HashSet;
-use std::path::{Component, Path};
+use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
 use ljos_engine::{
     Engine, MapSource, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeDump, TypeEntry,
@@ -24,6 +25,77 @@ pub enum OnError {
     /// Any file with an error fails the whole compile, one error a
     /// line: for a build step or CI that wants every file clean.
     Fail,
+}
+
+/// What a compile of QML directories found ([`compile_quiet`]): the
+/// files as a component source, and every diagnostic of every file.
+#[derive(Debug)]
+pub struct Compiled {
+    /// The compiled files; each file with an error is recorded as one
+    /// that did not compile ([`MapSource::failures`]).
+    pub source: MapSource,
+    /// In key order, and in the order the compiler found them in a
+    /// file.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl Compiled {
+    /// Whether a diagnostic is an error: some file did not compile.
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error)
+    }
+}
+
+/// How bad a [`Diagnostic`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum Severity {
+    /// The file did not compile: making it fails.
+    Error,
+    /// The file compiled, to something only the running program can
+    /// settle (a name looked up when it runs, say).
+    Warning,
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        })
+    }
+}
+
+/// One thing a compile found in a file. Shown as a compiler at a
+/// terminal says it, `path:line:column: severity: message`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Diagnostic {
+    /// The file, as found under the directory it was compiled from.
+    pub path: PathBuf,
+    /// The key the file is known by (`Main`, `controls/Button`).
+    pub key: String,
+    /// 1-based, in characters.
+    pub line: u32,
+    pub column: u32,
+    pub severity: Severity,
+    pub message: String,
+}
+
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}: {}: {}",
+            self.path.display(),
+            self.line,
+            self.column,
+            self.severity,
+            self.message
+        )
+    }
 }
 
 /// Compiles every file under `dir` into a component source, against
@@ -68,6 +140,10 @@ pub fn compile(
 /// of one root may import a module whose `qmldir` is in another.
 /// Where two roots have a file of the same key the earlier root's is
 /// used, as the first import path that has a module is.
+///
+/// Each diagnostic is printed to stderr as one line
+/// (`path:line:column: severity: message`); [`compile_quiet`] hands
+/// them back instead.
 pub fn compile_dirs(
     dirs: &[&Path],
     engine: Option<&Engine>,
@@ -79,34 +155,41 @@ pub fn compile_dirs(
     }
 }
 
-pub(crate) fn compile_with_oracle<O: TypeOracle>(
-    dirs: &[&Path],
-    oracle: O,
-    on_error: OnError,
-) -> Result<MapSource, String> {
-    let named = || {
-        dirs.iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+/// [`compile_dirs`] printing nothing and failing no file: what the
+/// compile found comes back as values, for an application to show
+/// its own way, count, or hold to none. Each file has its own URL,
+/// `file://` and its absolute path, so `Qt.resolvedUrl` and every
+/// relative address in it resolve beside the file, as a QML file
+/// loaded from disk does. `Err` only when a directory cannot be read.
+#[cfg(feature = "dev-qml")]
+pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled, String> {
+    match engine {
+        Some(engine) => compile_found(dirs, EngineOracle::from_engine(engine)),
+        None => compile_found(dirs, QtTypeOracle),
+    }
+}
+
+pub(crate) fn compile_found<O: TypeOracle>(dirs: &[&Path], oracle: O) -> Result<Compiled, String> {
     let mut source = MapSource::new();
-    let mut errors = Vec::new();
+    let mut found = Vec::new();
     let files = ljos_compiler::compile_roots_with(dirs, oracle).map_err(|e| e.to_string())?;
     for r in files {
+        let path = r.path.clone().unwrap_or_else(|| PathBuf::from(&r.key));
         let diagnostics = match &r.result {
             Ok(c) => &c.diagnostics,
             Err(ds) => ds,
         };
-        for d in diagnostics {
-            eprintln!("{}: {:?}: {}", r.key, d.severity, d.message);
-        }
-        errors.extend(
-            diagnostics
-                .iter()
-                .filter(|d| d.severity == ljos_compiler::Severity::Error)
-                .map(|d| format!("{}: {}", r.key, d.message)),
-        );
+        found.extend(diagnostics.iter().map(|d| Diagnostic {
+            path: path.clone(),
+            key: r.key.clone(),
+            line: d.span.line,
+            column: d.span.column,
+            severity: match d.severity {
+                ljos_compiler::Severity::Error => Severity::Error,
+                ljos_compiler::Severity::Warning => Severity::Warning,
+            },
+            message: d.message.clone(),
+        }));
         if let Some(path) = &r.path {
             source.insert_url(r.key.clone(), file_url(path));
         }
@@ -117,14 +200,49 @@ pub(crate) fn compile_with_oracle<O: TypeOracle>(
             Err(ds) => source.insert_failure(r.key, ljos_compiler::failure_reason(&ds)),
         }
     }
-    if on_error == OnError::Fail && !errors.is_empty() {
-        return Err(format!(
-            "{} did not compile:\n{}",
-            named(),
-            errors.join("\n")
-        ));
+    Ok(Compiled {
+        source,
+        diagnostics: found,
+    })
+}
+
+/// [`compile_found`], printing each diagnostic, and with
+/// [`OnError::Fail`] failing on any error.
+pub(crate) fn compile_with_oracle<O: TypeOracle>(
+    dirs: &[&Path],
+    oracle: O,
+    on_error: OnError,
+) -> Result<MapSource, String> {
+    let compiled = compile_found(dirs, oracle)?;
+    for d in &compiled.diagnostics {
+        eprintln!("{d}");
     }
-    Ok(source)
+    checked(dirs, compiled, on_error)
+}
+
+/// `compiled`'s source, or with [`OnError::Fail`] and an error, every
+/// error a line.
+pub(crate) fn checked(
+    dirs: &[&Path],
+    compiled: Compiled,
+    on_error: OnError,
+) -> Result<MapSource, String> {
+    if on_error == OnError::Fail && compiled.has_errors() {
+        let named = dirs
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let errors = compiled
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!("{named} did not compile:\n{errors}"));
+    }
+    Ok(compiled.source)
 }
 
 /// The `file://` URL of `path`, made absolute against the working

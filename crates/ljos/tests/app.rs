@@ -186,7 +186,7 @@ fn a_file_that_does_not_compile_fails_only_where_it_is_made() {
         Ok(_) => panic!("a strict qml_dir compiled a broken file"),
         Err(err) => err,
     };
-    assert!(err.contains("Unused: "), "{err}");
+    assert!(err.contains("Unused.qml:2:8: error: "), "{err}");
 }
 
 #[test]

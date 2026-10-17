@@ -1,9 +1,13 @@
 //! A directory of QML compiled at start-up (`ljos::dev`, `App::qml_dir`)
 //! as an application uses it: each file at its own URL, so what it
-//! names by a relative address is found beside it.
+//! names by a relative address is found beside it, and what the
+//! compile found handed back as values.
 
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 
+use ljos::dev::{Diagnostic, Severity};
 use ljos::prelude::*;
 
 const MAIN: &str = r#"
@@ -121,4 +125,107 @@ fn a_base_url_stays_for_a_source_with_no_files() {
         .with_base_url("qrc:/app");
     let root = ljos::create_root(&engine, source, "Main").unwrap();
     assert_eq!(text(&engine, root, "icon"), "qrc:/app/icons/a.svg");
+}
+
+fn checked_dir() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "Warns.qml",
+        "import QtQuick\nItem {\n    property var x: nowhere\n}\n",
+    );
+    write(
+        dir.path(),
+        "Fails.qml",
+        "import QtQuick\nItem {\n    width: 1 +\n}\n",
+    );
+    write(dir.path(), "Fine.qml", "import QtQuick\nItem {}\n");
+    dir
+}
+
+#[test]
+fn a_compile_hands_back_what_it_found() {
+    let dir = checked_dir();
+    let engine = ljos::engine();
+    let found = ljos::dev::compile_quiet(&[dir.path()], Some(&engine)).unwrap();
+    assert!(found.has_errors());
+
+    let fails: Vec<&Diagnostic> = found
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert_eq!(fails.len(), 1, "{:?}", found.diagnostics);
+    let fail = fails[0];
+    assert_eq!(fail.key, "Fails");
+    assert_eq!(fail.path, dir.path().join("Fails.qml"));
+    assert_eq!((fail.line, fail.column), (4, 1));
+    assert_eq!(
+        fail.to_string(),
+        format!("{}:4:1: error: {}", fail.path.display(), fail.message)
+    );
+
+    let warns = found
+        .diagnostics
+        .iter()
+        .find(|d| d.key == "Warns")
+        .expect("a warning for the name looked up when it runs");
+    assert_eq!(warns.severity, Severity::Warning);
+    assert_eq!(warns.line, 3);
+    assert!(warns.to_string().contains(":3:"), "{warns}");
+
+    let source = found.source;
+    assert_eq!(source.keys().collect::<Vec<_>>(), ["Fine", "Warns"]);
+    let failures: Vec<(&str, &str)> = source.failures().collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].0, "Fails");
+    assert!(failures[0].1.starts_with("4:1: "), "{}", failures[0].1);
+    let debug = format!("{source:?}");
+    assert!(debug.contains("failures: [\"Fails\"]"), "{debug}");
+
+    let err = ljos::create_root(&engine, source, "Fails")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(&format!("{}:4:1: ", url_of(dir.path(), "Fails.qml"))),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_app_hands_its_diagnostics_to_the_application() {
+    let dir = checked_dir();
+    let seen: Rc<RefCell<Vec<Diagnostic>>> = Rc::default();
+    let into = seen.clone();
+    let (engine, root) = ljos::App::new("Test")
+        .qml_diagnostics(move |ds| into.borrow_mut().extend_from_slice(ds))
+        .qml_dir(dir.path(), "Fine")
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(engine.is_alive(root));
+    let seen = seen.borrow();
+    assert!(
+        seen.iter()
+            .any(|d| d.key == "Fails" && d.severity == Severity::Error)
+    );
+    assert!(
+        seen.iter()
+            .any(|d| d.key == "Warns" && d.severity == Severity::Warning)
+    );
+}
+
+#[test]
+fn an_app_that_fails_on_errors_has_shown_them_first() {
+    let dir = checked_dir();
+    let seen = Rc::new(RefCell::new(0));
+    let into = seen.clone();
+    let err = ljos::App::new("Test")
+        .qml_errors(ljos::dev::OnError::Fail)
+        .qml_diagnostics(move |ds| *into.borrow_mut() += ds.len())
+        .qml_dir(dir.path(), "Fine")
+        .unwrap_err();
+    assert!(err.contains("did not compile"), "{err}");
+    assert!(err.contains("Fails.qml:4:1: error: "), "{err}");
+    assert!(*seen.borrow() >= 2);
 }

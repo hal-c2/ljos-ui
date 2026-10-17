@@ -11,5 +11,6 @@
 //! the parser.
 
 pub use crate::compile::{
-    EngineOracle, EngineType, OnError, compile, compile_dir, compile_dir_with, compile_dirs,
+    Compiled, Diagnostic, EngineOracle, EngineType, OnError, Severity, compile, compile_dir,
+    compile_dir_with, compile_dirs, compile_quiet,
 };

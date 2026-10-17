@@ -52,6 +52,9 @@ type Module = Box<dyn Fn(&Engine)>;
 /// Handles one message from a worker thread, on the Engine thread.
 type MessageHandler<M> = Box<dyn FnMut(&Engine, M) + 'static>;
 
+#[cfg(feature = "dev-qml")]
+type DiagnosticsHandler = Box<dyn FnMut(&[crate::dev::Diagnostic])>;
+
 /// The start of an application: configuration, native modules,
 /// compiled components, context state and the root component.
 ///
@@ -65,6 +68,8 @@ pub struct App<M = ()> {
     shell_config: Option<crate::ShellConfig>,
     #[cfg(feature = "dev-qml")]
     qml_errors: crate::dev::OnError,
+    #[cfg(feature = "dev-qml")]
+    qml_diagnostics: Option<DiagnosticsHandler>,
     modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
@@ -99,6 +104,8 @@ impl App<()> {
             shell_config: None,
             #[cfg(feature = "dev-qml")]
             qml_errors: crate::dev::OnError::Record,
+            #[cfg(feature = "dev-qml")]
+            qml_diagnostics: None,
             modules: Vec::new(),
             source: None,
             root: None,
@@ -207,7 +214,8 @@ impl<M> App<M> {
     /// beside it, as a QML file loaded from disk does.
     ///
     /// A file with an error does not stop the application: it is
-    /// recorded, its diagnostics are printed, and making that
+    /// recorded, its diagnostics are printed (or handed to
+    /// [`qml_diagnostics`](App::qml_diagnostics)), and making that
     /// component (the root included) fails with the compiler's
     /// message, as a QML engine fails a component only where it is
     /// made. [`qml_errors`](App::qml_errors) set to
@@ -248,13 +256,35 @@ impl<M> App<M> {
         let dirs: Vec<std::path::PathBuf> =
             dirs.into_iter().map(|d| d.as_ref().to_owned()).collect();
         let dirs: Vec<&std::path::Path> = dirs.iter().map(|d| d.as_path()).collect();
-        self.source = Some(crate::dev::compile_dirs(
-            &dirs,
-            Some(&snapshot),
-            self.qml_errors,
-        )?);
+        let compiled = crate::dev::compile_quiet(&dirs, Some(&snapshot))?;
+        match &mut self.qml_diagnostics {
+            Some(handler) => handler(&compiled.diagnostics),
+            None => {
+                for d in &compiled.diagnostics {
+                    eprintln!("{d}");
+                }
+            }
+        }
+        self.source = Some(crate::compile::checked(&dirs, compiled, self.qml_errors)?);
         self.root = Some(root.into());
         Ok(self)
+    }
+
+    /// What a later [`qml_dir`](App::qml_dir) or
+    /// [`qml_dirs`](App::qml_dirs) does with what the compile found:
+    /// hands every diagnostic to `handler`, once, instead of printing
+    /// each to stderr. An application shows them its own way, counts
+    /// them, or keeps the warnings quiet. A file with an error is
+    /// still recorded (or, with [`qml_errors`](App::qml_errors) set to
+    /// fail, fails the call) after `handler` has seen it.
+    #[cfg(feature = "dev-qml")]
+    #[must_use]
+    pub fn qml_diagnostics(
+        mut self,
+        handler: impl FnMut(&[crate::dev::Diagnostic]) + 'static,
+    ) -> Self {
+        self.qml_diagnostics = Some(Box::new(handler));
+        self
     }
 
     /// What a later [`qml_dir`](App::qml_dir) or
@@ -312,6 +342,8 @@ impl<M> App<M> {
             shell_config,
             #[cfg(feature = "dev-qml")]
             qml_errors,
+            #[cfg(feature = "dev-qml")]
+            qml_diagnostics,
             modules,
             source,
             root,
@@ -325,6 +357,8 @@ impl<M> App<M> {
             shell_config,
             #[cfg(feature = "dev-qml")]
             qml_errors,
+            #[cfg(feature = "dev-qml")]
+            qml_diagnostics,
             modules,
             source,
             root,

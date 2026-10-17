@@ -4,7 +4,7 @@
 //! the bindings simple enough to run without JS.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -140,9 +140,9 @@ fn has_scheme(url: &str) -> bool {
 /// [`base`](Self::with_base_url); else `file:///{key}.qml`.
 #[derive(Default)]
 pub struct MapSource {
-    files: HashMap<String, Arc<CompiledFile>>,
+    files: BTreeMap<String, Arc<CompiledFile>>,
     bytecode: HashMap<String, Bytecode>,
-    failures: HashMap<String, String>,
+    failures: BTreeMap<String, String>,
     base: Option<String>,
     urls: HashMap<String, String>,
     keys_by_url: HashMap<String, String>,
@@ -178,6 +178,20 @@ impl MapSource {
         }
     }
 
+    /// The keys of the compiled files, in order.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.files.keys().map(String::as_str)
+    }
+
+    /// The files that did not compile, in key order, each with why
+    /// ([`insert_failure`](Self::insert_failure)): where in the file
+    /// the first error is and what it is (`4:1: Unexpected token`).
+    pub fn failures(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.failures
+            .iter()
+            .map(|(key, why)| (key.as_str(), why.as_str()))
+    }
+
     /// Notes that `key` is a file that did not compile, and why.
     pub fn insert_failure(&mut self, key: impl Into<String>, why: impl Into<String>) {
         self.failures.insert(key.into(), why.into());
@@ -199,8 +213,7 @@ impl MapSource {
                 .map(u32::to_le_bytes)
                 .map_err(|_| EngineError::Load("a pack entry over 4 GiB".to_owned()))
         };
-        let mut keys: Vec<&String> = self.files.keys().collect();
-        keys.sort();
+        let keys: Vec<&String> = self.files.keys().collect();
         let mut out = Vec::new();
         out.extend_from_slice(&len(keys.len())?);
         for key in keys {
@@ -251,6 +264,7 @@ impl std::fmt::Debug for MapSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MapSource")
             .field("files", &self.files.keys().collect::<Vec<_>>())
+            .field("failures", &self.failures.keys().collect::<Vec<_>>())
             .field("base", &self.base)
             .finish_non_exhaustive()
     }
@@ -689,6 +703,24 @@ mod tests {
         source.insert_url("Main", "file:///home/b/Main.qml");
         assert_eq!(source.key("file:///home/b/Main.qml"), "Main");
         assert_ne!(source.key("file:///home/a/Main.qml"), "Main");
+    }
+
+    #[test]
+    fn a_map_source_says_what_it_holds() {
+        // The compiled files are counted in `ljos`'s dev compile tests.
+        let mut source = MapSource::new();
+        source.insert_failure("d", "2:3: Expected token `}`");
+        source.insert_failure("c", "4:1: Unexpected token");
+        assert_eq!(source.keys().count(), 0);
+        assert_eq!(
+            source.failures().collect::<Vec<_>>(),
+            [
+                ("c", "4:1: Unexpected token"),
+                ("d", "2:3: Expected token `}`")
+            ]
+        );
+        let debug = format!("{source:?}");
+        assert!(debug.contains("failures: [\"c\", \"d\"]"), "{debug}");
     }
 
     #[test]

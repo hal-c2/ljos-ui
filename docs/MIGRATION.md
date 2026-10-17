@@ -369,6 +369,15 @@ pack says nothing of where its files were: a shipped application whose
 QML names its assets relatively says where they live with
 `MapSource::with_base_url`.
 
+The printed diagnostics are one line each,
+`path:line:column: severity: message`. An application that shows them
+its own way (a `--check` command, a log, a test that wants no
+warnings) takes them as values: `App::qml_diagnostics(handler)` before
+`qml_dir`, or `ljos::dev::compile_quiet(&dirs, Some(&engine))`, which
+returns the `MapSource` with every `Diagnostic` and prints nothing.
+`MapSource::keys()` and `MapSource::failures()` list what compiled and
+what did not, with where its first error is.
+
 What the builder does not cover stays reachable: `App::run_with`
 runs the same start and then hands over the shell's full `Setup`
 (the Engine, the `UiHandle` worker threads post through, the
