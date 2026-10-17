@@ -3629,6 +3629,8 @@ module QtQuick.Controls
 	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Basic/Frame.qml
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
+	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Basic/Label.qml
 	Menu QtQuick/Controls/Basic/Menu.qml
@@ -3660,6 +3662,7 @@ module QtQuick.Controls
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
 	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
@@ -3668,6 +3671,8 @@ module QtQuick.Controls
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
+	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick.Controls.Calendar Calendar
 		is uncreatable
@@ -3708,6 +3713,8 @@ module QtQuick.Controls.Basic
 	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Basic/Frame.qml
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
+	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Basic/Label.qml
 	Menu QtQuick/Controls/Basic/Menu.qml
@@ -3739,6 +3746,7 @@ module QtQuick.Controls.Basic
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
 	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
@@ -3747,6 +3755,8 @@ module QtQuick.Controls.Basic
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
+	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Basic/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
@@ -3780,6 +3790,10 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.Frame named
 	type QtQuick/Controls/Basic/GroupBox.qml GroupBox
 		prototype QtQuick.Templates.GroupBox named
+	type QtQuick/Controls/Basic/HorizontalHeaderView.qml HorizontalHeaderView
+		prototype QtQuick.Templates.HorizontalHeaderView named
+	type QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml HorizontalHeaderViewDelegate
+		prototype QtQuick.Templates.HeaderViewDelegate named
 	type QtQuick/Controls/Basic/ItemDelegate.qml ItemDelegate
 		prototype QtQuick.Templates.ItemDelegate named
 	type QtQuick/Controls/Basic/Label.qml Label
@@ -3838,6 +3852,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.TabBar named
 	type QtQuick/Controls/Basic/TabButton.qml TabButton
 		prototype QtQuick.Templates.TabButton named
+	type QtQuick/Controls/Basic/TableViewDelegate.qml TableViewDelegate
+		prototype QtQuick.Templates.TableViewDelegate named
 	type QtQuick/Controls/Basic/TextArea.qml TextArea
 		prototype QtQuick.Templates.TextArea named
 	type QtQuick/Controls/Basic/TextField.qml TextField
@@ -3854,6 +3870,10 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.TreeViewDelegate named
 	type QtQuick/Controls/Basic/Tumbler.qml Tumbler
 		prototype QtQuick.Templates.Tumbler named
+	type QtQuick/Controls/Basic/VerticalHeaderView.qml VerticalHeaderView
+		prototype QtQuick.Templates.VerticalHeaderView named
+	type QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml VerticalHeaderViewDelegate
+		prototype QtQuick.Templates.HeaderViewDelegate named
 	type QtQuick/Controls/Basic/WeekNumberColumn.qml WeekNumberColumn
 		prototype QtQuick.Templates.AbstractWeekNumberColumn named
 
@@ -3882,6 +3902,8 @@ module QtQuick.Controls.Fusion
 	Frame QtQuick/Controls/Basic/Frame.qml
 	Fusion QtQuick.Controls.Fusion.Fusion
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
+	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Basic/Label.qml
 	Menu QtQuick/Controls/Basic/Menu.qml
@@ -3913,6 +3935,7 @@ module QtQuick.Controls.Fusion
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
 	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Fusion/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
@@ -3921,6 +3944,8 @@ module QtQuick.Controls.Fusion
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
+	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Fusion/Button.qml Button
 		prototype QtQuick.Templates.Button named
@@ -3969,6 +3994,8 @@ module QtQuick.Controls.Material
 	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Basic/Frame.qml
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
+	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Material/Label.qml
 	Material QtQuick.Controls.Material.Material
@@ -4001,6 +4028,7 @@ module QtQuick.Controls.Material
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
 	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Material/TextField.qml
 	ToolBar QtQuick/Controls/Material/ToolBar.qml
@@ -4009,6 +4037,8 @@ module QtQuick.Controls.Material
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
+	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
+	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Material/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
@@ -4118,6 +4148,8 @@ module QtQuick.Controls.Universal
 	Drawer QtQuick/Controls/Basic/Drawer.qml
 	Frame QtQuick/Controls/Basic/Frame.qml
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
+	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
+	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Universal/Label.qml
 	Menu QtQuick/Controls/Basic/Menu.qml
@@ -4149,6 +4181,7 @@ module QtQuick.Controls.Universal
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
 	TabBar QtQuick/Controls/Basic/TabBar.qml
 	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Universal/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
@@ -4158,6 +4191,8 @@ module QtQuick.Controls.Universal
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	Universal QtQuick.Controls.Universal.Universal
+	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
+	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Universal/ApplicationWindow.qml ApplicationWindow
 		prototype QtQuick.Templates.ApplicationWindow named
@@ -4864,6 +4899,8 @@ module QtQuick.Templates
 	Drawer QtQuick.Templates.Drawer
 	Frame QtQuick.Templates.Frame
 	GroupBox QtQuick.Templates.GroupBox
+	HeaderViewDelegate QtQuick.Templates.HeaderViewDelegate
+	HorizontalHeaderView QtQuick.Templates.HorizontalHeaderView
 	ItemDelegate QtQuick.Templates.ItemDelegate
 	Label QtQuick.Templates.Label
 	Menu QtQuick.Templates.Menu
@@ -4894,6 +4931,7 @@ module QtQuick.Templates
 	SwitchDelegate QtQuick.Templates.SwitchDelegate
 	TabBar QtQuick.Templates.TabBar
 	TabButton QtQuick.Templates.TabButton
+	TableViewDelegate QtQuick.Templates.TableViewDelegate
 	TextArea QtQuick.Templates.TextArea
 	TextField QtQuick.Templates.TextField
 	ToolBar QtQuick.Templates.ToolBar
@@ -4902,6 +4940,7 @@ module QtQuick.Templates
 	ToolTip QtQuick.Templates.ToolTip
 	TreeViewDelegate QtQuick.Templates.TreeViewDelegate
 	Tumbler QtQuick.Templates.Tumbler
+	VerticalHeaderView QtQuick.Templates.VerticalHeaderView
 	type QtQuick.Templates.AbstractButton AbstractButton
 		prototype QtQuick.Templates.Control named
 		enum Display IconOnly=0 TextOnly=1 TextBesideIcon=2 TextUnderIcon=3
@@ -5394,6 +5433,18 @@ module QtQuick.Templates
 		signal labelChanged
 		signal implicitLabelWidthChanged
 		signal implicitLabelHeightChanged
+	type QtQuick.Templates.HeaderViewDelegate HeaderViewDelegate
+		prototype QtQuick.Templates.TableViewDelegate named
+		prop orientation Qt::Orientation readonly
+		prop headerView QtQuick.TableView named pointer required
+		prop model QtQml.var named required
+		signal orientationChanged
+		signal headerViewChanged
+		signal modelChanged
+	type QtQuick.Templates.HorizontalHeaderView HorizontalHeaderView
+		prototype QtQuick.Templates.HeaderViewBase
+		prop movableColumns QtQml.bool named
+		signal movableColumnsChanged
 	type QtQuick.Templates.ItemDelegate ItemDelegate
 		prototype QtQuick.Templates.AbstractButton named
 		prop highlighted QtQml.bool named
@@ -5936,6 +5987,16 @@ module QtQuick.Templates
 		signal positionChanged
 	type QtQuick.Templates.TabButton TabButton
 		prototype QtQuick.Templates.AbstractButton named
+	type QtQuick.Templates.TableViewDelegate TableViewDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+		prop tableView QtQuick.TableView named pointer required
+		prop current QtQml.bool named required
+		prop selected QtQml.bool named required
+		prop editing QtQml.bool named required
+		signal tableViewChanged
+		signal currentChanged
+		signal selectedChanged
+		signal editingChanged
 	type QtQuick.Templates.TextArea TextArea
 		prototype QtQuick.TextEdit named
 		prop background QtQml.QtObject named pointer
@@ -6073,6 +6134,10 @@ module QtQuick.Templates
 		signal movingChanged
 		signal flickDecelerationChanged
 		method positionViewAtIndex
+	type QtQuick.Templates.VerticalHeaderView VerticalHeaderView
+		prototype QtQuick.Templates.HeaderViewBase
+		prop movableRows QtQml.bool named
+		signal movableRowsChanged
 	type QtQuick.Templates.ButtonIcon ButtonIcon
 		is uncreatable
 		prop name QtQml.string named
@@ -6161,6 +6226,11 @@ module QtQuick.Templates
 		signal hoveredChanged
 		signal implicitIndicatorWidthChanged
 		signal implicitIndicatorHeightChanged
+	type QtQuick.Templates.HeaderViewBase HeaderViewBase
+		prototype QtQuick.TableView named
+		is uncreatable
+		prop textRole QtQml.string named
+		signal textRoleChanged
 	type QtQuick.Templates.OverlayAttached OverlayAttached
 		is uncreatable
 		prop overlay QtQml.QtObject named pointer readonly

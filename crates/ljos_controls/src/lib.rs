@@ -32,6 +32,7 @@ mod dial;
 mod dialog;
 mod focus;
 mod group;
+mod header_view;
 mod icon_label;
 mod inherit;
 mod label;
@@ -79,6 +80,9 @@ pub use delegates::{CheckDelegate, RadioDelegate, SwitchDelegate, TreeViewDelega
 pub use dial::Dial;
 pub use dialog::{Dialog, DialogButtonBox, DialogButtonBoxAttached};
 pub use group::{ButtonGroup, ButtonGroupAttached};
+pub use header_view::{
+    HeaderViewBase, HeaderViewDelegate, HorizontalHeaderView, TableViewDelegate, VerticalHeaderView,
+};
 pub use label::Label;
 pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use menu_bar::{MenuBar, MenuBarItem};
@@ -200,6 +204,7 @@ pub fn register(engine: &Engine) {
     text_control::register(engine);
     spin_box::register(engine);
     value_controls::register(engine);
+    header_view::register(engine);
     container::register(engine);
     calendar::register_all(engine);
 

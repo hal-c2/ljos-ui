@@ -1908,7 +1908,7 @@ mod tests {
         let (libraries, bad) = StyleLibrary::embedded();
         assert!(bad.is_empty(), "{bad:?}");
         let basic = libraries[BASIC].type_names();
-        assert_eq!(basic.len(), 54);
+        assert_eq!(basic.len(), 59);
         for directory in [MATERIAL, FUSION, UNIVERSAL] {
             for name in libraries[directory].type_names() {
                 assert!(

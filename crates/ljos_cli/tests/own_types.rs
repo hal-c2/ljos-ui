@@ -1087,6 +1087,48 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.Controls.Universal.TextArea",
         "`TextArea.flickable` is not there",
     ),
+    // The header delegates, which Qt's table gives no default property
+    // although the TableViewDelegate they are built on has one.
+    (
+        "QtQuick.Controls.HorizontalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.VerticalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Basic.HorizontalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Basic.VerticalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Fusion.HorizontalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Fusion.VerticalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Material.HorizontalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Material.VerticalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Universal.HorizontalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Universal.VerticalHeaderViewDelegate",
+        "a style file here, which has the default property of the control it is",
+    ),
     // `ObjectModel.index` on an item, and the rest of what Qt's models
     // attach to the items they make.
     (
