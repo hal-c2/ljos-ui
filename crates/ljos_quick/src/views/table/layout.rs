@@ -548,7 +548,7 @@ fn place_of_cell(st: &TableState, index: usize) -> Option<Vec<(i32, i32)>> {
     let cols = st.cells.columns();
     let line = st.cells.line(index / cols.max(1))?;
     let mut place: Vec<(i32, i32)> = line.path.iter().map(|r| (*r as i32, 0)).collect();
-    place.last_mut()?.1 = (index % cols.max(1)) as i32;
+    place.last_mut()?.1 = st.cells.logical_column(index % cols.max(1)) as i32;
     Some(place)
 }
 

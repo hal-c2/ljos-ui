@@ -6,6 +6,12 @@
 //! `(row, column)` is row `row * columns + column` of this model, and has
 //! the tree's roles and `row` and `column`.
 //!
+//! After `moveRow` and `moveColumn` the view's rows and columns are in
+//! another order than the model's: [`Cells::line`] and [`Cells::row_of`]
+//! take and give the view's row, and a cell's data and its `row` and
+//! `column` are the model's. Rows that come or go put the rows back in
+//! the model's order.
+//!
 //! When the rows in sight change (a row is expanded or collapsed, the
 //! tree gains or loses rows) the old rows and the new ones are merged by
 //! path, and the rows that went and came are told as removals and
@@ -39,7 +45,24 @@ pub(crate) struct Cells {
     root: RefCell<Vec<usize>>,
     columns: Cell<usize>,
     roles: RefCell<Vec<Atom>>,
+    /// The row of `lines` each row of the view shows; empty: in order.
+    row_order: RefCell<Vec<usize>>,
+    /// The model's column each column of the view shows; empty: in order.
+    column_order: RefCell<Vec<usize>>,
     listeners: ModelListeners,
+}
+
+/// What `order` has at `visual`, the identity when it is empty.
+fn logical(order: &RefCell<Vec<usize>>, visual: usize) -> usize {
+    order.borrow().get(visual).copied().unwrap_or(visual)
+}
+
+fn visual(order: &RefCell<Vec<usize>>, logical: usize) -> usize {
+    order
+        .borrow()
+        .iter()
+        .position(|&l| l == logical)
+        .unwrap_or(logical)
 }
 
 /// A list model as a tree of one level, so a tree view of a list shows
@@ -181,8 +204,12 @@ impl Cells {
         self.tree.borrow().clone()
     }
 
+    /// The row of the tree row `row` of the view shows.
     pub(crate) fn line(&self, row: usize) -> Option<Line> {
-        self.lines.borrow().get(row).cloned()
+        self.lines
+            .borrow()
+            .get(logical(&self.row_order, row))
+            .cloned()
     }
 
     pub(crate) fn line_count(&self) -> usize {
@@ -199,6 +226,80 @@ impl Cells {
             .borrow()
             .binary_search_by(|l| l.path.as_slice().cmp(path))
             .ok()
+            .map(|l| visual(&self.row_order, l))
+    }
+
+    /// The model's column column `column` of the view shows.
+    pub(crate) fn logical_column(&self, column: usize) -> usize {
+        logical(&self.column_order, column)
+    }
+
+    /// The view's column that shows the model's column `column`.
+    pub(crate) fn visual_column(&self, column: usize) -> usize {
+        visual(&self.column_order, column)
+    }
+
+    /// Moves the view's row (`columns`: column) `from` to `to`, and tells
+    /// every cell its data changed. What moved: the model's row or column,
+    /// where it was in the view and where it is now; nothing for a move
+    /// out of range or in place.
+    pub(crate) fn move_line(
+        &self,
+        engine: &Engine,
+        columns: bool,
+        from: usize,
+        to: usize,
+    ) -> Vec<(usize, usize, usize)> {
+        let (order, count) = if columns {
+            (&self.column_order, self.columns.get())
+        } else {
+            (&self.row_order, self.line_count())
+        };
+        if from == to || from >= count || to >= count {
+            return Vec::new();
+        }
+        let before: Vec<usize> = (0..count).map(|v| logical(order, v)).collect();
+        let mut after = before.clone();
+        let moved = after.remove(from);
+        after.insert(to, moved);
+        let mut changed: Vec<(usize, usize, usize)> = (0..count)
+            .filter_map(|v| (before[v] != after[v]).then_some(after[v]))
+            .map(|l| {
+                let old = before.iter().position(|&x| x == l).unwrap_or(l);
+                let new = after.iter().position(|&x| x == l).unwrap_or(l);
+                (l, old, new)
+            })
+            .collect();
+        changed.sort_unstable();
+        *order.borrow_mut() = after;
+        self.all_changed(engine);
+        changed
+    }
+
+    /// Puts the view's rows (`columns`: columns) back in the model's order.
+    pub(crate) fn clear_order(&self, engine: &Engine, columns: bool) {
+        let order = if columns {
+            &self.column_order
+        } else {
+            &self.row_order
+        };
+        if !order.take().is_empty() {
+            self.all_changed(engine);
+        }
+    }
+
+    fn all_changed(&self, engine: &Engine) {
+        let count = self.row_count();
+        if count > 0 {
+            self.listeners.emit(
+                engine,
+                &ModelChange::DataChanged {
+                    first: 0,
+                    count,
+                    roles: Vec::new(),
+                },
+            );
+        }
     }
 
     pub(crate) fn root(&self) -> Vec<usize> {
@@ -216,6 +317,8 @@ impl Cells {
             old.unsubscribe(self.subscription.take());
         }
         self.expanded.borrow_mut().clear();
+        self.row_order.borrow_mut().clear();
+        self.column_order.borrow_mut().clear();
         *self.root.borrow_mut() = root;
         if let Some(tree) = &tree {
             let me: Weak<Cells> = Rc::downgrade(self);
@@ -234,8 +337,10 @@ impl Cells {
     /// Reads the columns and roles of the tree again.
     fn measure(&self) {
         let tree = self.tree();
-        self.columns
-            .set(tree.as_ref().map_or(0, |t| t.column_count()));
+        let columns = tree.as_ref().map_or(0, |t| t.column_count());
+        if columns != self.columns.replace(columns) {
+            self.column_order.borrow_mut().clear();
+        }
         let mut roles = tree.map(|t| t.role_names()).unwrap_or_default();
         for extra in ["row", "column"] {
             if !roles.iter().any(|r| &**r == extra) {
@@ -376,6 +481,8 @@ impl Cells {
         if cols == 0 || changes.is_empty() {
             return;
         }
+        // The changes are told in the model's order.
+        let reordered = !self.row_order.take().is_empty();
         for c in &changes {
             self.listeners.emit(engine, c);
         }
@@ -385,7 +492,11 @@ impl Cells {
             &ModelChange::DataChanged {
                 first: 0,
                 count: rows * cols,
-                roles: vec![Atom::intern("row")],
+                roles: if reordered {
+                    Vec::new()
+                } else {
+                    vec![Atom::intern("row")]
+                },
             },
         );
     }
@@ -405,6 +516,8 @@ impl Cells {
                 if !root_there {
                     self.root.borrow_mut().clear();
                 }
+                self.row_order.borrow_mut().clear();
+                self.column_order.borrow_mut().clear();
                 self.measure();
                 *self.lines.borrow_mut() = self.walk();
                 self.listeners.emit(engine, &ModelChange::ModelReset);
@@ -450,10 +563,15 @@ impl Cells {
         }
     }
 
-    /// The row and column of cell `index`.
+    /// The row of `lines` and the model's column of cell `index`.
     fn cell(&self, index: usize) -> Option<(usize, usize)> {
         let cols = self.columns.get();
-        (cols > 0).then(|| (index / cols, index % cols))
+        (cols > 0).then(|| {
+            (
+                logical(&self.row_order, index / cols),
+                logical(&self.column_order, index % cols),
+            )
+        })
     }
 }
 

@@ -2596,6 +2596,8 @@ module QtQuick
 		signal resizableRowsChanged
 		signal editTriggersChanged
 		signal selectionModeChanged
+		signal columnMoved logicalIndex oldVisualIndex newVisualIndex
+		signal rowMoved logicalIndex oldVisualIndex newVisualIndex
 		signal layoutChanged
 		method forceLayout
 		method itemAtCell
@@ -2623,6 +2625,10 @@ module QtQuick
 		method positionViewAtIndex
 		method edit
 		method closeEditor
+		method moveColumn
+		method moveRow
+		method clearColumnReordering
+		method clearRowReordering
 	type QtQuick.TapHandler TapHandler
 		prototype QtQml.QtObject named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3

@@ -570,6 +570,25 @@ fn in_range(st: &TableState, row: i64, column: i64) -> Option<(usize, usize)> {
     (row < st.cells.line_count() && column < st.cells.columns()).then_some((row, column))
 }
 
+/// Moves the view's row or column `source` to `destination`; a move out
+/// of range is ignored, as on qml6.
+fn reorder(cx: &Cx, columns: bool, source: i32, destination: i32) {
+    let (e, me) = (cx.engine, cx.this);
+    let (Some(st), Ok(from), Ok(to)) = (
+        state_of(e, me),
+        usize::try_from(source),
+        usize::try_from(destination),
+    ) else {
+        return;
+    };
+    let moved = st.cells.move_line(e, columns, from, to);
+    let signal = if columns { "columnMoved" } else { "rowMoved" };
+    for (logical, old, new) in moved {
+        let args = [logical, old, new].map(|i| Value::Int(i as i32));
+        warn(e, signal, e.emit_by_name(me, signal, &args).map(drop));
+    }
+}
+
 /// The model index of cell `(row, column)`.
 fn index_of_cell(e: &Engine, st: &TableState, row: usize, column: usize) -> Value {
     let Some(line) = st.cells.line(row) else {
@@ -577,7 +596,7 @@ fn index_of_cell(e: &Engine, st: &TableState, row: usize, column: usize) -> Valu
     };
     let mut place: Vec<(i32, i32)> = line.path.iter().map(|r| (*r as i32, 0)).collect();
     if let Some(last) = place.last_mut() {
-        last.1 = column as i32;
+        last.1 = st.cells.logical_column(column) as i32;
     }
     e.model_index(st.model.get(), &place)
 }
@@ -586,7 +605,7 @@ fn index_of_cell(e: &Engine, st: &TableState, row: usize, column: usize) -> Valu
 fn cell_of_index(e: &Engine, st: &TableState, index: &Value) -> Option<(usize, usize)> {
     let place = e.model_index_place(index, st.model.get())?;
     let path: Vec<usize> = place.iter().map(|(r, _)| *r as usize).collect();
-    let column = place.last()?.1 as usize;
+    let column = st.cells.visual_column(place.last()?.1 as usize);
     Some((st.cells.row_of(&path)?, column))
 }
 
@@ -876,6 +895,42 @@ impl TableView {
     }
 
     /// The layout changed.
+    /// `moveColumn(source, destination)`: shows the view's column `source`
+    /// at `destination`, the columns between shifting over. The model is
+    /// not changed: `index()` and `cellAtIndex()` map between the two.
+    #[qml(invokable, name = "moveColumn")]
+    fn move_column(cx: &Cx, source: i32, destination: i32) {
+        reorder(cx, true, source, destination);
+    }
+
+    #[qml(invokable, name = "moveRow")]
+    fn move_row(cx: &Cx, source: i32, destination: i32) {
+        reorder(cx, false, source, destination);
+    }
+
+    /// The columns in the model's order again; nothing is told.
+    #[qml(invokable, name = "clearColumnReordering")]
+    fn clear_column_reordering(cx: &Cx) {
+        if let Some(st) = state_of(cx.engine, cx.this) {
+            st.cells.clear_order(cx.engine, true);
+        }
+    }
+
+    #[qml(invokable, name = "clearRowReordering")]
+    fn clear_row_reordering(cx: &Cx) {
+        if let Some(st) = state_of(cx.engine, cx.this) {
+            st.cells.clear_order(cx.engine, false);
+        }
+    }
+
+    /// Told for each column a `moveColumn` put somewhere else, in the
+    /// model's order.
+    #[qml(signal, name = "columnMoved")]
+    fn column_moved(logical_index: i32, old_visual_index: i32, new_visual_index: i32);
+
+    #[qml(signal, name = "rowMoved")]
+    fn row_moved(logical_index: i32, old_visual_index: i32, new_visual_index: i32);
+
     #[qml(signal, name = "layoutChanged")]
     fn layout_changed();
 }
