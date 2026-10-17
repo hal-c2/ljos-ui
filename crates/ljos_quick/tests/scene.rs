@@ -59,6 +59,42 @@ fn a_second_frame_with_nothing_to_do_is_idle() {
     assert_eq!(s.render_tree().content_rebuilds(), rebuilds + 1);
 }
 
+/// A frame where one item of many changes colour or moves leaves the
+/// paint effects of the rest alone: it does not look at every item to
+/// tell which are on screen, as it must when one comes or goes.
+#[test]
+fn a_frame_that_shows_the_same_items_does_not_look_at_them_all() {
+    let e = engine();
+    let root = rect_item(&e, None, (0.0, 0.0, 400.0, 400.0), rgb(200, 0, 0));
+    for i in 0..200 {
+        let x = f64::from(i % 20) * 20.0;
+        let y = f64::from(i / 20) * 20.0;
+        rect_item(&e, Some(root), (x, y, 10.0, 10.0), rgb(0, 0, 200));
+    }
+    let busy = rect_item(&e, Some(root), (0.0, 300.0, 10.0, 10.0), rgb(0, 200, 0));
+    let mut s = scene(&e, root, 400.0, 400.0);
+    frame(&mut s, &e);
+    let looked = s.content_effects_looked_at();
+    assert!(looked >= 202);
+    for i in 1..=30u32 {
+        let c = if i % 2 == 0 {
+            rgb(0, 200, 0)
+        } else {
+            rgb(0, 0, 9)
+        };
+        set(&e, busy, "color", c);
+        set(&e, busy, "x", Value::Real(f64::from(i)));
+        assert!(s.frame(&e, Time::from_millis(16 * u64::from(i))).changed);
+    }
+    assert_eq!(s.content_effects_looked_at(), looked);
+    // One that comes into view is matched; the rest still are not redrawn.
+    let rebuilds = s.render_tree().content_rebuilds();
+    rect_item(&e, Some(root), (390.0, 390.0, 10.0, 10.0), rgb(9, 9, 9));
+    s.frame(&e, Time::from_millis(600));
+    assert!(s.content_effects_looked_at() > looked);
+    assert_eq!(s.render_tree().content_rebuilds(), rebuilds + 1);
+}
+
 #[test]
 fn an_item_that_only_moves_reads_only_where_it_is() {
     let e = engine();

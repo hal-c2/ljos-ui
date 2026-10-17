@@ -356,6 +356,14 @@ pub struct QuickScene {
     scale_factor: f32,
     frame: u64,
     snapshot: Option<Arc<FrameSnapshot>>,
+    /// The painted nodes and the item generation the content effects were
+    /// last matched to. A frame that changes what nodes paint but not
+    /// which leaves them as they are, without a look at every item.
+    content_synced: (Vec<NodeId>, u64),
+    /// Moves when an item joins or leaves the scene, or an effect is read.
+    items_gen: u64,
+    /// Items the content effects were matched against, for tests.
+    content_looked: u64,
     /// The UI thread's text engine, and the font generation the Texts
     /// were last laid out under.
     text: SharedTextEngine,
@@ -430,6 +438,9 @@ impl QuickScene {
             scale_factor: 1.0,
             frame: 0,
             snapshot: None,
+            content_synced: (Vec::new(), 0),
+            items_gen: 1,
+            content_looked: 0,
             text_generation: text::text_engine().borrow().generation(),
             text: text::text_engine(),
             timers: None,
@@ -645,6 +656,12 @@ impl QuickScene {
 
     pub fn item_of(&self, node: NodeId) -> Option<ObjectId> {
         self.by_node.get(node).copied()
+    }
+
+    /// Items the frames so far matched paint effects against.
+    #[doc(hidden)]
+    pub fn content_effects_looked_at(&self) -> u64 {
+        self.content_looked
     }
 
     /// The last composed snapshot.
@@ -964,6 +981,7 @@ impl QuickScene {
         }
         let anchors = Rc::new(RefCell::new(AnchorState::default()));
         let inherit = Rc::new(RefCell::new(Inherit::default()));
+        self.items_gen += 1;
         self.entries.insert(
             obj,
             Entry {
@@ -1018,6 +1036,7 @@ impl QuickScene {
         let Some(entry) = self.entries.remove(&obj) else {
             return;
         };
+        self.items_gen += 1;
         let g = engine.graph();
         for n in entry.effects.iter().chain(entry.content_effect.iter()) {
             let _ = g.dispose(*n);
@@ -1102,7 +1121,10 @@ impl QuickScene {
                         }
                     }
                     Some(ce) => {
-                        ce.parent = Some(p);
+                        if ce.parent != Some(p) {
+                            ce.parent = Some(p);
+                            self.items_gen += 1;
+                        }
                         let node = ce.node;
                         let at = self
                             .tree
@@ -1205,6 +1227,7 @@ impl QuickScene {
                 self.tree.mark_content_dirty(e.node);
                 let p = match p {
                     Paint::Effect(fx) => {
+                        self.items_gen += 1;
                         self.effect_base.insert(obj, (fx.clone(), None));
                         Paint::Effect(fx)
                     }
@@ -1212,6 +1235,7 @@ impl QuickScene {
                     // not live keeps it, and one that is takes it again
                     // only when the source changed.
                     Paint::Source(src) => {
+                        self.items_gen += 1;
                         let seen = self.source_base.remove(&obj).and_then(|(_, seen)| seen);
                         let shown = src.with_picture(seen.as_ref().and_then(|s| s.2.clone()));
                         self.source_base.insert(obj, (src, seen));
@@ -1411,6 +1435,14 @@ impl QuickScene {
     /// Installs paint effects for painting items in `snap` and drops them
     /// for items that left it. Returns whether any were installed.
     fn sync_content_effects(&mut self, engine: &Engine, snap: &FrameSnapshot) -> bool {
+        let (nodes, generation) = &self.content_synced;
+        if *generation == self.items_gen
+            && nodes.len() == snap.items.len()
+            && nodes.iter().zip(&snap.items).all(|(n, i)| *n == i.node)
+        {
+            return false;
+        }
+        self.content_looked += self.entries.len() as u64;
         let mut visible: FxHashSet<ObjectId> = snap
             .items
             .iter()
@@ -1470,6 +1502,12 @@ impl QuickScene {
                 _ => {}
             }
         }
+        // What failed is tried again on the next frame.
+        self.content_synced = if failed.is_empty() {
+            (snap.items.iter().map(|i| i.node).collect(), self.items_gen)
+        } else {
+            (Vec::new(), 0)
+        };
         for err in failed {
             engine.log(
                 LogLevel::Warning,
