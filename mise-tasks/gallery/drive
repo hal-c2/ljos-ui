@@ -12,7 +12,13 @@ if [ ${#ids[@]} -eq 0 ]; then
   mapfile -t ids < <(python3 -c 'import json, sys; [print(e["id"]) for e in json.load(open(sys.argv[1])) if e.get("renders")]' "$report")
 fi
 
-cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+# The build gallery:run then runs (GALLERY_BUILT), in its profile.
+profile="${GALLERY_PROFILE:-debug}"
+if [ "$profile" = debug ]; then
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+else
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --profile "$profile"
+fi
 trap '"$root/scripts/cua-sandbox.sh" stop' EXIT
 GALLERY_BUILT=1 python3 "$root/scripts/gallery-drive.py" "$out" "${ids[@]}"
 echo "per example: $out/<id>/report.txt and screenshots; all of it: $out/summary.txt"
