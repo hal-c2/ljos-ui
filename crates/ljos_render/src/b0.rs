@@ -1366,11 +1366,12 @@ impl RenderBackend for EpaintBackend {
             egui::Vec2::new(snap.viewport.width() as f32, snap.viewport.height() as f32),
         );
         sink.shapes.clear();
+        sink.shapes.reserve(snap.items.len());
         sink.backdrop = None;
         // Nodes to draw, in paint order, each with its clip rectangle. Shapes
         // are emitted after the loop, once the glyph atlas is complete: adding
         // a glyph can grow the atlas, which moves every texture coordinate.
-        let mut order: Vec<Drawn> = Vec::new();
+        let mut order: Vec<Drawn> = Vec::with_capacity(snap.items.len());
         let mut has_glyphs = false;
 
         for item in &snap.items {

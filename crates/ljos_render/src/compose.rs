@@ -224,9 +224,15 @@ impl RenderTree {
 
         let root = self.root;
         self.refresh_bounds(root);
+        // About as many as last time: a frame that moves every node pays
+        // for its list once, not for each doubling on the way to it.
+        let (items, clips) = self
+            .cache
+            .as_ref()
+            .map_or((0, 0), |c| (c.snapshot.items.len(), c.snapshot.clips.len()));
         let mut walk = Walk {
-            items: Vec::new(),
-            clips: Vec::new(),
+            items: Vec::with_capacity(items),
+            clips: Vec::with_capacity(clips),
             stats: ComposeStats::default(),
             frame,
         };

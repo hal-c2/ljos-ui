@@ -169,6 +169,7 @@ pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, areas: &[Rect], pixels_per
     let tallest = areas.iter().map(Rect::height).fold(0.0, f32::max);
     let mut near = Vec::new();
     let all = std::mem::take(shapes);
+    shapes.reserve(all.len());
     for s in all {
         let reach = extent(&s, pixels_per_point);
         near.clear();

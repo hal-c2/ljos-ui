@@ -457,3 +457,21 @@ fn display_list_bounds_extend_the_cull_box() {
     // Still outside by node size, but the shadow's left edge (-20) reaches in.
     assert!(order(&mut t, VP).contains(&n));
 }
+
+#[test]
+fn a_frame_that_moves_every_node_lists_them_without_growing_the_list() {
+    let mut t = RenderTree::new();
+    let r = t.root();
+    let nodes: Vec<_> = (0..200)
+        .map(|i| sized(&mut t, r, 0.0, f64::from(i) * 0.5, 4.0, 0.5))
+        .collect();
+    let first = t.compose(VP, 1);
+    assert_eq!(first.items.len(), 201);
+    for (i, &n) in nodes.iter().enumerate() {
+        t.set_pos(n, 1.0, i as f64 * 0.5);
+    }
+    let moved = t.compose(VP, 2);
+    assert!(!Arc::ptr_eq(&first, &moved));
+    // Sized from the last frame: one allocation, not one per doubling.
+    assert_eq!(moved.items.capacity(), moved.items.len());
+}
