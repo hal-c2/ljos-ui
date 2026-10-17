@@ -456,3 +456,37 @@ fn a_flush_with_a_broken_save_reports_it_and_is_answered() {
         "{reports:?}"
     );
 }
+
+#[test]
+fn a_list_view_and_its_model_are_kept_and_nothing_is_left_behind() {
+    const LIST: &str = r##"import QtQuick
+Rectangle {
+  objectName: "root"
+  width: 200; height: 100
+  color: "#646464"
+  ListView {
+    objectName: "list"
+    anchors.fill: parent
+    orientation: ListView.Horizontal
+    delegate: Rectangle {
+      required property string city
+      width: 100; height: 100
+    }
+    model: ListModel {
+      ListElement { city: "Oslo" }
+      ListElement { city: "Tokyo" }
+      ListElement { city: "Lima" }
+    }
+  }
+}
+"##;
+    let mut app = app(&[("Main.qml", LIST)]);
+    app.save("Main.qml", &LIST.replace("#646464", "#123456"));
+    reloaded(&app.wait());
+    let objects = app.engine.object_count();
+    for colour in ["#654321", "#123456", "#654321"] {
+        app.save("Main.qml", &LIST.replace("#646464", colour));
+        reloaded(&app.wait());
+        assert_eq!(app.engine.object_count(), objects);
+    }
+}
