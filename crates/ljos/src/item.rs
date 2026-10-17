@@ -17,6 +17,11 @@
 //!   click, say), as `forceActiveFocus()` does in QML.
 //! - [`register_wheel_item`]: what it does with a [`WheelEvent`] over it.
 //!
+//! A picture the item draws is an [`ImageHandle`] made from its pixels
+//! ([`ImageHandle::from_straight`]) and drawn with
+//! [`DisplayListBuilder::image`]; [`place_image`] fits it to the item as an
+//! `Image`'s `fillMode` would ([`ImageFit`], [`ImageAlign`]).
+//!
 //! A `TextEdit` that colours its text takes a [`Highlighter`] instead:
 //! [`set_highlighter`].
 //!
@@ -72,6 +77,9 @@ pub use ljos_render::{
     Border, Brush, Decorations, DisplayList, DisplayListBuilder, DrawOp, FillRule, GlyphRun,
     GradientStop, LinearGradient, Paint, PathStyle, PositionedGlyph, Rgba, ShapeStyle, Spread,
     TextAlign, kurbo, peniko,
+};
+pub use ljos_render::{
+    ImageAlign, ImageError, ImageFit, ImageHandle, ImagePlacement, painted_size, place_image,
 };
 pub use ljos_text::{
     ElideMode, FontMetrics, LayoutParams, Line, LineRun, TextEngine, TextLayout, TextStyle,

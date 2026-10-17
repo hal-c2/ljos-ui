@@ -7,8 +7,9 @@
 use std::rc::Rc;
 
 use ljos::item::{
-    self, DisplayListBuilder, DrawOp, FocusReason, HighlightSpan, Highlighter, ItemPaint, KeyEvent,
-    KeyItem, KeyKind, LayoutParams, Rgba, TextEngine, TextStyle, WheelEvent, WheelItem, key, kurbo,
+    self, DisplayListBuilder, DrawOp, FocusReason, HighlightSpan, Highlighter, ImageAlign,
+    ImageFit, ImageHandle, ItemPaint, KeyEvent, KeyItem, KeyKind, LayoutParams, Rgba, TextEngine,
+    TextStyle, WheelEvent, WheelItem, key, kurbo, place_image,
 };
 use ljos::prelude::*;
 use ljos_quick::QuickScene;
@@ -25,17 +26,26 @@ pub struct Gauge {
     pub label: String,
 }
 
-/// A bar as long as the value, and the label laid out over it.
+/// A bar as long as the value, the label laid out over it, and a mark
+/// at the end.
 #[derive(Debug)]
 struct Bar {
     value: f64,
     label: String,
+    mark: ImageHandle,
 }
 
 impl ItemPaint for Bar {
     fn paint(&self, size: kurbo::Size, text: &mut TextEngine, out: &mut DisplayListBuilder) {
         let filled = kurbo::Rect::new(0.0, 0.0, size.width * self.value, size.height);
         out.fill_rect(filled, Rgba::BLACK);
+        // The mark fits the item's height at its right end.
+        let mark = kurbo::Size::new(f64::from(self.mark.width()), f64::from(self.mark.height()));
+        let fit = ImageFit::Fit;
+        let align = [ImageAlign::End, ImageAlign::Center];
+        if let Some(at) = place_image(mark, size, fit, align, [false, false]) {
+            out.image(self.mark.clone(), at.dst);
+        }
         let layout = text.layout(
             &self.label,
             &TextStyle::sized(12.0),
@@ -58,6 +68,7 @@ fn read(engine: &Engine, gauge: ObjectId) -> Rc<dyn ItemPaint> {
     Rc::new(Bar {
         value: item::prop(engine, gauge, Gauge::VALUE),
         label: item::prop(engine, gauge, Gauge::LABEL),
+        mark: ImageHandle::filled(4, 4, [255, 0, 0, 255]).unwrap(),
     })
 }
 
@@ -98,23 +109,28 @@ fn register(engine: &Engine) {
 
 /// The width of the bar the gauge painted last, and how many glyph runs.
 fn painted(scene: &QuickScene, gauge: ObjectId) -> (f64, usize) {
+    painted_ops(scene, gauge, |ops| {
+        let width = ops
+            .iter()
+            .find_map(|op| match op {
+                DrawOp::Rect { rect, .. } => Some(rect.width()),
+                _ => None,
+            })
+            .unwrap();
+        let glyphs = ops
+            .iter()
+            .filter(|op| matches!(op, DrawOp::Glyphs { .. }))
+            .count();
+        (width, glyphs)
+    })
+}
+
+fn painted_ops<R>(scene: &QuickScene, gauge: ObjectId, f: impl FnOnce(&[DrawOp]) -> R) -> R {
     let node = scene
         .render_tree()
         .node(scene.node_of(gauge).unwrap())
         .unwrap();
-    let ops = node.content().unwrap().ops();
-    let width = ops
-        .iter()
-        .find_map(|op| match op {
-            DrawOp::Rect { rect, .. } => Some(rect.width()),
-            _ => None,
-        })
-        .unwrap();
-    let glyphs = ops
-        .iter()
-        .filter(|op| matches!(op, DrawOp::Glyphs { .. }))
-        .count();
-    (width, glyphs)
+    f(node.content().unwrap().ops())
 }
 
 fn gauge() -> (Engine, ObjectId, QuickScene) {
@@ -139,6 +155,14 @@ fn gauge() -> (Engine, ObjectId, QuickScene) {
 fn a_painted_item_paints_what_it_read_and_repaints_when_it_changes() {
     let (engine, gauge, mut scene) = gauge();
     assert_eq!(painted(&scene, gauge), (50.0, 1));
+    // The mark is a 20 by 20 square at the right end.
+    let mark = painted_ops(&scene, gauge, |ops| {
+        ops.iter().find_map(|op| match op {
+            DrawOp::Image { dst, .. } => Some(*dst),
+            _ => None,
+        })
+    });
+    assert_eq!(mark, Some(kurbo::Rect::new(80.0, 0.0, 100.0, 20.0)));
     engine.set(gauge, Gauge::VALUE, 1.0).unwrap();
     scene.frame(&engine, Time::ZERO);
     assert_eq!(painted(&scene, gauge).0, 100.0);
