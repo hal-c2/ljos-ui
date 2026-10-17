@@ -167,6 +167,10 @@ impl Engine {
                 .ok_or_else(|| EngineError::dead(obj))?;
             match h.node(prop) {
                 Some(n) => n,
+                None if h.read_without_node(prop) => {
+                    drop(store);
+                    self.ensure_node(obj, prop)?
+                }
                 None => {
                     // Nobody observes it: the field is the only copy.
                     store_in(h, prop, &v)?;

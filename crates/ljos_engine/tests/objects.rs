@@ -754,6 +754,82 @@ fn registry_versions_and_dump() {
 }
 
 #[test]
+fn a_read_of_properties_that_never_change_makes_no_nodes() {
+    let e = engine();
+    let r = rect(&e);
+    let props = [Item::X, Item::Y, Item::WIDTH, Item::HEIGHT];
+    let before = e.graph().len();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let s = seen.clone();
+    let fx = e
+        .effect(move |e| {
+            let sum: f64 = props.iter().map(|p| e.get(r, *p).unwrap()).sum();
+            let shown = e.get(r, Item::VISIBLE).unwrap();
+            s.borrow_mut().push((sum, shown));
+        })
+        .unwrap();
+    // The effect alone: a property read and never changed has no node.
+    assert_eq!(e.graph().len(), before + 1);
+    // Each way a field changes still reaches the reader, and gives the
+    // property its node then.
+    e.set(r, Item::X, 1.0).unwrap();
+    assert_eq!(seen.borrow().last(), Some(&(1.0, false)));
+    e.write(r, Item::Y.index, Value::Real(2.0), WriteKind::Animation)
+        .unwrap();
+    assert_eq!(seen.borrow().last(), Some(&(3.0, false)));
+    e.with_mut::<Item, _>(r, |i| i.width = 4.0).unwrap();
+    e.notify(r, Item::WIDTH.index).unwrap();
+    assert_eq!(seen.borrow().last(), Some(&(7.0, false)));
+    e.bind(r, Item::HEIGHT.index, |_| Value::Real(8.0)).unwrap();
+    assert_eq!(seen.borrow().last(), Some(&(15.0, false)));
+    e.write_derived(r, Item::VISIBLE.index, Value::Bool(true))
+        .unwrap();
+    assert_eq!(seen.borrow().last(), Some(&(15.0, true)));
+    assert_eq!(seen.borrow().len(), 6, "one run per change");
+    assert_eq!(e.graph().len(), before + 1 + props.len() + 1);
+    e.graph().check_invariants().unwrap();
+    e.graph().dispose(fx).unwrap();
+    e.set(r, Item::X, 3.0).unwrap();
+    assert_eq!(seen.borrow().len(), 6, "no reader, no run");
+}
+
+#[test]
+fn a_property_read_without_a_node_is_followed_only_while_it_is_read() {
+    let e = engine();
+    let r = rect(&e);
+    let use_x = Rc::new(Cell::new(true));
+    let runs = Rc::new(Cell::new(0));
+    let (u, n) = (use_x.clone(), runs.clone());
+    let _fx = e
+        .effect(move |e| {
+            n.set(n.get() + 1);
+            e.get(r, Item::VISIBLE).unwrap();
+            if u.get() {
+                e.get(r, Item::X).unwrap();
+            } else {
+                e.get(r, Item::Y).unwrap();
+            }
+        })
+        .unwrap();
+    use_x.set(false);
+    e.set(r, Item::VISIBLE, true).unwrap();
+    assert_eq!(runs.get(), 2);
+    // The last run read `y`, not `x`.
+    e.set(r, Item::X, 1.0).unwrap();
+    assert_eq!(runs.get(), 2, "a branch no longer taken");
+    e.set(r, Item::Y, 1.0).unwrap();
+    assert_eq!(runs.get(), 3);
+    // Reads of many runs of a reader that keeps running stay bounded.
+    for i in 0..1000 {
+        e.set(r, Item::Y, f64::from(i) + 2.0).unwrap();
+    }
+    assert_eq!(runs.get(), 1003);
+    assert_eq!(e.observers_of(r, Item::X.index), []);
+    assert_eq!(e.observers_of(r, Item::Y.index).len(), 1);
+    e.graph().check_invariants().unwrap();
+}
+
+#[test]
 fn engine_handles_reach_the_engine_inside_closures() {
     let e = engine();
     let r = rect(&e);

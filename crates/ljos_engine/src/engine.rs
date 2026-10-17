@@ -40,8 +40,8 @@ use crate::ids::{ContextId, MethodIndex, ObjectId, PropIndex, PropKey};
 use crate::log::LogState;
 use crate::meta::{CompleteThunk, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags};
 use crate::object::{
-    AliasTarget, Location, ObjectFlags, ObjectHeader, QmlObject, QmlType, downcast_chain,
-    downcast_chain_mut, find_native, find_native_mut,
+    AliasTarget, FieldReads, Location, ObjectFlags, ObjectHeader, QmlObject, QmlType,
+    downcast_chain, downcast_chain_mut, find_native, find_native_mut,
 };
 use crate::registry::{ModuleDef, Registry, TypeDump, Version};
 use crate::signal::Signals;
@@ -713,6 +713,10 @@ impl Engine {
                 if let Some(scope) = h.scope {
                     let _ = self.inner.graph.dispose_scope(scope);
                 }
+                // Read without nodes, the properties go as if they had.
+                if let Some(r) = &h.field_reads {
+                    self.inner.graph.readers_lost(r.all());
+                }
             }
             for c in &orphans {
                 self.parent_changed(*c, None);
@@ -1068,7 +1072,8 @@ impl Engine {
         enum Got {
             Node(NodeId),
             Value(Value),
-            NeedNode,
+            /// Tracked, without a node: the read is kept on the object.
+            Field(Value),
             Alias(Option<AliasTarget>),
         }
         self.make_if_due(obj, prop);
@@ -1094,16 +1099,16 @@ impl Engine {
                     {
                         Got::Value(read_access(&*h.native, &h.dynamic, &p.access))
                     }
-                    None => Got::NeedNode,
+                    None => Got::Field(read_access(&*h.native, &h.dynamic, &p.access)),
                 }
             }
         };
         let v = match got {
             Got::Value(v) => v,
             Got::Node(n) => self.inner.graph.try_get(n).unwrap_or_default(),
-            Got::NeedNode => {
-                let n = self.ensure_node(obj, prop)?;
-                self.inner.graph.try_get(n).unwrap_or_default()
+            Got::Field(v) => {
+                self.keep_field_read(obj, prop);
+                v
             }
             Got::Alias(Some(AliasTarget {
                 object,
@@ -1293,7 +1298,7 @@ impl Engine {
                 .objects
                 .get_mut(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            if h.node(prop).is_none() {
+            if h.node(prop).is_none() && !h.read_without_node(prop) {
                 // Nobody observes it: the field is the only copy, and it
                 // is not marked assigned.
                 store_in(h, prop, &v)?;
@@ -1358,7 +1363,17 @@ impl Engine {
                 Some(ext) if !internal => ext.write_hook.clone(),
                 _ => None,
             };
-            (coerce_for(&store, Some(obj), &ty, &v)?, h.node(prop), hook)
+            let node = match h.node(prop) {
+                None if h.read_without_node(prop) => Err(()),
+                n => Ok(n),
+            };
+            (coerce_for(&store, Some(obj), &ty, &v)?, node, hook)
+        };
+        let node = match node {
+            Ok(n) => n,
+            // A reader follows it: the node, made with the old value,
+            // tells it of the new one.
+            Err(()) => Some(self.ensure_node(obj, prop)?),
         };
         // A model row: the write goes to the model, which writes back.
         if let Some(hook) = hook
@@ -1487,12 +1502,59 @@ impl Engine {
             Provenance::Default
         };
         let n = g.property_with(scope, value, provenance)?;
-        {
+        let readers = {
             let mut store = self.inner.store.borrow_mut();
-            store.objects[obj].set_node(prop, n);
             store.node_keys.insert(n, PropKey { object: obj, prop });
+            let h = &mut store.objects[obj];
+            h.set_node(prop, n);
+            h.field_reads.as_mut().map(|r| r.take(prop))
+        };
+        // Who read the field without a node reads the node now.
+        if let Some(readers) = readers {
+            g.adopt_readers(n, readers);
         }
         Ok(n)
+    }
+
+    /// For tools and tests: the graph node of a property, made if it has
+    /// none. A tracked read makes none for a property that never changes;
+    /// the node made here is read by whoever read the property.
+    pub fn property_node(&self, obj: ObjectId, prop: PropIndex) -> Result<NodeId, EngineError> {
+        self.ensure_node(obj, prop)
+    }
+
+    /// Keeps a tracked read of a property that has no node
+    /// ([`FieldReads`]).
+    fn keep_field_read(&self, obj: ObjectId, prop: PropIndex) {
+        let g = &self.inner.graph;
+        let Some(r) = g.reader() else {
+            return;
+        };
+        let mut store = self.inner.store.borrow_mut();
+        if let Some(h) = store.objects.get_mut(obj) {
+            let len = h.meta.properties.len();
+            h.field_reads
+                .get_or_insert_with(|| Box::new(FieldReads::new(len)))
+                .add(prop, r, |e| g.is_current(e));
+        }
+    }
+
+    /// The node of a property something observes, made if only a read
+    /// without one did: what a change has to go through to be seen.
+    pub(crate) fn observed_node(&self, obj: ObjectId, prop: PropIndex) -> Option<NodeId> {
+        let read = {
+            let store = self.inner.store.borrow();
+            let h = store.objects.get(obj)?;
+            if let Some(n) = h.node(prop) {
+                return Some(n);
+            }
+            h.read_without_node(prop)
+        };
+        if read {
+            self.ensure_node(obj, prop).ok()
+        } else {
+            None
+        }
     }
 
     /// Installs a binding (`Qt.binding()`, or a binding from the creator).
@@ -1738,11 +1800,19 @@ impl Engine {
                 .meta
                 .property(prop)
                 .ok_or_else(|| unknown_index(&h.meta, prop))?;
-            let Some(n) = h.node(prop) else {
+            match h.node(prop) {
+                Some(n) => (n, read_access(&*h.native, &h.dynamic, &p.access)),
                 // Nothing observes it.
-                return Ok(());
-            };
-            (n, read_access(&*h.native, &h.dynamic, &p.access))
+                None if !h.read_without_node(prop) => return Ok(()),
+                None => {
+                    // A reader of the field: the node, made with the value
+                    // the field has now, re-runs it.
+                    drop(store);
+                    let n = self.ensure_node(obj, prop)?;
+                    self.inner.graph.notify(n)?;
+                    return Ok(());
+                }
+            }
         };
         let g = &self.inner.graph;
         if g.is_bound(n) || g.override_count(n) > 0 {

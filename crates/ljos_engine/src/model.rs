@@ -1200,13 +1200,10 @@ impl Engine {
         }
         let roles = row.shape.roles.iter().map(|(_, p)| *p);
         for prop in roles.chain(row.shape.model_data) {
-            let node = {
-                let store = self.inner.store.borrow();
-                let Some(h) = store.objects.get(row.id) else {
-                    return;
-                };
-                h.node(prop)
-            };
+            if !self.is_alive(row.id) {
+                return;
+            }
+            let node = self.observed_node(row.id, prop);
             let quiet = match node {
                 // Nobody has read it: the object's copy is the only one.
                 None => true,

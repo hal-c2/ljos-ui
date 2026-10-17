@@ -67,6 +67,9 @@ const NAMED: &[&str] = &[
     "empty", "digits", "undef", "nothing", "list", "pt", "sz", "rc", "link", "other", "none",
 ];
 
+/// The child's properties a dependency may be named by.
+const CHILD: &[&str] = &["x", "y", "width", "height", "depth"];
+
 /// One object with `MEMBERS`, a child, and the properties under test.
 struct World {
     h: Harness,
@@ -96,6 +99,16 @@ impl World {
         h.engine.set_tier1_check(false);
         let root = h.load(&source);
         let child = h.find(root, "child");
+        // A dependency is a graph source only once the property has a
+        // node; a read of one that never changed makes none.
+        let e = &h.engine;
+        for (obj, names) in [(root, NAMED), (child, CHILD)] {
+            for n in names {
+                if let Ok(p) = e.property_index(obj, n) {
+                    e.property_node(obj, p).expect("a property");
+                }
+            }
+        }
         World { h, root, child }
     }
 
@@ -112,6 +125,9 @@ impl World {
     /// an object the one that says the object is alive.
     fn nodes(&self, obj: ObjectId, prop: &str) -> Vec<NodeId> {
         let e = &self.h.engine;
+        if let Ok(p) = e.property_index(obj, prop) {
+            e.property_node(obj, p).expect("a property");
+        }
         let name = prop.to_string();
         let effect = e
             .effect(move |e| {
@@ -164,7 +180,7 @@ impl World {
             known.push((node, "child.parent".to_string()));
         }
         e.graph().dispose(effect).expect("the effect is alive");
-        for n in ["x", "y", "width", "height", "depth"] {
+        for n in CHILD {
             for node in self.nodes(self.child, n) {
                 known.push((node, format!("child.{n}")));
             }

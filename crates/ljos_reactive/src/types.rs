@@ -17,6 +17,14 @@ slotmap::new_key_type! {
     pub struct ScopeId;
 }
 
+/// One run of a binding or effect, as [`Graph::reader`] gives it: a read
+/// it made can be handed to a node made later ([`Graph::adopt_readers`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Reader {
+    pub node: NodeId,
+    pub run: u64,
+}
+
 /// Identifies one entry on a property's override stack.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OverrideId(pub(crate) u64);

@@ -4,7 +4,7 @@
 use std::any::{Any, TypeId};
 use std::rc::Rc;
 
-use ljos_reactive::{NodeId, ScopeId};
+use ljos_reactive::{NodeId, Reader, ScopeId};
 use smallvec::SmallVec;
 
 use crate::atom::Atom;
@@ -122,6 +122,111 @@ pub struct ObjectHeader {
     pub(crate) nodes: Option<Box<[Option<NodeId>]>>,
     /// Properties written while they had no node, for provenance.
     pub(crate) assigned: Vec<u64>,
+    /// Tracked reads of properties that have no node.
+    pub(crate) field_reads: Option<Box<FieldReads>>,
+}
+
+/// Who read which property of an object while it had no node. Most
+/// properties are read and never change (a delegate's colour, a text's
+/// font): keeping the read here costs far less than a node made for it
+/// and disposed with the object. The property gets its node, read by
+/// exactly the runs that read it, when it next changes
+/// ([`Engine::ensure_node`]).
+pub(crate) struct FieldReads {
+    /// A bit per property with an entry.
+    props: Box<[u64]>,
+    entries: Vec<(PropIndex, Reader)>,
+    /// Length past which entries of finished runs are swept out.
+    sweep_at: usize,
+    /// The run that read last, and a bit per property it read: a run
+    /// that reads a property again adds nothing.
+    last: Option<Reader>,
+    last_props: Box<[u64]>,
+}
+
+impl FieldReads {
+    /// For an object with `len` properties.
+    pub(crate) fn new(len: usize) -> Self {
+        let words = len.div_ceil(64);
+        FieldReads {
+            props: vec![0; words].into_boxed_slice(),
+            entries: Vec::new(),
+            sweep_at: 0,
+            last: None,
+            last_props: vec![0; words].into_boxed_slice(),
+        }
+    }
+
+    pub(crate) fn has(&self, prop: PropIndex) -> bool {
+        has_bit(&self.props, prop)
+    }
+
+    /// Adds a read, unless the run already made it. `current` tells
+    /// whether an entry still counts, for the sweep.
+    pub(crate) fn add(&mut self, prop: PropIndex, r: Reader, current: impl Fn(Reader) -> bool) {
+        if self.last == Some(r) {
+            if has_bit(&self.last_props, prop) {
+                return;
+            }
+        } else {
+            self.last = Some(r);
+            self.last_props.iter_mut().for_each(|w| *w = 0);
+        }
+        set_bit(&mut self.last_props, prop);
+        if self.entries.len() >= self.sweep_at {
+            self.entries.retain(|(_, e)| current(*e));
+            self.props.iter_mut().for_each(|w| *w = 0);
+            for (p, _) in &self.entries {
+                set_bit(&mut self.props, *p);
+            }
+            self.sweep_at = (self.entries.len() * 2).max(32);
+        }
+        set_bit(&mut self.props, prop);
+        self.entries.push((prop, r));
+    }
+
+    /// Takes the readers of `prop` out.
+    pub(crate) fn take(&mut self, prop: PropIndex) -> SmallVec<[Reader; 4]> {
+        if !self.has(prop) {
+            return SmallVec::new();
+        }
+        let (word, bit) = (prop.0 as usize / 64, prop.0 % 64);
+        self.props[word] &= !(1 << bit);
+        let mut out = SmallVec::new();
+        self.entries.retain(|(p, r)| {
+            let mine = *p == prop;
+            if mine {
+                out.push(*r);
+            }
+            !mine
+        });
+        out
+    }
+
+    /// Every reader of every property.
+    pub(crate) fn all(&self) -> impl Iterator<Item = Reader> + '_ {
+        self.entries.iter().map(|(_, r)| *r)
+    }
+
+    /// The readers of `prop`, left in place.
+    pub(crate) fn readers(&self, prop: PropIndex) -> impl Iterator<Item = Reader> + '_ {
+        self.entries
+            .iter()
+            .filter(move |(p, _)| *p == prop)
+            .map(|(_, r)| *r)
+    }
+}
+
+fn has_bit(words: &[u64], prop: PropIndex) -> bool {
+    let (word, bit) = (prop.0 as usize / 64, prop.0 % 64);
+    words.get(word).is_some_and(|w| w & (1 << bit) != 0)
+}
+
+fn set_bit(words: &mut [u64], prop: PropIndex) {
+    let (word, bit) = (prop.0 as usize / 64, prop.0 % 64);
+    if let Some(w) = words.get_mut(word) {
+        *w |= 1 << bit;
+    }
 }
 
 /// A native whose type builds on `QtObject` without a field for it (the
@@ -205,11 +310,18 @@ impl ObjectHeader {
             scope: None,
             nodes: None,
             assigned: Vec::new(),
+            field_reads: None,
         }
     }
 
     pub(crate) fn node(&self, prop: PropIndex) -> Option<NodeId> {
         self.nodes.as_ref()?.get(prop.0 as usize).copied().flatten()
+    }
+
+    /// Whether a reader may follow `prop` without its node: a change has
+    /// to make the node first ([`Engine::ensure_node`]) to reach it.
+    pub(crate) fn read_without_node(&self, prop: PropIndex) -> bool {
+        self.field_reads.as_ref().is_some_and(|r| r.has(prop))
     }
 
     pub(crate) fn set_node(&mut self, prop: PropIndex, n: NodeId) {

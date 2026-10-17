@@ -223,7 +223,15 @@ impl Engine {
                 .objects
                 .get_mut(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            let node = h.node(prop);
+            let node = match h.node(prop) {
+                None if h.read_without_node(prop) => {
+                    // A reader follows it: the edit goes through a node.
+                    drop(store);
+                    self.ensure_node(obj, prop)?;
+                    return self.list_edit(obj, prop, edit);
+                }
+                n => n,
+            };
             let Some(slot) = list_slot(h, prop) else {
                 // Not a list kept where the engine can reach it.
                 drop(store);

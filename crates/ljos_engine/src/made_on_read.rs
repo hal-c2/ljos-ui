@@ -60,12 +60,31 @@ impl Engine {
     /// subscribers); empty when nothing ever did.
     pub fn observers_of(&self, obj: ObjectId, prop: PropIndex) -> Vec<NodeId> {
         let (obj, prop) = self.redirect(obj, prop);
-        let node = {
+        let (node, unnoded) = {
             let store = self.inner.store.borrow();
-            store.objects.get(obj).and_then(|h| h.node(prop))
+            let Some(h) = store.objects.get(obj) else {
+                return Vec::new();
+            };
+            // Read without a node: who read it in their last run.
+            let g = &self.inner.graph;
+            let unnoded: Vec<NodeId> = h
+                .field_reads
+                .iter()
+                .flat_map(|r| r.readers(prop))
+                .filter(|r| g.is_current(*r))
+                .map(|r| r.node)
+                .collect();
+            (h.node(prop), unnoded)
         };
-        node.map(|n| self.inner.graph.observers(n))
-            .unwrap_or_default()
+        let mut all = node
+            .map(|n| self.inner.graph.observers(n))
+            .unwrap_or_default();
+        for n in unnoded {
+            if !all.contains(&n) {
+                all.push(n);
+            }
+        }
+        all
     }
 
     /// Takes the maker of `prop` away, if it has one.

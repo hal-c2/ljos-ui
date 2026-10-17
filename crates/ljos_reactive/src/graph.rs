@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use crate::types::{
     BindingFn, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
-    OverrideValue, Provenance, ReactiveError, RestoreMode, ScopeId, Stats, WriteKind,
+    OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,
 };
 
 /// One end of a dependency edge, stored on both nodes.
@@ -123,6 +123,8 @@ struct Node<V> {
     data: Option<u64>,
     /// Stamp of the last frame that recorded a read of this node.
     read_stamp: u64,
+    /// Stamp of the last run whose reads became its sources.
+    done_stamp: u64,
     runs: u32,
     run_epoch: u64,
     /// Bumped whenever the active layer changes, so a closure that was
@@ -912,6 +914,90 @@ impl<V: Clone + 'static> Graph<V> {
             .frames
             .last()
             .is_some_and(|f| f.node.is_some())
+    }
+
+    /// The run that a read right now belongs to: `None` where
+    /// [`Graph::is_tracking`] is false. For a caller that keeps what was
+    /// read without a node, and makes the node only when it changes.
+    pub fn reader(&self) -> Option<Reader> {
+        let i = self.inner.borrow();
+        let f = i.frames.last()?;
+        Some(Reader {
+            node: f.node?,
+            run: f.stamp,
+        })
+    }
+
+    /// Whether what `r` read still counts: the run is in progress, or it
+    /// is the reader's last one and its reads are the reader's sources.
+    pub fn is_current(&self, r: Reader) -> bool {
+        self.inner.borrow().is_current(r)
+    }
+
+    /// Makes `n` a source of the readers that read what it stands for, as
+    /// if they had read `n`: a run in progress gets it among its reads, a
+    /// finished one as a source, and the next change of `n` reaches them.
+    /// Readers that are not [current](Graph::is_current) are passed over.
+    /// For a node made after the reads, for a value that had none.
+    pub fn adopt_readers(&self, n: NodeId, readers: impl IntoIterator<Item = Reader>) {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        if !i.nodes.contains_key(n) {
+            return;
+        }
+        for r in readers {
+            if r.node == n {
+                continue;
+            }
+            if let Some(f) = i.frames.iter_mut().rev().find(|f| f.node == Some(r.node))
+                && f.stamp == r.run
+            {
+                if i.nodes[n].read_stamp != r.run {
+                    i.nodes[n].read_stamp = r.run;
+                    f.reads.push(n);
+                }
+                continue;
+            }
+            let Some(reader) = i.nodes.get(r.node) else {
+                continue;
+            };
+            if reader.done_stamp != r.run || i.nodes[n].observers.iter().any(|e| e.node == r.node) {
+                continue;
+            }
+            let back = reader.sources.len() as u32;
+            let slot = i.nodes[n].observers.len() as u32;
+            let height = i.nodes[n].height + 1;
+            let reader = &mut i.nodes[r.node];
+            reader.height = reader.height.max(height);
+            reader.sources.push(Edge {
+                node: n,
+                back: slot,
+            });
+            i.nodes[n].observers.push(Edge { node: r.node, back });
+        }
+    }
+
+    /// What [`Graph::dispose`] does to the observers of a node, for reads
+    /// that never had one: each reader whose last finished run made the
+    /// read is marked dirty, and finds what it read gone when it runs.
+    pub fn readers_lost(&self, readers: impl IntoIterator<Item = Reader>) {
+        {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            let mut stack = std::mem::take(&mut i.mark_stack);
+            for r in readers {
+                if i.nodes.get(r.node).is_some_and(|n| n.done_stamp == r.run) {
+                    stack.push((r.node, NodeState::Dirty, ALWAYS_STALE));
+                }
+            }
+            if stack.is_empty() {
+                i.mark_stack = stack;
+                return;
+            }
+            i.mark_stack = stack;
+            i.propagate_marks();
+        }
+        self.flush_if_idle();
     }
 
     // -------------------------------------------------------------- writes
@@ -1914,6 +2000,7 @@ impl<V: Clone + 'static> Graph<V> {
             let frame = i.frames.pop();
             debug_assert!(frame.as_ref().is_some_and(|f| f.node == Some(n)));
             i.eval_stack.pop();
+            let stamp = frame.as_ref().map_or(0, |f| f.stamp);
             let mut reads = frame.map(|f| f.reads).unwrap_or_default();
             let current = i.nodes.get(n).is_some_and(|node| node.binding_gen == gen_);
             if !current {
@@ -1934,6 +2021,7 @@ impl<V: Clone + 'static> Graph<V> {
                 }
                 if ok {
                     i.diff_sources(n, &reads);
+                    i.nodes[n].done_stamp = stamp;
                     let node = &mut i.nodes[n];
                     node.state = NodeState::Clean;
                     let self_read = std::mem::take(&mut node.self_read);
@@ -2088,6 +2176,7 @@ impl<V: Clone + 'static> Inner<V> {
             scratch: 0,
             data: None,
             read_stamp: 0,
+            done_stamp: 0,
             runs: 0,
             run_epoch: 0,
             binding_gen: 0,
@@ -2261,6 +2350,19 @@ impl<V: Clone + 'static> Inner<V> {
             enqueue(&mut self.queues, n, node);
         }
         self.mark_observers(n, NodeState::Check);
+    }
+
+    fn is_current(&self, r: Reader) -> bool {
+        let Some(node) = self.nodes.get(r.node) else {
+            return false;
+        };
+        node.done_stamp == r.run
+            || self
+                .frames
+                .iter()
+                .rev()
+                .find(|f| f.node == Some(r.node))
+                .is_some_and(|f| f.stamp == r.run)
     }
 
     /// Records a read of `n` in the innermost tracking frame.

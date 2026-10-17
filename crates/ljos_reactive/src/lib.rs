@@ -114,5 +114,5 @@ mod types;
 pub use graph::{Graph, ScopeHandle};
 pub use types::{
     BindingFn, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
-    OverrideValue, Provenance, ReactiveError, RestoreMode, ScopeId, Stats, WriteKind,
+    OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,
 };
