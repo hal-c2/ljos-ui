@@ -69,11 +69,16 @@
 /// companions (with the [`Version`](prelude::Version) a singleton is
 /// registered under), list and tree models for Rust-owned rows, the `Timer` a
 /// host may run from Rust, the [`Item`](prelude::Item) a visual type extends
-/// (`extends = Item` with a `#[qml(base)]` field), and the platform
-/// services (fetch, settings, dialogs, opening a URL, the badge) a type may
-/// ask the host for.
+/// (`extends = Item` with a `#[qml(base)]` field), the platform
+/// services (fetch, settings, dialogs, opening a URL, the badge, the
+/// clipboard) a type may ask the host for, and what the Engine's own
+/// methods hand out: the [`Time`](prelude::Time) of `Engine::now`, the
+/// [`TimerId`](prelude::TimerId) of `Engine::call_at`, the
+/// [`Application`](prelude::Application) singleton (`Qt.application`)
+/// and the [`ColorScheme`](prelude::ColorScheme) of [`color_scheme`].
 pub mod prelude {
     pub use crate::task::Task;
+    pub use ljos_controls::{Application, ApplicationState};
     pub use ljos_engine::{
         Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, ItemTree, JsError,
         LogEntry, LogLevel, ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList,
@@ -82,10 +87,12 @@ pub mod prelude {
         qml_singleton, tree_model,
     };
     pub use ljos_platform::{
-        BadgeService, FetchError, Fetcher, Method, OpenUrlService, Platform, RecordedBadge,
-        RecordedUrls, Request, Response, is_remote, url_path,
+        BadgeService, ClipboardImage, ClipboardMode, ClipboardService, FetchError, Fetcher, Method,
+        OpenUrlService, Platform, RecordedBadge, RecordedUrls, Request, Response, is_remote,
+        url_path,
     };
-    pub use ljos_quick::Item;
+    pub use ljos_quick::{ColorScheme, Item};
+    pub use ljos_runtime::{Time, TimerId};
 }
 
 mod app;
@@ -163,6 +170,13 @@ pub fn font_families() -> Vec<String> {
     ljos_quick::font_families()
 }
 
+/// The colour scheme the application follows: its own when it set one
+/// (`Qt.styleHints.colorScheme`), else the system's. Tracked: a binding or
+/// a native type's tracked read that asks follows a change of scheme.
+pub fn color_scheme(engine: &Engine) -> prelude::ColorScheme {
+    ljos_quick::color_scheme(engine)
+}
+
 /// Opens the application's windows and runs until the last of them is
 /// closed, on the desktop shell. `setup` receives the shell's setup
 /// (the Engine — already holding the standard modules — and the
@@ -183,8 +197,9 @@ pub fn run<M: Send + 'static>(
 /// Engine through: what [`Setup::handle`] hands out. Its `send`
 /// fails fast on a full inbox with a [`SendError`]; `send_blocking`
 /// and `send_async` ([`SendAsync`]) wait for room instead, for a
-/// stream that must not lose messages.
+/// stream that must not lose messages. `send_coalesced` keeps only the
+/// newest message under each [`CoalesceKey`].
 #[cfg(feature = "shell")]
-pub use ljos_runtime::{SendAsync, SendError, UiHandle};
+pub use ljos_runtime::{CoalesceKey, SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
 pub use ljos_shell::{Setup, SetupError, ShellConfig, ShellError};

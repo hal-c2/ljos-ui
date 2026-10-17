@@ -108,6 +108,7 @@ pub use layouts::{
     ColumnLayout, GridLayout, Layout, LayoutAttached, LayoutItemProxy, RowLayout, StackLayout,
     layout_runs,
 };
+pub use ljos_a11y::ColorScheme;
 pub use loader::Loader;
 #[allow(deprecated)]
 pub use log::{LogEntry, QuickLog};

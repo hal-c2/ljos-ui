@@ -493,6 +493,17 @@ body; `Request::new(Method::Post, url).json(body)` in the prelude as `Method`,
 `Request` and `Response`) and answers with the reply's status as data —
 a 404 is a `Response`, only transport failures are `Err`.
 
+What the Engine and the platform hand out is named in the prelude
+too, so it can be kept in a field: the `Time` of `engine.now()` and
+the `TimerId` that `engine.call_at` returns and `cancel_call` takes
+(a debounce), the `ClipboardService` of `Platform::clipboard()` with
+its `ClipboardMode` and `ClipboardImage`, the `Application` singleton
+behind `Qt.application` (`engine.singleton::<Application>()`, whose
+`active` and `state` say whether the application has the user's
+focus), and the `ColorScheme` that `ljos::color_scheme(engine)`
+gives. `ljos::CoalesceKey` sits beside `ljos::UiHandle`, for
+`send_coalesced`.
+
 Heavy work of your own follows the same shape: `ljos::task::spawn`
 runs a closure on the bounded compute pool and runs its `done` with the
 value on the Engine thread, so nothing heavy ever runs where QML lives.
