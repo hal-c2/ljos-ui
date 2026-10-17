@@ -2543,6 +2543,14 @@ module QtQuick
 		method isColumnLoaded
 		method columnWidth
 		method rowHeight
+		method setColumnWidth
+		method setRowHeight
+		method explicitColumnWidth
+		method explicitRowHeight
+		method clearColumnWidths
+		method clearRowHeights
+		method implicitColumnWidth
+		method implicitRowHeight
 		method positionViewAtRow
 		method positionViewAtCell
 		method positionViewAtIndex

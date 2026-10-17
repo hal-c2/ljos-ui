@@ -8,7 +8,7 @@
 //! of a long table is a guess that gets better as it moves. Across, only
 //! the columns in sight get delegates, and the same goes for
 //! `contentWidth`. A column is as wide as its widest delegate in sight,
-//! or as the `columnWidthProvider` says. Delegates of cells that leave go
+//! or as the `columnWidthProvider` or `setColumnWidth` says. Delegates of cells that leave go
 //! to the pool with `reuseItems`, hidden there.
 //!
 //! A view with a `syncView` lays out by it in the directions
@@ -229,7 +229,7 @@ fn provided(e: &Engine, view: ObjectId, provider: &Value, i: usize) -> Option<f6
 const UNSIZED: f64 = 50.0;
 
 /// A delegate's implicit width or height, as a column or row takes it.
-fn implicit(e: &Engine, o: ObjectId, p: PropIndex) -> f64 {
+pub(crate) fn implicit(e: &Engine, o: ObjectId, p: PropIndex) -> f64 {
     let x = rd(e, o, p);
     if x > 0.0 { x } else { UNSIZED }
 }
@@ -278,6 +278,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
             across
                 .and_then(|a| a.0.get(c).copied())
                 .or_else(|| provided(e, view, &col_provider, c))
+                .or_else(|| super::resize::own(st, super::resize::COLUMNS, c))
         })
         .collect();
     let sight = (cx, cx + w.max(0.0));
@@ -313,7 +314,9 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
                 }
             }
             // A row with no column in sight is not measured.
-            let fixed = synced_height(row).or_else(|| provided(e, view, &row_provider, row));
+            let fixed = synced_height(row)
+                .or_else(|| provided(e, view, &row_provider, row))
+                .or_else(|| super::resize::own(st, super::resize::ROWS, row));
             if let Some(t) = fixed.or(tallest) {
                 tall = t;
                 heights[row] = tall;
@@ -516,7 +519,7 @@ fn columns_in_sight(
                 }
             },
         };
-        if x + wide > sight.0 && x < sight.1 {
+        if wide > 0.0 && x + wide > sight.0 && x < sight.1 {
             shown.push(c);
         }
         x += wide + gap;

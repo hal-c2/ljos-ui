@@ -1450,6 +1450,15 @@ impl QuickScene {
             self.pointer.grab = Some(Grab::Item(f));
             return true;
         }
+        // The end of a table's column or row the user resizes is the
+        // table's, before the cells' over it.
+        if button == MouseButtons::LEFT
+            && let Some(v) =
+                crate::views::table::catch_resize(engine, &hits, |o| local_point(engine, o, ev.pos))
+        {
+            self.pointer.grab = Some(Grab::Item(v));
+            return true;
+        }
         for obj in hits {
             // Drag and point handlers grab passively, and see it first.
             handled |= crate::handlers::press(engine, obj, ev);

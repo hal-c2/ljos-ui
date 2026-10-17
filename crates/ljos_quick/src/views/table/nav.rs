@@ -20,8 +20,8 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use super::{
-    TableState, TableView, edit, edit_trigger, index_of_cell, layout, select, selection_behavior,
-    selection_mode, state_of,
+    TableState, TableView, edit, edit_trigger, index_of_cell, layout, resize, select,
+    selection_behavior, selection_mode, state_of,
 };
 use crate::flickable::{Flickable, drag};
 use crate::input::{KeyEvent, Modifiers, MouseButtons, PointerEvent};
@@ -54,6 +54,7 @@ pub(crate) fn pointer_hooks() -> PointerItem {
         cancel: |e, view| {
             if let Some(st) = state_of(e, view) {
                 st.press.set(None);
+                resize::release(&st);
                 select::release(e, view, &st);
             }
             (drag::hooks().cancel)(e, view);
@@ -341,6 +342,10 @@ fn pointer_press(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point
 
 fn pointer_moved(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     if let Some(st) = state_of(e, view) {
+        if resize::holds(&st) {
+            resize::moved(e, view, &st, at);
+            return;
+        }
         select::moved(e, view, &st, at);
         if select::holds(&st) {
             return;
@@ -354,6 +359,11 @@ fn pointer_release(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Poi
         (drag::hooks().release)(e, view, ev, at);
         return;
     };
+    if resize::holds(&st) {
+        resize::release(&st);
+        st.press.set(None);
+        return;
+    }
     let selector_held = select::holds(&st);
     if select::release(e, view, &st) {
         st.press.set(None);

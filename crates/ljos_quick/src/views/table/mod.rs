@@ -14,6 +14,7 @@ mod cells;
 mod edit;
 mod layout;
 mod nav;
+mod resize;
 mod select;
 
 use std::cell::{Cell, RefCell};
@@ -32,6 +33,7 @@ use crate::item::{Item, is_a, is_item, write_computed};
 use crate::tree;
 
 pub(crate) use cells::Cells;
+pub(crate) use resize::catch as catch_resize;
 pub use select::{CellBlock, CellSelector, cell_block_rect, select_by, set_cell_selector};
 
 /// `TableView.EditTrigger`.
@@ -131,6 +133,8 @@ pub(crate) struct TableState {
     pub synced_at: Cell<(f64, f64)>,
     /// What selects its cells with the pointer, and how far it got.
     pub select: select::SelectState,
+    /// The sizes given its columns and rows, and the press resizing one.
+    pub resize: resize::ResizeState,
 }
 
 impl std::fmt::Debug for TableState {
@@ -155,7 +159,10 @@ impl TableState {
 /// shares its `contentX`, across, and its row heights, row spacing and
 /// `contentY` down, as `syncDirection` says ([`layout`]).
 ///
-/// Kept and read back, with no effect yet: `animate`, `alternatingRows`, `resizableColumns` and `resizableRows`.
+/// Columns and rows take explicit sizes, and with `resizableColumns` and
+/// `resizableRows` the user drags their ends ([`resize`]).
+///
+/// Kept and read back, with no effect yet: `animate` and `alternatingRows`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -728,9 +735,13 @@ impl TableView {
         column < cols && d.live().iter().any(|(i, _)| i % cols == column)
     }
 
-    /// `columnWidth(column)`: as laid out; -1 for a column that is not.
+    /// `columnWidth(column)`: as laid out; -1 for a column that is not
+    /// loaded.
     #[qml(invokable, name = "columnWidth")]
     fn column_width(cx: &Cx, column: i32) -> f64 {
+        if !Self::is_column_loaded(cx, column) {
+            return -1.0;
+        }
         state_of(cx.engine, cx.this)
             .and_then(|st| {
                 let widths = st.column_x.borrow();
@@ -750,6 +761,69 @@ impl TableView {
             .and_then(|st| st.heights.borrow().get(row as usize).copied())
             .filter(|h| !h.is_nan())
             .unwrap_or(-1.0)
+    }
+
+    /// `setColumnWidth(column, width)`: the width the next layout gives
+    /// the column; a negative one takes it away.
+    #[qml(invokable, name = "setColumnWidth")]
+    fn set_column_width(cx: &Cx, column: i32, width: f64) {
+        if let Ok(column) = usize::try_from(column) {
+            resize::set(cx.engine, cx.this, resize::COLUMNS, column, width);
+        }
+    }
+
+    /// `setRowHeight(row, height)`: as `setColumnWidth`, for a row.
+    #[qml(invokable, name = "setRowHeight")]
+    fn set_row_height(cx: &Cx, row: i32, height: f64) {
+        if let Ok(row) = usize::try_from(row) {
+            resize::set(cx.engine, cx.this, resize::ROWS, row, height);
+        }
+    }
+
+    /// `explicitColumnWidth(column)`: as set; -1 for none.
+    #[qml(invokable, name = "explicitColumnWidth")]
+    fn explicit_column_width(cx: &Cx, column: i32) -> f64 {
+        usize::try_from(column).map_or(-1.0, |c| {
+            resize::explicit(cx.engine, cx.this, resize::COLUMNS, c)
+        })
+    }
+
+    /// `explicitRowHeight(row)`: as set; -1 for none.
+    #[qml(invokable, name = "explicitRowHeight")]
+    fn explicit_row_height(cx: &Cx, row: i32) -> f64 {
+        usize::try_from(row).map_or(-1.0, |r| {
+            resize::explicit(cx.engine, cx.this, resize::ROWS, r)
+        })
+    }
+
+    /// `clearColumnWidths()`: takes the explicit widths away.
+    #[qml(invokable, name = "clearColumnWidths")]
+    fn clear_column_widths(cx: &Cx) {
+        resize::clear(cx.engine, cx.this, resize::COLUMNS);
+    }
+
+    /// `clearRowHeights()`: takes the explicit heights away.
+    #[qml(invokable, name = "clearRowHeights")]
+    fn clear_row_heights(cx: &Cx) {
+        resize::clear(cx.engine, cx.this, resize::ROWS);
+    }
+
+    /// `implicitColumnWidth(column)`: the widest of its delegates; -1 for
+    /// a column that is not loaded.
+    #[qml(invokable, name = "implicitColumnWidth")]
+    fn implicit_column_width(cx: &Cx, column: i32) -> f64 {
+        usize::try_from(column).map_or(-1.0, |c| {
+            resize::implicit(cx.engine, cx.this, resize::COLUMNS, c)
+        })
+    }
+
+    /// `implicitRowHeight(row)`: the tallest of its delegates; -1 for a
+    /// row that is not loaded.
+    #[qml(invokable, name = "implicitRowHeight")]
+    fn implicit_row_height(cx: &Cx, row: i32) -> f64 {
+        usize::try_from(row).map_or(-1.0, |r| {
+            resize::implicit(cx.engine, cx.this, resize::ROWS, r)
+        })
     }
 
     /// `positionViewAtRow(row, mode)`: brings the row into sight.
