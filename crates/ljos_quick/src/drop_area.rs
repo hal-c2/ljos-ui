@@ -45,7 +45,10 @@ impl DragData {
     /// Files, as a file manager drags them.
     pub fn files<I: IntoIterator<Item = std::path::PathBuf>>(paths: I) -> Self {
         Self {
-            urls: paths.into_iter().map(|p| file_url(&p)).collect(),
+            urls: paths
+                .into_iter()
+                .map(|p| ljos_engine::file_url(&p))
+                .collect(),
             ..Self::default()
         }
     }
@@ -79,27 +82,6 @@ impl DragData {
                 .map(|(_, v)| v.clone()),
         }
     }
-}
-
-fn file_url(path: &std::path::Path) -> String {
-    let s = path.to_string_lossy();
-    let mut out = String::from("file://");
-    for b in s.bytes() {
-        // Only what would break the address is escaped, and every byte of
-        // a character outside ASCII, as Qt's file URLs have them.
-        match b {
-            b' ' | b'#' | b'%' | b'?' | 0..0x20 | 0x7f.. => {
-                out.push_str(&format!("%{b:02X}"));
-            }
-            _ => out.push(b as char),
-        }
-    }
-    if !s.starts_with('/') {
-        // A Windows path: file:///C:/...
-        out.insert(7, '/');
-        return out.replace('\\', "/");
-    }
-    out
 }
 
 /// The `drag` group of a `DropArea`: the drag over it.

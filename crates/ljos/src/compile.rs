@@ -245,25 +245,23 @@ pub(crate) fn checked(
     Ok(compiled.source)
 }
 
-/// The `file://` URL of `path`, made absolute against the working
-/// directory and without `.` and `..`, so that it is the same text
-/// the engine reaches when it resolves a relative address beside
-/// another file.
+/// The `file://` URL of `path` ([`ljos_engine::file_url`]), made
+/// absolute against the working directory and without `.` and `..`, so
+/// that it is the same text the engine reaches when it resolves a
+/// relative address beside another file.
 fn file_url(path: &Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
-    let mut parts: Vec<String> = Vec::new();
+    let mut clean = PathBuf::new();
     for part in absolute.components() {
         match part {
-            Component::Prefix(p) => parts.push(p.as_os_str().to_string_lossy().into_owned()),
-            Component::RootDir | Component::CurDir => {}
+            Component::CurDir => {}
             Component::ParentDir => {
-                parts.pop();
+                clean.pop();
             }
-            Component::Normal(p) => parts.push(p.to_string_lossy().into_owned()),
+            part => clean.push(part),
         }
     }
-    // `file:///home/a/Main.qml`; on Windows `file:///C:/a/Main.qml`.
-    format!("file:///{}", parts.join("/"))
+    ljos_engine::file_url(&clean)
 }
 
 /// One type as the compiler sees it in a render with backends: of the

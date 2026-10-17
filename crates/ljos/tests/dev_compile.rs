@@ -112,6 +112,34 @@ fn each_root_gives_its_files_their_own_url() {
 }
 
 #[test]
+fn a_directory_name_a_url_cannot_hold_is_escaped() {
+    let top = tempfile::tempdir().unwrap();
+    let dir = top.path().join("a b#c");
+    write(&dir, "Main.qml", MAIN);
+    write(&dir, "parts/Panel.qml", PANEL);
+    write(&dir, "icons/a.svg", "<svg/>");
+    let (engine, root) = ljos::App::new("Test")
+        .qml_dir(&dir, "Main")
+        .unwrap()
+        .build()
+        .unwrap();
+    // `#` would end the path and start a fragment; the space and `#`
+    // are escaped, and what is resolved beside the file keeps them so.
+    let escaped = format!("file://{}/a%20b%23c", top.path().display());
+    assert_eq!(
+        text(&engine, root, "icon"),
+        format!("{escaped}/icons/a.svg")
+    );
+    // The Loader's address, resolved beside Main.qml, names the file
+    // the compile recorded.
+    let panel = engine
+        .read_by_name(root, "panel")
+        .as_object()
+        .expect("the Loader found parts/Panel.qml under `a b#c`");
+    assert_eq!(text(&engine, panel, "here"), format!("{escaped}/parts/"));
+}
+
+#[test]
 fn a_base_url_stays_for_a_source_with_no_files() {
     let dir = app_dir();
     let engine = ljos::engine();

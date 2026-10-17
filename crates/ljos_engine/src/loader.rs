@@ -58,6 +58,29 @@ pub(crate) fn strip_query(url: &str) -> &str {
     }
 }
 
+/// The `file://` URL of the absolute `path`. Only what would break the
+/// address is escaped (a space, `#`, `%`, `?`, control bytes) and every
+/// byte of a character outside ASCII, as Qt's file URLs have them; a
+/// reader of the URL percent-decodes it back to the path.
+pub fn file_url(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let mut out = String::from("file://");
+    for b in s.bytes() {
+        match b {
+            b' ' | b'#' | b'%' | b'?' | 0..0x20 | 0x7f.. => {
+                out.push_str(&format!("%{b:02X}"));
+            }
+            _ => out.push(b as char),
+        }
+    }
+    if !s.starts_with('/') {
+        // A Windows path: file:///C:/...
+        out.insert(7, '/');
+        return out.replace('\\', "/");
+    }
+    out
+}
+
 /// `file:///Main.qml` and `Main.qml` are `Main`.
 fn plain_key(url: &str) -> String {
     let url = strip_query(url);
