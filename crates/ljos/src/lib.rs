@@ -92,10 +92,19 @@
 ///
 /// A field's `#[qml(write = Self::name)]` is its setter: a
 /// `fn(&self, T) -> Option<T>` every write goes through before it is
-/// stored, from QML, a binding or Rust (`Engine::write_by_name`,
-/// `Engine::set`). It returns the value to store, which may be a
-/// clamped one, or `None` to refuse the write; nothing hears of a write
-/// that leaves the value as it was.
+/// stored, from QML, a binding, an animation or Rust
+/// (`Engine::write_by_name`, `Engine::set`). It returns the value to
+/// store, which may be a clamped one, or `None` to refuse the write. It
+/// runs for every write, one of the value already held included; nothing
+/// hears of a write that leaves the value as it was.
+///
+/// A setter that has more to do, as a `WRITE` function in Qt may, takes
+/// `fn(cx: &Cx, T) -> Option<T>` instead: `cx.this` is the object, and
+/// what it writes to the object's other properties goes through their
+/// own setters and is heard before the assignment returns. Writing its
+/// own property from inside is refused with
+/// [`EngineError::WriteInOwnSetter`](prelude::EngineError); what it
+/// returns is what is stored.
 ///
 /// ```
 /// use ljos::prelude::*;
@@ -118,6 +127,29 @@
 /// let dial = engine.create_by_name("Example", "Dial", None).unwrap();
 /// engine.set(dial, Dial::LEVEL, 42).unwrap();
 /// assert_eq!(engine.get(dial, Dial::LEVEL), Ok(10));
+///
+/// #[derive(Debug, Default, QmlObject)]
+/// #[qml(module = "Example", name = "Browser")]
+/// pub struct Browser {
+///     #[qml(notify, write = Self::keep_root)]
+///     root_path: Atom,
+///     #[qml(notify)]
+///     error: Atom,
+/// }
+///
+/// impl Browser {
+///     // Any write, the path already open included, clears the error.
+///     fn keep_root(cx: &Cx, path: Atom) -> Option<Atom> {
+///         cx.set(Self::ERROR, Atom::default()).ok()?;
+///         Some(path)
+///     }
+/// }
+///
+/// engine.register_module(ljos::module!("Example" 1.0 => [Browser]));
+/// let browser = engine.create_by_name("Example", "Browser", None).unwrap();
+/// engine.set(browser, Browser::ERROR, Atom::from("denied")).unwrap();
+/// engine.set(browser, Browser::ROOT_PATH, Atom::default()).unwrap();
+/// assert_eq!(engine.get(browser, Browser::ERROR), Ok(Atom::default()));
 /// ```
 pub mod prelude {
     pub use crate::task::Task;

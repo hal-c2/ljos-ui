@@ -53,15 +53,24 @@
 //! a field that takes any object: the QML type a description of the type
 //! says it holds, where the engine takes other objects too, as a control's
 //! part that a style gives as a `Component` and the control makes) and
-//! `write = path` (a `fn(&self, T) -> Option<T>`, `T` the field's type, that
-//! every write goes through before it is stored, as a setter in Qt: it gets
-//! the value already converted, and returns `Some` with the value to store,
-//! the one given or a corrected one, or `None` to refuse the write. Nothing
-//! hears of a write it corrects to the value already held, nor of one it
-//! refuses. QML assignments, bindings, animation steps and
+//! `write = path` (the field's setter, as in Qt: every write goes through
+//! it before it is stored. It is a `fn(&self, T) -> Option<T>`, `T` the
+//! field's type, or `fn(cx: &Cx, T) -> Option<T>` when it has more to do
+//! than look at the struct; the signature picks the form. It gets the
+//! value already converted, and returns `Some` with the value to store,
+//! the one given or a corrected one, or `None` to refuse the write. It runs
+//! for every write, one of the value already held included; nothing hears
+//! of a write that leaves the value as it was, nor of one it refuses. The
+//! `Cx` form runs with nothing borrowed: it reads the object through `cx`
+//! and may write its other properties, which go through their own setters
+//! and are heard before the write that ran it returns. A write of its own
+//! property from inside it is refused with
+//! `EngineError::WriteInOwnSetter`; the value it returns is what is stored.
+//! What it reads is not tracked, so a binding of the property does not come
+//! to depend on it. QML assignments, bindings, animation steps and
 //! `Engine::write_by_name`/`Engine::set` all go through it; `undefined`
 //! taking the property back does not. `Self::name` names a method of the
-//! struct). Field names are exposed in camelCase unless renamed.
+//! //! struct). Field names are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -587,18 +596,35 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                 ));
             }
             let write = format_ident!("__qml_write_{}", ident);
+            let write_cx = format_ident!("__qml_write_cx_{}", ident);
             let path = self_to(path, ty);
+            // Both forms are generated; the method's signature picks one.
             accessors.push(quote! {
                 fn #write(
                     o: &dyn #e::QmlObject,
                     v: &#e::Value,
                 ) -> #p::Result<#p::Option<#e::Value>, #e::ConvertError> {
                     let wanted = <#fty as #e::QmlValue>::from_value(v)?;
-                    let kept: #p::Option<#fty> = #path(#p::downcast::<#ty>(o), wanted);
+                    let kept: #p::Option<#fty> = #p::WriteFn::<#ty, #fty, _>::on_native(
+                        &#path,
+                        #p::downcast::<#ty>(o),
+                        wanted,
+                    );
+                    #p::Result::Ok(kept.map(|k| #e::QmlValue::to_value(&k)))
+                }
+                fn #write_cx(
+                    cx: &#e::Cx<'_>,
+                    v: &#e::Value,
+                ) -> #p::Result<#p::Option<#e::Value>, #e::ConvertError> {
+                    let wanted = <#fty as #e::QmlValue>::from_value(v)?;
+                    let kept: #p::Option<#fty> =
+                        #p::WriteFn::<#ty, #fty, _>::on_cx(&#path, cx, wanted);
                     #p::Result::Ok(kept.map(|k| #e::QmlValue::to_value(&k)))
                 }
             });
-            builder.push(quote!(.write(#write)));
+            builder.push(
+                quote!(.write(#p::WriteFn::<#ty, #fty, _>::filter(&#path, #write, #write_cx))),
+            );
         }
         match &a.reset {
             Some(Some(reset)) => builder.push(quote!(.reset(#reset))),

@@ -179,6 +179,50 @@ pub mod __private {
 
     pub use crate::meta::{ImplFallback, ImplViaTrait, Probe};
 
+    /// Which of the two setter forms a `#[qml(write = ..)]` path is: the
+    /// derive passes trampolines for both, and the method's signature
+    /// picks one (the marker `M` is inferred).
+    #[diagnostic::on_unimplemented(
+        message = "a setter is `fn(&self, T) -> Option<T>` or `fn(cx: &Cx, T) -> Option<T>`, with `T` the field's type"
+    )]
+    pub trait WriteFn<S, T, M> {
+        fn filter(&self, native: NativeWrite, cx: CxWrite) -> crate::WriteFilter;
+        fn on_native(&self, this: &S, v: T) -> Option<T>;
+        fn on_cx(&self, cx: &crate::Cx<'_>, v: T) -> Option<T>;
+    }
+
+    #[derive(Debug)]
+    pub struct ByRef;
+    #[derive(Debug)]
+    pub struct ByCx;
+    type NativeWrite =
+        fn(&dyn QmlObject, &crate::Value) -> Result<Option<crate::Value>, crate::ConvertError>;
+    type CxWrite = crate::meta::CxWrite;
+
+    impl<S, T, F: Fn(&S, T) -> Option<T>> WriteFn<S, T, ByRef> for F {
+        fn filter(&self, native: NativeWrite, _: CxWrite) -> crate::WriteFilter {
+            crate::WriteFilter::Native(native)
+        }
+        fn on_native(&self, this: &S, v: T) -> Option<T> {
+            self(this, v)
+        }
+        fn on_cx(&self, _: &crate::Cx<'_>, _: T) -> Option<T> {
+            unreachable!("ljos_engine: a `&self` setter was given a Cx")
+        }
+    }
+
+    impl<S, T, F: Fn(&crate::Cx<'_>, T) -> Option<T>> WriteFn<S, T, ByCx> for F {
+        fn filter(&self, _: NativeWrite, cx: CxWrite) -> crate::WriteFilter {
+            crate::WriteFilter::Cx(cx)
+        }
+        fn on_native(&self, _: &S, _: T) -> Option<T> {
+            unreachable!("ljos_engine: a `Cx` setter was given the struct")
+        }
+        fn on_cx(&self, cx: &crate::Cx<'_>, v: T) -> Option<T> {
+            self(cx, v)
+        }
+    }
+
     use crate::object::QmlObject;
 
     /// The struct a generated accessor was registered for. The engine has

@@ -112,9 +112,23 @@ pub type Getter = fn(&dyn QmlObject) -> Value;
 pub type Setter = fn(&mut dyn QmlObject, &Value) -> Result<(), ConvertError>;
 /// Decides what a write to a native field stores, before it is stored or
 /// heard: `Some` is the value to store (the one written, or a corrected
-/// one), `None` refuses the write. The argument is the struct that
-/// declares the field, and the value is already of the property's type.
-pub type WriteFilter = fn(&dyn QmlObject, &Value) -> Result<Option<Value>, ConvertError>;
+/// one), `None` refuses the write. It sees every write, one of the value
+/// the field already holds too. The value is already of the property's
+/// type.
+#[derive(Clone, Copy, Debug)]
+pub enum WriteFilter {
+    /// Gets the struct that declares the field (`fn(&self, T)`).
+    Native(fn(&dyn QmlObject, &Value) -> Result<Option<Value>, ConvertError>),
+    /// Gets the engine and the object (`fn(cx: &Cx, T)`), and runs with
+    /// nothing borrowed, so it may read and write the object's other
+    /// properties, as a WRITE function in Qt may. What it writes goes
+    /// through their own filters and is heard before the write that ran
+    /// it is stored. A write of the property it filters is refused
+    /// ([`EngineError::WriteInOwnSetter`]); its reads are not tracked.
+    Cx(CxWrite),
+}
+/// A [`WriteFilter::Cx`] setter.
+pub type CxWrite = fn(&Cx<'_>, &Value) -> Result<Option<Value>, ConvertError>;
 /// Gets the group struct (`Border`) from the struct that holds it.
 pub type GroupGet = fn(&dyn QmlObject) -> &dyn QmlObject;
 /// Mutable [`GroupGet`].
@@ -948,11 +962,11 @@ impl MetaBuilder {
     }
 
     /// Sends writes to the field just added through `f` before they are
-    /// stored, so a type can clamp or refuse a value where Qt's setter
-    /// would: nothing hears a write `f` corrects to the value already
-    /// held, nor one it refuses. QML assignments, bindings and writes from
-    /// Rust all go through it; taking the property back with `undefined`
-    /// does not.
+    /// stored, so a type can clamp or refuse a value, or change other
+    /// properties, where Qt's setter would: nothing hears a write `f`
+    /// corrects to the value already held, nor one it refuses. QML
+    /// assignments, bindings, animation steps and writes from Rust all go
+    /// through it; taking the property back with `undefined` does not.
     pub fn write(mut self, f: WriteFilter) -> Self {
         if let Some(PropertyAccess::Field { write, .. }) =
             self.meta.properties.last_mut().map(|p| &mut p.access)

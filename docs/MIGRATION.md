@@ -257,8 +257,15 @@ the rest as an `Item` does.
 A `Q_PROPERTY`'s `WRITE` function that clamps or refuses a value is a
 field's `#[qml(write = Self::name)]`: a `fn(&self, T) -> Option<T>`
 every write goes through before it is stored, whether from QML, a
-binding or Rust. It returns the value to store, or `None` to refuse the
-write, and nothing hears of a write that leaves the value as it was.
+binding, an animation or Rust. It returns the value to store, or `None`
+to refuse the write. It runs for every write, one of the value already
+held included, and nothing hears of a write that leaves the value as it
+was. A `WRITE` function that also changes the object's other properties
+(clears an error, counts a visit) is a `fn(cx: &Cx, T) -> Option<T>`
+instead: it writes them through `cx` (`cx.set(Self::ERROR, ..)`), they
+go through their own setters, and they are heard before the assignment
+returns, as their signals are in Qt. It may not write its own property
+(`EngineError::WriteInOwnSetter`); it returns the value to store.
 Correcting the value in a handler of its own change signal instead is
 heard twice, the raw value and then the corrected one.
 

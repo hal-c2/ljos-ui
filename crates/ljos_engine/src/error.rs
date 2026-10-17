@@ -27,6 +27,12 @@ pub enum EngineError {
     /// `border` in `border.width` is not itself assignable.
     #[error("Cannot assign to grouped property \"{0}\"; assign its members")]
     GroupProperty(String),
+    /// A setter that gets a `Cx` wrote the property it is the setter of:
+    /// the value it returns is what is stored.
+    #[error(
+        "{ty}.{name} cannot be written from inside its own setter; the setter returns the value to store"
+    )]
+    WriteInOwnSetter { ty: String, name: String },
     #[error(transparent)]
     Convert(#[from] ConvertError),
     #[error("{name}: expected {expected} arguments, got {got}")]

@@ -38,7 +38,9 @@ use crate::cx::Cx;
 use crate::error::EngineError;
 use crate::ids::{ContextId, MethodIndex, ObjectId, PropIndex, PropKey};
 use crate::log::LogState;
-use crate::meta::{CompleteThunk, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags};
+use crate::meta::{
+    CompleteThunk, MetaObject, MetaRef, Prop, PropertyAccess, PropertyFlags, WriteFilter,
+};
 use crate::object::{
     AliasTarget, FieldReads, Location, ObjectFlags, ObjectHeader, QmlObject, QmlType,
     downcast_chain, downcast_chain_mut, find_native, find_native_mut,
@@ -120,6 +122,9 @@ pub(crate) struct Inner {
     pub(crate) slow: crate::slow::SlowState,
     /// What bindings say while their objects are made (delayed_errors.rs).
     pub(crate) delayed: crate::delayed_errors::DelayedErrors,
+    /// The properties whose setters (those that get a `Cx`) are running,
+    /// innermost last: a write to one of them from inside is refused.
+    setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -261,6 +266,7 @@ impl Engine {
             faults: Default::default(),
             slow: Default::default(),
             delayed: Default::default(),
+            setters: RefCell::new(SmallVec::new()),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {
@@ -1369,8 +1375,15 @@ impl Engine {
             if h.node(prop).is_none() && !h.read_without_node(prop) {
                 // Nobody observes it: the field is the only copy, and it
                 // is not marked assigned.
-                if let Some(v) = filter_in(h, prop, v)? {
-                    store_in(h, prop, &v)?;
+                match filter_in(h, prop, v)? {
+                    Filtered::Done(Some(v)) => store_in(h, prop, &v)?,
+                    Filtered::Done(None) => {}
+                    // The setter may write other properties, so it runs
+                    // where a write can: unfiltered, through the full path.
+                    Filtered::WithCx(_, v) => {
+                        drop(store);
+                        return self.write_impl(obj, prop, v, WriteKind::Animation, true);
+                    }
                 }
                 return Ok(());
             }
@@ -1422,28 +1435,36 @@ impl Engine {
         // An array is the script's own in a `var`, a list anywhere else
         // (script_arrays.rs).
         let v = self.for_slot(obj, prop, v);
-        let (v, node, hook) = {
+        let (filtered, node, hook) = {
             let store = self.inner.store.borrow();
             let h = store
                 .objects
                 .get(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
             let ty = self.check_writable(h, prop, internal)?;
-            let hook = match &h.ext {
-                Some(ext) if !internal => ext.write_hook.clone(),
-                _ => None,
-            };
-            let node = match h.node(prop) {
-                None if h.read_without_node(prop) => Err(()),
-                n => Ok(n),
-            };
+            let (node, hook) = node_and_hook(h, prop, internal);
             let v = coerce_for(&store, Some(obj), &ty, &v)?;
             // The type's own say comes before anything hears of it, as a
             // setter's does in Qt.
-            let Some(v) = filter_in(h, prop, v)? else {
-                return Ok(());
-            };
-            (v, node, hook)
+            (filter_in(h, prop, v)?, node, hook)
+        };
+        let (v, node, hook) = match filtered {
+            Filtered::Done(None) => return Ok(()),
+            Filtered::Done(Some(v)) => (v, node, hook),
+            setter @ Filtered::WithCx(..) => {
+                let Some(v) = self.finish_filter(obj, prop, setter)? else {
+                    return Ok(());
+                };
+                // What the setter wrote may have given the property a
+                // node or a reader.
+                let store = self.inner.store.borrow();
+                let h = store
+                    .objects
+                    .get(obj)
+                    .ok_or_else(|| EngineError::dead(obj))?;
+                let (node, hook) = node_and_hook(h, prop, internal);
+                (v, node, hook)
+            }
         };
         let node = match node {
             Ok(n) => n,
@@ -1487,6 +1508,38 @@ impl Engine {
             }
             Ok(())
         })
+    }
+
+    /// Runs a setter that gets a [`Cx`], with no store borrow held, so it
+    /// can read and write the object's other properties. Its reads are not
+    /// tracked: a binding of the property does not come to depend on
+    /// them. A write to the property itself from inside is refused.
+    fn finish_filter(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        filtered: Filtered,
+    ) -> Result<Option<Value>, EngineError> {
+        let (setter, v) = match filtered {
+            Filtered::Done(v) => return Ok(v),
+            Filtered::WithCx(setter, v) => (setter, v),
+        };
+        if self.inner.setters.borrow().contains(&(obj, prop)) {
+            let (ty, name) = self.describe(obj, prop);
+            return Err(EngineError::WriteInOwnSetter {
+                ty: ty.to_string(),
+                name: name.to_string(),
+            });
+        }
+        struct Running<'a>(&'a RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>);
+        impl Drop for Running<'_> {
+            fn drop(&mut self) {
+                self.0.borrow_mut().pop();
+            }
+        }
+        self.inner.setters.borrow_mut().push((obj, prop));
+        let _running = Running(&self.inner.setters);
+        Ok(self.untrack(|| setter(&Cx::new(self, obj), &v))?)
     }
 
     /// Updates the field cache; a no-op for a dead object.
@@ -1838,8 +1891,13 @@ impl Engine {
                 let store = engine.inner.store.borrow();
                 coerce_for(&store, Some(obj), &ty, &v).and_then(|v| match store.objects.get(obj) {
                     Some(h) => Ok(filter_in(h, prop, v)?),
-                    None => Ok(Some(v)),
+                    None => Ok(Filtered::Done(Some(v))),
                 })
+            };
+            let coerced = match coerced {
+                Ok(Filtered::Done(v)) => Ok(v),
+                Ok(setter) => engine.finish_filter(obj, prop, setter),
+                Err(e) => Err(e),
             };
             match coerced {
                 // The type refused it: the property keeps what it holds.
@@ -2694,6 +2752,33 @@ pub(crate) fn read_access(
     }
 }
 
+/// What a native field's setter makes of a write.
+pub(crate) enum Filtered {
+    /// What to store, or nothing if the setter refused it.
+    Done(Option<Value>),
+    /// A setter that gets a `Cx`, still to run with the value: it may write
+    /// other properties, so it cannot run under the store's borrow.
+    WithCx(crate::meta::CxWrite, Value),
+}
+
+/// A property's node, `Err` if a reader follows it without one, and the
+/// write hook a model row has.
+fn node_and_hook(
+    h: &ObjectHeader,
+    prop: PropIndex,
+    internal: bool,
+) -> (Result<Option<NodeId>, ()>, Option<crate::object::WriteHook>) {
+    let hook = match &h.ext {
+        Some(ext) if !internal => ext.write_hook.clone(),
+        _ => None,
+    };
+    let node = match h.node(prop) {
+        None if h.read_without_node(prop) => Err(()),
+        n => Ok(n),
+    };
+    (node, hook)
+}
+
 /// What a write of `v` to a native field stores: `v`, what the field's
 /// [`WriteFilter`](crate::meta::WriteFilter) makes of it, or nothing if
 /// the filter refuses it.
@@ -2701,15 +2786,16 @@ fn filter_access(
     native: &dyn QmlObject,
     access: &PropertyAccess,
     v: Value,
-) -> Result<Option<Value>, ConvertError> {
+) -> Result<Filtered, ConvertError> {
     match *access {
         PropertyAccess::Field {
             owner,
             write: Some(write),
             ..
-        } => match find_native(native, owner) {
-            Some(o) => write(o, &v),
-            None => Ok(Some(v)),
+        } => match (write, find_native(native, owner)) {
+            (WriteFilter::Native(write), Some(o)) => Ok(Filtered::Done(write(o, &v)?)),
+            (WriteFilter::Cx(write), Some(_)) => Ok(Filtered::WithCx(write, v)),
+            (_, None) => Ok(Filtered::Done(Some(v))),
         },
         PropertyAccess::Group {
             owner,
@@ -2719,9 +2805,9 @@ fn filter_access(
             ..
         } => match find_native(native, owner) {
             Some(o) => filter_access(get(o), &meta.properties[leaf.0 as usize].access, v),
-            None => Ok(Some(v)),
+            None => Ok(Filtered::Done(Some(v))),
         },
-        _ => Ok(Some(v)),
+        _ => Ok(Filtered::Done(Some(v))),
     }
 }
 
@@ -2729,10 +2815,10 @@ pub(crate) fn filter_in(
     h: &ObjectHeader,
     prop: PropIndex,
     v: Value,
-) -> Result<Option<Value>, ConvertError> {
+) -> Result<Filtered, ConvertError> {
     match h.meta.property(prop) {
         Some(p) => filter_access(&*h.native, &p.access, v),
-        None => Ok(Some(v)),
+        None => Ok(Filtered::Done(Some(v))),
     }
 }
 
