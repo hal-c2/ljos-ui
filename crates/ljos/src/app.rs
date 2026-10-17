@@ -201,6 +201,11 @@ impl<M> App<M> {
     /// Engine). A module registered afterwards is, to this
     /// compile, an unknown type, and a file naming it has an error.
     ///
+    /// Each file's URL is the file itself (`file://` and its absolute
+    /// path), so `Qt.resolvedUrl` and the relative addresses its
+    /// objects use (an `Image` source, a `Loader` source) find what is
+    /// beside it, as a QML file loaded from disk does.
+    ///
     /// A file with an error does not stop the application: it is
     /// recorded, its diagnostics are printed, and making that
     /// component (the root included) fails with the compiler's

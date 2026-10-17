@@ -360,6 +360,15 @@ for a build step or CI). QML in several trees — the counterpart of
 each tree's files are keyed from their own root, and a file of one
 may import a module whose `qmldir` is in another.
 
+Each file compiled from a directory is at its own URL, `file://` and
+its path, in every tree, so `Qt.resolvedUrl("icons/a.svg")` and an
+`Image` or `Loader` source written relative to the file find what is
+beside it, as a QML file loaded from disk does. A `url` property keeps
+the relative text it is given, as in Qt 6; what uses it resolves it. A
+pack says nothing of where its files were: a shipped application whose
+QML names its assets relatively says where they live with
+`MapSource::with_base_url`.
+
 What the builder does not cover stays reachable: `App::run_with`
 runs the same start and then hands over the shell's full `Setup`
 (the Engine, the `UiHandle` worker threads post through, the

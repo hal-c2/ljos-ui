@@ -118,6 +118,8 @@ pub enum Error {
 #[derive(Debug)]
 pub struct FileResult {
     pub key: String,
+    /// The file it was read from.
+    pub path: Option<PathBuf>,
     pub result: Result<Compiled, Vec<Diagnostic>>,
 }
 
@@ -177,6 +179,7 @@ pub fn compile_roots_with<O: TypeOracle>(
         .files()
         .map(|key| FileResult {
             key: key.to_string(),
+            path: project.path(key).map(Path::to_owned),
             result: compile_file(&project, key),
         })
         .collect())

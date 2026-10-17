@@ -133,12 +133,19 @@ fn has_scheme(url: &str) -> bool {
 }
 
 /// A [`ComponentSource`] over files given up front.
+///
+/// A file's URL is the one given for its key
+/// ([`insert_url`](Self::insert_url)), as a compile from a directory
+/// records where each file is; else `{base}/{key}.qml` with a
+/// [`base`](Self::with_base_url); else `file:///{key}.qml`.
 #[derive(Default)]
 pub struct MapSource {
     files: HashMap<String, Arc<CompiledFile>>,
     bytecode: HashMap<String, Bytecode>,
     failures: HashMap<String, String>,
     base: Option<String>,
+    urls: HashMap<String, String>,
+    keys_by_url: HashMap<String, String>,
 }
 
 impl MapSource {
@@ -146,7 +153,10 @@ impl MapSource {
         Self::default()
     }
 
-    /// URLs become `{base}/{key}.qml`.
+    /// URLs become `{base}/{key}.qml`: for files that came from no
+    /// one place (a pack, files given as text), where the application
+    /// says where they and their assets live. A key with its own URL
+    /// ([`insert_url`](Self::insert_url)) keeps it.
     pub fn with_base_url(mut self, base: impl Into<String>) -> Self {
         self.base = Some(base.into());
         self
@@ -154,6 +164,18 @@ impl MapSource {
 
     pub fn insert(&mut self, key: impl Into<String>, file: impl Into<Arc<CompiledFile>>) {
         self.files.insert(key.into(), file.into());
+    }
+
+    /// Says the file `key` (compiled or failed) is at `url`, a file
+    /// read from disk at its own `file://` URL: `Qt.resolvedUrl` and
+    /// every relative address its objects use (an `Image` source, a
+    /// `Loader` source, an imported script) resolve against it.
+    pub fn insert_url(&mut self, key: impl Into<String>, url: impl Into<String>) {
+        let (key, url) = (key.into(), url.into());
+        self.keys_by_url.insert(url.clone(), key.clone());
+        if let Some(old) = self.urls.insert(key, url) {
+            self.keys_by_url.remove(&old);
+        }
     }
 
     /// Notes that `key` is a file that did not compile, and why.
@@ -244,6 +266,9 @@ impl ComponentSource for MapSource {
     }
 
     fn url(&self, key: &str) -> String {
+        if let Some(url) = self.urls.get(key) {
+            return url.clone();
+        }
         match &self.base {
             Some(b) => format!("{}/{key}.qml", b.trim_end_matches('/')),
             None => format!("file:///{key}.qml"),
@@ -251,6 +276,9 @@ impl ComponentSource for MapSource {
     }
 
     fn key(&self, url: &str) -> String {
+        if let Some(key) = self.keys_by_url.get(strip_query(url)) {
+            return key.clone();
+        }
         let under_base = self
             .base
             .as_deref()
@@ -645,6 +673,22 @@ mod tests {
         assert_eq!(based.url("sub/Leaf"), "qrc:/app/sub/Leaf.qml");
         assert_eq!(based.key("qrc:/app/sub/Leaf.qml"), "sub/Leaf");
         assert_eq!(based.key("sub/Leaf.qml"), "sub/Leaf");
+    }
+
+    #[test]
+    fn a_file_with_its_own_url_is_found_by_it() {
+        let mut source = MapSource::new().with_base_url("qrc:/app");
+        source.insert_url("Main", "file:///home/a/Main.qml");
+        source.insert_url("Lib/Brick", "file:///opt/shared/Lib/Brick.qml");
+        assert_eq!(source.url("Main"), "file:///home/a/Main.qml");
+        assert_eq!(source.url("Other"), "qrc:/app/Other.qml");
+        assert_eq!(source.key("file:///home/a/Main.qml?generation=2"), "Main");
+        assert_eq!(source.key("file:///opt/shared/Lib/Brick.qml"), "Lib/Brick");
+        assert_eq!(source.key("qrc:/app/Other.qml"), "Other");
+        // A file moved: its old address names nothing of it.
+        source.insert_url("Main", "file:///home/b/Main.qml");
+        assert_eq!(source.key("file:///home/b/Main.qml"), "Main");
+        assert_ne!(source.key("file:///home/a/Main.qml"), "Main");
     }
 
     #[test]

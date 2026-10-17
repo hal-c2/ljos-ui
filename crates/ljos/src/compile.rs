@@ -3,7 +3,7 @@
 //! does in a build script. Either feature links the parser.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use ljos_engine::{
     Engine, MapSource, MetaObject, MetaRef, PropertyAccess, PropertyFlags, TypeDump, TypeEntry,
@@ -107,6 +107,9 @@ pub(crate) fn compile_with_oracle<O: TypeOracle>(
                 .filter(|d| d.severity == ljos_compiler::Severity::Error)
                 .map(|d| format!("{}: {}", r.key, d.message)),
         );
+        if let Some(path) = &r.path {
+            source.insert_url(r.key.clone(), file_url(path));
+        }
         match r.result {
             Ok(c) if !c.has_errors() => source.insert(r.key, c.file),
             // Compiled only as far as it could: not a file to run.
@@ -122,6 +125,27 @@ pub(crate) fn compile_with_oracle<O: TypeOracle>(
         ));
     }
     Ok(source)
+}
+
+/// The `file://` URL of `path`, made absolute against the working
+/// directory and without `.` and `..`, so that it is the same text
+/// the engine reaches when it resolves a relative address beside
+/// another file.
+fn file_url(path: &Path) -> String {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+    let mut parts: Vec<String> = Vec::new();
+    for part in absolute.components() {
+        match part {
+            Component::Prefix(p) => parts.push(p.as_os_str().to_string_lossy().into_owned()),
+            Component::RootDir | Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(p) => parts.push(p.to_string_lossy().into_owned()),
+        }
+    }
+    // `file:///home/a/Main.qml`; on Windows `file:///C:/a/Main.qml`.
+    format!("file:///{}", parts.join("/"))
 }
 
 /// One type as the compiler sees it in a render with backends: of the

@@ -29,6 +29,8 @@ const MAX_DIRS: usize = 20_000;
 pub struct Project<O> {
     pub(crate) front: project::Project,
     sources: BTreeMap<String, String>,
+    /// Where each file read from disk is ([`Self::load_roots`]).
+    paths: BTreeMap<String, PathBuf>,
     /// The JavaScript files, by their path from the root (`content/calc.js`).
     scripts: BTreeMap<String, String>,
     pub(crate) oracle: O,
@@ -47,6 +49,7 @@ impl<O: TypeOracle> Project<O> {
         Self {
             front: project::Project::new(),
             sources: BTreeMap::new(),
+            paths: BTreeMap::new(),
             scripts: BTreeMap::new(),
             oracle,
             dynamic: OnceCell::new(),
@@ -132,6 +135,7 @@ impl<O: TypeOracle> Project<O> {
     pub fn remove(&mut self, key: &str) {
         self.front.remove(key);
         self.sources.remove(key);
+        self.paths.remove(key);
         self.dynamic = OnceCell::new();
         self.callable.get_mut().clear();
     }
@@ -199,6 +203,7 @@ impl<O: TypeOracle> Project<O> {
                 };
                 if !earlier.contains(&key) {
                     self.add(&key, text);
+                    self.paths.insert(key, path);
                 }
             }
             for name in names
@@ -240,6 +245,12 @@ impl<O: TypeOracle> Project<O> {
     /// The files, by key, in order.
     pub fn files(&self) -> impl Iterator<Item = &str> {
         self.sources.keys().map(String::as_str)
+    }
+
+    /// The path the file `key` was read from: none for a file
+    /// [`add`](Self::add)ed as text.
+    pub fn path(&self, key: &str) -> Option<&Path> {
+        self.paths.get(key).map(PathBuf::as_path)
     }
 
     pub fn source(&self, key: &str) -> Option<&str> {
