@@ -874,6 +874,13 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         // A place that was declared is where the view starts.
         st.positioned.set(true);
     }
+    if let Some((main, anchor)) = st.carried_anchor.take()
+        && first_pass
+        && main == g.main
+        && st.positioned.get()
+    {
+        st.anchor.set(anchor);
+    }
     let to_begin = !st.positioned.get() && over.is_none();
     let v0 = match over {
         Some(v) => v,

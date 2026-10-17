@@ -760,16 +760,18 @@ fn tell_attached(e: &Engine, item: ObjectId, att: ObjectId) {
 
 impl Migrate for ItemView {
     const VERSION: u32 = 1;
-    type State = state::CarriedCurrent;
+    type State = state::CarriedView;
 
-    fn snapshot(engine: &Engine, obj: ObjectId) -> Option<state::CarriedCurrent> {
+    fn snapshot(engine: &Engine, obj: ObjectId) -> Option<state::CarriedView> {
         let st = state_of(engine, obj)?;
         // A view that never laid out has nothing the file does not say.
         st.seen_index.get()?;
-        Some(state::CarriedCurrent {
-            follow: st.follow.get(),
-            auto_index: st.auto_index.get(),
-            cleared: st.cleared.get(),
+        Some(state::CarriedView {
+            current: state::CarriedCurrent {
+                auto_index: st.auto_index.get(),
+                cleared: st.cleared.get(),
+            },
+            anchor: st.last_main.get().map(|(main, _)| (main, st.anchor.get())),
         })
     }
 
@@ -777,10 +779,11 @@ impl Migrate for ItemView {
         engine: &Engine,
         obj: ObjectId,
         _from: u32,
-        carried: state::CarriedCurrent,
+        carried: state::CarriedView,
     ) -> Result<(), String> {
         let st = state_of(engine, obj).ok_or("not a view")?;
-        st.carried.set(Some(carried));
+        st.carried.set(Some(carried.current));
+        st.carried_anchor.set(carried.anchor);
         Ok(())
     }
 }

@@ -50,7 +50,7 @@ pub(crate) fn normalise(e: &Engine, view: ObjectId, st: &ViewState, rows: usize)
             // The view is where the old one was, which had already gone
             // to its current row or been moved away from it.
             st.cleared.set(c.cleared);
-            st.follow.set(c.follow);
+            st.follow.set(false);
             st.auto_index.set(c.auto_index);
         } else {
             let said = !first_pass || !is_unset(e, view, p);

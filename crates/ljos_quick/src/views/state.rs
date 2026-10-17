@@ -275,6 +275,11 @@ pub(crate) struct ViewState {
     /// row, for the first pass to take instead of what the carried
     /// `currentIndex` would say.
     pub carried: Cell<Option<CarriedCurrent>>,
+    /// The anchor of the view this one replaced at a reload, and the
+    /// axis it is along: a carried place is measured from rows the new
+    /// view has not measured yet, and the row that started there still
+    /// does.
+    pub carried_anchor: Cell<Option<(usize, (usize, f64))>>,
     pub last_main: Cell<Option<(usize, bool)>>,
     /// The bounds the content last had: a pass that changes them brings
     /// the content inside.
@@ -313,12 +318,20 @@ pub(crate) struct ViewState {
 
 /// How a view stood towards its current row when a reload replaced it.
 /// The reload carries `currentIndex` as a value; this is what that value
-/// does not say.
+/// does not say. The view does not follow its highlight: the current row
+/// did not change, and the view is where the old one was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CarriedCurrent {
-    pub(crate) follow: bool,
     pub(crate) auto_index: bool,
     pub(crate) cleared: bool,
+}
+
+/// What a view a reload replaced knew of its rows: its current row, and
+/// which row started where along the way the rows ran.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CarriedView {
+    pub(crate) current: CarriedCurrent,
+    pub(crate) anchor: Option<(usize, (usize, f64))>,
 }
 
 impl Default for ViewState {
@@ -355,6 +368,7 @@ impl Default for ViewState {
             follow: Cell::new(false),
             positioned: Cell::new(false),
             carried: Cell::new(None),
+            carried_anchor: Cell::new(None),
             last_main: Cell::new(None),
             bounds: Cell::new((0.0, 0.0, 0.0)),
             laid: Cell::new(None),
