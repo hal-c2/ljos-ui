@@ -1477,7 +1477,7 @@ impl Engine {
                 }
                 continue;
             }
-            self.apply_literal(inst, &t, &a.value);
+            self.apply_literal(inst, &t, &a.value, (a.span.line, a.span.column));
             if matches!(a.value, Literal::List(_) | Literal::Object(_))
                 && self.is_declared_in_qml(t.obj, t.prop)
             {
@@ -1957,7 +1957,7 @@ impl Engine {
         Some(cur)
     }
 
-    fn apply_literal(&self, inst: &Rc<Instance>, t: &Target, lit: &Literal) {
+    fn apply_literal(&self, inst: &Rc<Instance>, t: &Target, lit: &Literal, at: (u32, u32)) {
         if let Literal::Translatable(tr) = lit
             && tr.kind != TranslationKind::NoOp
         {
@@ -1971,11 +1971,29 @@ impl Engine {
             }
             return;
         }
-        let v = self.literal_value(inst, lit);
+        let object = matches!(lit, Literal::Object(_));
+        let v = if object && self.declared_type(t) == Some(TypeTag::Real) {
+            // An object written in the file holds no number to a real.
+            Value::Real(f64::NAN)
+        } else {
+            self.literal_value(inst, lit)
+        };
         if let Err(e) = self.write_internal(t.obj, t.prop, v, WriteKind::Initial) {
+            if object {
+                // Qt runs an object as a binding, and says so where it is.
+                let (line, col) = at;
+                self.warn(format!("{}:{line}:{col}: {e}", inst.url()));
+                return;
+            }
             let at = self.location_of(t.obj).unwrap_or_default();
             self.warn(format!("{at}{e}"));
         }
+    }
+
+    fn declared_type(&self, t: &Target) -> Option<TypeTag> {
+        let store = self.inner.store.borrow();
+        let info = store.objects.get(t.obj)?.meta.property(t.prop)?;
+        Some(info.ty.clone())
     }
 
     fn literal_value(&self, inst: &Rc<Instance>, lit: &Literal) -> Value {

@@ -620,6 +620,26 @@ impl<'js> Scope<'js> {
         })
     }
 
+    /// `Number(value)`: an object is asked its `valueOf`, so a Date is its
+    /// time and an object with no number in it is NaN.
+    pub fn number(&self, v: &JsValue) -> f64 {
+        self.to_value(v)
+            .and_then(|v| v.get::<rquickjs::convert::Coerced<f64>>())
+            .map_or(f64::NAN, |c| c.0)
+    }
+
+    /// `String(value)` for a Date, None for any other value.
+    pub fn date_text(&self, r: &JsRef) -> Option<String> {
+        let v = self.restore(r).ok()?;
+        let date: Value<'js> = self.ctx.globals().get("Date").ok()?;
+        if !v.as_object()?.is_instance_of(&date) {
+            return None;
+        }
+        v.get::<rquickjs::convert::Coerced<String>>()
+            .ok()
+            .map(|c| c.0)
+    }
+
     /// `String(value)` for a value from JS, as `console.log` prints it.
     pub fn display(&self, v: &JsValue) -> String {
         let Ok(value) = self.to_value(v) else {

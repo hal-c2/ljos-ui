@@ -200,12 +200,32 @@ impl TypeTag {
                 Value::Real(_) => v.clone(),
                 _ => match numeric(v) {
                     Some(n) => Value::Real(n),
-                    None => return fail(),
+                    // What JavaScript makes a number of it; a script's own
+                    // object is made one before it comes here.
+                    None => match v {
+                        Value::List(items) => match &items[..] {
+                            [] => Value::Real(0.0),
+                            // An array is the number its text is.
+                            [Value::Null | Value::Undefined] => Value::Real(0.0),
+                            [one] => Value::Real(Value::String(one.to_js_string()).to_number()),
+                            _ => Value::Real(f64::NAN),
+                        },
+                        Value::Js(_) => return fail(),
+                        _ => Value::Real(f64::NAN),
+                    },
                 },
             },
             TypeTag::String => match v {
                 Value::String(_) => v.clone(),
                 Value::Null => Value::String(Atom::EMPTY),
+                // An object, though it has a toString, as qml6 refuses it
+                // and names it in a binding's warning.
+                Value::Map(_) | Value::Js(_) => {
+                    return Err(ConvertError::new("QJSValue", "QString"));
+                }
+                Value::Object(_) => {
+                    return Err(ConvertError::new("QObject", "QString"));
+                }
                 _ => Value::String(v.to_js_string()),
             },
             TypeTag::Color => match v {

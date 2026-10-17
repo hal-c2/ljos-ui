@@ -1048,6 +1048,17 @@ impl Engine {
         if matches!(ty, TypeTag::Data) {
             return self.js_to_data(scope, v, 0);
         }
+        // A real takes what JavaScript makes a number of an object, as
+        // qml6's does; a function is refused where it is written.
+        if matches!(ty, TypeTag::Real) {
+            match &v {
+                JsValue::Object(_) | JsValue::Typed(..) => return Value::Real(f64::NAN),
+                JsValue::Handle(r) if !scope.is_function(r) && !self.is_face(r) => {
+                    return Value::Real(scope.number(&v));
+                }
+                _ => {}
+            }
+        }
         match v {
             JsValue::Undefined => Value::Undefined,
             JsValue::Null => Value::Null,
@@ -1107,6 +1118,11 @@ impl Engine {
                         };
                         Value::Color(Color::from_rgba_f(num("r"), num("g"), num("b"), a))
                     }
+                    // A Date is its text; any other object a string refuses.
+                    TypeTag::String => match scope.date_text(&r) {
+                        Some(t) => Value::String(t.into()),
+                        None => Value::Js(JsHandle(r)),
+                    },
                     // A script's `URL` object: the address it holds.
                     TypeTag::Url => match scope.get_field(&r, "href") {
                         Ok(JsValue::String(s)) => Value::Url(s.into()),
