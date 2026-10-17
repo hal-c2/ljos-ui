@@ -3,8 +3,9 @@
 //!
 //! - Linux: the launcher-entry signal on the session bus
 //!   (`com.canonical.Unity.LauncherEntry.Update`), which KDE Plasma's task
-//!   manager and the GNOME docks read. It names the application by its
-//!   desktop entry (`Platform::desktop_file_name`).
+//!   manager and the GNOME docks read, and its `Query` method, which a dock
+//!   that starts later calls for the count already set. It names the
+//!   application by its desktop entry (`Platform::desktop_file_name`).
 //! - macOS: the Dock tile's badge label.
 //! - Elsewhere the in-process service stays: the count is kept, not shown.
 //!   Windows shows a count only as an overlay icon the application draws,
@@ -42,6 +43,8 @@ pub(crate) mod launcher {
     use ljos_platform::{BadgeService, Platform};
     use zbus::blocking::Connection;
     use zbus::zvariant::Value;
+
+    type Properties = HashMap<String, Value<'static>>;
 
     const INTERFACE: &str = "com.canonical.Unity.LauncherEntry";
 
@@ -121,11 +124,27 @@ pub(crate) mod launcher {
         }
     }
 
+    /// The count last sent, for a dock that asks (`Query`).
+    struct Shown {
+        uri: String,
+        count: u32,
+    }
+
+    #[zbus::interface(name = "com.canonical.Unity.LauncherEntry")]
+    impl Shown {
+        fn query(&self) -> (String, Properties) {
+            (self.uri.clone(), properties(self.count))
+        }
+    }
+
     fn send_all(connect: Connect, latest: &Latest) {
         // No session bus: nothing to show the badge on.
         let Ok(bus) = connect() else {
             return;
         };
+        // Where `Query` is answered. The connection's own thread, which
+        // sleeps until a message comes, answers it.
+        let mut served: Option<String> = None;
         loop {
             let next = {
                 let mut state = latest.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -140,26 +159,50 @@ pub(crate) mod launcher {
                 }
             };
             let (name, count) = next;
-            // A failed send (the bus went away) loses this count only.
-            let _ = update(&bus, &name, count);
+            let uri = format!("application://{name}.desktop");
+            let path = format!("/com/canonical/unity/launcherentry/{}", fnv1a(&uri));
+            // Failures (the bus went away) lose this count only.
+            let _ = serve(&bus, &mut served, &path, uri.clone(), count);
+            let _ = bus.emit_signal(
+                None::<&str>,
+                path.as_str(),
+                INTERFACE,
+                "Update",
+                &(uri, properties(count)),
+            );
         }
     }
 
-    /// `Update(app_uri, properties)`, from an object path of the
-    /// application's own as the convention has it.
-    fn update(bus: &Connection, desktop_file_name: &str, count: u32) -> zbus::Result<()> {
-        let uri = format!("application://{desktop_file_name}.desktop");
-        let path = format!("/com/canonical/unity/launcherentry/{}", fnv1a(&uri));
-        let mut properties: HashMap<&str, Value<'_>> = HashMap::new();
-        properties.insert("count", Value::I64(i64::from(count)));
-        properties.insert("count-visible", Value::Bool(count > 0));
-        bus.emit_signal(
-            None::<&str>,
-            path.as_str(),
-            INTERFACE,
-            "Update",
-            &(uri, properties),
-        )
+    /// Keeps the object at `path` answering `Query` with `count`.
+    fn serve(
+        bus: &Connection,
+        served: &mut Option<String>,
+        path: &str,
+        uri: String,
+        count: u32,
+    ) -> zbus::Result<()> {
+        let server = bus.object_server();
+        if served.as_deref() == Some(path) {
+            let shown = server.interface::<_, Shown>(path)?;
+            let mut shown = shown.get_mut();
+            shown.uri = uri;
+            shown.count = count;
+            return Ok(());
+        }
+        if let Some(old) = served.take() {
+            let _ = server.remove::<Shown, _>(old.as_str());
+        }
+        server.at(path, Shown { uri, count })?;
+        *served = Some(path.to_owned());
+        Ok(())
+    }
+
+    /// `Update`'s and `Query`'s properties: the count and whether to show it.
+    fn properties(count: u32) -> Properties {
+        let mut properties = HashMap::new();
+        properties.insert("count".to_owned(), Value::I64(i64::from(count)));
+        properties.insert("count-visible".to_owned(), Value::Bool(count > 0));
+        properties
     }
 
     /// A name for the object path made only of the characters one allows.
@@ -244,11 +287,17 @@ pub(crate) mod launcher {
                 .build();
             let mut updates =
                 MessageIterator::for_match_rule(rule, &listener, None).expect("a match rule");
-            let (tx, rx) = mpsc::channel::<Update>();
+            let (tx, rx) = mpsc::channel::<(Update, String, String)>();
             std::thread::spawn(move || {
                 while let Some(Ok(msg)) = updates.next() {
+                    let header = msg.header();
+                    let (Some(sender), Some(path)) = (header.sender(), header.path()) else {
+                        continue;
+                    };
                     if let Ok(update) = msg.body().deserialize::<Update>()
-                        && tx.send(update).is_err()
+                        && tx
+                            .send((update, sender.to_string(), path.to_string()))
+                            .is_err()
                     {
                         return;
                     }
@@ -264,7 +313,7 @@ pub(crate) mod launcher {
                 Box::new(move || connection::Builder::address(address.as_str())?.build()),
             );
             entry.show(3);
-            let (uri, properties) = rx
+            let ((uri, properties), sender, path) = rx
                 .recv_timeout(Duration::from_secs(10))
                 .expect("an Update signal");
             assert_eq!(uri, "application://org.example.Notes.desktop");
@@ -274,10 +323,35 @@ pub(crate) mod launcher {
                 Some(true)
             );
 
+            // A dock that starts now asks for what was last sent.
+            let query = |listener: &Connection| -> Update {
+                listener
+                    .call_method(
+                        Some(sender.as_str()),
+                        path.as_str(),
+                        Some(INTERFACE),
+                        "Query",
+                        &(),
+                    )
+                    .expect("Query")
+                    .body()
+                    .deserialize()
+                    .expect("Query's reply")
+            };
+            let (uri, properties) = query(&listener);
+            assert_eq!(uri, "application://org.example.Notes.desktop");
+            assert_eq!(i64::try_from(&properties["count"]).ok(), Some(3));
+
             entry.show(0);
-            let (_, properties) = rx
+            let ((_, properties), _, _) = rx
                 .recv_timeout(Duration::from_secs(10))
                 .expect("a second Update signal");
+            assert_eq!(i64::try_from(&properties["count"]).ok(), Some(0));
+            assert_eq!(
+                bool::try_from(&properties["count-visible"]).ok(),
+                Some(false)
+            );
+            let (_, properties) = query(&listener);
             assert_eq!(i64::try_from(&properties["count"]).ok(), Some(0));
             assert_eq!(
                 bool::try_from(&properties["count-visible"]).ok(),
