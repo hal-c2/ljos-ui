@@ -937,6 +937,14 @@ pub(crate) fn register(engine: &Engine) {
         ljos_engine::Version::new(2, 15),
         MetaRef::Static(CloseEvent::static_meta()),
     );
+    ljos_quick::register_window_position(engine, |e, item| {
+        let w = window_above(e, item)?;
+        e.with(w, |w: &Window| ljos_engine::Point {
+            x: f64::from(w.x),
+            y: f64::from(w.y),
+        })
+        .ok()
+    });
     ljos_quick::focus::register_focus_scope(engine, MetaRef::Static(Window::static_meta()));
     app::register(engine);
 }

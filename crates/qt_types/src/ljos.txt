@@ -1647,6 +1647,8 @@ module QtQuick
 		signal transformChanged
 		method mapToItem
 		method mapFromItem
+		method mapToGlobal
+		method mapFromGlobal
 		method contains
 		method forceActiveFocus
 		method nextItemInFocusChain

@@ -601,6 +601,33 @@ impl Item {
         map_point(cx.engine, item, Some(cx.this), Point { x, y })
     }
 
+    /// `mapToGlobal(x, y)` or `mapToGlobal(point)`: a point in this item's
+    /// coordinates, on the desktop.
+    #[qml(invokable, name = "mapToGlobal")]
+    fn map_to_global(cx: &Cx, x: Value, y: Value) -> Point {
+        let (e, me) = (cx.engine, cx.this);
+        let at = map_point(e, Some(me), None, point_of(&x, &y));
+        let origin = window_position(e, me);
+        Point {
+            x: at.x + origin.x,
+            y: at.y + origin.y,
+        }
+    }
+
+    /// `mapFromGlobal(x, y)` or `mapFromGlobal(point)`: a point on the
+    /// desktop, in this item's coordinates.
+    #[qml(invokable, name = "mapFromGlobal")]
+    fn map_from_global(cx: &Cx, x: Value, y: Value) -> Point {
+        let (e, me) = (cx.engine, cx.this);
+        let at = point_of(&x, &y);
+        let origin = window_position(e, me);
+        let scene = Point {
+            x: at.x - origin.x,
+            y: at.y - origin.y,
+        };
+        map_point(e, None, Some(me), scene)
+    }
+
     /// `contains(point)`: whether a point in local coordinates is inside
     /// the item's bounding rectangle.
     #[qml(invokable)]
@@ -815,6 +842,40 @@ fn map_point(engine: &Engine, from: Option<ObjectId>, to: Option<ObjectId>, p: P
         .and_then(|inv| inv.apply(from_t.apply(kurbo::Point::new(p.x, p.y))?))
         .unwrap_or(kurbo::Point::new(p.x, p.y));
     Point { x: q.x, y: q.y }
+}
+
+/// The point a script gives as `(x, y)` or as one `point`.
+fn point_of(x: &Value, y: &Value) -> Point {
+    match x {
+        Value::Point(p) => **p,
+        Value::IntPoint(p) => Point {
+            x: f64::from(p.x),
+            y: f64::from(p.y),
+        },
+        _ => Point {
+            x: x.to_number(),
+            y: y.to_number(),
+        },
+    }
+}
+
+/// Where the window an item is shown in is on the desktop, as a
+/// [`WindowPosition`] hook gives it.
+pub type WindowPosition = fn(&Engine, ObjectId) -> Option<Point>;
+
+#[derive(Default)]
+struct WindowPositions(std::cell::Cell<Option<WindowPosition>>);
+
+/// Says where an item's window is on the desktop, for `mapToGlobal` and
+/// `mapFromGlobal`. The window types live above this crate; without
+/// one, a window is at the desktop's origin, as an off-screen one is.
+pub fn register_window_position(engine: &Engine, position: WindowPosition) {
+    engine.extension::<WindowPositions>().0.set(Some(position));
+}
+
+fn window_position(engine: &Engine, item: ObjectId) -> Point {
+    let hook = engine.extension::<WindowPositions>().0.get();
+    hook.and_then(|f| f(engine, item)).unwrap_or_default()
 }
 
 /// Whether `obj`'s type is `Item` or derives from it.
