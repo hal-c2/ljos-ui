@@ -649,6 +649,9 @@ impl Engine {
             }
             order
         };
+        // A window's singletons are told it goes while it stands, and go
+        // once it has.
+        let scoped = self.singleton_scopes_end(&order);
         let mut headers = Vec::with_capacity(order.len());
         // Survivors whose visual parent died, to tell listeners.
         let mut orphans = Vec::new();
@@ -745,6 +748,9 @@ impl Engine {
         // Natives and handlers may own anything; drop them unborrowed.
         drop(connections);
         drop(headers);
+        for obj in scoped {
+            self.destroy_now(obj);
+        }
         true
     }
 

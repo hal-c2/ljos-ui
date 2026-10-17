@@ -126,9 +126,9 @@ pub mod prelude {
         Atom, Color, ConnectionId, ContextId, Cx, Engine, EngineError, Handler, ItemModel,
         ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange, ModelListener, ModelListeners,
         ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap, QmlList, QmlListModel,
-        QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, TreeChange,
-        TreeListener, TreeListeners, Url, Value, Version, list_model, qml_impl, qml_singleton,
-        tree_model,
+        QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, ScopedEvent, ScopedSingleton,
+        SignalIndex, Size, Timer, TreeChange, TreeListener, TreeListeners, Url, Value, Version,
+        list_model, qml_impl, qml_singleton, tree_model,
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,

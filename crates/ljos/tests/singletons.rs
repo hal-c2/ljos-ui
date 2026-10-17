@@ -104,3 +104,50 @@ fn a_singleton_is_made_by_the_factory_it_was_registered_with() {
     );
     assert_eq!(made.get(), 1);
 }
+
+/// One for each window: every root the application makes has its own.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Document")]
+#[qml_singleton(scope = "window")]
+pub struct Document {
+    #[qml(notify)]
+    pub title: String,
+}
+
+#[test]
+fn each_window_reads_its_own_singleton_through_both_tiers() {
+    let engine = ljos::engine();
+    let made = std::rc::Rc::new(std::cell::Cell::new(0));
+    let count = made.clone();
+    engine.register_singleton_with("Example", Version::new(1, 0), move |_| {
+        count.set(count.get() + 1);
+        Document::default()
+    });
+    engine.set_tier1(true);
+    engine.set_tier1_check(true);
+    let source = compile(
+        &engine,
+        "import QtQuick\nimport Example\nItem { property string title: Document.title + \"!\" }\n",
+    )
+    .unwrap();
+    let a = ljos::create_root(&engine, source, "Main").unwrap();
+    let b = engine.create_from_url("Main", None, Vec::new()).unwrap();
+    let text = |root| match engine.read_by_name(root, "title") {
+        Value::String(s) => s.to_string(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!((text(a), text(b)), ("!".into(), "!".into()));
+    assert_eq!(made.get(), 2, "the factory makes one for each window");
+    let doc = engine.singleton_in::<Document>(a).unwrap();
+    assert_ne!(Ok(doc), engine.singleton_in::<Document>(b));
+    engine
+        .write_by_name(doc, "title", Value::from("a"))
+        .unwrap();
+    assert_eq!(text(a), "a!");
+    assert_eq!(text(b), "!");
+    let stats = engine.tier1_stats();
+    assert!(stats.checked >= 1, "{stats:?}");
+    assert_eq!(stats.mismatches, 0, "{stats:?}");
+    let warnings = engine.take_warnings();
+    assert!(warnings.is_empty(), "{warnings:?}");
+}

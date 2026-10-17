@@ -1142,7 +1142,7 @@ impl Engine {
         props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
         let template = self.component_template(component)?;
-        self.create_from_template(&template, parent, props)
+        self.as_host_root(|| self.create_from_template(&template, parent, props))
     }
 
     /// What a `createObject` of `component` left it in: Error with

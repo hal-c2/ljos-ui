@@ -326,9 +326,11 @@ impl Engine {
     ) -> Result<ObjectId, EngineError> {
         let template = self.file_template(url)?;
         if !self.inner.reload.tracking.get() {
-            return self.create_from_template(&template, parent, initial_props);
+            return self
+                .as_host_root(|| self.create_from_template(&template, parent, initial_props));
         }
-        let root = self.create_from_template(&template, parent, initial_props.clone())?;
+        let root = self
+            .as_host_root(|| self.create_from_template(&template, parent, initial_props.clone()))?;
         self.reload_note_origin(root, url, parent, &initial_props);
         Ok(root)
     }
@@ -503,6 +505,7 @@ impl Engine {
     ) -> Result<ObjectId, EngineError> {
         let root = inst.objects[0];
         cr.top = Some(inst.clone());
+        self.singleton_scope_enter(&inst, parent);
         // The instance (and so its contexts) lives as long as its root.
         self.keep_with(root, inst);
         if append
@@ -2418,7 +2421,9 @@ impl Engine {
             }
             // Made here if this is the first read; a type with no object
             // is JavaScript's to answer for.
-            Arg::Singleton(ty) => self.singleton_object(ty).map(Value::Object),
+            Arg::Singleton(ty) => self
+                .singleton_object(ty, Some(inst.context))
+                .map(Value::Object),
             _ => None,
         }
     }
@@ -2478,7 +2483,9 @@ impl Engine {
             },
             // What stands for the object: the script asks for it where the
             // name is written (`__ljos_single`), and it is made then.
-            Arg::Singleton(t) => JsValue::Number(self.singleton_handle(t) as f64),
+            Arg::Singleton(t) => {
+                JsValue::Number(self.singleton_handle(t, Some(inst.context)) as f64)
+            }
             // A type read through it has a parameter of its own, so what
             // a script reads off the namespace itself is a name the module
             // does not have: nothing, as any member of an object that is
@@ -2498,14 +2505,14 @@ impl Engine {
                 Some(v) => self.to_js(&v),
                 None => match fallback.as_deref() {
                     // The script has the name as it is: nothing asks.
-                    Some(Arg::Singleton(t)) => self.singleton_value_js(t),
+                    Some(Arg::Singleton(t)) => self.singleton_value_js(t, inst.context),
                     Some(f) => self.arg_js(s, inst, f),
                     None => global(s, name),
                 },
             },
             Arg::Dynamic(name) => match self.context_name(inst.context, name) {
                 Some(v) => self.to_js(&v),
-                None => match self.singleton_named(name) {
+                None => match self.singleton_named(name, inst.context) {
                     Some(o) => self.to_js(&Value::Object(o)),
                     // Nothing has the name: the script throws where it
                     // reads it (`__ljos_named`), which a value could not

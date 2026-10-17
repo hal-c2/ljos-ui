@@ -118,7 +118,7 @@ pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey
 pub use incubate::Incubator;
 pub use incubator::dynamic::{QmlText, QmlTextCompiler, QmlTextError};
 pub use incubator::reload::{Migrate, ReloadError, ReloadFault, ReloadOutcome};
-pub use incubator::singletons::{QmlSingleton, SingletonScope};
+pub use incubator::singletons::{QmlSingleton, ScopedEvent, ScopedSingleton, SingletonScope};
 pub use incubator::tier1::Tier1Stats;
 pub use incubator::{CreationHandle, CreationJob, SharedCreation};
 pub use instantiator::Instantiator;

@@ -136,6 +136,12 @@ impl Engine {
         *self.extension::<Dynamic>().compiler.borrow_mut() = compiler;
     }
 
+    /// The context of the script that is running, if one is.
+    pub(crate) fn calling_context(&self) -> Option<ContextId> {
+        let js = self.inner.js.borrow().clone()?;
+        js.calling.get().map(|c| c.context)
+    }
+
     /// A script of `inst` runs until the guard is dropped.
     pub(crate) fn calling(&self, inst: &Instance) -> CallingGuard {
         let Ok(js) = self.js() else {

@@ -87,7 +87,9 @@
 //! registered with `Engine::register_singleton` (made with `Default`)
 //! or `Engine::register_singleton_with` (made by a closure, for one that
 //! is handed what it depends on). `scope = "engine"` says the same;
-//! `scope = "window"` is not built (ARCHITECTURE.md §6.4).
+//! `scope = "window"` makes it one object for each root the host makes,
+//! read by everything under that root and destroyed with it
+//! (`Engine::singleton_in`, ARCHITECTURE.md §6.4).
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -132,7 +134,7 @@ fn singleton(attr: TokenStream2, input: &DeriveInput) -> Result<TokenStream2> {
             if key != "scope" {
                 return Err(Error::new(
                     key.span(),
-                    "#[qml_singleton] takes only `scope = \"engine\"`",
+                    "#[qml_singleton] takes only `scope = \"engine\"` or `scope = \"window\"`",
                 ));
             }
             input.parse::<syn::Token![=]>()?;
@@ -150,29 +152,22 @@ fn singleton(attr: TokenStream2, input: &DeriveInput) -> Result<TokenStream2> {
         ));
     }
     let Scope(scope) = syn::parse2(attr)?;
-    match scope.as_ref().map(LitStr::value).as_deref() {
-        None | Some("engine") => {}
-        Some("window") => {
-            return Err(Error::new(
-                scope.span(),
-                "a singleton per window is not built yet: only `scope = \"engine\"` \
-                 (the default) is supported; keep per-window state in an engine \
-                 singleton, keyed by the window (`Window.window` in QML)",
-            ));
-        }
+    let which = match scope.as_ref().map(LitStr::value).as_deref() {
+        None | Some("engine") => quote!(Engine),
+        Some("window") => quote!(Window),
         Some(other) => {
             return Err(Error::new(
                 scope.span(),
-                format!("unknown singleton scope \"{other}\": expected \"engine\""),
+                format!("unknown singleton scope \"{other}\": expected \"engine\" or \"window\""),
             ));
         }
-    }
+    };
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let e = engine_path();
     Ok(quote! {
         impl #impl_generics #e::QmlSingleton for #name #ty_generics #where_clause {
-            const SCOPE: #e::SingletonScope = #e::SingletonScope::Engine;
+            const SCOPE: #e::SingletonScope = #e::SingletonScope::#which;
         }
     })
 }

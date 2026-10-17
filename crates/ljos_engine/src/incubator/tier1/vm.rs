@@ -327,7 +327,10 @@ impl Run<'_> {
                 .context_name(inst.context, name)
                 .map(|v| normal(self.e, v)),
             // Made here if this is the first read.
-            Arg::Singleton(ty) => self.e.singleton_object(ty).map(Value::Object),
+            Arg::Singleton(ty) => self
+                .e
+                .singleton_object(ty, Some(inst.context))
+                .map(Value::Object),
             Arg::Type(_) | Arg::Namespace { .. } | Arg::Holder { .. } => None,
         }
     }

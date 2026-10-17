@@ -612,6 +612,8 @@ impl Engine {
         let mut failure = None;
         for (old_root, origin, path) in &plan {
             *st.forced.borrow_mut() = Some(path.clone());
+            // The window keeps its singletons.
+            self.singleton_scope_adopt(*old_root);
             match self.create_from_url(&origin.url, origin.parent, origin.props.clone()) {
                 Ok(new) => made.push((*old_root, new)),
                 Err(e) => {
@@ -621,6 +623,7 @@ impl Engine {
             }
         }
         st.forced.borrow_mut().take();
+        self.singleton_scope_adopt_none();
 
         if let Some(e) = failure {
             // Nothing of the attempt is to be heard, also not that it ends.
@@ -650,6 +653,7 @@ impl Engine {
         }
 
         for (old_root, new) in &made {
+            self.singleton_scope_moved(*old_root, *new);
             swap(self, *old_root, *new);
         }
         // An object that goes on is not told that it is destroyed; one
