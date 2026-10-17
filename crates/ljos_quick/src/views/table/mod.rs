@@ -573,6 +573,7 @@ fn delegate_at(e: &Engine, me: ObjectId, row: i64, column: i64) -> Value {
     };
     in_range(&st, row, column)
         .and_then(|(r, c)| st.delegates()?.object_at(r * st.cells.columns() + c))
+        .filter(|o| !edit::is_away(&st, *o))
         .map_or(Value::Null, Value::Object)
 }
 

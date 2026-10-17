@@ -293,8 +293,11 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         row_y.push(y);
         let mut tall = heights[row];
         let guess = if tall.is_nan() { average } else { tall };
+        // A row that ends where the content in sight begins is not in
+        // sight (qml6); one of no known height may be.
+        let reaches = if guess > 0.0 { y + guess > cy } else { y >= cy };
         let in_sight = cols > 0
-            && y + guess >= cy
+            && reaches
             && y <= cy + h.max(0.0)
             && loaded_rows.len() < MAX_LOADED_ROWS;
         if in_sight {
@@ -332,12 +335,29 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     };
     let shown = shown.unwrap_or_default();
 
-    // Cells that left: their delegates go.
+    // Cells that left: their delegates go, but for the edited cell's,
+    // which is kept out of the way.
     for (i, o) in d.live() {
-        if !wanted.contains(&i) {
+        if wanted.contains(&i) {
+            continue;
+        }
+        if st.editing.get().is_some_and(|ed| ed.delegate == o) {
+            let wide = rd(e, o, Item::WIDTH.index);
+            warn(
+                e,
+                "away",
+                write_placed(e, o, Item::X.index, Value::Real(-(AWAY + wide))),
+            );
+        } else {
             release(e, st, &d, o, reuse);
         }
     }
+    let edited_in_sight = st
+        .editing
+        .get()
+        .and_then(|ed| d.index_of(ed.delegate))
+        .is_some_and(|i| wanted.contains(&i));
+    super::edit::set_away(st, st.editing.get().is_some() && !edited_in_sight);
 
     // Columns: as wide as the provider says or the widest delegate in
     // sight; one never measured, as the average of those that were.
@@ -675,6 +695,17 @@ pub(crate) fn show_y(e: &Engine, view: ObjectId, y: f64) {
     let content = rd(e, view, Flickable::CONTENT_HEIGHT.index);
     let y = y.min((content - h).max(0.0)).max(0.0);
     put(e, view, Flickable::CONTENT_Y.index, Value::Real(y));
+}
+
+/// How far left of the content the delegate of an edited cell out of
+/// sight is kept.
+const AWAY: f64 = 10_000.0;
+
+/// Destroys the delegate `obj`, which is not pooled.
+pub(crate) fn let_go(e: &Engine, st: &TableState, obj: ObjectId) {
+    if let Some(d) = st.delegates() {
+        release(e, st, &d, obj, false);
+    }
 }
 
 /// Gives a delegate back: to the pool with `reuse`, hidden there.

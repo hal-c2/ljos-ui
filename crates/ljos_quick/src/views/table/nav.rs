@@ -77,7 +77,7 @@ fn selection_model(e: &Engine, view: ObjectId) -> Option<ObjectId> {
     e.untrack(|| e.read(view, TableView::SELECTION_MODEL.index).as_object())
 }
 
-fn press(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
+pub(crate) fn press(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
     let (Some(st), Some(_)) = (state_of(e, view), selection_model(e, view)) else {
         return false;
     };

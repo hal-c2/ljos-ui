@@ -5,6 +5,10 @@
 //! it without, and Tab or Backtab commits and edits the next or the
 //! previous cell. What the editor does with those keys itself does not
 //! count, as the view sees them first.
+//!
+//! The edited cell's delegate is never pooled: when the cell leaves
+//! sight it stays, out of the way, editor and all, and takes the cell
+//! again when it is back; closed out of sight, it is destroyed.
 
 use ljos_engine::{Engine, LogLevel, ObjectId, Value};
 
@@ -25,6 +29,22 @@ pub(crate) struct Editing {
     pub delegate: ObjectId,
     pub editor: ObjectId,
     filter: KeyFilterId,
+    /// The cell is out of sight, its delegate kept out of the way.
+    pub away: bool,
+}
+
+/// Whether `delegate` is kept for an editor whose cell is out of sight.
+pub(crate) fn is_away(st: &TableState, delegate: ObjectId) -> bool {
+    st.editing
+        .get()
+        .is_some_and(|ed| ed.away && ed.delegate == delegate)
+}
+
+/// Marks whether the edited cell is out of sight.
+pub(crate) fn set_away(st: &TableState, away: bool) {
+    if let Some(ed) = st.editing.get() {
+        st.editing.set(Some(Editing { away, ..ed }));
+    }
 }
 
 fn refuse(e: &Engine, view: ObjectId, why: &str) {
@@ -57,7 +77,10 @@ pub(crate) fn edit_index(e: &Engine, view: ObjectId, index: &Value) {
 /// the cell has none.
 pub(crate) fn open(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, usize)) -> bool {
     let cols = st.cells.columns().max(1);
-    let delegate = || st.delegates()?.object_at(cell.0 * cols + cell.1);
+    let delegate = || {
+        let d = st.delegates()?.object_at(cell.0 * cols + cell.1)?;
+        (!is_away(st, d)).then_some(d)
+    };
     if delegate().is_none() {
         layout::show_row(e, view, cell.0 as i32);
         e.untrack(|| layout::pass(e, view, st));
@@ -97,6 +120,7 @@ pub(crate) fn open(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, us
         delegate,
         editor,
         filter,
+        away: false,
     }));
     raise(e, delegate, 2.0);
     layout::decorate(e, view, st, cell.0 * cols + cell.1, delegate, false);
@@ -140,6 +164,10 @@ pub(crate) fn close(e: &Engine, view: ObjectId, st: &TableState, commit: bool) {
             ed.delegate,
             false,
         );
+        // Kept only for the editor: it goes, not to the pool (qml6).
+        if ed.away {
+            layout::let_go(e, st, ed.delegate);
+        }
     }
     if had_focus {
         focus::force_active_focus(e, view, FocusReason::Other);
@@ -196,6 +224,9 @@ fn keys_of_editor(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
         return false;
     }
     match ev.key {
+        // With its cell out of sight, the view moves the current cell as
+        // it does without an editor, and the editor stays (qml6).
+        key::TAB | key::BACKTAB if ed.away => return nav::press(e, view, ev),
         key::RETURN | key::ENTER => close(e, view, &st, true),
         key::ESCAPE => close(e, view, &st, false),
         _ => {
