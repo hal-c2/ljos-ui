@@ -45,6 +45,8 @@ pub struct TypeDef {
     pub props: Vec<PropDef>,
     pub methods: Vec<MethodDef>,
     pub signals: Vec<SignalDef>,
+    /// Prints as a plain object (`[object Object]`), not as a QObject.
+    pub plain: bool,
 }
 
 /// Failure of a host callback.

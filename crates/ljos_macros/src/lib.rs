@@ -21,6 +21,8 @@
 //! - `attached = KeysAttached`: the type `Name.` attaches;
 //! - `uncreatable`: not creatable from QML. Otherwise the type must
 //!   implement `Default`, which is how the engine creates it.
+//! - `plain_object`: scripts see a plain object, not a QObject: it prints
+//!   as `[object Object]`, as what Qt makes in script (an incubator) does.
 //!
 //! - `enums = path`: a `fn() -> Vec<(&'static str, Vec<(&'static str, i64)>)>`
 //!   listing the type's enums (`Component.Ready`).
@@ -236,6 +238,7 @@ struct ContainerAttrs {
     default: Option<String>,
     attached: Option<Type>,
     uncreatable: bool,
+    plain_object: bool,
     enums: Option<syn::Path>,
     /// (camelCase name, the `Reset`) for properties of the base.
     reset_inherited: Vec<(String, syn::Expr)>,
@@ -278,6 +281,8 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 c.attached = Some(m.value()?.parse::<Type>()?);
             } else if m.path.is_ident("uncreatable") {
                 c.uncreatable = true;
+            } else if m.path.is_ident("plain_object") {
+                c.plain_object = true;
             } else if m.path.is_ident("enums") {
                 c.enums = Some(m.value()?.parse::<syn::Path>()?);
             } else if m.path.is_ident("reset_inherited") {
@@ -289,7 +294,7 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
                 })?;
             } else {
                 return Err(m.error(
-                    "expected one of: name, module, extends, default, attached, uncreatable, enums, reset_inherited",
+                    "expected one of: name, module, extends, default, attached, uncreatable, plain_object, enums, reset_inherited",
                 ));
             }
             Ok(())
@@ -623,6 +628,7 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         .attached
         .as_ref()
         .map(|a| quote!(.attached(|| #e::MetaRef::Static(<#a as #e::QmlType>::static_meta()))));
+    let plain_call = c.plain_object.then(|| quote!(.plain_object()));
     let create_call = if c.uncreatable {
         quote!(.uncreatable())
     } else {
@@ -661,6 +667,7 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                         #enums_call
                         #attached_call
                         #create_call
+                        #plain_call
                         .impl_info((&#p::Probe::<#ty>::new()).qml_impl_info())
                         .build();
                     debug_assert_eq!(

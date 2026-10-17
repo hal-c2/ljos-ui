@@ -48,7 +48,7 @@ const SYNCHRONOUS: f64 = 1.0;
 
 /// What `incubateObject` returns. In no module: QML cannot name it.
 #[derive(Default, QmlObject)]
-#[qml(name = "ComponentIncubator", extends = QtObject)]
+#[qml(name = "ComponentIncubator", extends = QtObject, plain_object)]
 pub struct Incubator {
     #[qml(base)]
     pub base: QtObject,

@@ -381,6 +381,7 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         props,
         methods,
         signals,
+        plain: meta.plain_object,
     }
 }
 

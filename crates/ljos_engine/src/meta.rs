@@ -345,6 +345,8 @@ pub struct MetaObject {
     /// Where this type's own `required property` declarations are
     /// written: `url:line:column: `, by property index.
     pub required_at: Vec<(PropIndex, Atom)>,
+    /// Scripts see a plain object, not a QObject: it prints as one.
+    pub plain_object: bool,
     lookup: OnceLock<Lookup>,
 }
 
@@ -741,6 +743,7 @@ impl MetaBuilder {
                 on_complete: None,
                 enums: Vec::new(),
                 required_at: Vec::new(),
+                plain_object: false,
                 lookup: OnceLock::new(),
             },
         }
@@ -1012,6 +1015,12 @@ impl MetaBuilder {
 
     pub fn creatable(mut self, f: fn() -> Box<dyn QmlObject>) -> Self {
         self.meta.create = Some(f);
+        self
+    }
+
+    /// Scripts see a plain object, not a QObject.
+    pub fn plain_object(mut self) -> Self {
+        self.meta.plain_object = true;
         self
     }
 

@@ -9,6 +9,7 @@ Feature: Component.incubateObject
   `incubateObject(parent, properties, mode)` returns an incubator: an
   object with the `status` of the creation, the `object` once it is made
   and `forceCompletion()`, which finishes the creation before it returns.
+  It is a script's object, not a QObject, and prints as one.
 
   Background:
     Given the QML:
@@ -22,6 +23,7 @@ Feature: Component.incubateObject
         property int n: -1
         property bool mine: false
         property bool empty: false
+        property string printed: ""
         Component { id: comp; Item { objectName: "kid"; property int n: 1 } }
         Component { id: needy; Item { objectName: "needy"; required property int n } }
         function look() {
@@ -34,6 +36,7 @@ Feature: Component.incubateObject
         function orphan() { inc = comp.incubateObject(null); inc.forceCompletion(); look() }
         function fail() { inc = needy.incubateObject(root); inc.forceCompletion(); look() }
         function twice() { force(); inc.forceCompletion(); look() }
+        function show() { start(Qt.Synchronous); printed = String(inc) + "|" + (inc.toString === Object.prototype.toString) }
       }
       """
 
@@ -77,3 +80,7 @@ Feature: Component.incubateObject
     Then the property "status" of "root" is 3
     And the property "empty" of "root" is true
     And the object "needy" does not exist
+
+  Scenario: An incubator prints as a plain object
+    When the method "show" of "root" is called
+    Then the property "printed" of "root" is "[object Object]|true"

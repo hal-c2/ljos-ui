@@ -1273,6 +1273,9 @@ impl JsHost {
             for sig in &def.signals {
                 install_signal(&proto, weak.clone(), sig)?;
             }
+            if def.plain {
+                return Ok(Persistent::save(&scope.ctx, proto));
+            }
             let name = def.name.clone();
             // As Qt prints an object: its class, its address, and its
             // objectName when it has one.
