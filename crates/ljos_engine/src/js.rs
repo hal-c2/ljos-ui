@@ -94,6 +94,12 @@ impl LineTable {
                         .get(i + 2)
                         .is_some_and(|b| b.trim_start().starts_with("return (function "));
                 let first = if wrapped || method { i + 3 } else { i + 2 };
+                // QuickJS may place a throw in a wrapped expression on
+                // the `export function` line itself (`null.foo()`): that
+                // line is the expression's too.
+                if first != i + 2 {
+                    lines.push(((i + 2) as u32, line));
+                }
                 lines.push((first as u32, line));
             }
         }
