@@ -1350,7 +1350,8 @@ impl Engine {
                 .map_or(JsValue::Undefined, JsValue::Number))
         });
         // A type of a module a script imports under a name
-        // (`.import QtQuick as QQ`): its enums, or nothing.
+        // (`.import QtQuick as QQ`): a singleton's object
+        // (`Sql.LocalStorage`), else its enums, or nothing.
         let w = Rc::downgrade(&self.inner);
         let type_of: HostFn = Rc::new(move |scope, args| {
             let (Some(inner), [JsValue::String(module), JsValue::String(name)]) =
@@ -1359,6 +1360,9 @@ impl Engine {
                 return Ok(JsValue::Undefined);
             };
             let engine = Engine::from_inner(inner);
+            if let Some(o) = engine.singleton_by_name(module, name) {
+                return Ok(engine.to_js(&Value::Object(o)));
+            }
             // `QtQuick` sees `QtQml`.
             Ok(engine
                 .lookup_type(module, name)

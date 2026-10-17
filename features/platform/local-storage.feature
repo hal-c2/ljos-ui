@@ -41,6 +41,34 @@ Feature: LocalStorage
         """
       Then the property "got" of "o" is "1,2,2,a,2"
 
+    Scenario: A script reaches LocalStorage through the module it imports under a name
+      Given the file "store.js":
+        """
+        .pragma library
+        .import QtQuick.LocalStorage as Sql
+        function count() {
+          const db = Sql.LocalStorage.openDatabaseSync("ljos-ls-script", "1.0", "script", 1000)
+          let n = -1
+          db.transaction(tx => {
+            tx.executeSql("DROP TABLE IF EXISTS t")
+            tx.executeSql("CREATE TABLE t(v INTEGER)")
+            tx.executeSql("INSERT INTO t VALUES(7)")
+            n = tx.executeSql("SELECT v FROM t").rows.item(0).v
+          })
+          return n
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "store.js" as Store
+        Item {
+          objectName: "o"
+          property int got: Store.count()
+        }
+        """
+      Then the property "got" of "o" is 7
+
     Scenario: Named arguments, and the values a row holds
       Given the QML:
         """qml
