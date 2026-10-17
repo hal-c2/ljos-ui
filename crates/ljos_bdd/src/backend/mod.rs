@@ -549,6 +549,14 @@ pub trait Backend: fmt::Debug {
             what: "seeing a request to quit",
         })
     }
+    /// The size in pixels of the picture kept for the image `object`, None
+    /// while none is. The oracle does not say what it keeps.
+    fn kept_picture(&mut self, _object: &str) -> Result<Option<(u32, u32)>> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "seeing the size a picture is kept at",
+        })
+    }
     /// The `Qt.CursorShape` the pointer shows. The oracle runs off-screen,
     /// where there is no pointer to show one.
     fn pointer_cursor(&mut self) -> Result<i64> {

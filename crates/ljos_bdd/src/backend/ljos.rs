@@ -1732,6 +1732,12 @@ impl Backend for LjosBackend {
         Ok(self.live()?.engine.quit_requested())
     }
 
+    fn kept_picture(&mut self, object: &str) -> Result<Option<(u32, u32)>> {
+        let live = self.live()?;
+        let obj = live.find(object)?;
+        Ok(ljos_quick::kept_pixels(&live.engine, obj))
+    }
+
     fn pointer_cursor(&mut self) -> Result<i64> {
         Ok(i64::from(self.live()?.scene.cursor_shape()))
     }

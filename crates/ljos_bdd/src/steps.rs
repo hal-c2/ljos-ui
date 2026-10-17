@@ -1595,6 +1595,19 @@ fn asked_to_quit(w: &mut LjosWorld, not: String) -> StepResult {
     })
 }
 
+#[then(regex = r#"^the picture of "([^"]+)" is kept at (\d+) by (\d+) pixels$"#)]
+fn picture_kept_at(w: &mut LjosWorld, object: String, width: u32, height: u32) -> StepResult {
+    w.each(|b| match b.kept_picture(&object)? {
+        Some(size) if size == (width, height) => Ok(()),
+        Some((w, h)) => Err(BackendError::Failed(format!(
+            "the picture of {object:?} is kept at {w} by {h} pixels, expected {width} by {height}"
+        ))),
+        None => Err(BackendError::Failed(format!(
+            "no picture is kept for {object:?}"
+        ))),
+    })
+}
+
 #[then(regex = r#"^the pointer shows the "([A-Za-z]+Cursor)" cursor$"#)]
 fn pointer_cursor(w: &mut LjosWorld, name: String) -> StepResult {
     let want = ljos_engine::qt_namespace()
