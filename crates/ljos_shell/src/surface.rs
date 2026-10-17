@@ -174,6 +174,8 @@ impl Painter {
         pending: &egui::TexturesDelta,
         pixels_per_point: f32,
     ) -> Frame {
+        #[cfg(not(gl_painter))]
+        let _ = pixels_per_point;
         match self {
             // egui-wgpu draws every frame whole.
             Painter::Wgpu(_) if change == Change::None && pending.is_empty() => Frame::Nothing,

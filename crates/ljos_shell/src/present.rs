@@ -141,6 +141,10 @@ pub(crate) enum Frame {
     /// These areas (in points, on whole pixels, none overlapping another);
     /// what lies outside them in the window's buffer is the picture
     /// already.
+    #[cfg_attr(
+        not(gl_painter),
+        expect(dead_code, reason = "only the GL painter draws part of a window")
+    )]
     Part(Vec<Rect>),
     Whole,
 }
