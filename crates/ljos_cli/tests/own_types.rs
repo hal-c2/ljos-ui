@@ -1104,16 +1104,10 @@ const NOT_YET: &[(&str, &str)] = &[
         "the default property is the Flickable's `flickableData`, not `data`",
     ),
     // TreeView is built on a TableView of its own; a TableView of a table
-    // model, and what a table view attaches to its delegates, are not.
+    // model is not.
     (
         "QtQuick.TableView",
-        "a file cannot make one yet (only TreeView), and it attaches nothing to its delegates \
-         (`TableView.view`, `pooled`, `reused`, `editDelegate`)",
-    ),
-    (
-        "QtQuick.TreeView",
-        "attaches nothing to its delegates (`TableView.view`, `pooled`, `reused`, \
-         `editDelegate`)",
+        "a file cannot make one yet (only TreeView)",
     ),
     (
         "QtQuick.ViewSection",

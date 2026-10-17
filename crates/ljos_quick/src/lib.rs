@@ -153,8 +153,8 @@ pub use views::{
     object_model_changed, object_model_rows,
 };
 pub use views::{
-    GridView, ItemView, ListView, TableView, TreeView, ViewAttached, ViewSection, ViewTransition,
-    ViewTransitionAttached,
+    GridView, ItemView, ListView, TableView, TableViewAttached, TreeView, ViewAttached,
+    ViewSection, ViewTransition, ViewTransitionAttached,
 };
 pub use views::{PathView, PathViewAttached, path_view};
 pub use views::{view_index_of, view_item_at};

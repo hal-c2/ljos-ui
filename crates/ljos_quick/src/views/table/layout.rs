@@ -400,6 +400,9 @@ fn release(
     if !d.release(e, obj, reuse) {
         return;
     }
+    if let Some(att) = super::attached_of(e, obj) {
+        warn(e, "pooled", e.emit_by_name(att, "pooled", &[]));
+    }
     if !e.is_alive(obj) || st.hidden.borrow().contains_key(&obj) {
         return;
     }
@@ -417,7 +420,7 @@ fn release(
     }
 }
 
-/// A delegate came out of the pool: it is shown again.
+/// A delegate came out of the pool: it is shown again and told.
 fn revive(e: &Engine, st: &TableState, obj: ObjectId) {
     let hidden = st.hidden.borrow_mut().remove(&obj);
     if let Some(id) = hidden {
@@ -426,5 +429,8 @@ fn revive(e: &Engine, st: &TableState, obj: ObjectId) {
             "show",
             e.remove_override(obj, Item::VISIBLE.index, id, RestoreMode::BindingOrValue),
         );
+    }
+    if let Some(att) = super::attached_of(e, obj) {
+        warn(e, "reused", e.emit_by_name(att, "reused", &[]));
     }
 }

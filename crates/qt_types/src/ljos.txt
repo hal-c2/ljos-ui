@@ -2443,6 +2443,7 @@ module QtQuick
 		signal paletteChanged
 	type QtQuick.TableView TableView
 		prototype QtQuick.Flickable named
+		attached QtQuick.TableViewAttached
 		is uncreatable
 		enum SelectionBehavior SelectionDisabled=0 SelectCells=1 SelectRows=2 SelectColumns=3
 		enum SelectionMode SingleSelection=0 ContiguousSelection=1 ExtendedSelection=2
@@ -3371,6 +3372,15 @@ module QtQuick
 		signal primaryOrientationChanged
 		signal orientationUpdateMaskChanged
 		method angleBetween
+	type QtQuick.TableViewAttached TableViewAttached
+		is uncreatable
+		prop view QtQml.QtObject named pointer readonly
+		prop editDelegate QtQml.Component named pointer
+		signal viewChanged
+		signal editDelegateChanged
+		signal pooled
+		signal reused
+		signal commit
 	type QtQuick.TextEditorBase TextEditorBase
 		prototype QtQuick.Item named
 		is uncreatable

@@ -26,7 +26,7 @@ use ljos_engine::{
 use super::{models, stack, warn};
 use crate::enums::EnumTable;
 use crate::flickable::{self, Flickable};
-use crate::item::{is_a, is_item};
+use crate::item::{Item, is_a, is_item, write_computed};
 use crate::tree;
 
 pub(crate) use cells::Cells;
@@ -145,6 +145,7 @@ impl TableState {
     name = "TableView",
     extends = Flickable,
     enums = table_view_enums,
+    attached = TableViewAttached,
     uncreatable
 )]
 pub struct TableView {
@@ -248,6 +249,58 @@ impl Default for TableView {
     }
 }
 
+/// What `TableView.` attaches to a delegate of a table or tree view.
+#[derive(Debug, Default, QmlObject)]
+#[qml(name = "TableViewAttached")]
+pub struct TableViewAttached {
+    #[qml(notify, readonly)]
+    pub view: Option<ObjectId>,
+    /// The delegate that edits the cell: kept, as no cell is edited yet.
+    #[qml(notify, object = "Component")]
+    pub edit_delegate: Option<ObjectId>,
+}
+
+#[qml_impl]
+impl TableViewAttached {
+    /// The delegate went to the pool (`reuseItems`).
+    #[qml(signal, name = "pooled")]
+    fn pooled();
+
+    /// The delegate came out of the pool to show another cell.
+    #[qml(signal, name = "reused")]
+    fn reused();
+
+    /// An edit of the cell is to be kept; never sent, as no cell is
+    /// edited yet.
+    #[qml(signal, name = "commit")]
+    fn commit();
+}
+
+/// The attached object `item` has from `TableView.`, if it ever asked
+/// for one.
+pub(crate) fn attached_of(e: &Engine, item: ObjectId) -> Option<ObjectId> {
+    e.existing_attached_object(item, &MetaRef::Static(TableView::static_meta()))
+}
+
+/// The view whose delegate `item` is: its parent is the view's content.
+fn view_of(e: &Engine, item: ObjectId) -> Option<ObjectId> {
+    let parent = |o: ObjectId| e.untrack(|| e.read(o, Item::PARENT.index).as_object());
+    let content = parent(item)?;
+    let view = parent(content)?;
+    (is_a::<TableView>(e, view) && flickable::content_item(e, view) == Some(content))
+        .then_some(view)
+}
+
+/// Tells a delegate's attached object its view.
+fn tell_attached(e: &Engine, view: ObjectId, att: ObjectId) {
+    let v = Value::Object(view);
+    warn(
+        e,
+        "attach",
+        e.untrack(|| write_computed(e, att, TableViewAttached::VIEW.index, v)),
+    );
+}
+
 /// `TreeView` (QtQuick): a table of the rows of a tree model that are in
 /// sight, the rows under a row shown while it is expanded.
 #[derive(Debug, QmlObject)]
@@ -308,6 +361,10 @@ impl ViewHost for Host {
             stack(e, object, 1.0);
             if let Some(st) = state_of(e, view) {
                 layout::decorate(e, view, &st, index, object, true);
+            }
+            // One its handlers asked for while it was made.
+            if let Some(att) = attached_of(e, object) {
+                tell_attached(e, view, att);
             }
         });
         // A delegate that takes the press (a TreeViewDelegate) is tapped
@@ -888,4 +945,12 @@ pub(crate) fn register(engine: &Engine) {
     let meta = MetaRef::Static(TableView::static_meta());
     crate::keys::register_key_item(engine, meta.clone(), nav::key_hooks());
     crate::pointer_item::register_pointer_item(engine, meta, nav::pointer_hooks());
+    engine.on_attached_created(|e, item, att| {
+        if is_a::<TableViewAttached>(e, att)
+            && let Some(view) = view_of(e, item)
+        {
+            tell_attached(e, view, att);
+        }
+        true
+    });
 }

@@ -46,7 +46,7 @@ pub use models::{
 pub use path_view::{PathView, PathViewAttached};
 pub(crate) use state::ViewState;
 pub use state::position_mode;
-pub use table::{TableView, TreeView};
+pub use table::{TableView, TableViewAttached, TreeView};
 pub use view_transition::{ViewTransition, ViewTransitionAttached};
 
 /// The log category of what a view could not do.
