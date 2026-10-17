@@ -35,6 +35,10 @@ impl Splitter {
         }
     }
 
+    pub(crate) fn cut(&self) -> Cut {
+        self.cut
+    }
+
     /// Takes `bytes` and gives the units they complete.
     pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.buf.extend_from_slice(bytes);

@@ -18,6 +18,8 @@ decode = [
     "dep:filmcraft-frame",
     "dep:filmcraft-time",
     "dep:filmcraft-color",
+    "dep:filmcraft-h264",
+    "dep:filmcraft-bitstream",
 ]
 # Play sound on the system's device. Without it, or with no device, sound
 # goes to a null sink and the engine's clock is the media clock.
@@ -36,6 +38,10 @@ filmcraft-frame = { workspace = true, optional = true }
 # The colour a YUV frame a program hands in is converted with.
 filmcraft-color = { workspace = true, optional = true }
 filmcraft-time = { workspace = true, optional = true }
+# A stream's sequence parameters, read to know whether its pictures can
+# be handed out as soon as they are decoded.
+filmcraft-h264 = { workspace = true, optional = true }
+filmcraft-bitstream = { workspace = true, optional = true }
 cpal = { workspace = true, optional = true }
 
 [dev-dependencies]

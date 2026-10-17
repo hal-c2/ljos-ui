@@ -3845,9 +3845,11 @@ name = "ljos_media"
 version = "0.0.0"
 dependencies = [
  "cpal",
+ "filmcraft-bitstream",
  "filmcraft-codecs",
  "filmcraft-color",
  "filmcraft-frame",
+ "filmcraft-h264",
  "filmcraft-media",
  "filmcraft-time",
  "ljos_compiler",

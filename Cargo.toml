@@ -78,6 +78,8 @@ filmcraft-media = { path = "third_party/filmcraft/crates/media" }
 filmcraft-frame = { path = "third_party/filmcraft/crates/frame" }
 filmcraft-color = { path = "third_party/filmcraft/crates/color" }
 filmcraft-time = { path = "third_party/filmcraft/crates/time" }
+filmcraft-h264 = { path = "third_party/filmcraft/crates/h264" }
+filmcraft-bitstream = { path = "third_party/filmcraft/crates/bitstream" }
 # Audio output: ALSA (libasound2-dev on Linux), CoreAudio, WASAPI, AAudio.
 cpal = "0.18.2"
 
