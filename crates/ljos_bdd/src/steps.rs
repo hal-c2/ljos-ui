@@ -844,6 +844,11 @@ fn object_exists(w: &mut LjosWorld, object: String, which: String) -> StepResult
     })
 }
 
+#[when(regex = r#"^the file "([^"]+\.qml)" is opened in a window of its own$"#)]
+fn file_opened_in_window(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.open_window(&name))
+}
+
 #[when(regex = r#"^the object "([^"]+)" is destroyed$"#)]
 fn object_destroyed(w: &mut LjosWorld, object: String) -> StepResult {
     w.each(|b| {
@@ -924,6 +929,34 @@ fn log_has_warning(w: &mut LjosWorld, pattern: String) -> StepResult {
 #[then(regex = r#"^the log has an info matching "([^"]+)"$"#)]
 fn log_has_info(w: &mut LjosWorld, pattern: String) -> StepResult {
     log_matches(w, &pattern, LogLevel::Info, true)
+}
+
+#[then(regex = r#"^the log has no info matching "([^"]+)"$"#)]
+fn log_has_no_info(w: &mut LjosWorld, pattern: String) -> StepResult {
+    log_matches(w, &pattern, LogLevel::Info, false)
+}
+
+#[then(regex = r#"^the log has (\d+) infos matching "([^"]+)"$"#)]
+fn log_has_infos(w: &mut LjosWorld, count: usize, pattern: String) -> StepResult {
+    let re = Regex::new(&pattern).map_err(|e| format!("bad pattern {pattern:?}: {e}"))?;
+    w.each(|b| {
+        let log = b.log()?;
+        let hits = log
+            .iter()
+            .filter(|e| e.level == LogLevel::Info && re.is_match(&e.message))
+            .count();
+        if hits == count {
+            return Ok(());
+        }
+        let seen: Vec<String> = log
+            .iter()
+            .map(|e| format!("  {}: {}", e.level, e.message))
+            .collect();
+        Err(BackendError::Failed(format!(
+            "expected {count} infos matching {pattern:?}, found {hits}; log was:\n{}",
+            seen.join("\n")
+        )))
+    })
 }
 
 #[then(regex = r#"^the log has no warning matching "([^"]+)"$"#)]

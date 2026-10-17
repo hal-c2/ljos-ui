@@ -27,6 +27,7 @@ use super::{
     Result,
 };
 
+mod fixtures;
 mod inspect;
 mod lazy;
 mod paged;
@@ -158,6 +159,9 @@ struct Live {
     driver: ObjectId,
     /// What each `load` created, in order; lookups start here.
     roots: Vec<ObjectId>,
+    /// Those of `roots` opened in a window of their own: made with no
+    /// parent, so no child of the driver.
+    windows: Vec<ObjectId>,
     /// Shared with the engine's and the scene's log handlers, so the order
     /// of messages across both is kept.
     log: Rc<RefCell<Vec<LogEntry>>>,
@@ -362,6 +366,7 @@ impl LjosBackend {
         ljos_media::register(&engine);
         ljos_media::use_null_audio(&engine);
         ljos_localstorage::register(&engine);
+        fixtures::register(&engine);
         let clock = Arc::new(VirtualClock::new());
         engine.set_clock(Rc::new(clock.clone()));
         let log: Rc<RefCell<Vec<LogEntry>>> = Rc::default();
@@ -372,6 +377,7 @@ impl LjosBackend {
                 message: e.message.clone(),
             });
         });
+        fixtures::log_documents(&engine);
         let mut compiled = BTreeMap::new();
         compiled.insert(format!("{DRIVER}.qml"), DRIVER_SOURCE.to_owned());
         engine.set_component_source(compile(&compiled, None)?);
@@ -397,6 +403,7 @@ impl LjosBackend {
             scene,
             driver,
             roots: Vec::new(),
+            windows: Vec::new(),
             log,
             compiled_from: compiled,
             controls_style: None,
@@ -443,6 +450,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_folderlistmodel::register(&snapshot);
                 ljos_media::register(&snapshot);
                 ljos_localstorage::register(&snapshot);
+                fixtures::register(&snapshot);
                 ljos::dev::EngineOracle::from_engine(&snapshot)
             })
             .clone()
@@ -524,6 +532,16 @@ impl Live {
         // `createObject(driver)`: an item becomes a visual child.
         ljos_quick::add_data(&self.engine, self.driver, obj).map_err(failed)?;
         self.roots.push(obj);
+        self.settle()
+    }
+
+    fn open_window(&mut self, name: &str) -> Result<()> {
+        let obj = self
+            .engine
+            .create_from_url(key_of(name), None, Vec::new())
+            .map_err(|e| failed(format!("cannot open {name}: {e}")))?;
+        self.roots.push(obj);
+        self.windows.push(obj);
         self.settle()
     }
 
@@ -1164,6 +1182,10 @@ impl Backend for LjosBackend {
         let out = live.to_json(&out);
         live.settle()?;
         Ok(out)
+    }
+
+    fn open_window(&mut self, name: &str) -> Result<()> {
+        self.live()?.open_window(name)
     }
 
     fn exists(&mut self, object: &str) -> Result<bool> {

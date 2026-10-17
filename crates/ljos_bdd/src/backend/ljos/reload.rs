@@ -182,16 +182,24 @@ impl Live {
             Build::Patch { patch, .. } => patch,
         };
         let driver = self.driver;
+        let windows = std::mem::take(&mut self.windows);
+        let mut moved = Vec::new();
         let applied = ljos_dev::apply(
             &self.engine,
             &patch,
             &self.roots,
             Some(driver),
-            &mut |engine, _old, new| {
-                // `createObject(driver)`, as the first load did.
-                let _ = ljos_quick::add_data(engine, driver, new);
+            &mut |engine, old, new| {
+                if windows.contains(&old) {
+                    // A window of its own stays one.
+                    moved.push(new);
+                } else {
+                    // `createObject(driver)`, as the first load did.
+                    let _ = ljos_quick::add_data(engine, driver, new);
+                }
             },
         );
+        self.windows = if applied.is_ok() { moved } else { windows };
         match applied {
             Ok(done) => {
                 rig.reloader.ack(patch.generation);

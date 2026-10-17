@@ -152,11 +152,17 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given a tree model "files" that reads a folder's rows 100 ms after a view asks for them:` + table | the application gives the QML a tree model in Rust under that name; the table's `folder` and `name` columns list each folder's rows (an empty folder is the top). A folder has its expand arrow before it is read, and its rows come that long after a view asks; give it before the QML (`@ljos-only`: the Qt backend cannot be given a C++ model) |
 | `Given a list model "pages" of 50 rows that reads 20 at a time, 100 ms after a view asks for more` | the application gives the QML a list model in Rust under that name, with no rows read at the start; its rows are `row 0`, `row 1` and so on in the `display` role. Each time a view asks for more it reads the next page that long later, and asking again while a page is on the way reads nothing; give it before the QML (`@ljos-only`) |
 
+The Ljós backend registers the module `Fixtures`, native types as an application registers
+them, for `@ljos-only` scenarios about what the engine does with such types: `Document` is a
+singleton for each window and `Session` one for the engine, each with a `title`; the log has the
+info `Document made` and `Document dropped` when a window's `Document` is made and when it goes.
+
 ### When
 
 | Step | Meaning |
 |---|---|
 | `When "X.qml" is loaded` | create an instance of `X.qml`; objects become findable by `objectName` |
+| `When the file "X.qml" is opened in a window of its own` | the application makes a root of the given file with no parent, as it makes each window it opens beside the first; its objects are findable as a load's are (`@ljos-only`: on Qt each window would need its own engine) |
 | `When the UI language is set to "…"` | what assigning `Qt.uiLanguage` does (`"is_IS"`, `"de"`, `""`) |
 | `When the system setting "font scale" changes to 1.5` | the user changes a setting of the system while the application runs; the settings and values of `Given the system setting` (`@ljos-only`) |
 | `When the application sets the system setting "reduced motion" to true` | the application (or a test) sets a setting itself, with the settings and values of `Given the system setting`; it stays over what the system or the desktop says until it is set to the system's value again (`@ljos-only`) |
@@ -215,6 +221,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the object "o" exists` / `does not exist` | lookup by `objectName` |
 | `Then the log has a warning matching "regex"` | some warning matches |
 | `Then the log has an info matching "regex"` | some info message matches |
+| `Then the log has N infos matching "regex"` / `Then the log has no info matching "regex"` | exactly that many info messages match, or none do |
 | `Then the log has no warning matching "regex"` / `Then the log has no warnings` | none do |
 | `Then the pixel at X, Y of the window is "#rrggbb"` / `is within T of "#rrggbb"` | one pixel of the window's picture, laid over black; `T` is how far each of red, green and blue may be off (a blend is rounded differently by each painter) |
 | `Then the accessibility tree has a "role" named "name"` | role names are lower case: `button`, `checkbox`, `label` … |

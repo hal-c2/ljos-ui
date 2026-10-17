@@ -273,6 +273,11 @@ pub trait Backend: fmt::Debug {
     /// Put a file that is not QML (an image) beside the QML files, where a
     /// relative URL in them finds it.
     fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()>;
+    /// The application makes a root of the loaded file `name` with no
+    /// parent, as it makes each window it opens beside the first.
+    fn open_window(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a window of its own"))
+    }
     /// Type `text` on the keyboard, one key press per character.
     fn type_text(&mut self, _text: &str) -> Result<()> {
         Err(BackendError::NotImplemented("typing text"))
