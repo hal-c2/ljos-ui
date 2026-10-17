@@ -16,7 +16,7 @@ use std::sync::Arc;
 use ljos_ir::CompiledFile;
 use ljos_js::rquickjs;
 use ljos_js::{
-    HostError, HostFn, HostObjects, HostTypeId, JsConfig, JsFault, JsHost, JsRef, JsValue,
+    FnId, HostError, HostFn, HostObjects, HostTypeId, JsConfig, JsFault, JsHost, JsRef, JsValue,
     MethodDef, PropDef, Scope, SignalDef, Slice, TypeDef,
 };
 use slotmap::{Key, KeyData};
@@ -77,6 +77,13 @@ struct JsConn {
 #[derive(Default)]
 pub(crate) struct LineTable {
     modules: HashMap<String, ModuleLines>,
+}
+
+/// A module loaded for a file ([`JsState::loaded_module`]).
+struct LoadedModule {
+    source: String,
+    name: String,
+    fns: Vec<Option<FnId>>,
 }
 
 /// One module's place in its QML file.
@@ -201,8 +208,13 @@ pub(crate) struct JsState {
     types: RefCell<HashMap<usize, (MetaRef, HostTypeId)>>,
     /// The number each type QML declares prints with, by description.
     numbers: RefCell<HashMap<usize, usize>>,
+    /// How many numbers were given: one let go of is not given again.
+    numbered: Cell<usize>,
     conns: RefCell<Vec<JsConn>>,
     pub(crate) lines: Rc<RefCell<LineTable>>,
+    /// The modules loaded for each file, by their source: (source, module
+    /// name, exported functions).
+    modules: RefCell<HashMap<String, Vec<LoadedModule>>>,
     /// The budget of one dispatch when the host asked for another than the
     /// configured one ([`Engine::set_js_dispatch_budget`]).
     budget: Cell<Option<Slice>>,
@@ -249,8 +261,64 @@ impl JsState {
     fn number(&self, meta: &MetaRef) -> usize {
         let key = std::ptr::from_ref::<crate::meta::MetaObject>(meta) as usize;
         let mut numbers = self.numbers.borrow_mut();
-        let next = numbers.len();
-        *numbers.entry(key).or_insert(next)
+        let next = self.numbered.get();
+        *numbers.entry(key).or_insert_with(|| {
+            self.numbered.set(next + 1);
+            next
+        })
+    }
+
+    /// The module loaded for the file `key` when its script was `source`.
+    pub(crate) fn loaded_module(
+        &self,
+        key: &str,
+        source: &str,
+    ) -> Option<(String, Vec<Option<FnId>>)> {
+        let modules = self.modules.borrow();
+        let found = modules.get(key)?.iter().find(|m| m.source == source)?;
+        Some((found.name.clone(), found.fns.clone()))
+    }
+
+    /// Remembers the module loaded for `key` with `source`.
+    pub(crate) fn keep_module(&self, key: &str, source: &str, name: &str, fns: &[Option<FnId>]) {
+        self.modules
+            .borrow_mut()
+            .entry(key.to_owned())
+            .or_default()
+            .push(LoadedModule {
+                source: source.to_owned(),
+                name: name.to_owned(),
+                fns: fns.to_vec(),
+            });
+    }
+
+    /// Lets go of the prototypes of the type descriptions only this cache
+    /// still holds: those of the files a hot reload replaced. An object
+    /// holds its description, so no object is left to be given one of
+    /// them, and its address may be another description's next.
+    pub(crate) fn release_unused_types(&self) {
+        loop {
+            let mut gone = Vec::new();
+            // A description holds its base: the base goes in a later round.
+            self.types.borrow_mut().retain(|key, (meta, id)| {
+                let held = match meta {
+                    MetaRef::Static(_) => true,
+                    MetaRef::Shared(m) => Arc::strong_count(m) > 1,
+                };
+                if !held {
+                    gone.push((*key, *id));
+                }
+                held
+            });
+            if gone.is_empty() {
+                return;
+            }
+            let mut numbers = self.numbers.borrow_mut();
+            for (key, id) in gone {
+                self.host.unregister_type(id);
+                numbers.remove(&key);
+            }
+        }
     }
 
     fn type_id(&self, engine: &Engine, meta: &MetaRef) -> Result<HostTypeId, JsFault> {
@@ -776,6 +844,8 @@ impl Engine {
             host,
             types: RefCell::new(HashMap::new()),
             numbers: RefCell::new(HashMap::new()),
+            numbered: Cell::new(0),
+            modules: RefCell::new(HashMap::new()),
             conns: RefCell::new(Vec::new()),
             lines,
             budget: Cell::new(None),

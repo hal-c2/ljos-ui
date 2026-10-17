@@ -613,6 +613,11 @@ impl Engine {
         st.generation.set(patch.generation);
         *st.last_error.borrow_mut() = None;
         drop(saved);
+        // The replaced files' types are held by nothing now but the
+        // prototypes made for them, which would pile up reload by reload.
+        if let Some(js) = self.inner.js.borrow().clone() {
+            js.release_unused_types();
+        }
         let pending = st.pending.borrow();
         let p = pending.as_ref();
         Ok(ReloadOutcome {

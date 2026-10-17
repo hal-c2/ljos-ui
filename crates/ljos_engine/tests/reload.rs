@@ -780,3 +780,28 @@ Item {
         "the removed file is gone for the engine too"
     );
 }
+
+#[test]
+fn reloads_leave_no_script_types_behind() {
+    let mut r = rig(&[("Main", USES_COUNTER), ("Counter", COUNTER_FILE)]);
+    // The file that is edited has a script of its own, which a value
+    // edited on its own line leaves as it was.
+    let edit = |r: &mut Rig, width: u32| {
+        r.edit(
+            "Counter",
+            &COUNTER_FILE.replace("label: \"none\"", &format!("label: \"{width}\"")),
+        )
+        .unwrap();
+        r.call("one", "bump");
+    };
+    edit(&mut r, 1);
+    assert!(r.h.engine.collect_garbage());
+    let before = r.h.engine.script_memory().expect("scripts ran");
+    for width in 2..22 {
+        edit(&mut r, width);
+    }
+    assert!(r.h.engine.collect_garbage());
+    let after = r.h.engine.script_memory().expect("scripts ran");
+    assert_eq!(before, after);
+    assert_eq!(r.num("one", "count"), 21.0);
+}

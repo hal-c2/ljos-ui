@@ -493,6 +493,15 @@ impl LoadedFile {
 
     fn load_module(&self, engine: &Engine) -> Result<Vec<Option<FnId>>, EngineError> {
         let js = engine.js()?;
+        // QuickJS keeps every module it loaded. A reload that leaves a
+        // file's script as it was (a value edited on its own line) takes
+        // the module it loaded before, which a file the reload did not
+        // touch does anyway.
+        let reusable = self.text.get() == 0 && self.bytecode.is_none();
+        if reusable && let Some((name, fns)) = js.loaded_module(&self.key, &self.ir.js.source) {
+            js.lines.borrow_mut().add(&name, &self.url, &self.ir);
+            return Ok(fns);
+        }
         // Module names must be unique per host; the key is.
         let name = match (self.text.get(), self.epoch.get()) {
             (0, 0) => format!("{}.qml.js", self.key),
@@ -518,13 +527,17 @@ impl LoadedFile {
                     EngineError::Js(e.to_string())
                 })?;
         }
-        Ok(self
+        let fns: Vec<Option<FnId>> = self
             .ir
             .js
             .functions
             .iter()
             .map(|f| handle.function(&f.export))
-            .collect())
+            .collect();
+        if reusable {
+            js.keep_module(&self.key, &self.ir.js.source, &handle.name, &fns);
+        }
+        Ok(fns)
     }
 }
 

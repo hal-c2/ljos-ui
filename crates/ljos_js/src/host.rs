@@ -50,8 +50,9 @@ struct InterruptState {
 
 pub(crate) struct HostState {
     fns: RefCell<SlotMap<FnId, FnEntry>>,
-    /// Prototype per registered type, indexed by [`HostTypeId`].
-    types: RefCell<Vec<Persistent<Object<'static>>>>,
+    /// Prototype per registered type, indexed by [`HostTypeId`]; None
+    /// where one was let go of, for the next type to take.
+    types: RefCell<Vec<Option<Persistent<Object<'static>>>>>,
     /// Engine-owned wrappers. Kept strongly so identity is stable and so the
     /// Engine decides when a wrapper may die ([`JsHost::drop_wrapper`]).
     wrappers: RefCell<HashMap<u64, Persistent<Object<'static>>>>,
@@ -614,7 +615,13 @@ impl<'js> Scope<'js> {
                 "object no longer exists",
             ));
         };
-        let proto = self.state.types.borrow().get(ty.0 as usize).cloned();
+        let proto = self
+            .state
+            .types
+            .borrow()
+            .get(ty.0 as usize)
+            .cloned()
+            .flatten();
         let Some(proto) = proto else {
             return Err(Exception::throw_message(
                 &self.ctx,
@@ -1308,10 +1315,28 @@ impl JsHost {
             Ok(Persistent::save(&scope.ctx, proto))
         })?;
         let mut types = self.state.types.borrow_mut();
-        types.push(proto);
+        let slot = match types.iter().position(Option::is_none) {
+            Some(free) => {
+                types[free] = Some(proto);
+                free
+            }
+            None => {
+                types.push(Some(proto));
+                types.len() - 1
+            }
+        };
         Ok(HostTypeId(
-            u32::try_from(types.len() - 1).expect("type count fits u32"),
+            u32::try_from(slot).expect("type count fits u32"),
         ))
+    }
+
+    /// Lets go of the prototype of `id`, for a type no object will have
+    /// again (one a hot reload replaced). Wrappers made with it keep it;
+    /// the id may be given to a type registered later.
+    pub fn unregister_type(&self, id: HostTypeId) {
+        if let Some(slot) = self.state.types.borrow_mut().get_mut(id.0 as usize) {
+            *slot = None;
+        }
     }
 
     /// Forgets the cached wrapper of `obj`. JS that still holds it keeps a

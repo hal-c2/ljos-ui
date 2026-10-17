@@ -186,3 +186,27 @@ impl Engine {
         true
     }
 }
+
+/// What the script engine holds, as [`Engine::script_memory`] tells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptMemory {
+    /// Bytes allocated for scripts.
+    pub bytes: usize,
+    /// Script objects alive, functions included.
+    pub objects: usize,
+}
+
+impl Engine {
+    /// What the script engine holds now, for a tool that watches memory;
+    /// None before any script ran and while one runs.
+    pub fn script_memory(&self) -> Option<ScriptMemory> {
+        if !self.js_started() {
+            return None;
+        }
+        let stats = self.js().ok()?.host.memory_stats()?;
+        Some(ScriptMemory {
+            bytes: stats.malloc_size,
+            objects: stats.object_count,
+        })
+    }
+}

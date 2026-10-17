@@ -148,6 +148,7 @@ pub use registry::{
     EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, PropertyKind,
     Registry, SignalEntry, TypeDump, TypeEntry, Version,
 };
+pub use script_owned::ScriptMemory;
 pub use signal::Handler;
 pub use slow::SlowCall;
 pub use sort_filter::{
