@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
+use ljos_ir::CompiledFile;
 use ljos_js::rquickjs;
 use ljos_js::{
     HostError, HostFn, HostObjects, HostTypeId, JsConfig, JsFault, JsHost, JsRef, JsValue,
@@ -55,15 +56,24 @@ struct JsConn {
 /// QML line of each generated function, per module, for error messages.
 #[derive(Default)]
 pub(crate) struct LineTable {
-    /// Module name to (QML url, [(first JS line of a function, its QML
-    /// line)]).
-    modules: HashMap<String, (String, Vec<(u32, u32)>)>,
+    modules: HashMap<String, ModuleLines>,
+}
+
+/// One module's place in its QML file.
+struct ModuleLines {
+    url: String,
+    /// (First JS line of a function, its QML line).
+    lines: Vec<(u32, u32)>,
+    /// The file its source is in. A file loaded again after a reload lets
+    /// the earlier one go: its lines stay, its source does not.
+    file: Option<Arc<CompiledFile>>,
 }
 
 impl LineTable {
     /// Reads the `// File.qml:L:C` comment the compiler writes above every
     /// function.
-    pub(crate) fn add(&mut self, module: &str, url: &str, source: &str) {
+    pub(crate) fn add(&mut self, module: &str, url: &str, file: &Arc<CompiledFile>) {
+        let source = &file.js.source;
         let mut lines = Vec::new();
         let all: Vec<&str> = source.lines().collect();
         for (i, l) in all.iter().enumerate() {
@@ -103,15 +113,33 @@ impl LineTable {
                 lines.push((first as u32, line));
             }
         }
-        self.modules
-            .insert(module.to_owned(), (url.to_owned(), lines));
+        for m in self.modules.values_mut() {
+            if m.url == url {
+                m.file = None;
+            }
+        }
+        self.modules.insert(
+            module.to_owned(),
+            ModuleLines {
+                url: url.to_owned(),
+                lines,
+                file: Some(file.clone()),
+            },
+        );
     }
 
     pub(crate) fn map(&self, module: &str, js_line: u32) -> Option<(String, u32)> {
-        let (url, lines) = self.modules.get(module)?;
+        let ModuleLines { url, lines, .. } = self.modules.get(module)?;
         let i = lines.partition_point(|(js, _)| *js <= js_line);
         let (js, qml) = lines.get(i.checked_sub(1)?)?;
         Some((url.clone(), qml + js_line.saturating_sub(*js)))
+    }
+
+    /// Line `js_line` (1-based) of a module's source.
+    pub(crate) fn line(&self, module: &str, js_line: u32) -> Option<String> {
+        let file = self.modules.get(module)?.file.as_ref()?;
+        let i = usize::try_from(js_line.checked_sub(1)?).ok()?;
+        file.js.source.lines().nth(i).map(str::to_owned)
     }
 }
 
@@ -640,6 +668,10 @@ impl Engine {
         let table = lines.clone();
         host.set_source_mapper(Some(Box::new(move |module, line| {
             table.borrow().map(module, line)
+        })));
+        let table = lines.clone();
+        host.set_source_text(Some(Box::new(move |module, line| {
+            table.borrow().line(module, line)
         })));
         let state = Rc::new(JsState {
             host,

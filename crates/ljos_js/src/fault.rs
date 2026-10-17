@@ -78,3 +78,7 @@ impl From<rquickjs::Error> for JsFault {
 /// it was generated from. Source maps plug in here later; until then the
 /// compiler's line table does not exist and the identity mapping applies.
 pub type SourceMapper = Box<dyn Fn(&str, u32) -> Option<(String, u32)>>;
+
+/// The text of a line `(module name, line)` of a module's source, read to
+/// say what the script was doing where it threw (a call or a read).
+pub type SourceText = Box<dyn Fn(&str, u32) -> Option<String>>;

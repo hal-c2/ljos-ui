@@ -36,7 +36,7 @@ mod value;
 
 pub use bytecode::{Bytecode, BytecodeOptions};
 pub use config::{JsConfig, Slice};
-pub use fault::{JsFault, SourceMapper};
+pub use fault::{JsFault, SourceMapper, SourceText};
 pub use host::{FnId, HostFn, JsHost, MemoryStats, ModuleHandle, Scope};
 pub use objects::{HostError, HostObjects, HostTypeId, MethodDef, PropDef, SignalDef, TypeDef};
 pub use value::{JsArg, JsOut, JsRef, JsValue, ValueKind};

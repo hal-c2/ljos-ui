@@ -20,7 +20,7 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    PropDef, SignalDef, Slice, SourceMapper, TypeDef, ValueKind,
+    PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
     objects::HostWrapper,
     value::{Pending, WeakRef},
 };
@@ -64,6 +64,7 @@ pub(crate) struct HostState {
     /// Made with the first wrapper of a script-owned object.
     owned_face: RefCell<Option<OwnedFace>>,
     mapper: RefCell<Option<Rc<SourceMapper>>>,
+    text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
     /// JS values held by Rust through [`JsRef`].
     handles: RefCell<HashMap<u64, Held>>,
@@ -983,6 +984,7 @@ impl JsHost {
             owned: RefCell::default(),
             owned_face: RefCell::default(),
             mapper: RefCell::default(),
+            text: RefCell::default(),
             entered: Cell::new(false),
             handles: RefCell::default(),
             by_object: RefCell::default(),
@@ -1020,6 +1022,13 @@ impl JsHost {
     /// [`JsFault::JsException`].
     pub fn set_source_mapper(&self, mapper: Option<SourceMapper>) {
         *self.state.mapper.borrow_mut() = mapper.map(Rc::new);
+    }
+
+    /// Installs the hook that reads a line of a module's source, so an
+    /// exception says what the script was doing where it threw: a method
+    /// called through null is not a property read through it.
+    pub fn set_source_text(&self, text: Option<SourceText>) {
+        *self.state.text.borrow_mut() = text.map(Rc::new);
     }
 
     /// Runs `f` with the interrupt armed for `slice.hard`, and maps every
@@ -1134,6 +1143,7 @@ impl JsHost {
         elapsed: Duration,
     ) -> JsFault {
         let mapper = self.state.mapper.borrow().clone();
+        let text = self.state.text.borrow().clone();
         classify_error(
             &scope.ctx,
             Some(scope),
@@ -1141,7 +1151,10 @@ impl JsHost {
             label,
             self.interrupt.fired.get(),
             elapsed,
-            mapper.as_deref(),
+            Sources {
+                mapper: mapper.as_deref(),
+                text: text.as_deref(),
+            },
         )
     }
 
@@ -1657,6 +1670,13 @@ fn callback_scope<'js>(
     ))
 }
 
+/// What an exception is described from beside itself.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Sources<'a> {
+    pub(crate) mapper: Option<&'a SourceMapper>,
+    pub(crate) text: Option<&'a SourceText>,
+}
+
 /// Turns an rquickjs error into a [`JsFault`], draining the pending exception.
 /// With a `scope`, an exception keeps the value thrown.
 pub(crate) fn classify_error<'js>(
@@ -1666,7 +1686,7 @@ pub(crate) fn classify_error<'js>(
     label: &str,
     interrupted: bool,
     elapsed: Duration,
-    mapper: Option<&SourceMapper>,
+    sources: Sources<'_>,
 ) -> JsFault {
     match err {
         _ if interrupted => {
@@ -1682,7 +1702,7 @@ pub(crate) fn classify_error<'js>(
         },
         rquickjs::Error::Exception => {
             let thrown = ctx.catch();
-            let mut fault = describe_exception(&thrown, label, mapper);
+            let mut fault = describe_exception(&thrown, label, sources);
             if let (JsFault::JsException { thrown: kept, .. }, Some(scope)) = (&mut fault, scope) {
                 *kept = scope.from_value(&thrown).ok();
                 // Reading it can only fail by throwing (an array nested too
@@ -1697,7 +1717,11 @@ pub(crate) fn classify_error<'js>(
     }
 }
 
-fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMapper>) -> JsFault {
+fn describe_exception(
+    thrown: &Value<'_>,
+    label: &str,
+    Sources { mapper, text }: Sources<'_>,
+) -> JsFault {
     let as_text = |v: &Value<'_>| {
         v.get::<rquickjs::convert::Coerced<String>>()
             .map(|c| c.0)
@@ -1717,9 +1741,22 @@ fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMap
             // reports one: `Error: boom`, `TypeError: ...`.
             let message = e.message().unwrap_or_default();
             // QuickJS words a read through nothing as QML does, but for
-            // the capital: one spelling for whoever matches the log.
+            // the capital: one spelling for whoever matches the log. It
+            // words a method called through nothing the same; QML says it
+            // could not call the method, which the source tells.
             let message = match message.strip_prefix("cannot read property ") {
-                Some(rest) => format!("Cannot read property {rest}"),
+                Some(rest) => {
+                    let called = text.zip(top_place(&stack)).is_some_and(|(t, (f, l, c))| {
+                        let prop = rest.strip_prefix('\'').and_then(|r| r.rsplit_once("' of "));
+                        prop.zip(t(f, l))
+                            .is_some_and(|((prop, _), line)| calls(&line, c, prop))
+                    });
+                    if called {
+                        format!("Cannot call method {rest}")
+                    } else {
+                        format!("Cannot read property {rest}")
+                    }
+                }
                 None => message,
             };
             let message = match o.get::<_, Option<String>>("name").ok().flatten() {
@@ -1790,6 +1827,117 @@ fn frames(stack: &str) -> impl Iterator<Item = (&str, u32)> {
         .filter_map(frame_place)
 }
 
+/// The file, line and column of the frame that threw.
+fn top_place(stack: &str) -> Option<(&str, u32, u32)> {
+    let frame = stack
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("at "))?;
+    let frame = frame.trim_start_matches("at ");
+    let inner = match (frame.rfind('('), frame.ends_with(')')) {
+        (Some(open), true) => &frame[open + 1..frame.len() - 1],
+        _ => frame,
+    };
+    let mut parts = inner.rsplitn(3, ':');
+    let (col, line, file) = (parts.next()?, parts.next()?, parts.next()?);
+    Some((file, line.parse().ok()?, col.parse().ok()?))
+}
+
+/// Whether the member chain that starts at column `col` (1-based) of
+/// `line` calls what it reads as `prop`: `a.prop(`, `a.b.prop (`,
+/// `a["prop"](`, `a[i](`. QuickJS puts a failed read at the start of the
+/// chain it reads from. The first access to `prop` decides; a chain that
+/// goes on past the line, or text this does not follow, is a read.
+pub(crate) fn calls(line: &str, col: u32, prop: &str) -> bool {
+    let s: Vec<char> = line.chars().skip(col.saturating_sub(1) as usize).collect();
+    let mut i = 0;
+    let ws = |i: &mut usize| {
+        while s.get(*i).is_some_and(|c| c.is_whitespace()) {
+            *i += 1;
+        }
+    };
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    // The closing bracket of the group that opens at `i`, strings skipped.
+    let close = |mut i: usize| -> Option<usize> {
+        let mut depth = 0usize;
+        let mut quote = None;
+        while let Some(&c) = s.get(i) {
+            match quote {
+                Some(_) if c == '\\' => i += 1,
+                Some(q) if c == q => quote = None,
+                Some(_) => {}
+                None => match c {
+                    '\'' | '"' | '`' => quote = Some(c),
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        depth = depth.checked_sub(1)?;
+                        if depth == 0 {
+                            return Some(i);
+                        }
+                    }
+                    _ => {}
+                },
+            }
+            i += 1;
+        }
+        None
+    };
+    match s.first() {
+        Some(&c) if ident(c) => {
+            while s.get(i).copied().is_some_and(ident) {
+                i += 1;
+            }
+        }
+        Some('(' | '[') => match close(0) {
+            Some(end) => i = end + 1,
+            None => return false,
+        },
+        _ => return false,
+    }
+    loop {
+        ws(&mut i);
+        let named = match s.get(i) {
+            Some('.') => {
+                i += 1;
+                ws(&mut i);
+                let start = i;
+                while s.get(i).copied().is_some_and(ident) {
+                    i += 1;
+                }
+                s[start..i].iter().copied().eq(prop.chars())
+            }
+            Some('[') => {
+                let Some(end) = close(i) else {
+                    return false;
+                };
+                let inner: String = s[i + 1..end].iter().collect();
+                let inner = inner.trim();
+                i = end + 1;
+                // A key the text gives must be `prop`; one it computes may be.
+                match inner.chars().next() {
+                    Some(q @ ('\'' | '"')) => {
+                        inner.len() >= 2 && inner.ends_with(q) && inner[1..inner.len() - 1] == *prop
+                    }
+                    Some(c) if c.is_ascii_digit() => inner == prop,
+                    _ => true,
+                }
+            }
+            Some('(') => {
+                let Some(end) = close(i) else {
+                    return false;
+                };
+                i = end + 1;
+                continue;
+            }
+            _ => return false,
+        };
+        if named {
+            ws(&mut i);
+            return s.get(i) == Some(&'(');
+        }
+    }
+}
+
 fn frame_place(frame: &str) -> Option<(&str, u32)> {
     let frame = frame.trim_start_matches("at ");
     let inner = match (frame.rfind('('), frame.ends_with(')')) {
@@ -1806,4 +1954,25 @@ fn panic_message(p: &(dyn Any + Send)) -> String {
         .map(|s| (*s).to_owned())
         .or_else(|| p.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "<non-string panic>".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calls;
+
+    #[test]
+    fn a_call_is_told_from_a_read() {
+        let at = |line: &str, prop| calls(line, line.find('n').unwrap() as u32 + 1, prop);
+        assert!(at("x = nothing.foo()", "foo"));
+        assert!(at("x = nothing  .  foo  ( 1 )", "foo"));
+        assert!(at("x = nothing[\"foo\"]()", "foo"));
+        assert!(at("x = nothing[k](1)", "foo"));
+        assert!(at("x = nothing.a.foo(2)", "foo"));
+        assert!(at("x = nothing(1).foo()", "foo"));
+        assert!(!at("x = nothing.foo", "foo"));
+        assert!(!at("x = nothing.foo.bar()", "foo"));
+        assert!(!at("x = nothing[0]", "0"));
+        assert!(!at("x = nothing['bar']()", "foo"));
+        assert!(!at("x = nothing.foo", "bar"));
+    }
 }

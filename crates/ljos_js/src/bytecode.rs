@@ -5,7 +5,10 @@ use rquickjs::{
     module::{WriteOptions, WriteOptionsEndianness},
 };
 
-use crate::{JsFault, host::classify_error};
+use crate::{
+    JsFault,
+    host::{Sources, classify_error},
+};
 
 /// Options for [`Bytecode::compile`].
 #[derive(Debug, Clone, Copy)]
@@ -57,7 +60,15 @@ impl Bytecode {
                 })
             });
             module.map_err(|e| {
-                classify_error(&ctx, None, e, name, false, std::time::Duration::ZERO, None)
+                classify_error(
+                    &ctx,
+                    None,
+                    e,
+                    name,
+                    false,
+                    std::time::Duration::ZERO,
+                    Sources::default(),
+                )
             })
         })?;
         Ok(Self(bytes.into()))

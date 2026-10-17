@@ -507,9 +507,7 @@ impl LoadedFile {
             engine.report_js_fault(&e);
             EngineError::Js(e.to_string())
         })?;
-        js.lines
-            .borrow_mut()
-            .add(&handle.name, &self.url, &self.ir.js.source);
+        js.lines.borrow_mut().add(&handle.name, &self.url, &self.ir);
         // A module that names `Qt` has its own, which reads a relative
         // address from this file (incubator/dynamic.rs).
         if let Some(at) = handle.function(crate::incubator::dynamic::AT_EXPORT) {
