@@ -16,6 +16,7 @@ mod heap;
 mod i18n;
 mod render;
 mod run;
+mod stderr;
 mod test;
 
 #[derive(Parser)]
@@ -77,21 +78,29 @@ enum Command {
 fn main() -> ExitCode {
     #[cfg(feature = "dhat-heap")]
     heap::start();
-    match run() {
+    let status = match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             // stdout carries the MCP protocol; diagnostics go to stderr.
-            eprintln!("ljos: {e:#}");
+            stderr::line(&format!("ljos: {e:#}"));
             ExitCode::FAILURE
         }
-    }
+    };
+    stderr::flush();
+    status
+}
+
+/// Ends the process with `status` once what it logged is written.
+fn exit(status: i32) -> ! {
+    stderr::flush();
+    std::process::exit(status)
 }
 
 fn run() -> anyhow::Result<()> {
     let cli = Cli::parse_from(test::arguments(std::env::args_os()));
     // Same reason: logs must never touch stdout.
     tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+        .with_writer(stderr::events)
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing::level_filters::LevelFilter::WARN.into())
@@ -128,24 +137,24 @@ fn run() -> anyhow::Result<()> {
             if render.run() {
                 Ok(())
             } else {
-                std::process::exit(1)
+                exit(1)
             }
         }
         // The status is how many tests failed, which is what Qt's runner
         // gives a script that runs a suite on both.
         Command::Test(test) => match test.run()? {
             0 => Ok(()),
-            failed => std::process::exit(i32::from(failed)),
+            failed => exit(i32::from(failed)),
         },
         // 1 is `--check` finding a file to lay out, 2 a file that does not
         // parse; both are for a script to tell apart.
         Command::Fmt(fmt) => match fmt.run() {
             0 => Ok(()),
-            status => std::process::exit(status),
+            status => exit(status),
         },
         Command::Bench(bench) => match bench.run()? {
             0 => Ok(()),
-            status => std::process::exit(status),
+            status => exit(status),
         },
         // Returns only when the application could not be started.
         Command::BenchGate(gate) => Err(gate.run()),

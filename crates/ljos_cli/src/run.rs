@@ -149,13 +149,13 @@ impl Tools {
             // Said loudly and apart from the line below: it is the one
             // thing in the start that can hand the application to others.
             if let Some(warning) = &at.warning {
-                eprintln!("ljos: WARNING: {warning}");
+                crate::stderr::line(&format!("ljos: WARNING: {warning}"));
             }
-            eprintln!(
+            crate::stderr::line(&format!(
                 "ljos: inspector (--mcp={granted}) at {}, token in {}",
                 at.url,
                 at.token_file.display()
-            );
+            ));
         }
         Ok(())
     }
@@ -270,7 +270,9 @@ fn print_log(entry: &LogEntry) {
         LogLevel::Warning => "warning",
         LogLevel::Critical => "error",
     };
-    eprintln!("{level}: {}", entry.message);
+    // Not from this thread: a write to stderr can block, and this runs
+    // inside the script that logged.
+    crate::stderr::line(&format!("{level}: {}", entry.message));
 }
 
 /// Refuses a socket path the system cannot bind before a window opens,
@@ -322,14 +324,16 @@ impl Run {
                 ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
-                setup.on_reload(|report| eprintln!("ljos: {}", describe(report)));
+                setup.on_reload(|report| {
+                    crate::stderr::line(&format!("ljos: {}", describe(report)))
+                });
                 let root = setup.watch_in(&main, project.as_deref())?;
                 // A project that does not compile opens all the same: the
                 // window says why, and so does the terminal.
                 if let Some(fault) = setup.engine().last_reload_error() {
-                    eprintln!("ljos: {fault}");
+                    crate::stderr::line(&format!("ljos: {fault}"));
                 }
-                eprintln!("ljos: watching {}", dir.display());
+                crate::stderr::line(&format!("ljos: watching {}", dir.display()));
                 Ok(root)
             })?;
         } else {

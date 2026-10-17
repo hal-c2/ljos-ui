@@ -934,6 +934,12 @@ impl Drop for EnterGuard<'_> {
     }
 }
 
+/// How much slower a build without optimisations runs scripts (the
+/// interpreter's C too). The soft budget is what an optimised build
+/// should keep to; a debug build that warned at it would warn about
+/// nothing a user gets.
+const UNOPTIMISED: u32 = if cfg!(debug_assertions) { 8 } else { 1 };
+
 impl JsHost {
     pub fn new(cfg: JsConfig) -> Result<Self, JsFault> {
         let rt = Runtime::new()?;
@@ -1072,12 +1078,24 @@ impl JsHost {
         let elapsed = start.elapsed();
         drop(guard);
 
-        if elapsed > slice.soft {
+        let soft = slice.soft * UNOPTIMISED;
+        if elapsed > soft {
             let what = what();
             if what.is_empty() {
-                tracing::warn!(label, ?elapsed, soft = ?slice.soft, "JS dispatch exceeded its soft budget");
+                tracing::warn!(
+                    label,
+                    ?elapsed,
+                    ?soft,
+                    "JS dispatch exceeded its soft budget"
+                );
             } else {
-                tracing::warn!(label, what, ?elapsed, soft = ?slice.soft, "JS dispatch exceeded its soft budget");
+                tracing::warn!(
+                    label,
+                    what,
+                    ?elapsed,
+                    ?soft,
+                    "JS dispatch exceeded its soft budget"
+                );
             }
         }
         self.flush_released();
