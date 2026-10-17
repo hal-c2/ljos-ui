@@ -18,12 +18,13 @@ use ljos_engine::Engine;
 
 /// Starts telling `engine` whether a screen reader runs.
 pub(crate) fn watch(engine: &Engine) {
-    if let Some(said) = forced(std::env::var("LJOS_SCREEN_READER").ok().as_deref()) {
-        ljos_quick::set_screen_reader_from_platform(engine, said);
-        return;
+    match forced(std::env::var("LJOS_SCREEN_READER").ok().as_deref()) {
+        Some(said) => ljos_quick::set_screen_reader_from_platform(engine, said),
+        #[cfg(target_os = "linux")]
+        None => atspi::watch(engine),
+        #[cfg(not(target_os = "linux"))]
+        None => {}
     }
-    #[cfg(target_os = "linux")]
-    atspi::watch(engine);
 }
 
 /// What `LJOS_SCREEN_READER` says; none for anything else.
