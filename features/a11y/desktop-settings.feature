@@ -15,7 +15,9 @@
 Feature: The desktop's settings reach the application
   The shell reads the desktop's settings when the application starts and
   hears each change. Less motion, more contrast and larger text, said in
-  any of the keys a desktop has, reach Qt.styleHints.accessibility.
+  any of the keys a desktop has, reach Qt.styleHints.accessibility. The
+  portal's colour scheme is the system's scheme Qt.styleHints.colorScheme
+  reads.
 
   Rule: Each key a desktop has says what the user prefers
 
@@ -65,6 +67,42 @@ Feature: The desktop's settings reach the application
       And the property "contrast" of "root" is 0
       And the property "scale" of "root" is 1
 
+  Rule: The portal's colour scheme is the system's
+
+    # The window system says no scheme on X11, nor on Wayland unless the
+    # application chose one, so the portal is where a Linux desktop says it.
+    # The portal's 0 is no preference, which desktops show light.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property var scheme: Qt.styleHints.colorScheme
+          function ask(scheme) { Qt.styleHints.colorScheme = scheme }
+        }
+        """
+
+    Scenario Outline: The portal's colour scheme is read
+      When the desktop setting "org.freedesktop.appearance" "color-scheme" changes to <value>
+      Then the property "scheme" of "root" is <scheme>
+
+      Examples:
+        | value    | scheme |
+        | uint32 1 | 2      |
+        | uint32 2 | 1      |
+
+    Scenario: A desktop that goes from dark to no preference is light
+      When the desktop setting "org.freedesktop.appearance" "color-scheme" changes to uint32 1
+      And the desktop setting "org.freedesktop.appearance" "color-scheme" changes to uint32 0
+      Then the property "scheme" of "root" is 1
+
+    Scenario: A scheme the application asked for stays when the desktop's changes
+      When the method "ask" of "root" is called with 1
+      And the desktop setting "org.freedesktop.appearance" "color-scheme" changes to uint32 1
+      Then the property "scheme" of "root" is 1
+
   Rule: What the application set stays over the desktop's
 
     Background:
@@ -100,6 +138,7 @@ Feature: The desktop's settings reach the application
 
     Scenario: Settings the desktop had before the application started are read
       Given the desktop setting "org.freedesktop.appearance" "contrast" is uint32 1
+      And the desktop setting "org.freedesktop.appearance" "color-scheme" is uint32 1
       And the desktop setting "org.gnome.desktop.interface" "text-scaling-factor" is 2.0
       And the QML:
         """qml
@@ -108,7 +147,9 @@ Feature: The desktop's settings reach the application
           objectName: "started"
           property var contrast: Qt.styleHints.accessibility.contrastPreference
           property var scale: Qt.styleHints.accessibility.fontScale
+          property var scheme: Qt.styleHints.colorScheme
         }
         """
       Then the property "contrast" of "started" is 1
       And the property "scale" of "started" is 2
+      And the property "scheme" of "started" is 2

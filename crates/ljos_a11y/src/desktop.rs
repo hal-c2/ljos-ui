@@ -4,7 +4,7 @@
 //! GNOME's and KDE's settings a portal passes on. Plain values: the shell
 //! reads the bus, and a test says what the bus would.
 
-use crate::prefs::{Contrast, HostPrefs};
+use crate::prefs::{ColorScheme, Contrast, HostPrefs};
 
 /// A setting's value, of the D-Bus types the keys have.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,6 +30,9 @@ impl SettingValue {
 /// What the desktop said last, of the keys that carry a preference.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DesktopSettings {
+    /// `org.freedesktop.appearance color-scheme`: 1 dark, 2 light, 0 no
+    /// preference, which desktops show light.
+    appearance_scheme: Option<ColorScheme>,
     /// `org.freedesktop.appearance reduced-motion`: 1 is less motion.
     appearance_motion: Option<bool>,
     /// `org.freedesktop.appearance contrast`: 1 is higher contrast.
@@ -66,6 +69,15 @@ impl DesktopSettings {
         };
         let one = || value.number().map(|n| n == 1.0);
         let (slot, read) = match (namespace, key) {
+            ("org.freedesktop.appearance", "color-scheme") => {
+                let scheme = match value.number() {
+                    Some(1.0) => ColorScheme::Dark,
+                    Some(0.0 | 2.0) => ColorScheme::Light,
+                    _ => return false,
+                };
+                self.appearance_scheme = Some(scheme);
+                return true;
+            }
             ("org.freedesktop.appearance", "reduced-motion") => {
                 (&mut self.appearance_motion, one())
             }
@@ -129,6 +141,7 @@ impl DesktopSettings {
                 }
             }),
             font_scale: self.gnome_text_scale,
+            color_scheme: self.appearance_scheme,
             ..HostPrefs::default()
         }
     }

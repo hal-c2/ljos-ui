@@ -1,14 +1,15 @@
-//! What the system prefers beyond the colour scheme: less motion, more
-//! contrast and larger text, read when the application starts and again
-//! each time the platform says one changed (`Qt.styleHints.accessibility`).
-//! The colour scheme comes from winit through egui (`ljos_egui`).
+//! What the system prefers: less motion, more contrast and larger text,
+//! read when the application starts and again each time the platform says
+//! one changed (`Qt.styleHints.accessibility`). The colour scheme comes
+//! from winit through egui (`ljos_egui`), and on Linux, where winit says
+//! none, from the portal.
 //!
 //! - Linux: the desktop's settings portal (`org.freedesktop.portal.Settings`
 //!   on the session bus): its `ReadAll` at start and its `SettingChanged`
 //!   signal after, heard on a thread of its own that sleeps until the bus
-//!   has a message. The keys are those of [`ljos_a11y::DesktopSettings`].
-//!   Without a portal nothing is said, and the application keeps the
-//!   defaults.
+//!   has a message. The keys are those of [`ljos_a11y::DesktopSettings`],
+//!   the colour scheme among them. Without a portal nothing is said, and
+//!   the application keeps the defaults.
 //! - macOS: `NSWorkspace`'s `accessibilityDisplayShouldReduceMotion` and
 //!   `accessibilityDisplayShouldIncreaseContrast`, read again on its
 //!   `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`. macOS
