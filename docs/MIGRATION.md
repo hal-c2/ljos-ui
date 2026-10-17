@@ -590,6 +590,18 @@ runs over it recorded and named in the log (`slow native call:
 Type.method took N ms`), which is how a freeze gets a name instead of
 a mystery.
 
+A JS function Rust holds (a handler a script registered, say) is
+called with `Engine::try_call_js`, the counterpart of `QJSValue::call`
+with `isError()` checked. A throw comes back as `JsError::Thrown`,
+which carries the value thrown as well as what it prints as: `value`
+is the `Error` or object itself, whose fields (`message`, `name`, a
+`code` the script added) `Engine::js_member` reads, or the primitive
+thrown. `JsError::message(&engine)` is what to show a person: the
+thrown value's `message` when it has one, else what it prints as —
+so there is no `Error: ` to strip. Code that builds or matches the
+variant field by field adds `value` (or `..`); the same holds for
+`ljos_js::JsFault::JsException`, which gained `thrown`.
+
 ## 7. Running and testing the port
 
 - `ljos check path/to/qml` (without `--port`) compiles the project and

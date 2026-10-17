@@ -264,6 +264,7 @@ impl Engine {
                 stack,
                 file,
                 line,
+                ..
             } => {
                 let (frames, trace) = self.js_trace(stack);
                 let mut text = match (file, line) {

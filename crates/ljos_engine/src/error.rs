@@ -68,12 +68,20 @@ pub enum EngineError {
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum JsError {
     /// The function threw. `message` is what the thrown value prints as
-    /// (`Error: why it failed`); `file` and `line` place the throw, in QML
-    /// terms when the code came from QML; `stack` is the QML trace, given
-    /// when the throw passed through more than one function.
+    /// (`Error: why it failed`); `value` is the value thrown, an `Error`
+    /// or any object as a [`Value::Js`](crate::Value::Js) whose members
+    /// [`Engine::js_member`](crate::Engine::js_member) reads, or a
+    /// primitive; `file` and `line` place the throw, in QML terms when
+    /// the code came from QML; `stack` is the QML trace, given when the
+    /// throw passed through more than one function.
+    ///
+    /// `value` holds a JS object by reference, which keeps it from being
+    /// collected while the error is held; once the engine is gone it holds
+    /// nothing, and dropping it is still safe.
     #[error("{message}")]
     Thrown {
         message: String,
+        value: crate::Value,
         file: Option<String>,
         line: Option<u32>,
         stack: Option<String>,
@@ -85,6 +93,32 @@ pub enum JsError {
     /// heap, or the JS host could not start.
     #[error("{0}")]
     Failed(String),
+}
+
+impl JsError {
+    /// What went wrong, for a person: the `message` of what was thrown
+    /// when it has one that is a string (`no` for `new Error('no')`, a
+    /// subclass or a plain object alike), else what it prints as. A
+    /// failure that was not a throw gives its description.
+    pub fn message(&self, engine: &crate::Engine) -> String {
+        match self {
+            JsError::Thrown { message, value, .. } => {
+                let own = match value {
+                    crate::Value::Js(_) => engine.js_member(value, "message"),
+                    crate::Value::Object(o) => engine
+                        .property_index(*o, "message")
+                        .ok()
+                        .map(|_| engine.read_by_name(*o, "message")),
+                    _ => None,
+                };
+                match own {
+                    Some(crate::Value::String(s)) => s.to_string(),
+                    _ => message.clone(),
+                }
+            }
+            other => other.to_string(),
+        }
+    }
 }
 
 /// Lets a native method return `Result<T, String>` (or `&str`): the

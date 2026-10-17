@@ -89,6 +89,7 @@ fn exception_carries_message_stack_and_position() {
             stack,
             file,
             line,
+            ..
         } => {
             assert!(message.contains("null"), "{message}");
             assert!(stack.contains("boom"), "{stack}");
@@ -793,6 +794,7 @@ fn faults_convert_for_the_supervisor() {
         stack: String::new(),
         file: Some("Main.qml".into()),
         line: Some(7),
+        thrown: None,
     };
     let ljos_runtime::Fault::JsException(info) = ljos_runtime::Fault::from(f) else {
         panic!("expected an exception");

@@ -2215,6 +2215,7 @@ impl Engine {
                         stack: String::new(),
                         file: Some(inst.url().to_string()),
                         line: Some(b.span.line),
+                        thrown: None,
                     });
                     return Some(None);
                 }

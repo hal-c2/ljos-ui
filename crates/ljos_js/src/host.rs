@@ -1001,7 +1001,7 @@ impl JsHost {
                 };
                 match f(&scope) {
                     Ok(v) => Ok(v),
-                    Err(e) => Err(self.classify(&ctx, e, label, start.elapsed())),
+                    Err(e) => Err(self.classify(&scope, e, label, start.elapsed())),
                 }
             })
         }));
@@ -1043,19 +1043,20 @@ impl JsHost {
             state: self.state.clone(),
         };
         let start = Instant::now();
-        f(&scope).map_err(|e| self.classify(&ctx, e, label, start.elapsed()))
+        f(&scope).map_err(|e| self.classify(&scope, e, label, start.elapsed()))
     }
 
     fn classify<'js>(
         &self,
-        ctx: &Ctx<'js>,
+        scope: &Scope<'js>,
         err: rquickjs::Error,
         label: &str,
         elapsed: Duration,
     ) -> JsFault {
         let mapper = self.state.mapper.borrow().clone();
         classify_error(
-            ctx,
+            &scope.ctx,
+            Some(scope),
             err,
             label,
             self.interrupt.fired.get(),
@@ -1577,8 +1578,10 @@ fn callback_scope<'js>(
 }
 
 /// Turns an rquickjs error into a [`JsFault`], draining the pending exception.
+/// With a `scope`, an exception keeps the value thrown.
 pub(crate) fn classify_error<'js>(
     ctx: &Ctx<'js>,
+    scope: Option<&Scope<'js>>,
     err: rquickjs::Error,
     label: &str,
     interrupted: bool,
@@ -1599,7 +1602,16 @@ pub(crate) fn classify_error<'js>(
         },
         rquickjs::Error::Exception => {
             let thrown = ctx.catch();
-            describe_exception(&thrown, label, mapper)
+            let mut fault = describe_exception(&thrown, label, mapper);
+            if let (JsFault::JsException { thrown: kept, .. }, Some(scope)) = (&mut fault, scope) {
+                *kept = scope.from_value(&thrown).ok();
+                // Reading it can only fail by throwing (an array nested too
+                // deep): the context is left clean, and the value goes.
+                if kept.is_none() {
+                    let _ = ctx.catch();
+                }
+            }
+            fault
         }
         other => JsFault::Internal(other.to_string()),
     }
@@ -1671,6 +1683,7 @@ fn describe_exception(thrown: &Value<'_>, label: &str, mapper: Option<&SourceMap
         stack,
         file,
         line,
+        thrown: None,
     }
 }
 

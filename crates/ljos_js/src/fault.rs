@@ -15,6 +15,11 @@ pub enum JsFault {
         /// Module name, or the QML file when a [`SourceMapper`] knows it.
         file: Option<String>,
         line: Option<u32>,
+        /// The value thrown: an `Error` or any object (by reference, as
+        /// [`crate::JsValue::Handle`]) or a primitive. `None` where nothing
+        /// was thrown by a script (a module that did not compile, a fault
+        /// the embedder words as an exception).
+        thrown: Option<crate::JsValue>,
     },
     #[error("JS `{label}` interrupted after {after:?}")]
     JsInterrupted { label: String, after: Duration },
@@ -37,6 +42,7 @@ impl From<JsFault> for ljos_runtime::Fault {
                 stack,
                 file,
                 line,
+                ..
             } => Fault::JsException(JsErrorInfo {
                 message,
                 file: file.map(Into::into),

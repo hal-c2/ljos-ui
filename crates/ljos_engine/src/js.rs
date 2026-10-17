@@ -721,8 +721,16 @@ impl Engine {
                     stack,
                     file,
                     line,
+                    thrown,
                 } => crate::JsError::Thrown {
                     stack: self.js_trace(&stack).1,
+                    value: thrown
+                        .and_then(|v| {
+                            self.run_js("thrown", |s| {
+                                Ok(self.js_to_value_kept(s, v, &crate::TypeTag::Var))
+                            })
+                        })
+                        .unwrap_or_default(),
                     message,
                     file,
                     line,

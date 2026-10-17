@@ -56,8 +56,9 @@ impl Bytecode {
                     ..WriteOptions::default()
                 })
             });
-            module
-                .map_err(|e| classify_error(&ctx, e, name, false, std::time::Duration::ZERO, None))
+            module.map_err(|e| {
+                classify_error(&ctx, None, e, name, false, std::time::Duration::ZERO, None)
+            })
         })?;
         Ok(Self(bytes.into()))
     }
