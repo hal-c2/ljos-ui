@@ -346,3 +346,63 @@ fn destroying_a_pressed_button_leaves_nothing_behind() {
     assert_eq!(settle(&mut s, &e, Time::ZERO), None);
     assert_eq!(e.read_by_name(root, "clicks"), Value::Int(0));
 }
+
+/// A change of the application font writes each font that inherits it
+/// once, the deepest too, and leaves alone a control whose font is all its
+/// own.
+#[test]
+fn a_new_application_font_is_written_once_to_each_font_that_inherits_it() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    Pane {
+        objectName: "outer"
+        Pane {
+            objectName: "inner"
+            Label { objectName: "label"; text: "x" }
+        }
+    }
+    Label { objectName: "own"; text: "x"; font.family: "Serif"; font.pixelSize: 30 }
+}"#,
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let control = ljos_controls::Control::FONT.index;
+    let text = ljos_quick::Text::FONT.index;
+    let count = |name: &str, prop| {
+        let n = Rc::new(Cell::new(0));
+        let seen = n.clone();
+        e.watch(find(&e, root, name), prop, move |_, _| {
+            seen.set(seen.get() + 1)
+        })
+        .unwrap();
+        n
+    };
+    let writes = [
+        count("outer", control),
+        count("inner", control),
+        count("label", text),
+    ];
+    let own = count("own", text);
+    for size in [20, 24] {
+        let font = ljos_engine::Font {
+            pixel_size: size,
+            point_size: -1.0,
+            ..ljos_engine::Font::default()
+        };
+        ljos_controls::set_application_font(&e, Some(&font));
+        settle(&mut s, &e, Time::ZERO);
+        let label = e.read(find(&e, root, "label"), text);
+        let Value::Font(label) = label else {
+            panic!("{label:?}")
+        };
+        assert_eq!(label.pixel_size, size);
+    }
+    assert_eq!(writes.map(|n| n.get()), [2, 2, 2]);
+    assert_eq!(own.get(), 0);
+}

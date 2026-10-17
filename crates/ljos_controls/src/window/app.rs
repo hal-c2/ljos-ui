@@ -192,7 +192,9 @@ pub struct Application {
     pub domain: Atom,
     #[qml(notify, readonly, enumeration = "Qt.LayoutDirection")]
     pub layout_direction: i32,
-    /// The font text has when nothing sets one.
+    /// The font text has when nothing sets one, which the host can change
+    /// while the application runs (`set_application_font`). Qt's has no
+    /// signal of its change, and a binding that reads it follows it anyway.
     #[qml(readonly)]
     pub font: Font,
     #[qml(notify, list)]
@@ -252,6 +254,18 @@ pub fn set_application_arguments(engine: &Engine, args: impl IntoIterator<Item =
             app,
             Application::ARGUMENTS.index,
             Value::list(args),
+            WriteKind::Imperative,
+        );
+    }
+}
+
+/// The application font is now `font` (`set_application_font`).
+pub(crate) fn application_font_changed(engine: &Engine, font: std::sync::Arc<Font>) {
+    if let Ok(app) = engine.untrack(|| engine.singleton::<Application>()) {
+        let _ = engine.write_internal(
+            app,
+            Application::FONT.index,
+            Value::Font(font),
             WriteKind::Imperative,
         );
     }

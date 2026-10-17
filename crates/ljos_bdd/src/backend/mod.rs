@@ -270,6 +270,15 @@ pub trait Backend: fmt::Debug {
     fn translation(&mut self, name: &str, ts: &str) -> Result<()>;
     /// What assigning `Qt.uiLanguage` does.
     fn set_ui_language(&mut self, language: &str) -> Result<()>;
+    /// The host makes another font the application font while the
+    /// application runs: the default font with these attributes (`family`,
+    /// `pointSize`, `pixelSize`, `weight`, `bold`, `italic`), or the
+    /// default again for `None`.
+    fn set_application_font(&mut self, _font: Option<&[(String, String)]>) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "changing the application font",
+        ))
+    }
     /// Put a file that is not QML (an image) beside the QML files, where a
     /// relative URL in them finds it.
     fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()>;

@@ -1611,6 +1611,13 @@ impl Backend for LjosBackend {
         live.settle()
     }
 
+    fn set_application_font(&mut self, font: Option<&[(String, String)]>) -> Result<()> {
+        let font = font.map(application_font).transpose()?;
+        let live = self.live()?;
+        ljos_controls::set_application_font(&live.engine, font.as_ref());
+        live.settle()
+    }
+
     // Scenario files live at `file:///<name>`, so a picture beside them
     // does too; nothing is written to disk.
     fn resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
@@ -1742,6 +1749,32 @@ impl Backend for LjosBackend {
     fn top_seen(&mut self) -> Result<super::top::TopSeen> {
         self.top_as_seen()
     }
+}
+
+/// The default font with the attributes a scenario names.
+fn application_font(attrs: &[(String, String)]) -> Result<ljos_engine::Font> {
+    let mut font = ljos_engine::Font::default();
+    let bad = |k: &str, v: &str| BackendError::Failed(format!("{v:?} is not a font's {k}"));
+    for (k, v) in attrs {
+        let number = || v.parse::<f64>().map_err(|_| bad(k, v));
+        let flag = || v.parse::<bool>().map_err(|_| bad(k, v));
+        match k.as_str() {
+            "family" => font.family = ljos_engine::Atom::from(v.as_str()),
+            "pointSize" => {
+                font.point_size = number()?;
+                font.pixel_size = -1;
+            }
+            "pixelSize" => {
+                font.pixel_size = number()? as i32;
+                font.point_size = -1.0;
+            }
+            "weight" => font.weight = number()? as i32,
+            "bold" => font.weight = if flag()? { 700 } else { 400 },
+            "italic" => font.italic = flag()?,
+            _ => return Err(BackendError::Failed(format!("a font has no {k:?}"))),
+        }
+    }
+    Ok(font)
 }
 
 #[cfg(test)]

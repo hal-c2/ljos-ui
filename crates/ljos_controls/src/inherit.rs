@@ -20,13 +20,19 @@
 //! walks the tree: one graph node per kind (an epoch, as `LayoutMirroring`
 //! has) tells every object when that changes.
 //!
+//! Above every one of them is the application font
+//! ([`set_application_font`]), which the host can change at any time: the
+//! objects that inherit it follow, each once, and its attributes that differ
+//! from the default count as set above, so a style with a font of its own
+//! takes them too.
+//!
 //! Assigning `undefined` hands one back ([`FONT_RESET`], [`ROLE_RESET`],
 //! [`LOCALE_RESET`]): the object has what is above it again and follows
 //! it.
 //!
 //! Behaviour is pinned by `features/controls/control-font.feature`,
-//! `control-palette.feature`, `control-look-reset.feature` and
-//! `style-font.feature`.
+//! `control-palette.feature`, `control-look-reset.feature`,
+//! `style-font.feature` and `application-font.feature`.
 //!
 //! Limits: an attribute set to the value it would have had anyway is not
 //! seen as set; a control that has the application's locale keeps the one
@@ -236,6 +242,65 @@ struct Epochs {
     font: Cell<Option<NodeId>>,
     palette: Cell<Option<NodeId>>,
     locale: Cell<Option<NodeId>>,
+}
+
+/// The engine's application font: a graph node, so that what reads it runs
+/// again when it changes, and its attributes that differ from the default.
+#[derive(Default)]
+struct ApplicationFont {
+    node: Cell<Option<NodeId>>,
+    set: Cell<u32>,
+}
+
+fn application_font_node(engine: &Engine) -> Option<NodeId> {
+    let app = engine.extension::<ApplicationFont>();
+    if app.node.get().is_none() {
+        let g = engine.graph();
+        let font = Value::Font(Arc::new(Font::default()));
+        app.node.set(g.property(g.root(), font).ok());
+    }
+    app.node.get()
+}
+
+/// The application font (tracked): what is above every object that has a
+/// font. [`Font::default`] until the host sets another.
+pub fn application_font(engine: &Engine) -> Arc<Font> {
+    match application_font_node(engine) {
+        Some(node) => font_value(&engine.graph().get(node)),
+        None => Arc::new(Font::default()),
+    }
+}
+
+/// Makes `font` the application font of this engine, or the default
+/// ([`Font::default`]) again for `None`, while the application runs: every
+/// control, label and window that inherits its font takes it, keeping what
+/// it or an object above it set, and `Qt.application.font` reads it. Each
+/// of them is resolved once for a change. A plain `Text` keeps the font it
+/// was made with.
+///
+/// [`Font::set_application_font`] is the font of the whole process, read
+/// when an object is made; this one is the engine's and is followed.
+pub fn set_application_font(engine: &Engine, font: Option<&Font>) {
+    let font = font.cloned().unwrap_or_default();
+    let Some(node) = application_font_node(engine) else {
+        return;
+    };
+    let g = engine.graph();
+    if *font_value(&g.get_untracked(node)) == font {
+        return;
+    }
+    let set = differing(&font, &Font::default());
+    let font = Arc::new(font);
+    engine.batch(|| {
+        engine.extension::<ApplicationFont>().set.set(set);
+        g.set(node, Value::Font(font.clone()));
+        if set != 0 && !engine.untrack(|| in_use(engine, Which::Font)) {
+            // Until now nothing walked the tree for a font.
+            bump(engine, Which::Font);
+        }
+        crate::window::application_font_changed(engine, font);
+    });
+    engine.request_wake();
 }
 
 #[derive(Clone, Copy)]
@@ -504,8 +569,8 @@ fn inherited_font(engine: &Engine, obj: ObjectId) -> FromAbove {
         cur = above(engine, p);
     }
     FromAbove {
-        font: Arc::new(Font::default()),
-        set: 0,
+        font: application_font(engine),
+        set: engine.extension::<ApplicationFont>().set.get(),
         look: None,
     }
 }

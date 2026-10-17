@@ -342,6 +342,26 @@ fn ui_language_set(w: &mut LjosWorld, language: String) -> StepResult {
     w.each(|b| b.set_ui_language(&language))
 }
 
+// The table has an attribute and its value on each row.
+#[when("the application font is set to:")]
+fn application_font_set(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| "the step needs a table of attributes and values".to_owned())?;
+    let attrs: Vec<(String, String)> = table
+        .rows
+        .iter()
+        .map(|r| (r[0].clone(), r[1].clone()))
+        .collect();
+    w.each(|b| b.set_application_font(Some(&attrs)))
+}
+
+#[when("the application font is set back to the default")]
+fn application_font_reset(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.set_application_font(None))
+}
+
 #[when(regex = r#"^"([^"]+)" is loaded$"#)]
 fn file_loaded(w: &mut LjosWorld, name: String) -> StepResult {
     w.load(&name)

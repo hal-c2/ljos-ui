@@ -310,7 +310,9 @@ impl Font {
     /// those of every default font from now on (`QGuiApplication::setFont`),
     /// or with `None` [`Font::fallback`]'s again. A host calls it once, with
     /// the desktop's font, before it builds an engine: what was made
-    /// before keeps the font it had.
+    /// before keeps the font it had. It is the process's; to change the
+    /// font of a running application, so that the controls follow, use the
+    /// engine's (`ljos::set_application_font`).
     pub fn set_application_font(font: Option<&Font>) {
         use std::sync::atomic::Ordering;
         let app = font.map(|f| ApplicationFont {

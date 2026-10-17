@@ -86,6 +86,7 @@ pub use group::{ButtonGroup, ButtonGroupAttached};
 pub use header_view::{
     HeaderViewBase, HeaderViewDelegate, HorizontalHeaderView, TableViewDelegate, VerticalHeaderView,
 };
+pub use inherit::{application_font, set_application_font};
 pub use label::Label;
 pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use menu_bar::{MenuBar, MenuBarItem};

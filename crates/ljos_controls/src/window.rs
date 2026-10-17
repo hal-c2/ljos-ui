@@ -33,6 +33,7 @@ use ljos_quick::focus::{
 };
 use ljos_quick::{Item, Rectangle, is_item, set_parent_item, window_of};
 
+pub(crate) use app::application_font_changed;
 pub use app::{
     Application, ApplicationState, ScreenInfo, ScreenSpec, application_reopened,
     quit_on_last_window_closed, set_application_arguments, set_quit_on_last_window_closed,

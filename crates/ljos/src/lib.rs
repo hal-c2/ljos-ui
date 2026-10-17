@@ -304,6 +304,32 @@ pub fn reduced_motion(engine: &Engine) -> bool {
     ljos_quick::reduced_motion(engine)
 }
 
+/// Makes `font` the application font while the application runs, or the
+/// default again for `None`: every control, label and window that
+/// inherits its font takes it, keeping what it or an object above it set,
+/// and `Qt.application.font` reads it (QML cannot assign it, as in Qt). A
+/// plain `Text` keeps the font it was made with.
+///
+/// ```
+/// use ljos::item::Font;
+///
+/// let engine = ljos::engine();
+/// let large = Font { pixel_size: 20, point_size: -1.0, ..Font::default() };
+/// ljos::set_application_font(&engine, Some(&large));
+/// assert_eq!(ljos::application_font(&engine).pixel_size, 20);
+/// ljos::set_application_font(&engine, None);
+/// assert_eq!(*ljos::application_font(&engine), Font::default());
+/// ```
+pub fn set_application_font(engine: &Engine, font: Option<&item::Font>) {
+    ljos_controls::set_application_font(engine, font);
+}
+
+/// The application font. Tracked: a binding or a native type's tracked
+/// read that asks follows [`set_application_font`].
+pub fn application_font(engine: &Engine) -> std::sync::Arc<item::Font> {
+    ljos_controls::application_font(engine)
+}
+
 /// Opens the application's windows and runs until the last of them is
 /// closed, on the desktop shell. `setup` receives the shell's setup
 /// (the Engine — already holding the standard modules — and the

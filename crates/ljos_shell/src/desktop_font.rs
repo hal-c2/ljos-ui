@@ -21,8 +21,8 @@
 //! It is read once, as the application starts, on a thread of its own:
 //! asking the bus may wait, and the drivers start meanwhile. The shell
 //! waits for the answer a short while before the root is built. A font the
-//! desktop changes later is not followed: items keep the font they were
-//! made with.
+//! desktop changes later is not followed; an application that hears of
+//! one can hand it on with `ljos_controls::set_application_font`.
 
 use std::sync::mpsc;
 use std::time::Duration;
