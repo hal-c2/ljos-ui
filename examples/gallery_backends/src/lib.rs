@@ -26,6 +26,8 @@ pub fn register(engine: &Engine, id: &str) {
         // No types of its own: the generic `QtQml.XmlListModel` module
         // its feed is read with.
         "rssnews" => ljos_xml::register(engine),
+        // The generic `Qt.labs.folderlistmodel` module it lists pictures with.
+        "photosurface" => ljos_folderlistmodel::register(engine),
         // `BackEnd`, answering as a device with none of the Android
         // services the demo is about.
         "qtjennydemo" => ljos_example_qtjennydemo::register(engine),

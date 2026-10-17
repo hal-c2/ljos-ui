@@ -165,6 +165,9 @@ impl QtBackend {
             fs::write(dir.join(name), source)?;
         }
         for (name, bytes) in &self.resources {
+            if let Some(parent) = dir.join(name).parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(dir.join(name), bytes)?;
         }
         self.release_translations(&dir)?;

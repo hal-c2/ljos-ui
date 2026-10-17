@@ -1,0 +1,23 @@
+[package]
+name = "ljos_folderlistmodel"
+description = "The Qt.labs.folderlistmodel module for Ljós: a read-only list model of the files in a folder, as an opt-in crate written against the ljos facade alone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The facade alone: a module crate opens no windows.
+ljos = { path = "../ljos", default-features = false }
+
+[dev-dependencies]
+# Tests compile QML strings; the crate itself never links the compiler or
+# the parser (ARCHITECTURE.md principle 5).
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
+ljos = { path = "../ljos", features = ["dev-qml"] }
+
+[lints]
+workspace = true

@@ -3467,6 +3467,7 @@ dependencies = [
  "ljos_controls",
  "ljos_dev",
  "ljos_engine",
+ "ljos_folderlistmodel",
  "ljos_i18n",
  "ljos_localstorage",
  "ljos_mcp_core",
@@ -3690,6 +3691,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_folderlistmodel"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "qml_front",
+]
+
+[[package]]
 name = "ljos_gallery_backends"
 version = "0.0.0"
 dependencies = [
@@ -3698,6 +3708,7 @@ dependencies = [
  "ljos_example_focusscopewidget",
  "ljos_example_mediaplayer",
  "ljos_example_qtjennydemo",
+ "ljos_folderlistmodel",
  "ljos_xml",
 ]
 

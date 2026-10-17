@@ -21,6 +21,8 @@ ljos_example_mediaplayer = { path = "../mediaplayer" }
 # A generic Qt module one example uses (`QtQml.XmlListModel`, rssnews):
 # its own crate, here only as a registration.
 ljos_xml = { path = "../../crates/ljos_xml" }
+# `Qt.labs.folderlistmodel`, which photosurface lists its pictures with.
+ljos_folderlistmodel = { path = "../../crates/ljos_folderlistmodel" }
 
 [lints]
 workspace = true

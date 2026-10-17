@@ -93,7 +93,7 @@ pub mod prelude {
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, FetchError,
         Fetcher, Method, OpenUrlService, Platform, RecordedBadge, RecordedUrls, Request, Response,
-        is_remote, url_path,
+        file_url, is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item};
     pub use ljos_runtime::{Time, TimerId};

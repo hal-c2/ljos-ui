@@ -289,9 +289,10 @@ impl LjosBackend {
         ljos_quick::register(&engine);
         ljos_controls::register(&engine);
         // Opt-in modules a scenario may import (QtQml.XmlListModel,
-        // QtMultimedia, QtQuick.LocalStorage). Sound goes nowhere: the clock
-        // is virtual.
+        // Qt.labs.folderlistmodel, QtMultimedia, QtQuick.LocalStorage).
+        // Sound goes nowhere: the clock is virtual.
         ljos_xml::register(&engine);
+        ljos_folderlistmodel::register(&engine);
         ljos_media::register(&engine);
         ljos_media::use_null_audio(&engine);
         ljos_localstorage::register(&engine);
@@ -373,6 +374,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_quick::register(&snapshot);
                 ljos_controls::register(&snapshot);
                 ljos_xml::register(&snapshot);
+                ljos_folderlistmodel::register(&snapshot);
                 ljos_media::register(&snapshot);
                 ljos_localstorage::register(&snapshot);
                 ljos::dev::EngineOracle::from_engine(&snapshot)
