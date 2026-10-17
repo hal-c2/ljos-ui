@@ -156,6 +156,9 @@ The Ljós backend registers the module `Fixtures`, native types as an applicatio
 them, for `@ljos-only` scenarios about what the engine does with such types: `Document` is a
 singleton for each window and `Session` one for the engine, each with a `title`; the log has the
 info `Document made` and `Document dropped` when a window's `Document` is made and when it goes.
+`Browser` has setters that write its other properties. Any write of `rootPath` or `zoom` clears
+`error`, and one of `rootPath` adds one to `visits`, which keeps itself at 3 or below; `depth`'s
+setter tries to write `depth` and logs the error it gets.
 
 ### When
 
