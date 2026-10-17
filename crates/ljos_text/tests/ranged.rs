@@ -226,7 +226,8 @@ fn spans_outside_the_text_are_ignored() {
         strut: false,
     };
     let l = te.layout_ranged("\u{e9}a", &base, &ranged, &LayoutParams::default());
-    assert_eq!(l.natural_width, te.advance_width("\u{e9}a", &base));
+    let plain = te.layout("\u{e9}a", &base, &LayoutParams::default());
+    assert_eq!(l.natural_width, plain.natural_width);
     assert!(l.lines[0].boxes.is_empty());
 }
 

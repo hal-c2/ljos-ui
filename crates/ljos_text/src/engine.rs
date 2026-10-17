@@ -95,6 +95,8 @@ struct ShapedEntry {
     class: BreakClass,
     ranged: OwnedRanged,
     shape: Shape,
+    /// The widest line by its advances alone.
+    advance: f32,
     natural_width: f32,
     rtl: bool,
 }
@@ -541,6 +543,8 @@ fn extract(
         // line stays as it was stretched.
         let mut shift = 0.0_f32;
         let mut width = 0.0_f32;
+        // The glyph that ends the line: its run and id, and its advance.
+        let mut last: Option<(usize, u32, f32)> = None;
         for item in line.items() {
             let gr = match item {
                 PositionedLayoutItem::GlyphRun(gr) => gr,
@@ -559,6 +563,7 @@ fn extract(
                     if !justified {
                         width += placed.width;
                     }
+                    last = None;
                     continue;
                 }
             };
@@ -589,6 +594,7 @@ fn extract(
                     if !hangs(pen, g.advance) {
                         shift += g.advance - qt;
                         width += qt;
+                        last = Some((runs.len(), g.id, qt));
                     }
                 }
                 pen += g.advance;
@@ -629,6 +635,19 @@ fn extract(
                 line_size: fm.underline_size,
                 tag: style.brush,
             });
+        }
+        if let Some((r, id, qt)) = last
+            && let Some(run) = runs.get(r)
+        {
+            width += overhang(
+                &run.font,
+                run.font_size,
+                &run.coords,
+                run.embolden,
+                run.skew,
+                id,
+                qt,
+            );
         }
         let has_glyphs = !runs.is_empty() || !boxes.is_empty();
         // Measured on Qt 6.11: a line that is only objects standing on the
@@ -684,18 +703,81 @@ fn coords(run: &parley::Run<'_, u32>) -> Vec<i16> {
 }
 
 /// Width of the widest line as Qt counts it, spaces at the end included.
-fn snapped_width(shape: &Shape) -> f32 {
-    shape
-        .lines()
-        .map(|line| {
-            line.items()
-                .map(|item| match item {
-                    PositionedLayoutItem::GlyphRun(gr) => snapped(&gr).1.iter().sum::<f32>(),
-                    PositionedLayoutItem::InlineBox(placed) => placed.width,
-                })
-                .sum::<f32>()
-        })
-        .fold(0.0, f32::max)
+/// The widest line of `shape` by Qt's advances, and with the ink of each
+/// line's last glyph that reaches past them ([`overhang`]).
+fn snapped_widths(shape: &Shape) -> (f32, f32) {
+    let (mut advance, mut natural) = (0.0_f32, 0.0_f32);
+    for line in shape.lines() {
+        let mut width = 0.0;
+        let mut last = 0.0;
+        for item in line.items() {
+            match item {
+                PositionedLayoutItem::GlyphRun(gr) => {
+                    let (placed, qt) = snapped(&gr);
+                    width += qt.iter().sum::<f32>();
+                    if let (Some(g), Some(a)) = (placed.last(), qt.last()) {
+                        let run = gr.run();
+                        let synthesis = run.synthesis();
+                        last = overhang(
+                            run.font(),
+                            run.font_size(),
+                            &coords(run),
+                            synthesis.embolden(),
+                            synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
+                            g.id,
+                            *a,
+                        );
+                    }
+                }
+                PositionedLayoutItem::InlineBox(placed) => {
+                    width += placed.width;
+                    last = 0.0;
+                }
+            }
+        }
+        advance = advance.max(width);
+        natural = natural.max(width + last);
+    }
+    (advance, natural)
+}
+
+/// How far the ink of the glyph that ends a line reaches past its advance,
+/// in whole pixels, which Qt counts in the line's width (`implicitWidth`
+/// and `contentWidth` of every text item; not `advanceWidth`). Measured on
+/// Qt 6.11 as a black box: the ink's right edge rounded up against the
+/// advance rounded, as hinted metrics have them, so `t` and `W` at 12 px
+/// add a pixel and at 9 px none. Where a font's hinting widens an advance
+/// at a small size Qt adds nothing and this still does.
+fn overhang(
+    font: &FontData,
+    font_size: f32,
+    coords: &[i16],
+    embolden: bool,
+    skew: f32,
+    glyph: u32,
+    advance: f32,
+) -> f32 {
+    let run = GlyphRun {
+        font: font.clone(),
+        font_size,
+        glyphs: vec![PositionedGlyph {
+            id: glyph,
+            x: 0.0,
+            y: 0.0,
+        }],
+        baseline: 0.0,
+        bounds: Rect::ZERO,
+        normalized_coords: coords.to_vec(),
+        embolden,
+        skew,
+    };
+    let Some(Some(ink)) = ljos_render::glyph_ink_bounds(&run).first().copied() else {
+        return 0.0;
+    };
+    // On Qt's 1/64 px grid before rounding, so an edge on a whole pixel
+    // stays there.
+    let right = ((ink.x1 * 64.0).round() / 64.0).ceil() as f32;
+    (right - advance.round()).max(0.0)
 }
 
 /// Byte range and advance of every cluster of a shaped text.
@@ -1034,10 +1116,10 @@ impl TextEngine {
         self.style_metrics(style).font
     }
 
-    /// Width of `text` on one line, as [`TextLayout::natural_width`].
+    /// Width of `text` on one line by its advances, as
+    /// [`TextLayout::advance`].
     pub fn advance_width(&mut self, text: &str, style: &TextStyle) -> f64 {
-        self.layout(text, style, &LayoutParams::default())
-            .natural_width
+        self.layout(text, style, &LayoutParams::default()).advance
     }
 
     /// `text` cut to fit `width` on one line, with an ellipsis where text was
@@ -1133,7 +1215,7 @@ impl TextEngine {
         break_lines(&mut dots, None, false);
         let metrics = StyleMetrics {
             font,
-            ellipsis: snapped_width(&dots),
+            ellipsis: snapped_widths(&dots).0,
         };
         self.styles.insert(style.clone(), metrics);
         metrics
@@ -1188,12 +1270,14 @@ impl TextEngine {
             );
             break_lines(&mut shape, None, false);
             self.stats.shapes_built += 1;
+            let (advance, natural_width) = snapped_widths(&shape);
             let entry = ShapedEntry {
                 text: text.into(),
                 style: style.clone(),
                 class,
                 ranged: OwnedRanged::of(ranged),
-                natural_width: snapped_width(&shape),
+                advance,
+                natural_width,
                 rtl: shape.is_rtl(),
                 shape,
             };
@@ -1234,7 +1318,10 @@ impl TextEngine {
         };
         let mut full = self.shape_once(text, style, ranged, base);
         break_lines(&mut full, None, false);
-        if !force && snapped_width(&full) <= width {
+        // By advances, as Qt elides: a text whose last glyph's ink alone
+        // is past the width is truncated but keeps every character
+        // (measured on Qt 6.11).
+        if !force && snapped_widths(&full).0 <= width {
             return (text.to_owned(), Some(full), text.len());
         }
         if ellipsis > width {
@@ -1250,7 +1337,7 @@ impl TextEngine {
             break_lines(&mut shape, None, false);
             // The estimate ignores kerning against the ellipsis, so check the
             // real width and give up one more cluster if it is over.
-            if keep == 0 || snapped_width(&shape) <= width {
+            if keep == 0 || snapped_widths(&shape).0 <= width {
                 return (candidate, Some(shape), head);
             }
             keep = Clusters::fewer(mode, keep);
@@ -1285,8 +1372,8 @@ impl TextEngine {
         let justify = params.justify && wraps;
         let max_advance = width.filter(|_| wraps).map(|w| w as f32);
 
-        let (mut raw, natural, rtl) = if text.is_empty() && ranged.objects.is_empty() {
-            (Vec::new(), 0.0, false)
+        let (mut raw, (advance, natural), rtl) = if text.is_empty() && ranged.objects.is_empty() {
+            (Vec::new(), (0.0, 0.0), false)
         } else {
             let entry = self.shaped(text, style, &ranged, BreakClass::of(wrap));
             // Parley breaks lines by the shaper's advances, which are a
@@ -1305,7 +1392,7 @@ impl TextEngine {
                     line.clusters = carets.clusters;
                 }
             }
-            (lines, entry.natural_width, entry.rtl)
+            (lines, (entry.advance, entry.natural_width), entry.rtl)
         };
         if raw.is_empty() {
             raw.push(RawLine::empty(fallback));
@@ -1411,6 +1498,7 @@ impl TextEngine {
         TextLayout {
             baseline: lines.first().map_or(0.0, |l| l.baseline),
             lines,
+            advance: ceil64(advance),
             natural_width: ceil64(natural),
             content_width,
             content_height,

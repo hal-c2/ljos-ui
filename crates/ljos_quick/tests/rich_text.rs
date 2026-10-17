@@ -340,7 +340,15 @@ Item {
     // them; another colour starts where the first ends.
     let joined = fills(&s, item("joined"), RED);
     assert_eq!(joined.len(), 1);
-    assert!((joined[0].width() - num(&e, item("joined"), "implicitWidth")).abs() < 0.01);
+    // Over the advances: the ink of the slanted `c` reaches whole pixels
+    // past them, which the text's width counts and the background does not.
+    let full = num(&e, item("joined"), "implicitWidth");
+    let past = full - joined[0].x1;
+    assert!(joined[0].x0.abs() < 0.01, "{joined:?}");
+    assert!(
+        past > 0.5 && (past - past.round()).abs() < 0.01,
+        "{joined:?} {full}"
+    );
     let (a, b) = (fills(&s, item("two"), RED), fills(&s, item("two"), GREEN));
     assert_eq!((a.len(), b.len()), (1, 1));
     assert_eq!(a[0].x1, b[0].x0);

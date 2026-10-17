@@ -89,7 +89,7 @@ impl TextEngine {
                     });
                 }
             }
-            pen += layout.natural_width;
+            pen += layout.advance;
         }
         let Some((left, right)) = span else {
             return TextBounds {

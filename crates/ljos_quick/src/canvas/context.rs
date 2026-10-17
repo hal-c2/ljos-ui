@@ -585,7 +585,7 @@ impl Op<'_> {
                     &style,
                     &LayoutParams::default(),
                 );
-                Value::Real(layout.natural_width)
+                Value::Real(layout.advance)
             }
             "isPointInPath" => {
                 let Some([x, y]) = self.nums() else {
@@ -868,7 +868,7 @@ impl Op<'_> {
             let metrics = engine.font_metrics(style);
             (layout, metrics)
         };
-        let width = layout.natural_width;
+        let width = layout.advance;
         let dx = match align {
             "right" | "end" => -width,
             "center" => -width / 2.0,

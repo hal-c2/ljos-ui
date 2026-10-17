@@ -117,7 +117,11 @@ impl Line {
 pub struct TextLayout {
     /// The lines that are shown.
     pub lines: Vec<Line>,
-    /// Width of the widest line when nothing wraps or elides (Qt's
+    /// Width of the widest line by its advances alone, when nothing wraps
+    /// (Qt's `advanceWidth`).
+    pub advance: f64,
+    /// Width of the widest line when nothing wraps or elides, with the ink
+    /// of its last glyph that reaches past its advance (Qt's
     /// `implicitWidth`).
     pub natural_width: f64,
     /// Width of the widest shown line (Qt's `contentWidth`).
