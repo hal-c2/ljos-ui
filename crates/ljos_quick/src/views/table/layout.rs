@@ -224,6 +224,16 @@ fn provided(e: &Engine, view: ObjectId, provider: &Value, i: usize) -> Option<f6
     (n.is_finite() && n >= 0.0).then_some(n)
 }
 
+/// How wide and tall qml6 takes a cell whose delegate has no implicit
+/// size to be, and a view that laid out no cell.
+const UNSIZED: f64 = 50.0;
+
+/// A delegate's implicit width or height, as a column or row takes it.
+fn implicit(e: &Engine, o: ObjectId, p: PropIndex) -> f64 {
+    let x = rd(e, o, p);
+    if x > 0.0 { x } else { UNSIZED }
+}
+
 /// The cells' places: where each row starts and each column, and how
 /// tall and wide.
 pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
@@ -297,7 +307,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
                 let i = row * cols + c;
                 wanted.insert(i);
                 if let Some(o) = load(e, st, &d, i) {
-                    let t = rd(e, o, Item::IMPLICIT_HEIGHT.index);
+                    let t = implicit(e, o, Item::IMPLICIT_HEIGHT.index);
                     tallest = Some(tallest.map_or(t, |m: f64| m.max(t)));
                 }
             }
@@ -335,7 +345,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         let widest = loaded_rows
             .iter()
             .filter_map(|row| d.object_at(row * cols + c))
-            .map(|o| rd(e, o, Item::IMPLICIT_WIDTH.index))
+            .map(|o| implicit(e, o, Item::IMPLICIT_WIDTH.index))
             .fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
         if let Some(widest) = widest {
             widths[c] = widest;
@@ -354,6 +364,21 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         Some(a) => a.2,
         None if cols > 0 => x - col_gap,
         None => 0.0,
+    };
+    // A view with cells of which none was ever in sight (it has no room)
+    // is as large as qml6 says one is then: what lets a view sized by its
+    // content, a vertical header, find room for its first cells.
+    let never = |sizes: &[f64]| sizes.iter().all(|x| x.is_nan());
+    let unlaid = rows > 0 && cols > 0 && shown.is_empty() && never(&widths) && never(&heights);
+    let content_w = if unlaid && across.is_none() {
+        UNSIZED
+    } else {
+        content_w
+    };
+    let content_h = if unlaid && down.is_none() {
+        UNSIZED
+    } else {
+        content_h
     };
 
     for &row in &loaded_rows {
@@ -398,8 +423,12 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     let first = |v: Option<&usize>| v.map_or(-1, |r| *r as i32);
     let left = shown.first();
     let right = shown.last();
-    // The rows loaded are the rows in sight.
-    let (top, bottom) = (first(loaded_rows.first()), first(loaded_rows.last()));
+    // The rows loaded are the rows in sight, when a column is.
+    let (top, bottom) = if shown.is_empty() {
+        (-1, -1)
+    } else {
+        (first(loaded_rows.first()), first(loaded_rows.last()))
+    };
     if rows == 0 || loaded_rows.last() == Some(&(rows - 1)) {
         let cells: Rc<dyn ItemModel> = st.cells.clone();
         let current = |e: &Engine, view| -> Option<Rc<dyn ItemModel>> {
@@ -463,7 +492,7 @@ fn columns_in_sight(
                 Some(guess) if x + guess <= sight.0 => guess,
                 _ => {
                     let m = load(e, st, d, row * cols + c)
-                        .map_or(0.0, |o| rd(e, o, Item::IMPLICIT_WIDTH.index));
+                        .map_or(0.0, |o| implicit(e, o, Item::IMPLICIT_WIDTH.index));
                     widths[c] = m;
                     m
                 }
@@ -566,18 +595,26 @@ pub(crate) fn decorate(
         ("selected", Value::Bool(selected)),
         ("editing", Value::Bool(editing)),
     ];
-    let meta = (!tree).then(|| e.meta_of(obj)).flatten();
+    // A `TableViewDelegate`'s and a header's: given only where required.
+    let views = [
+        ("tableView", Value::Object(view)),
+        ("headerView", Value::Object(view)),
+    ];
+    let required = |p: ljos_engine::PropIndex| {
+        e.meta_of(obj).is_some_and(|meta| {
+            meta.properties
+                .get(p.0 as usize)
+                .is_some_and(|d| d.flags.contains(PropertyFlags::REQUIRED))
+        })
+    };
     let tree_part = if tree { &in_tree[..] } else { &[] };
-    for (name, v) in tree_part.iter().chain(&in_any).cloned() {
+    let given = tree_part.iter().chain(&in_any).map(|g| (g, tree));
+    for ((name, v), always) in given.chain(views.iter().map(|g| (g, false))) {
+        let (name, v) = (*name, v.clone());
         let Ok(p) = e.property_index(obj, name) else {
             continue;
         };
-        if let Some(meta) = &meta
-            && !meta
-                .properties
-                .get(p.0 as usize)
-                .is_some_and(|d| d.flags.contains(PropertyFlags::REQUIRED))
-        {
+        if !always && !required(p) {
             continue;
         }
         let r = if first {

@@ -144,3 +144,43 @@ Feature: TableView shows a model in rows and columns
       """
     When the method "defaults" of "tv" is called
     Then the property "out" of "tv" is "0,1,true,true,false,true,true,1,2,10,true,false,0,3,-1,-1,-1,-1,3"
+
+  Scenario Outline: A view with <what> lays out no cell and is <size> large
+    Given the QML:
+      """qml
+      import QtQuick
+      TableView {
+        objectName: "tv"; width: <width>; height: 100; model: <model>
+        delegate: Rectangle { implicitWidth: 30; implicitHeight: 20 }
+        property string out: ""
+        function go() { out = [itemAtCell(0, 0) !== null, contentWidth, contentHeight, topRow, leftColumn].join(" ") }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "go" of "tv" is called
+    Then the property "out" of "tv" is "<out>"
+
+    Examples:
+      | what                  | width | model | size     | out                 |
+      | cells but no room     | 0     | 3     | 50 by 50 | false 50 50 -1 -1   |
+      | no cells              | 100   | 0     | 0 by 0   | false 0 0 -1 -1     |
+
+  Scenario Outline: A delegate with no implicit <what> makes a cell 50 <what>
+    Given the QML:
+      """qml
+      import QtQuick
+      TableView {
+        objectName: "tv"; width: 300; height: 200; model: 3
+        delegate: Item { <size> }
+        property string out: ""
+        function go() { out = [columnWidth(0), rowHeight(0), contentWidth, contentHeight, bottomRow].join(" ") }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "go" of "tv" is called
+    Then the property "out" of "tv" is "<out>"
+
+    Examples:
+      | what            | size               | out            |
+      | width or height |                    | 50 50 50 150 2 |
+      | width           | implicitHeight: 10 | 50 10 50 30 2  |
