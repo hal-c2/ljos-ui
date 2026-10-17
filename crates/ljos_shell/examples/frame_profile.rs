@@ -7,7 +7,11 @@
 //! the pass split by function.
 //!
 //! `cargo run --release -p ljos_shell --example frame_profile -- DIR ENTRY
-//! [--frames N] [--size WxH] [--click] [--warm N]`
+//! [--frames N] [--size WxH] [--click] [--warm N] [--eval EXPR]…`
+//!
+//! `--eval` prints what a script in the root makes of `EXPR` at the end,
+//! to see that the run reached the state meant (a game started, a page
+//! shown).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +22,9 @@ use ljos_engine::MapSource;
 use ljos_runtime::VirtualClock;
 use ljos_shell::{ShellApp, ShellConfig};
 
+/// 2026-01-01 12:00:00 UTC: what `Date` says as the run starts.
+const WALL_ORIGIN_MS: f64 = 1_767_268_800_000.0;
+
 struct Args {
     dir: PathBuf,
     entry: String,
@@ -25,6 +32,7 @@ struct Args {
     warm: u32,
     size: (f32, f32),
     click: bool,
+    eval: Vec<String>,
 }
 
 fn args() -> anyhow::Result<Args> {
@@ -38,12 +46,14 @@ fn args() -> anyhow::Result<Args> {
         warm: 60,
         size: (800.0, 600.0),
         click: false,
+        eval: Vec::new(),
     };
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--frames" => a.frames = it.next().context("N")?.parse()?,
             "--warm" => a.warm = it.next().context("N")?.parse()?,
             "--click" => a.click = true,
+            "--eval" => a.eval.push(it.next().context("EXPR")?),
             "--size" => {
                 let s = it.next().context("WxH")?;
                 let (w, h) = s.split_once('x').context("WxH")?;
@@ -75,14 +85,25 @@ fn main() -> anyhow::Result<()> {
     let ctx = egui::Context::default();
     let clock = Arc::new(VirtualClock::new());
     let config = ShellConfig::new("profile").with_size(a.size.0, a.size.1);
+    let root = std::cell::Cell::new(None);
     let mut app = ShellApp::<()>::new(&ctx, &config, clock.clone(), |setup| {
         let engine = setup.engine();
+        // Timers and `Date` move with the frames, as they would in real
+        // time, so a Timer fires and a clock's second ticks within the run.
+        engine.set_clock(std::rc::Rc::new(clock.clone()));
+        engine.set_wall_clock_origin(Some(WALL_ORIGIN_MS));
         ljos_localstorage::register(engine);
         ljos_localstorage::set_storage(engine, ljos_localstorage::Storage::Memory);
         engine.set_component_source(source);
-        Ok(engine
+        let made = engine
             .create_from_url(&key, None, Vec::new())
-            .map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        root.set(Some(made));
+        // Under a profiler a handler runs many times slower: interrupting
+        // it would measure a different run. This starts the script host
+        // if nothing has, which happens before the frames.
+        let _ = engine.set_js_dispatch_budget(Duration::from_secs(10), Duration::from_secs(600));
+        Ok(made)
     })?;
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(a.size.0, a.size.1));
     let period = Duration::from_micros(16_667);
@@ -101,6 +122,9 @@ fn main() -> anyhow::Result<()> {
     };
     let (mut pass, mut tess, mut prims) = (Duration::ZERO, Duration::ZERO, 0usize);
     let mut worst = Duration::ZERO;
+    // Frames after which the view asked for the next one at once: what a
+    // real host would draw; the rest it would skip until a deadline.
+    let mut eager = 0u32;
     let mut press: Option<egui::Pos2> = None;
     let mut before = None;
     for i in 0..total {
@@ -140,6 +164,10 @@ fn main() -> anyhow::Result<()> {
             app.show(ui);
         });
         let t1 = Instant::now();
+        let soon = out
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|v| v.repaint_delay <= period);
         let p = ctx.tessellate(out.shapes, out.pixels_per_point);
         let t2 = Instant::now();
         if i >= a.warm {
@@ -147,12 +175,13 @@ fn main() -> anyhow::Result<()> {
             tess += t2 - t1;
             worst = worst.max(t2 - t0);
             prims += p.len();
+            eager += u32::from(soon);
         }
     }
     let ms = |d: Duration| d.as_secs_f64() * 1000.0 / f64::from(a.frames);
     let stats = app.view().stats();
     println!(
-        "{} frames: pass {:.3} ms, tessellate {:.3} ms, total {:.3} ms/frame (worst {:.2} ms); {} scene frames, {} changed; {:.0} primitives/frame",
+        "{} frames: pass {:.3} ms, tessellate {:.3} ms, total {:.3} ms/frame (worst {:.2} ms); {} scene frames, {} changed, {} asked for the next; {:.0} primitives/frame",
         a.frames,
         ms(pass),
         ms(tess),
@@ -160,6 +189,7 @@ fn main() -> anyhow::Result<()> {
         worst.as_secs_f64() * 1000.0,
         stats.frames,
         stats.changed,
+        eager,
         prims as f64 / f64::from(a.frames.max(1)),
     );
     if let Some(b) = before {
@@ -172,6 +202,23 @@ fn main() -> anyhow::Result<()> {
             per(s.propagations, b.propagations),
             per(s.flushes, b.flushes),
         );
+    }
+    for w in app.engine().take_warnings().iter().take(10) {
+        eprintln!("warning: {w}");
+    }
+    if let Some(root) = root.get() {
+        for e in &a.eval {
+            let said = app.engine().eval_js_in(
+                Some(root),
+                e,
+                Duration::from_secs(1),
+                [4, 32, 200, 1000, 4000],
+            );
+            match said {
+                Ok(v) => println!("{e}: {v}"),
+                Err(err) => println!("{e}: {err}"),
+            }
+        }
     }
     Ok(())
 }
