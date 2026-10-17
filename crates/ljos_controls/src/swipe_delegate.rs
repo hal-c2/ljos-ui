@@ -28,11 +28,15 @@
 //! On an open row, the left or right item shown takes the presses on it
 //! (not the item behind): its attached `SwipeDelegate.pressed` is true
 //! while held, and let go on it, it says `SwipeDelegate.clicked`, after
-//! which the row says it was pressed and open once more, as Qt's does. A
-//! swipe that starts there lets go of it.
+//! which the row says it was pressed and open once more, as Qt's does.
+//! Let go anywhere else, it is not clicked. A swipe that starts there lets
+//! go of it, and when the row is left open, the row is pressed once more
+//! and says it is open, or closed while it is still springing back. A row
+//! being swiped is not `complete` until it arrives again.
 //! Read off Qt 6.11.2 (qml6 and qmltestrunner) as a black box; pinned by
-//! `features/controls/swipe-delegate.feature` and
-//! `swipe-delegate-release.feature` and `swipe-delegate-attached.feature`.
+//! `features/controls/swipe-delegate.feature`,
+//! `swipe-delegate-release.feature`, `swipe-delegate-attached.feature` and
+//! `swipe-delegate-side-release.feature`.
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-swipedelegate.html.
 
 use std::cell::Cell;
@@ -134,6 +138,8 @@ struct Drag {
     swiping: bool,
     /// What is attached to the side item the press is on.
     side: Option<ObjectId>,
+    /// The press was on a side item, which a swipe let go of.
+    from_side: bool,
 }
 
 /// The `swipe` of a `SwipeDelegate`.
@@ -449,6 +455,7 @@ pub(crate) fn pressed(engine: &Engine, delegate: ObjectId, x: f64, time: Time) {
         start,
         swiping: false,
         side: None,
+        from_side: false,
     }));
 }
 
@@ -552,8 +559,15 @@ pub(crate) fn moved(engine: &Engine, delegate: ObjectId, at: kurbo::Point) -> bo
                 return false;
             }
             d.swiping = true;
+            // A row being swiped is not complete, even before it moves.
+            check(
+                engine,
+                "swipe",
+                set_computed(engine, swipe, Swipe::COMPLETE.index, Value::Bool(false)),
+            );
             if let Some(att) = d.side.take() {
                 side_pressed(engine, att, false);
+                d.from_side = true;
             }
             st.drag.set(Some(d));
         }
@@ -600,7 +614,11 @@ pub(crate) fn released(engine: &Engine, delegate: ObjectId, at: kurbo::Point, ti
         // Moves that all come at once tell nothing of speed.
         let speed = if secs > 0.0 { (at.x - d.x) / secs } else { 0.0 };
         emit(engine, delegate, "canceled");
-        go(engine, swipe, goes_to(position, speed));
+        let to = goes_to(position, speed);
+        go(engine, swipe, to);
+        if d.from_side && to != 0.0 {
+            pressed_again(engine, delegate, swipe);
+        }
         return true;
     }
     // A row that is not closed is no click; one that is open says so.
@@ -623,22 +641,29 @@ pub(crate) fn released(engine: &Engine, delegate: ObjectId, at: kurbo::Point, ti
     }
     emit(engine, delegate, "canceled");
     if let Some(att) = d.side {
-        // Qt's row is pressed and said open once more.
-        let pressed = |on| {
-            let r = set_computed(
-                engine,
-                delegate,
-                AbstractButton::PRESSED.index,
-                Value::Bool(on),
-            );
-            check(engine, "pressed", r);
-        };
-        pressed(true);
-        emit(engine, swipe, "opened");
-        pressed(false);
+        pressed_again(engine, delegate, swipe);
         side_pressed(engine, att, false);
     }
     true
+}
+
+/// After a press on a side item that leaves the row open, Qt's row is
+/// pressed once more and says it is open, or, while it is still on its
+/// way back there, closed.
+fn pressed_again(engine: &Engine, delegate: ObjectId, swipe: ObjectId) {
+    let complete = engine.untrack(|| engine.read(swipe, Swipe::COMPLETE.index).to_boolean());
+    let pressed = |on| {
+        let r = set_computed(
+            engine,
+            delegate,
+            AbstractButton::PRESSED.index,
+            Value::Bool(on),
+        );
+        check(engine, "pressed", r);
+    };
+    pressed(true);
+    emit(engine, swipe, if complete { "opened" } else { "closed" });
+    pressed(false);
 }
 
 /// The press was taken away: a swipe goes back to where it started.
