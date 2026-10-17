@@ -297,7 +297,10 @@ fn type_entry(meta: &MetaObject, since: Version) -> TypeEntry {
             .filter(|p| !matches!(p.access, PropertyAccess::Group { .. }))
             .map(|p| PropertyEntry {
                 name: p.name.to_string(),
-                ty: p.holds.as_ref().map_or_else(|| p.ty.name(), Atom::to_string),
+                ty: p
+                    .holds
+                    .as_ref()
+                    .map_or_else(|| p.ty.name(), Atom::to_string),
                 kind: property_kind(&p.ty),
                 list: p.flags.contains(PropertyFlags::LIST),
                 readonly: p.flags.contains(PropertyFlags::READONLY),
