@@ -751,6 +751,7 @@ impl Look<'_> {
         caps: CapSet,
         reload: &Value,
         windows: usize,
+        (painter, startup, host_text): (Value, Value, String),
     ) -> Answer {
         let engine = self.engine;
         let viewport = self.scene.viewport();
@@ -796,7 +797,7 @@ impl Look<'_> {
         window.insert("focus".into(), focus.clone());
         let clock = if virtual_clock { "virtual" } else { "system" };
         let nodes = self.capture.tree.len();
-        let value = json!({
+        let mut value = json!({
             "windows": [Value::Object(window)],
             "window_count": windows,
             "inspected": "primary_window_only",
@@ -807,6 +808,8 @@ impl Look<'_> {
             "capabilities": caps.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
             "reload": reload,
         });
+        value["painter"] = painter;
+        value["startup"] = startup;
         let mut text = format!(
             "window {}x{} at scale {}{}{}\n",
             num(viewport.width()),
@@ -870,6 +873,7 @@ impl Look<'_> {
         if reload["watched"] == json!(false) {
             text.push_str("\nfiles are not watched");
         }
+        text.push_str(&host_text);
         Ok(ToolReply::from(value).with_text(text))
     }
 }
@@ -1023,6 +1027,7 @@ pub(crate) fn delta_reply(delta: Delta, since: u64, epoch: u64) -> ToolReply {
 pub(crate) fn metrics(
     engine: &Engine,
     stats: &FrameStats,
+    paint: &super::paint::PaintStats,
     queued: usize,
     capacity: usize,
     as_json_text: bool,
@@ -1045,7 +1050,7 @@ pub(crate) fn metrics(
             )
         })
         .collect();
-    let value = json!({
+    let mut value = json!({
         "frames": {
             "count": stats.frames,
             "overruns": stats.overruns,
@@ -1068,6 +1073,7 @@ pub(crate) fn metrics(
         "objects": engine.object_count(),
         "inbox": { "capacity": capacity, "queued": queued },
     });
+    value["paint"] = paint.json();
     if as_json_text {
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
         return ToolReply::from(value).with_text(text);
@@ -1109,6 +1115,7 @@ pub(crate) fn metrics(
         ms(stats.drain_time),
         engine.object_count()
     );
+    text.push_str(&paint.text());
     ToolReply::from(value).with_text(text)
 }
 

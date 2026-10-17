@@ -18,7 +18,10 @@ use std::{
 
 use ljos_dev::{
     DevSession,
-    mcp::{INBOX_CAPACITY, Inspector, InspectorConfig, InspectorSurface, TOOLS},
+    mcp::{
+        Drawn, INBOX_CAPACITY, Inspector, InspectorConfig, InspectorSurface, PaintReport,
+        PainterInfo, StartupStep, TOOLS,
+    },
 };
 use ljos_engine::{Engine, LogLevel, ObjectId, Value as QmlValue};
 use ljos_mcp_core::{
@@ -971,6 +974,101 @@ fn status_counts_the_windows_and_says_only_the_primary_is_inspected() {
         reply
             .text
             .contains("3 windows; only the primary window is inspected"),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn status_says_what_paints_the_window_and_when_each_start_up_step_ended() {
+    let mut app = seen();
+    let reply = app.call("app_status", json!({}));
+    assert_eq!(
+        reply.structured["painter"],
+        Value::Null,
+        "the host has not said"
+    );
+    let inspector = app.inspector.as_mut().unwrap();
+    inspector.set_painter(PainterInfo {
+        painter: "wgpu".into(),
+        backend: Some("Vulkan".into()),
+        adapter: Some("llvmpipe (LLVM 20.1.8, 256 bits)".into()),
+        present_mode: Some("Fifo".into()),
+        partial_redraw: Some(false),
+    });
+    inspector.record_startup(StartupStep::Built, Duration::from_millis(1200));
+    inspector.record_startup(StartupStep::Device, Duration::from_millis(1350));
+    inspector.record_startup(StartupStep::FirstFrame, Duration::from_millis(1600));
+    // Only the first time counts.
+    inspector.record_startup(StartupStep::FirstFrame, Duration::from_millis(9000));
+    let reply = app.call("app_status", json!({}));
+    let s = &reply.structured;
+    assert_eq!(s["painter"]["painter"], "wgpu");
+    assert_eq!(s["painter"]["backend"], "Vulkan");
+    assert_eq!(s["painter"]["present_mode"], "Fifo");
+    assert_eq!(s["painter"]["partial_redraw"], false);
+    assert_eq!(s["startup"]["built_ms"], 1200);
+    assert_eq!(s["startup"]["device_ms"], 1350);
+    assert_eq!(s["startup"]["first_frame_ms"], 1600);
+    assert_eq!(s["startup"]["first_input_ms"], Value::Null);
+    assert!(
+        reply.text.contains("painted by wgpu on Vulkan, llvmpipe"),
+        "{}",
+        reply.text
+    );
+    assert!(
+        reply.text.contains("first frame presented at 1600 ms"),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    let ms = Duration::from_millis;
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        build: ms(2),
+        paint: ms(10),
+        uploads: 2,
+        upload_bytes: 4096,
+        since_asked: Some(ms(14)),
+    });
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Part,
+        build: ms(1),
+        paint: ms(3),
+        uploads: 0,
+        upload_bytes: 0,
+        since_asked: Some(ms(5)),
+    });
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Unchanged,
+        build: Duration::ZERO,
+        paint: Duration::ZERO,
+        uploads: 0,
+        upload_bytes: 0,
+        since_asked: None,
+    });
+    let reply = app.call("app_metrics", json!({}));
+    let p = &reply.structured["paint"];
+    assert_eq!(p["presented"], 2);
+    assert_eq!(p["presented_in_part"], 1);
+    assert_eq!(p["unchanged"], 1);
+    assert_eq!(p["build_us"]["last"], 1000);
+    assert_eq!(p["build_us"]["max"], 2000);
+    assert_eq!(p["paint_us"]["max"], 10000);
+    assert_eq!(p["paint_us"]["total"], 13000);
+    assert_eq!(p["uploads"], 2);
+    assert_eq!(p["upload_bytes"], 4096);
+    assert_eq!(p["asked_to_presented_us"]["last"], 5000);
+    assert_eq!(p["asked_to_presented_us"]["max"], 14000);
+    assert!(
+        reply
+            .text
+            .contains("2 passes presented (1 in part), 1 unchanged and not presented"),
         "{}",
         reply.text
     );

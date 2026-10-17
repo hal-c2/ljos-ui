@@ -39,6 +39,7 @@ mod act;
 mod args;
 mod capture;
 mod logs;
+mod paint;
 mod reload;
 mod surface;
 mod tools;
@@ -70,11 +71,13 @@ pub use ljos_mcp_core::glue::http::{
 pub use ljos_mcp_core::{
     Cap, CapSet, ParseCapError, SOCKET_PATH_MAX, SocketPathError, check_socket_path,
 };
+pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
 use capture::{Capture, Lease};
 use logs::LogRing;
+use paint::{PaintStats, Startup};
 use reload::ReloadFeed;
 use surface::{Answer, DevReq, SlotGuard};
 use tools::{Look, Target};
@@ -245,6 +248,10 @@ pub struct Inspector {
     reload_wanted: bool,
     /// How many windows the application has, as the host last said.
     windows: usize,
+    /// What paints the primary window, as the host said.
+    painter: Option<PainterInfo>,
+    startup: Startup,
+    paint: PaintStats,
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     devtools_assigned: HashSet<(ObjectId, String)>,
@@ -301,6 +308,9 @@ impl Inspector {
             parked: None,
             reload_wanted: false,
             windows: 1,
+            painter: None,
+            startup: Startup::default(),
+            paint: PaintStats::default(),
             devtools_assigned: HashSet::new(),
         };
         (inspector, surface)
@@ -325,6 +335,24 @@ impl Inspector {
     /// many there are so that it does not take the one it sees for all.
     pub fn set_windows(&mut self, count: usize) {
         self.windows = count.max(1);
+    }
+
+    /// Says what paints the primary window, for `app_status`.
+    pub fn set_painter(&mut self, painter: PainterInfo) {
+        self.painter = Some(painter);
+    }
+
+    /// Records when a step of the start-up ended, timed from when the host
+    /// started, for `app_status`. A step recorded again keeps its first
+    /// time.
+    pub fn record_startup(&mut self, step: StartupStep, at: Duration) {
+        self.startup.record(step, at);
+    }
+
+    /// Records a pass of the primary window the host painted or found
+    /// unchanged, for `app_metrics`.
+    pub fn record_paint(&mut self, report: &PaintReport) {
+        self.paint.record(report);
     }
 
     /// Notes a reload that happened since the last call, so that clients
@@ -608,10 +636,22 @@ impl Inspector {
                 let text = serde_json::to_string_pretty(&value).unwrap_or_default();
                 Ok(ToolReply::from(value).with_text(text))
             }
-            (Kind::Metrics, _) => Ok(tools::metrics(engine, &self.stats, queued, capacity, false)),
-            (Kind::Resource(Resource::Metrics), _) => {
-                Ok(tools::metrics(engine, &self.stats, queued, capacity, true))
-            }
+            (Kind::Metrics, _) => Ok(tools::metrics(
+                engine,
+                &self.stats,
+                &self.paint,
+                queued,
+                capacity,
+                false,
+            )),
+            (Kind::Resource(Resource::Metrics), _) => Ok(tools::metrics(
+                engine,
+                &self.stats,
+                &self.paint,
+                queued,
+                capacity,
+                true,
+            )),
             (Kind::Snapshot(args), capture) => {
                 match self.start_snapshot(engine, scene, capture, args, per_copy) {
                     Ok(Started::Answer(reply)) => Ok(reply),
@@ -653,6 +693,7 @@ impl Inspector {
             (kind, Some(capture)) => {
                 let reload = self.feed.state().json(false);
                 let windows = self.windows;
+                let host = paint::status(self.painter.as_ref(), &self.startup);
                 let mut look = Look {
                     engine,
                     scene,
@@ -660,7 +701,7 @@ impl Inspector {
                     refs: &mut self.refs,
                 };
                 match kind {
-                    Kind::Status(_) => look.status(virtual_clock, caps, &reload, windows),
+                    Kind::Status(_) => look.status(virtual_clock, caps, &reload, windows, host),
                     Kind::Find(args) => look.find(args, per_copy),
                     Kind::Inspect(args) => look.inspect(args, per_copy, &self.devtools_assigned),
                     Kind::Screenshot(args) => look.screenshot(args, background),

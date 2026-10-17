@@ -213,6 +213,10 @@ struct Slot {
     held: Option<Instant>,
     /// The frame part of `held`: what a pass asked for at once waits for.
     paced: Option<Instant>,
+    /// When the earliest repaint the next pass answers was due, for the
+    /// inspector.
+    #[cfg(feature = "mcp")]
+    asked: Option<Instant>,
 }
 
 impl std::fmt::Debug for Slot {
@@ -266,6 +270,8 @@ impl Slot {
             undrawn: 0,
             held: None,
             paced: None,
+            #[cfg(feature = "mcp")]
+            asked: None,
         }
     }
 
@@ -393,6 +399,19 @@ fn note_state(slot: &mut Slot, engine: &Engine, sys: &WindowSystem) {
     }
 }
 
+/// A key, a button, a touch or a turn of the wheel: what a user does, and
+/// not where the pointer happens to be.
+#[cfg(feature = "mcp")]
+fn is_an_act(event: &WindowEvent) -> bool {
+    match event {
+        WindowEvent::Pointer(pointer) => matches!(
+            pointer.kind,
+            PointerKind::Wheel(_) | PointerKind::Button(_, ButtonState::Pressed)
+        ),
+        event => starts_input(event),
+    }
+}
+
 /// What a modal window keeps from the windows behind it: everything a
 /// user starts. Releases and the pointer leaving still arrive, so that
 /// nothing stays held.
@@ -425,6 +444,58 @@ fn screen_spec(screen: &Screen) -> ScreenSpec {
             f64::from(screen.position[1]) / scale,
         ],
         scale,
+    }
+}
+
+/// What a pass of the primary window costs, as the inspector is told.
+#[cfg(feature = "mcp")]
+struct Meter {
+    started: Instant,
+    built: Option<Instant>,
+    drawn: ljos_dev::mcp::Drawn,
+    uploads: usize,
+    upload_bytes: usize,
+}
+
+#[cfg(feature = "mcp")]
+impl Meter {
+    fn new(frame: &Frame, pending: &egui::TexturesDelta) -> Self {
+        use ljos_dev::mcp::Drawn;
+        Self {
+            started: Instant::now(),
+            built: None,
+            drawn: match frame {
+                Frame::Nothing => Drawn::Unchanged,
+                Frame::Part(_) => Drawn::Part,
+                Frame::Whole => Drawn::Whole,
+            },
+            uploads: pending.set.values().map(|d| d.len()).sum(),
+            upload_bytes: pending
+                .set
+                .values()
+                .flat_map(|d| d.iter())
+                .map(|d| d.image.width() * d.image.height() * d.image.bytes_per_pixel())
+                .sum(),
+        }
+    }
+
+    /// What is drawn is ready; uploading, drawing and presenting follow.
+    fn built(&mut self) {
+        self.built = Some(Instant::now());
+    }
+
+    /// The pass ended; `asked` is when the repaint it answered was due.
+    fn report(self, asked: Option<Instant>) -> ljos_dev::mcp::PaintReport {
+        let end = Instant::now();
+        let built = self.built.unwrap_or(self.started);
+        ljos_dev::mcp::PaintReport {
+            drawn: self.drawn,
+            build: built - self.started,
+            paint: end - built,
+            uploads: self.uploads,
+            upload_bytes: self.upload_bytes,
+            since_asked: asked.map(|at| end.saturating_duration_since(at)),
+        }
     }
 }
 
@@ -465,6 +536,9 @@ struct Desktop<M> {
     exiting: bool,
     /// A window was drawn.
     drawn_once: bool,
+    /// When the shell started: the inspector times the start-up from here.
+    #[cfg(feature = "mcp")]
+    began: Instant,
     /// The scripts the windows may run on input were prepared
     /// ([`Engine::prepare_scripts`]).
     scripts_prepared: bool,
@@ -512,6 +586,9 @@ impl<M: Send + 'static> Desktop<M> {
             warned_hidden_root: false,
             exiting: false,
             drawn_once: false,
+            // `run` says when the shell started.
+            #[cfg(feature = "mcp")]
+            began: Instant::now(),
             scripts_prepared: false,
         }
     }
@@ -847,6 +924,15 @@ impl<M: Send + 'static> Desktop<M> {
             }
             (Ok(_), None) => return,
         };
+        #[cfg(feature = "mcp")]
+        if slot.is_root() {
+            let info = painter.describe();
+            self.app
+                .record_startup(ljos_dev::mcp::StartupStep::Device, self.began.elapsed());
+            if let Some(info) = info {
+                self.app.set_painter(info);
+            }
+        }
         let mut state = egui_winit::State::new(
             slot.ctx.clone(),
             ViewportId::ROOT,
@@ -1095,6 +1181,12 @@ impl<M: Send + 'static> Desktop<M> {
         let now = Instant::now();
         let change = slot.shown.change(&shapes, pixels_per_point, clear);
         let frame = painter.frame(change, &slot.pending, pixels_per_point);
+        #[cfg(feature = "mcp")]
+        let mut meter =
+            // The root's: its view is the application's.
+            (slot.view.is_none() && app.inspected()).then(|| Meter::new(&frame, &slot.pending));
+        #[cfg(feature = "mcp")]
+        let asked = slot.asked.take();
         if frame == Frame::Nothing {
             painter.paint(
                 pixels_per_point,
@@ -1105,6 +1197,10 @@ impl<M: Send + 'static> Desktop<M> {
                 &surface.window,
             );
             slot.not_drawn(now, wake);
+            #[cfg(feature = "mcp")]
+            if let Some(meter) = meter {
+                app.record_paint(&meter.report(None));
+            }
             return;
         }
         slot.shown.keep(&shapes, pixels_per_point, clear);
@@ -1114,6 +1210,10 @@ impl<M: Send + 'static> Desktop<M> {
         }
         painter.prepare(&mut shapes, pixels_per_point);
         let primitives = slot.ctx.tessellate(shapes, pixels_per_point);
+        #[cfg(feature = "mcp")]
+        if let Some(meter) = meter.as_mut() {
+            meter.built();
+        }
         painter.paint(
             pixels_per_point,
             clear,
@@ -1122,6 +1222,13 @@ impl<M: Send + 'static> Desktop<M> {
             &mut slot.pending,
             &surface.window,
         );
+        #[cfg(feature = "mcp")]
+        if let Some(meter) = meter {
+            app.record_paint(&meter.report(asked));
+            if !self.drawn_once {
+                app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
+            }
+        }
         if !surface.shown {
             surface.shown = true;
             host.change_window(surface.id, WindowChange::Visible(true));
@@ -1154,6 +1261,11 @@ impl<M: Send + 'static> Desktop<M> {
             _ => {}
         }
         let caps = host.capabilities();
+        #[cfg(feature = "mcp")]
+        if is_an_act(event) {
+            self.app
+                .record_startup(ljos_dev::mcp::StartupStep::FirstInput, self.began.elapsed());
+        }
         let slot = &mut self.slots[i];
         if slot.blocked && starts_input(event) {
             return;
@@ -1292,6 +1404,10 @@ impl<M: Send + 'static> Desktop<M> {
         if now == pass || now == pass + 1 {
             if at_once {
                 slot.asked_at_once();
+            }
+            #[cfg(feature = "mcp")]
+            {
+                slot.asked = Some(slot.asked.map_or(when, |asked| asked.min(when)));
             }
             self.repaints.request(key, when);
         }
@@ -1566,6 +1682,8 @@ pub(crate) fn run<M: Send + 'static>(
 ) -> Result<(), ShellError> {
     // Only with the system's fonts: the bundled ones have none of the
     // desktop's families.
+    #[cfg(feature = "mcp")]
+    let began = Instant::now();
     let desktop_font = config
         .system_fonts
         .then(crate::desktop_font::Reading::start);
@@ -1593,9 +1711,13 @@ pub(crate) fn run<M: Send + 'static>(
             Box::new(move || dirty.set(true))
         },
     };
-    let app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
+    #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
+    let mut app = ShellApp::hosted(&ctx, &config, Arc::new(SystemClock::new()), setup, hosting)?;
+    #[cfg(feature = "mcp")]
+    app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
     let failure = Rc::new(RefCell::new(None));
-    let desktop = Desktop::new(
+    #[cfg_attr(not(feature = "mcp"), allow(unused_mut))]
+    let mut desktop = Desktop::new(
         app,
         config,
         ctx,
@@ -1604,6 +1726,10 @@ pub(crate) fn run<M: Send + 'static>(
         Rc::clone(&failure),
         starting,
     );
+    #[cfg(feature = "mcp")]
+    {
+        desktop.began = began;
+    }
     host.run(desktop)?;
     match failure.borrow_mut().take() {
         Some(error) => Err(error),

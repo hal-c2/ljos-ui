@@ -1379,6 +1379,7 @@ Actions never quietly fall back to coordinates.
   - `app_eval` is refused under `--mcp-redact` and for targets with a hidden echo mode, but a value derived from a redacted one can still be read by script.
   - `app_resize` changes the scene's size, not the platform window's. `app_advance` needs the virtual clock.
   - Only the primary window is inspected; `app_status` says so and gives the number of windows.
+- **As built: drawing the window.** The desktop shell tells the inspector what the scene cannot see. `app_status` gets `painter` (gl or wgpu, the backend, the adapter and driver, the present mode, and whether a pass redraws only what changed) and `startup`: when the application was built, the device was ready, the first frame was presented and the first key, button, touch or wheel arrived, timed from when the shell started. `app_metrics` gets `paint`, for the primary window: passes presented (whole or in part) and found unchanged, the cost of building the picture and of uploading, drawing and presenting it, the pictures uploaded and their bytes, and the time from when the repaint a pass answered was due to its present. Without an inspector nothing is measured.
 
 ### 19.6 Budgets
 

@@ -218,6 +218,33 @@ impl GlPainter {
         self.painter.max_texture_side()
     }
 
+    /// What draws, for the inspector: GL's renderer on EGL, which swaps
+    /// once the display is ready and redraws only what changed where EGL
+    /// says how old a buffer is.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn describe(&self) -> ljos_dev::mcp::PainterInfo {
+        use glutin::display::GetDisplayExtensions;
+        let glow = &self.gl.glow;
+        // SAFETY: plain queries of strings on the context GL's functions
+        // were loaded for.
+        let (renderer, version) = unsafe {
+            (
+                glow.get_parameter_string(glow::RENDERER),
+                glow.get_parameter_string(glow::VERSION),
+            )
+        };
+        ljos_dev::mcp::PainterInfo {
+            painter: "gl".into(),
+            backend: Some(format!(
+                "{}, OpenGL {version}",
+                self.gl.display.version_string()
+            )),
+            adapter: Some(renderer),
+            present_mode: Some("swap interval 1".into()),
+            partial_redraw: Some(self.gl.display.extensions().contains("EGL_EXT_buffer_age")),
+        }
+    }
+
     /// Draws into `window` from now on.
     pub(crate) fn set_window(&mut self, window: &Arc<Window>) -> Result<(), String> {
         self.forget_window();

@@ -130,6 +130,35 @@ impl Painter {
         }
     }
 
+    /// What draws, for the inspector; `None` before the first window.
+    #[cfg(feature = "mcp")]
+    pub(crate) fn describe(&self) -> Option<ljos_dev::mcp::PainterInfo> {
+        match self {
+            Painter::Wgpu(painter) => {
+                let info = painter.render_state()?.adapter.get_info();
+                let driver = [info.driver.as_str(), info.driver_info.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Some(ljos_dev::mcp::PainterInfo {
+                    painter: "wgpu".into(),
+                    backend: Some(format!("{:?}", info.backend)),
+                    adapter: Some(if driver.is_empty() {
+                        info.name
+                    } else {
+                        format!("{} ({driver})", info.name)
+                    }),
+                    // As `wgpu_painter` configures it.
+                    present_mode: Some(format!("{:?}", wgpu::PresentMode::Fifo)),
+                    partial_redraw: Some(false),
+                })
+            }
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => Some(painter.describe()),
+        }
+    }
+
     /// Whether the painter fills plain rectangles cheaper than meshes
     /// (`QmlView::set_solid_rects`).
     pub(crate) fn fills_rects(&self) -> bool {

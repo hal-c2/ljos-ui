@@ -194,6 +194,38 @@ impl<M> ShellApp<M> {
     }
 }
 
+/// What the inspector is told of drawing the primary window, which the
+/// scene cannot see: the painter, what each pass cost, and the start-up.
+#[cfg(feature = "mcp")]
+impl<M> ShellApp<M> {
+    /// Whether an inspector takes it; nothing is measured otherwise.
+    pub(crate) fn inspected(&self) -> bool {
+        self.tools.inspector.is_some()
+    }
+
+    pub(crate) fn set_painter(&mut self, painter: ljos_dev::mcp::PainterInfo) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().set_painter(painter);
+        }
+    }
+
+    pub(crate) fn record_startup(
+        &mut self,
+        step: ljos_dev::mcp::StartupStep,
+        at: std::time::Duration,
+    ) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().record_startup(step, at);
+        }
+    }
+
+    pub(crate) fn record_paint(&mut self, report: &ljos_dev::mcp::PaintReport) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().record_paint(report);
+        }
+    }
+}
+
 /// The overlay: a sheet in the window's top right corner, in a font of
 /// equal widths so the columns stand.
 fn paint_top(ui: &mut egui::Ui, top: &TopView) {
@@ -355,6 +387,11 @@ mod inspector {
 
         pub(crate) fn take_work(&mut self) -> Option<FrameReport> {
             self.inspector.take_work()
+        }
+
+        /// What the host says of painting the window.
+        pub(crate) fn inspector_mut(&mut self) -> &mut Inspector {
+            &mut self.inspector
         }
     }
 
