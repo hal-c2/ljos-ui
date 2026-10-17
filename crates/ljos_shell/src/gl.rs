@@ -183,6 +183,7 @@ impl Gl {
 pub(crate) struct GlPainter {
     gl: Rc<Gl>,
     painter: egui_glow::Painter,
+    meshes: crate::gl_mesh::Meshes,
     window: Option<GlWindow>,
     programs: crate::gl_shader::Programs,
 }
@@ -205,9 +206,11 @@ impl GlPainter {
         }
         let painter = egui_glow::Painter::new(Arc::clone(&gl.glow), "", None, true)
             .map_err(|e| e.to_string())?;
+        let meshes = crate::gl_mesh::Meshes::new(&gl.glow)?;
         Ok(Self {
             gl,
             painter,
+            meshes,
             window: None,
             programs: crate::gl_shader::Programs::default(),
         })
@@ -406,6 +409,7 @@ impl GlPainter {
             Frame::Whole => None,
         };
         let gamma = clear.to_normalized_gamma_f32();
+        let mut backdrop = None;
         match &part {
             Some(areas) => {
                 // A clear costs a software rasteriser next to nothing per
@@ -420,18 +424,20 @@ impl GlPainter {
                     }
                 }
                 if !mesh.is_empty() {
-                    let backdrop = egui::ClippedPrimitive {
+                    backdrop = Some(egui::ClippedPrimitive {
                         clip_rect: egui::Rect::EVERYTHING,
                         primitive: egui::epaint::Primitive::Mesh(mesh),
-                    };
-                    self.painter
-                        .paint_primitives(gw.px, pixels_per_point, &[backdrop]);
+                    });
                 }
             }
             None => self.painter.clear(gw.px, gamma),
         }
-        self.painter
-            .paint_primitives(gw.px, pixels_per_point, primitives);
+        self.meshes.paint(
+            &mut self.painter,
+            gw.px,
+            pixels_per_point,
+            backdrop.iter().chain(primitives),
+        );
         free_pending(&mut self.painter, pending);
         let drawn = Instant::now();
         window.pre_present_notify();
@@ -480,6 +486,7 @@ impl Drop for GlPainter {
         let surface = self.window.as_ref().map(|w| (w.id, &w.surface));
         if self.gl.make_current(surface) {
             self.programs.destroy(&self.gl.glow);
+            self.meshes.destroy(&self.gl.glow);
             self.painter.destroy();
         }
         self.forget_window();

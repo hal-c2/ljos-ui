@@ -33,6 +33,8 @@ mod desktop_font;
 #[cfg(gl_painter)]
 mod gl;
 #[cfg(gl_painter)]
+mod gl_mesh;
+#[cfg(gl_painter)]
 mod gl_shader;
 mod network;
 mod platform;
