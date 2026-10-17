@@ -19,6 +19,9 @@ icu_decimal.workspace = true
 # QtQuick.Controls and `Locale.dayName`.
 icu_calendar.workspace = true
 icu_datetime.workspace = true
+# Time zones by their IANA (or Windows) names, and the instant a zone's
+# name is read at, for CLDR's zone names.
+icu_time.workspace = true
 # `localeCompare` and the facade's collator: the locale's alphabet, accents
 # and case, as ICU orders them (what QCollator does). Its data adds about
 # 1.2 MB to a stripped release binary, so it is a feature.
@@ -28,6 +31,15 @@ writeable.workspace = true
 # builds without the `ts` feature and does not link an XML parser.
 quick-xml = { workspace = true, optional = true }
 thiserror.workspace = true
+
+# The local zone, its offset and its abbreviation, as the C library reads
+# TZ and the zone database (tzfile(5)).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# The zone the system is set to.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Time"] }
 
 [features]
 default = ["ts", "collation"]

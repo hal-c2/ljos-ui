@@ -284,7 +284,7 @@ impl Engine {
             Some(name) => LocaleInfo::new(name),
             None => {
                 self.i18n_track(&state.locale);
-                state.i18n.borrow().locale().clone()
+                state.i18n.borrow().locale().clone().as_application()
             }
         }
     }

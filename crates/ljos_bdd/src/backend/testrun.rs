@@ -35,6 +35,14 @@ pub struct TestRun {
     /// Nothing is run: the files are one project that `ljos check` reads,
     /// and the report is everything it says. Qt has no program of the kind.
     pub check: bool,
+    /// The `TZ` the runner starts with; UTC when `None`.
+    pub time_zone: Option<String>,
+}
+
+impl TestRun {
+    fn time_zone(&self) -> &str {
+        self.time_zone.as_deref().unwrap_or("UTC")
+    }
 }
 
 /// What a runner said.
@@ -215,6 +223,8 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     }
     command.arg("--json").arg(&json);
     let out = command
+        .env("TZ", run.time_zone())
+        .env("LANG", "en_US.UTF-8")
         .stdin(Stdio::null())
         .output()
         .map_err(|e| failed(format!("cannot start `ljos test`: {e}")))?;
@@ -281,7 +291,7 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     let out = command
         .env("QT_QPA_PLATFORM", "offscreen")
         .env("QT_QUICK_BACKEND", "software")
-        .env("TZ", "UTC")
+        .env("TZ", run.time_zone())
         .env("LANG", "en_US.UTF-8")
         .env("GSETTINGS_BACKEND", "memory")
         .current_dir(&staged.root)

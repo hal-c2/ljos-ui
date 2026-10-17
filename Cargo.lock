@@ -3772,9 +3772,12 @@ dependencies = [
  "icu_decimal",
  "icu_locale",
  "icu_plurals",
+ "icu_time",
+ "libc",
  "quick-xml 0.42.0",
  "tempfile",
  "thiserror 2.0.21",
+ "windows-sys 0.52.0",
  "writeable",
 ]
 

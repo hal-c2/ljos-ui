@@ -178,6 +178,9 @@ pub struct LocaleInfo {
     collate: Option<Locale>,
     grouped: Option<DecimalFormatter>,
     ungrouped: Option<DecimalFormatter>,
+    /// Whether this is the application's locale, which writes the zone
+    /// database's abbreviations whatever its language.
+    application: bool,
 }
 
 impl Default for LocaleInfo {
@@ -221,6 +224,7 @@ impl LocaleInfo {
             numeric,
             time: known(time),
             collate: known(collate),
+            application: false,
         }
     }
 
@@ -231,6 +235,24 @@ impl LocaleInfo {
             && self.numeric == other.numeric
             && self.time == other.time
             && self.collate == other.collate
+    }
+
+    /// This locale as the application's: it abbreviates a time zone as
+    /// the zone database does (`CET`) in every language, as Qt's does,
+    /// where another German locale writes `MEZ`.
+    #[must_use]
+    pub fn as_application(mut self) -> Self {
+        self.application = true;
+        self
+    }
+
+    /// Whether a zone's abbreviation is the zone database's: in English, in
+    /// the `C` locale and in the application's.
+    pub(crate) fn platform_zone_abbreviation(&self) -> bool {
+        self.application
+            || self
+                .icu()
+                .is_none_or(|l| l.id.language == icu_locale::subtags::language!("en"))
     }
 
     /// The `C` locale.
@@ -244,6 +266,7 @@ impl LocaleInfo {
             collate: None,
             grouped: None,
             ungrouped: None,
+            application: false,
         }
     }
 

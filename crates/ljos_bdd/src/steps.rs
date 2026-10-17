@@ -1635,6 +1635,16 @@ fn tests_run_with_import(w: &mut LjosWorld, dir: String) -> StepResult {
     })
 }
 
+// `TZ`, as a program is started in a zone: an IANA name (`Europe/Berlin`)
+// or a POSIX rule.
+#[when(regex = r#"^the tests are run in the time zone "([^"]+)"$"#)]
+fn tests_run_in_zone(w: &mut LjosWorld, zone: String) -> StepResult {
+    w.run_tests(&TestRun {
+        time_zone: Some(zone),
+        ..TestRun::default()
+    })
+}
+
 #[when(regex = r#"^the tests matching "([^"]+)" are run$"#)]
 fn tests_run_matching(w: &mut LjosWorld, filter: String) -> StepResult {
     w.run_tests(&TestRun {

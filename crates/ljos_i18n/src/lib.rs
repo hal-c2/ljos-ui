@@ -6,6 +6,7 @@
 //! - [`PluralForms`]: which numerus form a count selects.
 //! - [`I18n`]: catalogues, UI language and locale together; what `qsTr` asks.
 //! - [`arg`][]: `String.prototype.arg`.
+//! - [`zone`]: the local time zone and its names at an instant.
 
 pub mod arg;
 pub mod calendar;
@@ -18,6 +19,7 @@ pub mod locale;
 pub mod plural;
 #[cfg(feature = "ts")]
 pub mod ts;
+pub mod zone;
 
 pub use catalog::{Catalog, Entry, Messages, Translation};
 pub use collate::Collator;
@@ -25,3 +27,4 @@ pub use i18n::I18n;
 pub use ljl::{Ljl, LjlError};
 pub use locale::{DataSizeFormat, LocaleInfo, SystemLocale};
 pub use plural::PluralForms;
+pub use zone::{LocalZone, ZoneNames};

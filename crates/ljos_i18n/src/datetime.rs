@@ -72,6 +72,18 @@ impl Fields {
         }
     }
 
+    /// The instant, in milliseconds after the UNIX epoch.
+    #[must_use]
+    pub fn unix_ms(&self) -> i64 {
+        let days = crate::calendar::days_from_civil(self.year, self.month, self.day);
+        days * 86_400_000
+            + i64::from(self.hour) * 3_600_000
+            + i64::from(self.minute) * 60_000
+            + i64::from(self.second) * 1000
+            + i64::from(self.millisecond)
+            - i64::from(self.offset) * 1000
+    }
+
     /// The day of the week, as `Qt::DayOfWeek` numbers it: 1 is Monday.
     #[must_use]
     pub fn weekday(&self) -> u8 {
@@ -131,6 +143,37 @@ impl LocaleInfo {
         };
         let time = from_cldr(&pattern);
         if long { format!("{time} tttt") } else { time }
+    }
+
+    /// The local zone's names at the instant `fields` are local fields
+    /// of: its abbreviation (`t`) and long name (`tttt`) in this locale.
+    /// Fields at another offset than the local zone's are named by that
+    /// offset (`UTC-08:00`).
+    #[must_use]
+    pub fn zone_names(&self, fields: &Fields) -> crate::ZoneNames {
+        let unix_ms = fields.unix_ms();
+        let zone = crate::LocalZone::at(unix_ms);
+        crate::zone::names(
+            Some(&zone),
+            fields.offset,
+            unix_ms,
+            self.icu(),
+            self.platform_zone_abbreviation(),
+        )
+    }
+
+    /// The local zone's names at `unix_ms`, milliseconds after the UNIX
+    /// epoch, in this locale.
+    #[must_use]
+    pub fn local_zone_names(&self, unix_ms: i64) -> crate::ZoneNames {
+        let zone = crate::LocalZone::at(unix_ms);
+        crate::zone::names(
+            Some(&zone),
+            zone.offset,
+            unix_ms,
+            self.icu(),
+            self.platform_zone_abbreviation(),
+        )
     }
 
     /// `Locale.dateTimeFormat`: the date's format, a space, the time's.
@@ -270,7 +313,15 @@ impl LocaleInfo {
                 let trimmed = ms.trim_end_matches('0');
                 self.digits(if trimmed.is_empty() { "0" } else { trimmed }.to_owned())
             }
-            ('t', _) => zone(f.offset, n),
+            ('t', 2 | 3) => zone(f.offset, n),
+            ('t', _) => {
+                let names = self.zone_names(f);
+                if n == 1 {
+                    names.abbreviation
+                } else {
+                    names.long_name
+                }
+            }
             _ => String::new(),
         }
     }
@@ -468,18 +519,16 @@ fn c_date_format(long: bool) -> String {
     .to_owned()
 }
 
-/// The name of the zone `offset` seconds east of UTC: `t` its
-/// abbreviation, `tt` `+0000`, `ttt` `+00:00`, `tttt` its long name.
+/// The offset `offset` seconds east of UTC as `tt` (`+0000`) and `ttt`
+/// (`+00:00`) write it.
 fn zone(offset: i32, letters: usize) -> String {
     let sign = if offset < 0 { '-' } else { '+' };
     let minutes = offset.unsigned_abs() / 60;
     let (h, m) = (minutes / 60, minutes % 60);
-    match letters {
-        2 => format!("{sign}{h:02}{m:02}"),
-        3 => format!("{sign}{h:02}:{m:02}"),
-        _ if offset == 0 && letters >= 4 => "Coordinated Universal Time".to_owned(),
-        _ if offset == 0 => "UTC".to_owned(),
-        _ => format!("UTC{sign}{h:02}:{m:02}"),
+    if letters == 2 {
+        format!("{sign}{h:02}{m:02}")
+    } else {
+        format!("{sign}{h:02}:{m:02}")
     }
 }
 

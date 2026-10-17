@@ -27,6 +27,10 @@
 //! assert_eq!(names, ["a", "ä", "b", "B", "z"]);
 //! ```
 //!
+//! A date's zone is the local one, which the platform names
+//! ([`Locale::zone_names`]): `PST` and `Pacific Standard Time` in winter
+//! in Los Angeles, `PDT` and `Pacific Daylight Time` in summer.
+//!
 //! Without the `collation` feature, which carries the alphabets, every
 //! locale orders text as the `C` locale does: by its UTF-16 code units.
 
@@ -37,7 +41,13 @@ use ljos_i18n::LocaleInfo;
 use ljos_i18n::datetime::Part;
 
 pub use ljos_i18n::DataSizeFormat;
+/// What the platform says of the local time zone at an instant: its
+/// IANA name, offset and abbreviation ([`LocalZone::at`]).
+pub use ljos_i18n::LocalZone;
 pub use ljos_i18n::SystemLocale;
+/// A time zone's abbreviation (`PST`) and long name (`Pacific Standard
+/// Time`) at an instant ([`Locale::zone_names`]).
+pub use ljos_i18n::ZoneNames;
 /// The local fields of a date and time (`year`, `month` from 1, …, and
 /// the zone's `offset` in seconds east of UTC), as a script's `Date`
 /// has them. [`DateTime::from_unix_ms`] makes them from an instant.
@@ -176,6 +186,16 @@ impl Locale {
     pub fn format_date_time(&self, date: &DateTime, format: FormatType) -> String {
         self.0
             .format_date_time(&self.date_time_format(format), date, Part::DateTime)
+    }
+
+    /// The local time zone's names at an instant, `unix_ms` milliseconds
+    /// after the UNIX epoch, as a date's `t` and `tttt` write them: its
+    /// abbreviation and long name there, daylight saving time included,
+    /// in this locale's language. A zone without a name is its offset
+    /// (`UTC-08:00`).
+    #[must_use]
+    pub fn zone_names(&self, unix_ms: i64) -> ZoneNames {
+        self.0.local_zone_names(unix_ms)
     }
 
     /// A collator that orders text by this locale's collation (for
