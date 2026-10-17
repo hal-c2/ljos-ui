@@ -8,11 +8,15 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-# The facade and nothing else, not even as a dev-dependency: what the
+# The facade and nothing else, in tests too: what the
 # derive and the attribute macros generate must resolve through it, as
 # it does for an application outside this repository.
 [dependencies]
 ljos = { path = "../ljos", default-features = false }
+
+# `testing`: the facade's window without a platform, for the tests.
+[dev-dependencies]
+ljos = { path = "../ljos", default-features = false, features = ["testing"] }
 
 [lints]
 workspace = true

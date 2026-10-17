@@ -4,13 +4,19 @@
 //! builds with the workspace, so the macros' generated paths, the
 //! prelude and the facade's manifest (no `[patch]` to copy) stay
 //! enough for a crate outside this repository. Its visual item paints
-//! itself and takes keys and the wheel through `ljos::item`.
+//! itself and takes keys and the wheel through `ljos::item`; its
+//! terminal-like [`CellGrid`] takes the pointer and an input method, and
+//! measures text outside paint.
+
+mod cell_grid;
 
 use std::rc::Rc;
 
 use ljos::item::{self, DisplayListBuilder, ItemPaint, KeyEvent, KeyItem, Rgba, TextEngine};
 use ljos::item::{WheelEvent, WheelItem, key, kurbo};
 use ljos::prelude::*;
+
+pub use cell_grid::{CellGrid, Cells, Screenful, hover_colour, read_cell_grid, selection_colour};
 
 /// A native type with a property, a signal and an invokable method.
 #[derive(Debug, Default, QmlObject)]
@@ -100,7 +106,7 @@ fn gauge_wheel(engine: &Engine, gauge: ObjectId, ev: &WheelEvent, _: kurbo::Poin
 
 /// The one seam a host calls.
 pub fn register(engine: &Engine) {
-    engine.register_module(ljos::module!("Example" 1.0 => [Counter, Gauge]));
+    engine.register_module(ljos::module!("Example" 1.0 => [Counter, Gauge, CellGrid]));
     engine.register_singleton::<Greeter>("Example", Version::new(1, 0));
     item::register_paint_item::<Gauge>(engine, read_gauge);
     item::register_key_item::<Gauge>(
@@ -112,4 +118,5 @@ pub fn register(engine: &Engine) {
         },
     );
     item::register_wheel_item::<Gauge>(engine, WheelItem { wheel: gauge_wheel });
+    cell_grid::register(engine);
 }
