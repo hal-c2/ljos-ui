@@ -4142,7 +4142,7 @@ module QtQuick.Controls.Material
 	Pane QtQuick/Controls/Material/Pane.qml
 	Popup QtQuick/Controls/Material/Popup.qml
 	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
-	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	RadioButton QtQuick/Controls/Material/RadioButton.qml
 	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
 	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
 	RoundButton QtQuick/Controls/Material/RoundButton.qml
@@ -4198,6 +4198,8 @@ module QtQuick.Controls.Material
 		prototype QtQuick.Templates.Pane named
 	type QtQuick/Controls/Material/Popup.qml Popup
 		prototype QtQuick.Templates.Popup named
+	type QtQuick/Controls/Material/RadioButton.qml RadioButton
+		prototype QtQuick.Templates.RadioButton named
 	type QtQuick/Controls/Material/RoundButton.qml RoundButton
 		prototype QtQuick.Templates.RoundButton named
 	type QtQuick/Controls/Material/Slider.qml Slider
