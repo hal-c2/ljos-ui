@@ -4,7 +4,10 @@
 //! A control, a `Label` and a window each have a font and a palette; a
 //! plain `Text` or `Rectangle` has neither and lets them through. An attribute of the font
 //! (or a colour of the palette) that the author set on an object stays;
-//! every other one is the nearest such ancestor's, and follows it. A
+//! every other one is the nearest such ancestor's, and follows it. In a
+//! style with a font of its own ([`crate::style_font`]) a control starts
+//! from the style's font for its type instead, and takes from above only
+//! what an author set there. A
 //! palette colour nobody set is the style's, and the style has a second
 //! set for a control that is not enabled, and both again for a dark colour
 //! scheme (`Qt.styleHints.colorScheme`).
@@ -22,7 +25,8 @@
 //! it.
 //!
 //! Behaviour is pinned by `features/controls/control-font.feature`,
-//! `control-palette.feature` and `control-look-reset.feature`.
+//! `control-palette.feature`, `control-look-reset.feature` and
+//! `style-font.feature`.
 //!
 //! Limits: an attribute set to the value it would have had anyway is not
 //! seen as set; a control that has the application's locale keeps the one
@@ -42,6 +46,7 @@ use ljos_quick::{Item, Text, TextEditor};
 use crate::control::Control;
 use crate::label::Label;
 use crate::palette::{ROLE_COUNT, ROLES, role_props};
+use crate::style_font::{self, Look, Scope};
 use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::util::{check, warn};
@@ -69,6 +74,13 @@ pub(crate) struct InheritState {
     /// The font this module last wrote, so that the author's writes can be
     /// told from its own.
     font_resolved: RefCell<Option<Arc<Font>>>,
+    /// What the object's type says of its font.
+    scope: Cell<Scope>,
+    /// The style whose font it starts from: its own, or that of the
+    /// control above.
+    look: Cell<Option<Look>>,
+    /// The attributes of the font an author set on the objects above.
+    font_above: Cell<u32>,
     /// Whether the palette ever left the defaults of an enabled control.
     palette_touched: Cell<bool>,
 }
@@ -361,6 +373,14 @@ pub(crate) fn attach(
     };
 
     if let Some(fp) = font_prop(kind) {
+        let scope = style_font::scope_of(engine, obj);
+        state.scope.set(scope);
+        state.look.set(scope.look);
+        if scope.look.is_some() && !engine.untrack(|| in_use(engine, Which::Font)) {
+            // The style's font differs from the default: every object
+            // finds out what it starts from.
+            bump(engine, Which::Font);
+        }
         if author_set(engine, obj, fp) {
             let own = font_value(&engine.untrack(|| engine.read(obj, fp)));
             let mask = differing(&own, &Font::default());
@@ -453,20 +473,60 @@ fn above(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
         .or_else(|| ljos_quick::layer_host(engine, obj))
 }
 
+/// What the nearest ancestor with a font hands down.
+struct FromAbove {
+    font: Arc<Font>,
+    /// The attributes an author set on it or above it.
+    set: u32,
+    look: Option<Look>,
+}
+
 /// The nearest ancestor with a font, and that font (both tracked).
-fn inherited_font(engine: &Engine, obj: ObjectId) -> Arc<Font> {
+fn inherited_font(engine: &Engine, obj: ObjectId) -> FromAbove {
     let mut cur = above(engine, obj);
     // A tree deeper than this is a cycle someone built by hand.
     for _ in 0..4096 {
         let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
             break;
         };
-        if let Some(fp) = kind_of(engine, p).and_then(font_prop) {
-            return font_value(&engine.read(p, fp));
+        let kind = kind_of(engine, p);
+        if let Some(fp) = kind.and_then(font_prop) {
+            let font = font_value(&engine.read(p, fp));
+            let st = kind.and_then(|k| state_of(engine, p, k));
+            return FromAbove {
+                font,
+                set: st
+                    .as_ref()
+                    .map_or(0, |s| s.font_above.get() | s.font_mask.get()),
+                look: st.and_then(|s| s.look.get()),
+            };
         }
         cur = above(engine, p);
     }
-    Arc::new(Font::default())
+    FromAbove {
+        font: Arc::new(Font::default()),
+        set: 0,
+        look: None,
+    }
+}
+
+/// The font `obj` has where it sets nothing (tracked): the one above, or
+/// for a control of a style with a font of its own that font, with what
+/// an author set above laid over it.
+fn base_font(engine: &Engine, obj: ObjectId, state: &InheritState) -> Arc<Font> {
+    let from = inherited_font(engine, obj);
+    let scope = state.scope.get();
+    let look = scope.look.or(from.look);
+    state.look.set(look);
+    state.font_above.set(from.set);
+    match look {
+        None => from.font,
+        Some(look) => Arc::new(merged(
+            &style_font::font(look, scope.name),
+            &from.font,
+            from.set,
+        )),
+    }
 }
 
 fn resolve_font(
@@ -475,7 +535,7 @@ fn resolve_font(
     fp: PropIndex,
     state: &InheritState,
 ) -> Result<(), EngineError> {
-    let base = inherited_font(engine, obj);
+    let base = base_font(engine, obj, state);
     let own = font_value(&engine.untrack(|| engine.read(obj, fp)));
     let font = merged(&base, &own, state.font_mask.get());
     if font == *own {
@@ -520,14 +580,17 @@ pub(crate) const FONT_RESET: Reset = Reset::Custom {
 };
 
 fn font_from_above(engine: &Engine, obj: ObjectId, _font: PropIndex) -> Value {
-    Value::Font(inherited_font(engine, obj))
+    match kind_of(engine, obj).and_then(|k| state_of(engine, obj, k)) {
+        Some(state) => Value::Font(base_font(engine, obj, &state)),
+        None => Value::Font(inherited_font(engine, obj).font),
+    }
 }
 
 fn take_font_back(engine: &Engine, obj: ObjectId, fp: PropIndex) -> Result<(), EngineError> {
     let Some(state) = kind_of(engine, obj).and_then(|k| state_of(engine, obj, k)) else {
         return engine.reset_to_default(obj, fp);
     };
-    let font = engine.untrack(|| inherited_font(engine, obj));
+    let font = engine.untrack(|| base_font(engine, obj, &state));
     state.font_mask.set(0);
     // Before the write, so that the watch on the font takes it for this
     // module's and not for the author's.

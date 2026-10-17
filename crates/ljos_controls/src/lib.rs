@@ -51,6 +51,7 @@ mod spin_box;
 mod split_view;
 mod stack_view;
 mod style;
+mod style_font;
 mod swipe_delegate;
 mod swipe_view;
 mod tab_bar;
@@ -257,8 +258,9 @@ pub fn register(engine: &Engine) {
         for name in basic.iter().chain(extra) {
             let from = if own.contains(name) { directory } else { BASIC };
             let key = format!("{from}/{name}");
-            if let Err(err) = engine.register_qml_type(uri, Version::new(2, 15), &key) {
-                util::warn(engine, format!("{uri}.{name}: {err}"));
+            match engine.register_qml_type(uri, Version::new(2, 15), &key) {
+                Ok(()) => style_font::remember(engine, uri, name, from),
+                Err(err) => util::warn(engine, format!("{uri}.{name}: {err}")),
             }
         }
     }
