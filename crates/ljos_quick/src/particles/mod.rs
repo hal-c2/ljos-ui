@@ -17,7 +17,7 @@
 
 mod sim;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -343,13 +343,12 @@ impl Emitter {
             if !e.is_alive(em) {
                 return;
             }
-            for p in [
-                Item::ENABLED.index,
-                Self::EMIT_RATE.index,
-                Self::SYSTEM.index,
-                Self::START_TIME.index,
-            ] {
+            for p in [Self::SYSTEM.index, Self::START_TIME.index] {
                 let _ = e.read(em, p);
+            }
+            let enabled = e.read(em, Item::ENABLED.index).to_boolean();
+            if enabled && e.read(em, Self::EMIT_RATE.index).to_number() > 0.0 {
+                enliven(e, em);
             }
             if let Some(sys) = system_of(e, em, Self::SYSTEM.index) {
                 sync_timer(e, sys);
@@ -371,6 +370,7 @@ impl Emitter {
             && let Some(run) = emitter_run(cx.engine, cx.this)
         {
             run.borrow_mut().bursts.push((n, at));
+            enliven(cx.engine, cx.this);
             wake(cx.engine, cx.this);
         }
     }
@@ -385,6 +385,7 @@ impl Emitter {
             let mut r = run.borrow_mut();
             r.pulse_left = r.pulse_left.max(s);
             drop(r);
+            enliven(cx.engine, cx.this);
             wake(cx.engine, cx.this);
         }
     }
@@ -628,6 +629,12 @@ impl Default for SystemRun {
 #[derive(Default)]
 struct Registry {
     emitters: RefCell<Vec<ObjectId>>,
+    /// The emitters that may give birth: enabled with a rate, or owing a
+    /// burst or pulse. A step looks at these alone, where a hundred blocks
+    /// that each burst once when they die would cost a hundred looks.
+    lively: RefCell<Vec<ObjectId>>,
+    /// How many emitters steps have looked at.
+    looked: Cell<u64>,
     painters: RefCell<Vec<ObjectId>>,
     affectors: RefCell<Vec<ObjectId>>,
     shown: RefCell<FxHashMap<ObjectId, Shown>>,
@@ -717,6 +724,29 @@ fn emitters_of(e: &Engine, sys: ObjectId) -> Vec<ObjectId> {
     members(e, &registry(e).emitters, sys, Emitter::SYSTEM.index)
 }
 
+/// The emitters of `sys` that may give birth.
+fn lively_of(e: &Engine, sys: ObjectId) -> Vec<ObjectId> {
+    let reg = registry(e);
+    let lively = members(e, &reg.lively, sys, Emitter::SYSTEM.index);
+    reg.looked.set(reg.looked.get() + lively.len() as u64);
+    lively
+}
+
+/// `em` may give birth from now on.
+fn enliven(e: &Engine, em: ObjectId) {
+    let reg = registry(e);
+    let mut lively = reg.lively.borrow_mut();
+    if !lively.contains(&em) {
+        lively.push(em);
+    }
+}
+
+/// How many emitters the particle steps of this engine have looked at.
+#[doc(hidden)]
+pub fn emitters_looked_at(engine: &Engine) -> u64 {
+    registry(engine).looked.get()
+}
+
 fn painters_of(e: &Engine, sys: ObjectId) -> Vec<ObjectId> {
     members(e, &registry(e).painters, sys, ParticlePainter::SYSTEM.index)
 }
@@ -740,7 +770,7 @@ fn busy(e: &Engine, sys: ObjectId) -> bool {
     if !run.borrow().particles.is_empty() {
         return true;
     }
-    emitters_of(e, sys).into_iter().any(|em| {
+    lively_of(e, sys).into_iter().any(|em| {
         let enabled = e.read(em, Item::ENABLED.index).to_boolean();
         let owes = emitter_run(e, em).is_some_and(|r| {
             let r = r.borrow();
@@ -1066,10 +1096,9 @@ fn advance_system(e: &Engine, sys: ObjectId) {
         return;
     };
     let reaches = read_reaches(e, sys);
-    // Most emitters owe nothing on most steps (one on each of a hundred
-    // blocks that bursts when the block dies): only one that gives birth
-    // has the rest of what it says read.
-    let emitters: Vec<(EmitterSpec, Vec<Burst>)> = emitters_of(e, sys)
+    // Only an emitter that gives birth has the rest of what it says read.
+    let mut spent = Vec::new();
+    let emitters: Vec<(EmitterSpec, Vec<Burst>)> = lively_of(e, sys)
         .into_iter()
         .filter_map(|em| {
             let run = emitter_run(e, em)?;
@@ -1089,11 +1118,20 @@ fn advance_system(e: &Engine, sys: ObjectId) {
                         owed.push((whole as u32, None));
                     }
                 }
+                if !(enabled && rate > 0.0) && r.pulse_left <= 0.0 && r.bursts.is_empty() {
+                    spent.push(em);
+                }
                 owed
             };
             (!owed.is_empty()).then(|| (read_emitter(e, sys, em), owed))
         })
         .collect();
+    if !spent.is_empty() {
+        registry(e)
+            .lively
+            .borrow_mut()
+            .retain(|em| !spent.contains(em));
+    }
     step_particles(&mut run.borrow_mut(), &reaches, &emitters);
 }
 

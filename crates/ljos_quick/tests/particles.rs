@@ -149,3 +149,50 @@ fn a_step_costs_the_same_however_many_particles_it_draws() {
         "{per_step} effect runs a step for {drawn} particles"
     );
 }
+
+/// How many emitters a second of steps looks at, with `idle` emitters
+/// that never emit and one that bursts once.
+fn emitters_looked_at_with(idle: usize) -> u64 {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let idle_emitters = (0..idle)
+        .map(|_| r#"Emitter { enabled: false; width: 10; height: 10 }"#)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let root = load(
+        &e,
+        &format!(
+            r#"
+    import QtQuick
+    import QtQuick.Particles
+    ParticleSystem {{
+      objectName: "system"
+      width: 300; height: 300
+      Emitter {{ emitRate: 100; lifeSpan: 5000; width: 10; height: 10 }}
+      Emitter {{ objectName: "burst"; enabled: false; lifeSpan: 5000; width: 10; height: 10 }}
+      {idle_emitters}
+    }}"#
+        ),
+    );
+    let burst = find(&e, root, "burst");
+    e.invoke_by_name(burst, "burst", &[Value::Int(10)]).unwrap();
+    let before = ljos_quick::emitters_looked_at(&e);
+    for t in (16..=1000u32).step_by(16) {
+        clock.set(Time::from_millis(u64::from(t)));
+        e.advance_timers(Time::from_millis(u64::from(t)));
+    }
+    assert!(!get(&e, find(&e, root, "system"), "empty").to_boolean());
+    ljos_quick::emitters_looked_at(&e) - before
+}
+
+#[test]
+fn a_step_looks_only_at_the_emitters_that_may_give_birth() {
+    // A hundred blocks each with an emitter that bursts when the block
+    // dies: a step costs what emits, not how many could.
+    let few = emitters_looked_at_with(10);
+    let many = emitters_looked_at_with(400);
+    assert_eq!(few, many, "{few} looks with 10 idle, {many} with 400");
+    // The rate emitter on each of the ~62 steps, the burst on its first.
+    assert!(few <= 2 * 64 + 2, "{few} looks");
+}
