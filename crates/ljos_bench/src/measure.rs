@@ -155,6 +155,10 @@ pub struct Span {
     /// application that should sleep.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub woken: BTreeMap<String, u64>,
+    /// Of `cpu_ms`, what threads that ended in the window used: short
+    /// workers whose wakeups `woken` cannot count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_cpu_ms: Option<f64>,
     pub frames: Option<Frames>,
     /// Clicks, moves or wheel notches given, for a driven window.
     pub clicks: Option<u32>,
@@ -417,6 +421,7 @@ fn span(
     let cpu0 = w.cg.cpu_usec()?;
     let thr0 = w.cg.throttled_usec();
     let sw0 = procfs::thread_switches(pid);
+    let ns0 = procfs::thread_cpu_ns(pid);
     let start = Instant::now();
     let mut clicks = None;
     match (drive, &setup.wayland, &setup.sway) {
@@ -435,6 +440,7 @@ fn span(
     let cpu1 = w.cg.cpu_usec().unwrap_or(cpu0);
     let sw1 = procfs::thread_switches(pid);
     let woken = procfs::woken(&sw0, &sw1);
+    let live_ms = procfs::live_cpu_ns(&ns0, &procfs::thread_cpu_ns(pid)) as f64 / 1e6;
     let times = counter.and_then(|c| c.finish().ok());
     let cpu_ms = ms(cpu1.saturating_sub(cpu0));
     #[allow(clippy::cast_precision_loss)]
@@ -457,6 +463,8 @@ fn span(
         frames: times.map(|t| frames(&t, seconds)),
         clicks,
         woken,
+        // Rounding between the two clocks is not an ended thread.
+        ended_cpu_ms: Some((cpu_ms - live_ms).max(0.0)).filter(|ms| *ms >= 1.0),
     })
 }
 

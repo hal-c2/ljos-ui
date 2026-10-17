@@ -167,6 +167,13 @@ const METRICS: &[Metric] = &[
         value: |r| r.idle.as_ref().map(|s| s.cpu_percent),
     },
     Metric {
+        title: "Idle CPU of threads that ended (% of one core)",
+        value: |r| {
+            let s = r.idle.as_ref()?;
+            (s.seconds > 0.0).then(|| s.ended_cpu_ms.unwrap_or(0.0) / 10.0 / s.seconds)
+        },
+    },
+    Metric {
         title: "Idle wakeups (per second)",
         value: |r| r.idle.as_ref().map(|s| s.wakeups_per_s),
     },

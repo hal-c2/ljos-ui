@@ -93,6 +93,33 @@ pub fn woken(
     by_name
 }
 
+/// CPU time of every live thread so far, in nanoseconds, by thread id.
+#[must_use]
+pub fn thread_cpu_ns(pid: u32) -> BTreeMap<u32, u64> {
+    let Ok(tasks) = fs::read_dir(format!("/proc/{pid}/task")) else {
+        return BTreeMap::new();
+    };
+    tasks
+        .flatten()
+        .filter_map(|t| {
+            let id = t.file_name().to_str()?.parse().ok()?;
+            let stat = fs::read_to_string(t.path().join("schedstat")).ok()?;
+            Some((id, stat.split_whitespace().next()?.parse().ok()?))
+        })
+        .collect()
+}
+
+/// The CPU time, between two [`thread_cpu_ns`], of the threads still alive
+/// at the end. What the process used beyond it went to threads that ended
+/// in between, which [`woken`] cannot see either.
+#[must_use]
+pub fn live_cpu_ns(before: &BTreeMap<u32, u64>, after: &BTreeMap<u32, u64>) -> u64 {
+    after
+        .iter()
+        .map(|(id, n)| n.saturating_sub(before.get(id).copied().unwrap_or(0)))
+        .sum()
+}
+
 /// The program a process runs.
 #[must_use]
 pub fn exe(pid: u32) -> Option<PathBuf> {
@@ -203,6 +230,16 @@ mod tests {
         assert_eq!(woke.get("pool"), Some(&3));
         assert_eq!(woke.get("new"), Some(&2));
         assert!(!woke.contains_key("main"), "{woke:?}");
+    }
+
+    #[test]
+    fn a_thread_that_ended_is_not_live_cpu() {
+        let before = BTreeMap::from([(1, 100), (2, 50), (4, 30)]);
+        let after = BTreeMap::from([(1, 160), (2, 50), (5, 20)]);
+        assert_eq!(live_cpu_ns(&before, &after), 80);
+        let me = std::process::id();
+        let mine = thread_cpu_ns(me);
+        assert!(mine.values().any(|n| *n > 0), "{mine:?}");
     }
 
     #[test]
