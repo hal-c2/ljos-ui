@@ -13,6 +13,8 @@
 //!   and the rest;
 //! - opening a URL in the user's application for it ([`OpenUrlService`],
 //!   `Qt.openUrlExternally`);
+//! - the application's badge, a count on its icon ([`BadgeService`],
+//!   `QGuiApplication::setBadgeNumber`);
 //! - `Qt.platform`.
 //!
 //! Answers from other threads come back through one bounded inbox that the
@@ -22,6 +24,7 @@
 //! [`native::SystemOpener`]; a
 //! host with a network turns on `http` and installs `HttpFetcher`.
 
+mod badge;
 mod clipboard;
 mod dialogs;
 mod drop;
@@ -44,6 +47,7 @@ use std::cell::Cell;
 
 use ljos_engine::{Engine, LogLevel, Value, Version};
 
+pub use badge::{BadgeService, RecordedBadge};
 pub use clipboard::{ClipboardImage, ClipboardMode, ClipboardService, MemoryClipboard};
 pub use dialogs::{
     AbstractDialog, CANCEL, ColorDialog, DialogAnswer, DialogKind, DialogReply, DialogRequest,

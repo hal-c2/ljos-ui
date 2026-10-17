@@ -1,6 +1,8 @@
 //! The desktop's platform services (ARCHITECTURE.md §15): the system
 //! clipboard and dialogs, the system's opener of URLs, an HTTPS fetcher,
-//! and the window system's name for `Qt.platform`.
+//! and the window system's name for `Qt.platform`. The application's badge
+//! keeps the in-process service on every desktop for now: it is kept and
+//! read back (`Platform::badge_number`), and not shown.
 //!
 //! Files dragged in from other applications are not handled here: winit's
 //! file events reach each window's egui input, and the window's `QmlView`

@@ -16,6 +16,7 @@ use std::time::Duration;
 use ljos_engine::{Atom, Engine, LogLevel, ObjectId};
 use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
 
+use crate::badge::{BadgeService, RecordedBadge};
 use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
 use crate::drop::ExternalDrag;
@@ -173,6 +174,8 @@ pub struct Platform {
     permissions: RefCell<Rc<dyn PermissionService>>,
     fetcher: RefCell<Arc<dyn Fetcher>>,
     open_url: RefCell<Rc<dyn OpenUrlService>>,
+    badge: RefCell<Rc<dyn BadgeService>>,
+    badge_number: Cell<u32>,
     env: RefCell<Rc<PathEnv>>,
     plugin_name: RefCell<Atom>,
     application: RefCell<Option<(String, String)>>,
@@ -215,6 +218,8 @@ impl Default for Platform {
             permissions: RefCell::new(Rc::new(UngatedPermissions)),
             fetcher: RefCell::new(Arc::new(NoNetwork)),
             open_url: RefCell::new(Rc::new(RecordedUrls::default())),
+            badge: RefCell::new(Rc::new(RecordedBadge::default())),
+            badge_number: Cell::new(0),
             env: RefCell::new(Rc::new(PathEnv::from_process())),
             // What a run without a window system is called (Qt.platform).
             plugin_name: RefCell::new(Atom::from("offscreen")),
@@ -406,6 +411,37 @@ impl Platform {
 
     pub fn set_open_url(&self, service: Rc<dyn OpenUrlService>) {
         *self.open_url.borrow_mut() = service;
+    }
+
+    /// Shows `count` on the application's icon, as
+    /// `QGuiApplication::setBadgeNumber` does; 0 clears it. Where the
+    /// desktop has no badge the count is only kept.
+    pub fn set_badge_number(&self, count: u32) {
+        self.badge_number.set(count);
+        let service = Rc::clone(&self.badge.borrow());
+        service.show(count);
+    }
+
+    /// The count last set with [`Platform::set_badge_number`]; 0 when
+    /// there is no badge.
+    pub fn badge_number(&self) -> u32 {
+        self.badge_number.get()
+    }
+
+    /// What shows the badge. Until a host installs one it is a
+    /// [`RecordedBadge`], which shows nothing.
+    pub fn badge(&self) -> Rc<dyn BadgeService> {
+        Rc::clone(&self.badge.borrow())
+    }
+
+    /// Installs what shows the badge, and shows it the count already set,
+    /// so a count set before the host started is not lost.
+    pub fn set_badge(&self, service: Rc<dyn BadgeService>) {
+        *self.badge.borrow_mut() = Rc::clone(&service);
+        let count = self.badge_number.get();
+        if count != 0 {
+            service.show(count);
+        }
     }
 
     /// Where the user's directories are.
