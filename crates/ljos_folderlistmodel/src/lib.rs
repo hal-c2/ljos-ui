@@ -282,6 +282,22 @@ fn attach(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// The properties a listing depends on.
+const LISTED_BY: [PropIndex; 12] = [
+    FolderListModel::FOLDER.index,
+    FolderListModel::NAME_FILTERS.index,
+    FolderListModel::SHOW_DIRS.index,
+    FolderListModel::SHOW_DIRS_FIRST.index,
+    FolderListModel::SHOW_DOT_AND_DOT_DOT.index,
+    FolderListModel::SHOW_FILES.index,
+    FolderListModel::SHOW_HIDDEN.index,
+    FolderListModel::SHOW_ONLY_READABLE.index,
+    FolderListModel::CASE_SENSITIVE.index,
+    FolderListModel::SORT_CASE_SENSITIVE.index,
+    FolderListModel::SORT_FIELD.index,
+    FolderListModel::SORT_REVERSED.index,
+];
+
 #[qml_impl]
 impl FolderListModel {
     #[qml(on_complete)]
@@ -291,20 +307,7 @@ impl FolderListModel {
         // Listed first: a folder that is not one when the model completes
         // is replaced, which must not list it again.
         load(e, me);
-        for prop in [
-            FolderListModel::FOLDER.index,
-            FolderListModel::NAME_FILTERS.index,
-            FolderListModel::SHOW_DIRS.index,
-            FolderListModel::SHOW_DIRS_FIRST.index,
-            FolderListModel::SHOW_DOT_AND_DOT_DOT.index,
-            FolderListModel::SHOW_FILES.index,
-            FolderListModel::SHOW_HIDDEN.index,
-            FolderListModel::SHOW_ONLY_READABLE.index,
-            FolderListModel::CASE_SENSITIVE.index,
-            FolderListModel::SORT_CASE_SENSITIVE.index,
-            FolderListModel::SORT_FIELD.index,
-            FolderListModel::SORT_REVERSED.index,
-        ] {
+        for prop in LISTED_BY {
             e.watch(me, prop, move |e, _| load(e, me))?;
         }
         Ok(())
@@ -401,6 +404,13 @@ struct Found {
 /// Starts (or restarts) listing the model's folder. The rows land in
 /// [`apply`].
 fn load(e: &Engine, me: ObjectId) {
+    // A bound option is only pulled into the object when it is read, and
+    // at completion nothing has read it yet.
+    e.untrack(|| {
+        for prop in LISTED_BY {
+            e.read(me, prop);
+        }
+    });
     let Ok((generation, first, opts)) = e.untrack(|| {
         e.with_mut(me, |m: &mut FolderListModel| {
             m.generation += 1;

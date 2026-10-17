@@ -186,6 +186,29 @@ Feature: FolderListModel
       | nameFilters: ["*.JPG"]; caseSensitive: false  | A.jpg,Zdir,sub                                    |
       | nameFilters: ["?.*"]                          | A.jpg,Zdir,a.tar.gz,b.png,c.txt,sub               |
 
+  Scenario: Name filters bound to another object's list pick the first rows
+    Given the QML:
+      """qml
+      import QtQuick
+      import Qt.labs.folderlistmodel
+      Item {
+        id: root; objectName: "o"
+        property var filters: ["*.png", "*.jpg"]
+        property string names: ""
+        FolderListModel {
+          id: m; folder: Qt.resolvedUrl("d"); showDirs: false
+          nameFilters: root.filters
+          onStatusChanged: {
+            let r = []
+            for (let i = 0; i < count; i++) r.push(get(i, "fileName"))
+            root.names = r.join(",")
+          }
+        }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "names" of "o" is "A.jpg,b.png"
+
   @api-Qt.labs.folderlistmodel.FolderListModel.parentFolder
   Scenario: The parent folder is the one the folder is in
     Given the QML:

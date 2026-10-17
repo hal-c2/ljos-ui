@@ -95,8 +95,8 @@ pub mod prelude {
     pub use ljos_engine::{
         Atom, Color, ConnectionId, ContextId, Cx, Engine, EngineError, Handler, ItemModel,
         ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange, ModelListener, ModelListeners,
-        ModelSignals, ObjectId, Point, Prop, PropertyMap, QmlList, QmlListModel, QmlObject,
-        QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, TreeChange,
+        ModelSignals, ObjectId, Point, Prop, PropIndex, PropertyMap, QmlList, QmlListModel,
+        QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, TreeChange,
         TreeListener, TreeListeners, Url, Value, Version, list_model, qml_impl, qml_singleton,
         tree_model,
     };
