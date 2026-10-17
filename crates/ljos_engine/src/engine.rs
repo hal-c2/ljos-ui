@@ -1235,6 +1235,28 @@ impl Engine {
         Ok(())
     }
 
+    /// The group `prop` of `obj` is, or the group it leads to as an alias
+    /// of a whole group (`frame: box.border`): its object and its name.
+    pub(crate) fn group_at(&self, obj: ObjectId, prop: PropIndex) -> Option<(ObjectId, Atom)> {
+        let is_group = |info: &crate::PropertyInfo| info.flags.contains(PropertyFlags::GROUP);
+        let alias = {
+            let store = self.inner.store.borrow();
+            let h = store.objects.get(obj)?;
+            let info = h.meta.property(prop)?;
+            if !info.is_alias() {
+                return is_group(info).then(|| (obj, info.name.clone()));
+            }
+            h.alias(prop)?
+        };
+        if alias.prop.is_none() || alias.member.is_some() {
+            return None;
+        }
+        let (obj, prop) = self.redirect(obj, prop);
+        let store = self.inner.store.borrow();
+        let info = store.objects.get(obj)?.meta.property(prop)?;
+        is_group(info).then(|| (obj, info.name.clone()))
+    }
+
     /// Follows aliases to the property that holds the value.
     pub(crate) fn redirect(&self, obj: ObjectId, prop: PropIndex) -> (ObjectId, PropIndex) {
         let mut cur = (obj, prop);

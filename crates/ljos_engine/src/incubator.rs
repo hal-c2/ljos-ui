@@ -1623,7 +1623,7 @@ impl Engine {
     /// `textureSize` of `layer.textureSize`), and its type.
     fn value_target(&self, obj: ObjectId, path: &[String]) -> Option<(Target, TypeTag)> {
         let (name, through) = path.split_last()?;
-        let t = self.member_target(obj, through, name).ok()?;
+        let t = self.unalias(self.member_target(obj, through, name).ok()?);
         let ty = self.meta_of(t.obj).and_then(|mm| {
             mm.property(t.prop)
                 .filter(|p| !p.flags.contains(PropertyFlags::GROUP))
@@ -1875,6 +1875,13 @@ impl Engine {
         if let Ok(prop) = self.property_index(obj, &dotted) {
             return Ok(Target { obj, prop });
         }
+        // `frame.color` where `frame` is an alias of `box.border`: the
+        // member is the group's, on the object the alias leads to.
+        if let Some((target, group)) = self.aliased_property(obj, &path[0]) {
+            let mut through = vec![group.to_string()];
+            through.extend_from_slice(&path[1..]);
+            return self.member_target(target, &through, name);
+        }
         self.make_when_reached(obj, path);
         let mut cur = obj;
         for seg in path {
@@ -1891,6 +1898,37 @@ impl Engine {
         }
         let prop = self.property_index(cur, name)?;
         Ok(Target { obj: cur, prop })
+    }
+
+    /// Where the alias `name` of `obj` leads when it names a whole property
+    /// (`box.border`, `label.font`): that object and the property's name.
+    /// None for anything else, an alias of an object or of one member.
+    fn aliased_property(&self, obj: ObjectId, name: &str) -> Option<(ObjectId, Atom)> {
+        let prop = self.property_index(obj, name).ok()?;
+        let t = self.unalias(Target { obj, prop });
+        if (t.obj, t.prop) == (obj, prop) {
+            return None;
+        }
+        let name = self.meta_of(t.obj)?.property(t.prop)?.name.clone();
+        Some((t.obj, name))
+    }
+
+    /// The property a whole-property alias (`frame: box.border`) leads to;
+    /// `t` itself for any other property.
+    fn unalias(&self, t: Target) -> Target {
+        let whole = {
+            let store = self.inner.store.borrow();
+            store.objects.get(t.obj).is_some_and(|h| {
+                h.meta.property(t.prop).is_some_and(|p| p.is_alias())
+                    && h.alias(t.prop)
+                        .is_some_and(|a| a.prop.is_some() && a.member.is_none())
+            })
+        };
+        if !whole {
+            return t;
+        }
+        let (obj, prop) = self.redirect(t.obj, t.prop);
+        Target { obj, prop }
     }
 
     /// The object `path` leads to from `obj` through properties that hold

@@ -448,17 +448,8 @@ impl HostObjects for EngineHost {
             });
         }
         let p = PropIndex(prop);
-        let group = {
-            let store = engine.inner.store.borrow();
-            store.objects.get(id).and_then(|h| {
-                let info = h.meta.property(p)?;
-                info.flags
-                    .contains(PropertyFlags::GROUP)
-                    .then(|| info.name.clone())
-            })
-        };
-        if let Some(name) = group {
-            return group_proxy(scope, &engine, id, &name).map_err(HostError::from);
+        if let Some((owner, name)) = engine.group_at(id, p) {
+            return group_proxy(scope, &engine, owner, &name).map_err(HostError::from);
         }
         let read = engine.try_read(id, p);
         // A `list<T>` declared in QML is read as the property's own list
