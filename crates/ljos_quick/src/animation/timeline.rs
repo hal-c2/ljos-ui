@@ -20,14 +20,16 @@ use ljos_engine::{
 use ljos_reactive::WriteKind;
 
 use super::easing::Curve;
+use super::shown;
 use super::smooth::{Params, Reversing, Track};
 use super::spring;
 use super::types::{
-    AnchorAnimation, Animation, ColorAnimation, NumberAnimation, ParallelAnimation,
-    ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation, RotationAnimation,
-    ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation,
+    AnchorAnimation, Animation, Animator, ColorAnimation, NumberAnimation, OpacityAnimator,
+    ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation,
+    RotationAnimation, RotationAnimator, ScaleAnimator, ScriptAction, SequentialAnimation,
+    SmoothedAnimation, SpringAnimation, UniformAnimator, XAnimator, YAnimator,
 };
-use crate::item::{Item, is_a, is_item};
+use crate::item::{Item, is_a, is_item, is_unset};
 
 /// "Never": a duration or a loop count without end. Far from `i64::MAX`, so
 /// sums of a few of them do not overflow.
@@ -229,6 +231,9 @@ struct PropNode {
     curve: Curve,
     /// Per slot, from the first moment of the node. `None`: not begun.
     lerps: Option<Vec<Lerp>>,
+    /// An Animator's: per slot, the value shown and not yet written. The
+    /// property is written once, when the node ends or the run does.
+    held: Option<Vec<Option<f64>>>,
 }
 
 /// A `SmoothedAnimation`: each property on a way of its own.
@@ -507,6 +512,10 @@ fn slots(engine: &Engine, anim: ObjectId, defaults: Option<&Defaults>, quiet: bo
 
 /// The objects and the property names an animation names itself.
 fn named(engine: &Engine, anim: ObjectId) -> (Vec<ObjectId>, Vec<String>) {
+    if is_a::<Animator>(engine, anim) {
+        let target = engine.read(anim, Animator::TARGET.index).as_object();
+        return (target.into_iter().collect(), animated(engine, anim));
+    }
     let mut targets = objects(engine, anim, "targets");
     if let Some(t) = engine.read_by_name(anim, "target").as_object()
         && !targets.contains(&t)
@@ -523,6 +532,32 @@ fn named(engine: &Engine, anim: ObjectId) -> (Vec<ObjectId>, Vec<String>) {
         }
     }
     (targets, names)
+}
+
+/// The property an Animator moves, which its type says.
+fn animated(engine: &Engine, anim: ObjectId) -> Vec<String> {
+    let name = if is_a::<OpacityAnimator>(engine, anim) {
+        "opacity"
+    } else if is_a::<XAnimator>(engine, anim) {
+        "x"
+    } else if is_a::<YAnimator>(engine, anim) {
+        "y"
+    } else if is_a::<ScaleAnimator>(engine, anim) {
+        "scale"
+    } else if is_a::<RotationAnimator>(engine, anim) {
+        "rotation"
+    } else if is_a::<UniformAnimator>(engine, anim) {
+        return match engine
+            .read(anim, UniformAnimator::UNIFORM.index)
+            .to_js_string()
+        {
+            n if n.is_empty() => Vec::new(),
+            n => vec![n.to_string()],
+        };
+    } else {
+        return Vec::new();
+    };
+    vec![name.to_owned()]
 }
 
 /// What an animation of properties moves in a transition, and per slot
@@ -629,7 +664,10 @@ pub(crate) fn moves(engine: &Engine, anim: ObjectId, d: &Defaults) -> bool {
         objects(engine, anim, "animations")
             .into_iter()
             .any(|c| moves(engine, c, d))
-    } else if is_a::<PropertyAnimation>(engine, anim) || is_a::<PropertyAction>(engine, anim) {
+    } else if is_a::<PropertyAnimation>(engine, anim)
+        || is_a::<PropertyAction>(engine, anim)
+        || is_a::<Animator>(engine, anim)
+    {
         slots(engine, anim, Some(d), true)
             .iter()
             .any(|s| s.obj == d.obj && s.prop == d.prop)
@@ -754,6 +792,38 @@ impl Timed {
             );
             let longest = node.tracks.iter().flatten().map(Track::micros).max();
             (Node::Smooth(node), longest.unwrap_or(0))
+        } else if is_a::<Animator>(engine, anim) {
+            let kind = if is_a::<RotationAnimator>(engine, anim) {
+                Kind::Rotation(Turn::of(engine.read_by_name(anim, "direction").to_number()))
+            } else {
+                Kind::Number
+            };
+            let (slots, tos) = aimed(kind);
+            // `from` and `to` are numbers: one never written is not there.
+            let own = |p: PropIndex| {
+                (!is_unset(engine, anim, p)).then(|| Value::Real(engine.read(anim, p).to_number()))
+            };
+            let (mut from, mut to) = (
+                own(Animator::FROM.index),
+                own(Animator::TO.index)
+                    .or_else(|| defaults.and_then(|d| d.to.clone()))
+                    .or_else(|| env.changes.is_none().then_some(Value::Real(0.0))),
+            );
+            if reversed {
+                std::mem::swap(&mut from, &mut to);
+            }
+            let held = Some(vec![None; slots.len()]);
+            let node = PropNode {
+                kind,
+                slots,
+                from,
+                to,
+                tos,
+                curve: curve_of(engine, anim),
+                lerps: None,
+                held,
+            };
+            (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<PropertyAnimation>(engine, anim) {
             let kind = if is_a::<RotationAnimation>(engine, anim) {
                 Kind::Rotation(Turn::of(engine.read_by_name(anim, "direction").to_number()))
@@ -780,6 +850,7 @@ impl Timed {
                 tos,
                 curve: curve_of(engine, anim),
                 lerps: None,
+                held: None,
             };
             (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<AnchorAnimation>(engine, anim) {
@@ -796,6 +867,7 @@ impl Timed {
                 tos,
                 curve: curve_of(engine, anim),
                 lerps: None,
+                held: None,
             };
             (Node::Prop(node), duration_of(engine, anim))
         } else if is_a::<PauseAnimation>(engine, anim) {
@@ -897,7 +969,9 @@ impl Timed {
     /// SmoothedAnimation and a SpringAnimation, which have no duration to
     /// tell Qt when they end.
     pub(crate) fn finishes_when_stopped(&self) -> bool {
-        self.is_endless() || matches!(self.node, Node::Smooth(_) | Node::Spring(_))
+        self.is_endless()
+            || matches!(self.node, Node::Smooth(_) | Node::Spring(_))
+            || matches!(&self.node, Node::Prop(p) if p.held.is_some())
     }
 
     /// When the pass it is in ends. For `complete()` on an endless
@@ -933,6 +1007,26 @@ impl Timed {
             Node::Pause | Node::Script { .. } => return,
         };
         out.extend(slots.iter().map(|s| (s.obj, s.prop)));
+    }
+
+    /// Writes what Animators show and have not written yet, and shows the
+    /// properties again: at their end, or when their run ends early.
+    pub(crate) fn release(&mut self, engine: &Engine) {
+        match &mut self.node {
+            Node::Prop(p) => {
+                let Some(held) = &mut p.held else {
+                    return;
+                };
+                for (slot, v) in p.slots.iter().zip(held.iter_mut()) {
+                    if let Some(v) = v.take() {
+                        slot.write(engine, as_shown(slot, v));
+                        shown::show(engine, slot.obj, slot.prop, None);
+                    }
+                }
+            }
+            Node::Seq(c) | Node::Par(c) => c.iter_mut().for_each(|c| c.release(engine)),
+            _ => {}
+        }
     }
 
     fn has_scripts(&self) -> bool {
@@ -1007,6 +1101,7 @@ impl Timed {
         self.pass_to(local, cx);
         if n < FOREVER && t >= self.total() && !cx.cancelled.get() {
             self.state = State::Done;
+            self.release(cx.engine);
         }
     }
 
@@ -1024,9 +1119,17 @@ impl Timed {
                     local as f64 / pass as f64
                 };
                 let eased = p.curve.value(progress);
-                for (slot, lerp) in p.slots.iter().zip(p.lerps.iter().flatten()) {
-                    if let Some(v) = lerp.at(eased) {
-                        slot.write(cx.engine, v);
+                for (i, (slot, lerp)) in p.slots.iter().zip(p.lerps.iter().flatten()).enumerate() {
+                    let Some(v) = lerp.at(eased) else {
+                        continue;
+                    };
+                    match &mut p.held {
+                        Some(held) => {
+                            let n = v.to_number();
+                            held[i] = Some(n);
+                            shown::show(cx.engine, slot.obj, slot.prop, Some(n));
+                        }
+                        None => slot.write(cx.engine, v),
                     }
                 }
             }

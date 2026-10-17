@@ -503,11 +503,19 @@ impl ShaderEffectPaint {
         let (uniforms, textures) = match (&program, compiled) {
             (Some(p), true) => {
                 let mut buf = vec![0u8; p.size as usize];
+                let shown = crate::animation::shown::shown(e);
                 for m in &p.members {
                     if m.name == "qt_Matrix" || m.name == "qt_Opacity" {
                         continue;
                     }
-                    let v = e.read_by_name(obj, &m.name);
+                    let mut v = e.read_by_name(obj, &m.name);
+                    // A UniformAnimator on its way shows its own value.
+                    if !shown.is_empty()
+                        && let Ok(prop) = e.property_index(obj, &m.name)
+                        && let Some(n) = shown.get(obj, prop)
+                    {
+                        v = Value::Real(n);
+                    }
                     write_member(&mut buf, m, &numbers(&v, m.ty));
                 }
                 let textures = p

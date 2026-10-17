@@ -329,6 +329,103 @@ pub struct RotationAnimation {
     pub direction: i32,
 }
 
+/// `Animator` (QtQuick): moves one property of an item as a
+/// NumberAnimation would, but the property keeps its old value until the
+/// animator ends; only the picture moves on the way
+/// ([`super::shown`]).
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick", name = "Animator", extends = Animation, uncreatable)]
+pub struct Animator {
+    #[qml(base)]
+    pub animation: Animation,
+    #[qml(notify)]
+    pub target: Option<ObjectId>,
+    /// Never written: the value the property has when the animator begins.
+    #[qml(notify)]
+    pub from: f64,
+    /// Never written: what a Behavior or a state gives, else 0.
+    #[qml(notify)]
+    pub to: f64,
+    /// Milliseconds.
+    #[qml(notify)]
+    pub duration: i32,
+    #[qml(group)]
+    pub easing: EasingGroup,
+}
+
+impl Default for Animator {
+    fn default() -> Self {
+        Self {
+            animation: Animation::default(),
+            target: None,
+            from: 0.0,
+            to: 0.0,
+            duration: 250,
+            easing: EasingGroup::default(),
+        }
+    }
+}
+
+/// `OpacityAnimator` (QtQuick).
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "OpacityAnimator", extends = Animator)]
+pub struct OpacityAnimator {
+    #[qml(base)]
+    pub base: Animator,
+}
+
+/// `XAnimator` (QtQuick).
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "XAnimator", extends = Animator)]
+pub struct XAnimator {
+    #[qml(base)]
+    pub base: Animator,
+}
+
+/// `YAnimator` (QtQuick).
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "YAnimator", extends = Animator)]
+pub struct YAnimator {
+    #[qml(base)]
+    pub base: Animator,
+}
+
+/// `ScaleAnimator` (QtQuick).
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "ScaleAnimator", extends = Animator)]
+pub struct ScaleAnimator {
+    #[qml(base)]
+    pub base: Animator,
+}
+
+/// `RotationAnimator` (QtQuick): turns `rotation` the way `direction`
+/// says, as a RotationAnimation does.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtQuick",
+    name = "RotationAnimator",
+    extends = Animator,
+    enums = rotation_enums
+)]
+pub struct RotationAnimator {
+    #[qml(base)]
+    pub base: Animator,
+    /// `RotationAnimator.RotationDirection`.
+    #[qml(notify, enumeration = "RotationDirection")]
+    pub direction: i32,
+}
+
+/// `UniformAnimator` (QtQuick): moves the property of a ShaderEffect that
+/// `uniform` names.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "UniformAnimator", extends = Animator)]
+pub struct UniformAnimator {
+    #[qml(base)]
+    pub base: Animator,
+    #[qml(notify)]
+    pub uniform: Atom,
+}
+
 pub(crate) fn smoothed_enums() -> EnumTable {
     vec![(
         "ReversingMode",

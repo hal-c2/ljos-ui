@@ -46,6 +46,7 @@ use slotmap::SecondaryMap;
 
 use crate::accessible::A11yPass;
 use crate::anchors::{self, AnchorState};
+use crate::animation::shown::Shown;
 use crate::enums::gesture_policy;
 use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
 use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
@@ -202,18 +203,27 @@ fn local_transform(place: Place, g: &Geom) -> kurbo::Affine {
     crate::transform::compose(x, y, g.w, g.h, g.rotation, g.scale, g.origin, &g.list)
 }
 
+/// A property as the picture shows it: what an Animator on its way shows,
+/// else its value. The property is read either way, so that the reader
+/// follows it once the Animator is over.
+fn shown_num(e: &Engine, shown: &Shown, obj: ObjectId, p: PropIndex) -> f64 {
+    let v = num(e, obj, p);
+    shown.get(obj, p).unwrap_or(v)
+}
+
 impl Geom {
     fn read(e: &Engine, obj: ObjectId) -> Geom {
+        let shown = crate::animation::shown::shown(e);
         Geom {
             z: num(e, obj, Item::Z.index),
             w: num(e, obj, Item::WIDTH.index),
             h: num(e, obj, Item::HEIGHT.index),
             visible: e.read(obj, Item::VISIBLE.index).to_boolean(),
             faces_away: crate::flipable::faces_away(e, obj),
-            opacity: num(e, obj, Item::OPACITY.index),
+            opacity: shown_num(e, &shown, obj, Item::OPACITY.index),
             clip: e.read(obj, Item::CLIP.index).to_boolean(),
-            rotation: num(e, obj, Item::ROTATION.index),
-            scale: num(e, obj, Item::SCALE.index),
+            rotation: shown_num(e, &shown, obj, Item::ROTATION.index),
+            scale: shown_num(e, &shown, obj, Item::SCALE.index),
             origin: num(e, obj, Item::TRANSFORM_ORIGIN.index) as i32,
             list: crate::transform::list_map(e, obj),
         }
@@ -412,6 +422,8 @@ pub struct QuickScene {
     /// The engine's platform, for the same reason: answers of dialogs,
     /// downloads and the settings writer wait there.
     platform: Option<Rc<ljos_platform::Platform>>,
+    /// Whether it hears what Animators show (once per scene).
+    watching_shown: bool,
 }
 
 impl Drop for QuickScene {
@@ -479,6 +491,7 @@ impl QuickScene {
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             },
             platform: None,
+            watching_shown: false,
         }
     }
 
@@ -499,6 +512,16 @@ impl QuickScene {
         }
         let top = self.tree.root();
         self.adopt(engine, root, None, top, 0)?;
+        if !std::mem::replace(&mut self.watching_shown, true) {
+            let shared = Rc::downgrade(&self.shared);
+            crate::animation::shown::watch(engine, move |e, obj, prop| {
+                let Some(s) = shared.upgrade() else {
+                    return false;
+                };
+                e.untrack(|| shown_changed(e, obj, prop, &s));
+                true
+            });
+        }
         self.root = Some(root);
         // The scene is the window: its focus item gets active focus.
         crate::focus::tree::add_window(engine, root);
@@ -2317,7 +2340,11 @@ fn place_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     if !e.is_alive(obj) {
         return;
     }
-    let place = (num(e, obj, Item::X.index), num(e, obj, Item::Y.index));
+    let shown = crate::animation::shown::shown(e);
+    let place = (
+        shown_num(e, &shown, obj, Item::X.index),
+        shown_num(e, &shown, obj, Item::Y.index),
+    );
     mark(shared, |s| {
         s.place.insert(obj, place);
     });
@@ -2361,6 +2388,21 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
     mark(shared, |s| {
         s.polish.insert(obj);
     });
+}
+
+/// An Animator showed another value of `prop`, or stopped showing one:
+/// whatever draws that property reads it again.
+fn shown_changed(e: &Engine, obj: ObjectId, prop: PropIndex, shared: &SharedRc) {
+    if prop == Item::X.index || prop == Item::Y.index {
+        place_effect(e, obj, shared);
+    } else if [Item::OPACITY, Item::ROTATION, Item::SCALE]
+        .iter()
+        .any(|p| p.index == prop)
+    {
+        geometry_effect(e, obj, shared);
+    } else if is_a::<crate::shader_effect::ShaderEffect>(e, obj) {
+        content_effect(e, obj, Kind::Shader, shared);
+    }
 }
 
 fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {

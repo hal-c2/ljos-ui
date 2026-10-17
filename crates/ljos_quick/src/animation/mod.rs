@@ -11,6 +11,8 @@
 //! - [`easing`]: the curves.
 //! - [`smooth`]: the way a `SmoothedAnimation` takes.
 //! - [`spring`]: the way a `SpringAnimation` takes.
+//! - [`shown`]: what an Animator shows while its property keeps the old
+//!   value.
 //!
 //! - [`transition`]: `Transition`. Its animations run on an object it is
 //!   given (a popup's `enter` and `exit`, a view's `add` and `remove`), or
@@ -24,6 +26,7 @@ pub(crate) mod behavior;
 pub(crate) mod controller;
 pub(crate) mod driver;
 pub mod easing;
+pub(crate) mod shown;
 pub(crate) mod smooth;
 pub(crate) mod spring;
 pub(crate) mod timeline;
@@ -41,9 +44,10 @@ pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
 pub use transition::{Transition, run_transition, run_transition_to, stop_transition};
 pub use types::{
-    AnchorAnimation, Animation, ColorAnimation, Easing, EasingGroup, NumberAnimation,
-    ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation,
-    RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation,
+    AnchorAnimation, Animation, Animator, ColorAnimation, Easing, EasingGroup, NumberAnimation,
+    OpacityAnimator, ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction,
+    PropertyAnimation, RotationAnimation, RotationAnimator, ScaleAnimator, ScriptAction,
+    SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator, XAnimator, YAnimator,
 };
 
 /// Hooks the animation types into the engine. Once per engine; more calls
@@ -59,7 +63,8 @@ pub(crate) fn register(engine: &Engine) {
         Animation, PropertyAnimation, NumberAnimation, ColorAnimation, SequentialAnimation,
         ParallelAnimation, PauseAnimation, ScriptAction, PropertyAction, Behavior,
         AnimationController, Easing, RotationAnimation, SmoothedAnimation, Transition,
-        AnchorAnimation, ParentAnimation, SpringAnimation,
+        AnchorAnimation, ParentAnimation, SpringAnimation, Animator, OpacityAnimator, XAnimator,
+        YAnimator, ScaleAnimator, RotationAnimator, UniformAnimator,
     ]));
     // `script: ...` is a statement to run when its turn comes.
     engine.register_script_property(ScriptAction::static_meta(), ScriptAction::SCRIPT.index);

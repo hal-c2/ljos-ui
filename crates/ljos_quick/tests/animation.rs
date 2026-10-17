@@ -660,3 +660,68 @@ fn a_spring_on_a_whole_number_goes_on_from_the_place_it_was_at() {
         assert_eq!(rig.num("root", "whole"), real.num("box", "x").round());
     }
 }
+
+const ANIMATOR: &str = r#"import QtQuick
+Item {
+  id: root; objectName: "root"
+  property int moves: 0
+  Rectangle { id: box; objectName: "box"; width: 10; height: 10; onXChanged: root.moves++ }
+  XAnimator { objectName: "anim"; target: box; from: 0; to: 100; duration: 100 }
+}
+"#;
+
+#[test]
+fn an_animator_moves_the_picture_and_writes_its_property_once() {
+    let mut rig = Rig::new(ANIMATOR);
+    let node = rig.s.node_of(rig.obj("box")).expect("the box is drawn");
+    let drawn_x = |rig: &Rig| {
+        rig.s
+            .render_tree()
+            .node(node)
+            .unwrap()
+            .local()
+            .translation()
+            .x
+    };
+
+    rig.call("anim", "start");
+    rig.run_until(ms(50));
+    assert!(
+        (drawn_x(&rig) - 50.0).abs() < 11.0,
+        "drawn at {}",
+        drawn_x(&rig)
+    );
+    assert_eq!(rig.num("box", "x"), 0.0, "the property waits for the end");
+    assert_eq!(rig.num("root", "moves"), 0.0);
+
+    let frames = rig.run_until(ms(1000));
+    assert!(frames <= 6, "{frames} frames for the last 50 ms");
+    assert_eq!(rig.num("box", "x"), 100.0);
+    assert_eq!(rig.num("root", "moves"), 1.0);
+    assert_eq!(drawn_x(&rig), 100.0);
+    assert_eq!(running_animation_count(&rig.e), 0);
+    assert!(rig.idle(), "nothing is asked for once it ended");
+    assert_eq!(rig.run_until(ms(60_000)), 0);
+}
+
+#[test]
+fn an_animator_stopped_on_the_way_is_drawn_where_its_property_is() {
+    let mut rig = Rig::new(ANIMATOR);
+    let node = rig.s.node_of(rig.obj("box")).expect("the box is drawn");
+    rig.call("anim", "start");
+    rig.run_until(ms(40));
+    rig.call("anim", "stop");
+    rig.frames_now();
+    let x = rig.num("box", "x");
+    assert!(x > 20.0 && x < 60.0, "x is {x}");
+    let drawn = rig
+        .s
+        .render_tree()
+        .node(node)
+        .unwrap()
+        .local()
+        .translation()
+        .x;
+    assert_eq!(drawn, x);
+    assert!(rig.idle());
+}

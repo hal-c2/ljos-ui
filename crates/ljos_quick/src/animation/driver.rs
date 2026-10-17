@@ -113,8 +113,17 @@ impl Driver {
         self.by_anim.borrow_mut().insert(run.anim, Rc::clone(run));
     }
 
-    fn remove(&self, run: &Rc<Run>) {
+    /// Ends `run`. What its Animators show is written now: where they got
+    /// to, as Qt does.
+    fn remove(&self, engine: &Engine, run: &Rc<Run>) {
         run.cancelled.set(true);
+        // Inside its own step (a script that stops it) the timeline is out:
+        // the step releases it when it puts it back.
+        if let Ok(mut t) = run.timeline.try_borrow_mut()
+            && let Some(t) = t.as_mut()
+        {
+            t.release(engine);
+        }
         self.runs.borrow_mut().retain(|r| !Rc::ptr_eq(r, run));
         let mut by_anim = self.by_anim.borrow_mut();
         if by_anim.get(&run.anim).is_some_and(|r| Rc::ptr_eq(r, run)) {
@@ -144,6 +153,9 @@ impl Run {
             scripts: true,
         };
         timeline.advance(t, &cx);
+        if self.cancelled.get() {
+            timeline.release(engine);
+        }
         *self.timeline.borrow_mut() = Some(timeline);
     }
 
@@ -211,7 +223,7 @@ pub(crate) fn start_driven(
     let d = driver(engine);
     engine.batch(|| {
         if let Some(old) = d.find(anim) {
-            d.remove(&old);
+            d.remove(engine, &old);
         }
         begin(engine, &d, anim, Some(defaults), true, done);
     });
@@ -231,7 +243,7 @@ pub(crate) fn forget_driven(engine: &Engine, anim: ObjectId) -> bool {
     let d = driver(engine);
     match d.find(anim) {
         Some(run) if run.driven => {
-            d.remove(&run);
+            d.remove(engine, &run);
             true
         }
         _ => false,
@@ -246,7 +258,7 @@ pub(crate) fn forget_driven(engine: &Engine, anim: ObjectId) -> bool {
 pub(crate) fn start_timeline(engine: &Engine, key: ObjectId, timeline: Timed, done: Option<Done>) {
     let d = driver(engine);
     if let Some(old) = d.find(key) {
-        d.remove(&old);
+        d.remove(engine, &old);
     }
     let run = Rc::new(Run {
         anim: key,
@@ -352,7 +364,7 @@ fn settle(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
 /// The run reached its end.
 fn finish(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
     let anim = run.anim;
-    d.remove(run);
+    d.remove(engine, run);
     if run.paused.replace(false) {
         show(engine, anim, Animation::PAUSED.index, false);
     }
@@ -426,7 +438,7 @@ pub(crate) fn stop(engine: &Engine, anim: ObjectId) {
         engine.request_wake();
         return;
     }
-    d.remove(&run);
+    d.remove(engine, &run);
     if run.finishes_when_stopped {
         // Qt reports an animation without end as finished when stopped.
         emit(engine, anim, "finished");
@@ -538,7 +550,7 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
                 continue;
             }
             if !engine.is_alive(run.anim) {
-                d.remove(run);
+                d.remove(engine, run);
                 continue;
             }
             // A frozen page's run stands still with its clock: on thaw it

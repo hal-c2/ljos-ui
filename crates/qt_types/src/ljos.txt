@@ -902,6 +902,7 @@ module QtQuick
 	AnimatedImage QtQuick.AnimatedImage
 	Animation QtQuick.Animation
 	AnimationController QtQuick.AnimationController
+	Animator QtQuick.Animator
 	Application QtQuick.Application
 	Behavior QtQuick.Behavior
 	BorderImage QtQuick.BorderImage
@@ -941,6 +942,7 @@ module QtQuick
 	MouseArea QtQuick.MouseArea
 	MouseEvent QtQuick.MouseEvent
 	NumberAnimation QtQuick.NumberAnimation
+	OpacityAnimator QtQuick.OpacityAnimator
 	ParallelAnimation QtQuick.ParallelAnimation
 	ParentAnimation QtQuick.ParentAnimation
 	ParentChange QtQuick.ParentChange
@@ -973,9 +975,11 @@ module QtQuick
 	Repeater QtQuick.Repeater
 	Rotation QtQuick.Rotation
 	RotationAnimation QtQuick.RotationAnimation
+	RotationAnimator QtQuick.RotationAnimator
 	Row QtQuick.Row
 	SafeArea QtQuick.SafeArea
 	Scale QtQuick.Scale
+	ScaleAnimator QtQuick.ScaleAnimator
 	Screen QtQuick.Screen
 	ScreenInfo QtQuick.ScreenInfo
 	ScriptAction QtQuick.ScriptAction
@@ -1004,11 +1008,14 @@ module QtQuick
 	Transition QtQuick.Transition
 	Translate QtQuick.Translate
 	TreeView QtQuick.TreeView
+	UniformAnimator QtQuick.UniformAnimator
 	ViewSection QtQuick.ViewSection
 	ViewTransition QtQuick.ViewTransition
 	WheelEvent QtQuick.WheelEvent
 	WheelHandler QtQuick.WheelHandler
 	Window QtQuick.Window
+	XAnimator QtQuick.XAnimator
+	YAnimator QtQuick.YAnimator
 	color QtQuick.color
 	font QtQuick.font
 	quaternion QtQuick.quaternion
@@ -1115,6 +1122,18 @@ module QtQuick
 		signal animationChanged
 		signal progressChanged
 		method reload
+	type QtQuick.Animator Animator
+		prototype QtQuick.Animation named
+		is uncreatable
+		prop target QtQml.QtObject named pointer
+		prop from QtQml.real named
+		prop to QtQml.real named
+		prop duration QtQml.int named
+		prop easing QtQuick.EasingCurve pointer readonly
+		signal targetChanged
+		signal fromChanged
+		signal toChanged
+		signal durationChanged
 	type QtQuick.Application Application
 		prototype QtQml.QtObject named
 		is singleton
@@ -1831,6 +1850,8 @@ module QtQuick
 		prop accepted QtQml.bool named
 	type QtQuick.NumberAnimation NumberAnimation
 		prototype QtQuick.PropertyAnimation named
+	type QtQuick.OpacityAnimator OpacityAnimator
+		prototype QtQuick.Animator named
 	type QtQuick.ParallelAnimation ParallelAnimation
 		prototype QtQuick.Animation named
 		default animations
@@ -2254,6 +2275,11 @@ module QtQuick
 		enum RotationDirection Numerical=0 Shortest=1 Clockwise=2 Counterclockwise=3
 		prop direction RotationDirection
 		signal directionChanged
+	type QtQuick.RotationAnimator RotationAnimator
+		prototype QtQuick.Animator named
+		enum RotationDirection Numerical=0 Shortest=1 Clockwise=2 Counterclockwise=3
+		prop direction RotationDirection
+		signal directionChanged
 	type QtQuick.Row Row
 		prototype QtQuick.Item named
 		prop spacing QtQml.real named
@@ -2292,6 +2318,8 @@ module QtQuick
 		signal yScaleChanged
 		signal zScaleChanged
 		signal scaleChanged
+	type QtQuick.ScaleAnimator ScaleAnimator
+		prototype QtQuick.Animator named
 	type QtQuick.Screen Screen
 		attached QtQuick.ScreenAttached
 		is uncreatable
@@ -2896,6 +2924,10 @@ module QtQuick
 		method expandRecursively
 		method collapseRecursively
 		method expandToIndex
+	type QtQuick.UniformAnimator UniformAnimator
+		prototype QtQuick.Animator named
+		prop uniform QtQml.string named
+		signal uniformChanged
 	type QtQuick.ViewSection ViewSection
 		is uncreatable
 		enum SectionCriteria FullString=0 FirstCharacter=1
@@ -3010,6 +3042,10 @@ module QtQuick
 		method alert
 		method startSystemMove
 		method startSystemResize
+	type QtQuick.XAnimator XAnimator
+		prototype QtQuick.Animator named
+	type QtQuick.YAnimator YAnimator
+		prototype QtQuick.Animator named
 	type QtQuick.AccessibleAttached AccessibleAttached
 		is uncreatable
 		enum Role NoRole=0 TitleBar=1 MenuBar=2 ScrollBar=3 Grip=4 Sound=5 Cursor=6 Caret=7 AlertMessage=8 Window=9 Client=10 PopupMenu=11 MenuItem=12 ToolTip=13 Application=14 Document=15 Pane=16 Chart=17 Dialog=18 Border=19 Grouping=20 Separator=21 ToolBar=22 StatusBar=23 Table=24 ColumnHeader=25 RowHeader=26 Column=27 Row=28 Cell=29 Link=30 HelpBalloon=31 Assistant=32 List=33 ListItem=34 Tree=35 TreeItem=36 PageTab=37 PropertyPage=38 Indicator=39 Graphic=40 StaticText=41 EditableText=42 Button=43 CheckBox=44 RadioButton=45 ComboBox=46 ProgressBar=48 Dial=49 HotkeyField=50 Slider=51 SpinBox=52 Canvas=53 Animation=54 Equation=55 ButtonDropDown=56 ButtonMenu=57 ButtonDropGrid=58 Whitespace=59 PageTabList=60 Clock=61 Splitter=62 LayeredPane=128 Terminal=129 Desktop=130 Paragraph=131 WebDocument=132 Section=133 Notification=134 Switch=135 ColorChooser=1028 Footer=1038 Form=1040 Heading=1044 Note=1051 ComplementaryContent=1068 BlockQuote=1073 UserRole=65535 PushButton=43
