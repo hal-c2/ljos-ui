@@ -219,6 +219,31 @@ fn a_save_changes_the_scene_and_keeps_its_state() {
 }
 
 #[test]
+fn a_reload_tells_the_warnings_of_the_files_the_program_uses_only() {
+    let main = "import QtQuick\nItem {\n  Used { }\n  property int n: 1\n}\n";
+    let mut app = app(&[
+        ("Main.qml", main),
+        (
+            "Used.qml",
+            "import QtQuick\nItem {\n  property var v: usedUnknown\n}\n",
+        ),
+        // Below the entry, and nothing makes one.
+        (
+            "stray/Stray.qml",
+            "import QtQuick\nItem {\n  property var v: strayUnknown\n}\n",
+        ),
+    ]);
+    app.save("Main.qml", &main.replace("n: 1", "n: 2"));
+    let reports = app.wait();
+    let files: Vec<&str> = reloaded(&reports)
+        .warnings
+        .iter()
+        .map(|w| w.file.as_str())
+        .collect();
+    assert_eq!(files, ["Used.qml"]);
+}
+
+#[test]
 fn a_broken_save_keeps_the_scene_and_a_mended_one_clears_the_error() {
     let mut app = app(&[("Main.qml", MAIN)]);
     app.call("box", "tap");

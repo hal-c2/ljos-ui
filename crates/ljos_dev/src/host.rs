@@ -451,6 +451,17 @@ impl DevSession {
         // left half done is gone, and its overlay with it.
         engine.clear_application_fault();
         self.reloads += 1;
+        // The session compiles every file of the project, so that a save
+        // to any is one patch; the developer hears of the ones the program
+        // reached, as Qt never compiles the others.
+        let warnings = warnings
+            .into_iter()
+            .filter(|w| {
+                w.file
+                    .strip_suffix(".qml")
+                    .is_some_and(|key| engine.has_loaded(key))
+            })
+            .collect();
         Report::Reloaded(ReloadStats {
             generation: done.generation,
             build,

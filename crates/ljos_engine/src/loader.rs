@@ -684,6 +684,13 @@ impl Engine {
         Some(location.url.clone())
     }
 
+    /// Whether the file `key` is loaded: an object of it was made since the
+    /// files were last given. What a program reaches, for a development
+    /// host that tells what the compiler says of those files only.
+    pub fn has_loaded(&self, key: &str) -> bool {
+        self.inner.loader.borrow().files.contains_key(key)
+    }
+
     /// The loaded file `key`, loading it on first use.
     pub(crate) fn load_file(&self, key: &str) -> Result<Rc<LoadedFile>, EngineError> {
         if let Some(f) = self.inner.loader.borrow().files.get(key) {
