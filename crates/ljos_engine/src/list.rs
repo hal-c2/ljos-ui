@@ -202,7 +202,7 @@ impl Engine {
     /// property's node in the graph, and they share one allocation. The
     /// edit is made in that allocation whenever nothing else (a reader
     /// that kept the value) shares it; only then is it copied.
-    fn list_edit(
+    pub(crate) fn list_edit(
         &self,
         obj: ObjectId,
         prop: PropIndex,

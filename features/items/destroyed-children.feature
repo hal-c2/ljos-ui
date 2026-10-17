@@ -19,8 +19,8 @@ Feature: A destroyed object leaves the lists of its parent
         property string seen: ""
         property list<QtObject> picked: [first, timer]
         property var made: null
-        Item { id: first }
-        Item { id: second }
+        Item { id: first; objectName: "first" }
+        Item { id: second; objectName: "second" }
         Timer { id: timer }
         Component { id: comp; Item {} }
         function look() { seen = children.length + " " + resources.length + " " + data.length }
@@ -29,6 +29,9 @@ Feature: A destroyed object leaves the lists of its parent
         function dropItem() { first.destroy() }
         function dropTimer() { timer.destroy() }
         function dropMade() { made.destroy() }
+        function makeSix() { for (var i = 0; i < 6; i++) comp.createObject(root, { objectName: "m" + i }) }
+        function dropEven() { for (var i = 0; i < children.length; i++) if (/^m[024]$/.test(children[i].objectName)) children[i].destroy() }
+        function names() { seen = Array.prototype.map.call(children, function (o) { return o.objectName }).join(" ") }
       }
       """
 
@@ -59,6 +62,13 @@ Feature: A destroyed object leaves the lists of its parent
     And 10 milliseconds pass
     And the method "look" of "root" is called
     Then the property "seen" of "root" is "2 2 4"
+
+  Scenario: Objects destroyed together leave, and the rest keep their order
+    When the method "makeSix" of "root" is called
+    And the method "dropEven" of "root" is called
+    And 10 milliseconds pass
+    And the method "names" of "root" is called
+    Then the property "seen" of "root" is "first second m1 m3 m5"
 
   Scenario: A list property of the author's keeps its length and reads null
     When the method "dropItem" of "root" is called

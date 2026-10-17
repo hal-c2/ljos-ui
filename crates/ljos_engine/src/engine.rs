@@ -682,8 +682,18 @@ impl Engine {
                 if let Some(o) = h.owner.and_then(|o| s.objects.get_mut(o)) {
                     o.children.retain(|c| *c != obj);
                 }
-                if let Some(p) = h.visual_parent.and_then(|p| s.objects.get_mut(p)) {
-                    p.visual_children.retain(|c| not_in(&order, *c));
+                // The dead are out of the store: one look per child, where
+                // `order` is the whole subtree.
+                if let Some(p) = h.visual_parent
+                    && let Some(mut kids) = s
+                        .objects
+                        .get_mut(p)
+                        .map(|p| std::mem::take(&mut p.visual_children))
+                {
+                    kids.retain(|c| s.objects.contains_key(*c));
+                    if let Some(p) = s.objects.get_mut(p) {
+                        p.visual_children = kids;
+                    }
                 }
                 for c in &h.visual_children {
                     if let Some(ch) = s.objects.get_mut(*c) {
@@ -722,7 +732,7 @@ impl Engine {
                 self.parent_changed(*c, None);
             }
             for p in &holders {
-                self.forget_in_lists(*p, &order);
+                self.forget_in_lists(*p);
             }
         });
         for h in &headers {
@@ -738,11 +748,11 @@ impl Engine {
         true
     }
 
-    /// Takes `dead` out of the native list properties of `holder`
+    /// Takes the dead out of the native list properties of `holder`
     /// (`Item.children`, `resources`, `data`), as Qt's own lists drop a
     /// deleted object. A `property list<T>` written in QML keeps its
     /// length and reads `null` there, so it is left alone.
-    fn forget_in_lists(&self, holder: ObjectId, dead: &[ObjectId]) {
+    fn forget_in_lists(&self, holder: ObjectId) {
         let lists: SmallVec<[PropIndex; 4]> = {
             let store = self.inner.store.borrow();
             let Some(h) = store.objects.get(holder) else {
@@ -760,12 +770,23 @@ impl Engine {
             let Value::List(l) = self.untrack(|| self.read(holder, p)) else {
                 continue;
             };
-            let gone = |v: &Value| v.as_object().is_some_and(|o| dead.contains(&o));
-            if !l.iter().any(gone) {
+            // The dead are out of the store by now: asking it is one look
+            // per entry, where the destroyed subtree is many.
+            let dead: SmallVec<[ObjectId; 4]> = {
+                let store = self.inner.store.borrow();
+                l.iter()
+                    .filter_map(Value::as_object)
+                    .filter(|o| !store.objects.contains_key(*o))
+                    .collect()
+            };
+            if dead.is_empty() {
                 continue;
             }
-            let kept = l.iter().filter(|v| !gone(v)).cloned().collect();
-            let _ = self.write_internal(holder, p, Value::list(kept), WriteKind::Initial);
+            // The read's share goes first, so the edit is made in place.
+            drop(l);
+            let _ = self.list_edit(holder, p, &|items| {
+                items.retain(|v| v.as_object().is_none_or(|o| !dead.contains(&o)));
+            });
         }
     }
 
@@ -2598,10 +2619,6 @@ impl Engine {
     pub fn declared_at(&self, obj: ObjectId) -> Option<String> {
         self.location_of(obj)
     }
-}
-
-fn not_in(order: &[ObjectId], id: ObjectId) -> bool {
-    !order.contains(&id)
 }
 
 fn unknown_index(meta: &MetaObject, prop: PropIndex) -> EngineError {
