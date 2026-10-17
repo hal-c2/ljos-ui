@@ -302,7 +302,16 @@ impl Families {
                     continue;
                 }
                 match GenericFamily::parse(name) {
-                    Some(generic) => names.push(FontFamilyName::Generic(generic)),
+                    // Fontique's own reading of the platform's generic
+                    // families can miss the rules fontconfig applies (a
+                    // user's preferred monospace face among them), so the
+                    // face fontconfig names comes first, as it does in Qt.
+                    Some(generic) => {
+                        if let Some(sub) = self.substitute(name) {
+                            names.push(FontFamilyName::Named(Cow::Owned(sub.to_string())));
+                        }
+                        names.push(FontFamilyName::Generic(generic));
+                    }
                     None => {
                         names.push(FontFamilyName::Named(Cow::Borrowed(name)));
                         if let Some(sub) = self.substitute(name) {

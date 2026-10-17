@@ -8,11 +8,14 @@
 # (`fc-match Helvetica`), and there Helvetica bold at 16 pixels is 23 pixels
 # tall with its baseline at 17.109375, against 18 and 14.484375 for Liberation
 # Sans. The scenarios compare the two families rather than state numbers.
+# A generic family is the system's too: `fc-match monospace` names the
+# machine's fixed-pitch face, and Qt sets "monospace" text in it.
 
 Feature: A font family that is not installed
   A family the machine does not have is set in the family the system's font
   matching puts in its place, with that family's ascent, descent and widths;
-  with only the font Ljós carries, it is set in that font.
+  with only the font Ljós carries, it is set in that font. A generic family,
+  serif or monospace, is the face the system's matching names for it.
 
   @qt-parity
   Scenario: A missing family takes the measurements of the family the system puts in its place
@@ -31,6 +34,29 @@ Feature: A font family that is not installed
       """
     When 100 milliseconds pass
     Then the property "sameFace" of "root" is true
+
+  @qt-parity
+  Scenario: A generic family is set in the face the system names for it
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property bool fixedPitch: thin.contentWidth === wide.contentWidth
+        property bool serifIsItsOwn: serif.contentWidth !== sans.contentWidth
+        property bool capitalised: thin.contentWidth === upper.contentWidth && thin.height === upper.height
+        Text { id: thin; text: "iiii"; font.family: "monospace"; font.pixelSize: 14 }
+        Text { id: wide; text: "MMMM"; font.family: "monospace"; font.pixelSize: 14 }
+        Text { id: upper; text: "iiii"; font.family: "Monospace"; font.pixelSize: 14 }
+        Text { id: serif; text: "Hamburgefonstiv"; font.family: "serif"; font.pixelSize: 14 }
+        Text { id: sans; text: "Hamburgefonstiv"; font.family: "sans-serif"; font.pixelSize: 14 }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "fixedPitch" of "root" is true
+    And the property "serifIsItsOwn" of "root" is true
+    And the property "capitalised" of "root" is true
 
   # The oracle reads the machine's fonts and cannot be limited to one.
   @ljos-only
