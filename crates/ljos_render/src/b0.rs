@@ -281,7 +281,7 @@ fn texture_for(
         return Some(t.handle.id());
     }
     let image = owner.upgrade()?;
-    let max_side = ctx.input(|i| i.max_texture_side).max(1);
+    let max_side = max_texture_side(ctx);
     let fitted = fit_texture(&image, max_side)?;
     let pixels = ColorImage::from_rgba_premultiplied(
         [fitted.width() as usize, fitted.height() as usize],
@@ -302,7 +302,7 @@ fn texture_for(
         },
         mipmap_mode: key.mipmap.then_some(TextureFilter::Linear),
     };
-    let handle = ctx.load_texture(format!("ljos-image-{}", key.image), pixels, options);
+    let handle = upload(ctx, format!("ljos-image-{}", key.image), pixels, options);
     let id = handle.id();
     *uploads += 1;
     textures.insert(
@@ -314,6 +314,40 @@ fn texture_for(
         },
     );
     Some(id)
+}
+
+/// The GPU's limit as the host said it ([`set_max_texture_side`]).
+#[derive(Clone, Copy)]
+struct GpuTextureSide(usize);
+
+/// Tells the backends drawing with `ctx` the largest texture side the GPU
+/// takes. A host that says it can give egui a smaller limit of its own:
+/// egui makes its text atlas as wide as that limit, 2 MiB at 16384 and as
+/// much again once uploaded, though Ljós draws its text with an atlas of
+/// its own.
+pub fn set_max_texture_side(ctx: &Context, side: usize) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, GpuTextureSide(side.max(1))));
+}
+
+/// The largest texture side the GPU takes: what the host said with
+/// [`set_max_texture_side`], or else egui's limit.
+pub fn max_texture_side(ctx: &Context) -> usize {
+    ctx.data(|d| d.get_temp::<GpuTextureSide>(egui::Id::NULL))
+        .map_or_else(|| ctx.input(|i| i.max_texture_side), |s| s.0)
+        .max(1)
+}
+
+/// `ctx.load_texture`, which would check the size against egui's limit,
+/// not the GPU's ([`max_texture_side`]).
+pub(crate) fn upload(
+    ctx: &Context,
+    name: impl Into<String>,
+    image: impl Into<egui::ImageData>,
+    options: TextureOptions,
+) -> TextureHandle {
+    let manager = ctx.tex_manager();
+    let id = manager.write().alloc(name.into(), image.into(), options);
+    TextureHandle::new(manager, id)
 }
 
 /// `image`, or a smaller copy when a side is past the GPU's limit. Texture

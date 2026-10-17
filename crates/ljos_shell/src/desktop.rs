@@ -65,6 +65,10 @@ const HEARTBEAT: Duration = Duration::from_millis(16);
 /// animations wait for it.
 const BACKGROUND: Duration = Duration::from_millis(100);
 
+/// The texture limit egui is told, which is also the width of its text
+/// atlas: 256 KiB of atlas instead of 2 MiB at llvmpipe's 16384.
+const EGUI_TEXTURE_SIDE: usize = 2048;
+
 /// What other threads, egui and the accessibility adapter post into the
 /// loop.
 pub(crate) enum ShellEvent {
@@ -937,13 +941,20 @@ impl<M: Send + 'static> Desktop<M> {
                 self.app.set_painter(info);
             }
         }
+        // Ljós's textures follow the GPU's limit; egui's follows a small
+        // one, since egui makes its text atlas, which Ljós barely uses, as
+        // wide as its limit.
+        let side = painter.max_texture_side();
+        if let Some(side) = side {
+            ljos_render::b0::set_max_texture_side(&slot.ctx, side);
+        }
         let mut state = egui_winit::State::new(
             slot.ctx.clone(),
             ViewportId::ROOT,
             &*window,
             Some(window.scale_factor() as f32),
             host.event_loop().system_theme(),
-            painter.max_texture_side(),
+            side.map(|s| s.min(EGUI_TEXTURE_SIDE)),
         );
         // While the window is unseen: the adapter has to be there before
         // the platform asks about the window.

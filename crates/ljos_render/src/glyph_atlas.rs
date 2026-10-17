@@ -155,7 +155,7 @@ impl GlyphAtlas {
         } else {
             4096
         };
-        ctx.input(|i| i.max_texture_side).clamp(START_SIDE, budget)
+        crate::b0::max_texture_side(ctx).clamp(START_SIDE, budget)
     }
 
     /// Texture coordinates from before a change of generation are stale.
@@ -387,7 +387,7 @@ impl GlyphAtlas {
             .is_none_or(|t| t.size() != [self.side, self.side]);
         if stale {
             let image = self.image((0, self.side));
-            self.texture = Some(ctx.load_texture("ljos_glyph_atlas", image, options));
+            self.texture = Some(crate::b0::upload(ctx, "ljos_glyph_atlas", image, options));
             self.dirty = None;
         } else if let Some(rows) = self.dirty.take() {
             let image = self.image(rows);

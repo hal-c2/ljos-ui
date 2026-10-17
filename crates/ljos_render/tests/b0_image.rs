@@ -353,3 +353,40 @@ fn a_critical_trim_drops_textures_and_the_next_frame_uploads_again() {
     assert_eq!(meshes.len(), 1);
     assert_eq!((be.image_textures(), be.texture_uploads()), (1, 2));
 }
+
+/// The host tells egui a small limit, which is also the width of egui's
+/// text atlas, and keeps the GPU's limit for pictures.
+#[test]
+fn egui_is_told_a_small_limit_and_pictures_keep_the_gpus() {
+    const GPU_SIDE: usize = 16384;
+    const EGUI_SIDE: usize = 2048;
+    let ctx = Context::default();
+    let input = egui::RawInput {
+        max_texture_side: Some(EGUI_SIDE),
+        ..Default::default()
+    };
+    ctx.run_ui(input, |_| {}).textures_delta.clear();
+    let [w, h] = ctx.fonts(|f| f.font_image_size());
+    assert_eq!(w, EGUI_SIDE);
+    // RGBA bytes of atlas not held, on the CPU and again on the GPU.
+    let saved = (GPU_SIDE - w) * h * 4;
+    assert!(
+        saved >= (GPU_SIDE - EGUI_SIDE) * 32 * 4,
+        "saved {saved} bytes"
+    );
+
+    ljos_render::b0::set_max_texture_side(&ctx, GPU_SIDE);
+    let image = picture(3000, 10);
+    let mut s = Scene::new(100.0, 100.0);
+    let n = s.node(0.0, 0.0, 100.0, 10.0);
+    s.op(n, whole(&image, Rect::new(0.0, 0.0, 100.0, 10.0), true));
+    let mut be = EpaintBackend::new();
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    let size = ctx
+        .tex_manager()
+        .read()
+        .meta(meshes[0].texture_id)
+        .expect("the picture's texture")
+        .size;
+    assert_eq!(size, [3000, 10], "not shrunk to egui's limit");
+}

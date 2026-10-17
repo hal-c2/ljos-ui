@@ -505,7 +505,7 @@ impl ShapeCache {
         let (x0, y0) = (b.x0.floor() - 1.0, b.y0.floor() - 1.0);
         let (x1, y1) = (b.x1.ceil() + 1.0, b.y1.ceil() + 1.0);
         let (w, h) = (x1 - x0, y1 - y0);
-        let max_side = (ctx.input(|i| i.max_texture_side) as f64).min(MAX_SIDE);
+        let max_side = (crate::b0::max_texture_side(ctx) as f64).min(MAX_SIDE);
         if !(w >= 1.0 && h >= 1.0 && w <= max_side && h <= max_side && w * h <= MAX_PIXELS) {
             return Err("a shape is too large for a texture");
         }
@@ -534,7 +534,7 @@ impl ShapeCache {
                 None => {
                     seg.texture = Some(HeldTexture {
                         key,
-                        handle: ctx.load_texture("ljos-shape", image, TEXTURE_OPTIONS),
+                        handle: crate::b0::upload(ctx, "ljos-shape", image, TEXTURE_OPTIONS),
                         bytes,
                     });
                 }
