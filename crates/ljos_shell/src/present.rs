@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use egui::Rect;
 use egui::epaint::{ClippedShape, Shape};
+use ljos_render::b0::ShaderPaint;
 
 /// What a window last showed.
 #[derive(Debug, Default)]
@@ -232,8 +233,15 @@ fn same_shape(a: &Shape, b: &Shape) -> bool {
         (Shape::Vec(a), Shape::Vec(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_shape(a, b))
         }
-        // What a callback paints is its own; it may differ with the same
-        // callback, so a window with one is always drawn.
+        // B0 hands out a shader effect's paint as the same `Arc` while
+        // nothing it draws with changes.
+        (Shape::Callback(a), Shape::Callback(b))
+            if a.callback.is::<ShaderPaint>() && b.callback.is::<ShaderPaint>() =>
+        {
+            a.rect == b.rect && Arc::ptr_eq(&a.callback, &b.callback)
+        }
+        // What another callback paints is its own; it may differ with the
+        // same callback, so a window with one is always drawn.
         (Shape::Callback(_), _) | (_, Shape::Callback(_)) => false,
         (a, b) => a == b,
     }
@@ -306,6 +314,48 @@ mod tests {
             drawn(&passes),
             1,
             "equal meshes, shared or not, are no change"
+        );
+    }
+
+    fn shader(paint: &Arc<ShaderPaint>) -> ClippedShape {
+        ClippedShape {
+            clip_rect: Rect::EVERYTHING,
+            shape: Shape::Callback(egui::PaintCallback {
+                rect: Rect::from_min_size(Pos2::ZERO, vec2(10.0, 10.0)),
+                callback: Arc::clone(paint) as _,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_shader_effect_unchanged_is_the_same_picture() {
+        use ljos_render::kurbo::{Affine, Rect as KRect};
+        use ljos_render::ljos_shader::{Program, default_fragment, default_vertex};
+        use ljos_render::{Cull, ShaderOp};
+        let program = Arc::new(Program::new(default_vertex(), default_fragment()).unwrap());
+        let paint = || {
+            Arc::new(ShaderPaint {
+                op: Arc::new(ShaderOp {
+                    program: Arc::clone(&program),
+                    uniforms: Vec::new(),
+                    textures: Vec::new(),
+                    grid: (1, 1),
+                    blending: true,
+                    cull: Cull::None,
+                }),
+                rect: KRect::new(0.0, 0.0, 10.0, 10.0),
+                to_screen: Affine::IDENTITY,
+                opacity: 1.0,
+                ppp: 1.0,
+                textures: Vec::new(),
+            })
+        };
+        let (a, b) = (paint(), paint());
+        let passes = vec![vec![shader(&a)], vec![shader(&a)], vec![shader(&b)]];
+        assert_eq!(
+            drawn(&passes),
+            2,
+            "a new paint is drawn, the same one is not"
         );
     }
 

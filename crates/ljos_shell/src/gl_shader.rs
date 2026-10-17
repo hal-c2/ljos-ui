@@ -1,0 +1,390 @@
+//! A `ShaderEffect`'s program, run by the GL painter (ARCHITECTURE.md
+//! section 7.1, "As built: shader effects").
+//!
+//! B0 hands the effect over as a paint callback holding a [`ShaderPaint`];
+//! [`programs`] turns each into the egui_glow callback that draws it. The
+//! programs are linked the first time one is drawn and kept, with their
+//! grid, while the op that holds them lives; the uniform buffer is written
+//! at each draw, since `qt_Matrix` depends on the viewport egui gives it.
+//!
+//! egui_glow sets its own state again after a callback, but not the
+//! sampler objects, the uniform buffer binding or culling, which this
+//! leaves as it found them.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use egui::epaint::{ClippedShape, PaintCallbackInfo, Shape};
+use glow::HasContext;
+use ljos_render::b0::ShaderPaint;
+use ljos_render::kurbo::Rect;
+use ljos_render::ljos_shader::{Compiled, Program};
+use ljos_render::{Cull, Viewport};
+
+/// The programs one GL painter linked, shared by the callbacks it draws.
+#[derive(Clone, Default)]
+pub(crate) struct Programs(Arc<Mutex<Cache>>);
+
+#[derive(Default)]
+struct Cache {
+    /// By the address of the program's `Arc`, which the entry holds so the
+    /// address is not given to another.
+    linked: HashMap<usize, Linked>,
+    /// Bound for a sampler that has no picture: transparent black.
+    empty: Option<glow::Texture>,
+    smooth: Option<glow::Sampler>,
+    nearest: Option<glow::Sampler>,
+    ubo: Option<glow::Buffer>,
+    /// Programs that failed to link, said once each.
+    failed: HashMap<usize, Arc<Program>>,
+}
+
+struct Linked {
+    program: Arc<Program>,
+    gl: glow::Program,
+    /// The sampler uniforms by texture unit, as
+    /// [`Program::texture_names`] orders them.
+    units: Vec<Vec<glow::UniformLocation>>,
+    grid: Option<Grid>,
+}
+
+struct Grid {
+    rect: Rect,
+    cells: (u32, u32),
+    vao: glow::VertexArray,
+    vbo: glow::Buffer,
+    ebo: glow::Buffer,
+    count: i32,
+}
+
+impl Programs {
+    /// Deletes everything linked, while the painter's context is current.
+    pub(crate) fn destroy(&self, gl: &glow::Context) {
+        let mut cache = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let cache = std::mem::take(&mut *cache);
+        // SAFETY: the caller made the context current.
+        unsafe {
+            for l in cache.linked.into_values() {
+                if let Some(g) = &l.grid {
+                    delete_grid(gl, g);
+                }
+                gl.delete_program(l.gl);
+            }
+            if let Some(t) = cache.empty {
+                gl.delete_texture(t);
+            }
+            for s in [cache.smooth, cache.nearest].into_iter().flatten() {
+                gl.delete_sampler(s);
+            }
+            if let Some(b) = cache.ubo {
+                gl.delete_buffer(b);
+            }
+        }
+    }
+}
+
+/// Turns every shader callback of `shapes` into one the GL painter runs.
+pub(crate) fn programs(programs: &Programs, shapes: &mut [ClippedShape]) {
+    for shape in shapes {
+        let Shape::Callback(cb) = &mut shape.shape else {
+            continue;
+        };
+        let Ok(paint) = Arc::clone(&cb.callback).downcast::<ShaderPaint>() else {
+            continue;
+        };
+        let cache = programs.clone();
+        cb.callback = Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
+            let mut cache = cache.0.lock().unwrap_or_else(PoisonError::into_inner);
+            draw(&mut cache, &paint, &info, painter);
+        }));
+    }
+}
+
+fn draw(
+    cache: &mut Cache,
+    paint: &ShaderPaint,
+    info: &PaintCallbackInfo,
+    painter: &egui_glow::Painter,
+) {
+    let gl = painter.gl();
+    let key = Arc::as_ptr(&paint.op.program) as usize;
+    forget_dead(cache, gl);
+    if cache.failed.contains_key(&key) {
+        return;
+    }
+    if let std::collections::hash_map::Entry::Vacant(slot) = cache.linked.entry(key) {
+        // SAFETY: the painter calls this while its context is current.
+        match unsafe { link(gl, &paint.op.program) } {
+            Ok(linked) => {
+                slot.insert(linked);
+            }
+            Err(log) => {
+                eprintln!("ShaderEffect: the program does not link: {log}");
+                cache.failed.insert(key, Arc::clone(&paint.op.program));
+                return;
+            }
+        }
+    }
+    // SAFETY: as above; everything bound here is bound back to none.
+    unsafe {
+        let empty = *cache.empty.get_or_insert_with(|| empty_texture(gl));
+        let smooth = *cache
+            .smooth
+            .get_or_insert_with(|| sampler(gl, glow::LINEAR as i32));
+        let nearest = *cache
+            .nearest
+            .get_or_insert_with(|| sampler(gl, glow::NEAREST as i32));
+        let ubo = *cache
+            .ubo
+            .get_or_insert_with(|| gl.create_buffer().expect("a GL buffer"));
+        let Some(linked) = cache.linked.get_mut(&key) else {
+            return;
+        };
+        let op = &paint.op;
+        let grid = match &linked.grid {
+            Some(g) if g.rect == paint.rect && g.cells == op.grid => g,
+            _ => {
+                if let Some(old) = linked.grid.take() {
+                    delete_grid(gl, &old);
+                }
+                &*linked.grid.insert(grid(gl, paint))
+            }
+        };
+
+        let v = info.viewport_in_pixels();
+        let top = info.screen_size_px[1] as i32 - v.from_bottom_px - v.height_px;
+        let uniforms = paint.uniforms(Viewport {
+            left: v.left_px as f32,
+            top: top as f32,
+            width: v.width_px as f32,
+            height: v.height_px as f32,
+        });
+
+        gl.use_program(Some(linked.gl));
+        if !uniforms.is_empty() {
+            gl.bind_buffer(glow::UNIFORM_BUFFER, Some(ubo));
+            gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &uniforms, glow::STREAM_DRAW);
+            gl.bind_buffer_base(glow::UNIFORM_BUFFER, 0, Some(ubo));
+        }
+        for (unit, locations) in linked.units.iter().enumerate() {
+            let texture = op.textures.get(unit);
+            let id = paint.textures.get(unit).copied().flatten();
+            let tex = id.and_then(|id| painter.texture(id)).unwrap_or(empty);
+            gl.active_texture(glow::TEXTURE0 + unit as u32);
+            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+            let filter = if texture.is_none_or(|t| t.smooth) {
+                smooth
+            } else {
+                nearest
+            };
+            gl.bind_sampler(unit as u32, Some(filter));
+            for at in locations {
+                gl.uniform_1_i32(Some(at), unit as i32);
+            }
+        }
+        if op.blending {
+            gl.enable(glow::BLEND);
+            gl.blend_equation(glow::FUNC_ADD);
+            gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+        } else {
+            gl.disable(glow::BLEND);
+        }
+        match op.cull {
+            Cull::None => gl.disable(glow::CULL_FACE),
+            Cull::Back | Cull::Front => {
+                gl.enable(glow::CULL_FACE);
+                gl.front_face(glow::CCW);
+                gl.cull_face(if op.cull == Cull::Back {
+                    glow::BACK
+                } else {
+                    glow::FRONT
+                });
+            }
+        }
+        gl.bind_vertex_array(Some(grid.vao));
+        gl.draw_elements(glow::TRIANGLES, grid.count, glow::UNSIGNED_INT, 0);
+        gl.bind_vertex_array(None);
+
+        gl.disable(glow::CULL_FACE);
+        for unit in 0..linked.units.len() {
+            gl.bind_sampler(unit as u32, None);
+            gl.active_texture(glow::TEXTURE0 + unit as u32);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+        }
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_buffer_base(glow::UNIFORM_BUFFER, 0, None);
+        gl.bind_buffer(glow::UNIFORM_BUFFER, None);
+    }
+}
+
+/// Deletes what was linked for programs nothing draws any more.
+fn forget_dead(cache: &mut Cache, gl: &glow::Context) {
+    cache.failed.retain(|_, p| Arc::strong_count(p) > 1);
+    cache.linked.retain(|_, l| {
+        let live = Arc::strong_count(&l.program) > 1;
+        if !live {
+            // SAFETY: the context is current (see `draw`).
+            unsafe {
+                if let Some(g) = l.grid.take() {
+                    delete_grid(gl, &g);
+                }
+                gl.delete_program(l.gl);
+            }
+        }
+        live
+    });
+}
+
+unsafe fn link(gl: &glow::Context, program: &Arc<Program>) -> Result<Linked, String> {
+    let es = gl.version().is_embedded;
+    let text = |c: &Compiled| {
+        if es { c.es300.clone() } else { c.gl330.clone() }
+    };
+    // SAFETY: the caller's context is current.
+    unsafe {
+        let p = gl.create_program()?;
+        let mut shaders = Vec::new();
+        for (kind, source) in [
+            (glow::VERTEX_SHADER, text(&program.vertex)),
+            (glow::FRAGMENT_SHADER, text(&program.fragment)),
+        ] {
+            let s = gl.create_shader(kind)?;
+            gl.shader_source(s, &source);
+            gl.compile_shader(s);
+            if !gl.get_shader_compile_status(s) {
+                let log = gl.get_shader_info_log(s);
+                gl.delete_shader(s);
+                for s in shaders {
+                    gl.delete_shader(s);
+                }
+                gl.delete_program(p);
+                return Err(log);
+            }
+            gl.attach_shader(p, s);
+            shaders.push(s);
+        }
+        gl.bind_attrib_location(p, 0, "_p2vs_location0");
+        gl.bind_attrib_location(p, 1, "_p2vs_location1");
+        gl.link_program(p);
+        for s in shaders {
+            gl.detach_shader(p, s);
+            gl.delete_shader(s);
+        }
+        if !gl.get_program_link_status(p) {
+            let log = gl.get_program_info_log(p);
+            gl.delete_program(p);
+            return Err(log);
+        }
+        for block in [&program.vertex.block, &program.fragment.block]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(i) = gl.get_uniform_block_index(p, &block.gl_name) {
+                gl.uniform_block_binding(p, i, 0);
+            }
+        }
+        let units = program
+            .texture_names()
+            .into_iter()
+            .map(|name| {
+                program
+                    .samplers()
+                    .filter(|s| s.name == name)
+                    .filter_map(|s| gl.get_uniform_location(p, &s.gl_name))
+                    .collect()
+            })
+            .collect();
+        Ok(Linked {
+            program: Arc::clone(program),
+            gl: p,
+            units,
+            grid: None,
+        })
+    }
+}
+
+unsafe fn grid(gl: &glow::Context, paint: &ShaderPaint) -> Grid {
+    let (vertices, indices) = paint.op.grid_for(paint.rect);
+    let vb: Vec<u8> = vertices.iter().flat_map(|f| f.to_ne_bytes()).collect();
+    let ib: Vec<u8> = indices.iter().flat_map(|i| i.to_ne_bytes()).collect();
+    // SAFETY: the caller's context is current.
+    unsafe {
+        let vao = gl.create_vertex_array().expect("a GL vertex array");
+        let vbo = gl.create_buffer().expect("a GL buffer");
+        let ebo = gl.create_buffer().expect("a GL buffer");
+        gl.bind_vertex_array(Some(vao));
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, &vb, glow::STATIC_DRAW);
+        gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
+        gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, &ib, glow::STATIC_DRAW);
+        let stride = 6 * 4;
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_f32(0, 4, glow::FLOAT, false, stride, 0);
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, 4 * 4);
+        gl.bind_vertex_array(None);
+        gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        Grid {
+            rect: paint.rect,
+            cells: paint.op.grid,
+            vao,
+            vbo,
+            ebo,
+            count: indices.len() as i32,
+        }
+    }
+}
+
+unsafe fn delete_grid(gl: &glow::Context, g: &Grid) {
+    // SAFETY: the caller's context is current.
+    unsafe {
+        gl.delete_vertex_array(g.vao);
+        gl.delete_buffer(g.vbo);
+        gl.delete_buffer(g.ebo);
+    }
+}
+
+unsafe fn empty_texture(gl: &glow::Context) -> glow::Texture {
+    // SAFETY: the caller's context is current.
+    unsafe {
+        let t = gl.create_texture().expect("a GL texture");
+        gl.bind_texture(glow::TEXTURE_2D, Some(t));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            1,
+            1,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(Some(&[0, 0, 0, 0])),
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::NEAREST as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::NEAREST as i32,
+        );
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        t
+    }
+}
+
+/// Sampler objects, so the filter a ShaderEffectSource asks for does not
+/// change the texture egui draws the same picture with elsewhere.
+unsafe fn sampler(gl: &glow::Context, filter: i32) -> glow::Sampler {
+    // SAFETY: the caller's context is current.
+    unsafe {
+        let s = gl.create_sampler().expect("a GL sampler");
+        gl.sampler_parameter_i32(s, glow::TEXTURE_MIN_FILTER, filter);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_MAG_FILTER, filter);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        s
+    }
+}

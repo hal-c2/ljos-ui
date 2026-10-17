@@ -176,6 +176,7 @@ pub(crate) struct GlPainter {
     gl: Rc<Gl>,
     painter: egui_glow::Painter,
     window: Option<GlWindow>,
+    programs: crate::gl_shader::Programs,
 }
 
 struct GlWindow {
@@ -200,11 +201,17 @@ impl GlPainter {
             gl,
             painter,
             window: None,
+            programs: crate::gl_shader::Programs::default(),
         })
     }
 
     pub(crate) fn gl(&self) -> Rc<Gl> {
         Rc::clone(&self.gl)
+    }
+
+    /// The `ShaderEffect` programs this painter links.
+    pub(crate) fn programs(&self) -> &crate::gl_shader::Programs {
+        &self.programs
     }
 
     pub(crate) fn max_texture_side(&self) -> usize {
@@ -414,6 +421,7 @@ impl Drop for GlPainter {
     fn drop(&mut self) {
         let surface = self.window.as_ref().map(|w| (w.id, &w.surface));
         if self.gl.make_current(surface) {
+            self.programs.destroy(&self.gl.glow);
             self.painter.destroy();
         }
         self.forget_window();

@@ -12,6 +12,8 @@ publish.workspace = true
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_controls = { path = "../ljos_controls" }
 ljos_egui = { path = "../ljos_egui" }
+# B0's shader callbacks, which the GL painter runs (src/gl_shader.rs).
+ljos_render = { path = "../ljos_render", features = ["b0"] }
 ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_runtime = { path = "../ljos_runtime" }

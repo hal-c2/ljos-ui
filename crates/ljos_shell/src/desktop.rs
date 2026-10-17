@@ -849,16 +849,16 @@ impl<M: Send + 'static> Desktop<M> {
         note_size(slot, engine, sys, false);
         self.repaints.request(slot.key, Instant::now());
         self.screens_stale = true;
-        let fills = self.slots[i]
-            .painter
-            .as_ref()
-            .is_some_and(Painter::fills_rects);
+        let painter = self.slots[i].painter.as_ref();
+        let fills = painter.is_some_and(Painter::fills_rects);
+        let shaders = painter.is_some_and(Painter::draws_shaders);
         let view = match self.slots[i].view.as_mut() {
             Some(view) => view,
             None => self.app.view_mut(),
         };
         view.set_drawn(true);
         view.set_solid_rects(fills);
+        view.set_draws_shaders(shaders);
     }
 
     /// The platform refused a window. Without the root's there is no

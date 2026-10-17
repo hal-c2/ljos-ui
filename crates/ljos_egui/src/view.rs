@@ -197,6 +197,8 @@ pub struct QmlView {
     backdrop: Option<egui::Color32>,
     /// See [`QmlView::set_solid_rects`].
     solid_rects: bool,
+    /// See [`QmlView::set_draws_shaders`].
+    draws_shaders: bool,
     emitted: a11y::Emitted,
     /// The text runs below the editors' nodes of the last pass.
     emitted_runs: a11y::TextRuns,
@@ -263,6 +265,7 @@ impl QmlView {
             fold_backdrop: false,
             backdrop: None,
             solid_rects: false,
+            draws_shaders: false,
             emitted: a11y::Emitted::new(),
             emitted_runs: a11y::TextRuns::new(),
             graft: None,
@@ -514,6 +517,15 @@ impl QmlView {
     /// default.
     pub fn set_solid_rects(&mut self, on: bool) {
         self.solid_rects = on;
+    }
+
+    /// Whether a `ShaderEffect` with a program of its own is handed to
+    /// egui as a paint callback holding a `ljos_render::b0::ShaderPaint`
+    /// (`EguiSink::shaders`). For a host whose painter runs it; elsewhere
+    /// the effect draws nothing, as in Qt's software scene graph. Off by
+    /// default.
+    pub fn set_draws_shaders(&mut self, on: bool) {
+        self.draws_shaders = on;
     }
 
     /// The colour the last pass left for the host to clear its window to
@@ -866,6 +878,7 @@ impl QmlView {
                 && scene.contains_rect(window)
                 && painter.clip_rect().contains_rect(window);
             sink.solid_rects = self.solid_rects;
+            sink.shaders = self.draws_shaders;
             self.backend.encode(&view, &mut sink);
             sink.paint(&painter);
             self.backdrop = sink.backdrop;

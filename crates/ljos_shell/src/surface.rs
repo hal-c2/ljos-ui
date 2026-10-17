@@ -140,12 +140,27 @@ impl Painter {
         }
     }
 
+    /// Whether the painter runs a `ShaderEffect`'s program
+    /// (`QmlView::set_draws_shaders`). wgpu would need the programs in
+    /// WGSL and a pipeline of their own; it draws nothing in their place.
+    pub(crate) fn draws_shaders(&self) -> bool {
+        match self {
+            Painter::Wgpu(_) => false,
+            #[cfg(gl_painter)]
+            Painter::Gl(_) => true,
+        }
+    }
+
     /// The shapes as this painter draws them best.
     pub(crate) fn prepare(&self, shapes: &mut [egui::epaint::ClippedShape], pixels_per_point: f32) {
         match self {
+            // Shader callbacks never reach it (`draws_shaders`).
             Painter::Wgpu(_) => {}
             #[cfg(gl_painter)]
-            Painter::Gl(_) => crate::gl::fill_rects(shapes, pixels_per_point),
+            Painter::Gl(painter) => {
+                crate::gl_shader::programs(painter.programs(), shapes);
+                crate::gl::fill_rects(shapes, pixels_per_point);
+            }
         }
         #[cfg(not(gl_painter))]
         let _ = (shapes, pixels_per_point);
