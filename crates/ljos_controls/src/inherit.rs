@@ -246,6 +246,10 @@ struct Epochs {
     /// bits of [`Which`]. Moved for each control made, every control made
     /// before it looked again: a creation of many was many times many.
     pending: Cell<u8>,
+    /// Whether a style with a font of its own is in use. Until one is, a
+    /// font is the one above as a whole, and which attributes an author
+    /// set does not matter to the objects below.
+    looks: Cell<bool>,
 }
 
 /// The engine's application font: a graph node, so that what reads it runs
@@ -464,16 +468,20 @@ pub(crate) fn attach(
         let scope = style_font::scope_of(engine, obj);
         state.scope.set(scope);
         state.look.set(scope.look);
-        if scope.look.is_some() && !engine.untrack(|| in_use(engine, Which::Font)) {
+        let epochs = engine.extension::<Epochs>();
+        let looks = &epochs.looks;
+        if scope.look.is_some() && !looks.replace(true) {
             // The style's font differs from the default: every object
-            // finds out what it starts from.
+            // finds out what it starts from, and what was set above it.
             bump(engine, Which::Font);
         }
         if author_set(engine, obj, fp) {
             let own = font_value(&engine.untrack(|| engine.read(obj, fp)));
             let mask = differing(&own, &Font::default());
             state.font_mask.set(mask);
-            if mask != 0 {
+            // The objects below read this font as it is written; only a
+            // style's font laid under it needs what was set here.
+            if mask != 0 && (looks.get() || !engine.untrack(|| in_use(engine, Which::Font))) {
                 bump(engine, Which::Font);
             }
         }
