@@ -272,6 +272,10 @@ struct Unreached(String);
 /// answer (unreached).
 fn read_answer(response: &Response) -> Result<Result<Json, String>, Unreached> {
     let text = String::from_utf8_lossy(&response.body);
+    // Turned away for asking too often: the inspector is there.
+    if response.status == 429 {
+        return Ok(Err(format!("rate_limited: {}", text.trim())));
+    }
     if !response.ok() {
         return Err(Unreached(format!(
             "the inspector answered {}: {}",
@@ -400,5 +404,15 @@ mod tests {
         assert!(matches!(read_answer(&response(&streamed)), Ok(Ok(_))));
         let refused = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"no"}}"#;
         assert!(matches!(read_answer(&response(refused)), Ok(Err(m)) if m == "no"));
+    }
+
+    #[test]
+    fn an_inspector_asked_too_often_is_still_reached() {
+        let busy = Response {
+            status: 429,
+            headers: Vec::new(),
+            body: br#"{"error":{"code":"rate_limited"}}"#.to_vec(),
+        };
+        assert!(matches!(read_answer(&busy), Ok(Err(m)) if m.starts_with("rate_limited")));
     }
 }
