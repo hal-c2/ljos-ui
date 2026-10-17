@@ -70,7 +70,7 @@ pub use fetch::{
 pub use http::HttpFetcher;
 pub use network::{
     NetworkInformation, NetworkStatus, Reachability, TransportMedium, network_status,
-    report_network_status,
+    report_network_status, set_network_monitor,
 };
 pub use open_url::{OpenUrl, OpenUrlService, RecordedUrls};
 pub use paths::{Location, PathEnv, StandardPaths, encoded_url, file_url, url_path};

@@ -49,14 +49,14 @@ impl Held {
     }
 }
 
-pub(crate) fn watch(post: Post) -> Watch {
-    watch_with(
-        post,
+impl Buses {
+    /// The desktop's.
+    pub(crate) fn platform() -> Self {
         Buses {
             session: Box::new(Connection::session),
             system: Box::new(Connection::system),
-        },
-    )
+        }
+    }
 }
 
 pub(crate) fn watch_with(post: Post, buses: Buses) -> Watch {

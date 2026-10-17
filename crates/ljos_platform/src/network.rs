@@ -6,8 +6,14 @@
 //! the shell hears the desktop's network monitor. Nothing polls: a status
 //! changes when a host says so, and what read it runs again. A host that
 //! says nothing leaves it at [`Reachability::Unknown`].
+//!
+//! A host's monitor starts the first time something asks: when QML first
+//! reads `NetworkInformation` or Rust [`network_status`]
+//! ([`set_network_monitor`]). An application that never asks pays for no
+//! thread and no connection to the system, as Qt loads its backend only
+//! when asked.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{Engine, ObjectId, PropIndex, QmlObject, Value, WriteKind, qml_singleton};
@@ -174,10 +180,16 @@ impl NetworkInformation {
     }
 }
 
-/// Per engine: what the host said last.
+type Monitor = Box<dyn FnOnce(&Engine)>;
+
+/// Per engine: what the host said last, and its monitor until asked for.
 #[derive(Default)]
 struct State {
     status: Cell<NetworkStatus>,
+    /// Whether the object has been made: until it is, a report is only
+    /// kept for when it is.
+    made: Cell<bool>,
+    monitor: RefCell<Option<Monitor>>,
 }
 
 fn state(engine: &Engine) -> Rc<State> {
@@ -186,11 +198,34 @@ fn state(engine: &Engine) -> Rc<State> {
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_singleton_with("QtNetwork", ljos_engine::Version::new(6, 0), |e| {
-        NetworkInformation::of(state(e).status.get())
+        let s = state(e);
+        s.made.set(true);
+        start(e, &s);
+        NetworkInformation::of(s.status.get())
     });
 }
 
-/// The engine's `NetworkInformation`, if this engine has the type.
+fn start(engine: &Engine, s: &State) {
+    let monitor = s.monitor.borrow_mut().take();
+    if let Some(monitor) = monitor {
+        monitor(engine);
+    }
+}
+
+/// What starts the host's monitor of the network, run once the first time
+/// something asks for the status, or now if something already has. It
+/// reports through [`report_network_status`] and ends with the engine,
+/// as what it keeps in the engine does.
+pub fn set_network_monitor(engine: &Engine, monitor: impl FnOnce(&Engine) + 'static) {
+    let s = state(engine);
+    s.monitor.replace(Some(Box::new(monitor)));
+    if s.made.get() {
+        start(engine, &s);
+    }
+}
+
+/// The engine's `NetworkInformation`, if this engine has the type: made
+/// now if it was not, which starts the monitor.
 fn object(engine: &Engine) -> Option<ObjectId> {
     engine
         .untrack(|| engine.singleton::<NetworkInformation>())
@@ -202,7 +237,7 @@ fn object(engine: &Engine) -> Option<ObjectId> {
 /// costs nothing.
 pub fn report_network_status(engine: &Engine, status: NetworkStatus) {
     let s = state(engine);
-    if s.status.replace(status) == status {
+    if s.status.replace(status) == status || !s.made.get() {
         return;
     }
     let Some(obj) = object(engine) else {
