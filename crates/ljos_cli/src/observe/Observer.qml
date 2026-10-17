@@ -61,7 +61,7 @@ ApplicationWindow {
         else if (route === "processes" && ok)
             processes.show(s)
         else if (route === "mailboxes" && ok)
-            mailboxes.rows = s.mailboxes
+            mailboxes.show(s.mailboxes)
         else if (route === "objects")
             objects.showTree(ok, s, r)
         else if (route === "inspect")
@@ -598,11 +598,15 @@ ApplicationWindow {
                     id: processes
                     spacing: 10
                     property var rows: []
+                    // The view is given the number of rows, not the rows:
+                    // a view given a new array makes every row again, and
+                    // a busy application is shown anew each second.
+                    property int count: 0
                     property var process: null
                     property string kind: ""
                     // Kind, name, state, work, wakeups, detail: the heads
                     // and the rows share them, so they line up.
-                    readonly property var widths: [96, 0, 110, 96, 86, 230]
+                    readonly property var widths: [118, 0, 110, 96, 86, 230]
 
                     function load() {
                         var args = kind === "" ? {} : { kind: kind }
@@ -611,6 +615,7 @@ ApplicationWindow {
 
                     function show(s) {
                         rows = s.processes
+                        count = rows.length
                         if (s.process)
                             process = s.process
                     }
@@ -687,12 +692,12 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.topMargin: 33
                             clip: true
-                            model: processes.rows
+                            model: processes.count
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: prow
-                                required property var modelData
                                 required property int index
+                                readonly property var modelData: processes.rows[index] || ({})
                                 width: ListView.view.width
                                 height: 32
                                 color: rowHover.containsMouse ? theme.accentSoft
@@ -782,6 +787,13 @@ ApplicationWindow {
                     id: mailboxes
                     spacing: 10
                     property var rows: []
+                    // Given to the view as a number, as the processes are.
+                    property int count: 0
+
+                    function show(list) {
+                        rows = list
+                        count = list.length
+                    }
 
                     function load() {
                         window.ask("app_mailboxes", { peek: 5 }, "mailboxes")
@@ -803,9 +815,10 @@ ApplicationWindow {
                         clip: true
                         cellWidth: Math.max(280, width / Math.max(1, Math.floor(width / 320)))
                         cellHeight: 168
-                        model: mailboxes.rows
+                        model: mailboxes.count
                         delegate: Item {
-                            required property var modelData
+                            required property int index
+                            readonly property var modelData: mailboxes.rows[index] || ({})
                             width: boxes.cellWidth
                             height: boxes.cellHeight
                             Rectangle {
@@ -1095,6 +1108,15 @@ ApplicationWindow {
                                             : node.modelData.object_name ? "\"" + node.modelData.object_name + "\"" : ""
                                         color: theme.accent
                                     }
+                                    // Without an id or a name, the handle tells
+                                    // one Timer from the next.
+                                    Label {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: !node.modelData.id && !node.modelData.object_name
+                                        text: node.modelData.handle
+                                        color: theme.subtle
+                                        font.pixelSize: 11
+                                    }
                                     Label {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: node.modelData.hidden !== undefined
@@ -1212,9 +1234,11 @@ ApplicationWindow {
                                         color: theme.text
                                         background: Rectangle {
                                             radius: 5
+                                            // Framed at rest, so a value that can be
+                                            // changed reads apart from one that cannot.
                                             color: field.activeFocus ? theme.bg : "transparent"
                                             border.color: field.activeFocus ? theme.accent
-                                                : field.hovered ? theme.rule : "transparent"
+                                                : field.hovered ? theme.subtle : theme.rule
                                         }
                                         text: objects.valueText(prop.modelData.value)
                                         onFocusChanged: {
@@ -1408,26 +1432,50 @@ ApplicationWindow {
                         if (s.entries.length === 0)
                             return
                         var all = entries.concat(s.entries)
-                        entries = all.slice(Math.max(0, all.length - 2000))
+                        var over = Math.max(0, all.length - 2000)
+                        entries = all.slice(over)
+                        if (over > 0) {
+                            show()
+                        } else {
+                            for (var i = 0; i < s.entries.length; ++i)
+                                put(s.entries[i])
+                        }
                         if (window.page !== 4)
                             unread += s.entries.length
                     }
 
-                    readonly property var rows: {
-                        var least = levels.indexOf(level)
+                    function matches(e) {
+                        if (levels.indexOf(e.level) < levels.indexOf(level))
+                            return false
                         var f = filter.toLowerCase()
-                        var out = []
-                        for (var i = 0; i < entries.length; ++i) {
-                            var e = entries[i]
-                            if (levels.indexOf(e.level) < least)
-                                continue
-                            if (f !== "" && e.message.toLowerCase().indexOf(f) < 0
-                                    && (e.category || "").toLowerCase().indexOf(f) < 0)
-                                continue
-                            out.push(e)
-                        }
-                        return out
+                        return f === "" || e.message.toLowerCase().indexOf(f) >= 0
+                            || (e.category || "").toLowerCase().indexOf(f) >= 0
                     }
+
+                    // Lines are added to the model, not given as a new
+                    // array: a view given a new array makes every row
+                    // again, and a busy application logs all the time.
+                    function put(e) {
+                        if (!matches(e))
+                            return
+                        shownLines.append({
+                            level: e.level,
+                            category: e.category || "",
+                            message: e.message,
+                            where: e.file ? e.file.split("/").pop() + ":" + e.line : ""
+                        })
+                    }
+
+                    function show() {
+                        shownLines.clear()
+                        for (var i = 0; i < entries.length; ++i)
+                            put(entries[i])
+                    }
+
+                    onFilterChanged: show()
+                    onLevelChanged: show()
+
+                    ListModel { id: shownLines }
 
                     function tone(level) {
                         return level === "critical" ? theme.bad
@@ -1448,7 +1496,7 @@ ApplicationWindow {
                         spacing: 10
                         Label { text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Label {
-                            text: logs.rows.length + " of " + logs.entries.length + " lines"
+                            text: shownLines.count + " of " + logs.entries.length + " lines"
                             color: theme.subtle
                         }
                         Item { Layout.fillWidth: true }
@@ -1463,7 +1511,10 @@ ApplicationWindow {
                         }
                         Button {
                             text: "Clear"
-                            onClicked: logs.entries = []
+                            onClicked: {
+                                logs.entries = []
+                                shownLines.clear()
+                            }
                         }
                     }
 
@@ -1479,13 +1530,16 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 6
                             clip: true
-                            model: logs.rows
+                            model: shownLines
                             ScrollBar.vertical: ScrollBar {}
                             onCountChanged: positionViewAtEnd()
                             delegate: Item {
                                 id: entry
-                                required property var modelData
                                 required property int index
+                                required property string level
+                                required property string category
+                                required property string message
+                                required property string where
                                 width: ListView.view.width
                                 height: 24
                                 Rectangle {
@@ -1499,15 +1553,15 @@ ApplicationWindow {
                                     Label {
                                         width: 64
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: entry.modelData.level
-                                        color: logs.tone(entry.modelData.level)
-                                        font.bold: entry.modelData.level === "warning" || entry.modelData.level === "critical"
+                                        text: entry.level
+                                        color: logs.tone(entry.level)
+                                        font.bold: entry.level === "warning" || entry.level === "critical"
                                         font.pixelSize: 12
                                     }
                                     Label {
                                         width: 110
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: entry.modelData.category || ""
+                                        text: entry.category
                                         color: theme.subtle
                                         elide: Text.ElideRight
                                         font.pixelSize: 12
@@ -1515,7 +1569,7 @@ ApplicationWindow {
                                     Label {
                                         width: entry.width - 64 - 110 - 160 - 50
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: entry.modelData.message
+                                        text: entry.message
                                         color: theme.text
                                         elide: Text.ElideRight
                                         font.family: theme.mono
@@ -1525,7 +1579,7 @@ ApplicationWindow {
                                         width: 160
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
-                                        text: entry.modelData.file ? entry.modelData.file.split("/").pop() + ":" + entry.modelData.line : ""
+                                        text: entry.where
                                         color: theme.subtle
                                         elide: Text.ElideLeft
                                         font.pixelSize: 11
@@ -1535,7 +1589,7 @@ ApplicationWindow {
                         }
                         Label {
                             anchors.centerIn: parent
-                            visible: logs.rows.length === 0
+                            visible: shownLines.count === 0
                             text: logs.entries.length === 0 ? "Nothing logged yet" : "No line matches"
                             color: theme.subtle
                         }
