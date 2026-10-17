@@ -563,7 +563,14 @@ behind `Qt.application` (`engine.singleton::<Application>()`, whose
 `active` and `state` say whether the application has the user's
 focus), and the `ColorScheme` that `ljos::color_scheme(engine)`
 gives. `ljos::CoalesceKey` sits beside `ljos::UiHandle`, for
-`send_coalesced`.
+`send_coalesced`. A host that brings its own system dialogs or
+permission prompts writes a `DialogService` (taking a `DialogRequest`
+and answering through its `DialogAnswer` with a `DialogReply`) or a
+`PermissionService` (a `Permission`, a `PermissionStatus`, a
+`PermissionAnswer`) with the prelude's names; the `PathEnv` of
+`Platform::env()` is the home and environment the standard paths come
+from; and a host hands a drag of files from another application on as
+an `ExternalDrag` to `external_drag(engine, &drag)`.
 
 A clipboard write says whether it happened: `set_text`, `set_html`,
 `set_image` and `clear` return `Result<(), ClipboardError>`, `Ok` only

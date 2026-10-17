@@ -71,3 +71,54 @@ fn a_coalesced_send_is_keyed_by_a_named_key() {
     }
     let _ = wake;
 }
+
+/// A host whose system shows no dialogs and grants nothing, written with
+/// the facade's names for what the services take and give.
+struct Strict;
+
+impl DialogService for Strict {
+    fn can_show(&self, request: &DialogRequest) -> bool {
+        let _: Option<DialogKind> = request.kind;
+        let _: &[NameFilter] = &request.filters;
+        false
+    }
+
+    fn show(&self, _: DialogRequest, answer: DialogAnswer) {
+        answer.send(DialogReply::Dismissed);
+    }
+
+    fn close(&self, _: u64) {}
+}
+
+impl PermissionService for Strict {
+    fn status(&self, _: Permission) -> PermissionStatus {
+        PermissionStatus::Denied
+    }
+
+    fn request(&self, _: Permission, answer: PermissionAnswer) {
+        answer.send(PermissionStatus::Denied);
+    }
+}
+
+#[test]
+fn a_host_s_dialogs_and_permissions_are_written_with_facade_names() {
+    let engine = ljos::engine();
+    let platform = Platform::of(&engine);
+    platform.set_dialogs(std::rc::Rc::new(Strict));
+    platform.set_permissions(std::rc::Rc::new(Strict));
+    assert_eq!(
+        platform.permissions().status(Permission::Camera),
+        PermissionStatus::Denied
+    );
+}
+
+#[test]
+fn the_paths_and_a_drag_from_elsewhere_have_facade_names() {
+    let engine = ljos::engine();
+    let platform = Platform::of(&engine);
+    let env: std::rc::Rc<PathEnv> = platform.env();
+    platform.set_env(PathEnv::sandbox(env.home.clone(), "/"));
+    // Nothing in the window takes a drop, so no one took the drag.
+    let drag = ExternalDrag::Left;
+    assert!(!external_drag(&engine, &drag));
+}

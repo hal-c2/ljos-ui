@@ -74,8 +74,11 @@
 /// registered under), list and tree models for Rust-owned rows, the `Timer` a
 /// host may run from Rust, the [`Item`](prelude::Item) a visual type extends
 /// (`extends = Item` with a `#[qml(base)]` field), the platform
-/// services (fetch, settings, dialogs, opening a URL, the badge, the
-/// clipboard) a type may ask the host for, and what the Engine's own
+/// services (fetch, settings, dialogs, permissions, the paths, opening a
+/// URL, the badge, the clipboard) a type may ask the host for, with what
+/// a host's own service takes and gives and the drags from other
+/// applications ([`ExternalDrag`](prelude::ExternalDrag)) a host hands
+/// on, and what the Engine's own
 /// methods hand out: the [`Time`](prelude::Time) of `Engine::now`, the
 /// [`TimerId`](prelude::TimerId) of `Engine::call_at`, the
 /// [`Application`](prelude::Application) singleton (`Qt.application`)
@@ -91,9 +94,11 @@ pub mod prelude {
         qml_singleton, tree_model,
     };
     pub use ljos_platform::{
-        BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, FetchError,
-        Fetcher, Method, OpenUrlService, Platform, RecordedBadge, RecordedUrls, Request, Response,
-        file_url, is_remote, url_path,
+        BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,
+        DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, ExternalDrag,
+        FetchError, Fetcher, Method, NameFilter, OpenUrlService, PathEnv, Permission,
+        PermissionAnswer, PermissionService, PermissionStatus, Platform, RecordedBadge,
+        RecordedUrls, Request, Response, external_drag, file_url, is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item};
     pub use ljos_runtime::{Time, TimerId};
