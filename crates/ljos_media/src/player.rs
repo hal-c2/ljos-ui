@@ -29,7 +29,7 @@ use crate::devices::gain_of;
 use crate::meta::{Entry, MediaMetaData};
 use crate::open::{self, OpenError, Opened, VideoInfo};
 use crate::sink::{Audio, Voice};
-use crate::stream::{Look, Played};
+use crate::stream::{Look, MediaStream, Played, StreamFormat, StreamOptions};
 use crate::video;
 
 fn player_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -412,6 +412,33 @@ pub(crate) fn load_stream(e: &Engine, me: ObjectId, stream: Played) -> u64 {
     load_with(e, me, Some(stream))
 }
 
+/// Plays `stream` for the source being loaded, which it is: the player
+/// stays as loading left it. The generation the stream's answers must
+/// carry.
+fn adopt_stream(e: &Engine, me: ObjectId, stream: Played) -> u64 {
+    run(e, me, |r| {
+        r.generation += 1;
+        r.stream = Some(stream);
+        r.generation
+    })
+    .unwrap_or(0)
+}
+
+/// The source being loaded turned out to be a stream of pictures: the
+/// stream to write it into, unless the player has moved on.
+fn source_streams(
+    e: &Engine,
+    me: ObjectId,
+    generation: u64,
+    format: StreamFormat,
+    options: StreamOptions,
+) -> Option<MediaStream> {
+    if !e.is_alive(me) || run(e, me, |r| r.generation) != Some(generation) {
+        return None;
+    }
+    MediaStream::begin(e, me, format, options, adopt_stream).ok()
+}
+
 fn load_with(e: &Engine, me: ObjectId, stream: Option<Played>) -> u64 {
     halt(e, me);
     let is_stream = stream.is_some();
@@ -449,7 +476,7 @@ fn load_with(e: &Engine, me: ObjectId, stream: Option<Played>) -> u64 {
     }
     set_status(e, me, status::LOADING);
     let url = e.resolve_url(me, &source);
-    open::start(e, me, generation, url, None, opened);
+    open::start(e, me, generation, url, None, opened, Some(source_streams));
     generation
 }
 
@@ -528,7 +555,10 @@ fn pump(e: &Engine, me: ObjectId) {
                 run(e, me, |r| r.frame = Some(id));
                 return;
             }
-            Look::Wait => return,
+            Look::Wait => {
+                run(e, me, |r| r.stream.as_ref().map(|s| s.expect(e)));
+                return;
+            }
             Look::Ended => return stream_ended(e, me),
             Look::Failed(why) => {
                 halt(e, me);

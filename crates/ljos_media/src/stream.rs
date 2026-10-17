@@ -25,7 +25,7 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use ljos_engine::{Engine, ObjectId};
-use ljos_platform::{Platform, Post};
+use ljos_platform::{Platform, Post, Reply};
 use ljos_render::ImageHandle;
 
 use crate::player;
@@ -111,17 +111,30 @@ impl MediaStream {
         format: StreamFormat,
         options: StreamOptions,
     ) -> Result<MediaStream, StreamError> {
+        let player = player::of(engine, player).ok_or(StreamError::NotPlayer(player))?;
+        Self::begin(engine, player, format, options, player::load_stream)
+    }
+
+    /// Plays the stream returned on `player` (a `MediaPlayer`), handing
+    /// what it keeps of it to `load`, which answers with the generation
+    /// the stream's answers must carry.
+    pub(crate) fn begin(
+        engine: &Engine,
+        player: ObjectId,
+        format: StreamFormat,
+        options: StreamOptions,
+        load: fn(&Engine, ObjectId, Played) -> u64,
+    ) -> Result<MediaStream, StreamError> {
         if !cfg!(feature = "decode") {
             return Err(StreamError::NoDecoder);
         }
-        let player = player::of(engine, player).ok_or(StreamError::NotPlayer(player))?;
         let shared = Arc::new(Shared {
             state: Mutex::default(),
             taken: Condvar::new(),
             live: options.live,
         });
         let (tx, rx) = sync_channel(WRITES_AHEAD);
-        let generation = player::load_stream(
+        let generation = load(
             engine,
             player,
             Played {
@@ -132,6 +145,9 @@ impl MediaStream {
                 shown: 0,
             },
         );
+        // The first thing the stream tells, a picture, its end or what
+        // went wrong, is promised.
+        shared.lock().promise = Some(Platform::of(engine).expect());
         let post = Platform::of(engine).poster();
         let wake = Wake {
             shared: Arc::clone(&shared),
@@ -141,7 +157,8 @@ impl MediaStream {
         };
         std::thread::Builder::new()
             .name("ljos-media-stream".to_owned())
-            .spawn(move || decode(format, &rx, &wake))?;
+            .spawn(move || decode(format, &rx, &wake))
+            .inspect_err(|_| drop(shared.lock().promise.take()))?;
         Ok(MediaStream {
             bytes: Mutex::new(Some(tx)),
             shared,
@@ -203,6 +220,11 @@ struct State {
     posted: bool,
     /// The player let the stream go.
     closed: bool,
+    /// The player waits for what the decoder has next, as a platform
+    /// answer: a test that lets time pass waits for it, as for a fetch.
+    /// Held while the player has nothing to show and waits for the
+    /// decode thread, which answers it when it tells the player next.
+    promise: Option<Reply>,
     /// A container, read whole: opened on the Engine thread's side.
     #[cfg(feature = "decode")]
     opened: Option<Result<crate::open::Opened, crate::open::OpenError>>,
@@ -221,7 +243,11 @@ pub(crate) struct Played {
 
 impl Drop for Played {
     fn drop(&mut self) {
-        self.shared.lock().closed = true;
+        let mut s = self.shared.lock();
+        s.closed = true;
+        let promise = s.promise.take();
+        drop(s);
+        drop(promise);
         self.shared.taken.notify_all();
     }
 }
@@ -336,6 +362,16 @@ impl Played {
     pub(crate) fn rearm(&self) {
         self.shared.lock().posted = false;
     }
+
+    /// A playing paced stream has no picture yet: the next is on its
+    /// way unless the stream ended. A live stream is waited for by no
+    /// one, as a camera may never send another.
+    pub(crate) fn expect(&self, e: &Engine) {
+        let mut s = self.shared.lock();
+        if !self.live && !s.ended && s.pictures.is_empty() && s.promise.is_none() {
+            s.promise = Some(Platform::of(e).expect());
+        }
+    }
 }
 
 /// How the decode thread tells the player.
@@ -350,11 +386,18 @@ impl Wake {
     /// Tells the player there is something to look at, unless it was
     /// told already and has not looked.
     fn wake(&self) {
-        let first = !std::mem::replace(&mut self.shared.lock().posted, true);
-        if first {
-            let (me, generation) = (self.player, self.generation);
-            self.post
-                .send(move |e: &Engine| player::stream_woke(e, me, generation));
+        let mut s = self.shared.lock();
+        let first = !std::mem::replace(&mut s.posted, true);
+        let promise = s.promise.take();
+        drop(s);
+        let (me, generation) = (self.player, self.generation);
+        let job = move |e: &Engine| player::stream_woke(e, me, generation);
+        // A promise is answered even when the player was told already:
+        // it may have looked since, and one look more does no harm.
+        match promise {
+            Some(promise) => promise.send(job),
+            None if first => self.post.send(job),
+            None => {}
         }
     }
 

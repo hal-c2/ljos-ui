@@ -52,6 +52,8 @@ qt_types = { path = "../qt_types" }
 tempfile.workspace = true
 # An application that hands QML JSON (`records.rs`).
 serde_json.workspace = true
+# A player reading a stream from a server of the test's own (`media_stream.rs`).
+ljos_platform = { path = "../ljos_platform", features = ["http"] }
 # So the tests see the facade as an application with dev-qml does.
 ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 

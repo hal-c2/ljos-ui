@@ -204,7 +204,7 @@ fn load(e: &Engine, me: ObjectId) {
     }
     set_status(e, me, status::LOADING);
     let url = e.resolve_url(me, &source);
-    open::start(e, me, generation, url, Audio::of(e).format(), loaded);
+    open::start(e, me, generation, url, Audio::of(e).format(), loaded, None);
 }
 
 // `loadedChanged` is declared and never emitted: Qt 6.11 does not emit

@@ -1,6 +1,8 @@
 //! A `MediaPlayer` that plays bytes the program writes as it gets them:
 //! paced, every picture in its turn, or live, the newest at once.
 
+use std::io::{Read as _, Write as _};
+use std::net::TcpListener;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,8 +31,8 @@ Item {
 }
 "#;
 
-const MJPEG: &[u8] = include_bytes!("data/clip.mjpeg");
-const H264: &[u8] = include_bytes!("data/clip.h264");
+const MJPEG: &[u8] = include_bytes!("../../../features/multimedia/media/clip.mjpeg");
+const H264: &[u8] = include_bytes!("../../../features/multimedia/media/clip.h264");
 const MP4: &[u8] = include_bytes!("../../../features/multimedia/media/clip.mp4");
 
 struct App {
@@ -193,8 +195,10 @@ fn a_live_stream_shows_the_newest_and_never_holds_its_writer() {
     );
     app.call("play");
     app.until("the end", |a| a.player("mediaStatus") == 6.0);
-    // The newest, once, then the end clears it.
-    assert_eq!(app.read("frames").to_number(), 2.0);
+    // The newest there is when it plays, and any decoded later, then
+    // the end clears it. The H.264 decoder works on threads of its own,
+    // so how many are still to come once the first is there varies.
+    assert!(app.read("frames").to_number() >= 2.0);
     assert_eq!(app.player("position"), 0.0);
     assert_eq!(app.player("duration"), 0.0);
 }
@@ -326,4 +330,117 @@ fn h264_pictures_come_before_the_stream_ends() {
     stream.write(&H264[..1950]).unwrap();
     app.until("the first picture", |a| a.player("mediaStatus") == 2.0);
     assert!(!stream.is_closed());
+}
+
+/// The pictures of the MJPEG fixture, one by one.
+fn jpegs() -> Vec<&'static [u8]> {
+    let starts: Vec<usize> = (0..MJPEG.len() - 1)
+        .filter(|&i| MJPEG[i..i + 2] == [0xFF, 0xD8])
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(k, &s)| &MJPEG[s..starts.get(k + 1).copied().unwrap_or(MJPEG.len())])
+        .collect()
+}
+
+#[test]
+fn a_camera_on_a_web_server_plays_live_as_it_sends() {
+    // A camera of the test's own on the loopback interface: it pushes
+    // two pictures, then waits to be let go before the rest.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/camera", listener.local_addr().unwrap());
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    let camera = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0; 1024];
+        let _ = socket.read(&mut request);
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        for (k, picture) in jpegs().into_iter().enumerate() {
+            if k == 2 {
+                wait.recv().unwrap();
+            }
+            let head = format!(
+                "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+                picture.len()
+            );
+            socket.write_all(head.as_bytes()).unwrap();
+            socket.write_all(picture).unwrap();
+            socket.write_all(b"\r\n").unwrap();
+        }
+    });
+    let app = App::new();
+    Platform::of(&app.engine).set_fetcher(Arc::new(ljos_platform::HttpFetcher::new()));
+    app.engine
+        .write_by_name(app.player, "source", Value::from(url.as_str()))
+        .unwrap();
+    app.call("play");
+    assert_eq!(app.player("mediaStatus"), 1.0, "loading");
+    // Shown while the camera still holds the rest back.
+    app.until("the first pictures", |a| {
+        a.read("frames").to_number() >= 1.0
+    });
+    assert_eq!(app.read("size").to_js_string(), "64x48");
+    assert_eq!(app.player("playbackState"), 1.0);
+    assert_eq!(app.player("duration"), 0.0);
+    assert_eq!(app.player("seekable"), 0.0);
+    go.send(()).unwrap();
+    camera.join().unwrap();
+    app.until("the end", |a| a.player("mediaStatus") == 6.0);
+    assert!(app.read("frames").to_number() >= 2.0);
+    assert_eq!(app.player("position"), 0.0);
+}
+
+#[test]
+fn a_camera_let_go_is_disconnected() {
+    // A camera that never stops: once the player takes another source,
+    // its writes fail.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/camera", listener.local_addr().unwrap());
+    let camera = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0; 1024];
+        let _ = socket.read(&mut request);
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        let end = Instant::now() + Duration::from_secs(20);
+        for picture in jpegs().into_iter().cycle() {
+            assert!(Instant::now() < end, "the camera was never let go");
+            let sent = socket
+                .write_all(b"--frame\r\n\r\n")
+                .and_then(|()| socket.write_all(picture));
+            if let Err(err) = sent {
+                assert!(
+                    !matches!(
+                        err.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ),
+                    "the player kept the connection without reading it"
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+    let app = App::new();
+    Platform::of(&app.engine).set_fetcher(Arc::new(ljos_platform::HttpFetcher::new()));
+    app.engine
+        .write_by_name(app.player, "source", Value::from(url.as_str()))
+        .unwrap();
+    app.call("play");
+    app.until("a picture", |a| a.read("frames").to_number() >= 1.0);
+    app.engine
+        .write_by_name(app.player, "source", Value::from(""))
+        .unwrap();
+    camera.join().unwrap();
 }

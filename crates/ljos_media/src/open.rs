@@ -3,6 +3,8 @@
 //! its streams, duration and metadata. The answer is a platform reply,
 //! so whoever asked sees `LoadingMedia` first, as in Qt.
 
+use std::io::Read;
+
 use ljos_engine::{Engine, LogLevel, ObjectId};
 use ljos_platform::{Platform, is_remote, url_path};
 
@@ -11,6 +13,7 @@ use std::sync::Arc;
 
 use crate::meta::Entry;
 use crate::sink::Format;
+use crate::stream::{MediaStream, StreamFormat, StreamOptions};
 
 /// What opening found.
 pub(crate) struct Opened {
@@ -69,9 +72,16 @@ impl OpenError {
 /// function, so the thread that opens carries nothing of the Engine's.
 pub(crate) type Done = fn(&Engine, ObjectId, u64, Result<Opened, OpenError>);
 
+/// The source being opened is a stream of pictures, with no container:
+/// `(engine, object, generation, format, options)`, answered by the
+/// stream to write it into, or nothing when it is no longer wanted.
+pub(crate) type Streams =
+    fn(&Engine, ObjectId, u64, StreamFormat, StreamOptions) -> Option<MediaStream>;
+
 /// Opens `url` (already resolved) for `me`, answering through `done` on
 /// the Engine thread. `samples` asks for the sound decoded whole, for a
-/// device of that format.
+/// device of that format. A remote source that `streams` can take is
+/// read into it as it arrives, instead of whole before it plays.
 pub(crate) fn start(
     e: &Engine,
     me: ObjectId,
@@ -79,6 +89,7 @@ pub(crate) fn start(
     url: String,
     samples: Option<Format>,
     done: Done,
+    streams: Option<Streams>,
 ) {
     let platform = Platform::of(e);
     if let Some(bytes) = platform.resource(&url) {
@@ -90,12 +101,58 @@ pub(crate) fn start(
     }
     if is_remote(&url) {
         let name = name_of(&url);
-        platform.fetch(&url, move |e, got| match got {
-            Ok(bytes) => spawn(e, me, generation, done, move || {
-                from_bytes(&name, bytes, samples)
-            }),
-            Err(err) => done(e, me, generation, Err(OpenError::Network(err.to_string()))),
-        });
+        let Some(streams) = streams else {
+            platform.fetch(&url, move |e, got| match got {
+                Ok(bytes) => spawn(e, me, generation, done, move || {
+                    from_bytes(&name, bytes, samples)
+                }),
+                Err(err) => done(e, me, generation, Err(OpenError::Network(err.to_string()))),
+            });
+            return;
+        };
+        let fetcher = platform.fetcher();
+        let reply = platform.expect();
+        let spawned = std::thread::Builder::new()
+            .name("ljos-media-fetch".to_owned())
+            .spawn(move || {
+                let mut incoming = match fetcher.stream(&url) {
+                    Ok(incoming) => incoming,
+                    Err(err) => {
+                        let err = OpenError::Network(err.to_string());
+                        reply.send(move |e| done(e, me, generation, Err(err)));
+                        return;
+                    }
+                };
+                let mut head = Vec::new();
+                let read = fill(&mut *incoming.body, &mut head, SNIFF);
+                let Some((format, options)) = read
+                    .is_ok()
+                    .then(|| stream_kind(incoming.content_type.as_deref(), &head))
+                    .flatten()
+                else {
+                    let outcome = read
+                        .and_then(|()| incoming.body.read_to_end(&mut head).map(drop))
+                        .map_err(|err| OpenError::Network(err.to_string()))
+                        .and_then(|()| from_bytes(&name, head, samples));
+                    reply.send(move |e| done(e, me, generation, outcome));
+                    return;
+                };
+                let (tx, rx) = std::sync::mpsc::channel();
+                reply.send(move |e| {
+                    let _ = tx.send(streams(e, me, generation, format, options));
+                });
+                if let Ok(Some(stream)) = rx.recv() {
+                    pass_on(&mut *incoming.body, head, &stream);
+                }
+            });
+        if let Err(err) = spawned {
+            e.log(
+                LogLevel::Warning,
+                crate::CATEGORY,
+                format!("no thread to fetch media with: {err}"),
+            );
+            done(e, me, generation, Err(OpenError::Format(err.to_string())));
+        }
         return;
     }
     let real = url_path(&url).map(|p| platform.env().real(&p));
@@ -103,6 +160,77 @@ pub(crate) fn start(
         Some(path) => from_path(&path, samples),
         None => Err(OpenError::Resource),
     });
+}
+
+/// Bytes read before a remote source is known by them.
+const SNIFF: usize = 8;
+
+/// What is read from a remote stream at a time.
+const PIECE: usize = 64 * 1024;
+
+/// Reads into `into` until it has `want` bytes or the body ends.
+fn fill(body: &mut dyn Read, into: &mut Vec<u8>, want: usize) -> std::io::Result<()> {
+    let mut piece = [0; SNIFF];
+    while into.len() < want {
+        match body.read(&mut piece[..want - into.len()]) {
+            Ok(0) => break,
+            Ok(n) => into.extend_from_slice(&piece[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+/// Whether a remote body is a stream of pictures with no container, and
+/// how it is played: by what the server calls it, else by how it
+/// begins. A server that pushes picture after picture
+/// (`multipart/x-mixed-replace`, a camera's) is played live; a stream
+/// served as a file is paced, every picture in its turn. Anything else
+/// is a container, read whole.
+fn stream_kind(content_type: Option<&str>, head: &[u8]) -> Option<(StreamFormat, StreamOptions)> {
+    let paced = StreamOptions::default();
+    match content_type {
+        Some("multipart/x-mixed-replace") => {
+            return Some((
+                StreamFormat::Mjpeg,
+                StreamOptions {
+                    live: true,
+                    frame_rate: None,
+                },
+            ));
+        }
+        Some("video/h264") => return Some((StreamFormat::H264AnnexB, paced)),
+        _ => {}
+    }
+    if head.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some((StreamFormat::Mjpeg, paced));
+    }
+    // A start code, and not an MP4 box with a 64-bit size.
+    let start_code = head.starts_with(&[0, 0, 1]) || head.starts_with(&[0, 0, 0, 1]);
+    (start_code && head.get(4..8) != Some(b"ftyp")).then_some((StreamFormat::H264AnnexB, paced))
+}
+
+/// Writes what was read and the rest of the body into `stream`, until
+/// either ends. A body cut short ends the stream where it was cut.
+fn pass_on(body: &mut dyn Read, head: Vec<u8>, stream: &MediaStream) {
+    if stream.write(&head).is_err() {
+        return;
+    }
+    let mut piece = vec![0; PIECE];
+    loop {
+        match body.read(&mut piece) {
+            Ok(0) => break,
+            Ok(n) => {
+                if stream.write(&piece[..n]).is_err() {
+                    return;
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    stream.finish();
 }
 
 fn name_of(url: &str) -> String {

@@ -39,7 +39,8 @@
 //!   own or one of the program's. A program hands in frames of its own,
 //!   from any thread, through a [`VideoFrameInput`].
 //! - **Streams**: a player plays bytes a program writes as they come
-//!   ([`MediaStream`]), paced or live.
+//!   ([`MediaStream`]), paced or live, and MJPEG or H.264 from a web
+//!   server as it arrives.
 //!
 //! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
 //! WindowCapture, AudioInput and subtitles are not built.
