@@ -433,7 +433,7 @@ impl Shared {
         let Some((index, model, before)) = found else {
             return;
         };
-        if let Some(data) = give_row(engine, &model, index, root, ctx) {
+        if let Some(data) = give_row(engine, &model, index, root, ctx, false) {
             let mut st = self.state.borrow_mut();
             if let Some(i) = st.position(id) {
                 st.rows[i].data = Some(data);
@@ -653,14 +653,16 @@ fn give_row(
     index: usize,
     root: ObjectId,
     ctx: ContextId,
+    roles_in_context: bool,
 ) -> Option<RowObject> {
     let shape = row_shape(RowKind::Delegate, &model.role_names());
     // Owned by the delegate: it lives exactly as long.
     let data = engine.make_row(model, &shape, index, Some(root)).ok()?;
     let required = required_properties(engine, root);
-    if required.is_empty() {
+    if required.is_empty() || roles_in_context {
         engine.set_context_object(ctx, Some(data.id));
-    } else {
+    }
+    if !required.is_empty() {
         let mut members = None;
         for (p, name) in required {
             let row = data.id;
@@ -870,6 +872,13 @@ pub trait ViewHost {
     /// that object stays alive.
     fn destroying(&self, engine: &Engine, object: ObjectId) {
         let _ = (engine, object);
+    }
+
+    /// Whether a delegate with required properties still sees its row's
+    /// roles, `model` and `index` by name, as a table's cells do in Qt.
+    /// A list's delegate that declares one sees only what it declares.
+    fn roles_in_context(&self) -> bool {
+        false
     }
 }
 
@@ -1368,7 +1377,14 @@ impl ViewShared {
         let Some((index, model)) = found else {
             return;
         };
-        let data = give_row(engine, &model, index, root, ctx);
+        let data = give_row(
+            engine,
+            &model,
+            index,
+            root,
+            ctx,
+            self.host.roles_in_context(),
+        );
         {
             let mut st = self.state.borrow_mut();
             if let Some(h) = st.live.iter_mut().find(|h| h.id == id) {

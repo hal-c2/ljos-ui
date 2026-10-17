@@ -75,7 +75,7 @@ pub use container::Container;
 pub use containers::{Frame, GroupBox, Page, Pane, ToolBar};
 pub use control::Control;
 pub use delay_button::{DelayButton, RoundButton};
-pub use delegates::{CheckDelegate, RadioDelegate, SwitchDelegate};
+pub use delegates::{CheckDelegate, RadioDelegate, SwitchDelegate, TreeViewDelegate};
 pub use dial::Dial;
 pub use dialog::{Dialog, DialogButtonBox, DialogButtonBoxAttached};
 pub use group::{ButtonGroup, ButtonGroupAttached};

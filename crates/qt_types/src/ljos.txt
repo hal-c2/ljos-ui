@@ -71,6 +71,57 @@ module Ljos
 module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
 	DelegateChooser QtQml.Models.DelegateChooser
+	TableModelColumn Qt.labs.qmlmodels.TableModelColumn
+	TreeModel Qt.labs.qmlmodels.TreeModel
+	type Qt.labs.qmlmodels.TableModelColumn TableModelColumn
+		prototype QtQml.QtObject named
+		prop display QtQml.var named
+		prop decoration QtQml.var named
+		prop edit QtQml.var named
+		prop toolTip QtQml.var named
+		prop statusTip QtQml.var named
+		prop whatsThis QtQml.var named
+		prop font QtQml.var named
+		prop textAlignment QtQml.var named
+		prop background QtQml.var named
+		prop foreground QtQml.var named
+		prop checkState QtQml.var named
+		prop accessibleText QtQml.var named
+		prop accessibleDescription QtQml.var named
+		prop sizeHint QtQml.var named
+		signal displayChanged
+		signal decorationChanged
+		signal editChanged
+		signal toolTipChanged
+		signal statusTipChanged
+		signal whatsThisChanged
+		signal fontChanged
+		signal textAlignmentChanged
+		signal backgroundChanged
+		signal foregroundChanged
+		signal checkStateChanged
+		signal accessibleTextChanged
+		signal accessibleDescriptionChanged
+		signal sizeHintChanged
+	type Qt.labs.qmlmodels.TreeModel TreeModel
+		prototype QtQml.QtObject named
+		default columns
+		prop columns QtQml.var named list readonly
+		prop columnCount QtQml.int named readonly
+		prop rows QtQml.var named
+		signal columnCountChanged
+		signal rowsChanged
+		method index
+		method rowCount
+		method hasChildren
+		method parent
+		method data
+		method setData
+		method getRow
+		method setRow
+		method appendRow
+		method removeRow
+		method clear
 
 module Qt.labs.synchronizer
 	Synchronizer Qt.labs.synchronizer.Synchronizer
@@ -889,6 +940,7 @@ module QtQuick
 	StateChangeScript QtQuick.StateChangeScript
 	StateGroup QtQuick.StateGroup
 	SystemPalette QtQuick.SystemPalette
+	TableView QtQuick.TableView
 	TapHandler QtQuick.TapHandler
 	Text QtQuick.Text
 	TextDocument QtQuick.TextDocument
@@ -898,6 +950,7 @@ module QtQuick
 	TextSelection QtQuick.TextSelection
 	Transition QtQuick.Transition
 	Translate QtQuick.Translate
+	TreeView QtQuick.TreeView
 	ViewSection QtQuick.ViewSection
 	ViewTransition QtQuick.ViewTransition
 	WheelEvent QtQuick.WheelEvent
@@ -2386,6 +2439,84 @@ module QtQuick
 		signal placeholderTextChanged
 		signal accentChanged
 		signal paletteChanged
+	type QtQuick.TableView TableView
+		prototype QtQuick.Flickable named
+		is uncreatable
+		enum SelectionBehavior SelectionDisabled=0 SelectCells=1 SelectRows=2 SelectColumns=3
+		enum SelectionMode SingleSelection=0 ContiguousSelection=1 ExtendedSelection=2
+		enum EditTrigger NoEditTriggers=0 SingleTapped=1 DoubleTapped=2 SelectedTapped=4 EditKeyPressed=8 AnyKeyPressed=16
+		flags EditTriggers NoEditTriggers=0 SingleTapped=1 DoubleTapped=2 SelectedTapped=4 EditKeyPressed=8 AnyKeyPressed=16
+		prop rows QtQml.int named readonly
+		prop columns QtQml.int named readonly
+		prop rowSpacing QtQml.real named
+		prop columnSpacing QtQml.real named
+		prop rowHeightProvider QtQml.var named
+		prop columnWidthProvider QtQml.var named
+		prop model QtQml.var named
+		prop delegate QtQml.Component named pointer
+		prop reuseItems QtQml.bool named
+		prop syncView QtQuick.TableView named pointer
+		prop syncDirection Qt::Orientations
+		prop leftColumn QtQml.int named readonly
+		prop rightColumn QtQml.int named readonly
+		prop topRow QtQml.int named readonly
+		prop bottomRow QtQml.int named readonly
+		prop selectionModel QtQml.Models.ItemSelectionModel named pointer
+		prop animate QtQml.bool named
+		prop keyNavigationEnabled QtQml.bool named
+		prop pointerNavigationEnabled QtQml.bool named
+		prop currentRow QtQml.int named readonly
+		prop currentColumn QtQml.int named readonly
+		prop alternatingRows QtQml.bool named
+		prop selectionBehavior SelectionBehavior
+		prop resizableColumns QtQml.bool named
+		prop resizableRows QtQml.bool named
+		prop editTriggers EditTriggers
+		prop selectionMode SelectionMode
+		signal rowsChanged
+		signal columnsChanged
+		signal rowSpacingChanged
+		signal columnSpacingChanged
+		signal rowHeightProviderChanged
+		signal columnWidthProviderChanged
+		signal modelChanged
+		signal delegateChanged
+		signal reuseItemsChanged
+		signal syncViewChanged
+		signal syncDirectionChanged
+		signal leftColumnChanged
+		signal rightColumnChanged
+		signal topRowChanged
+		signal bottomRowChanged
+		signal selectionModelChanged
+		signal animateChanged
+		signal keyNavigationEnabledChanged
+		signal pointerNavigationEnabledChanged
+		signal currentRowChanged
+		signal currentColumnChanged
+		signal alternatingRowsChanged
+		signal selectionBehaviorChanged
+		signal resizableColumnsChanged
+		signal resizableRowsChanged
+		signal editTriggersChanged
+		signal selectionModeChanged
+		signal layoutChanged
+		method forceLayout
+		method itemAtCell
+		method itemAtIndex
+		method cellAtPosition
+		method index
+		method modelIndex
+		method cellAtIndex
+		method rowAtIndex
+		method columnAtIndex
+		method isRowLoaded
+		method isColumnLoaded
+		method columnWidth
+		method rowHeight
+		method positionViewAtRow
+		method positionViewAtCell
+		method positionViewAtIndex
 	type QtQuick.TapHandler TapHandler
 		prototype QtQml.QtObject named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
@@ -2619,6 +2750,20 @@ module QtQuick
 		prop y QtQml.real named
 		signal xChanged
 		signal yChanged
+	type QtQuick.TreeView TreeView
+		prototype QtQuick.TableView named
+		prop rootIndex QtQml.var named reset
+		signal rootIndexChanged
+		signal expanded row depth
+		signal collapsed row recursively
+		method depth
+		method isExpanded
+		method expand
+		method collapse
+		method toggleExpanded
+		method expandRecursively
+		method collapseRecursively
+		method expandToIndex
 	type QtQuick.ViewSection ViewSection
 		is uncreatable
 		enum SectionCriteria FullString=0 FirstCharacter=1
@@ -3480,6 +3625,7 @@ module QtQuick.Controls
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick.Controls.Calendar Calendar
@@ -3557,6 +3703,7 @@ module QtQuick.Controls.Basic
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Basic/ApplicationWindow.qml ApplicationWindow
@@ -3661,6 +3808,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.ToolSeparator named
 	type QtQuick/Controls/Basic/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named
+	type QtQuick/Controls/Basic/TreeViewDelegate.qml TreeViewDelegate
+		prototype QtQuick.Templates.TreeViewDelegate named
 	type QtQuick/Controls/Basic/Tumbler.qml Tumbler
 		prototype QtQuick.Templates.Tumbler named
 	type QtQuick/Controls/Basic/WeekNumberColumn.qml WeekNumberColumn
@@ -3728,6 +3877,7 @@ module QtQuick.Controls.Fusion
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Fusion/Button.qml Button
@@ -3814,6 +3964,7 @@ module QtQuick.Controls.Material
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
 	type QtQuick/Controls/Material/ApplicationWindow.qml ApplicationWindow
@@ -3961,6 +4112,7 @@ module QtQuick.Controls.Universal
 	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	Universal QtQuick.Controls.Universal.Universal
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
@@ -4704,6 +4856,7 @@ module QtQuick.Templates
 	ToolButton QtQuick.Templates.ToolButton
 	ToolSeparator QtQuick.Templates.ToolSeparator
 	ToolTip QtQuick.Templates.ToolTip
+	TreeViewDelegate QtQuick.Templates.TreeViewDelegate
 	Tumbler QtQuick.Templates.Tumbler
 	type QtQuick.Templates.AbstractButton AbstractButton
 		prototype QtQuick.Templates.Control named
@@ -5829,6 +5982,30 @@ module QtQuick.Templates
 		signal timeoutChanged
 		method show
 		method hide
+	type QtQuick.Templates.TreeViewDelegate TreeViewDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+		prop indentation QtQml.real named
+		prop leftMargin QtQml.real named
+		prop rightMargin QtQml.real named
+		prop treeView QtQuick.TreeView named pointer
+		prop isTreeNode QtQml.bool named
+		prop hasChildren QtQml.bool named
+		prop expanded QtQml.bool named
+		prop depth QtQml.int named
+		prop current QtQml.bool named
+		prop selected QtQml.bool named
+		prop editing QtQml.bool named
+		signal indentationChanged
+		signal leftMarginChanged
+		signal rightMarginChanged
+		signal treeViewChanged
+		signal isTreeNodeChanged
+		signal hasChildrenChanged
+		signal expandedChanged
+		signal depthChanged
+		signal currentChanged
+		signal selectedChanged
+		signal editingChanged
 	type QtQuick.Templates.Tumbler Tumbler
 		prototype QtQuick.Templates.Control named
 		attached QtQuick.Templates.TumblerAttached

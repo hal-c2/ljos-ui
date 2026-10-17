@@ -203,3 +203,45 @@ impl SwitchDelegate {
         })
     }
 }
+
+// ------------------------------------------------------ TreeViewDelegate
+
+/// `TreeViewDelegate`: the stock delegate of a `TreeView`. The view
+/// writes where the delegate's row is in the tree (`depth`, `expanded`,
+/// `hasChildren`, `isTreeNode`) and whether its cell is current or
+/// selected; the style moves the text right by `depth` levels of
+/// `indentation`, after an indicator that expands and collapses the row.
+/// Documentation: doc.qt.io/qt-6/qml-qtquick-controls-treeviewdelegate.html;
+/// pinned by `features/controls/tree-view-delegate.feature`.
+///
+/// The properties the view gives are required in Qt; here they are
+/// plain properties the view writes before the delegate's bindings run.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick.Templates", name = "TreeViewDelegate", extends = ItemDelegate)]
+pub struct TreeViewDelegate {
+    #[qml(base)]
+    pub row: ItemDelegate,
+    /// How far right each level of depth moves the row.
+    #[qml(notify)]
+    pub indentation: f64,
+    #[qml(notify)]
+    pub left_margin: f64,
+    #[qml(notify)]
+    pub right_margin: f64,
+    #[qml(notify, rename = "treeView", object = "TreeView")]
+    pub tree_view: Option<ObjectId>,
+    #[qml(notify)]
+    pub is_tree_node: bool,
+    #[qml(notify)]
+    pub has_children: bool,
+    #[qml(notify)]
+    pub expanded: bool,
+    #[qml(notify)]
+    pub depth: i32,
+    #[qml(notify)]
+    pub current: bool,
+    #[qml(notify)]
+    pub selected: bool,
+    #[qml(notify)]
+    pub editing: bool,
+}

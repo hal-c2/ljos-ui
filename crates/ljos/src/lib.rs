@@ -67,17 +67,18 @@
 /// What a native type is written with: the Engine and object model, the
 /// value types, the derive and its `qml_impl` and `qml_singleton`
 /// companions (with the [`Version`](prelude::Version) a singleton is
-/// registered under), list models for Rust-owned rows, the `Timer` a
+/// registered under), list and tree models for Rust-owned rows, the `Timer` a
 /// host may run from Rust, and the platform
 /// services (fetch, settings, dialogs, opening a URL) a type may ask the
 /// host for.
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_engine::{
-        Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, LogEntry, LogLevel,
-        ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList, QmlListModel, QmlObject,
-        QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, Url, Value, Version,
-        list_model, qml_impl, qml_singleton,
+        Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, ItemTree, LogEntry,
+        LogLevel, ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList, QmlListModel,
+        QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, TreeChange,
+        TreeListener, TreeListeners, Url, Value, Version, list_model, qml_impl, qml_singleton,
+        tree_model,
     };
     pub use ljos_platform::{
         FetchError, Fetcher, Method, OpenUrlService, Platform, RecordedUrls, Request, Response,

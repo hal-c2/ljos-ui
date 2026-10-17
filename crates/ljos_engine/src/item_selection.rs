@@ -9,6 +9,10 @@
 //! whose `parent` is another index. Two indexes of one item are equal
 //! in what they hold, not as objects: compare `row` and `column`.
 //!
+//! In a tree model ([`crate::ItemTree`]) the rows of each level are
+//! known, so whole rows and columns are selected and read at every
+//! level; in other models only at the top.
+//!
 //! Not there: selections of ranges (`select(selection, command)`),
 //! `Current`'s separate current selection (it selects as `Select`
 //! does), and following the model: rows inserted into or removed from
@@ -267,11 +271,23 @@ fn model_of(cx: &Cx) -> Option<ObjectId> {
 /// The rows and columns of the level `parent` is the parent of, when the
 /// model can say; a list has one column.
 fn extent(cx: &Cx, parent: &[(i32, i32)]) -> Option<(i32, i32)> {
+    let model = cx.engine.object_model(model_of(cx)?)?;
+    let count = |n: usize| i32::try_from(n).unwrap_or(i32::MAX);
+    if let Some(tree) = model.tree() {
+        // A tree's rows hang under the first column of their parent.
+        let mut path = Vec::with_capacity(parent.len());
+        for &(row, column) in parent {
+            if column != 0 {
+                return Some((0, 0));
+            }
+            path.push(usize::try_from(row).ok()?);
+        }
+        return Some((count(tree.row_count(&path)), count(tree.column_count())));
+    }
     if !parent.is_empty() {
         return None;
     }
-    let rows = cx.engine.object_model(model_of(cx)?)?.row_count();
-    Some((i32::try_from(rows).unwrap_or(i32::MAX), 1))
+    Some((count(model.row_count()), 1))
 }
 
 /// Where `index` is in this model; `None` for an index that is not valid,

@@ -23,6 +23,7 @@ mod pass;
 pub mod path_view;
 mod position;
 pub(crate) mod state;
+pub mod table;
 pub(crate) mod view_transition;
 
 use std::cell::RefCell;
@@ -45,6 +46,7 @@ pub use models::{
 pub use path_view::{PathView, PathViewAttached};
 pub(crate) use state::ViewState;
 pub use state::position_mode;
+pub use table::{TableView, TreeView};
 pub use view_transition::{ViewTransition, ViewTransitionAttached};
 
 /// The log category of what a view could not do.
@@ -751,6 +753,7 @@ fn tell_attached(e: &Engine, item: ObjectId, att: ObjectId) {
 pub(crate) fn register(engine: &Engine) {
     models::register(engine);
     path_view::register(engine);
+    table::register(engine);
     for meta in [
         ListView::static_meta(),
         GridView::static_meta(),

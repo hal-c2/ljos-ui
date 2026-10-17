@@ -153,6 +153,12 @@ pub trait ItemModel {
     fn delegate_gone(&self, engine: &Engine, object: ObjectId) {
         let _ = (engine, object);
     }
+
+    /// The whole tree, for a model of a tree's top level
+    /// ([`crate::ItemTree`]): what a `TreeView` shows.
+    fn tree(&self) -> Option<Rc<dyn crate::ItemTree>> {
+        None
+    }
 }
 
 /// The subscription list of a model that changes.
@@ -943,6 +949,9 @@ impl Engine {
             return Some(state);
         }
         if let Some(state) = self.sort_filter_state(obj) {
+            return Some(state);
+        }
+        if let Some(state) = self.tree_model_state(obj) {
             return Some(state);
         }
         let store = self.inner.store.borrow();

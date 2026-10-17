@@ -90,6 +90,8 @@ mod signal;
 mod slow;
 mod sort_filter;
 mod synchronizer;
+mod tree;
+mod tree_model;
 mod types;
 mod url_global;
 mod value;
@@ -150,6 +152,8 @@ pub use slow::SlowCall;
 pub use sort_filter::{
     FilterBase, RoleFilter, RoleSorter, SortFilterProxyModel, SorterBase, StringSorter, ValueFilter,
 };
+pub use tree::{ItemTree, TreeChange, TreeListener, TreeListeners, tree_model};
+pub use tree_model::{TableModelColumn, TreeModel};
 pub use types::{ConvertError, QmlValue, TypeTag, Url};
 pub use value::{Color, EnumValue, Font, JsHandle, Point, Rect, Size, Value};
 pub use value_types::{

@@ -8,7 +8,7 @@ use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Version};
 use crate::action_group::ActionGroup;
 use crate::bars::{BusyIndicator, ProgressBar, ToolSeparator};
 use crate::delay_button::{DelayButton, RoundButton};
-use crate::delegates::{CheckDelegate, RadioDelegate, SwitchDelegate};
+use crate::delegates::{CheckDelegate, RadioDelegate, SwitchDelegate, TreeViewDelegate};
 use crate::dial::Dial;
 use crate::page_indicator::PageIndicator;
 use crate::slider::{RangeSlider, Slider};
@@ -30,6 +30,7 @@ pub(crate) fn register(engine: &Engine) {
         CheckDelegate::static_meta(),
         RadioDelegate::static_meta(),
         SwitchDelegate::static_meta(),
+        TreeViewDelegate::static_meta(),
     ] {
         engine.register_type(
             "QtQuick.Templates",
