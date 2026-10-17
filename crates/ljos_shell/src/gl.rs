@@ -281,13 +281,11 @@ impl GlPainter {
         let now = match change {
             _ if replaced => None,
             Change::None => return Frame::Nothing,
-            Change::Area(areas) => {
-                let mut damage = Damage::default();
-                for area in areas {
-                    damage.add(Px::around(area, pixels_per_point, gw.px));
-                }
-                Some(damage)
-            }
+            Change::Area(areas) => Some(Damage::of(
+                areas
+                    .into_iter()
+                    .map(|area| Px::around(area, pixels_per_point, gw.px)),
+            )),
             Change::All => None,
         };
         // Asked before the context is current with the surface: EGL
@@ -298,13 +296,14 @@ impl GlPainter {
         if age == 0 || age > gw.drawn.len() {
             return Frame::Whole;
         }
-        let mut damage = Damage::default();
-        for drawn in gw.drawn.iter().take(age) {
-            match drawn {
-                Some(d) => d.0.iter().for_each(|px| damage.add(*px)),
+        let mut drawn = Vec::new();
+        for d in gw.drawn.iter().take(age) {
+            match d {
+                Some(d) => drawn.extend_from_slice(&d.0),
                 None => return Frame::Whole,
             }
         }
+        let damage = Damage::of(drawn);
         if damage.0.is_empty() {
             Frame::Nothing
         } else {
@@ -495,20 +494,75 @@ impl Px {
 struct Damage(Vec<Px>);
 
 impl Damage {
-    fn add(&mut self, px: Px) {
-        if px.is_empty() {
-            return;
+    /// The areas that cover `areas`: those that overlap become one around
+    /// them, which may overlap more. Swept top to bottom, so an area is
+    /// only compared with those that start above its bottom edge, not with
+    /// every other: a frame of two hundred moving bars compares each with
+    /// a few, not with two hundred.
+    fn of(areas: impl IntoIterator<Item = Px>) -> Damage {
+        let mut v: Vec<Px> = areas.into_iter().filter(|px| !px.is_empty()).collect();
+        let mut root: Vec<usize> = Vec::new();
+        loop {
+            v.sort_unstable_by_key(|px| px.0[1]);
+            root.clear();
+            root.extend(0..v.len());
+            let mut joined = false;
+            for i in 0..v.len() {
+                for j in i + 1..v.len() {
+                    count_compared();
+                    if v[j].0[1] >= v[i].0[3] {
+                        break;
+                    }
+                    if v[i].overlaps(v[j]) {
+                        let (a, b) = (find(&mut root, i), find(&mut root, j));
+                        if a != b {
+                            root[b] = a;
+                        }
+                        joined = true;
+                    }
+                }
+            }
+            if !joined {
+                break;
+            }
+            // Each group becomes the area around it, in its first member's
+            // place.
+            for i in 0..v.len() {
+                let r = find(&mut root, i);
+                if r != i {
+                    v[r] = v[r].union(v[i]);
+                }
+            }
+            let mut i = 0;
+            v.retain(|_| {
+                i += 1;
+                root[i - 1] == i - 1
+            });
         }
-        let mut px = px;
-        // What it overlaps becomes part of it; that may overlap more.
-        while let Some(i) = self.0.iter().position(|d| d.overlaps(px)) {
-            px = px.union(self.0.swap_remove(i));
+        if v.len() > AREAS {
+            let all = v.drain(..).reduce(Px::union);
+            v.extend(all);
         }
-        if self.0.len() == AREAS {
-            px = self.0.drain(..).fold(px, Px::union);
-        }
-        self.0.push(px);
+        Damage(v)
     }
+}
+
+fn find(root: &mut [usize], mut i: usize) -> usize {
+    while root[i] != i {
+        root[i] = root[root[i]];
+        i = root[i];
+    }
+    i
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMPARED: Cell<usize> = const { Cell::new(0) };
+}
+
+fn count_compared() {
+    #[cfg(test)]
+    COMPARED.set(COMPARED.get() + 1);
 }
 
 /// Turns each opaque rectangle with square corners and no border that
@@ -604,13 +658,14 @@ mod tests {
 
     #[test]
     fn areas_apart_stay_apart_and_overlapping_ones_join() {
-        let mut damage = Damage::default();
-        damage.add(Px([0, 0, 10, 10]));
-        damage.add(Px([100, 0, 110, 10]));
-        damage.add(Px([10, 0, 20, 10]));
+        let damage = Damage::of([
+            Px([0, 0, 10, 10]),
+            Px([100, 0, 110, 10]),
+            Px([10, 0, 20, 10]),
+        ]);
         assert_eq!(damage.0.len(), 3, "areas that only touch are not joined");
         // Overlaps the first and, once joined, reaches the third.
-        damage.add(Px([5, 5, 12, 12]));
+        let damage = Damage::of(damage.0.into_iter().chain([Px([5, 5, 12, 12])]));
         assert!(disjoint(&damage));
         assert_eq!(damage.0.len(), 2);
         assert!(damage.0.contains(&Px([0, 0, 20, 12])));
@@ -618,13 +673,27 @@ mod tests {
     }
 
     #[test]
+    fn an_area_made_by_joining_takes_in_what_it_then_overlaps() {
+        // The first two join into [0, 0, 30, 30], which overlaps the third
+        // though neither did.
+        let damage = Damage::of([
+            Px([0, 0, 10, 30]),
+            Px([0, 20, 30, 30]),
+            Px([20, 0, 30, 10]),
+            Px([50, 50, 60, 60]),
+        ]);
+        assert!(disjoint(&damage));
+        assert_eq!(damage.0.len(), 2);
+        assert!(damage.0.contains(&Px([0, 0, 30, 30])));
+    }
+
+    #[test]
     fn many_small_areas_each_draw_only_themselves() {
         // Two hundred bars across a window, each in a row of its own.
-        let mut damage = Damage::default();
-        for row in 0..200 {
+        let damage = Damage::of((0..200).map(|row| {
             let x = row * 37 % 776;
-            damage.add(Px([x, row * 6, x + 24, row * 6 + 6]));
-        }
+            Px([x, row * 6, x + 24, row * 6 + 6])
+        }));
         assert_eq!(damage.0.len(), 200);
         assert!(disjoint(&damage));
         let drawn: u32 = damage
@@ -636,11 +705,26 @@ mod tests {
     }
 
     #[test]
+    fn moving_bars_are_each_compared_with_a_few_areas_not_all() {
+        // Two hundred bars, each where it was and where it is, over the
+        // two frames a buffer is behind: 800 areas, which compared each
+        // with each other were 320 000 comparisons.
+        COMPARED.set(0);
+        let areas = (0..2u32).flat_map(|frame| {
+            (0..200u32).flat_map(move |row| {
+                let x = (row * 37 + frame * 4) % 776;
+                [x, x + 2].map(|x| Px([x, row * 3, x + 12, row * 3 + 3]))
+            })
+        });
+        let damage = Damage::of(areas);
+        assert_eq!(damage.0.len(), 200);
+        assert!(disjoint(&damage));
+        assert!(COMPARED.get() < 800 * 8, "{} comparisons", COMPARED.get());
+    }
+
+    #[test]
     fn more_areas_than_the_cap_are_drawn_as_one_around_them() {
-        let mut damage = Damage::default();
-        for i in 0..AREAS as u32 + 1 {
-            damage.add(Px([i * 3, 0, i * 3 + 2, 2]));
-        }
+        let damage = Damage::of((0..AREAS as u32 + 1).map(|i| Px([i * 3, 0, i * 3 + 2, 2])));
         assert_eq!(damage.0, [Px([0, 0, AREAS as u32 * 3 + 2, 2])]);
     }
 

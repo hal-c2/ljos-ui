@@ -158,17 +158,37 @@ fn extent(shape: &ClippedShape, pixels_per_point: f32) -> Rect {
 /// not at all if it reaches none. Each area gets its shapes in their
 /// order. A shape wholly inside one area keeps its own clip rectangle, so
 /// shapes that shared one are still drawn together.
+///
+/// A shape is compared only with the areas whose tops lie within the
+/// tallest area's height above it and its bottom, found by a binary search
+/// over the areas by their tops: two hundred shapes over two hundred
+/// areas are not forty thousand comparisons.
 pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, areas: &[Rect], pixels_per_point: f32) {
+    let mut by_top: Vec<usize> = (0..areas.len()).collect();
+    by_top.sort_by(|&a, &b| areas[a].min.y.total_cmp(&areas[b].min.y));
+    let tallest = areas.iter().map(Rect::height).fold(0.0, f32::max);
+    let mut near = Vec::new();
     let all = std::mem::take(shapes);
     for s in all {
         let reach = extent(&s, pixels_per_point);
-        if areas.iter().any(|area| area.contains_rect(reach)) {
+        near.clear();
+        if reach.min.y <= reach.max.y {
+            let from = by_top.partition_point(|&a| areas[a].min.y < reach.min.y - tallest);
+            let to = by_top.partition_point(|&a| areas[a].min.y <= reach.max.y);
+            near.extend_from_slice(&by_top[from..to.max(from)]);
+            // In the order the areas were given.
+            near.sort_unstable();
+        } else {
+            near.extend(0..areas.len());
+        }
+        count_compared(near.len());
+        let near = near.iter().map(|&a| areas[a]);
+        if near.clone().any(|area| area.contains_rect(reach)) {
             shapes.push(s);
             continue;
         }
-        let mut inside = areas
-            .iter()
-            .map(|area| s.clip_rect.intersect(*area))
+        let mut inside = near
+            .map(|area| s.clip_rect.intersect(area))
             .filter(|clip| clip.is_positive() && reach.intersect(*clip).is_positive())
             .peekable();
         while let Some(clip_rect) = inside.next() {
@@ -186,6 +206,16 @@ pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, areas: &[Rect], pixels_per
             });
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static COMPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_compared(_n: usize) {
+    #[cfg(test)]
+    COMPARED.set(COMPARED.get() + _n);
 }
 
 fn same_clipped(a: &ClippedShape, b: &ClippedShape) -> bool {
@@ -377,6 +407,33 @@ mod tests {
         clip_to(&mut shapes, &[area], 1.0);
         let clips: Vec<Rect> = shapes.iter().map(|s| s.clip_rect).collect();
         assert_eq!(clips, [Rect::EVERYTHING; 2]);
+    }
+
+    #[test]
+    fn each_shape_is_compared_only_with_the_areas_near_it() {
+        // Two hundred bars, one a row, each with the area it moved in.
+        let bar = |row: f32| ClippedShape {
+            clip_rect: Rect::EVERYTHING,
+            shape: Shape::Rect(RectShape::filled(
+                Rect::from_min_size(Pos2::new(row * 3.0 % 700.0, row * 6.0), vec2(12.0, 3.0)),
+                CornerRadius::ZERO,
+                Color32::RED,
+            )),
+        };
+        let mut shapes: Vec<_> = (0..200).map(|r| bar(r as f32)).collect();
+        let areas: Vec<_> = shapes
+            .iter()
+            .map(|s| extent(s, 1.0).expand2(vec2(2.0, 0.0)))
+            .collect();
+        COMPARED.set(0);
+        clip_to(&mut shapes, &areas, 1.0);
+        assert_eq!(shapes.len(), 200, "each in its own area");
+        assert!(shapes.iter().all(|s| s.clip_rect == Rect::EVERYTHING));
+        assert!(
+            COMPARED.get() <= 200 * 3,
+            "{} comparisons, not 40 000",
+            COMPARED.get()
+        );
     }
 
     #[test]
