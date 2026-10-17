@@ -1055,7 +1055,8 @@ impl QuickScene {
         // Root-scoped: an effect scoped to `obj` dies with it silently, and
         // this one has to see the death to drop the render node.
         effects.push(engine.effect(move |e| structure_effect(e, obj, &shared))?);
-        effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, &inherit))?);
+        let lifted = Rc::clone(&self.shared);
+        effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, &inherit, &lifted))?);
         effects.push(engine.effect_in(obj, move |e| anchors::run(e, obj, &anchors))?);
         let shared = Rc::clone(&self.shared);
         effects.push(engine.effect_in(obj, move |e| place_effect(e, obj, &shared))?);
@@ -2393,15 +2394,16 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
 /// `visible` and `enabled` read false under a hidden or disabled parent
 /// (Qt documents both as inherited). The item's own value sits below an
 /// override layer and comes back when the parent turns on again.
-fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>) {
+fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, shared: &SharedRc) {
     if !e.is_alive(obj) {
         return;
     }
+    let covered = st.borrow().visible.is_some();
     let parent = e
         .visual_parent(obj)
         .filter(|p| e.is_alive(*p) && is_item(e, *p));
-    let mut st = st.borrow_mut();
-    let st = &mut *st;
+    let mut guard = st.borrow_mut();
+    let st = &mut *guard;
     for (p, slot) in [
         (Item::VISIBLE.index, &mut st.visible),
         (Item::ENABLED.index, &mut st.enabled),
@@ -2420,6 +2422,18 @@ fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>) {
                 format!("inherit failed: {err}"),
             );
         }
+    }
+    // A covered item is kept shown in the tree (see `apply_geometry`).
+    // Uncovered, its own `visible` may be the false it read under the
+    // cover, which is no change, so the geometry is not read again by
+    // itself.
+    let lifted = covered && st.visible.is_none();
+    drop(guard);
+    if lifted {
+        let g = e.untrack(|| Geom::read(e, obj));
+        mark(shared, |s| {
+            s.geom.insert(obj, g);
+        });
     }
 }
 
