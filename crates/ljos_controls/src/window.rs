@@ -811,13 +811,21 @@ fn adopt_loose(engine: &Engine, win: ObjectId, st: &WinState) {
     });
 }
 
-/// The window an item is in: the nearest one above it, through the layer
-/// a popup is shown in.
+/// The window an item is in: the nearest one above it. What a popup shows
+/// is in the window of the popup's parent, as in Qt, where the popup's
+/// item is in that window's overlay; without a host a window declared in
+/// an item has no overlay of its own, so the layer would lead elsewhere.
 fn window_above(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     let mut cur = item;
     for _ in 0..DEPTH {
         if is_a::<Window>(engine, cur) {
             return Some(cur);
+        }
+        if let Some(parent) = crate::popup::popup_of(engine, cur)
+            .and_then(|p| object(engine, p, crate::popup::Popup::PARENT.index))
+        {
+            cur = parent;
+            continue;
         }
         match engine.visual_parent(cur) {
             Some(p) => cur = p,
