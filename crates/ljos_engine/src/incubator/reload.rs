@@ -256,6 +256,8 @@ struct Pending {
     counterpart: HashMap<ObjectId, ObjectId>,
     remounted: HashSet<ObjectId>,
     fresh: usize,
+    /// The roots being made again: what they own goes with them.
+    old_roots: HashSet<ObjectId>,
 }
 
 struct Overlay {
@@ -681,7 +683,8 @@ impl Engine {
         }
         *st.pending.borrow_mut() = None;
         let mut phases = Phases::start();
-        let pending = self.reload_snapshot(patch);
+        let mut pending = self.reload_snapshot(patch);
+        pending.old_roots = plan.iter().map(|(root, ..)| *root).collect();
         phases.mark("snapshot");
         let old: HashSet<ObjectId> = st.info.borrow().keys().copied().collect();
         let saved = self.reload_patch_loader(patch)?;
@@ -1440,11 +1443,28 @@ impl Engine {
         let tree = st.tree.get();
         let pending = st.pending.borrow();
         let info = st.info.borrow();
+        // An object of an earlier making that no root being made again
+        // owns (a singleton's) outlives the reload as it is.
+        let goes = |o: ObjectId| {
+            let Some(p) = pending.as_ref() else {
+                return false;
+            };
+            let mut cur = Some(o);
+            while let Some(c) = cur {
+                if p.old_roots.contains(&c) {
+                    return true;
+                }
+                cur = self.owner(c);
+            }
+            false
+        };
         let new_for = |o: ObjectId| {
             if let Some(new) = pending.as_ref().and_then(|p| p.counterpart.get(&o)) {
                 return Some(Some(*new));
             }
-            info.get(&o).filter(|i| i.tree != tree).map(|_| None)
+            info.get(&o)
+                .filter(|i| i.tree != tree && goes(o))
+                .map(|_| None)
         };
         translate(v, &|o| self.is_alive(o), &new_for)
     }
