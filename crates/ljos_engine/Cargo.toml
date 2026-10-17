@@ -29,6 +29,8 @@ thiserror.workspace = true
 url.workspace = true
 # A thin (8-byte) atomically counted string, which keeps `Value` at 16 bytes.
 arcstr.workspace = true
+# The steps of a slow reload, at debug level.
+tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

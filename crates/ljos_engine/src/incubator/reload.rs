@@ -616,9 +616,12 @@ impl Engine {
             }
         }
         *st.pending.borrow_mut() = None;
+        let mut phases = Phases::start();
         let pending = self.reload_snapshot(patch);
+        phases.mark("snapshot");
         let old: HashSet<ObjectId> = st.info.borrow().keys().copied().collect();
         let saved = self.reload_patch_loader(patch)?;
+        phases.mark("loader");
         st.epoch.set(st.epoch.get() + 1);
         st.tree.set(st.tree.get() + 1);
         *st.pending.borrow_mut() = Some(pending);
@@ -642,6 +645,7 @@ impl Engine {
         }
         st.forced.borrow_mut().take();
         self.singleton_scope_adopt_none();
+        phases.mark("make");
 
         if let Some(e) = failure {
             // Nothing of the attempt is to be heard, also not that it ends.
@@ -671,10 +675,12 @@ impl Engine {
         }
 
         self.reload_remake_scripted();
+        phases.mark("scripted");
         for (old_root, new) in &made {
             self.singleton_scope_moved(*old_root, *new);
             swap(self, *old_root, *new);
         }
+        phases.mark("swap");
         // An object that goes on is not told that it is destroyed; one
         // that is gone from the file is.
         let going_on: HashSet<ObjectId> = st
@@ -687,9 +693,11 @@ impl Engine {
         // Before they go: a binding on an object that outlives the tree
         // runs again as its objects are destroyed.
         self.reload_note_forwards();
+        phases.mark("forwards");
         for (old_root, _) in &made {
             self.destroy_now(*old_root);
         }
+        phases.mark("destroy");
         st.muting.set(false);
         st.muted.borrow_mut().clear();
         st.generation.set(patch.generation);
@@ -700,6 +708,8 @@ impl Engine {
         if let Some(js) = self.inner.js.borrow().clone() {
             js.release_unused_types();
         }
+        phases.mark("types");
+        phases.done();
         let pending = st.pending.borrow();
         let p = pending.as_ref();
         Ok(ReloadOutcome {
@@ -1553,5 +1563,39 @@ impl Engine {
             return Err("the object is of another type".to_owned());
         }
         (m.migrate)(self, obj, state)
+    }
+}
+
+/// How long each step of a reload took, told at debug level
+/// (`LJOS_LOG=ljos_engine::incubator::reload=debug`): what to cut when a
+/// reload is slow.
+struct Phases {
+    last: std::time::Instant,
+    took: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl Phases {
+    fn start() -> Self {
+        Self {
+            last: std::time::Instant::now(),
+            took: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, step: &'static str) {
+        let now = std::time::Instant::now();
+        self.took.push((step, now - self.last));
+        self.last = now;
+    }
+
+    fn done(self) {
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let steps: Vec<String> = self
+                .took
+                .iter()
+                .map(|(step, d)| format!("{step} {:.1} ms", d.as_secs_f64() * 1000.0))
+                .collect();
+            tracing::debug!("reload steps: {}", steps.join(", "));
+        }
     }
 }
