@@ -143,7 +143,7 @@ pub use object::{
     find_native_mut,
 };
 pub use property_map::PropertyMap;
-pub use qtqml::{Component, ComponentAttached, Connections, Timer};
+pub use qtqml::{Component, ComponentAttached, Connections, RunningTimer, Timer};
 pub use registry::{
     EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry, PropertyKind,
     Registry, SignalEntry, TypeDump, TypeEntry, Version,

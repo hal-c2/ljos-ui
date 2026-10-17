@@ -645,3 +645,13 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
 pub(crate) fn run_count(engine: &Engine) -> usize {
     driver(engine).runs.borrow().len()
 }
+
+pub(crate) fn runs(engine: &Engine) -> Vec<(ObjectId, bool)> {
+    driver(engine)
+        .runs
+        .borrow()
+        .iter()
+        .filter(|r| !r.cancelled.get())
+        .map(|r| (r.anim, r.paused.get()))
+        .collect()
+}

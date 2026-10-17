@@ -571,6 +571,9 @@ pub(crate) struct TimerState {
     /// Running timers of frozen objects (§8.3) and when they were due:
     /// armed again on thaw.
     parked: FxHashMap<ObjectId, Time>,
+    /// How often each timer fired, counted only while an observer is
+    /// attached (`ljos_runtime::observe`).
+    fired: FxHashMap<ObjectId, u64>,
     /// `Qt.callLater` queue: one entry per function, with its last args.
     calls: Vec<(JsRef, Vec<JsValue>)>,
     quit: bool,
@@ -590,12 +593,25 @@ impl Default for TimerState {
             by_start: FxHashMap::default(),
             due_at: FxHashMap::default(),
             parked: FxHashMap::default(),
+            fired: FxHashMap::default(),
             calls: Vec::new(),
             quit: false,
             wake: None,
             wall: None,
         }
     }
+}
+
+/// A running Timer as [`Engine::running_timers`] lists it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunningTimer {
+    pub object: ObjectId,
+    /// When it next fires; `None` while its object is frozen.
+    pub due: Option<Time>,
+    pub interval: i32,
+    pub repeat: bool,
+    /// Fires seen while an observer was attached.
+    pub fired: u64,
 }
 
 /// Most timer fires one [`Engine::advance_timers`] call catches up on, so a
@@ -752,6 +768,36 @@ impl Engine {
     /// re-arm its OS timer (ask [`Engine::next_timer_deadline`]).
     pub fn set_timer_wake(&self, f: impl Fn() + 'static) {
         self.inner.timers.borrow_mut().wake = Some(Rc::new(f));
+    }
+
+    /// The running Timers, for an observer: each with when it is next due,
+    /// or `None` while its object is frozen (§8.3). Ordered by object.
+    pub fn running_timers(&self) -> Vec<RunningTimer> {
+        let st = self.inner.timers.borrow();
+        let mut all: Vec<RunningTimer> = st
+            .due_at
+            .iter()
+            .map(|(o, t)| (*o, Some(*t)))
+            .chain(st.parked.keys().map(|o| (*o, None)))
+            .map(|(object, due)| RunningTimer {
+                object,
+                due,
+                interval: 0,
+                repeat: false,
+                fired: st.fired.get(&object).copied().unwrap_or(0),
+            })
+            .collect();
+        drop(st);
+        for t in &mut all {
+            if let Ok((interval, repeat)) =
+                self.with::<Timer, _>(t.object, |t| (t.interval, t.repeat))
+            {
+                t.interval = interval;
+                t.repeat = repeat;
+            }
+        }
+        all.sort_by_key(|t| t.object);
+        all
     }
 
     /// When [`Engine::advance_timers`] must next run; `None` while nothing
@@ -984,6 +1030,9 @@ impl Engine {
         };
         if !running {
             return;
+        }
+        if ljos_runtime::observe::is_enabled() {
+            *self.inner.timers.borrow_mut().fired.entry(obj).or_default() += 1;
         }
         if repeat {
             self.timer_schedule(obj, at, interval.max(1));

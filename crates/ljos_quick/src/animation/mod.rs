@@ -32,7 +32,7 @@ pub(crate) mod types;
 
 use std::time::Duration;
 
-use ljos_engine::{Engine, QmlType};
+use ljos_engine::{Engine, ObjectId, QmlType};
 use ljos_runtime::Time;
 
 use crate::item::is_a;
@@ -102,4 +102,10 @@ pub(crate) fn frame_period(engine: &Engine) -> Duration {
 /// Zero means the animations ask for no frames.
 pub fn running_animation_count(engine: &Engine) -> usize {
     driver::run_count(engine)
+}
+
+/// The animations under way in `engine`, each with whether it is paused,
+/// in the order they started. For an observer.
+pub fn running_animations(engine: &Engine) -> Vec<(ObjectId, bool)> {
+    driver::runs(engine)
 }

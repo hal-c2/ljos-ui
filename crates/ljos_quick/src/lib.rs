@@ -70,7 +70,7 @@ pub use animation::{
     Animation, AnimationController, Behavior, BehaviorTarget, ColorAnimation, Easing, EasingGroup,
     NumberAnimation, ParallelAnimation, PauseAnimation, PropertyAction, PropertyAnimation,
     RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, easing,
-    running_animation_count, set_animation_frame_period,
+    running_animation_count, running_animations, set_animation_frame_period,
 };
 pub use animation::{Transition, run_transition, run_transition_to, stop_transition};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
