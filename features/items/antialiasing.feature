@@ -43,3 +43,20 @@ Feature: Antialiasing defaults
     When the property "antialiasing" of "round" is set to false
     And the property "radius" of "round" is set to 9
     Then the property "antialiasing" of "round" is false
+
+  Scenario: A Rectangle's default follows a corner given later
+    When the property "topLeftRadius" of "square" is set to 5
+    Then the property "antialiasing" of "square" is true
+    When the property "topLeftRadius" of "square" is set to 0
+    Then the property "antialiasing" of "square" is false
+
+  Scenario: A corner given nothing follows a radius given later
+    When the property "radius" of "square" is set to 6
+    Then the property "topLeftRadius" of "square" is 6
+    And the property "bottomRightRadius" of "square" is 6
+
+  Scenario: A corner given a value keeps it when a radius comes later
+    When the property "topRightRadius" of "square" is set to 2
+    And the property "radius" of "square" is set to 6
+    Then the property "topRightRadius" of "square" is 2
+    And the property "topLeftRadius" of "square" is 6

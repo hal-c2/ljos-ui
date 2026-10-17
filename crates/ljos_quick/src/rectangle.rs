@@ -63,31 +63,21 @@ impl Rectangle {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let obj = cx.this;
-        for corner in [
-            Rectangle::TOP_LEFT_RADIUS.index,
-            Rectangle::TOP_RIGHT_RADIUS.index,
-            Rectangle::BOTTOM_LEFT_RADIUS.index,
-            Rectangle::BOTTOM_RIGHT_RADIUS.index,
-        ] {
-            if is_unset(cx.engine, obj, corner) {
-                cx.engine
-                    .bind(obj, corner, move |e| e.read(obj, Rectangle::RADIUS.index))?;
-            }
-        }
-        if is_unset(cx.engine, obj, Item::ANTIALIASING.index) {
-            cx.engine.bind(obj, Item::ANTIALIASING.index, move |e| {
-                Value::Bool(
-                    [
-                        Rectangle::RADIUS.index,
-                        Rectangle::TOP_LEFT_RADIUS.index,
-                        Rectangle::TOP_RIGHT_RADIUS.index,
-                        Rectangle::BOTTOM_LEFT_RADIUS.index,
-                        Rectangle::BOTTOM_RIGHT_RADIUS.index,
-                    ]
-                    .into_iter()
-                    .any(|r| e.read(obj, r).to_number() > 0.0),
-                )
+        let e = cx.engine;
+        // Most rectangles are square and stay so: while no radius has a
+        // value, the corners and `antialiasing` already read what their
+        // bindings would give, so one effect waits for the first radius in
+        // place of five bindings on every rectangle.
+        if RADII.iter().all(|&r| is_unset(e, obj, r)) {
+            e.effect_in(obj, move |e| {
+                if RADII.iter().any(|&r| e.read(obj, r).to_number() != 0.0)
+                    && let Err(err) = e.untrack(|| follow_radius(e, obj))
+                {
+                    e.log(LogLevel::Warning, "qml", format!("Rectangle: {err}"));
+                }
             })?;
+        } else {
+            follow_radius(e, obj)?;
         }
         // What is not a gradient is refused when it is assigned, as Qt
         // does, and not each time the rectangle is painted.
@@ -101,6 +91,31 @@ impl Rectangle {
             })?;
         Ok(())
     }
+}
+
+/// `radius` and the four corners, which `antialiasing` follows.
+const RADII: [ljos_engine::PropIndex; 5] = [
+    Rectangle::RADIUS.index,
+    Rectangle::TOP_LEFT_RADIUS.index,
+    Rectangle::TOP_RIGHT_RADIUS.index,
+    Rectangle::BOTTOM_LEFT_RADIUS.index,
+    Rectangle::BOTTOM_RIGHT_RADIUS.index,
+];
+
+/// Binds each corner that has no value of its own to `radius`, and
+/// `antialiasing`, while it is not assigned, to whether any is rounded.
+fn follow_radius(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    for &corner in &RADII[1..] {
+        if is_unset(engine, obj, corner) {
+            engine.bind(obj, corner, move |e| e.read(obj, Rectangle::RADIUS.index))?;
+        }
+    }
+    if is_unset(engine, obj, Item::ANTIALIASING.index) {
+        engine.bind(obj, Item::ANTIALIASING.index, move |e| {
+            Value::Bool(RADII.iter().any(|&r| e.read(obj, r).to_number() > 0.0))
+        })?;
+    }
+    Ok(())
 }
 
 /// Qt takes a `Gradient`, the number or the name of a preset, or nothing;
