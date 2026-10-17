@@ -156,3 +156,50 @@ Feature: When a changed file is reloaded
       Then there is no reload error
       And the property "width" of "root" is 20
       And 1 reload has happened
+
+  Rule: A file emptied by a save that has not finished waits for the save
+
+    # An editor that saves in place empties the file, then writes it. On a
+    # busy disk the writing can come seconds after the quiet time; the file
+    # is taken as it is once its writer has finished, and not on a timer.
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+        }
+        """
+
+    Scenario: A file written long after it was emptied is applied without an error
+      When the file "Scenario.qml" is emptied by a save that has not finished
+      And 1000 milliseconds pass
+      Then there is no reload error
+      And 0 reloads have happened
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 20
+        }
+        """
+      And 120 milliseconds pass
+      Then there is no reload error
+      And the property "width" of "root" is 20
+      And 1 reload has happened
+
+    Scenario: A file saved empty is reported
+      When the file "Scenario.qml" is changed to:
+        """qml
+        """
+      And 120 milliseconds pass
+      Then the reload error is in "Scenario.qml" at line 1
+      And the property "width" of "root" is 10
+
+    Scenario: A reload asked for takes a file being written as it is
+      When the file "Scenario.qml" is emptied by a save that has not finished
+      And a reload happens
+      Then the reload error is in "Scenario.qml" at line 1
+      And the property "width" of "root" is 10

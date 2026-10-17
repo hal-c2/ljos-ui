@@ -251,6 +251,46 @@ fn files_on_disk_are_read_when_the_build_starts() {
 }
 
 #[test]
+fn a_file_found_empty_while_being_written_waits_for_its_next_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let main = root.join("Main.qml");
+    fs::write(&main, MAIN).unwrap();
+    let mut r = Reloader::open(&root, QtTypeOracle).unwrap();
+    r.start();
+
+    // Emptied by a save in place, its writer not done: no build until the
+    // file's next event, however late.
+    fs::write(&main, "").unwrap();
+    assert!(r.touch(&main, false));
+    assert_eq!(r.build(), Build::Waiting);
+    assert_eq!(r.build(), Build::NoChange);
+    fs::write(&main, MAIN.replace("10", "20")).unwrap();
+    assert!(r.closed(&main));
+    assert_eq!(patch_of(&mut r), 1);
+    r.ack(1);
+
+    // Its writer closed it empty: that is the save.
+    fs::write(&main, "").unwrap();
+    assert!(r.closed(&main));
+    assert!(matches!(r.build(), Build::Failed(_)));
+}
+
+#[test]
+fn a_reload_asked_for_takes_a_file_being_written_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let main = root.join("Main.qml");
+    fs::write(&main, MAIN).unwrap();
+    let mut r = Reloader::open(&root, QtTypeOracle).unwrap();
+    r.start();
+    fs::write(&main, "").unwrap();
+    assert!(r.touch(&main, false));
+    assert_eq!(r.build(), Build::Waiting);
+    assert!(matches!(r.build_now(), Build::Failed(_)));
+}
+
+#[test]
 fn a_new_directory_is_found_by_reading_again() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();

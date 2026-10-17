@@ -23,7 +23,7 @@ use ljos_compiler::CompileFault;
 use ljos_ir::ReloadPatch;
 use notify::{
     EventKind, RecursiveMode, Watcher as _,
-    event::{AccessKind, AccessMode, CreateKind, RemoveKind},
+    event::{AccessKind, AccessMode, CreateKind, ModifyKind, RemoveKind},
 };
 use qml_front::TypeOracle;
 
@@ -73,7 +73,9 @@ pub enum WatchError {
 }
 
 enum Cmd {
-    Touched(PathBuf, bool),
+    /// A path, whether it is a directory, and whether what it holds is a
+    /// whole save: its writer closed it, or it was renamed into place.
+    Touched(PathBuf, bool, bool),
     Rescan,
     Flush,
     Ack(u64),
@@ -231,16 +233,19 @@ impl Events {
             self.post(Cmd::Rescan);
             return;
         }
-        let is_dir = match event.kind {
+        let (is_dir, whole) = match event.kind {
+            EventKind::Access(AccessKind::Close(AccessMode::Write))
+            | EventKind::Modify(ModifyKind::Name(_)) => (false, true),
             // Reading is no change, and the watcher itself reads.
-            EventKind::Access(AccessKind::Close(AccessMode::Write)) => false,
             EventKind::Access(_) | EventKind::Other => return,
-            EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder) => true,
-            _ => false,
+            EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder) => {
+                (true, false)
+            }
+            _ => (false, false),
         };
         for path in event.paths {
             if classify(&self.root, &path, is_dir) != Touch::Ignore {
-                self.post(Cmd::Touched(path, is_dir));
+                self.post(Cmd::Touched(path, is_dir, whole));
             }
         }
     }
@@ -290,8 +295,13 @@ impl<O: TypeOracle + Clone> Run<O> {
             };
             self.wakes.fetch_add(1, Ordering::Relaxed);
             match cmd {
-                Some(Cmd::Touched(path, is_dir)) => {
-                    if self.reloader.touch(&path, is_dir) {
+                Some(Cmd::Touched(path, is_dir, whole)) => {
+                    let touched = if whole {
+                        self.reloader.closed(&path)
+                    } else {
+                        self.reloader.touch(&path, is_dir)
+                    };
+                    if touched {
                         self.debounce.touch(Instant::now());
                     }
                 }
@@ -340,22 +350,29 @@ impl<O: TypeOracle + Clone> Run<O> {
             // nothing left to wait for.
             self.debounce.flush();
         }
-        if !self.build_files() {
+        if !self.build_files(flushed) {
             return false;
         }
         !flushed || (self.sink)(DevMsg::Idle)
     }
 
-    fn build_files(&mut self) -> bool {
+    /// `asked`: a reload was asked for, and files are taken as they are
+    /// now, an empty one too.
+    fn build_files(&mut self, asked: bool) -> bool {
         let started = Instant::now();
         if self.reloader.rescan_pending() {
             // Before the directory is read: what is written into a new
             // directory after the read is then seen as an event.
             self.watch_new_dirs();
         }
-        let built = self.reloader.build();
+        let built = if asked {
+            self.reloader.build_now()
+        } else {
+            self.reloader.build()
+        };
         match built {
-            Build::NoChange => true,
+            // The file's next event brings the build again.
+            Build::NoChange | Build::Waiting => true,
             Build::UpToDate => (self.sink)(DevMsg::Cleared),
             Build::Failed(faults) => (self.sink)(DevMsg::Failed(faults)),
             Build::Patch { patch, warnings } => {

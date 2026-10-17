@@ -65,7 +65,7 @@ impl Live {
         }
         if rig.started {
             rig.quiet.flush();
-            self.reload_now()?;
+            self.reload_now(true)?;
             return match self.engine.last_reload_error() {
                 Some(fault) => Err(failed(fault)),
                 None => Ok(true),
@@ -90,6 +90,16 @@ impl Live {
         Ok(())
     }
 
+    /// An editor that saves in place has emptied a file and not yet
+    /// written it.
+    pub(super) fn empty_file(&mut self, name: &str) -> Result<()> {
+        let now = self.clock.now();
+        let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
+        rig.reloader.emptied(key_of(name));
+        rig.quiet.touch(now);
+        Ok(())
+    }
+
     /// When the quiet time of the last save ends.
     pub(super) fn reload_due(&self) -> Option<Time> {
         self.reloads.as_ref().and_then(|r| r.quiet.deadline())
@@ -99,7 +109,7 @@ impl Live {
     pub(super) fn reload_if_due(&mut self) -> Result<()> {
         let now = self.clock.now();
         if self.reloads.as_mut().is_some_and(|rig| rig.quiet.fire(now)) {
-            self.reload_now()
+            self.reload_now(false)
         } else {
             Ok(())
         }
@@ -112,7 +122,7 @@ impl Live {
             .ok_or_else(not_watching)?
             .quiet
             .flush();
-        self.reload_now()
+        self.reload_now(true)
     }
 
     pub(super) fn reload_count(&self) -> Result<u64> {
@@ -121,8 +131,9 @@ impl Live {
 
     /// Builds what was saved and applies it. A change that does not
     /// compile or cannot be applied is not an error of the step: the
-    /// application goes on as it was and the engine holds why.
-    fn reload_now(&mut self) -> Result<()> {
+    /// application goes on as it was and the engine holds why. `asked`: a
+    /// reload was asked for, and an empty file is taken as it is.
+    fn reload_now(&mut self, asked: bool) -> Result<()> {
         // What the last reload made late has been matched by now: every
         // step settles the scene.
         self.engine.finish_reload();
@@ -131,8 +142,13 @@ impl Live {
             // Nothing runs yet; the next load compiles what was saved.
             return Ok(());
         }
-        let patch = match rig.reloader.build() {
-            Build::NoChange => return Ok(()),
+        let built = if asked {
+            rig.reloader.build_now()
+        } else {
+            rig.reloader.build()
+        };
+        let patch = match built {
+            Build::NoChange | Build::Waiting => return Ok(()),
             Build::UpToDate => {
                 self.engine.set_last_reload_error(None);
                 return Ok(());

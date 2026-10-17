@@ -1586,6 +1586,10 @@ impl Backend for LjosBackend {
         self.live()?.change_file(name, source)
     }
 
+    fn empty_file(&mut self, name: &str) -> Result<()> {
+        self.live()?.empty_file(name)
+    }
+
     fn reload(&mut self) -> Result<()> {
         self.live()?.reload_flush()?;
         self.note_reload();

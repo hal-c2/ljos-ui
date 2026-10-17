@@ -72,6 +72,16 @@ impl LjosWorld {
         self.each(|b| b.change_file(name, source))
     }
 
+    /// A file of the running application is emptied by a save that has not
+    /// finished.
+    ///
+    /// # Errors
+    /// A backend cannot change files under a running application.
+    pub fn empty_file(&mut self, name: &str) -> Result<(), String> {
+        self.files.insert(name.to_owned(), String::new());
+        self.each(|b| b.empty_file(name))
+    }
+
     /// The scenario's web server, started if it is not yet.
     ///
     /// # Errors

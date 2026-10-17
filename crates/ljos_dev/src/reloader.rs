@@ -32,6 +32,12 @@ pub enum Build {
     },
     /// A file does not compile: nothing of the change is offered.
     Failed(Vec<CompileFault>),
+    /// A file that had text was found empty while a save of it is under
+    /// way: an editor that saves in place empties the file first, and on a
+    /// busy disk the writing can come seconds later. Nothing was compiled.
+    /// The next event of the file brings the build again; the owner sets
+    /// no timer for it.
+    Waiting,
 }
 
 /// A project's files as they change, and the patches that follow.
@@ -48,6 +54,15 @@ pub struct Reloader<O> {
     /// A `qmldir` or `CMakeLists.txt` changed: what a module has may
     /// differ although no QML file does.
     force: bool,
+    /// The files a save is under way of: touched since their writer last
+    /// closed them, or emptied by a save that has not finished.
+    unfinished: BTreeSet<String>,
+    /// Paths found empty while being written, read again at their next
+    /// event.
+    parked: BTreeSet<PathBuf>,
+    /// A build that waited gave the session saves: the next one compiles
+    /// although it may bring nothing new.
+    carried: bool,
 }
 
 impl<O: TypeOracle + Clone> Reloader<O> {
@@ -69,6 +84,9 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             touched: BTreeSet::new(),
             rescan: false,
             force: false,
+            unfinished: BTreeSet::new(),
+            parked: BTreeSet::new(),
+            carried: false,
         }
     }
 
@@ -92,7 +110,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// them: [`ReloadSession::failures`] says why, and a build offers it
     /// once it compiles.
     pub fn start(&mut self) -> FileSet {
-        self.take_saves();
+        self.take_saves(false);
         let files = self.session.start().clone();
         self.prints.replace(
             self.session
@@ -105,7 +123,15 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// The file `key` (its path from the root without `.qml`) now has
     /// this text; None: it is gone.
     pub fn save(&mut self, key: &str, text: Option<String>) {
+        self.unfinished.remove(key);
         self.staged.insert(key.to_owned(), text);
+    }
+
+    /// The file `key` was emptied by a save that has not finished: its
+    /// text comes with a later [`save`](Self::save).
+    pub fn emptied(&mut self, key: &str) {
+        self.unfinished.insert(key.to_owned());
+        self.staged.insert(key.to_owned(), Some(String::new()));
     }
 
     /// Something happened to `path`. True when it is something a build
@@ -119,6 +145,9 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         match classify(root, path, is_dir) {
             Touch::Ignore => return false,
             Touch::File => {
+                if let Some(key) = self.session.key_of(path) {
+                    self.unfinished.insert(key);
+                }
                 self.touched.insert(path.to_owned());
             }
             Touch::Rescan => self.rescan = true,
@@ -128,6 +157,16 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             }
         }
         true
+    }
+
+    /// A writer closed `path` after writing it: what it holds now is the
+    /// whole save, an empty file too. True as for [`touch`](Self::touch).
+    pub fn closed(&mut self, path: &Path) -> bool {
+        let touched = self.touch(path, false);
+        if let Some(key) = self.session.key_of(path) {
+            self.unfinished.remove(&key);
+        }
+        touched
     }
 
     /// The directory may have changed in ways no event told of.
@@ -140,10 +179,26 @@ impl<O: TypeOracle + Clone> Reloader<O> {
         self.rescan || !self.staged.is_empty() || !self.touched.is_empty()
     }
 
+    /// Whether `text`, a save of `key`, is a file emptied by a save that
+    /// has not finished.
+    fn half_saved(&self, key: &str, text: &str) -> bool {
+        text.is_empty()
+            && self.unfinished.contains(key)
+            && self.session.source(key).is_some_and(|s| !s.is_empty())
+    }
+
     /// Reads what was touched and gives the session every save that says
-    /// something new. True when one did.
-    fn take_saves(&mut self) -> bool {
-        let mut changed = std::mem::take(&mut self.force);
+    /// something new: whether one did, and whether a file was left for its
+    /// save to finish ([`Build::Waiting`]). `may_wait` false takes every
+    /// file as it is now.
+    fn take_saves(&mut self, may_wait: bool) -> (bool, bool) {
+        let mut changed = std::mem::take(&mut self.force) | std::mem::take(&mut self.carried);
+        let mut waiting = false;
+        if !may_wait {
+            self.unfinished.clear();
+            let parked = std::mem::take(&mut self.parked);
+            self.touched.extend(parked);
+        }
         if std::mem::take(&mut self.rescan) {
             // The directory is read whole, so what was touched is in it.
             self.touched.clear();
@@ -159,7 +214,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             let Some(key) = self.session.key_of(&path) else {
                 continue;
             };
+            self.parked.remove(&path);
             match std::fs::read_to_string(&path) {
+                Ok(text) if self.half_saved(&key, &text) => {
+                    self.parked.insert(path);
+                    waiting = true;
+                }
                 Ok(text) => {
                     self.staged.entry(key).or_insert(Some(text));
                 }
@@ -171,7 +231,13 @@ impl<O: TypeOracle + Clone> Reloader<O> {
                 Err(_) => {}
             }
         }
+        let mut kept = BTreeMap::new();
         for (key, text) in std::mem::take(&mut self.staged) {
+            if text.as_deref().is_some_and(|t| self.half_saved(&key, t)) {
+                kept.insert(key, text);
+                waiting = true;
+                continue;
+            }
             if !self.prints.differs(&key, text.as_deref()) {
                 continue;
             }
@@ -182,12 +248,29 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             }
             changed = true;
         }
-        changed
+        // Nothing of a change is compiled while part of it is unwritten.
+        self.staged.extend(kept);
+        self.carried = waiting && changed;
+        (changed, waiting)
     }
 
     /// Compiles what the saves since the last build changed.
     pub fn build(&mut self) -> Build {
-        if !self.take_saves() {
+        self.build_with(true)
+    }
+
+    /// As [`build`](Self::build), taking every file as it is now, an empty
+    /// one whose save has not finished too: a reload was asked for.
+    pub fn build_now(&mut self) -> Build {
+        self.build_with(false)
+    }
+
+    fn build_with(&mut self, may_wait: bool) -> Build {
+        let (changed, waiting) = self.take_saves(may_wait);
+        if waiting {
+            return Build::Waiting;
+        }
+        if !changed {
             return Build::NoChange;
         }
         match self.session.build() {

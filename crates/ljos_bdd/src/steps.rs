@@ -647,6 +647,11 @@ fn file_removed(w: &mut LjosWorld, name: String) -> StepResult {
     w.change_file(&name, None)
 }
 
+#[when(regex = r#"^the file "([^"]+\.qml)" is emptied by a save that has not finished$"#)]
+fn file_emptied(w: &mut LjosWorld, name: String) -> StepResult {
+    w.empty_file(&name)
+}
+
 #[when("a reload happens")]
 fn reload_happens(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.reload())

@@ -56,7 +56,9 @@ fn changes_files(
                 text.contains("reload")
                     || text == "the files are watched"
                     || (text.starts_with("the file ")
-                        && (text.ends_with(" is changed to:") || text.ends_with(" is removed")))
+                        && (text.ends_with(" is changed to:")
+                            || text.ends_with(" is removed")
+                            || text.ends_with(" by a save that has not finished")))
             })
 }
 

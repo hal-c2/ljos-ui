@@ -471,6 +471,11 @@ pub trait Backend: fmt::Debug {
     fn change_file(&mut self, _name: &str, _source: Option<&str>) -> Result<()> {
         Err(self.no_reload())
     }
+    /// A file of the running application is emptied by a save that has
+    /// not finished: its text comes with a later `change_file`.
+    fn empty_file(&mut self, _name: &str) -> Result<()> {
+        Err(self.no_reload())
+    }
     /// The quiet time ends now: what was saved is applied. A change that
     /// cannot be applied is not an error here; `reload_error` says why.
     fn reload(&mut self) -> Result<()> {
