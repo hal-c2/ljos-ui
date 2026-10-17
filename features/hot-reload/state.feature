@@ -713,3 +713,60 @@ Feature: What survives a reload
       And a reload happens
       Then the property "contentX" of "view" is 640
       And the property "currentIndex" of "view" is 1
+
+  Rule: A view whose rows are as long as the view makes them stays where it was
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 640; height: 100
+          ListView {
+            id: view
+            objectName: "view"
+            anchors.fill: parent
+            orientation: ListView.Horizontal
+            cacheBuffer: 2000
+            snapMode: ListView.SnapOneItem
+            highlightRangeMode: ListView.ApplyRange
+            model: 7
+            delegate: Rectangle {
+              height: 100
+              width: ListView.view && ListView.view.width >= 200 ? ListView.view.width / Math.floor(ListView.view.width / 200.0) : 200
+            }
+          }
+        }
+        """
+
+    Scenario: A list brought to its current row is still there
+      When the method "positionViewAtIndex" of "view" is called with 3, 0
+      And the property "currentIndex" of "view" is set to 3
+      And 1000 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          width: 640; height: 100
+          ListView {
+            id: view
+            objectName: "view"
+            anchors.fill: parent
+            orientation: ListView.Horizontal
+            cacheBuffer: 2000
+            snapMode: ListView.SnapOneItem
+            highlightRangeMode: ListView.ApplyRange
+            model: 7
+            delegate: Rectangle {
+              height: 100
+              color: "red"
+              width: ListView.view && ListView.view.width >= 200 ? ListView.view.width / Math.floor(ListView.view.width / 200.0) : 200
+            }
+          }
+        }
+        """
+      And a reload happens
+      And 100 milliseconds pass
+      Then the property "contentX" of "view" is 640
+      And the property "originX" of "view" is 0
+      And the property "currentIndex" of "view" is 3
