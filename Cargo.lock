@@ -3424,6 +3424,7 @@ dependencies = [
  "ljos_controls",
  "ljos_dev",
  "ljos_engine",
+ "ljos_i18n",
  "ljos_media",
  "ljos_platform",
  "ljos_quick",

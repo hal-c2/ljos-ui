@@ -148,6 +148,33 @@ impl<M> App<M> {
         self
     }
 
+    /// The application's locale (`de_DE`, `is`), over the system's: what
+    /// `Qt.locale()` and [`Locale::of`](crate::locale::Locale::of)
+    /// describe, which numbers, dates and times are written by. The UI
+    /// language, which translations are looked up in, stays the system's;
+    /// [`ui_language`](App::ui_language) chooses it.
+    ///
+    /// Without it, [`run`](App::run) starts in the system's locale (see
+    /// [`crate::locale`]) and [`build`](App::build) in `en_US`, the same on
+    /// every machine.
+    #[must_use]
+    pub fn locale(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        self.modules
+            .push(Box::new(move |engine: &Engine| engine.set_locale(&name)));
+        self
+    }
+
+    /// The application's UI language (`Qt.uiLanguage`), over the system's.
+    #[must_use]
+    pub fn ui_language(mut self, language: impl Into<String>) -> Self {
+        let language = language.into();
+        self.modules.push(Box::new(move |engine: &Engine| {
+            engine.set_ui_language(&language)
+        }));
+        self
+    }
+
     /// A whole shell configuration, replacing the title and size the
     /// builder would make one from. For the settings with no builder
     /// shorthand: the background colour, the inbox bounds, fonts.

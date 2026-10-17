@@ -36,6 +36,9 @@ ljos_runtime = { path = "../ljos_runtime" }
 ljos_render = { path = "../ljos_render", default-features = false }
 # The text engine a native item lays its text out with (`ljos::item`).
 ljos_text = { path = "../ljos_text" }
+# Locale data for `ljos::locale`; the engine links it already. Without
+# `.ts`, which only development reads.
+ljos_i18n = { path = "../ljos_i18n", default-features = false }
 # Only with `testing`: the system's preferences a test plays.
 ljos_a11y = { path = "../ljos_a11y", optional = true }
 # Only with `dev-qml` or `build`: compiles QML directories at start-up or

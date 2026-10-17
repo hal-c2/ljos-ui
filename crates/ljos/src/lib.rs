@@ -153,6 +153,7 @@ pub mod dev;
 #[cfg(any(feature = "render", feature = "testing"))]
 mod drive;
 pub mod item;
+pub mod locale;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 /// Video a program makes or receives itself, shown by a `VideoOutput`,

@@ -307,6 +307,11 @@ pub trait Backend: fmt::Debug {
     fn controls_style(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("choosing a style"))
     }
+    /// The program starts with these locale variables (`LANG`, `LC_ALL`,
+    /// `LC_NUMERIC`, …) in its environment and no others.
+    fn locale_environment(&mut self, _vars: &[(String, String)]) -> Result<()> {
+        Err(BackendError::NotImplemented("a locale environment"))
+    }
     /// The system says what the user prefers: before anything is loaded
     /// it is what the application starts with, after that it is a setting
     /// the user changed.

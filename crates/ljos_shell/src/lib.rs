@@ -79,6 +79,13 @@ pub struct ShellConfig {
     /// keeps the text engine its thread already has (bundled fonts, unless
     /// it called [`ljos_quick::set_text_engine`]).
     pub system_fonts: bool,
+    /// [`run`] starts the application in the system's locale and UI
+    /// language, as the environment's locale categories name them
+    /// (`LC_ALL`, `LC_MESSAGES`, `LC_NUMERIC`, `LC_TIME`, `LC_COLLATE`,
+    /// `LANG`, `LANGUAGE`), before anything of the application runs, so
+    /// that the application's own choice comes after it and wins. False
+    /// keeps the engine's `en_US`, the same on every machine.
+    pub system_locale: bool,
 }
 
 impl Default for ShellConfig {
@@ -91,6 +98,7 @@ impl Default for ShellConfig {
             inbox_capacity: 1024,
             drain_budget: DrainBudget::time(Duration::from_millis(4)),
             system_fonts: true,
+            system_locale: true,
         }
     }
 }
@@ -289,6 +297,9 @@ impl<M: Send + 'static> ShellApp<M> {
             ljos_controls::WindowSystem::of(&engine).set_host(h.changed);
             h.tree
         });
+        if tree.is_some() && config.system_locale {
+            engine.use_system_locale();
+        }
         if tree.is_some() {
             // Before `setup` too: a `Settings` reads its file, and a
             // binding may ask `Qt.platform`, while the root is built.

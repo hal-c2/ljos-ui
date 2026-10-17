@@ -100,6 +100,8 @@ pub struct QtBackend {
     cache: Option<(usize, Run)>,
     /// `QT_QUICK_CONTROLS_STYLE` for the run.
     controls_style: Option<String>,
+    /// The locale variables of the run; `None` is `LANG=en_US.UTF-8`.
+    locale_env: Option<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +109,17 @@ struct Run {
     results: Vec<Value>,
     log: Vec<LogEntry>,
 }
+
+/// The variables a program's locale is read from.
+const LOCALE_VARS: [&str; 7] = [
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_MESSAGES",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "LC_COLLATE",
+];
 
 impl Default for QtBackend {
     fn default() -> Self {
@@ -127,6 +140,7 @@ impl QtBackend {
             binders: Vec::new(),
             cache: None,
             controls_style: None,
+            locale_env: None,
         }
     }
 
@@ -370,6 +384,21 @@ impl QtBackend {
             Some(style) => command.env("QT_QUICK_CONTROLS_STYLE", style),
             None => command.env_remove("QT_QUICK_CONTROLS_STYLE"),
         };
+        // The developer's own locale stays out: a parity scenario has one
+        // expectation.
+        for k in LOCALE_VARS {
+            command.env_remove(k);
+        }
+        match &self.locale_env {
+            Some(vars) => {
+                for (k, v) in vars {
+                    command.env(k, v);
+                }
+            }
+            None => {
+                command.env("LANG", "en_US.UTF-8");
+            }
+        }
         let mut child = command
             .arg(driver)
             .env("QT_FORCE_STDERR_LOGGING", "1")
@@ -380,7 +409,6 @@ impl QtBackend {
             // name from the scenario's own directory.
             .env("QML_IMPORT_PATH", driver.parent().unwrap_or(Path::new(".")))
             .env("TZ", "UTC")
-            .env("LANG", "en_US.UTF-8")
             // The desktop's settings stay out: a platform theme that reads
             // them would give the controls a dark palette on a desktop that
             // prefers one, and a parity scenario has one expectation.
@@ -561,6 +589,12 @@ impl Backend for QtBackend {
 
     fn controls_style(&mut self, name: &str) -> Result<()> {
         self.controls_style = Some(name.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn locale_environment(&mut self, vars: &[(String, String)]) -> Result<()> {
+        self.locale_env = Some(vars.to_vec());
         self.cache = None;
         Ok(())
     }

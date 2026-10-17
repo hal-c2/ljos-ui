@@ -204,6 +204,9 @@ pub struct LjosBackend {
     system_fonts: bool,
     /// The style the scenario chose, given before anything was loaded.
     controls_style: Option<ControlsStyle>,
+    /// The locale variables the program starts with, as a desktop
+    /// program reads them.
+    locale_env: Option<Vec<(String, String)>>,
     /// Tree models in Rust the QML is given, by name, before it is loaded.
     lazy_trees: Vec<(String, lazy::LazyTree)>,
     paged_models: Vec<(String, paged::PagedModel)>,
@@ -1028,6 +1031,12 @@ impl Backend for LjosBackend {
             for said in self.settings.drain(..) {
                 apply(&live.engine, said);
             }
+            if let Some(vars) = self.locale_env.take() {
+                let system = ljos_i18n::SystemLocale::from_vars(|k| {
+                    vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+                });
+                live.engine.use_system_locale_from(&system);
+            }
             self.platform.install(&live.engine)?;
             live.engine.set_wall_clock_origin(self.wall_clock);
             for (name, tree) in self.lazy_trees.drain(..) {
@@ -1407,6 +1416,16 @@ impl Backend for LjosBackend {
         // A node may refuse; the scenario says what it expects of that.
         live.scene.accessible_focus(&live.engine, key);
         live.settle()
+    }
+
+    fn locale_environment(&mut self, vars: &[(String, String)]) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "a program's environment is given before anything is loaded",
+            ));
+        }
+        self.locale_env = Some(vars.to_vec());
+        Ok(())
     }
 
     fn controls_style(&mut self, name: &str) -> Result<()> {

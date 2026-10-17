@@ -449,6 +449,21 @@ fn system_setting(setting: &str, value: &str) -> Result<SystemSetting, String> {
     }
 }
 
+/// `LANG=de_DE.UTF-8 LC_NUMERIC=fr_FR.UTF-8`: the program's locale
+/// variables, and no others; empty for none at all.
+#[given(regex = r#"^the application starts with the locale environment "([^"]*)"$"#)]
+fn locale_environment(w: &mut LjosWorld, vars: String) -> StepResult {
+    let vars: Vec<(String, String)> = vars
+        .split_whitespace()
+        .map(|kv| {
+            kv.split_once('=')
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                .ok_or_else(|| format!("{kv} is not NAME=value"))
+        })
+        .collect::<Result<_, _>>()?;
+    w.each(|b| b.locale_environment(&vars))
+}
+
 #[given(regex = r#"^the application starts with the controls style "([^"]+)"$"#)]
 fn controls_style(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.controls_style(&name))
