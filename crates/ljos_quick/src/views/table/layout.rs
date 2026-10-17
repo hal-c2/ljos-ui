@@ -2,13 +2,14 @@
 //! each row and how wide each column is, and where each cell goes.
 //!
 //! The rows are walked from the top. A row in sight gets a delegate for
-//! each of its cells and is as tall as its tallest (or as the
+//! each of its cells in sight and is as tall as its tallest (or as the
 //! `rowHeightProvider` says); a row out of sight that was never measured
 //! counts as tall as the average of those that were, so `contentHeight`
-//! of a long table is a guess that gets better as it moves. A column is
-//! as wide as its widest delegate in sight, or as the
-//! `columnWidthProvider` says. Delegates of rows that leave go to the
-//! pool with `reuseItems`, hidden there.
+//! of a long table is a guess that gets better as it moves. Across, only
+//! the columns in sight get delegates, and the same goes for
+//! `contentWidth`. A column is as wide as its widest delegate in sight,
+//! or as the `columnWidthProvider` says. Delegates of cells that leave go
+//! to the pool with `reuseItems`, hidden there.
 
 use std::collections::HashSet;
 
@@ -129,7 +130,16 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         known.iter().sum::<f64>() / known.len() as f64
     };
 
-    // Rows in sight, top down, each with all its cells.
+    let mut widths = std::mem::take(&mut *st.widths.borrow_mut());
+    widths.resize(cols, f64::NAN);
+    let given: Vec<Option<f64>> = (0..cols)
+        .map(|c| provided(e, view, &col_provider, c))
+        .collect();
+    let sight = (cx, cx + w.max(0.0));
+
+    // Rows in sight, top down, each with its cells in sight; which
+    // columns those are is found on the first of them.
+    let mut shown: Option<Vec<usize>> = None;
     let mut wanted: HashSet<usize> = HashSet::new();
     let mut loaded_rows: Vec<usize> = Vec::new();
     let mut row_y = Vec::with_capacity(rows);
@@ -143,19 +153,24 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
             && y <= cy + h.max(0.0)
             && loaded_rows.len() < MAX_LOADED_ROWS;
         if in_sight {
-            let mut tallest: f64 = 0.0;
-            for c in 0..cols {
+            if shown.is_none() {
+                let found = columns_in_sight(e, st, &d, row, &given, &mut widths, sight, col_gap);
+                shown = Some(found);
+            }
+            let mut tallest: Option<f64> = None;
+            for &c in shown.as_deref().unwrap_or_default() {
                 let i = row * cols + c;
                 wanted.insert(i);
-                if let Some((o, made)) = d.request(e, i, Urgency::Now) {
-                    if made == Made::Reused {
-                        revive(e, st, o);
-                    }
-                    tallest = tallest.max(rd(e, o, Item::IMPLICIT_HEIGHT.index));
+                if let Some(o) = load(e, st, &d, i) {
+                    let t = rd(e, o, Item::IMPLICIT_HEIGHT.index);
+                    tallest = Some(tallest.map_or(t, |m: f64| m.max(t)));
                 }
             }
-            tall = provided(e, view, &row_provider, row).unwrap_or(tallest);
-            heights[row] = tall;
+            // A row with no column in sight is not measured.
+            if let Some(t) = provided(e, view, &row_provider, row).or(tallest) {
+                tall = t;
+                heights[row] = tall;
+            }
             loaded_rows.push(row);
             let measured = heights.iter().filter(|x| !x.is_nan());
             let count = measured.clone().count();
@@ -165,34 +180,41 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         y += tall + row_gap;
     }
     let content_h = if rows > 0 { y - row_gap } else { 0.0 };
+    let shown = shown.unwrap_or_default();
 
-    // Rows that left: their delegates go.
+    // Cells that left: their delegates go.
     for (i, o) in d.live() {
         if !wanted.contains(&i) {
             release(e, st, &d, o, reuse);
         }
     }
 
-    // Columns: as wide as the provider says or the widest delegate.
-    let mut widths = vec![0.0f64; cols];
-    for &row in &loaded_rows {
-        for (c, wide) in widths.iter_mut().enumerate() {
-            if let Some(o) = d.object_at(row * cols + c) {
-                *wide = wide.max(rd(e, o, Item::IMPLICIT_WIDTH.index));
-            }
+    // Columns: as wide as the provider says or the widest delegate in
+    // sight; one never measured, as the average of those that were.
+    for &c in &shown {
+        let widest = loaded_rows
+            .iter()
+            .filter_map(|row| d.object_at(row * cols + c))
+            .map(|o| rd(e, o, Item::IMPLICIT_WIDTH.index))
+            .fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
+        if let Some(widest) = widest {
+            widths[c] = widest;
         }
     }
+    let typical = mean(&widths).unwrap_or(0.0);
     let mut column_x = Vec::with_capacity(cols);
     let mut x = 0.0;
-    for (c, wide) in widths.iter().enumerate() {
-        let wide = provided(e, view, &col_provider, c).unwrap_or(*wide);
+    for c in 0..cols {
+        let known = (!widths[c].is_nan()).then_some(widths[c]);
+        let wide = given[c].or(known).unwrap_or(typical);
         column_x.push((x, wide));
         x += wide + col_gap;
     }
     let content_w = if cols > 0 { x - col_gap } else { 0.0 };
 
     for &row in &loaded_rows {
-        for (c, &(x, wide)) in column_x.iter().enumerate() {
+        for &c in &shown {
+            let (x, wide) = column_x[c];
             let i = row * cols + c;
             let Some(o) = d.object_at(i) else {
                 continue;
@@ -210,6 +232,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     }
 
     *st.heights.borrow_mut() = heights;
+    *st.widths.borrow_mut() = widths;
     *st.row_y.borrow_mut() = row_y;
 
     put(
@@ -227,9 +250,8 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     put(e, view, TableView::ROWS.index, Value::Int(rows as i32));
     put(e, view, TableView::COLUMNS.index, Value::Int(cols as i32));
     let first = |v: Option<&usize>| v.map_or(-1, |r| *r as i32);
-    let in_x = |&(x, wide): &(f64, f64)| x + wide >= cx && x <= cx + w.max(0.0);
-    let left = column_x.iter().position(in_x);
-    let right = column_x.iter().rposition(in_x);
+    let left = shown.first();
+    let right = shown.last();
     // The rows loaded are the rows in sight.
     let (top, bottom) = (first(loaded_rows.first()), first(loaded_rows.last()));
     put(e, view, TableView::TOP_ROW.index, Value::Int(top));
@@ -238,13 +260,13 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         e,
         view,
         TableView::LEFT_COLUMN.index,
-        Value::Int(first(left.as_ref())),
+        Value::Int(first(left)),
     );
     put(
         e,
         view,
         TableView::RIGHT_COLUMN.index,
-        Value::Int(first(right.as_ref())),
+        Value::Int(first(right)),
     );
     *st.column_x.borrow_mut() = column_x;
 
@@ -254,6 +276,65 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         put(e, view, TableView::CURRENT_ROW.index, Value::Int(row));
         put(e, view, TableView::CURRENT_COLUMN.index, Value::Int(column));
     }
+}
+
+/// The columns in sight from `sight.0` to `sight.1` across: a column
+/// takes room as the provider says, or as wide as it was measured. One
+/// never measured is measured on the delegate of its cell in `row` when
+/// it may be in sight, and taken as wide as the average of the others
+/// when it is before them. A column 0 wide is never in sight.
+#[allow(clippy::too_many_arguments)]
+fn columns_in_sight(
+    e: &Engine,
+    st: &TableState,
+    d: &ljos_engine::ViewDelegates,
+    row: usize,
+    given: &[Option<f64>],
+    widths: &mut [f64],
+    sight: (f64, f64),
+    gap: f64,
+) -> Vec<usize> {
+    let cols = given.len();
+    let mut shown = Vec::new();
+    let mut x = 0.0;
+    for c in 0..cols {
+        if x >= sight.1 {
+            break;
+        }
+        let wide = match (given[c], widths[c]) {
+            (Some(g), _) => g,
+            (None, m) if !m.is_nan() => m,
+            (None, _) => match mean(widths) {
+                Some(guess) if x + guess <= sight.0 => guess,
+                _ => {
+                    let m = load(e, st, d, row * cols + c)
+                        .map_or(0.0, |o| rd(e, o, Item::IMPLICIT_WIDTH.index));
+                    widths[c] = m;
+                    m
+                }
+            },
+        };
+        if x + wide > sight.0 && x < sight.1 {
+            shown.push(c);
+        }
+        x += wide + gap;
+    }
+    shown
+}
+
+/// The delegate of cell `i`, made or taken from the pool.
+fn load(e: &Engine, st: &TableState, d: &ljos_engine::ViewDelegates, i: usize) -> Option<ObjectId> {
+    let (o, made) = d.request(e, i, Urgency::Now)?;
+    if made == Made::Reused {
+        revive(e, st, o);
+    }
+    Some(o)
+}
+
+/// The average of the widths that were measured.
+fn mean(widths: &[f64]) -> Option<f64> {
+    let known: Vec<f64> = widths.iter().copied().filter(|x| !x.is_nan()).collect();
+    (!known.is_empty()).then(|| known.iter().sum::<f64>() / known.len() as f64)
 }
 
 /// The place of the model index of cell `index` of the view, as the

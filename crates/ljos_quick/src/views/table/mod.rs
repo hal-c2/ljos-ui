@@ -106,6 +106,9 @@ pub(crate) struct TableState {
     pub hidden: RefCell<HashMap<ObjectId, OverrideId>>,
     /// How tall each row is, as far as it was measured; `NaN` not yet.
     pub heights: RefCell<Vec<f64>>,
+    /// How wide each column's delegates are, as far as they were
+    /// measured; `NaN` not yet.
+    pub widths: RefCell<Vec<f64>>,
     /// Where each row starts and how wide each column is, as laid out.
     pub row_y: RefCell<Vec<f64>>,
     pub column_x: RefCell<Vec<(f64, f64)>>,
@@ -396,6 +399,9 @@ impl ViewHost for Host {
         ) {
             st.heights.borrow_mut().clear();
         }
+        if matches!(change, ModelChange::ModelReset) {
+            st.widths.borrow_mut().clear();
+        }
         for (_, obj) in gone {
             st.hidden.borrow_mut().remove(obj);
         }
@@ -460,6 +466,7 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
                 .map(|p| p.iter().map(|(r, _)| *r as usize).collect())
                 .unwrap_or_default();
             source.heights.borrow_mut().clear();
+            source.widths.borrow_mut().clear();
             source.cells.set_tree(tree, root);
             // The delegates go with the old source, hidden or not.
             source.hidden.borrow_mut().clear();
