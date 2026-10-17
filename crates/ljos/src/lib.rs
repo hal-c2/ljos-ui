@@ -128,7 +128,9 @@ pub mod mcp;
 /// Video a program makes or receives itself, shown by a `VideoOutput`,
 /// a `Video` or a `VideoSink` (the `media` feature): a
 /// [`media::VideoFrameInput`] takes frames from any thread and keeps the
-/// newest.
+/// newest. Sound plays through the system's output only with
+/// `media-audio` (on by default); without it the sound library is not
+/// linked and sound goes nowhere.
 #[cfg(feature = "media")]
 pub mod media {
     pub use ljos_media::{

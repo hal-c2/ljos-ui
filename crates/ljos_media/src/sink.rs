@@ -32,6 +32,8 @@ pub(crate) struct Voice {
     data: Mutex<VoiceData>,
 }
 
+// Only a device mixes; the null sink counts no frames.
+#[cfg_attr(not(feature = "audio"), allow(dead_code))]
 #[derive(Debug)]
 enum VoiceData {
     /// A whole clip, played `loops` more times after this one (`-1`:
@@ -108,6 +110,7 @@ impl Voice {
 
     /// Adds this voice into `out` (interleaved, `channels` wide). Never
     /// waits: a voice its feeder holds is skipped for this buffer.
+    #[cfg_attr(not(feature = "audio"), allow(dead_code))]
     fn mix_into(&self, out: &mut [f32], channels: usize) {
         if self.is_done() {
             return;
@@ -154,11 +157,13 @@ impl Voice {
 }
 
 /// The voices one device mixes.
+#[cfg_attr(not(feature = "audio"), allow(dead_code))]
 #[derive(Debug, Default)]
 struct Mixer {
     voices: Mutex<Vec<Arc<Voice>>>,
 }
 
+#[cfg_attr(not(feature = "audio"), allow(dead_code))]
 impl Mixer {
     fn fill(&self, out: &mut [f32], channels: usize) {
         out.fill(0.0);

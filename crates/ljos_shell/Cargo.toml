@@ -20,7 +20,7 @@ ljos_runtime = { path = "../ljos_runtime" }
 ljos_host = { path = "../ljos_host" }
 # Only with `media` (on by default): QtMultimedia, registered beside the
 # standard modules.
-ljos_media = { path = "../ljos_media", optional = true }
+ljos_media = { path = "../ljos_media", optional = true, default-features = false, features = ["decode"] }
 # The desktop's own clipboard, dialogs and HTTP fetcher, which only the
 # shell's loop installs; the other hosts keep the in-process ones.
 ljos_platform = { path = "../ljos_platform", features = ["native", "http"] }
@@ -82,10 +82,12 @@ glow.workspace = true
 glutin.workspace = true
 
 [features]
-default = ["media"]
-# QtMultimedia: sound through the system's output, video through the
-# render tree.
+default = ["media", "media-audio"]
+# QtMultimedia: video through the render tree, sound to a null sink
+# unless `media-audio` is on too.
 media = ["dep:ljos_media"]
+# Sound through the system's output device (cpal).
+media-audio = ["media", "ljos_media/audio"]
 # `impl eframe::App for ShellApp`. `run` does not need it: the shell has
 # its own loop (tests/no_eframe.rs keeps eframe out of it).
 eframe = ["dep:eframe"]
