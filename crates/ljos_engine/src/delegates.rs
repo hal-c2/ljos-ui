@@ -1345,12 +1345,15 @@ impl ViewShared {
             handle.cancel();
         }
         if let Some(obj) = held.object {
+            // Told while it is still in the view, as in Qt: its bindings
+            // keep their values instead of running once more against no
+            // parent, and `Component.onDestruction` still finds its parent.
+            engine.tell_destruction(obj, false);
             self.host.destroying(engine, obj);
             let model = self.state.borrow().model.clone();
             if let Some(m) = model {
                 m.delegate_gone(engine, obj);
             }
-            engine.tell_destruction(obj, false);
             engine.destroy(obj);
         }
     }
