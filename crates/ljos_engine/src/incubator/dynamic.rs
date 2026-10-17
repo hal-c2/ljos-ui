@@ -19,7 +19,7 @@ use std::sync::Arc;
 use ljos_ir::CompiledFile;
 use ljos_js::{HostError, HostFn, JsFault, JsRef, JsValue};
 
-use super::{Instance, Template};
+use super::{Initial, Instance, Template};
 use crate::WriteKind;
 use crate::atom::Atom;
 use crate::engine::{Engine, Free};
@@ -162,33 +162,61 @@ impl Engine {
     /// The initial properties of `createObject` and `incubateObject`. What
     /// cannot be set is a warning in Qt's words and the others are still
     /// set; a value made with `Qt.binding` is a binding, except on a member
-    /// of a value unless `follow`: that is given the value it gives now.
-    /// `url` is the component's.
+    /// of a value when `createObject` sets it: that is given the value it
+    /// gives now. `url` is the component's.
     pub(crate) fn initial_props(
         &self,
         url: &Atom,
         root: ObjectId,
         props: &[(String, Value)],
-        follow: bool,
+        how: &Initial,
     ) {
+        // Where `incubateObject` was called: it says what it could not set
+        // as the call's error, where `createObject` speaks for the file.
+        let at = match how {
+            Initial::Incubated(at) => Some(at.as_ref().unwrap_or(url)),
+            _ => None,
+        };
         for (name, v) in props {
             let Some((obj, p, member)) = self.initial_target(root, name) else {
-                let ty = self
-                    .meta_of(root)
-                    .map(|m| m.name.to_string())
-                    .unwrap_or_default();
-                self.warn(format!(
-                    "{url}: Setting initial properties failed: {ty} does not have a property called {name}"
-                ));
+                let path = name.contains('.');
+                match at {
+                    Some(_) if path => {
+                        self.warn(format!("{url}: Cannot resolve property \"{name}\"."));
+                    }
+                    Some(at) => self.warn(format!(
+                        "{at}: Error: Cannot assign to non-existent property \"{name}\""
+                    )),
+                    // createObject says nothing of a path that leads nowhere.
+                    None if path => {}
+                    None => {
+                        let ty = self
+                            .meta_of(root)
+                            .map(|m| m.name.to_string())
+                            .unwrap_or_default();
+                        self.warn(format!(
+                            "{url}: Setting initial properties failed: {ty} does not have a property called {name}"
+                        ));
+                    }
+                }
                 continue;
             };
-            let set = match member {
-                Some(member) => self.initial_member(obj, p, &member, v, follow),
+            let (ty, readonly) = self
+                .meta_of(obj)
+                .and_then(|m| m.property(p).map(|i| (i.ty.clone(), i.is_readonly())))
+                .unzip();
+            // createObject sets a read-only property; incubateObject
+            // assigns it, as a script would.
+            if let (Some(at), None, Some(true)) = (at, &member, readonly) {
+                self.warn(format!(
+                    "{at}: TypeError: Cannot assign to read-only property \"{name}\""
+                ));
+                continue;
+            }
+            let set = match &member {
+                Some(member) => self.initial_member(obj, p, member, v, at.is_some()),
                 None => {
-                    let fits = self
-                        .meta_of(obj)
-                        .and_then(|m| m.property(p).map(|i| initial_fits(&i.ty, v)))
-                        .unwrap_or(true);
+                    let fits = ty.as_ref().is_none_or(|ty| initial_fits(ty, v));
                     match self.initial_binding(obj, p, v) {
                         Some(bound) => bound.is_ok(),
                         None => {
@@ -199,10 +227,83 @@ impl Engine {
                     }
                 }
             };
-            if !set {
-                self.warn(format!("{url}: Could not set initial property {name}"));
+            if set {
+                continue;
+            }
+            match (at, &member, &ty) {
+                (Some(at), None, Some(ty)) => self.warn(format!(
+                    "{at}: Error: Cannot assign {} to {}",
+                    self.assigned_type(v),
+                    self.qt_type(ty)
+                )),
+                _ => self.warn(format!("{url}: Could not set initial property {name}")),
             }
         }
+    }
+
+    /// The C++ type Qt's engine names a value by when it cannot assign it.
+    fn assigned_type(&self, v: &Value) -> &'static str {
+        match v {
+            Value::Undefined => "[undefined]",
+            Value::Null => "std::nullptr_t",
+            Value::Bool(_) => "bool",
+            Value::Int(_) | Value::Enum(_) => "int",
+            // A script's number is an int while it is a whole one.
+            Value::Real(n) if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) => "int",
+            Value::Real(_) => "double",
+            Value::String(_) => "QString",
+            Value::Color(_) => "QColor",
+            Value::Point(_) => "QPointF",
+            Value::IntPoint(_) => "QPoint",
+            Value::Size(_) => "QSizeF",
+            Value::Rect(_) => "QRectF",
+            Value::Font(_) => "QFont",
+            Value::Vector2d(_) => "QVector2D",
+            Value::Vector3d(_) => "QVector3D",
+            Value::Vector4d(_) => "QVector4D",
+            Value::Quaternion(_) => "QQuaternion",
+            Value::Url(_) => "QUrl",
+            Value::Object(_) => "QObject*",
+            Value::Js(_) if self.is_callable(v) => "JavaScript function",
+            Value::List(_) | Value::Map(_) | Value::Js(_) => "QJSValue",
+        }
+    }
+
+    /// The C++ type Qt's engine names a property's type by: an object
+    /// type is a pointer to its class.
+    fn qt_type(&self, ty: &TypeTag) -> String {
+        let name = match ty {
+            TypeTag::Var | TypeTag::Data => "QVariant",
+            TypeTag::Bool => "bool",
+            TypeTag::Int | TypeTag::Enum(_) | TypeTag::Flags(_) => "int",
+            TypeTag::Real => "double",
+            TypeTag::String => "QString",
+            TypeTag::Color => "QColor",
+            TypeTag::Point => "QPointF",
+            TypeTag::Size => "QSizeF",
+            TypeTag::Rect => "QRectF",
+            TypeTag::Font => "QFont",
+            TypeTag::Vector2d => "QVector2D",
+            TypeTag::Vector3d => "QVector3D",
+            TypeTag::Vector4d => "QVector4D",
+            TypeTag::Quaternion => "QQuaternion",
+            TypeTag::Url => "QUrl",
+            TypeTag::Void => "void",
+            TypeTag::Object(None) => "QObject*",
+            TypeTag::Object(Some(n)) => return format!("{}*", self.class_named(n)),
+            TypeTag::List(None) => "QQmlListProperty<QObject>",
+            TypeTag::List(Some(n)) => {
+                return format!("QQmlListProperty<{}>", self.class_named(n));
+            }
+            TypeTag::Group(n) => return n.to_string(),
+        };
+        name.to_owned()
+    }
+
+    /// The class of the type named `name`, as a script sees it printed.
+    fn class_named(&self, name: &Atom) -> String {
+        self.lookup_type_any(name)
+            .map_or_else(|| name.to_string(), |meta| self.printed_class(&meta))
     }
 
     /// Where the name of an initial property leads, as it would in the

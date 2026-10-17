@@ -24,6 +24,7 @@ use std::cell::{Cell, RefCell};
 use ljos_js::JsRef;
 use ljos_runtime::Lane;
 
+use crate::atom::Atom;
 use crate::boundary::APPLICATION_PROC;
 use crate::builtins::QtObject;
 use crate::cx::Cx;
@@ -131,9 +132,19 @@ impl Engine {
             status::LOADING.into(),
             WriteKind::Initial,
         )?;
+        // What cannot be set is told at the call, which an asynchronous
+        // incubation is past by then. Nothing to set, nothing to tell: no
+        // stack is taken.
+        let at = if props.is_empty() {
+            None
+        } else {
+            self.js_origin()
+                .map(|p| Atom::from(format!("{}:{}", p.file, p.line)))
+        };
+        let how = Initial::Incubated(at);
         if synchronous {
             let made = self.component_template(component).and_then(|template| {
-                self.create_from_template_for_script(&template, parent, props, Initial::Incubated)
+                self.create_from_template_for_script(&template, parent, props, how)
             });
             self.incubated(inc, &made);
             return Ok(inc);
@@ -142,7 +153,7 @@ impl Engine {
         let (job, handle) =
             CreationJob::for_component(self, component, parent, props, Lane::Visible, owner);
         let (job, shared) = job
-            .initial(Initial::Incubated)
+            .initial(how)
             .on_done(move |e, made| e.incubated(inc, made))
             .shared();
         self.extension::<Running>()
@@ -201,6 +212,9 @@ impl Engine {
                 );
                 status::READY
             }
+            // Qt says nothing of a required property left out: the
+            // incubator's status is all the script is told.
+            Err(EngineError::RequiredNotSet(_)) => status::ERROR,
             Err(e) => {
                 self.warn(format!("Component.incubateObject: {e}"));
                 status::ERROR

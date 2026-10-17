@@ -127,7 +127,7 @@ struct CompletionNode {
 
 /// Who gives the initial properties of an object being made, which
 /// decides how they are set.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Initial {
     /// Native code: each names a property of the root, and one that
     /// cannot be set stops the creation.
@@ -137,8 +137,9 @@ pub(crate) enum Initial {
     /// of a value given `Qt.binding` takes the value it gives then.
     Created,
     /// `incubateObject`: as `createObject`, except that such a member
-    /// follows its binding.
-    Incubated,
+    /// follows its binding, and what cannot be set is an error of the
+    /// script that called, told at the place of the call (`file:line`).
+    Incubated(Option<Atom>),
 }
 
 #[derive(Default)]
@@ -423,7 +424,7 @@ impl Engine {
                 for i in 0..cr.units.len() {
                     self.apply_unit(&cr, i);
                 }
-                self.set_initial(&template.file.url, root, &props, how)
+                self.set_initial(&template.file.url, root, &props, &how)
             });
             cr.held = held;
             self.run_held(&cr);
@@ -565,12 +566,12 @@ impl Engine {
         url: &Atom,
         root: ObjectId,
         props: &[(String, Value)],
-        how: Initial,
+        how: &Initial,
     ) -> Result<(), EngineError> {
         match how {
             Initial::Native => self.finish_props(root, props),
             how => {
-                self.initial_props(url, root, props, how == Initial::Incubated);
+                self.initial_props(url, root, props, how);
                 Ok(())
             }
         }
@@ -2977,7 +2978,12 @@ impl CreationJob {
                         return JobPoll::Yield;
                     }
                     let props = std::mem::take(&mut self.props);
-                    self.phase = Phase::Finish(sliced::Finish::new(cr, root, props, self.initial));
+                    self.phase = Phase::Finish(sliced::Finish::new(
+                        cr,
+                        root,
+                        props,
+                        std::mem::take(&mut self.initial),
+                    ));
                 }
                 Phase::Finish(mut f) => {
                     if !e.is_alive(f.root()) {

@@ -217,6 +217,16 @@ impl JsState {
     }
 }
 
+impl Engine {
+    /// The class an object of `meta` prints as ([`JsState::printed`]).
+    pub(crate) fn printed_class(&self, meta: &MetaRef) -> String {
+        match self.inner.js.borrow().as_ref() {
+            Some(js) => js.printed(meta),
+            None => qt_class(meta),
+        }
+    }
+}
+
 /// The C++ class Qt's engine gives a type of its toolkit, by the rule its
 /// classes follow, `QQuick` or `QQml` before the QML name, and the few
 /// that do not. A type of no Qt module is its own name.

@@ -120,7 +120,7 @@ impl Finish {
                     let stopped = e.batch(|| {
                         if let Some(p) = props.take() {
                             let url = cr.top.as_ref().map(|t| t.file.url.clone());
-                            result = e.set_initial(&url.unwrap_or_default(), root, &p, how);
+                            result = e.set_initial(&url.unwrap_or_default(), root, &p, &how);
                         }
                         let (order, next) =
                             todo.get_or_insert_with(|| (e.held_order(cr, false), 0));
