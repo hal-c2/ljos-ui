@@ -39,10 +39,17 @@ use crate::present::{Change, Frame, Steps};
 const REMEMBERED: usize = 4;
 
 /// How many separate areas a frame draws at most. Each costs a scissored
-/// clear and a draw of every shape that reaches it, which is cheap next to
-/// the pixels it spares; past this, they are drawn as one area around them
-/// all, so a frame never spends long working out where to draw.
-const AREAS: usize = 256;
+/// clear, a draw of every shape that reaches it, and a rectangle told to
+/// the compositor, which on Wayland is a request of its own (two hundred
+/// moving bars were two hundred requests a frame, a fifth of the frame's
+/// work). Past this, the window around them is cut into [`AREAS`] cells,
+/// and each draws the area around what lies in it: a frame never spends
+/// long working out where to draw, and still spares what lies away from
+/// every area.
+const AREAS: usize = (GRID * GRID) as usize;
+
+/// The cells a side of the window is cut into past [`AREAS`].
+const GRID: u32 = 4;
 
 /// Areas of at least this many pixels are cleared to the background;
 /// smaller ones are drawn together as one mesh.
@@ -599,11 +606,44 @@ impl Damage {
             });
         }
         if v.len() > AREAS {
-            let all = v.drain(..).reduce(Px::union);
-            v.extend(all);
+            return Damage(grid(&v));
         }
         Damage(v)
     }
+}
+
+/// `areas` drawn as at most [`AREAS`]: the rectangle around them all is
+/// cut into a grid, and each cell draws the rectangle around the parts of
+/// `areas` inside it. Cells do not overlap, so neither do these.
+fn grid(areas: &[Px]) -> Vec<Px> {
+    let Some(Px([x0, y0, x1, y1])) = areas.iter().copied().reduce(Px::union) else {
+        return Vec::new();
+    };
+    let (w, h) = (x1 - x0, y1 - y0);
+    // Cell `i` along a side of length `len` from `lo` holds the pixels
+    // `p` with `(p - lo) * GRID / len == i`.
+    let edge = |lo: u32, len: u32, i: u32| lo + (len * i).div_ceil(GRID);
+    let cell = |lo: u32, len: u32, p: u32| ((p - lo) * GRID / len).min(GRID - 1);
+    let mut cells = [None::<Px>; AREAS];
+    for a in areas {
+        let [ax0, ay0, ax1, ay1] = a.0;
+        for cy in cell(y0, h, ay0)..=cell(y0, h, ay1 - 1) {
+            for cx in cell(x0, w, ax0)..=cell(x0, w, ax1 - 1) {
+                let part = Px([
+                    ax0.max(edge(x0, w, cx)),
+                    ay0.max(edge(y0, h, cy)),
+                    ax1.min(edge(x0, w, cx + 1)),
+                    ay1.min(edge(y0, h, cy + 1)),
+                ]);
+                if part.is_empty() {
+                    continue;
+                }
+                let c = &mut cells[(cy * GRID + cx) as usize];
+                *c = Some(c.map_or(part, |c| c.union(part)));
+            }
+        }
+    }
+    cells.into_iter().flatten().collect()
 }
 
 fn find(root: &mut [usize], mut i: usize) -> usize {
@@ -773,20 +813,60 @@ mod tests {
     }
 
     #[test]
-    fn many_small_areas_each_draw_only_themselves() {
-        // Two hundred bars across a window, each in a row of its own.
-        let damage = Damage::of((0..200).map(|row| {
+    fn a_few_small_areas_each_draw_only_themselves() {
+        let damage = Damage::of((0..AREAS as u32).map(|row| {
             let x = row * 37 % 776;
             Px([x, row * 6, x + 24, row * 6 + 6])
         }));
-        assert_eq!(damage.0.len(), 200);
+        assert_eq!(damage.0.len(), AREAS);
         assert!(disjoint(&damage));
-        let drawn: u32 = damage
-            .0
-            .iter()
-            .map(|Px([x0, y0, x1, y1])| (x1 - x0) * (y1 - y0))
-            .sum();
-        assert_eq!(drawn, 200 * 24 * 6);
+        let drawn: u32 = damage.0.iter().map(|px| px.pixels()).sum();
+        assert_eq!(drawn, AREAS as u32 * 24 * 6);
+    }
+
+    /// Whether every pixel of `areas` is inside one of `damage`'s.
+    fn covers(damage: &Damage, areas: &[Px]) -> bool {
+        areas.iter().all(|a| {
+            let [x0, y0, x1, y1] = a.0;
+            (y0..y1).all(|y| {
+                (x0..x1).all(|x| {
+                    damage
+                        .0
+                        .iter()
+                        .any(|d| d.0[0] <= x && x < d.0[2] && d.0[1] <= y && y < d.0[3])
+                })
+            })
+        })
+    }
+
+    #[test]
+    fn many_areas_are_drawn_as_a_few_cells_that_cover_them() {
+        // Two hundred bars across a window, each in a row of its own.
+        let areas: Vec<Px> = (0..200)
+            .map(|row| {
+                let x = row * 37 % 776;
+                Px([x, row * 6, x + 24, row * 6 + 6])
+            })
+            .collect();
+        let damage = Damage::of(areas.iter().copied());
+        assert!(damage.0.len() <= AREAS, "{} areas", damage.0.len());
+        assert!(disjoint(&damage));
+        assert!(covers(&damage, &areas));
+    }
+
+    #[test]
+    fn cells_spare_what_lies_away_from_every_area() {
+        // Two columns of small areas, far apart: what lies between them is
+        // not drawn.
+        let areas: Vec<Px> = (0..100u32)
+            .flat_map(|row| [0, 700].map(|x| Px([x, row * 6, x + 20, row * 6 + 4])))
+            .collect();
+        let damage = Damage::of(areas.iter().copied());
+        assert!(damage.0.len() <= AREAS, "{} areas", damage.0.len());
+        assert!(disjoint(&damage));
+        assert!(covers(&damage, &areas));
+        let drawn: u32 = damage.0.iter().map(|px| px.pixels()).sum();
+        assert!(drawn < 720 * 600 / 2, "{drawn} pixels drawn");
     }
 
     #[test]
@@ -802,15 +882,9 @@ mod tests {
             })
         });
         let damage = Damage::of(areas);
-        assert_eq!(damage.0.len(), 200);
+        assert!(damage.0.len() <= AREAS);
         assert!(disjoint(&damage));
         assert!(COMPARED.get() < 800 * 8, "{} comparisons", COMPARED.get());
-    }
-
-    #[test]
-    fn more_areas_than_the_cap_are_drawn_as_one_around_them() {
-        let damage = Damage::of((0..AREAS as u32 + 1).map(|i| Px([i * 3, 0, i * 3 + 2, 2])));
-        assert_eq!(damage.0, [Px([0, 0, AREAS as u32 * 3 + 2, 2])]);
     }
 
     #[test]
