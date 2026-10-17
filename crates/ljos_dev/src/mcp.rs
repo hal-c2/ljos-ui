@@ -40,6 +40,7 @@ mod args;
 mod capture;
 mod frames;
 mod logs;
+mod observe;
 mod paint;
 mod reload;
 mod surface;
@@ -65,7 +66,9 @@ use ljos_runtime::{
 use serde_json::json;
 use tokio::sync::oneshot;
 
-pub use args::{INSTRUCTIONS, MAX_LOG_LINES, MAX_NODES, MAX_SCREENSHOT_SIDE, SERVER_NAME, TOOLS};
+pub use args::{
+    FIRST_ACT, INSTRUCTIONS, MAX_LOG_LINES, MAX_NODES, MAX_SCREENSHOT_SIDE, SERVER_NAME, TOOLS,
+};
 pub use ljos_mcp_core::glue::http::{
     HttpConfig, HttpError, HttpServer, LAN_WARNING, Listen, bind_policy,
 };
@@ -258,6 +261,9 @@ pub struct Inspector {
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     devtools_assigned: HashSet<(ObjectId, String)>,
+    /// The mailbox and timer counters move while an inspector is served
+    /// (`ljos_runtime::observe`).
+    _observing: ljos_runtime::ObserveGuard,
 }
 
 impl fmt::Debug for Inspector {
@@ -292,6 +298,7 @@ impl Inspector {
     /// snapshot is not finished.
     pub fn new(cfg: InspectorConfig, wake: WakeHook) -> (Inspector, Arc<InspectorSurface>) {
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX_CAPACITY, wake.clone());
+        inbox.observe_as("inspector", Some(observe::request_kind));
         let feed = ReloadFeed::new();
         let surface = Arc::new(InspectorSurface::new(handle, cfg.timeout, feed.clone()));
         let inspector = Inspector {
@@ -316,6 +323,7 @@ impl Inspector {
             paint: PaintStats::default(),
             frames: FrameLog::default(),
             devtools_assigned: HashSet::new(),
+            _observing: ljos_runtime::observe::enable(),
         };
         (inspector, surface)
     }
@@ -657,6 +665,15 @@ impl Inspector {
                 capacity,
                 false,
             )),
+            (Kind::Processes(args), _) => Ok(observe::processes(
+                engine,
+                &self.stats,
+                ljos_platform::Platform::of(engine).pending(),
+                // Frames asked for by more requests or by motion.
+                queued > 0 || ljos_quick::running_animation_count(engine) > 0,
+                args,
+            )),
+            (Kind::Mailboxes(args), _) => Ok(observe::mailboxes(args)),
             (Kind::Resource(Resource::Metrics), _) => Ok(tools::metrics(
                 engine,
                 &self.stats,
@@ -897,7 +914,7 @@ enum Started {
 /// already taken.
 fn needs_scene(kind: &Kind) -> bool {
     match kind {
-        Kind::Logs(_) | Kind::Metrics => false,
+        Kind::Logs(_) | Kind::Metrics | Kind::Processes(_) | Kind::Mailboxes(_) => false,
         Kind::Resource(r) => *r == Resource::Tree,
         Kind::Snapshot(args) => args.cursor.is_none() || args.image,
         Kind::Act(act) => !matches!(act, Act::Reload),

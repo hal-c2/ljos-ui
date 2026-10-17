@@ -374,7 +374,7 @@ fn the_instructions_and_the_tools_are_told_to_a_client_that_connects() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(names, &mcp::TOOLS[..7]);
+    assert_eq!(names, &mcp::TOOLS[..mcp::FIRST_ACT]);
     assert_eq!(served.wakes(), 0, "none of this is the application's work");
 }
 

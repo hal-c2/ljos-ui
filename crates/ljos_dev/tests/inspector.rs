@@ -19,8 +19,8 @@ use std::{
 use ljos_dev::{
     DevSession,
     mcp::{
-        Drawn, INBOX_CAPACITY, Inspector, InspectorConfig, InspectorSurface, PaintReport,
-        PainterInfo, StartupStep, TOOLS,
+        Drawn, FIRST_ACT, INBOX_CAPACITY, Inspector, InspectorConfig, InspectorSurface,
+        PaintReport, PainterInfo, StartupStep, TOOLS,
     },
 };
 use ljos_engine::{Engine, LogLevel, ObjectId, Value as QmlValue};
@@ -327,17 +327,17 @@ fn needs(tool: &str) -> Cap {
 }
 
 #[test]
-fn the_client_that_may_only_read_is_offered_the_seven_reading_tools_and_nothing_that_acts() {
+fn the_client_that_may_only_read_is_offered_the_reading_tools_and_nothing_that_acts() {
     let mut app = app();
     let tools = app.client.tools().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, &TOOLS[..7]);
+    assert_eq!(names, &TOOLS[..FIRST_ACT]);
     for tool in &tools {
         assert_eq!(tool.read_only, Some(true), "{}", tool.name);
         assert!(tool.description.len() > 60, "{}", tool.name);
         assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
     }
-    for acting in &TOOLS[7..] {
+    for acting in &TOOLS[FIRST_ACT..] {
         assert!(!names.contains(acting));
     }
     assert_eq!(
@@ -1354,7 +1354,7 @@ fn not_actionable_an_item_that_is_not_shown_cannot_be_pictured() {
 #[test]
 fn capability_denied_every_tool_that_acts_without_its_capability() {
     let mut app = app();
-    for tool in &TOOLS[7..] {
+    for tool in &TOOLS[FIRST_ACT..] {
         let (code, message, details) = app.refused(tool, json!({ "target": "e2" }));
         let needs = needs(tool);
         assert_eq!(code, "capability_denied", "{tool}: {message}");
@@ -1378,7 +1378,11 @@ fn capability_denied_eval_is_not_implied_by_the_other_capabilities() {
         .into_iter()
         .map(|t| t.name)
         .collect();
-    assert_eq!(names, &TOOLS[..19], "app_eval is the one tool left out");
+    assert_eq!(
+        names,
+        &TOOLS[..TOOLS.len() - 1],
+        "app_eval is the one tool left out"
+    );
     let reply = client
         .call("app_eval", json!({ "source": "1" }), &mut || {})
         .unwrap();
@@ -1601,4 +1605,116 @@ fn every_answer_fits_the_size_it_may_have() {
         let json = reply.structured.to_string().len();
         assert!(json <= 20_000 + 512, "{tool}: {json} bytes of JSON");
     }
+}
+
+// ------------------------------------------------- processes and mailboxes
+
+const BUSY: &str = r#"import QtQuick
+Item {
+    width: 200; height: 200
+    Timer { id: tick; interval: 250; repeat: true; running: true }
+    Timer { id: later; interval: 5000; running: false }
+    Rectangle {
+        id: box
+        width: 10; height: 10
+        NumberAnimation on x { id: slide; from: 0; to: 100; duration: 1000; loops: Animation.Infinite }
+    }
+}
+"#;
+
+fn rows<'a>(reply: &'a LocalReply, kind: &str) -> Vec<&'a Value> {
+    reply.structured["processes"]
+        .as_array()
+        .expect("processes")
+        .iter()
+        .filter(|p| p["kind"] == kind)
+        .collect()
+}
+
+#[test]
+fn app_processes_lists_the_running_timers_and_animations_and_not_the_stopped_ones() {
+    let mut app = app_with(BUSY, InspectorConfig::default());
+    let reply = app.call("app_processes", json!({}));
+    let timers = rows(&reply, "timer");
+    assert_eq!(timers.len(), 1, "{}", reply.text);
+    assert_eq!(timers[0]["name"], "Timer#tick");
+    assert_eq!(timers[0]["locator"], "id=tick");
+    assert_eq!(timers[0]["interval_ms"], 250);
+    assert_eq!(timers[0]["repeat"], true);
+    assert_eq!(timers[0]["state"], "waiting");
+    let animations = rows(&reply, "animation");
+    assert_eq!(animations.len(), 1, "{}", reply.text);
+    assert_eq!(animations[0]["name"], "NumberAnimation#slide");
+    assert_eq!(animations[0]["state"], "running");
+    assert!(
+        reply
+            .text
+            .contains("timer Timer#tick waiting, every 250 ms"),
+        "{}",
+        reply.text
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn app_processes_lists_the_ui_thread_first() {
+    let mut app = app();
+    let reply = app.call("app_processes", json!({ "kind": "thread" }));
+    let all = reply.structured["processes"].as_array().unwrap();
+    assert!(all.iter().all(|p| p["kind"] == "thread"), "{}", reply.text);
+    assert_eq!(all[0]["name"], "UI thread");
+    assert_eq!(all[0]["role"], "engine");
+    assert!(all[0]["work_us"].as_u64().unwrap() > 0);
+    assert!(all.len() > 1, "the test's own server thread runs too");
+}
+
+#[test]
+fn app_processes_keeps_one_kind() {
+    let mut app = app_with(BUSY, InspectorConfig::default());
+    let reply = app.call("app_processes", json!({ "kind": "animation" }));
+    let all = reply.structured["processes"].as_array().unwrap();
+    assert_eq!(all.len(), 1, "{}", reply.text);
+    let (code, message, _) = app.refused("app_processes", json!({ "kind": "fiber" }));
+    assert_eq!(code, "invalid_argument", "{message}");
+}
+
+#[test]
+fn app_mailboxes_counts_the_inspectors_own_requests_without_waking_the_ui_thread() {
+    let mut app = app();
+    app.call("app_status", json!({}));
+    app.call("app_status", json!({}));
+    let reply = app.call("app_mailboxes", json!({ "name": "inspector", "peek": 3 }));
+    assert_eq!(
+        app.pumps, 0,
+        "the mailboxes are read on the server's thread"
+    );
+    // Each test's inspector has a mailbox of its own; this one is the
+    // one that has drained the two status requests above (and its own
+    // `app_snapshot`-free start). Others run beside it.
+    let mine = reply.structured["mailboxes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["capacity"] == INBOX_CAPACITY && m["drained"].as_u64() >= Some(2))
+        .unwrap_or_else(|| panic!("no inspector mailbox in {}", reply.text))
+        .clone();
+    assert_eq!(mine["name"], "inspector");
+    assert_eq!(mine["depth"], 0);
+    assert!(mine["peek"].as_array().unwrap().is_empty());
+    assert!(
+        reply.text.contains("inspector: 0/16 queued"),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn app_mailboxes_names_kinds_never_contents() {
+    let mut app = app();
+    let reply = app.call("app_mailboxes", json!({ "peek": 20 }));
+    let text = serde_json::to_string(&reply.structured).unwrap();
+    assert!(!text.contains("hunter2"));
+    let (code, message, _) = app.refused("app_mailboxes", json!({ "peek": 21 }));
+    assert_eq!(code, "invalid_argument", "{message}");
+    assert!(message.contains("at most 20"), "{message}");
 }

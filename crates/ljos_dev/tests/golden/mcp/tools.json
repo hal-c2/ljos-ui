@@ -282,6 +282,85 @@
     "read_only": true
   },
   {
+    "description": "What does work in the app, like Erlang's observer: OS threads (UI thread, pools, inspector, platform readers) with state, CPU time and wakeups; running Timers and animations; the owners the frame scheduler charges time to. `kind` keeps one kind.",
+    "input_schema": {
+      "$defs": {
+        "ProcessKind": {
+          "oneOf": [
+            {
+              "const": "thread",
+              "description": "OS threads of the process, the UI thread first.",
+              "type": "string"
+            },
+            {
+              "const": "timer",
+              "description": "Running `Timer`s.",
+              "type": "string"
+            },
+            {
+              "const": "animation",
+              "description": "Animations under way.",
+              "type": "string"
+            },
+            {
+              "const": "owner",
+              "description": "What the frame scheduler charged time to: the application, error\nboundaries, the inspector.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "List only this kind: `thread`, `timer`, `animation` or `owner`."
+        }
+      },
+      "title": "ProcessesArgs",
+      "type": "object"
+    },
+    "name": "app_processes",
+    "read_only": true
+  },
+  {
+    "description": "The bounded inboxes threads use to reach the UI thread: depth and capacity, oldest message's age, messages sent, refused as busy, replaced and drained since the inspector attached, senders. `peek` lists the kinds of the front messages, never their contents.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "default": null,
+          "description": "List only the inboxes of this name (`application`, `platform`,\n`images`, `inspector`, `reload`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "peek": {
+          "default": null,
+          "description": "Name the kinds of this many front messages per inbox (at most 20,\ndefault 0). Never their contents.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "MailboxesArgs",
+      "type": "object"
+    },
+    "name": "app_mailboxes",
+    "read_only": true
+  },
+  {
     "description": "Click the item `target` (a reference or locator) at its centre: a move, a press and a release through the same hit test as a mouse, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
     "input_schema": {
       "$defs": {

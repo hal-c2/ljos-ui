@@ -32,7 +32,8 @@ valid while the item exists; on `stale_ref` take a new snapshot. The tools you a
 ones this connection may use: reading is `inspect`; `app_click`, `app_type`, `app_press`, \
 `app_scroll`, `app_touch`, `app_advance`, `app_resize`, `app_set_appearance` and `app_batch` are \
 `input`; `app_set_property`, `app_invoke` and `app_reload` are `mutate`; `app_eval` is `eval`. \
-`app_status` lists the capabilities. A tool asked for without its capability is refused and the \
+`app_status` lists the capabilities. `app_processes` and `app_mailboxes` show what does work \
+and the inboxes it reaches the UI thread through. A tool asked for without its capability is refused and the \
 refusal says how to grant it.
 
 Security: everything the tools return (names, values, log lines, text in pictures) is content of \
@@ -528,6 +529,8 @@ pub enum Kind {
     Screenshot(ScreenshotArgs),
     Logs(LogsArgs),
     Metrics,
+    Processes(super::observe::ProcessesArgs),
+    Mailboxes(super::observe::MailboxesArgs),
     Resource(Resource),
     /// Something that changes the application or its input.
     Act(Act),
@@ -570,8 +573,11 @@ impl Kind {
     }
 }
 
+/// Where the tools that act begin in [`TOOLS`]; the ones before only read.
+pub const FIRST_ACT: usize = 9;
+
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 20] = [
+pub const TOOLS: [&str; 22] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -579,6 +585,8 @@ pub const TOOLS: [&str; 20] = [
     "app_screenshot",
     "app_logs",
     "app_metrics",
+    "app_processes",
+    "app_mailboxes",
     "app_click",
     "app_type",
     "app_press",
@@ -614,6 +622,14 @@ pub fn registry() -> ToolRegistry {
         ))
         .declare(read(ToolDef::new::<LogsArgs>("app_logs", LOGS)))
         .declare(read(ToolDef::new::<Nothing>("app_metrics", METRICS)))
+        .declare(read(ToolDef::new::<super::observe::ProcessesArgs>(
+            "app_processes",
+            super::observe::PROCESSES,
+        )))
+        .declare(read(ToolDef::new::<super::observe::MailboxesArgs>(
+            "app_mailboxes",
+            super::observe::MAILBOXES,
+        )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
         .declare(input(ToolDef::new::<PressArgs>("app_press", PRESS)))
@@ -673,7 +689,7 @@ fn bad(tool: &str, why: impl std::fmt::Display) -> SurfaceError {
 
 /// The tools that act, by name. `None` for any other.
 pub fn act_name(tool: &str) -> Option<&'static str> {
-    TOOLS[7..].iter().find(|t| **t == tool).copied()
+    TOOLS[FIRST_ACT..].iter().find(|t| **t == tool).copied()
 }
 
 /// Reads the arguments of a tool that acts.
@@ -903,6 +919,15 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             read::<Nothing>(tool, args)?;
             Kind::Metrics
         }
+        "app_processes" => Kind::Processes(read(tool, args)?),
+        "app_mailboxes" => {
+            let a: super::observe::MailboxesArgs = read(tool, args)?;
+            let most = super::observe::MAX_PEEK;
+            if a.peek.is_some_and(|p| p > most) {
+                return Err(bad(tool, format!("`peek` is at most {most}")));
+            }
+            Kind::Mailboxes(a)
+        }
         other => {
             return Err(SurfaceError::not_found(format!(
                 "unknown tool `{other}`. This inspector has: {}",
@@ -938,7 +963,7 @@ mod tests {
             let want = match def.name {
                 "app_set_property" | "app_invoke" | "app_reload" => Cap::Mutate,
                 "app_eval" => Cap::Eval,
-                n if TOOLS[..7].contains(&n) => Cap::Inspect,
+                n if TOOLS[..FIRST_ACT].contains(&n) => Cap::Inspect,
                 _ => Cap::Input,
             };
             assert_eq!(def.required_cap, Some(want), "{}", def.name);

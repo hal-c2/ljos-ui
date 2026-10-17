@@ -1,0 +1,444 @@
+//! `app_processes` and `app_mailboxes`: the application as an Erlang
+//! observer sees a node (ARCHITECTURE.md 3.4), what does work and the
+//! mailboxes it is handed through.
+//!
+//! The threads are read from `/proc/self/task`, which the kernel keeps
+//! anyway, so listing them costs nothing until asked. The UI thread's
+//! own processes (Timers, animations, the owners the scheduler charges
+//! time to) are read where they live, on the UI thread. The mailboxes
+//! are read from [`ljos_runtime::observe`] on the server's thread, so a
+//! UI thread that is stuck still shows its inbox filling up.
+
+use std::fmt::Write as _;
+
+use ljos_engine::{Engine, ObjectId};
+use ljos_mcp_core::ToolReply;
+use ljos_runtime::observe::{self, MailboxSample};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use super::args::{Act, Kind, Resource};
+use super::surface::DevReq;
+use crate::top::{FrameStats, owner_name};
+
+pub const PROCESSES: &str = "\
+What does work in the app, like Erlang's observer: OS threads (UI thread, pools, inspector, \
+platform readers) with state, CPU time and wakeups; running Timers and animations; the owners \
+the frame scheduler charges time to. `kind` keeps one kind.";
+
+pub const MAILBOXES: &str = "\
+The bounded inboxes threads use to reach the UI thread: depth and capacity, oldest message's \
+age, messages sent, refused as busy, replaced and drained since the inspector attached, \
+senders. `peek` lists the kinds of the front messages, never their contents.";
+
+/// The most front messages `app_mailboxes` names per inbox.
+pub const MAX_PEEK: usize = 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessKind {
+    /// OS threads of the process, the UI thread first.
+    Thread,
+    /// Running `Timer`s.
+    Timer,
+    /// Animations under way.
+    Animation,
+    /// What the frame scheduler charged time to: the application, error
+    /// boundaries, the inspector.
+    Owner,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessesArgs {
+    /// List only this kind: `thread`, `timer`, `animation` or `owner`.
+    #[serde(default)]
+    pub kind: Option<ProcessKind>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailboxesArgs {
+    /// List only the inboxes of this name (`application`, `platform`,
+    /// `images`, `inspector`, `reload`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Name the kinds of this many front messages per inbox (at most 20,
+    /// default 0). Never their contents.
+    #[serde(default)]
+    pub peek: Option<usize>,
+}
+
+/// The kind of an inspector request, for its own inbox's counts: the tool
+/// it came from.
+pub(crate) fn request_kind(req: &DevReq) -> &'static str {
+    match &req.kind {
+        Kind::Status(_) => "app_status",
+        Kind::Snapshot(_) => "app_snapshot",
+        Kind::Find(_) => "app_find",
+        Kind::Inspect(_) => "app_inspect",
+        Kind::Screenshot(_) => "app_screenshot",
+        Kind::Logs(_) => "app_logs",
+        Kind::Metrics => "app_metrics",
+        Kind::Processes(_) => "app_processes",
+        Kind::Mailboxes(_) => "app_mailboxes",
+        Kind::Resource(r) => match r {
+            Resource::Tree => "resource tree",
+            Resource::Logs => "resource logs",
+            Resource::Metrics => "resource metrics",
+            Resource::Reload => "resource reload",
+        },
+        Kind::Act(act) => match act {
+            Act::Click(_) => "app_click",
+            Act::Type(_) => "app_type",
+            Act::Press(_) => "app_press",
+            Act::Scroll(_) => "app_scroll",
+            Act::Touch(_) => "app_touch",
+            Act::Advance(_) => "app_advance",
+            Act::Resize(_) => "app_resize",
+            Act::Appearance(_) => "app_set_appearance",
+            Act::SetProperty(_) => "app_set_property",
+            Act::Invoke(_) => "app_invoke",
+            Act::Reload => "app_reload",
+            Act::Eval(_) => "app_eval",
+            Act::Batch(_) => "app_batch",
+        },
+    }
+}
+
+fn micros(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// Answers `app_mailboxes`, on the server's thread.
+pub(crate) fn mailboxes(args: &MailboxesArgs) -> ToolReply {
+    let peek = args.peek.unwrap_or(0).min(MAX_PEEK);
+    let all: Vec<MailboxSample> = observe::mailboxes(peek)
+        .into_iter()
+        .filter(|m| args.name.as_deref().is_none_or(|n| n == m.name))
+        .collect();
+    let rows: Vec<Value> = all
+        .iter()
+        .map(|m| {
+            let mut row = json!({
+                "name": m.name,
+                "depth": m.depth,
+                "capacity": m.capacity,
+                "oldest_us": m.oldest.map(micros),
+                "sent": m.sent,
+                "refused": m.refused,
+                "replaced": m.replaced,
+                "drained": m.drained,
+                "senders": m.senders,
+                "waiting_senders": m.waiting,
+                "kinds": m.kinds.iter().map(|(k, n)| json!({ "kind": k, "count": n })).collect::<Vec<_>>(),
+            });
+            if peek > 0 {
+                row["peek"] = json!(m.peek);
+            }
+            row
+        })
+        .collect();
+    let mut text = String::new();
+    for m in &all {
+        let _ = write!(
+            text,
+            "{}: {}/{} queued, sent {}, refused {}, replaced {}, drained {}, {} senders",
+            m.name, m.depth, m.capacity, m.sent, m.refused, m.replaced, m.drained, m.senders
+        );
+        if m.waiting > 0 {
+            let _ = write!(text, " ({} waiting for room)", m.waiting);
+        }
+        if let Some(oldest) = m.oldest {
+            let _ = write!(text, ", oldest {:.1} ms", oldest.as_secs_f64() * 1000.0);
+        }
+        if !m.kinds.is_empty() {
+            let kinds: Vec<String> = m.kinds.iter().map(|(k, n)| format!("{k} {n}")).collect();
+            let _ = write!(text, " [{}]", kinds.join(", "));
+        }
+        text.push('\n');
+    }
+    if all.is_empty() {
+        text.push_str("no mailbox by that name\n");
+    }
+    text.push_str("Counts are since the inspector attached.");
+    ToolReply::from(json!({ "mailboxes": rows, "counted_since": "inspector attached" }))
+        .with_text(text)
+}
+
+/// One OS thread as `/proc` shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Thread {
+    tid: u32,
+    name: String,
+    /// `R`, `S`, `D`, ...
+    state: char,
+    work_us: u64,
+    wakeups: u64,
+    preempted: u64,
+}
+
+/// What a thread is for, from the name it was given (cut to 15 bytes by
+/// the kernel).
+fn thread_kind(name: &str, ui: bool) -> &'static str {
+    if ui {
+        return "engine";
+    }
+    let table: [(&str, &str); 16] = [
+        ("ljos-compute", "pool"),
+        ("ljos-mcp", "inspector"),
+        ("tokio", "tokio"),
+        ("ljos-media", "media"),
+        ("ljos-image", "images"),
+        ("ljos-settings", "settings"),
+        ("ljos-desktop-fo", "fonts"),
+        ("ljos-screen-rea", "screen_reader"),
+        ("ljos-fetch", "network"),
+        ("ljos-request", "network"),
+        ("ljos-dialog", "platform"),
+        ("ljos-open-url", "platform"),
+        ("ljos-badge", "platform"),
+        ("ljos-gpu", "gpu"),
+        ("ljos-dev-watche", "reload"),
+        ("ljos-", "worker"),
+    ];
+    table
+        .iter()
+        .find(|(prefix, _)| name.starts_with(prefix))
+        .map_or("other", |(_, kind)| kind)
+}
+
+fn thread_state(state: char) -> &'static str {
+    match state {
+        'R' => "busy",
+        'S' | 'I' => "idle",
+        'D' => "blocked",
+        'T' | 't' => "stopped",
+        _ => "gone",
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn current_tid() -> Option<u32> {
+    std::fs::read_link("/proc/thread-self")
+        .ok()?
+        .file_name()?
+        .to_str()?
+        .parse()
+        .ok()
+}
+
+#[cfg(target_os = "linux")]
+fn threads() -> Vec<Thread> {
+    let Ok(dir) = std::fs::read_dir("/proc/self/task") else {
+        return Vec::new();
+    };
+    let mut all: Vec<Thread> = dir
+        .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
+        .filter_map(read_thread)
+        .collect();
+    all.sort_by_key(|t| t.tid);
+    all
+}
+
+#[cfg(target_os = "linux")]
+fn read_thread(tid: u32) -> Option<Thread> {
+    let base = format!("/proc/self/task/{tid}");
+    let stat = std::fs::read_to_string(format!("{base}/stat")).ok()?;
+    // The name is in parentheses and may hold either; it ends at the last.
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    let name = stat.get(open + 1..close)?.to_string();
+    let rest: Vec<&str> = stat.get(close + 2..)?.split_whitespace().collect();
+    let state = rest.first()?.chars().next()?;
+    // utime and stime, fields 14 and 15, in clock ticks of 10 ms; the
+    // scheduler's own count in nanoseconds is finer when it is there.
+    let ticks: u64 = rest.get(11)?.parse::<u64>().ok()? + rest.get(12)?.parse::<u64>().ok()?;
+    let work_us = std::fs::read_to_string(format!("{base}/schedstat"))
+        .ok()
+        .and_then(|s| s.split_whitespace().next()?.parse::<u64>().ok())
+        .map_or(ticks * 10_000, |ns| ns / 1000);
+    let status = std::fs::read_to_string(format!("{base}/status")).unwrap_or_default();
+    let field = |key: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(key)?.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    Some(Thread {
+        tid,
+        name,
+        state,
+        work_us,
+        wakeups: field("voluntary_ctxt_switches:"),
+        preempted: field("nonvoluntary_ctxt_switches:"),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn current_tid() -> Option<u32> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn threads() -> Vec<Thread> {
+    Vec::new()
+}
+
+/// `Timer#tick`, `NumberAnimation "fade"`: what to call an object.
+fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) {
+    let report = engine.inspect_object(obj);
+    let ty = report
+        .as_ref()
+        .and_then(|r| r.types.first().cloned())
+        .unwrap_or_else(|| "object".to_owned());
+    let id = report.and_then(|r| r.id);
+    let object_name = engine
+        .untrack(|| engine.read_by_name(obj, "objectName"))
+        .to_js_string()
+        .to_string();
+    if !object_name.is_empty() && object_name != "undefined" {
+        (
+            format!("{ty} \"{object_name}\""),
+            Some(format!("#{object_name}")),
+        )
+    } else if let Some(id) = id {
+        (format!("{ty}#{id}"), Some(format!("id={id}")))
+    } else {
+        (ty, None)
+    }
+}
+
+/// Answers `app_processes`, on the UI thread.
+pub(crate) fn processes(
+    engine: &Engine,
+    stats: &FrameStats,
+    pending_requests: usize,
+    queued_work: bool,
+    args: &ProcessesArgs,
+) -> ToolReply {
+    let wants = |k: ProcessKind| args.kind.is_none_or(|w| w == k);
+    let mut rows: Vec<Value> = Vec::new();
+    let mut text = String::new();
+    if wants(ProcessKind::Thread) {
+        let ui = current_tid();
+        let mut all = threads();
+        // The UI thread first: it is the one the rest serve.
+        all.sort_by_key(|t| Some(t.tid) != ui);
+        for t in &all {
+            let is_ui = Some(t.tid) == ui;
+            let kind = thread_kind(&t.name, is_ui);
+            // It is answering this request, which says nothing about how
+            // busy it is otherwise.
+            let state = if is_ui {
+                if queued_work { "busy" } else { "idle" }
+            } else {
+                thread_state(t.state)
+            };
+            let mut row = json!({
+                "kind": "thread",
+                "name": if is_ui { "UI thread" } else { t.name.as_str() },
+                "role": kind,
+                "tid": t.tid,
+                "state": state,
+                "work_us": t.work_us,
+                "wakeups": t.wakeups,
+                "preempted": t.preempted,
+            });
+            if is_ui {
+                row["thread_name"] = json!(t.name);
+                row["platform_requests"] = json!(pending_requests);
+            }
+            let _ = writeln!(
+                text,
+                "thread {} [{kind}] tid {} {state}, cpu {:.1} ms, wakeups {}",
+                if is_ui { "UI thread" } else { t.name.as_str() },
+                t.tid,
+                t.work_us as f64 / 1000.0,
+                t.wakeups
+            );
+            rows.push(row);
+        }
+        if all.is_empty() {
+            text.push_str("threads: not listed on this platform\n");
+        }
+    }
+    if wants(ProcessKind::Timer) {
+        let now = engine.now();
+        for t in engine.running_timers() {
+            let (name, locator) = label(engine, t.object);
+            let due_in = t.due.map(|d| d.saturating_since(now));
+            let state = if t.due.is_some() { "waiting" } else { "frozen" };
+            rows.push(json!({
+                "kind": "timer",
+                "name": name,
+                "locator": locator,
+                "state": state,
+                "interval_ms": t.interval,
+                "repeat": t.repeat,
+                "due_in_us": due_in.map(micros),
+                "wakeups": t.fired,
+            }));
+            let _ = writeln!(
+                text,
+                "timer {name} {state}, every {} ms{}, fired {}",
+                t.interval,
+                if t.repeat { "" } else { " once" },
+                t.fired
+            );
+        }
+    }
+    if wants(ProcessKind::Animation) {
+        for (anim, paused) in ljos_quick::running_animations(engine) {
+            let (name, locator) = label(engine, anim);
+            let state = if paused { "paused" } else { "running" };
+            rows.push(json!({
+                "kind": "animation",
+                "name": name,
+                "locator": locator,
+                "state": state,
+            }));
+            let _ = writeln!(text, "animation {name} {state}");
+        }
+    }
+    if wants(ProcessKind::Owner) {
+        for (proc, time) in stats.owners(16) {
+            let name = owner_name(engine, proc);
+            rows.push(json!({
+                "kind": "owner",
+                "name": name,
+                "proc": format!("{}.{}", proc.index(), proc.generation()),
+                "work_us": micros(time),
+            }));
+            let _ = writeln!(text, "owner {name}, {:.2} ms", time.as_secs_f64() * 1000.0);
+        }
+    }
+    if rows.is_empty() {
+        text.push_str("nothing of that kind is running\n");
+    }
+    ToolReply::from(json!({ "processes": rows })).with_text(text.trim_end().to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_thread_is_known_by_its_name() {
+        assert_eq!(thread_kind("ljos-compute", false), "pool");
+        assert_eq!(thread_kind("ljos-screen-rea", false), "screen_reader");
+        assert_eq!(thread_kind("ljos-xml", false), "worker");
+        assert_eq!(thread_kind("gdbus", false), "other");
+        assert_eq!(thread_kind("gdbus", true), "engine");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn this_thread_is_among_the_threads() {
+        let me = current_tid().unwrap();
+        let mine = threads().into_iter().find(|t| t.tid == me).unwrap();
+        assert_eq!(mine.state, 'R');
+        assert!(!mine.name.is_empty());
+    }
+}

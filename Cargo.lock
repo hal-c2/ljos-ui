@@ -3590,6 +3590,7 @@ dependencies = [
  "ljos_engine",
  "ljos_ir",
  "ljos_mcp_core",
+ "ljos_platform",
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",

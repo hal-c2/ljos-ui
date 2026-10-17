@@ -259,6 +259,11 @@ impl McpSurface for InspectorSurface {
                 d.per_copy_bytes()
             });
             let kind = args::parse(name, args)?;
+            if let Kind::Mailboxes(a) = &kind {
+                // Read here, so a UI thread that is stuck still shows its
+                // inbox filling up.
+                return Ok(super::observe::mailboxes(a));
+            }
             if let Kind::Act(Act::Batch(steps)) = &kind {
                 // Everything a batch will do is allowed before any of it is.
                 for (i, (tool, act)) in steps.iter().enumerate() {
