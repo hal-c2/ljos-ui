@@ -262,4 +262,14 @@ pub fn register(engine: &Engine) {
             }
         }
     }
+    // The parts a style draws with, for controls that customise it.
+    let parts = format!("{BASIC}/impl");
+    for name in styles.get(&parts).cloned().unwrap_or_default() {
+        let uri = "QtQuick.Controls.Basic.impl";
+        if let Err(err) =
+            engine.register_qml_type(uri, Version::new(2, 15), &format!("{parts}/{name}"))
+        {
+            util::warn(engine, format!("{uri}.{name}: {err}"));
+        }
+    }
 }

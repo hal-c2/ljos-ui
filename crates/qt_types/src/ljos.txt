@@ -3995,6 +3995,17 @@ module QtQuick.Controls.Basic
 	type QtQuick/Controls/Basic/WeekNumberColumn.qml WeekNumberColumn
 		prototype QtQuick.Templates.AbstractWeekNumberColumn named
 
+module QtQuick.Controls.Basic.impl
+	BusyIndicatorImpl QtQuick/Controls/Basic/impl/BusyIndicatorImpl.qml
+	type QtQuick/Controls/Basic/impl/BusyIndicatorImpl.qml BusyIndicatorImpl
+		prototype QtQuick.Item named
+		prop pen QtQuick.color named
+		prop fill QtQuick.color named
+		prop running QtQml.bool named
+		signal penChanged
+		signal fillChanged
+		signal runningChanged
+
 module QtQuick.Controls.Fusion
 	AbstractButton QtQuick.Templates.AbstractButton
 	Action QtQuick.Templates.Action
