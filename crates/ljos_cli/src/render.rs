@@ -172,6 +172,15 @@ impl Render {
         ljos_localstorage::register(&engine);
         ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
         register_example(&engine, self.example.as_deref());
+        // As if the program were started on the entry file, as Qt's
+        // launcher is.
+        ljos_controls::set_application_arguments(
+            &engine,
+            [
+                crate::run::program(),
+                self.dir.join(&self.entry).display().to_string(),
+            ],
+        );
         let source = match &self.example {
             Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
             None => compile(&dir, &key, notes, EngineOracle::table_only())?,

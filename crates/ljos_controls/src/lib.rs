@@ -108,7 +108,7 @@ pub use window::{
     Application, ApplicationState, ApplicationWindow, CloseEvent, FRAMELESS, KIND_MASK, Modality,
     ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, Screen, ScreenAttached, ScreenInfo, ScreenSpec,
     Window, WindowBackdrop, WindowRequest, WindowShow, WindowSpec, WindowSystem,
-    device_pixel_ratio,
+    device_pixel_ratio, set_application_arguments,
 };
 
 use style::{BASIC, FUSION, MATERIAL, StyleLibrary, UNIVERSAL};

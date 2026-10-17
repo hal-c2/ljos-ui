@@ -92,6 +92,15 @@ pub struct Run {
     /// not know them.
     #[arg(long, value_name = "ID")]
     example: Option<String>,
+    /// What the application is given after `--`, in `Application.arguments`
+    /// after the program and the entry file.
+    #[arg(last = true, value_name = "ARGS")]
+    args: Vec<String>,
+}
+
+/// The program as it was started, which a command line begins with.
+pub(crate) fn program() -> String {
+    std::env::args().next().unwrap_or_else(|| "ljos".to_owned())
 }
 
 /// What `--mcp` may grant. `fs` and `run` belong to the authoring server
@@ -284,6 +293,16 @@ fn socket_path(text: &str) -> Result<PathBuf, String> {
 }
 
 impl Run {
+    /// `Application.arguments`: as `qml6 FILE ARGS` gives them, the
+    /// program, the file as it was given and the rest; `run`, its options
+    /// and the `--` are left out, as qml6 leaves out its own options.
+    fn arguments(&self) -> Vec<String> {
+        [program(), self.file.display().to_string()]
+            .into_iter()
+            .chain(self.args.iter().cloned())
+            .collect()
+    }
+
     pub fn run(self) -> anyhow::Result<()> {
         let (dir, key) = match &self.project {
             Some(project) => entry_in(&self.file, project)?,
@@ -316,6 +335,7 @@ impl Run {
             },
         };
         let example = self.example.clone();
+        let arguments = self.arguments();
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             let project = self.project.is_some().then(|| dir.clone());
@@ -324,6 +344,7 @@ impl Run {
                 ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
+                ljos_controls::set_application_arguments(setup.engine(), arguments);
                 setup.on_reload(|report| {
                     crate::stderr::line(&format!("ljos: {}", describe(report)))
                 });
@@ -344,6 +365,7 @@ impl Run {
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 let engine = setup.engine();
+                ljos_controls::set_application_arguments(engine, arguments);
                 engine.set_component_source(source);
                 crate::render::stage_resources(engine, &dir);
                 Ok(engine
@@ -387,6 +409,19 @@ mod tests {
             line(&["Main.qml", "--example", "rssnews"]).unwrap().example,
             Some("rssnews".to_owned())
         );
+    }
+
+    #[test]
+    fn the_application_is_given_the_file_and_what_follows_the_dashes() {
+        let run = line(&["--watch", "photos/Main.qml", "--", "/pictures", "-v"]).unwrap();
+        assert_eq!(
+            run.arguments(),
+            [program().as_str(), "photos/Main.qml", "/pictures", "-v"]
+        );
+        let run = line(&["Main.qml"]).unwrap();
+        assert_eq!(run.arguments(), [program().as_str(), "Main.qml"]);
+        // What is not after `--` is still `run`'s.
+        assert!(line(&["Main.qml", "/pictures"]).is_err());
     }
 
     #[test]

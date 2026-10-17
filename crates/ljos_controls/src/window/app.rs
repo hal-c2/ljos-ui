@@ -220,6 +220,24 @@ impl Default for Application {
     }
 }
 
+/// The host says what command line the application was started with,
+/// the program first: `Application.arguments`. Before the root is made,
+/// so that it reads them when it completes.
+pub fn set_application_arguments(engine: &Engine, args: impl IntoIterator<Item = String>) {
+    if let Ok(app) = engine.singleton::<Application>() {
+        let args = args
+            .into_iter()
+            .map(|a| Value::String(Atom::from(a.as_str())))
+            .collect();
+        let _ = engine.write_internal(
+            app,
+            Application::ARGUMENTS.index,
+            Value::list(args),
+            WriteKind::Imperative,
+        );
+    }
+}
+
 /// Puts the singleton on the `Qt` global as well.
 const INSTALL: &str = r#"(function (app) {
   Object.defineProperty(Qt, "application", { value: app, enumerable: true });
