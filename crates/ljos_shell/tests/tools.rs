@@ -32,7 +32,8 @@ Item {
 struct Window {
     // Dropped first: the watcher's thread ends before the directory goes.
     h: Harness<'static, ShellApp<()>>,
-    woke: mpsc::Receiver<()>,
+    /// Each request for a pass, by how long it may wait.
+    woke: mpsc::Receiver<Duration>,
     _tmp: tempfile::TempDir,
 }
 
@@ -66,8 +67,8 @@ fn opened(
         .with_max_steps(8)
         .build_eframe(move |cc| {
             // What a real window's event loop sleeps on.
-            cc.egui_ctx.set_request_repaint_callback(move |_| {
-                let _ = tx.send(());
+            cc.egui_ctx.set_request_repaint_callback(move |info| {
+                let _ = tx.send(info.delay);
             });
             ShellApp::new(
                 &cc.egui_ctx,
@@ -234,8 +235,13 @@ mod inspector {
     const PATIENCE: Duration = Duration::from_secs(30);
 
     fn served() -> (Window, InspectorAddress) {
+        served_of(MAIN)
+    }
+
+    /// As [`served`], on the window of `main`.
+    fn served_of(main: &str) -> (Window, InspectorAddress) {
         let (tx, rx) = mpsc::channel();
-        let w = window(move |setup| {
+        let w = window_of(main, move |setup| {
             let dir = tempfile::tempdir()?.keep();
             let address = setup.serve_inspector(
                 InspectorOptions {
@@ -348,6 +354,33 @@ mod inspector {
     fn save_as(w: &Window, name: &str) {
         let entry = w._tmp.path().canonicalize().unwrap().join("Main.qml");
         fs::write(entry, MAIN.replace("\"Save\"", &format!("\"{name}\""))).unwrap();
+    }
+
+    // A Timer a minute away: a loop sleeps until it unless a request for
+    // a pass at once wakes it.
+    #[test]
+    fn app_metrics_answers_while_a_long_timer_is_pending() {
+        let (mut w, address) = served_of(
+            "import QtQuick\nItem { Timer { interval: 60000; repeat: true; running: true } }\n",
+        );
+        let (a, bearer) = (address.clone(), token(&address));
+        let client = thread::spawn(move || call(&a, &bearer, "app_metrics"));
+        let until = std::time::Instant::now() + PATIENCE;
+        while !client.is_finished() {
+            assert!(
+                std::time::Instant::now() < until,
+                "the request did not ask for a pass at once"
+            );
+            if w.woke
+                .recv_timeout(Duration::from_millis(20))
+                .is_ok_and(|delay| delay.is_zero())
+            {
+                w.h.step();
+            }
+        }
+        let (status, body) = client.join().unwrap();
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("frames"), "{body}");
     }
 
     #[test]

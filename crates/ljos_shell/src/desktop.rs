@@ -76,6 +76,8 @@ pub(crate) enum ShellEvent {
         when: Instant,
         /// The context's pass count when it asked.
         pass: u64,
+        /// Asked for at once, not after a delay.
+        at_once: bool,
     },
     AccessKit(accesskit_winit::Event),
 }
@@ -127,6 +129,7 @@ fn new_context(key: u64, proxy: &Proxy) -> egui::Context {
                 slot: key,
                 when,
                 pass: info.current_cumulative_pass_nr,
+                at_once: info.delay.is_zero(),
             }));
         }
     });
@@ -205,8 +208,11 @@ struct Slot {
     /// Passes in a row since the window was last drawn.
     undrawn: u32,
     /// Passes that were not drawn asked for the next at once: it waits
-    /// until here, a frame later, as a drawn one waits for the display.
+    /// until here, a frame later, as a drawn one waits for the display;
+    /// or until the scene's next timer, which egui asked for a frame early.
     held: Option<Instant>,
+    /// The frame part of `held`: what a pass asked for at once waits for.
+    paced: Option<Instant>,
 }
 
 impl std::fmt::Debug for Slot {
@@ -259,6 +265,7 @@ impl Slot {
             shown: LastPicture::default(),
             undrawn: 0,
             held: None,
+            paced: None,
         }
     }
 
@@ -306,6 +313,7 @@ impl Slot {
         self.shown.forget();
         self.undrawn = 0;
         self.held = None;
+        self.paced = None;
     }
 
     /// A pass changed nothing to draw; the scene wants the next in
@@ -324,12 +332,21 @@ impl Slot {
         };
         let wait = wake.map_or(least, |w| w.max(least));
         self.held = (wait > Duration::ZERO).then(|| now + wait);
+        self.paced = (least > Duration::ZERO).then(|| now + least);
+    }
+
+    /// Something asked for a pass at once: another thread's result, the
+    /// inspector, a change. It waits for the frame and not for the
+    /// scene's timer, which is what it would wait for until it fires.
+    fn asked_at_once(&mut self) {
+        self.held = self.paced;
     }
 
     /// A pass was drawn.
     fn drawn(&mut self) {
         self.undrawn = 0;
         self.held = None;
+        self.paced = None;
     }
 
     /// How long a frame is shown on the window's display.
@@ -1265,14 +1282,17 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     /// A context asked for a pass.
-    fn repaint_asked(&mut self, key: u64, when: Instant, pass: u64) {
-        let Some(slot) = self.slots.iter().find(|s| s.key == key) else {
+    fn repaint_asked(&mut self, key: u64, when: Instant, pass: u64, at_once: bool) {
+        let Some(slot) = self.slots.iter_mut().find(|s| s.key == key) else {
             return;
         };
         // A pass that ran since answered it, unless it was asked while
         // that pass ran.
         let now = slot.ctx.cumulative_pass_nr_for(ViewportId::ROOT);
         if now == pass || now == pass + 1 {
+            if at_once {
+                slot.asked_at_once();
+            }
             self.repaints.request(key, when);
         }
     }
@@ -1521,8 +1541,13 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
             }
             Event::Window { id, event, raw } => self.window_event(host, id, &event, raw),
             Event::AppState(state) => self.app_state = state,
-            Event::User(ShellEvent::Repaint { slot, when, pass }) => {
-                self.repaint_asked(slot, when, pass);
+            Event::User(ShellEvent::Repaint {
+                slot,
+                when,
+                pass,
+                at_once,
+            }) => {
+                self.repaint_asked(slot, when, pass, at_once);
             }
             Event::User(ShellEvent::AccessKit(event)) => self.accesskit_event(event),
             Event::AboutToWait => self.settle(host),
@@ -1687,5 +1712,30 @@ mod tests {
         slot.drawn();
         slot.not_drawn(t + ms(60), Some(ms(15)));
         assert_eq!(slot.held, Some(t + ms(75)));
+    }
+
+    // A long Timer is pending and the pass drew nothing: a picture
+    // decoded on another thread, or the inspector, asks for a pass at once.
+    #[test]
+    fn a_pass_asked_for_at_once_is_not_held_until_the_scenes_timer() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.not_drawn(t, Some(Duration::from_secs(60)));
+        assert_eq!(slot.held, Some(t + Duration::from_secs(60)));
+        slot.asked_at_once();
+        assert_eq!(
+            slot.held, None,
+            "the first pass not drawn runs what is asked at once"
+        );
+        // From the second in a row, it still waits a frame, not the Timer.
+        slot.not_drawn(t + ms(1), Some(Duration::from_secs(60)));
+        slot.asked_at_once();
+        assert_eq!(slot.held, Some(t + ms(21)));
+        // A drawn pass holds nothing back.
+        slot.drawn();
+        slot.asked_at_once();
+        assert_eq!(slot.held, None);
     }
 }
