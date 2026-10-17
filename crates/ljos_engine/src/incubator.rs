@@ -2273,7 +2273,8 @@ impl Engine {
                             .iter()
                             .map(|p| if local(&p.name) { "" } else { p.name.as_str() })
                             .collect();
-                        s.retell_failed_call(&file.url, &js.export, &names, &a);
+                        let takes: Vec<&str> = b.args.iter().map(String::as_str).collect();
+                        s.retell_failed_call(&file.url, &js.export, &names, &takes, &a);
                     }
                     if !propagate {
                         return Err(ljos_js::rquickjs::Error::Exception);

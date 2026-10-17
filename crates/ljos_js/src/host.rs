@@ -259,20 +259,24 @@ impl<'js> Scope<'js> {
     /// a `not a function` thrown by that function's own code, at a call
     /// `root.a.name(...)` whose `root` is one of its `params`, is worded
     /// as Qt's engine words it, with what `root.a` is: `Property 'name' of
-    /// object QQuickItem(0x…) is not a function`. The function's values
-    /// are gone once it has thrown, but its parameters are the caller's
-    /// `args`; what is called through a local of its own keeps QuickJS's
-    /// words. Only a call that threw pays for this. Gives the exception
-    /// back, pending again.
+    /// object QQuickItem(0x…) is not a function`. A call of one of the
+    /// names in `takes`, the function's own parameters, which `args` hold
+    /// after `params`, says what it was given: `7 is not a function`. The
+    /// function's values are gone once it has thrown, but its parameters
+    /// are the caller's `args`; what is called through a local of its own,
+    /// or a parameter it gives another value, keeps QuickJS's words. Only
+    /// a call that threw pays for this. Gives the exception back, pending
+    /// again.
     pub fn retell_failed_call(
         &self,
         file: &str,
         export: &str,
         params: &[&str],
+        takes: &[&str],
         args: &[JsArg],
     ) -> rquickjs::Error {
         let thrown = self.ctx.catch();
-        let _ = self.retell(&thrown, file, export, params, args);
+        let _ = self.retell(&thrown, file, export, params, takes, args);
         // What the retelling threw is dropped; the call's error stands.
         let _ = self.ctx.catch();
         self.ctx.throw(thrown)
@@ -284,6 +288,7 @@ impl<'js> Scope<'js> {
         file: &str,
         export: &str,
         params: &[&str],
+        takes: &[&str],
         args: &[JsArg],
     ) -> Option<()> {
         let e = Exception::from_object(thrown.as_object()?.clone())?;
@@ -307,6 +312,27 @@ impl<'js> Scope<'js> {
         }
         let text = self.state.text.borrow().clone()?;
         let (path, prop) = called_member(&text(module, line)?, col)?;
+        if path.is_empty() {
+            let at = takes.iter().position(|p| *p == prop)?;
+            if rebound_before(&|l| text(module, l), export, line, col, &prop)? {
+                return None;
+            }
+            // A parameter the caller left out holds undefined.
+            let shown = match args.get(params.len() + at) {
+                Some(a) => {
+                    self.to_value(a)
+                        .ok()?
+                        .get::<rquickjs::convert::Coerced<String>>()
+                        .ok()?
+                        .0
+                }
+                None => "undefined".to_owned(),
+            };
+            return e
+                .as_object()
+                .set("message", format!("{shown} is not a function"))
+                .ok();
+        }
         let at = params.iter().position(|p| *p == path[0])?;
         let mut v = self.to_value(args.get(at)?).ok()?;
         for m in &path[1..] {
@@ -1973,7 +1999,7 @@ fn named_frames(stack: &str) -> impl Iterator<Item = (&str, &str)> {
 /// names it is read through, `["root", "a"]` of `root.a.prop(`. QuickJS
 /// puts the column at the member's name; past a space, at the bracket or
 /// at what follows it. None unless the callee is such a chain of names,
-/// whole.
+/// whole; a name called by itself has no path.
 pub(crate) fn called_member(line: &str, col: u32) -> Option<(Vec<String>, String)> {
     let s: Vec<char> = line.chars().collect();
     let i = col.checked_sub(1)? as usize;
@@ -2006,7 +2032,16 @@ pub(crate) fn called_member(line: &str, col: u32) -> Option<(Vec<String>, String
             ends.push(back_ws(open - 1));
         }
     }
-    ends.into_iter().find_map(|end| chain_before(&s, end))
+    // Where the column could be either, a member called is the likelier.
+    let found: Vec<_> = ends
+        .into_iter()
+        .filter_map(|end| chain_before(&s, end))
+        .collect();
+    let i = found
+        .iter()
+        .position(|(path, _)| !path.is_empty())
+        .unwrap_or(0);
+    found.into_iter().nth(i)
 }
 
 /// The chain of names `a.b.prop` that ends at `end` of `s`, whole.
@@ -2041,12 +2076,120 @@ fn chain_before(s: &[char], end: usize) -> Option<(Vec<String>, String)> {
         at = start;
     }
     // The chain is whole: nothing it is read off, `?.`, or a call before it.
+    // With no path it is a name called by itself.
     let before = back_ws(at);
-    if path.is_empty() || (before > 0 && matches!(s[before - 1], '.' | ')' | ']' | '?')) {
+    if before > 0 && matches!(s[before - 1], '.' | ')' | ']' | '?') {
         return None;
     }
     path.reverse();
     Some((path, prop))
+}
+
+/// Whether `name` may have been given another value between the start of
+/// the function `export` and column `col` of `line`: a write, a `++`, or a
+/// declaration of the name, in any block. None when the start is not
+/// found. Over-cautious by design: what it cannot tell apart keeps the
+/// engine's own words.
+fn rebound_before(
+    text: &dyn Fn(u32) -> Option<String>,
+    export: &str,
+    line: u32,
+    col: u32,
+    name: &str,
+) -> Option<bool> {
+    let head = format!("function {export}(");
+    let mut at = line;
+    loop {
+        let mut l: Vec<char> = text(at)?.chars().collect();
+        if at == line {
+            l.truncate(col.saturating_sub(1) as usize);
+        }
+        let start = find_chars(&l, &head);
+        // The parameter list declares the name; what follows it is looked at.
+        let from = start.map_or(0, |i| {
+            let open = i + head.chars().count();
+            l[open..]
+                .iter()
+                .position(|c| *c == ')')
+                .map_or(l.len(), |p| open + p + 1)
+        });
+        if rebinds(&l[from..], name) {
+            return Some(true);
+        }
+        if start.is_some() {
+            return Some(false);
+        }
+        at = at.checked_sub(1).filter(|a| *a > 0 && line - a < 10_000)?;
+    }
+}
+
+/// Where `needle` starts in `s`, in characters.
+fn find_chars(s: &[char], needle: &str) -> Option<usize> {
+    let n: Vec<char> = needle.chars().collect();
+    (n.len() <= s.len())
+        .then(|| (0..=s.len() - n.len()).find(|i| s[*i..*i + n.len()] == n[..]))
+        .flatten()
+}
+
+/// `name`, in `s`, written to or declared: after `var`, `let`, `const`,
+/// `function`, `catch (` or `for (`, next to `++` or `--`, or before an
+/// assignment.
+fn rebinds(s: &[char], name: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let back_ws = |mut i: usize| {
+        while i > 0 && s[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+    // The word that ends at `end`.
+    let word_before = |end: usize| {
+        let mut i = end;
+        while i > 0 && ident(s[i - 1]) {
+            i -= 1;
+        }
+        s[i..end].iter().collect::<String>()
+    };
+    let n: Vec<char> = name.chars().collect();
+    if n.is_empty() || s.len() < n.len() {
+        return false;
+    }
+    (0..=s.len() - n.len()).any(|i| {
+        let end = i + n.len();
+        if s[i..end] != n[..]
+            || (i > 0 && (ident(s[i - 1]) || s[i - 1] == '.'))
+            || s.get(end).copied().is_some_and(ident)
+        {
+            return false;
+        }
+        let b = back_ws(i);
+        if matches!(
+            word_before(b).as_str(),
+            "var" | "let" | "const" | "function"
+        ) {
+            return true;
+        }
+        if b > 0
+            && s[b - 1] == '('
+            && matches!(word_before(back_ws(b - 1)).as_str(), "catch" | "for")
+        {
+            return true;
+        }
+        if b >= 2 && matches!(s[b - 2..b], ['+', '+'] | ['-', '-']) {
+            return true;
+        }
+        let mut a = end;
+        while a < s.len() && s[a].is_whitespace() {
+            a += 1;
+        }
+        let rest: String = s[a..s.len().min(a + 4)].iter().collect();
+        const OPS: [&str; 16] = [
+            "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**=", "<<=", ">>=", "??=",
+            "||=", "&&=",
+        ];
+        (rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>"))
+            || OPS.iter().any(|op| rest.starts_with(op))
+    })
 }
 
 /// The file, line and column of the frame that threw.
@@ -2216,7 +2359,8 @@ mod tests {
         assert_eq!(at("{ kid.spawn  (k(1)) }", "k("), some("kid", "spawn"));
         assert_eq!(at("{ a.f(b.g(1)) }", "g"), some("b", "g"));
         assert_eq!(at("{ kid.spawn () }", "("), some("kid", "spawn"));
-        assert_eq!(at("{ spawn() }", "spawn"), None);
+        assert_eq!(at("{ spawn() }", "spawn"), some("", "spawn"));
+        assert_eq!(at("{ h (1) }", "1"), some("", "h"));
         assert_eq!(at("{ a?.b() }", "b"), None);
         assert_eq!(at("{ f().a.b() }", "b"), None);
         assert_eq!(at("{ x[0].a.b() }", "b"), None);
