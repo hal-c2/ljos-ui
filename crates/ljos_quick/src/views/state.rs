@@ -271,6 +271,10 @@ pub(crate) struct ViewState {
     pub follow: Cell<bool>,
     /// The view has been put at its beginning.
     pub positioned: Cell<bool>,
+    /// What the view this one replaced at a reload knew about its current
+    /// row, for the first pass to take instead of what the carried
+    /// `currentIndex` would say.
+    pub carried: Cell<Option<CarriedCurrent>>,
     pub last_main: Cell<Option<(usize, bool)>>,
     /// The bounds the content last had: a pass that changes them brings
     /// the content inside.
@@ -307,6 +311,16 @@ pub(crate) struct ViewState {
     pub mover_to: Cell<[Option<f64>; 2]>,
 }
 
+/// How a view stood towards its current row when a reload replaced it.
+/// The reload carries `currentIndex` as a value; this is what that value
+/// does not say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CarriedCurrent {
+    pub(crate) follow: bool,
+    pub(crate) auto_index: bool,
+    pub(crate) cleared: bool,
+}
+
 impl Default for ViewState {
     fn default() -> Self {
         Self {
@@ -340,6 +354,7 @@ impl Default for ViewState {
             current_span: Cell::new(None),
             follow: Cell::new(false),
             positioned: Cell::new(false),
+            carried: Cell::new(None),
             last_main: Cell::new(None),
             bounds: Cell::new((0.0, 0.0, 0.0)),
             laid: Cell::new(None),

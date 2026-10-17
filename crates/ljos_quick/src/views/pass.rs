@@ -990,7 +990,14 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     }
 
     // How long everything is.
-    let avg = average(slots.make_contiguous()).unwrap_or(avg_before);
+    // Rows still being made are not measured, but the row the anchor
+    // measured to find its way says how long they are: without it the
+    // rows before the first one laid out would take no room, and a view
+    // made at a place (one a reload carried) would start there.
+    let guessed = (fill.guess > 0.0).then_some(fill.guess);
+    let avg = average(slots.make_contiguous())
+        .or(guessed)
+        .unwrap_or(avg_before);
     let per = avg + g.spacing;
     let (start0, end) = match (slots.front(), slots.back()) {
         (Some(first), Some(last)) if g.grid => {

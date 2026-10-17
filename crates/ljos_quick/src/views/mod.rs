@@ -31,8 +31,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Cx, Engine, EngineError, LogLevel, MetaRef, ObjectId, QmlObject, QmlType, Value, Version,
-    ViewDelegates, WriteKind, qml_impl,
+    Atom, Cx, Engine, EngineError, LogLevel, MetaRef, Migrate, ObjectId, QmlObject, QmlType, Value,
+    Version, ViewDelegates, WriteKind, qml_impl,
 };
 use rustc_hash::FxHashMap;
 
@@ -758,8 +758,36 @@ fn tell_attached(e: &Engine, item: ObjectId, att: ObjectId) {
     });
 }
 
+impl Migrate for ItemView {
+    const VERSION: u32 = 1;
+    type State = state::CarriedCurrent;
+
+    fn snapshot(engine: &Engine, obj: ObjectId) -> Option<state::CarriedCurrent> {
+        let st = state_of(engine, obj)?;
+        // A view that never laid out has nothing the file does not say.
+        st.seen_index.get()?;
+        Some(state::CarriedCurrent {
+            follow: st.follow.get(),
+            auto_index: st.auto_index.get(),
+            cleared: st.cleared.get(),
+        })
+    }
+
+    fn migrate(
+        engine: &Engine,
+        obj: ObjectId,
+        _from: u32,
+        carried: state::CarriedCurrent,
+    ) -> Result<(), String> {
+        let st = state_of(engine, obj).ok_or("not a view")?;
+        st.carried.set(Some(carried));
+        Ok(())
+    }
+}
+
 /// Registers the views and what makes them take keys.
 pub(crate) fn register(engine: &Engine) {
+    engine.register_migrate::<ItemView>();
     models::register(engine);
     path_view::register(engine);
     table::register(engine);

@@ -45,10 +45,19 @@ pub(crate) fn normalise(e: &Engine, view: ObjectId, st: &ViewState, rows: usize)
     let first_pass = st.seen_index.get().is_none();
     if st.seen_index.get() != Some(ci) {
         // Somebody's assignment (or, on the first pass, declaration).
-        let said = !first_pass || !is_unset(e, view, p);
-        st.cleared.set(ci < 0 && said);
-        st.follow.set(said);
-        st.auto_index.set(false);
+        let carried = st.carried.take().filter(|_| first_pass);
+        if let Some(c) = carried {
+            // The view is where the old one was, which had already gone
+            // to its current row or been moved away from it.
+            st.cleared.set(c.cleared);
+            st.follow.set(c.follow);
+            st.auto_index.set(c.auto_index);
+        } else {
+            let said = !first_pass || !is_unset(e, view, p);
+            st.cleared.set(ci < 0 && said);
+            st.follow.set(said);
+            st.auto_index.set(false);
+        }
     }
     let mut want = ci;
     if ci < 0 && !st.cleared.get() && rows > 0 {
