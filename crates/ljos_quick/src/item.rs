@@ -47,7 +47,7 @@ pub struct Item {
     pub implicit_height: f64,
     #[qml(notify)]
     pub visible: bool,
-    #[qml(notify)]
+    #[qml(notify, write = Self::keep_opacity)]
     pub opacity: f64,
     #[qml(notify)]
     pub clip: bool,
@@ -637,6 +637,14 @@ impl AnchorLine {
             }
             _ => None,
         }
+    }
+}
+
+impl Item {
+    /// Qt keeps `opacity` in 0..1 as it is set, so a write past either end
+    /// stores the end and, if the item is already there, tells nobody.
+    fn keep_opacity(&self, opacity: f64) -> Option<f64> {
+        Some(opacity.clamp(0.0, 1.0))
     }
 }
 

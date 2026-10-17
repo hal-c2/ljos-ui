@@ -132,7 +132,7 @@ pub use meta::{
     AttachedTypeId, CompleteThunk, Declared, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo,
     ListAppend, ListField, MetaBuilder, MetaObject, MetaRef, MethodDecl, MethodInfo, MethodThunk,
     Prop, PropertyAccess, PropertyFlags, PropertyInfo, QmlImplInfo, Reset, ResetApply, ResetValue,
-    Setter, SignalDecl, SignalInfo,
+    Setter, SignalDecl, SignalInfo, WriteFilter,
 };
 pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, ObjectRows};
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};

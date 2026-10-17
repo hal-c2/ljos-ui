@@ -52,8 +52,16 @@
 //! `object = "Component"` is a template made later) and `holds = "Name"` (on
 //! a field that takes any object: the QML type a description of the type
 //! says it holds, where the engine takes other objects too, as a control's
-//! part that a style gives as a `Component` and the control makes). Field
-//! names are exposed in camelCase unless renamed.
+//! part that a style gives as a `Component` and the control makes) and
+//! `write = path` (a `fn(&self, T) -> Option<T>`, `T` the field's type, that
+//! every write goes through before it is stored, as a setter in Qt: it gets
+//! the value already converted, and returns `Some` with the value to store,
+//! the one given or a corrected one, or `None` to refuse the write. Nothing
+//! hears of a write it corrects to the value already held, nor of one it
+//! refuses. QML assignments, bindings, animation steps and
+//! `Engine::write_by_name`/`Engine::set` all go through it; `undefined`
+//! taking the property back does not. `Self::name` names a method of the
+//! struct). Field names are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -268,6 +276,8 @@ struct FieldAttrs {
     object: Option<String>,
     /// `holds = "Name"`: the QML type a description says the field holds.
     holds: Option<String>,
+    /// `write = path`: what every write goes through before it is stored.
+    write: Option<syn::Path>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -308,6 +318,19 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
     Ok(c)
 }
 
+/// `path` with a leading `Self` spelled as `ty`: the accessors are items
+/// nested in a function, where `Self` does not reach.
+fn self_to(path: &syn::Path, ty: &Ident) -> TokenStream2 {
+    let mut segments = path.segments.iter();
+    match segments.next() {
+        Some(first) if first.ident == "Self" && path.leading_colon.is_none() => {
+            let rest = segments.collect::<Vec<_>>();
+            quote!(<#ty> #(:: #rest)*)
+        }
+        _ => quote!(#path),
+    }
+}
+
 fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
     let mut f = FieldAttrs::default();
     for a in attrs.iter().filter(|a| is_qml(a)) {
@@ -343,6 +366,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.object = Some(m.value()?.parse::<LitStr>()?.value());
             } else if p.is_ident("holds") {
                 f.holds = Some(m.value()?.parse::<LitStr>()?.value());
+            } else if p.is_ident("write") {
+                f.write = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("reset") {
                 f.reset = Some(if m.input.peek(syn::Token![=]) {
                     Some(m.value()?.parse::<syn::Expr>()?)
@@ -351,7 +376,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset, object, holds",
+                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset, object, holds, write",
                 ));
             }
             Ok(())
@@ -479,6 +504,12 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
                     "a group is not taken back whole; put `reset` on the group type's fields",
                 ));
             }
+            if a.write.is_some() {
+                return Err(Error::new(
+                    ident.span(),
+                    "a group is not written whole; put `write` on the group type's fields",
+                ));
+            }
             let get = format_ident!("__qml_group_{}", ident);
             let get_mut = format_ident!("__qml_group_mut_{}", ident);
             accessors.push(quote! {
@@ -552,6 +583,27 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         }
         if let Some(holds) = &a.holds {
             builder.push(quote!(.holds(#holds)));
+        }
+        if let Some(path) = &a.write {
+            if a.list {
+                return Err(Error::new(
+                    ident.span(),
+                    "`write` is for a field that holds a value; a list's appends go through `append`",
+                ));
+            }
+            let write = format_ident!("__qml_write_{}", ident);
+            let path = self_to(path, ty);
+            accessors.push(quote! {
+                fn #write(
+                    o: &dyn #e::QmlObject,
+                    v: &#e::Value,
+                ) -> #p::Result<#p::Option<#e::Value>, #e::ConvertError> {
+                    let wanted = <#fty as #e::QmlValue>::from_value(v)?;
+                    let kept: #p::Option<#fty> = #path(#p::downcast::<#ty>(o), wanted);
+                    #p::Result::Ok(kept.map(|k| #e::QmlValue::to_value(&k)))
+                }
+            });
+            builder.push(quote!(.write(#write)));
         }
         match &a.reset {
             Some(Some(reset)) => builder.push(quote!(.reset(#reset))),

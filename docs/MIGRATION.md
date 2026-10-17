@@ -254,6 +254,14 @@ visual type extends the toolkit's `Item` (in the prelude) instead:
 `#[qml(base)] item: Item` field. It then takes `anchors`, `width` and
 the rest as an `Item` does.
 
+A `Q_PROPERTY`'s `WRITE` function that clamps or refuses a value is a
+field's `#[qml(write = Self::name)]`: a `fn(&self, T) -> Option<T>`
+every write goes through before it is stored, whether from QML, a
+binding or Rust. It returns the value to store, or `None` to refuse the
+write, and nothing hears of a write that leaves the value as it was.
+Correcting the value in a handler of its own change signal instead is
+heard twice, the raw value and then the corrected one.
+
 A visual type that paints itself, as a `QQuickPaintedItem` subclass
 does (a chart, a terminal, a video frame), is written against
 `ljos::item` alone. Its paint hook reads the item's own properties with

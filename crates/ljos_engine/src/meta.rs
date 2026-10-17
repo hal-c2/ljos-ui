@@ -110,6 +110,11 @@ bitflags::bitflags! {
 pub type Getter = fn(&dyn QmlObject) -> Value;
 /// Writes a native field. The argument is the struct that declares it.
 pub type Setter = fn(&mut dyn QmlObject, &Value) -> Result<(), ConvertError>;
+/// Decides what a write to a native field stores, before it is stored or
+/// heard: `Some` is the value to store (the one written, or a corrected
+/// one), `None` refuses the write. The argument is the struct that
+/// declares the field, and the value is already of the property's type.
+pub type WriteFilter = fn(&dyn QmlObject, &Value) -> Result<Option<Value>, ConvertError>;
 /// Gets the group struct (`Border`) from the struct that holds it.
 pub type GroupGet = fn(&dyn QmlObject) -> &dyn QmlObject;
 /// Mutable [`GroupGet`].
@@ -194,6 +199,8 @@ pub enum PropertyAccess {
         owner: TypeId,
         get: Getter,
         set: Setter,
+        /// What a write goes through first ([`MetaBuilder::write`]).
+        write: Option<WriteFilter>,
     },
     /// A leaf of a grouped property: `leaf` of `meta` (the group's type),
     /// reached through a field of `owner`.
@@ -839,7 +846,12 @@ impl MetaBuilder {
             ty,
             flags | PropertyFlags::FINAL,
             notify,
-            PropertyAccess::Field { owner, get, set },
+            PropertyAccess::Field {
+                owner,
+                get,
+                set,
+                write: None,
+            },
         );
         self
     }
@@ -931,6 +943,21 @@ impl MetaBuilder {
     pub fn list_append(mut self, f: ListAppend) -> Self {
         if let Some(p) = self.meta.properties.last_mut() {
             p.list_append = Some(f);
+        }
+        self
+    }
+
+    /// Sends writes to the field just added through `f` before they are
+    /// stored, so a type can clamp or refuse a value where Qt's setter
+    /// would: nothing hears a write `f` corrects to the value already
+    /// held, nor one it refuses. QML assignments, bindings and writes from
+    /// Rust all go through it; taking the property back with `undefined`
+    /// does not.
+    pub fn write(mut self, f: WriteFilter) -> Self {
+        if let Some(PropertyAccess::Field { write, .. }) =
+            self.meta.properties.last_mut().map(|p| &mut p.access)
+        {
+            *write = Some(f);
         }
         self
     }

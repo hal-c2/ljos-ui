@@ -89,6 +89,36 @@
 /// and the [`ColorScheme`](prelude::ColorScheme) of [`color_scheme`];
 /// and the standard locations ([`Location`](prelude::Location), Qt's
 /// `QStandardPaths`) a [`PathEnv`](prelude::PathEnv) is read with.
+///
+/// A field's `#[qml(write = Self::name)]` is its setter: a
+/// `fn(&self, T) -> Option<T>` every write goes through before it is
+/// stored, from QML, a binding or Rust (`Engine::write_by_name`,
+/// `Engine::set`). It returns the value to store, which may be a
+/// clamped one, or `None` to refuse the write; nothing hears of a write
+/// that leaves the value as it was.
+///
+/// ```
+/// use ljos::prelude::*;
+///
+/// #[derive(Debug, Default, QmlObject)]
+/// #[qml(module = "Example", name = "Dial")]
+/// pub struct Dial {
+///     #[qml(notify, write = Self::clamp_level)]
+///     level: i32,
+/// }
+///
+/// impl Dial {
+///     fn clamp_level(&self, level: i32) -> Option<i32> {
+///         Some(level.clamp(0, 10))
+///     }
+/// }
+///
+/// let engine = ljos::engine();
+/// engine.register_module(ljos::module!("Example" 1.0 => [Dial]));
+/// let dial = engine.create_by_name("Example", "Dial", None).unwrap();
+/// engine.set(dial, Dial::LEVEL, 42).unwrap();
+/// assert_eq!(engine.get(dial, Dial::LEVEL), Ok(10));
+/// ```
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_controls::{Application, ApplicationState};

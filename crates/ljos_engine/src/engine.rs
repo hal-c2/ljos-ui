@@ -1342,7 +1342,9 @@ impl Engine {
             if h.node(prop).is_none() && !h.read_without_node(prop) {
                 // Nobody observes it: the field is the only copy, and it
                 // is not marked assigned.
-                store_in(h, prop, &v)?;
+                if let Some(v) = filter_in(h, prop, v)? {
+                    store_in(h, prop, &v)?;
+                }
                 return Ok(());
             }
         }
@@ -1408,7 +1410,13 @@ impl Engine {
                 None if h.read_without_node(prop) => Err(()),
                 n => Ok(n),
             };
-            (coerce_for(&store, Some(obj), &ty, &v)?, node, hook)
+            let v = coerce_for(&store, Some(obj), &ty, &v)?;
+            // The type's own say comes before anything hears of it, as a
+            // setter's does in Qt.
+            let Some(v) = filter_in(h, prop, v)? else {
+                return Ok(());
+            };
+            (v, node, hook)
         };
         let node = match node {
             Ok(n) => n,
@@ -1801,10 +1809,15 @@ impl Engine {
             let v = engine.for_slot(obj, prop, v);
             let coerced = {
                 let store = engine.inner.store.borrow();
-                coerce_for(&store, Some(obj), &ty, &v)
+                coerce_for(&store, Some(obj), &ty, &v).and_then(|v| match store.objects.get(obj) {
+                    Some(h) => Ok(filter_in(h, prop, v)?),
+                    None => Ok(Some(v)),
+                })
             };
             match coerced {
-                Ok(v) => last = v,
+                // The type refused it: the property keeps what it holds.
+                Ok(None) => {}
+                Ok(Some(v)) => last = v,
                 Err(e) => {
                     // Qt's message is the binding's place and the error; a
                     // binding made at run time has no place to give.
@@ -2650,6 +2663,48 @@ pub(crate) fn read_access(
         },
         PropertyAccess::GroupRoot => Value::Undefined,
         PropertyAccess::Dynamic { slot } => dynamic.get(slot as usize).cloned().unwrap_or_default(),
+    }
+}
+
+/// What a write of `v` to a native field stores: `v`, what the field's
+/// [`WriteFilter`](crate::meta::WriteFilter) makes of it, or nothing if
+/// the filter refuses it.
+fn filter_access(
+    native: &dyn QmlObject,
+    access: &PropertyAccess,
+    v: Value,
+) -> Result<Option<Value>, ConvertError> {
+    match *access {
+        PropertyAccess::Field {
+            owner,
+            write: Some(write),
+            ..
+        } => match find_native(native, owner) {
+            Some(o) => write(o, &v),
+            None => Ok(Some(v)),
+        },
+        PropertyAccess::Group {
+            owner,
+            get,
+            meta,
+            leaf,
+            ..
+        } => match find_native(native, owner) {
+            Some(o) => filter_access(get(o), &meta.properties[leaf.0 as usize].access, v),
+            None => Ok(Some(v)),
+        },
+        _ => Ok(Some(v)),
+    }
+}
+
+pub(crate) fn filter_in(
+    h: &ObjectHeader,
+    prop: PropIndex,
+    v: Value,
+) -> Result<Option<Value>, ConvertError> {
+    match h.meta.property(prop) {
+        Some(p) => filter_access(&*h.native, &p.access, v),
+        None => Ok(Some(v)),
     }
 }
 
