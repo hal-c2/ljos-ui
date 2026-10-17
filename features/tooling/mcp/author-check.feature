@@ -13,7 +13,8 @@ Feature: Checking QML with the authoring tools
   `qml_check` tells an agent what is wrong with a file before anything
   runs it, each finding with its file, line, column, severity and code.
   A name that is no member of the type it is written on is reported as
-  the compiler and `ljos check` report it, as surely as they do.
+  the compiler and `ljos check` report it, as surely as they do. What
+  only compiling finds is reported too, and what both find, once.
 
   Background:
     Given the authoring tools are connected
@@ -116,3 +117,43 @@ Feature: Checking QML with the authoring tools
         {"paths": ["Hover.qml"]}
         """
       Then the answer's "/diagnostics" has 0 entries
+
+  Rule: What the compiler finds is reported as `ljos check` reports it
+
+    Scenario: A value a property cannot hold is found by compiling the file
+      Given the file "Align.qml":
+        """qml
+        import QtQuick
+        Text {
+            horizontalAlignment: "left"
+        }
+        """
+      When the agent calls the tool "qml_check" with:
+        """json
+        {"paths": ["Align.qml"]}
+        """
+      Then the answer's "/diagnostics" has 1 entries
+      And the answer's "/diagnostics/0/file" is "Align.qml"
+      And the answer's "/diagnostics/0/line" is 3
+      And the answer's "/diagnostics/0/column" is 26
+      And the answer's "/diagnostics/0/severity" is "error"
+      And the answer's "/diagnostics/0/code" is "compiler"
+      And the answer's "/diagnostics/0/message" is "Invalid property assignment: unknown enumeration"
+
+    Scenario: What the compiler and the front end both find is reported once
+      Given the file "Twice.qml":
+        """qml
+        import QtQuick
+        Item {
+            id: a
+            Rectanglez { }
+            Item { id: a }
+        }
+        """
+      When the agent calls the tool "qml_check" with:
+        """json
+        {"paths": ["Twice.qml"]}
+        """
+      Then the answer's "/diagnostics" has 2 entries
+      And the answer's "/diagnostics/0/code" is "unknown-type"
+      And the answer's "/diagnostics/1/code" is "duplicate-id"

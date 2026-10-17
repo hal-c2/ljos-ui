@@ -92,7 +92,17 @@ struct Pending {
     diagnostic: Diagnostic,
 }
 
-pub(super) fn run(root: &Path, files: &[PathBuf], lint: bool) -> Vec<Diagnostic> {
+/// The code of a type the front end holds back on (one some C++ registers, or
+/// one an unknown module may provide). It never leaves [`run`]: it marks the
+/// place for the compiler's findings to be held back at too.
+const HELD: &str = "held";
+
+/// What the front end finds in `files`, and the places it held back on.
+pub(super) fn run(
+    root: &Path,
+    files: &[PathBuf],
+    lint: bool,
+) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let mut per_file: Vec<Vec<Diagnostic>> = vec![Vec::new(); files.len()];
     let mut loader = Loader::new(root);
     // Files that parse, with their key and text.
@@ -205,7 +215,7 @@ pub(super) fn run(root: &Path, files: &[PathBuf], lint: bool) -> Vec<Diagnostic>
         });
         diagnostics.dedup();
     }
-    per_file.into_iter().flatten().collect()
+    per_file.into_iter().flatten().partition(|d| d.code != HELD)
 }
 
 fn file(
@@ -344,7 +354,14 @@ fn semantic_error(
     // The file exists and did not parse (its own errors say why), or the
     // type is one some C++ registers.
     if unverifiable || env.broken.contains(last) || env.loader.native(last) {
-        return None;
+        return Some(diagnostic(
+            path,
+            source,
+            at,
+            Severity::Hint,
+            HELD,
+            String::new(),
+        ));
     }
     let mut text = format!(
         "`{name}` is not a type provided by any module this file imports or by a file beside it"

@@ -18,7 +18,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use ljos_mcp_author::{FrontEnd, QmlFrontEnd};
+use ljos_mcp_author::QmlFrontEnd;
 
 /// What of the front end's findings is reported.
 pub const CODES: [&str; 2] = ["unknown-property", "unknown-signal"];
@@ -43,9 +43,8 @@ pub fn project(dir: &Path, label: &str, keys: &[String]) -> anyhow::Result<Vec<S
             path
         })
         .collect();
-    let found = QmlFrontEnd::new(dir)
-        .check(&files)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+    // The compiler's findings are `ljos check`'s own already.
+    let found = QmlFrontEnd::new(dir).front_findings(&files, false);
     Ok(found
         .into_iter()
         .filter(|d| CODES.contains(&d.code.as_str()))

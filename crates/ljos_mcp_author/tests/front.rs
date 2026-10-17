@@ -611,3 +611,59 @@ async fn tools_and_type_resource_are_served_by_the_real_front_end() {
     let info: Value = serde_json::from_str(text).unwrap();
     assert_eq!(info["name"], "Rectangle");
 }
+
+// --- with the compiler ---------------------------------------------------
+
+/// `qml_check` reports what `ljos check` does: what only compiling finds,
+/// such as a value a property cannot hold, comes with the front end's.
+#[test]
+fn what_only_the_compiler_finds_is_reported_with_its_place() {
+    let dir = project(&[(
+        "Main.qml",
+        "import QtQuick\nItem {\n    Text { horizontalAlignment: \"left\" }\n}\n",
+    )]);
+    let diagnostics = run(dir.path(), &["Main.qml"], false);
+    assert_eq!(brief(&diagnostics), ["3:33 compiler"], "{diagnostics:?}");
+    assert_eq!(diagnostics[0].severity, Severity::Error);
+    assert_eq!(
+        diagnostics[0].message,
+        "Invalid property assignment: unknown enumeration"
+    );
+}
+
+/// Where the compiler says what the front end says, at one place, the front
+/// end's finding, with its code, is the one reported.
+#[test]
+fn what_the_front_end_and_the_compiler_both_find_is_reported_once() {
+    let dir = project(&[(
+        "Main.qml",
+        "import QtQuick\nItem {\n    id: a\n    widht: 1\n    Rectanglez { }\n    Item { id: a }\n    property alias al: missing.width\n}\n",
+    )]);
+    let diagnostics = run(dir.path(), &["Main.qml"], false);
+    assert_eq!(
+        brief(&diagnostics),
+        [
+            "4:5 unknown-property",
+            "5:5 unknown-type",
+            "6:5 duplicate-id",
+            "7:5 unknown-alias-target"
+        ],
+        "{diagnostics:?}"
+    );
+}
+
+/// A module the front end does not know may provide any name, so what the
+/// compiler says of a file importing one is held back as the front end's is.
+#[test]
+fn a_file_importing_an_unknown_module_has_only_the_front_end_s_findings() {
+    let dir = project(&[(
+        "Main.qml",
+        "import QtQuick\nimport Vendor.Widgets\nItem {\n  property int mode: Gadget.Bright\n  Gadget { }\n}\n",
+    )]);
+    let diagnostics = run(dir.path(), &["Main.qml"], false);
+    assert_eq!(
+        brief(&diagnostics),
+        ["2:1 unknown-module"],
+        "{diagnostics:?}"
+    );
+}

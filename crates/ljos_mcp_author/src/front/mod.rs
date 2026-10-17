@@ -28,6 +28,7 @@
 //! | `unknown-alias-target` | error | A `property alias` points at an id the component does not have. |
 //! | `unresolved-name` | warning | A free name in a binding that QML's lookup order cannot find, and that nothing else in the project provides. Warning, not error: a delegate's model role or a name the creating component supplies cannot be seen from one file. |
 //! | `semantic` | error | Any other error the front end's analysis raises that has no code of its own yet; the message says what. |
+//! | `compiler` | error, warning | What the compiler says (as `ljos check` does) and the front end does not: a value a property cannot hold, a member a script names that its owner lacks, a script that does not parse. Where both say something at one place the front end's finding is reported, an error if the compiler's was. Held back where the front end holds back. |
 //!
 //! # Lint rules (`qml_lint` only)
 //!
@@ -48,6 +49,7 @@
 //! is its own file. Both are why those cases are warnings or held back.
 
 mod check;
+mod compiled;
 mod facts;
 mod lint;
 mod load;
@@ -87,8 +89,16 @@ impl QmlFrontEnd {
         usage::collect(&self.root)
     }
 
+    /// What the front end alone finds in `files`, with the lints when
+    /// `lint` says so: what `qml_check` and `qml_lint` report less the
+    /// compiler's. For a tool that compiles the files itself (`ljos check`).
+    pub fn front_findings(&self, files: &[PathBuf], lint: bool) -> Vec<Diagnostic> {
+        check::run(&self.root, files, lint).0
+    }
+
     fn analyse(&self, files: &[PathBuf], lint: bool) -> Vec<Diagnostic> {
-        check::run(&self.root, files, lint)
+        let (found, held) = check::run(&self.root, files, lint);
+        compiled::merge(&self.root, files, found, &held)
     }
 }
 

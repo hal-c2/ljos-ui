@@ -16,7 +16,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use ljos_mcp_author::{FrontEnd, LINTS, QmlFrontEnd};
+use ljos_mcp_author::{LINTS, QmlFrontEnd};
 
 /// Whether `ljos check` reports the rule with this code. The table is the
 /// authoring server's, where `qml_lint` and `ljos://lints` read it too.
@@ -49,9 +49,8 @@ pub fn project(dir: &Path, label: &str, keys: &[String]) -> anyhow::Result<Linte
             path
         })
         .collect();
-    let found = QmlFrontEnd::new(dir)
-        .lint(&files)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+    // The compiler's findings are `ljos check`'s own already.
+    let found = QmlFrontEnd::new(dir).front_findings(&files, true);
     let mut linted = Linted::default();
     for d in found {
         if !reported(&d.code) {
