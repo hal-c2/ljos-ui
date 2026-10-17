@@ -36,7 +36,8 @@
 //!   ([`ljos_quick::register_paint_item`]).
 //!
 //! - **Sinks**: every frame goes through a `VideoSink`, a `VideoOutput`'s
-//!   own or one of the program's.
+//!   own or one of the program's. A program hands in frames of its own,
+//!   from any thread, through a [`VideoFrameInput`].
 //!
 //! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
 //! WindowCapture, AudioInput and subtitles are not built.
@@ -46,6 +47,7 @@
 #![cfg_attr(not(feature = "decode"), allow(dead_code))]
 
 mod devices;
+mod frame_input;
 mod meta;
 mod open;
 mod player;
@@ -60,6 +62,7 @@ mod decoder;
 use ljos_engine::Engine;
 
 pub use devices::{AudioDevice, AudioOutput, MediaDevices};
+pub use frame_input::{FrameError, VideoFrame, VideoFrameInput, YuvColour, YuvMatrix};
 pub use meta::MediaMetaData;
 pub use player::MediaPlayer;
 pub use sound::SoundEffect;

@@ -3841,6 +3841,7 @@ version = "0.0.0"
 dependencies = [
  "cpal",
  "filmcraft-codecs",
+ "filmcraft-color",
  "filmcraft-frame",
  "filmcraft-media",
  "filmcraft-time",

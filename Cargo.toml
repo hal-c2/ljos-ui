@@ -76,6 +76,7 @@ jpeg-encoder = "0.7.1"
 filmcraft-codecs = { path = "third_party/filmcraft/crates/codecs" }
 filmcraft-media = { path = "third_party/filmcraft/crates/media" }
 filmcraft-frame = { path = "third_party/filmcraft/crates/frame" }
+filmcraft-color = { path = "third_party/filmcraft/crates/color" }
 filmcraft-time = { path = "third_party/filmcraft/crates/time" }
 # Audio output: ALSA (libasound2-dev on Linux), CoreAudio, WASAPI, AAudio.
 cpal = "0.18.2"

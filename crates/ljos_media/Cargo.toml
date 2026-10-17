@@ -12,7 +12,13 @@ publish.workspace = true
 default = ["decode", "audio"]
 # Demux and decode with FilmCraft. Without it every source is an error
 # (MediaPlayer.FormatError, SoundEffect.Error).
-decode = ["dep:filmcraft-codecs", "dep:filmcraft-media", "dep:filmcraft-frame", "dep:filmcraft-time"]
+decode = [
+    "dep:filmcraft-codecs",
+    "dep:filmcraft-media",
+    "dep:filmcraft-frame",
+    "dep:filmcraft-time",
+    "dep:filmcraft-color",
+]
 # Play sound on the system's device. Without it, or with no device, sound
 # goes to a null sink and the engine's clock is the media clock.
 audio = ["dep:cpal"]
@@ -27,6 +33,8 @@ thiserror.workspace = true
 filmcraft-codecs = { workspace = true, optional = true }
 filmcraft-media = { workspace = true, optional = true }
 filmcraft-frame = { workspace = true, optional = true }
+# The colour a YUV frame a program hands in is converted with.
+filmcraft-color = { workspace = true, optional = true }
 filmcraft-time = { workspace = true, optional = true }
 cpal = { workspace = true, optional = true }
 

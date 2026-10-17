@@ -92,8 +92,10 @@ pub struct Reply {
 
 /// The way into the inbox, from any thread, as often as there is news.
 /// Unlike a [`Reply`] it promises nothing, so [`Platform::finish`] does not
-/// wait for it: a stream (a sensor's readings, the desktop's settings) has
-/// no last answer to wait for. Made by [`Platform::poster`].
+/// wait for it: a stream (a sensor's readings, the desktop's settings, a
+/// camera's frames) has no last answer to wait for. Whoever posts a stream
+/// keeps it bounded: a newer item replaces one whose job has not run yet,
+/// so one job is in the inbox at most. Made by [`Platform::poster`].
 #[derive(Clone)]
 pub struct Post {
     tx: UiHandle<Job>,
@@ -127,7 +129,8 @@ impl std::fmt::Debug for Post {
 
 impl Post {
     /// Hands `job` to the Engine thread, which runs it at its next frame.
-    /// A sender on another thread waits while the inbox is full.
+    /// Off that thread it waits while the inbox is full; on it, it never
+    /// waits.
     pub fn send(&self, job: impl FnOnce(&Engine) + Send + 'static) {
         self.post(Box::new(job));
     }
