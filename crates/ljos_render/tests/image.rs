@@ -103,6 +103,7 @@ fn placed(
         mirror,
         smooth: false,
         opacity: 1.0,
+        tint: None,
     }
 }
 
@@ -322,6 +323,7 @@ fn a_source_rectangle_draws_that_part_of_the_picture() {
                 mirror: [false; 2],
                 smooth,
                 opacity: 1.0,
+                tint: None,
             },
         );
         s.render(1.0)
@@ -357,6 +359,7 @@ fn nearest_keeps_hard_edges_and_smooth_blends_them() {
                 mirror: [false; 2],
                 smooth,
                 opacity: 1.0,
+                tint: None,
             },
         );
         s.render(1.0)
@@ -401,6 +404,7 @@ fn opacity_and_transparent_pixels_blend_with_what_is_below() {
                 mirror: [false; 2],
                 smooth: false,
                 opacity: 1.0,
+                tint: None,
             },
         );
     }
@@ -433,6 +437,7 @@ fn a_picture_fades_by_its_own_opacity_within_its_nodes() {
                 mirror: [false; 2],
                 smooth: false,
                 opacity: 0.5,
+                tint: None,
             },
         );
     }

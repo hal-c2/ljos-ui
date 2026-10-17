@@ -61,7 +61,7 @@ pub(crate) fn tinted(engine: &Engine, obj: ObjectId, image: ImageHandle) -> Imag
 
 /// `image` laid over in `colour`, made once for each picture and colour
 /// while a display list shows it.
-pub(crate) fn tinted_in(engine: &Engine, image: ImageHandle, colour: Color) -> ImageHandle {
+fn tinted_in(engine: &Engine, image: ImageHandle, colour: Color) -> ImageHandle {
     let tints = engine.extension::<Tints>();
     let rgba = colour.to_rgba_f().map(|c| (c * 255.0).round() as u8);
     let key = (image.id(), rgba);
@@ -71,7 +71,7 @@ pub(crate) fn tinted_in(engine: &Engine, image: ImageHandle, colour: Color) -> I
     }
     // The pictures that are gone would otherwise stay in the table for
     // as long as the engine lives. Swept when it has doubled, so that
-    // making many (a particle each) does not walk it each time.
+    // making many does not walk it each time.
     if made.len() >= 2 * tints.swept.get().max(16) {
         made.retain(|_, w| w.is_alive());
         tints.swept.set(made.len());

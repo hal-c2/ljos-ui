@@ -572,6 +572,11 @@ pub enum DrawOp {
         /// 1 shows it as it is. One node can draw many pictures, each as
         /// faded as it should be (a particle system's).
         opacity: f32,
+        /// A colour every pixel is multiplied by, as a particle is
+        /// coloured; its alpha is not used. None shows the picture as it
+        /// is. Pictures that differ only in this share one texture, so
+        /// many of them still draw as one batch.
+        tint: Option<Rgba>,
     },
     /// An image cut into nine parts: the corners keep their size, the edges
     /// and the middle stretch or repeat to fill `dst`.
@@ -876,6 +881,7 @@ impl DisplayListBuilder {
             mirror: [false, false],
             smooth: true,
             opacity: 1.0,
+            tint: None,
         })
     }
 

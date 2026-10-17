@@ -255,3 +255,48 @@ fn a_painter_looks_only_at_the_particles_of_its_groups() {
     assert!(few <= 40 * 64, "{few} looks");
     assert!(few >= 40 * 60, "{few} looks");
 }
+
+#[test]
+fn particles_of_many_colours_draw_one_picture() {
+    let e = engine();
+    ImageStore::of(&e).register_resource("file:///dot.png", png(8, 8, [255, 255, 255, 255]));
+    let root = load(
+        &e,
+        r##"
+    import QtQuick
+    import QtQuick.Particles
+    ParticleSystem {
+      width: 300; height: 300
+      Emitter { emitRate: 400; lifeSpan: 5000; size: 8; width: 100; height: 100 }
+      ImageParticle {
+        objectName: "painter"; source: "file:///dot.png"
+        color: "#808080"; colorVariation: 0.5
+      }
+    }"##,
+    );
+    let painter = find(&e, root, "painter");
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let mut s = scene(&e, root, 300.0, 300.0);
+    for t in (16..=500u32).step_by(16) {
+        clock.set(Time::from_millis(u64::from(t)));
+        e.advance_timers(Time::from_millis(u64::from(t)));
+        frame(&mut s, &e);
+    }
+    let list = s
+        .node_of(painter)
+        .and_then(|n| s.render_tree().node(n))
+        .and_then(|n| n.content())
+        .expect("the painter's display list");
+    let mut pictures = std::collections::HashSet::new();
+    let mut tints = std::collections::HashSet::new();
+    for op in list.ops() {
+        if let DrawOp::Image { image, tint, .. } = op {
+            pictures.insert(image.id());
+            tints.insert(tint.map(|t| t.to_premul_u8()));
+        }
+    }
+    // A picture made for each colour was a texture and a batch each.
+    assert!(tints.len() > 50, "{} colours", tints.len());
+    assert_eq!(pictures.len(), 1, "one picture for every colour");
+}

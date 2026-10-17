@@ -602,6 +602,7 @@ impl EffectPaint {
             mirror: [false; 2],
             smooth: true,
             opacity: 1.0,
+            tint: None,
         });
     }
 }

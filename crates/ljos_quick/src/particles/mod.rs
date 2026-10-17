@@ -25,12 +25,12 @@ use ljos_engine::{
     Atom, Color, Cx, Engine, EngineError, LogLevel, MetaRef, NodeId, ObjectId, PropIndex,
     QmlObject, QmlType, QtObject, Timer, Url, Value, qml_impl,
 };
-use ljos_render::{DisplayListBuilder, DrawOp, ImageHandle, kurbo};
+use ljos_render::{DisplayListBuilder, DrawOp, ImageHandle, Rgba, kurbo};
 use rustc_hash::FxHashMap;
 
 use self::sim::{Affected, Dir, Mask, Particle, Rng, SEED, STEP, Shape, Wandering};
 use crate::enums::EnumTable;
-use crate::image::{ImageKey, ImageStore, tinted_in};
+use crate::image::{ImageKey, ImageStore};
 use crate::item::{Item, is_a, write_computed};
 use crate::paint_item::{ItemPaint, register_paint_item};
 use ljos_text::TextEngine;
@@ -1181,7 +1181,8 @@ struct Sprite {
     y: f64,
     size: f64,
     opacity: f64,
-    tint: Color,
+    /// What the picture's colours are multiplied by; none leaves them.
+    tint: Option<Rgba>,
 }
 
 /// Places the pictures of `only`, or of every painter of the system.
@@ -1249,11 +1250,7 @@ fn paint(e: &Engine, sys: ObjectId, only: Option<ObjectId>) {
                 y: p.y - off.1 - size / 2.0,
                 size,
                 opacity: a,
-                tint: if white {
-                    Color::TRANSPARENT
-                } else {
-                    Color::from_rgba_f(r, g, b, 1.0)
-                },
+                tint: (!white).then(|| Rgba::from_straight(r as f32, g as f32, b as f32, 1.0)),
             }
         });
         let raw = e
@@ -1277,32 +1274,38 @@ struct Shown {
     /// none when it could not be read.
     source: Option<String>,
     image: Option<ImageHandle>,
-    /// The picture in each colour a particle was given, kept while a step
-    /// uses it: a particle keeps its colour for its life, and looking it
-    /// up here is cheaper than in the engine's table of tints.
-    tints: FxHashMap<Color, ImageHandle>,
     paint: Rc<Pictures>,
 }
 
 /// Every particle of a painter, drawn into the painter's own node: one
 /// display list, where an item for each would cost its own geometry,
 /// paint and bindings on every step.
+///
+/// Every particle draws the one picture and carries its colour as a tint,
+/// as Qt colours a particle: a picture for each colour cost its pixels and
+/// a texture, and drew each particle as a batch of its own.
 #[derive(Debug, Default)]
 struct Pictures {
-    quads: Vec<(ImageHandle, kurbo::Rect, f32)>,
+    image: Option<ImageHandle>,
+    quads: Vec<(kurbo::Rect, f32, Option<Rgba>)>,
 }
 
 impl ItemPaint for Pictures {
     fn paint(&self, _size: kurbo::Size, _text: &mut TextEngine, out: &mut DisplayListBuilder) {
-        for (image, dst, opacity) in &self.quads {
+        let Some(image) = &self.image else {
+            return;
+        };
+        let src = image.rect();
+        for (dst, opacity, tint) in &self.quads {
             out.push(DrawOp::Image {
                 image: image.clone(),
-                src: image.rect(),
+                src,
                 dst: *dst,
                 tile: None,
                 mirror: [false; 2],
                 smooth: true,
                 opacity: *opacity,
+                tint: *tint,
             });
         }
     }
@@ -1334,34 +1337,17 @@ fn place(e: &Engine, pa: ObjectId, raw: &str, sprites: impl Iterator<Item = Spri
         };
         s.source = Some(raw.to_owned());
         s.image = load_picture(e, &url);
-        s.tints.clear();
     }
     let serial = s.serial;
-    let quads = match s.image.clone() {
-        Some(image) => {
-            let mut kept: FxHashMap<Color, ImageHandle> = FxHashMap::default();
-            let old = &mut s.tints;
-            let quads = sprites
-                .filter(|sp| sp.opacity > 0.0 && sp.size > 0.0)
-                .map(|sp| {
-                    // With a `colorVariation` each particle has a colour of its own.
-                    let image = if sp.tint.a == 0 {
-                        image.clone()
-                    } else {
-                        kept.entry(sp.tint)
-                            .or_insert_with(|| {
-                                old.remove(&sp.tint)
-                                    .unwrap_or_else(|| tinted_in(e, image.clone(), sp.tint))
-                            })
-                            .clone()
-                    };
-                    let dst = kurbo::Rect::new(sp.x, sp.y, sp.x + sp.size, sp.y + sp.size);
-                    (image, dst, sp.opacity.clamp(0.0, 1.0) as f32)
-                })
-                .collect();
-            s.tints = kept;
-            quads
-        }
+    let image = s.image.clone();
+    let quads = match &image {
+        Some(_) => sprites
+            .filter(|sp| sp.opacity > 0.0 && sp.size > 0.0)
+            .map(|sp| {
+                let dst = kurbo::Rect::new(sp.x, sp.y, sp.x + sp.size, sp.y + sp.size);
+                (dst, sp.opacity.clamp(0.0, 1.0) as f32, sp.tint)
+            })
+            .collect(),
         None => Vec::new(),
     };
     drop(shown);
@@ -1371,7 +1357,7 @@ fn place(e: &Engine, pa: ObjectId, raw: &str, sprites: impl Iterator<Item = Spri
             return;
         };
         let still_empty = s.paint.quads.is_empty() && quads.is_empty();
-        s.paint = Rc::new(Pictures { quads });
+        s.paint = Rc::new(Pictures { image, quads });
         still_empty
     };
     // Nothing shown before or now: no repaint.

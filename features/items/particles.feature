@@ -197,6 +197,31 @@ Feature: Particles
     Then the pixel at 150, 150 of the window is "#ff0000"
     And the pixel at 10, 10 of the window is "#000000"
 
+  # Qt's documentation calls white "no change", which only multiplying the
+  # picture's colours gives for every picture. Its software renderer draws no
+  # particles, so the pixels are Ljós's own.
+  @ljos-only
+  Scenario: A painter's colour multiplies the colours of its picture
+    Given a 8 by 8 image file "grey.png" filled with "#808080"
+    And the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Particles
+      ParticleSystem {
+        width: 300; height: 300
+        Emitter {
+          x: 140; y: 140; width: 20; height: 20
+          emitRate: 200; lifeSpan: 5000; size: 100
+        }
+        ImageParticle {
+          source: "grey.png"; color: "#ff8000"
+          entryEffect: ImageParticle.None
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the pixel at 150, 150 of the window is "#804000"
+
   # Qt's software renderer, which qml6 uses offscreen, draws no particles at
   # all, so what is painted is Ljós's own behaviour here.
   @ljos-only

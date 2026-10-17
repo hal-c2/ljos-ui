@@ -10,7 +10,7 @@ use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::kurbo::{Rect, Size};
 use ljos_render::{
     DisplayListBuilder, DrawOp, EncodeStats, FrameView, ImageHandle, Insets, MemoryPressure,
-    NodeId, RenderBackend, RenderTree, TileMode,
+    NodeId, RenderBackend, RenderTree, Rgba, TileMode,
 };
 
 struct Scene {
@@ -76,6 +76,7 @@ fn whole(image: &ImageHandle, dst: Rect, smooth: bool) -> DrawOp {
         mirror: [false; 2],
         smooth,
         opacity: 1.0,
+        tint: None,
     }
 }
 
@@ -128,6 +129,7 @@ fn many_pictures_of_one_image_in_a_node_are_one_mesh_each_as_faded_as_it_is() {
             mirror: [false; 2],
             smooth: true,
             opacity: if i == 0 { 0.5 } else { 1.0 },
+            tint: None,
         });
     }
     s.tree.set_content(n, Some(b.finish_arc()));
@@ -146,6 +148,43 @@ fn many_pictures_of_one_image_in_a_node_are_one_mesh_each_as_faded_as_it_is() {
 }
 
 #[test]
+fn pictures_of_one_image_in_many_tints_are_one_mesh_on_one_texture() {
+    let ctx = Context::default();
+    let image = picture(8, 8);
+    let mut s = Scene::new(200.0, 100.0);
+    let n = s.node(0.0, 0.0, 200.0, 100.0);
+    let mut b = DisplayListBuilder::new();
+    for i in 0..50u8 {
+        let x = f64::from(i) * 4.0;
+        b.push(DrawOp::Image {
+            image: image.clone(),
+            src: image.rect(),
+            dst: Rect::new(x, 0.0, x + 4.0, 4.0),
+            tile: None,
+            mirror: [false; 2],
+            smooth: true,
+            opacity: if i == 0 { 0.5 } else { 1.0 },
+            tint: Some(Rgba::rgb(i * 5, 255 - i * 5, 128)),
+        });
+    }
+    s.tree.set_content(n, Some(b.finish_arc()));
+    let mut be = EpaintBackend::new();
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes.len(), 1, "one mesh for fifty colours");
+    assert_eq!(
+        (be.image_textures(), be.texture_uploads()),
+        (1, 1),
+        "one texture for fifty colours"
+    );
+    let m = &meshes[0];
+    assert_eq!(
+        m.vertices[0].color,
+        egui::Color32::from_rgb(0, 255, 128).gamma_multiply(0.5)
+    );
+    assert_eq!(m.vertices[4].color, egui::Color32::from_rgb(5, 250, 128));
+}
+
+#[test]
 fn a_part_of_the_picture_and_a_flip_are_texture_coordinates() {
     let ctx = Context::default();
     let image = picture(40, 20);
@@ -161,6 +200,7 @@ fn a_part_of_the_picture_and_a_flip_are_texture_coordinates() {
             mirror: [true, false],
             smooth: false,
             opacity: 1.0,
+            tint: None,
         },
     );
     let mut be = EpaintBackend::new();
@@ -217,6 +257,7 @@ fn sampling_modes_have_their_own_textures() {
             mirror: [false; 2],
             smooth: true,
             opacity: 1.0,
+            tint: None,
         },
     );
     let mut be = EpaintBackend::new();

@@ -318,6 +318,7 @@ impl ItemPaint for FramePaint {
             mirror: [self.mirrored, false],
             smooth: true,
             opacity: 1.0,
+            tint: None,
         });
     }
 }

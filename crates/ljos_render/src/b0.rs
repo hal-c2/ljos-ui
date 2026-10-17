@@ -1147,12 +1147,13 @@ impl EpaintBackend {
                     mirror,
                     smooth,
                     opacity,
+                    tint,
                 } => {
                     if !cur.is_empty() {
                         segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
                     }
                     let blit = image_blit(*src, *dst, *tile, *mirror);
-                    if !image_segs(&mut segs, image, &[blit], *smooth, *opacity) {
+                    if !image_segs(&mut segs, image, &[blit], *smooth, *opacity, *tint) {
                         warn("an image is tiled too finely; some tiles are not drawn");
                     }
                 }
@@ -1169,7 +1170,7 @@ impl EpaintBackend {
                     }
                     let size = (image.width(), image.height());
                     let blits = nine_patch_blits(size, *insets, *dst, *tile, *mirror);
-                    if !image_segs(&mut segs, image, &blits, *smooth, 1.0) {
+                    if !image_segs(&mut segs, image, &blits, *smooth, 1.0, None) {
                         warn("a border image is tiled too finely; some tiles are not drawn");
                     }
                 }
@@ -1332,8 +1333,15 @@ fn image_segs(
     blits: &[ImageBlit],
     smooth: bool,
     opacity: f32,
+    tint: Option<Rgba>,
 ) -> bool {
     let size = (image.width(), image.height());
+    // egui multiplies the texture by the vertex colour, so a tint costs no
+    // texture of its own and the quads still join the batch of the picture.
+    let tint = tint.map(|t| {
+        let [r, g, b, _] = t.to_straight_u8();
+        Color32::from_rgb(r, g, b)
+    });
     let (mut clamp, mut repeat) = (Mesh::default(), Mesh::default());
     let mut complete = true;
     for blit in blits {
@@ -1342,6 +1350,11 @@ fn image_segs(
     for (mut mesh, repeat) in [(clamp, false), (repeat, true)] {
         if mesh.is_empty() {
             continue;
+        }
+        if let Some(tint) = tint {
+            for v in &mut mesh.vertices {
+                v.color = tint;
+            }
         }
         if opacity < 1.0 {
             for v in &mut mesh.vertices {

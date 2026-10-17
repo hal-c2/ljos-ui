@@ -545,6 +545,7 @@ impl ShaderEffectPaint {
                     mirror: [false; 2],
                     smooth,
                     opacity: 1.0,
+                    tint: None,
                 });
             }
             return;
@@ -718,6 +719,7 @@ impl SourcePaint {
             mirror: [false; 2],
             smooth: self.smooth,
             opacity: 1.0,
+            tint: None,
         });
     }
 }

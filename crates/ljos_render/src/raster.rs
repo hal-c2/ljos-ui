@@ -65,8 +65,20 @@ pub struct VelloCpuReference {
     resources: Resources,
     outlines: OutlineCache,
     /// vello_cpu's own copy of every image drawn (the whole image, or a part
-    /// that must be sampled on its own), until the image itself is dropped.
-    pixmaps: HashMap<(u64, Option<[u32; 4]>), PixmapEntry>,
+    /// that must be sampled on its own, in each tint it is drawn with),
+    /// until the image itself is dropped.
+    pixmaps: HashMap<PixmapKey, PixmapEntry>,
+}
+
+/// An image's identity, the part of it cut out, and the tint laid on it.
+type PixmapKey = (u64, Option<[u32; 4]>, Option<[u8; 3]>);
+
+/// How one blit samples and colours its picture.
+#[derive(Clone, Copy)]
+struct Look {
+    smooth: bool,
+    opacity: f32,
+    tint: Option<Rgba>,
 }
 
 struct PixmapEntry {
@@ -328,8 +340,13 @@ impl VelloCpuReference {
 
     /// vello_cpu's copy of `image`, or of the part `crop` (x, y, width,
     /// height) of it. `None` for an image past vello_cpu's 16-bit sizes.
-    fn pixmap(&mut self, image: &ImageHandle, crop: Option<[u32; 4]>) -> Option<Arc<Pixmap>> {
-        if let Some(e) = self.pixmaps.get(&(image.id(), crop)) {
+    fn pixmap(
+        &mut self,
+        image: &ImageHandle,
+        crop: Option<[u32; 4]>,
+        tint: Option<[u8; 3]>,
+    ) -> Option<Arc<Pixmap>> {
+        if let Some(e) = self.pixmaps.get(&(image.id(), crop, tint)) {
             return Some(Arc::clone(&e.pixmap));
         }
         let part = match crop {
@@ -341,9 +358,18 @@ impl VelloCpuReference {
             u16::try_from(part.height()).ok()?,
         );
         let meta = PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, !part.is_opaque());
-        let pixmap = Arc::new(Pixmap::from_parts(part.data().to_vec(), w, h, meta));
+        let mut data = part.data().to_vec();
+        if let Some(t) = tint {
+            // Premultiplied channels times an opaque colour stay premultiplied.
+            for px in data.as_chunks_mut::<4>().0 {
+                for (c, t) in px.iter_mut().zip(t) {
+                    *c = ((u16::from(*c) * u16::from(t) + 127) / 255) as u8;
+                }
+            }
+        }
+        let pixmap = Arc::new(Pixmap::from_parts(data, w, h, meta));
         self.pixmaps.insert(
-            (image.id(), crop),
+            (image.id(), crop, tint),
             PixmapEntry {
                 owner: image.downgrade(),
                 pixmap: Arc::clone(&pixmap),
@@ -357,10 +383,14 @@ impl VelloCpuReference {
         ctx: &mut RenderContext,
         image: &ImageHandle,
         blit: &ImageBlit,
-        smooth: bool,
-        opacity: f32,
+        look: Look,
         warned: &mut HashSet<&'static str>,
     ) {
+        let Look {
+            smooth,
+            opacity,
+            tint,
+        } = look;
         if !blit.is_visible() || opacity <= 0.0 {
             return;
         }
@@ -380,7 +410,11 @@ impl VelloCpuReference {
         } else {
             (None, blit.src)
         };
-        let Some(pixmap) = self.pixmap(image, crop) else {
+        let tint = tint.map(|t| {
+            let [r, g, b, _] = t.to_straight_u8();
+            [r, g, b]
+        });
+        let Some(pixmap) = self.pixmap(image, crop, tint) else {
             if warned.insert("image-size") {
                 tracing::debug!("R: an image larger than 65535 pixels is not drawn");
             }
@@ -560,9 +594,15 @@ impl VelloCpuReference {
                 mirror,
                 smooth,
                 opacity: own,
+                tint,
             } => {
                 let blit = image_blit(*src, *dst, *tile, *mirror);
-                self.draw_blit(ctx, image, &blit, *smooth, opacity * own, warned);
+                let look = Look {
+                    smooth: *smooth,
+                    opacity: opacity * own,
+                    tint: *tint,
+                };
+                self.draw_blit(ctx, image, &blit, look, warned);
             }
             DrawOp::NinePatch {
                 image,
@@ -574,7 +614,12 @@ impl VelloCpuReference {
             } => {
                 let size = (image.width(), image.height());
                 for blit in nine_patch_blits(size, *insets, *dst, *tile, *mirror) {
-                    self.draw_blit(ctx, image, &blit, *smooth, opacity, warned);
+                    let look = Look {
+                        smooth: *smooth,
+                        opacity,
+                        tint: None,
+                    };
+                    self.draw_blit(ctx, image, &blit, look, warned);
                 }
             }
             // Qt's software scene graph draws no ShaderEffect either.
