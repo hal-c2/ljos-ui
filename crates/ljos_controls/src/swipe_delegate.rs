@@ -108,7 +108,7 @@ struct Drag {
 
 /// The `swipe` of a `SwipeDelegate`.
 #[derive(Debug, QmlObject)]
-#[qml(name = "SwipeDelegateSwipe", uncreatable)]
+#[qml(module = "QtQuick.Templates", name = "SwipeDelegateSwipe", uncreatable)]
 pub struct SwipeDelegateSwipe {
     #[qml(notify)]
     pub position: f64,

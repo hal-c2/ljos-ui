@@ -3768,6 +3768,7 @@ module QtQuick.Controls
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick/Controls/Basic/SplitView.qml
 	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
@@ -3853,6 +3854,7 @@ module QtQuick.Controls.Basic
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick/Controls/Basic/SplitView.qml
 	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
@@ -3956,6 +3958,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.SplitView named
 	type QtQuick/Controls/Basic/StackView.qml StackView
 		prototype QtQuick.Templates.StackView named
+	type QtQuick/Controls/Basic/SwipeDelegate.qml SwipeDelegate
+		prototype QtQuick.Templates.SwipeDelegate named
 	type QtQuick/Controls/Basic/SwipeView.qml SwipeView
 		prototype QtQuick.Templates.SwipeView named
 	type QtQuick/Controls/Basic/Switch.qml Switch
@@ -4045,6 +4049,7 @@ module QtQuick.Controls.Fusion
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick/Controls/Basic/SplitView.qml
 	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Fusion/Switch.qml
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
@@ -4139,6 +4144,7 @@ module QtQuick.Controls.Material
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick/Controls/Basic/SplitView.qml
 	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Material/Switch.qml
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
@@ -4293,6 +4299,7 @@ module QtQuick.Controls.Universal
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick/Controls/Basic/SplitView.qml
 	StackView QtQuick/Controls/Basic/StackView.qml
+	SwipeDelegate QtQuick/Controls/Basic/SwipeDelegate.qml
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Universal/Switch.qml
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
@@ -5044,6 +5051,8 @@ module QtQuick.Templates
 	SplitHandle QtQuick.Templates.SplitHandle
 	SplitView QtQuick.Templates.SplitView
 	StackView QtQuick.Templates.StackView
+	SwipeDelegate QtQuick.Templates.SwipeDelegate
+	SwipeDelegateSwipe QtQuick.Templates.SwipeDelegateSwipe
 	SwipeView QtQuick.Templates.SwipeView
 	Switch QtQuick.Templates.Switch
 	SwitchDelegate QtQuick.Templates.SwitchDelegate
@@ -6090,6 +6099,37 @@ module QtQuick.Templates
 		method clear
 		method get
 		method find
+	type QtQuick.Templates.SwipeDelegate SwipeDelegate
+		prototype QtQuick.Templates.ItemDelegate named
+		enum Side Left=1 Right=-1
+		prop swipe QtQuick.Templates.SwipeDelegateSwipe named pointer readonly
+	type QtQuick.Templates.SwipeDelegateSwipe SwipeDelegateSwipe
+		is uncreatable
+		prop position QtQml.real named
+		prop complete QtQml.bool named readonly
+		prop left QtQml.Component named pointer
+		prop behind QtQml.Component named pointer
+		prop right QtQml.Component named pointer
+		prop leftItem QtQuick.Item named pointer readonly
+		prop behindItem QtQuick.Item named pointer readonly
+		prop rightItem QtQuick.Item named pointer readonly
+		prop enabled QtQml.bool named
+		prop transition QtQuick.Transition named pointer
+		signal positionChanged
+		signal completeChanged
+		signal leftChanged
+		signal behindChanged
+		signal rightChanged
+		signal leftItemChanged
+		signal behindItemChanged
+		signal rightItemChanged
+		signal enabledChanged
+		signal transitionChanged
+		signal completed
+		signal opened
+		signal closed
+		method open
+		method close
 	type QtQuick.Templates.SwipeView SwipeView
 		prototype QtQuick.Templates.Container named
 		attached QtQuick.Templates.SwipeViewAttached

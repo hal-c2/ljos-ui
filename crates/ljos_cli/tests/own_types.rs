@@ -990,6 +990,10 @@ const NOT_YET: &[(&str, &str)] = &[
         "an Item to Qt that holds a VideoOutput and declares no default property; here it is a VideoOutput, and so an item with one",
     ),
     (
+        "QtQuick.Templates: SwipeDelegateSwipe",
+        "the type of `SwipeDelegate.swipe`, anonymous to Qt; named here so that the table can describe it and a file's `swipe.left: Rectangle {}` is read as a component",
+    ),
+    (
         "QtQuick.Templates: Calendar",
         "Qt's Templates make it a creatable type; here it is the enum holder of QtQuick.Controls alone",
     ),
@@ -1128,6 +1132,30 @@ const NOT_YET: &[(&str, &str)] = &[
     (
         "QtQuick.Controls.Universal.VerticalHeaderViewDelegate",
         "a style file here, which has the default property of the control it is",
+    ),
+    (
+        "QtQuick.Controls.Basic.SwipeDelegate",
+        "attaches `pressed` and `clicked` to its side items to Qt; not built yet",
+    ),
+    (
+        "QtQuick.Controls.Fusion.SwipeDelegate",
+        "attaches `pressed` and `clicked` to its side items to Qt; not built yet",
+    ),
+    (
+        "QtQuick.Controls.Material.SwipeDelegate",
+        "attaches `pressed` and `clicked` to its side items to Qt; not built yet",
+    ),
+    (
+        "QtQuick.Controls.SwipeDelegate",
+        "attaches `pressed` and `clicked` to its side items to Qt; not built yet",
+    ),
+    (
+        "QtQuick.Controls.Universal.SwipeDelegate",
+        "attaches `pressed` and `clicked` to its side items to Qt; not built yet",
+    ),
+    (
+        "QtQuick.Templates.SwipeDelegate",
+        "attaches `pressed` and `clicked` to its side items to Qt; not built yet",
     ),
     // `ObjectModel.index` on an item, and the rest of what Qt's models
     // attach to the items they make.
