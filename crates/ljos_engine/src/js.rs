@@ -858,8 +858,11 @@ impl Engine {
                         if let Ok(JsValue::Number(n)) = scope.get_field(&r, "pointSize") {
                             f.point_size = n;
                         }
-                        if let Ok(JsValue::Number(n)) = scope.get_field(&r, "pixelSize") {
+                        if let Ok(JsValue::Number(n)) = scope.get_field(&r, "pixelSize")
+                            && n >= 1.0
+                        {
                             f.pixel_size = n as i32;
+                            f.point_size = -1.0;
                         }
                         if let Ok(JsValue::Bool(b)) = scope.get_field(&r, "bold") {
                             f.weight = if b { 700 } else { 400 };

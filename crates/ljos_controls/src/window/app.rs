@@ -212,10 +212,7 @@ impl Default for Application {
             organization: Atom::default(),
             domain: Atom::default(),
             layout_direction: 0,
-            font: Font {
-                pixel_size: ljos_quick::DEFAULT_PIXEL_SIZE as i32,
-                ..Font::default()
-            },
+            font: Font::default(),
             screens: QmlList::default(),
             arguments: Vec::new(),
             style_hints: None,

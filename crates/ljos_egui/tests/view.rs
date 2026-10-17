@@ -281,7 +281,8 @@ fn text_is_sized_by_the_text_engine_and_painted_from_the_atlas() {
     let (advance, line) = {
         let te = ljos_quick::text_engine();
         let mut te = te.borrow_mut();
-        let style = ljos_quick::TextStyle::default();
+        // The Text sets no font: it has the application font.
+        let style = ljos_quick::text_style(&ljos_engine::Font::default());
         (
             te.advance_width("Hello", &style),
             te.font_metrics(&style).line_height,

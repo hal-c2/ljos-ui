@@ -281,6 +281,7 @@ mod tests {
         let mut f = Font {
             family: "Arial".into(),
             pixel_size: 12,
+            point_size: -1.0,
             ..Font::default()
         };
         assert_eq!(

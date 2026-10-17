@@ -88,7 +88,7 @@ Item {
     width: 300; height: 200
     TextInput {
         objectName: "input"; width: 200; height: 20
-        text: "hello brave world"; selectionColor: "#ff0000"
+        text: "hello brave world"; selectionColor: "#ff0000"; font.pixelSize: 14
     }
     TextEdit { objectName: "edit"; y: 40; width: 200; height: 80; text: "one\ntwo" }
     TextInput {

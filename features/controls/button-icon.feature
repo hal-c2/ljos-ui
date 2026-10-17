@@ -170,7 +170,7 @@ Feature: The icon of a button
     Scenario: The icon is beside the text unless told otherwise
       Then the property "display" of "both" is 2
       And the property "wider" of "root" is 22
-      And the property "taller" of "root" is 0
+      And the property "taller" of "root" is 2
 
     Scenario: The space between the icon and the text is the spacing
       When the property "spacing" of "both" is set to 10

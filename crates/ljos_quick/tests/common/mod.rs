@@ -23,6 +23,17 @@ pub fn make<T: QmlType + Default>(e: &Engine, parent: Option<ObjectId>) -> Objec
     o
 }
 
+/// Sets the font of `o` to 14 px. Measuring tests hold numbers that Qt gives
+/// for the bundled font at that size, not at the default size.
+pub fn at_14_px(e: &Engine, o: ObjectId) {
+    let font = ljos_engine::Font {
+        pixel_size: 14,
+        point_size: -1.0,
+        ..Default::default()
+    };
+    set(e, o, "font", Value::Font(std::sync::Arc::new(font)));
+}
+
 /// Sets `x`, `y`, `width`, `height`.
 pub fn geom(e: &Engine, o: ObjectId, x: f64, y: f64, w: f64, h: f64) {
     e.set(o, Item::X, x).unwrap();

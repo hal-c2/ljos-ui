@@ -37,6 +37,10 @@ impl Atom {
     /// The empty string. Allocation-free.
     pub const EMPTY: Atom = Atom(ArcStr::new());
 
+    /// [`crate::Font::DEFAULT_FAMILY`], made without allocating: every
+    /// default font holds it.
+    pub(crate) const DEFAULT_FONT_FAMILY: Atom = Atom(arcstr::literal!("Sans Serif"));
+
     /// A fresh, uninterned atom. Use for runtime data.
     pub fn new(s: &str) -> Self {
         Atom(ArcStr::from(s))

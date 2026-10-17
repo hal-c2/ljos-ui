@@ -20,7 +20,10 @@ const EDITORS: &str = r##"
 import QtQuick
 Item {
     width: 300; height: 200
-    TextEdit { objectName: "edit"; width: 200; height: 80; text: "let one\nlet two" }
+    TextEdit {
+        objectName: "edit"; width: 200; height: 80; text: "let one\nlet two"
+        font.pixelSize: 14
+    }
     TextInput {
         objectName: "secret"; y: 100; width: 200; height: 20
         echoMode: TextInput.Password; text: "hunter2"

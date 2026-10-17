@@ -174,6 +174,7 @@ fn text_implicit_size_from_the_text_engine() {
     let e = engine();
     let root = make::<Item>(&e, None);
     let t = make::<Text>(&e, Some(root));
+    at_14_px(&e, t);
     set(&e, t, "text", Value::String(Atom::from("hello")));
     let mut s = scene(&e, root, 300.0, 300.0);
     frame(&mut s, &e);
@@ -193,6 +194,7 @@ fn text_wraps_to_its_width() {
     let e = engine();
     let root = make::<Item>(&e, None);
     let t = make::<Text>(&e, Some(root));
+    at_14_px(&e, t);
     set(&e, t, "text", Value::String(Atom::from("aaaa bbbb cccc")));
     set(&e, t, "wrapMode", Value::Int(wrap_mode::WORD_WRAP));
     // Room for two of the three words.

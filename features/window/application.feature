@@ -61,5 +61,5 @@ Feature: The application
         property int sameSize: Application.font.pixelSize
       }
       """
-    Then the property "size" of "app" is 14
-    And the property "sameSize" of "app" is 14
+    Then the property "size" of "app" is 12
+    And the property "sameSize" of "app" is 12

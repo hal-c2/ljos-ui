@@ -30,6 +30,7 @@ fn text_of(e: &Engine, o: ObjectId, name: &str) -> String {
 fn font_metrics_are_qts() {
     let e = engine();
     let fm = make::<FontMetrics>(&e, None);
+    at_14_px(&e, fm);
     for (name, want) in [
         ("ascent", 12.671875),
         ("descent", 2.953125),
@@ -131,8 +132,8 @@ Item {
     property rect nothing: fm.boundingRect("")
     property rect spaced: wide.boundingRect("Hello")
     property real spacedAdvance: wide.advanceWidth("Hello")
-    FontMetrics { id: fm }
-    FontMetrics { id: wide; font.letterSpacing: 2 }
+    FontMetrics { id: fm; font.pixelSize: 14 }
+    FontMetrics { id: wide; font.pixelSize: 14; font.letterSpacing: 2 }
 }"#,
     );
     assert_eq!(num(&e, root, "advance"), 69.203125);
@@ -171,7 +172,7 @@ Item {
     property string fits: fm.elidedText("Hello world", Qt.ElideRight, 70)
     property string flagged: fm.elidedText("Hello world", Qt.ElideRight, 40, 0)
     property string noRoom: fm.elidedText("Hello world", Qt.ElideRight, 0)
-    FontMetrics { id: fm }
+    FontMetrics { id: fm; font.pixelSize: 14 }
 }"#,
     );
     assert_eq!(text_of(&e, root, "atEnd"), "Hell…");
@@ -187,6 +188,7 @@ Item {
 fn text_metrics_are_qts() {
     let e = engine();
     let tm = make::<TextMetrics>(&e, None);
+    at_14_px(&e, tm);
     assert_eq!(num(&e, tm, "elide"), 3.0, "Qt.ElideNone");
     assert_eq!(num(&e, tm, "width"), 0.0);
     assert_eq!(num(&e, tm, "height"), 0.0);
@@ -210,6 +212,7 @@ fn text_metrics_are_qts() {
 fn text_metrics_elide() {
     let e = engine();
     let tm = make::<TextMetrics>(&e, None);
+    at_14_px(&e, tm);
     set(&e, tm, "text", string(WORDS));
     set(&e, tm, "elide", Value::Int(1));
     assert_eq!(text_of(&e, tm, "elidedText"), "", "an elide width of 0");

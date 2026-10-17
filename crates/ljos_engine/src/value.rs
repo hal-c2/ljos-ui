@@ -182,6 +182,12 @@ pub struct Rect {
 
 /// `font` value type. Unset sizes are `-1`, as in QML.
 ///
+/// The default is the application font, as in Qt: the platform's default
+/// family at its default point size ([`Font::DEFAULT_FAMILY`],
+/// [`Font::DEFAULT_POINT_SIZE`]). The fields are what was asked for;
+/// [`Font::read_pixel_size`] and [`Font::read_point_size`] are what a
+/// script reads, each size in both units.
+///
 /// This is the value, not a loaded face: `ljos_text` resolves it to a font
 /// handle at layout time.
 #[derive(Clone, Debug, PartialEq)]
@@ -227,8 +233,8 @@ pub struct Font {
 impl Default for Font {
     fn default() -> Self {
         Font {
-            family: Atom::EMPTY,
-            point_size: -1.0,
+            family: Atom::DEFAULT_FONT_FAMILY,
+            point_size: Font::DEFAULT_POINT_SIZE,
             pixel_size: -1,
             weight: 400,
             italic: false,
@@ -285,6 +291,37 @@ impl Font {
     pub const ALL_LOWERCASE: i32 = 2;
     pub const SMALL_CAPS: i32 = 3;
     pub const CAPITALIZE: i32 = 4;
+
+    /// The family of the application font. It is a name for the system's
+    /// sans-serif face, which the platform's font configuration resolves
+    /// when text is laid out (fontconfig on Unix, a bundled face where
+    /// there is none). Qt's generic Unix platform uses this name.
+    pub const DEFAULT_FAMILY: &str = "Sans Serif";
+    /// The point size of the application font: 9 pt, 12 px at 96 dpi.
+    pub const DEFAULT_POINT_SIZE: f64 = 9.0;
+
+    /// `font.pixelSize` as a script reads it: the pixel size asked for, or
+    /// the point size in whole pixels (cut, not rounded, as Qt reads it;
+    /// 11 pt reads 14), or `-1` when neither is set.
+    pub fn read_pixel_size(&self) -> i32 {
+        if self.pixel_size > 0 {
+            self.pixel_size
+        } else if self.point_size > 0.0 {
+            (self.point_size * 4.0 / 3.0) as i32
+        } else {
+            -1
+        }
+    }
+
+    /// `font.pointSize` as a script reads it: a pixel size, which wins over
+    /// a point size, in points, else the point size asked for.
+    pub fn read_point_size(&self) -> f64 {
+        if self.pixel_size > 0 {
+            f64::from(self.pixel_size) * 0.75
+        } else {
+            self.point_size
+        }
+    }
 
     /// `text` in the letters `capitalization` asks for: what is laid out
     /// and drawn, while the text itself stays as written. Every character
@@ -416,8 +453,17 @@ impl Value {
                 };
                 match name {
                     "family" => f.family = v.to_js_string(),
+                    // A font has one size. A pixel size takes its place;
+                    // a point size does not, as in Qt, where the pixel size
+                    // stays and wins.
+                    "pointSize" if f.pixel_size > 0 => {}
                     "pointSize" => f.point_size = n,
-                    "pixelSize" => f.pixel_size = crate::number::to_int32(n),
+                    "pixelSize" => {
+                        f.pixel_size = crate::number::to_int32(n);
+                        if f.pixel_size > 0 {
+                            f.point_size = -1.0;
+                        }
+                    }
                     "weight" => f.weight = crate::number::to_int32(n),
                     "bold" => f.weight = if v.to_boolean() { 700 } else { 400 },
                     "italic" => f.italic = v.to_boolean(),
@@ -930,5 +976,45 @@ impl From<Color> for Value {
 impl From<ObjectId> for Value {
     fn from(v: ObjectId) -> Self {
         Value::Object(v)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_font_is_the_application_font() {
+        let f = Font::default();
+        assert_eq!(f.family.as_str(), Font::DEFAULT_FAMILY);
+        assert_eq!((f.read_point_size(), f.read_pixel_size()), (9.0, 12));
+    }
+
+    #[test]
+    fn a_font_has_one_size_and_reads_it_in_both_units() {
+        let font = Value::Font(Arc::default());
+        let size = |v: &Value| match v {
+            Value::Font(f) => (
+                f.point_size,
+                f.pixel_size,
+                f.read_point_size(),
+                f.read_pixel_size(),
+            ),
+            _ => unreachable!(),
+        };
+        let px = font
+            .with_member(&TypeTag::Font, "pixelSize", &Value::Int(20))
+            .unwrap();
+        assert_eq!(size(&px), (-1.0, 20, 15.0, 20));
+        // A point size does not take a pixel size's place.
+        let both = px
+            .with_member(&TypeTag::Font, "pointSize", &Value::Real(9.0))
+            .unwrap();
+        assert_eq!(size(&both), (-1.0, 20, 15.0, 20));
+        // Points read as whole pixels, cut: 20 pt is 26.67 px.
+        let pt = font
+            .with_member(&TypeTag::Font, "pointSize", &Value::Real(20.0))
+            .unwrap();
+        assert_eq!(size(&pt), (20.0, -1, 20.0, 26));
     }
 }

@@ -24,6 +24,7 @@ fn string(s: &str) -> Value {
 
 fn text(e: &Engine, parent: ObjectId, s: &str) -> ObjectId {
     let t = make::<Text>(e, Some(parent));
+    at_14_px(e, t);
     set(e, t, "text", string(s));
     t
 }

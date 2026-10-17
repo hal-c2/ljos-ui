@@ -364,8 +364,9 @@ pub(crate) fn init_text(engine: &Engine, obj: ObjectId) -> Result<(), EngineErro
     })
 }
 
-/// Font size used when neither `pixelSize` nor `pointSize` is set.
-pub const DEFAULT_PIXEL_SIZE: f64 = 14.0;
+/// Font size used when neither `pixelSize` nor `pointSize` is set: the
+/// application font's ([`Font::DEFAULT_POINT_SIZE`]) in pixels.
+pub const DEFAULT_PIXEL_SIZE: f64 = Font::DEFAULT_POINT_SIZE * 4.0 / 3.0;
 
 /// A QML `font` as the text engine wants it. `pixelSize` wins over
 /// `pointSize` (1 pt = 4/3 px at 96 dpi).

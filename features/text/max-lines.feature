@@ -14,7 +14,7 @@ Feature: Limiting the number of lines
       Item {
         id: root
         objectName: "root"
-        property string words: "Hello world, this is a long line of text"
+        property string words: "Hello world, this is a long line of text that wraps"
         property bool twoLinesTall: two.height === 2 * one.height
         property bool implicitHeightIsCut: two.implicitHeight === two.height
         property bool roomyIsWhole: roomy.lineCount === whole.lineCount

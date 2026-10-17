@@ -393,7 +393,9 @@ const FACES: &str = r##"
   });
 
   // A font crosses as these, in this order (see `to_js` beside this text).
-  const fontFields = ["family", "pointSize", "pixelSize", "weight", "italic", "underline",
+  // The two sizes cross as they were asked for and are kept out of sight;
+  // a script reads each size in both units, as Qt gives them.
+  const fontFields = ["family", "__ljos_pointSize", "__ljos_pixelSize", "weight", "italic", "underline",
     "strikeout", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
     "hintingPreference", "styleName", "overline", "kerning", "preferShaping", "contextFontMerging",
     "preferTypoLineMetrics", "features", "variableAxes"];
@@ -414,8 +416,10 @@ const FACES: &str = r##"
       o.italic = italic;
       o.underline = underline;
       o.strikeout = strikeout;
-      o.pointSize = pointSize;
-      o.pixelSize = pixelSize;
+      o.pointSize = pixelSize > 0 ? pixelSize * 0.75 : pointSize;
+      o.pixelSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? Math.trunc(pointSize * 4 / 3) : -1;
+      hide(o, "__ljos_pointSize", pointSize);
+      hide(o, "__ljos_pixelSize", pixelSize);
       o.capitalization = capitalization;
       o.letterSpacing = letterSpacing;
       o.wordSpacing = wordSpacing;
@@ -434,13 +438,22 @@ const FACES: &str = r##"
     },
     // Every setting a font has in Qt; the ones a QML font here cannot
     // change are written as Qt has them by default.
-    (o) => "QFont(" + [o.family, o.pointSize, o.pixelSize, 5, o.weight, +o.italic, +o.underline,
+    (o) => "QFont(" + [o.family, o.__ljos_pointSize, o.__ljos_pixelSize, 5, o.weight, +o.italic, +o.underline,
       +o.strikeout, 0, 0, o.capitalization, o.letterSpacing !== 0 ? 1 : 0, o.letterSpacing, o.wordSpacing,
       0, 1, "", 0, 0].join(",") + ")");
   {
     const change = font.proto.__ljos_with;
     hide(font.proto, "__ljos_with", function (member, value) {
       if (member === "bold") return change.call(this, "weight", value ? 700 : 400);
+      // One size, as `Value::with_member` keeps it.
+      if (member === "pointSize") {
+        return this.__ljos_pixelSize > 0 ? this : change.call(this, "__ljos_pointSize", value);
+      }
+      if (member === "pixelSize") {
+        const next = change.call(this, "__ljos_pixelSize", value);
+        return next.__ljos_pixelSize > 0 ? change.call(next, "__ljos_pointSize", -1) : next;
+      }
+      if (typeof member === "string" && member.startsWith("__ljos_")) return undefined;
       return change.call(this, member, value);
     });
   }
