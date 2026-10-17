@@ -827,3 +827,29 @@ fn same_reads_keep_their_edges() {
     g.set(extra, 8);
     assert_eq!(g.stats().effect_runs, runs);
 }
+
+#[test]
+fn an_effect_that_a_check_finds_dirty_runs_once_though_it_writes() {
+    // The effect follows the binding, not the property: the write leaves
+    // it to check, and the check finds the binding changed. It then runs
+    // there, and its own write flushes what is queued; its place in the
+    // queue went with the run.
+    let g = Graph::new();
+    let a = g.property(g.root(), 0).unwrap();
+    let b = g.binding(g.root(), 0, move |g| g.get(a) * 2).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let n = counter();
+    let c = n.clone();
+    g.effect(g.root(), move |g| {
+        c.set(c.get() + 1);
+        let v = g.get(b);
+        g.set(out, v);
+    })
+    .unwrap();
+    assert_eq!(n.get(), 1);
+    for i in 1..=10 {
+        g.set(a, i);
+        assert_eq!(n.get(), 1 + i as u32, "write {i}");
+    }
+    assert_eq!(g.get(out), 20);
+}

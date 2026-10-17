@@ -1869,6 +1869,10 @@ impl<V: Clone + 'static> Graph<V> {
             node.state = NodeState::Computing;
             node.pending = false;
             node.held = false;
+            // A node run by a check below its queue entry: the run is what
+            // the entry was waiting for. Left there, the first flush of a
+            // write the run makes would find it computing and run it again.
+            node.queued = false;
             match compute {
                 Compute::Binding(_) => i.stats.evaluations += 1,
                 Compute::Effect(_) => i.stats.effect_runs += 1,
