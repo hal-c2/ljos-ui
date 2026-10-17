@@ -11,7 +11,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
     },
@@ -125,7 +125,23 @@ impl Watcher {
         O: TypeOracle + Clone + Send + 'static,
         Reloader<O>: Send,
     {
-        let root = reloader.root().ok_or(WatchError::NoRoot)?.to_owned();
+        Self::spawn_shared(Arc::new(Mutex::new(reloader)), quiet, sink)
+    }
+
+    /// As [`spawn_with_quiet`](Self::spawn_with_quiet) over a reloader
+    /// the application asks too: for a file the program reaches only when
+    /// it runs ([`Reloader::provide`]). Whoever asks while a build runs
+    /// waits for it.
+    pub fn spawn_shared<O>(
+        reloader: Arc<Mutex<Reloader<O>>>,
+        quiet: Duration,
+        sink: impl FnMut(DevMsg) -> bool + Send + 'static,
+    ) -> Result<Self, WatchError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
+        let root = lock(&reloader).root().ok_or(WatchError::NoRoot)?.to_owned();
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));
         let events = Events {
@@ -259,8 +275,16 @@ impl Events {
     }
 }
 
+/// The reloader, whoever had it last: a panic while it was held leaves
+/// it as a build that did not finish, which the next one starts over.
+pub(crate) fn lock<O>(reloader: &Mutex<Reloader<O>>) -> MutexGuard<'_, Reloader<O>> {
+    reloader
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 struct Run<O> {
-    reloader: Reloader<O>,
+    reloader: Arc<Mutex<Reloader<O>>>,
     sink: Box<dyn FnMut(DevMsg) -> bool + Send>,
     fs: notify::RecommendedWatcher,
     watched: BTreeSet<PathBuf>,
@@ -297,31 +321,31 @@ impl<O: TypeOracle + Clone> Run<O> {
             match cmd {
                 Some(Cmd::Touched(path, is_dir, whole)) => {
                     let touched = if whole {
-                        self.reloader.closed(&path)
+                        lock(&self.reloader).closed(&path)
                     } else {
-                        self.reloader.touch(&path, is_dir)
+                        lock(&self.reloader).touch(&path, is_dir)
                     };
                     if touched {
                         self.debounce.touch(Instant::now());
                     }
                 }
                 Some(Cmd::Rescan) => {
-                    self.reloader.touch_all();
+                    lock(&self.reloader).touch_all();
                     self.debounce.touch(Instant::now());
                 }
                 Some(Cmd::Flush) => {
                     // Events may be late or lost; the directory is read.
-                    self.reloader.touch_all();
+                    lock(&self.reloader).touch_all();
                     self.flushing = true;
                 }
                 Some(Cmd::Ack(generation)) => {
-                    self.reloader.ack(generation);
+                    lock(&self.reloader).ack(generation);
                     if self.in_flight == Some(generation) {
                         self.in_flight = None;
                     }
                 }
                 Some(Cmd::Reject(generation)) => {
-                    self.reloader.reject(generation);
+                    lock(&self.reloader).reject(generation);
                     if self.in_flight == Some(generation) {
                         self.in_flight = None;
                     }
@@ -330,7 +354,7 @@ impl<O: TypeOracle + Clone> Run<O> {
                 None => {}
             }
             if self.overflow.swap(false, Ordering::AcqRel) {
-                self.reloader.touch_all();
+                lock(&self.reloader).touch_all();
                 self.debounce.touch(Instant::now());
             }
             if self.in_flight.is_none() {
@@ -360,15 +384,15 @@ impl<O: TypeOracle + Clone> Run<O> {
     /// now, an empty one too.
     fn build_files(&mut self, asked: bool) -> bool {
         let started = Instant::now();
-        if self.reloader.rescan_pending() {
+        if lock(&self.reloader).rescan_pending() {
             // Before the directory is read: what is written into a new
             // directory after the read is then seen as an event.
             self.watch_new_dirs();
         }
         let built = if asked {
-            self.reloader.build_now()
+            lock(&self.reloader).build_now()
         } else {
-            self.reloader.build()
+            lock(&self.reloader).build()
         };
         match built {
             // The file's next event brings the build again.

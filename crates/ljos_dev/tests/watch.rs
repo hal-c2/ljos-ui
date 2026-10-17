@@ -397,6 +397,48 @@ fn a_file_in_a_new_directory_is_seen() {
 }
 
 #[test]
+fn a_save_that_imports_a_directory_nothing_reached_reloads_with_it() {
+    let mut app = app(&[
+        ("Main.qml", MAIN),
+        ("parts/Knob.qml", "import QtQuick\nItem { width: 7 }\n"),
+    ]);
+    assert!(app.try_find("knob").is_none());
+    app.save(
+        "Main.qml",
+        &MAIN
+            .replace("import QtQuick", "import QtQuick\nimport \"parts\"")
+            .replace(
+                "Rectangle {",
+                "Knob { objectName: \"knob\" }\n  Rectangle {",
+            ),
+    );
+    reloaded(&app.wait());
+    assert_eq!(app.num("knob", "width"), 7.0);
+
+    // It is the session's now: an edit of it reloads.
+    app.save("parts/Knob.qml", "import QtQuick\nItem { width: 9 }\n");
+    reloaded(&app.wait());
+    assert_eq!(app.num("knob", "width"), 9.0);
+}
+
+#[test]
+fn a_file_only_a_loader_reaches_loads_and_its_saves_reload() {
+    let page = "import QtQuick\nItem { objectName: \"page\"; width: 3 }\n";
+    let mut app = app(&[
+        (
+            "Main.qml",
+            "import QtQuick\nItem {\n  objectName: \"root\"\n  Loader { source: \"pages/Page.qml\" }\n}\n",
+        ),
+        ("pages/Page.qml", page),
+    ]);
+    assert_eq!(app.num("page", "width"), 3.0);
+
+    app.save("pages/Page.qml", &page.replace("width: 3", "width: 5"));
+    reloaded(&app.wait());
+    assert_eq!(app.num("page", "width"), 5.0);
+}
+
+#[test]
 fn the_keyboard_focus_stays_where_the_user_put_it() {
     const TWO: &str = r#"import QtQuick
 Item {

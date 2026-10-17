@@ -6,10 +6,11 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use ljos_compiler::{CompileFault, FileSet, ReloadSession};
-use ljos_ir::ReloadPatch;
+use ljos_ir::{CompiledFile, ReloadPatch};
 use qml_front::TypeOracle;
 
 use crate::fingerprint::Fingerprints;
@@ -74,6 +75,18 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// Over every QML file under `root`.
     pub fn open(root: &Path, oracle: O) -> Result<Self, ljos_compiler::Error> {
         Ok(Self::over(ReloadSession::open(root, oracle)?))
+    }
+
+    /// Over the files under `root` that the file `entry` (a key) reaches:
+    /// [`ReloadSession::open_reaching`].
+    pub fn open_reaching(
+        root: &Path,
+        entry: &str,
+        oracle: O,
+    ) -> Result<Self, ljos_compiler::Error> {
+        Ok(Self::over(ReloadSession::open_reaching(
+            root, entry, oracle,
+        )?))
     }
 
     fn over(session: ReloadSession<O>) -> Self {
@@ -273,6 +286,18 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             },
             Err(faults) => Build::Failed(faults),
         }
+    }
+
+    /// The file `key` for a program that makes an object of it although
+    /// no file of the session imports it: [`ReloadSession::provide`].
+    pub fn provide(&mut self, key: &str) -> Option<Result<Arc<CompiledFile>, String>> {
+        let known = self.session.files().count();
+        let file = self.session.provide(key);
+        if self.session.files().count() != known {
+            // What was read is what a save is told from.
+            self.prints.replace(texts(&self.session));
+        }
+        file
     }
 
     /// The application applied the patch of this generation.

@@ -467,3 +467,68 @@ fn a_session_over_a_directory_reads_it_and_reads_it_again() {
         }]
     );
 }
+
+#[test]
+fn a_session_from_an_entry_has_what_it_reaches_and_reads_more_as_it_is_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Main.qml", "import QtQuick\nItem { }\n");
+    write("parts/Knob.qml", "import QtQuick\nItem { width: 7 }\n");
+    write("pages/Page.qml", "import QtQuick\nItem { width: 3 }\n");
+    // Nothing reaches it, so its mistake is nobody's.
+    write("stray/Stray.qml", "import QtQuick\nItem { width: }\n");
+    let mut s = ReloadSession::open_reaching(dir.path(), "Main", QtTypeOracle).unwrap();
+    s.start();
+    assert_eq!(s.files().collect::<Vec<_>>(), ["Main"]);
+    assert_eq!(s.failures().count(), 0);
+
+    // A save of a file nothing reaches is nothing to it.
+    s.set_file("stray/Stray", "import QtQuick\nItem { width: }\n");
+    assert_eq!(s.files().collect::<Vec<_>>(), ["Main"]);
+
+    // A save that imports a directory reads it.
+    let main = "import QtQuick\nimport \"parts\"\nItem { Knob { } }\n";
+    write("Main.qml", main);
+    s.set_file("Main", main);
+    let p = s.build().unwrap().unwrap();
+    assert_eq!(s.files().collect::<Vec<_>>(), ["Main", "parts/Knob"]);
+    assert!(
+        p.ops.contains(&ReloadOp::FileAdded {
+            file: "parts/Knob".into()
+        }),
+        "{:?}",
+        p.ops
+    );
+    s.ack(p.generation);
+
+    // What the program asks for when it runs, a Loader's source.
+    let page = s.provide("pages/Page").expect("there").expect("compiles");
+    assert!(s.live().contains_key("pages/Page"));
+    assert!(std::sync::Arc::ptr_eq(
+        &page,
+        &s.provide("pages/Page").unwrap().unwrap()
+    ));
+    assert!(s.provide("pages/Gone").is_none());
+    assert!(s.provide("stray/Stray").unwrap().is_err());
+
+    // It is the session's: a save of it is a patch of it alone.
+    s.set_file("pages/Page", "import QtQuick\nItem { width: 4 }\n");
+    let p = s.build().unwrap().unwrap();
+    assert!(
+        p.files.iter().all(|f| f.file.file == "pages/Page"),
+        "{:?}",
+        p.files.iter().map(|f| &f.file.file).collect::<Vec<_>>()
+    );
+
+    // A rescan keeps what was reached.
+    s.ack(p.generation);
+    s.rescan().unwrap();
+    assert_eq!(
+        s.files().collect::<Vec<_>>(),
+        ["Main", "pages/Page", "parts/Knob", "stray/Stray"]
+    );
+}

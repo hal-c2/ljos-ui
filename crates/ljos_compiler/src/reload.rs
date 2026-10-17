@@ -622,6 +622,10 @@ pub struct ReloadSession<O> {
     /// The scripts saved since the start that do not parse: no build is
     /// offered while one is.
     broken_scripts: BTreeMap<String, CompileFault>,
+    /// For a session [`open_reaching`](Self::open_reaching): the files
+    /// the program was found to reach, which a rescan reaches again. None:
+    /// every file of the directory is the session's.
+    reached: Option<BTreeSet<String>>,
 }
 
 impl<O: TypeOracle + Clone> ReloadSession<O> {
@@ -644,6 +648,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             pending: None,
             warnings: BTreeMap::new(),
             broken_scripts: BTreeMap::new(),
+            reached: None,
         }
     }
 
@@ -652,6 +657,19 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     pub fn open(root: &Path, oracle: O) -> Result<Self, Error> {
         let mut session = Self::in_memory(oracle);
         session.root = Some(root.to_owned());
+        session.rescan()?;
+        Ok(session)
+    }
+
+    /// A session over the files under `root` that the file `entry` (a
+    /// key) reaches, as a program loads them ([`Project::reach`]): a file
+    /// nothing reaches is not read, compiled or told of. A save that
+    /// imports more reads more, and so does a file the program makes an
+    /// object of when it runs ([`provide`](Self::provide)).
+    pub fn open_reaching(root: &Path, entry: &str, oracle: O) -> Result<Self, Error> {
+        let mut session = Self::in_memory(oracle);
+        session.root = Some(root.to_owned());
+        session.reached = Some(BTreeSet::from([entry.to_owned()]));
         session.rescan()?;
         Ok(session)
     }
@@ -667,7 +685,16 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let Some(root) = self.root.clone() else {
             return Ok(());
         };
-        self.project = Project::load(&root, self.oracle.clone())?;
+        self.project = match &self.reached {
+            Some(reached) => {
+                let mut project = Project::open(&root, self.oracle.clone())?;
+                for key in reached {
+                    project.reach(key);
+                }
+                project
+            }
+            None => Project::load(&root, self.oracle.clone())?,
+        };
         // A broken script stays refused until it is mended or gone.
         let project = &self.project;
         self.broken_scripts.retain(|key, _| {
@@ -728,6 +755,11 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if self.sources.get(key) == Some(&source) {
             return;
         }
+        if !self.project.has_read(qml_front::project::directory(key)) {
+            // Nothing reaches it: it is read from the disk when something
+            // does.
+            return;
+        }
         if !self.sources.contains_key(key) {
             // Any file may have been waiting for a type of this name.
             self.all_dirty = true;
@@ -735,6 +767,75 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.project.add(key, source.as_str());
         self.sources.insert(key.to_owned(), source);
         self.dirty.insert(key.to_owned());
+        // It may import what nothing did before, and a file may have been
+        // waiting for a type of a name read with it.
+        for new in self.settle(key) {
+            self.dirty.insert(new);
+            self.all_dirty = true;
+        }
+    }
+
+    /// Reads what `key` reaches that the session did not have: the keys
+    /// read.
+    fn settle(&mut self, key: &str) -> Vec<String> {
+        let read = self.project.reach(key);
+        for new in &read {
+            let text = self.project.source(new).unwrap_or_default().to_owned();
+            self.sources.insert(new.clone(), text);
+        }
+        read
+    }
+
+    /// The file `key` for a program that makes an object of it although
+    /// nothing the session has imports it: a `Loader` or
+    /// `Qt.createComponent` given its URL. It is read with what it
+    /// reaches and compiled, and the application runs it from then on, so
+    /// a save of it reloads. None when there is no such file, `Err` with
+    /// why when it does not compile.
+    pub fn provide(&mut self, key: &str) -> Option<Result<Arc<CompiledFile>, String>> {
+        if let Some(file) = self.live.get(key) {
+            return Some(Ok(file.clone()));
+        }
+        if self.live_failed.contains(key) {
+            let first = self.failed.get(key).and_then(|f| f.first());
+            return Some(Err(first.map_or_else(String::new, CompileFault::reason)));
+        }
+        // What runs was compiled without these files, as Qt's would be:
+        // nothing is compiled again for them until a save.
+        self.settle(key);
+        if !self.sources.contains_key(key) {
+            return None;
+        }
+        if let Some(reached) = &mut self.reached {
+            reached.insert(key.to_owned());
+        }
+        let compiled = self.compile_one(key);
+        let pending = self
+            .pending
+            .as_mut()
+            .map(|(_, files, failed)| (files, failed));
+        match compiled {
+            Ok((file, warnings)) => {
+                self.live.insert(key.to_owned(), file.clone());
+                self.compiled.insert(key.to_owned(), file.clone());
+                self.warnings.insert(key.to_owned(), warnings);
+                if let Some((files, _)) = pending {
+                    files.insert(key.to_owned(), file.clone());
+                }
+                Some(Ok(file))
+            }
+            Err(errors) => {
+                let reason = errors
+                    .first()
+                    .map_or_else(String::new, CompileFault::reason);
+                self.live_failed.insert(key.to_owned());
+                self.failed.insert(key.to_owned(), errors);
+                if let Some((_, failed)) = pending {
+                    failed.insert(key.to_owned());
+                }
+                Some(Err(reason))
+            }
+        }
     }
 
     /// The file `key` is gone.
@@ -748,6 +849,12 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return;
         }
         if self.sources.remove(key).is_none() {
+            return;
+        }
+        if self.reached.is_some() {
+            // What its tree says of the modules is kept.
+            self.project.remove(key);
+            self.all_dirty = true;
             return;
         }
         // A project cannot forget a file, so it is made again without it.
@@ -914,43 +1021,13 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let mut done: Vec<(String, Arc<CompiledFile>, Vec<CompileFault>)> = Vec::new();
         let mut let_be: Vec<(String, Vec<CompileFault>)> = Vec::new();
         for key in &todo {
-            let errors: Vec<CompileFault> = match compile_file(&self.project, key) {
-                Err(diagnostics) => {
-                    let mut errors: Vec<CompileFault> = diagnostics
-                        .iter()
-                        .map(|d| CompileFault::of(key, d))
-                        .collect();
-                    if errors.is_empty() {
-                        errors.push(CompileFault {
-                            file: format!("{key}.qml"),
-                            line: 0,
-                            column: 0,
-                            message: "the file does not compile".to_owned(),
-                        });
-                    }
-                    errors
+            let errors = match self.compile_one(key) {
+                Ok((file, warnings)) => {
+                    done.push((key.clone(), file, warnings));
+                    continue;
                 }
-                Ok(c) => {
-                    let (errors, warnings): (Vec<_>, Vec<_>) = c
-                        .diagnostics
-                        .iter()
-                        .partition(|d| d.severity == Severity::Error);
-                    if errors.is_empty() {
-                        let warnings = warnings
-                            .into_iter()
-                            .map(|d| CompileFault::of(key, d))
-                            .collect();
-                        done.push((key.clone(), Arc::new(c.file), warnings));
-                    }
-                    errors
-                        .into_iter()
-                        .map(|d| CompileFault::of(key, d))
-                        .collect()
-                }
+                Err(errors) => errors,
             };
-            if errors.is_empty() {
-                continue;
-            }
             if tolerate || (self.live_failed.contains(key) && !self.dirty.contains(key)) {
                 let_be.push((key.clone(), errors));
             } else {
@@ -988,6 +1065,48 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.all_dirty = false;
         self.dynamic = Some(dynamic);
         Ok(())
+    }
+
+    /// The file `key` compiled, with its warnings; or its errors.
+    fn compile_one(
+        &self,
+        key: &str,
+    ) -> Result<(Arc<CompiledFile>, Vec<CompileFault>), Vec<CompileFault>> {
+        match compile_file(&self.project, key) {
+            Err(diagnostics) => {
+                let mut errors: Vec<CompileFault> = diagnostics
+                    .iter()
+                    .map(|d| CompileFault::of(key, d))
+                    .collect();
+                if errors.is_empty() {
+                    errors.push(CompileFault {
+                        file: format!("{key}.qml"),
+                        line: 0,
+                        column: 0,
+                        message: "the file does not compile".to_owned(),
+                    });
+                }
+                Err(errors)
+            }
+            Ok(c) => {
+                let (errors, warnings): (Vec<_>, Vec<_>) = c
+                    .diagnostics
+                    .iter()
+                    .partition(|d| d.severity == Severity::Error);
+                if errors.is_empty() {
+                    let warnings = warnings
+                        .into_iter()
+                        .map(|d| CompileFault::of(key, d))
+                        .collect();
+                    Ok((Arc::new(c.file), warnings))
+                } else {
+                    Err(errors
+                        .into_iter()
+                        .map(|d| CompileFault::of(key, d))
+                        .collect())
+                }
+            }
+        }
     }
 
     /// The dirty files and every file that may compile differently because

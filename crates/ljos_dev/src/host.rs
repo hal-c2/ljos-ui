@@ -5,12 +5,15 @@
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use ljos_compiler::{CompileFault, ReloadSession};
-use ljos_engine::{Engine, MapSource, ObjectId, ReloadError, ReloadFault, ReloadOutcome, Value};
-use ljos_ir::{ReloadOp, ReloadPatch};
+use ljos_engine::{
+    ComponentSource, Engine, MapSource, ObjectId, ReloadError, ReloadFault, ReloadOutcome, Value,
+};
+use ljos_ir::{CompiledFile, ReloadOp, ReloadPatch};
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_runtime::{Clock, CoalesceKey, DrainBudget, UiInbox, WakeHook};
 use qml_front::{QtTypeOracle, TypeOracle};
@@ -18,7 +21,7 @@ use qml_front::{QtTypeOracle, TypeOracle};
 use crate::{
     reloader::Reloader,
     text::ProjectTexts,
-    watch::{DevMsg, WatchError, Watcher},
+    watch::{DevMsg, WatchError, Watcher, lock},
 };
 
 /// Properties that hold what the user did rather than what the file says
@@ -88,6 +91,35 @@ pub fn component_source<O: TypeOracle + Clone>(
         }
     }
     source
+}
+
+/// The files of a session that started from what its entry reaches
+/// ([`Reloader::open_reaching`]): what it compiled, and a file the program
+/// makes an object of only when it runs (a `Loader`'s or
+/// `Qt.createComponent`'s URL) read and compiled when the engine asks.
+/// That file is the session's from then on, so a save of it reloads. The
+/// engine waits while the watcher builds.
+struct DevSource<O> {
+    urls: MapSource,
+    reloader: Arc<Mutex<Reloader<O>>>,
+}
+
+impl<O: TypeOracle + Clone> ComponentSource for DevSource<O> {
+    fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
+        lock(&self.reloader).provide(key)?.ok()
+    }
+
+    fn failure(&self, key: &str) -> Option<String> {
+        lock(&self.reloader).provide(key)?.err()
+    }
+
+    fn url(&self, key: &str) -> String {
+        self.urls.url(key)
+    }
+
+    fn key(&self, url: &str) -> String {
+        self.urls.key(url)
+    }
 }
 
 /// Applies `patch` to `roots` as [`Engine::reload`] does, and puts the
@@ -265,30 +297,38 @@ impl DevSession {
         };
         let dir = dir.as_path();
         prepare(engine);
-        let mut reloader = Reloader::open(dir, oracle)?;
+        let mut reloader = Reloader::open_reaching(dir, &entry, oracle)?;
         let texts = ProjectTexts::new(dir);
         engine.set_qml_text_compiler(Some(texts.compiler()));
         let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
         let mut root = None;
         let mut more_errors = 0;
         reloader.start();
-        engine.set_component_source(component_source(reloader.session(), Some(&base)));
+        let failures: Vec<(String, usize)> = reloader
+            .session()
+            .failures()
+            .map(|(key, faults)| (key.to_owned(), faults.len()))
+            .collect();
+        let reloader = Arc::new(Mutex::new(reloader));
+        engine.set_component_source(DevSource {
+            urls: MapSource::new().with_base_url(base),
+            reloader: reloader.clone(),
+        });
         match engine.create_from_url(&entry, None, properties.clone()) {
             Ok(made) => root = Some(made),
             Err(e) => {
                 let fault = engine.reload_fault(&e);
                 // The entry's own mistakes, when it is the file that did
                 // not compile.
-                more_errors = reloader
-                    .session()
-                    .failures()
+                more_errors = failures
+                    .iter()
                     .find(|(key, _)| format!("{key}.qml") == fault.file)
-                    .map_or(0, |(_, faults)| faults.len().saturating_sub(1));
+                    .map_or(0, |(_, faults)| faults.saturating_sub(1));
                 engine.set_last_reload_error(Some(fault));
             }
         }
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
-        let watcher = Watcher::spawn(reloader, move |msg| {
+        let watcher = Watcher::spawn_shared(reloader, crate::debounce::QUIET, move |msg| {
             let key = if matches!(msg, DevMsg::Idle) {
                 IDLE_KEY
             } else {
