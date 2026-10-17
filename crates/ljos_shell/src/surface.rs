@@ -229,11 +229,11 @@ impl Painter {
                 if !wgpu_presents(frame) {
                     return Steps::default();
                 }
+                let upload = wgpu_upload(painter, pending);
                 let started = std::time::Instant::now();
-                // egui-wgpu uploads, draws and presents in one call, and
-                // times only the waits inside it: for the surface's next
-                // texture, the submit and the present. Uploads are not
-                // told apart from drawing.
+                // egui-wgpu draws and presents in one call, and times only
+                // the waits inside it: for the surface's next texture, the
+                // submit and the present.
                 let waited = painter.paint_and_update_textures(
                     ViewportId::ROOT,
                     pixels_per_point,
@@ -246,7 +246,7 @@ impl Painter {
                 let all = started.elapsed();
                 let waited = std::time::Duration::from_secs_f32(waited.max(0.0)).min(all);
                 Steps {
-                    upload: None,
+                    upload,
                     draw: Some(all - waited),
                     present: Some(waited),
                 }
@@ -600,6 +600,28 @@ pub(crate) fn forget_freed(pending: &mut egui::TexturesDelta) {
     let free = &pending.free;
     // The frees stay: the painter may hold an earlier upload of them.
     pending.set.retain(|id, _| !free.contains(id));
+}
+
+/// Hands the pictures `pending` sets to the GPU, the first thing
+/// egui-wgpu's paint would do, so that it is timed apart from the
+/// drawing; the paint then finds nothing left to upload. A frame with no
+/// new picture costs nothing here.
+fn wgpu_upload(
+    painter: &egui_wgpu::winit::Painter,
+    pending: &mut egui::TexturesDelta,
+) -> Option<std::time::Duration> {
+    if pending.set.is_empty() {
+        return None;
+    }
+    let state = painter.render_state()?;
+    let started = std::time::Instant::now();
+    let mut renderer = state.renderer.write();
+    for (id, deltas) in pending.set.drain() {
+        for delta in deltas {
+            renderer.update_texture(&state.device, &state.queue, id, &delta);
+        }
+    }
+    Some(started.elapsed())
 }
 
 /// Gives the GPU memory of what `pending` frees back now, for a window

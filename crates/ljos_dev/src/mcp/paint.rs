@@ -80,9 +80,9 @@ pub struct PaintReport {
     /// the time the call took on this thread: a device works on after a
     /// call returns, and what it still had to do shows where the painter
     /// next waits for it, mostly in `present`. GL times all three; wgpu
-    /// draws in one call that uploads too, and times only the waits
-    /// inside it (for the surface, the submit and the present), which are
-    /// `present`, with the rest in `draw` and no `upload`.
+    /// uploads first, then draws and presents in one call that times only
+    /// the waits inside it (for the surface, the submit and the present),
+    /// which are `present`, with the rest in `draw`.
     pub upload: Option<Duration>,
     pub draw: Option<Duration>,
     pub present: Option<Duration>,
