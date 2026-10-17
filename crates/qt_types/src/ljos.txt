@@ -1649,6 +1649,7 @@ module QtQuick
 		prop state QtQml.string named
 		prop transitions QtQml.var named list
 		prop transform QtQml.var named list
+		prop layer QtQuick.ItemLayer pointer readonly
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -2365,6 +2366,7 @@ module QtQuick
 		signal samplesChanged
 		signal sourceRectChanged
 		signal textureSizeChanged
+		method scheduleUpdate
 	type QtQuick.Shear Shear
 		prototype QtQuick.Transform
 		prop origin QtQuick.vector3d named
@@ -3323,6 +3325,32 @@ module QtQuick
 		signal verticalCenterOffsetChanged
 		signal baselineOffsetChanged
 		signal alignWhenCenteredChanged
+	type QtQuick.ItemLayer ItemLayer
+		is uncreatable
+		prop enabled QtQml.bool named
+		prop smooth QtQml.bool named
+		prop mipmap QtQml.bool named
+		prop wrapMode QtQml.int named
+		prop textureMirroring QtQml.int named
+		prop samplerName QtQml.string named
+		prop format QtQml.int named
+		prop samples QtQml.int named
+		prop live QtQml.bool named
+		prop effect QtQml.QtObject named pointer
+		prop textureSize QtQml.size named
+		prop sourceRect QtQml.rect named
+		signal enabledChanged
+		signal smoothChanged
+		signal mipmapChanged
+		signal wrapModeChanged
+		signal textureMirroringChanged
+		signal samplerNameChanged
+		signal formatChanged
+		signal samplesChanged
+		signal liveChanged
+		signal effectChanged
+		signal textureSizeChanged
+		signal sourceRectChanged
 	type QtQuick.KeyNavigationAttached KeyNavigationAttached
 		is uncreatable
 		enum Priority BeforeItem=0 AfterItem=1

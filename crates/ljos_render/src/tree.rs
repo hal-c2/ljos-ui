@@ -137,6 +137,9 @@ pub struct RenderNode {
     pub(crate) clip: Option<ClipSpec>,
     pub(crate) layer: Option<LayerSpec>,
     pub(crate) visible: bool,
+    /// Whether it and what is below it paint. One that does not is still
+    /// composed, so it is hit tested and an effect can draw it.
+    pub(crate) drawn: bool,
     pub(crate) z: f32,
     pub(crate) hit_testable: bool,
     pub(crate) content: Option<Arc<DisplayList>>,
@@ -165,6 +168,7 @@ impl RenderNode {
             clip: None,
             layer: None,
             visible: true,
+            drawn: true,
             z: 0.0,
             hit_testable: true,
             content: None,
@@ -496,6 +500,16 @@ impl RenderTree {
         if crossed_zero {
             self.mark_bounds_of_parent(id);
         }
+    }
+
+    /// Whether `id` and what is below it paint; they stay in hit testing
+    /// either way (a `ShaderEffectSource`'s `hideSource`).
+    pub fn set_drawn(&mut self, id: NodeId, drawn: bool) {
+        self.with_node(id, |n| {
+            let changed = n.drawn != drawn;
+            n.drawn = drawn;
+            changed
+        });
     }
 
     /// Set `visible`.

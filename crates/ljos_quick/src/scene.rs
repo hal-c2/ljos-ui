@@ -236,6 +236,9 @@ struct Shared {
     structure: FxHashSet<ObjectId>,
     polish: FxHashSet<ObjectId>,
     dead: Vec<ObjectId>,
+    /// A ShaderEffectSource inside its own source took a picture that
+    /// differs from the last, so the next frame takes another.
+    pictures: bool,
     /// Set from the first mark until the frame that drains it.
     dirty: bool,
     waker: Option<Rc<dyn Fn()>>,
@@ -248,16 +251,23 @@ impl Shared {
             && self.content.is_empty()
             && self.structure.is_empty()
             && self.polish.is_empty()
-            && self.dead.is_empty())
+            && self.dead.is_empty()
+            && !self.pictures)
     }
 }
 
 type SharedRc = Rc<RefCell<Shared>>;
 
-/// What a `ShaderEffectSource` was last given of its source: the
-/// fingerprint and snapshot it was made from (held, as `effect_base`'s
-/// are), and the picture.
-type SourcePicture = (u64, FrameSnapshot, Option<ImageHandle>);
+/// What a `ShaderEffectSource` was last given of its source.
+struct SourcePicture {
+    /// The fingerprint of the snapshot it was made from, which is held as
+    /// `effect_base`'s are.
+    print: u64,
+    _snap: FrameSnapshot,
+    image: Option<ImageHandle>,
+    /// The `scheduleUpdate()` count it was taken for.
+    update: i32,
+}
 
 /// Records a change; calls the waker on the clean-to-dirty edge only.
 fn mark(shared: &SharedRc, f: impl FnOnce(&mut Shared)) {
@@ -346,6 +356,9 @@ pub struct QuickScene {
     /// Each `ShaderEffectSource` as read, and the fingerprint, snapshot
     /// and picture of its source it was last given.
     source_base: HashMap<ObjectId, (crate::shader_effect::SourcePaint, Option<SourcePicture>)>,
+    /// Each item whose layer a `ShaderEffect` samples, as it is sampled
+    /// (showing its picture), and what it was last taken from.
+    layer_base: HashMap<ObjectId, (crate::shader_effect::SourcePaint, Option<SourcePicture>)>,
     /// The source items a `ShaderEffectSource` hides (`hideSource`): not
     /// shown in the tree, whatever `visible` says.
     hidden: FxHashSet<ObjectId>,
@@ -431,6 +444,7 @@ impl QuickScene {
             paint: FxHashMap::default(),
             effect_base: HashMap::new(),
             source_base: HashMap::new(),
+            layer_base: HashMap::new(),
             hidden: FxHashSet::default(),
             root: None,
             layer: None,
@@ -575,6 +589,14 @@ impl QuickScene {
             return;
         }
         self.scale_factor = scale;
+        // Pictures are taken in device pixels.
+        for (_, seen) in self
+            .source_base
+            .values_mut()
+            .chain(self.layer_base.values_mut())
+        {
+            *seen = None;
+        }
         let nodes: Vec<NodeId> = self
             .entries
             .values()
@@ -690,7 +712,11 @@ impl QuickScene {
         self.frame += 1;
         // Marks made during the frame are drained by it or reported
         // through `next_wake`; they must not wake the host a second time.
-        self.shared.borrow_mut().dirty = true;
+        {
+            let mut s = self.shared.borrow_mut();
+            s.dirty = true;
+            s.pictures = false;
+        }
         self.follow_text_engine();
         // Pictures decoded in the background since the last frame.
         let images = crate::image::ImageStore::of(engine);
@@ -1195,10 +1221,9 @@ impl QuickScene {
             // left shown in the tree: the parent prunes it anyway, and a
             // `MultiEffect` drawing that parent shows it as Qt does.
             let covered = e.inherit.borrow().visible.is_some();
-            self.tree.set_visible(
-                node,
-                (g.visible || covered) && !g.faces_away && !self.hidden.contains(&obj),
-            );
+            self.tree
+                .set_visible(node, (g.visible || covered) && !g.faces_away);
+            self.tree.set_drawn(node, !self.hidden.contains(&obj));
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
             self.tree.set_z(node, g.z as f32);
@@ -1222,6 +1247,8 @@ impl QuickScene {
         let mut content: Vec<(ObjectId, Paint)> =
             self.shared.borrow_mut().content.drain().collect();
         content.sort_unstable_by_key(|c| c.0);
+        let mut sources: FxHashSet<ObjectId> = FxHashSet::default();
+        let mut shaders = false;
         for (obj, p) in content {
             if let Some(e) = self.entries.get(&obj) {
                 self.tree.mark_content_dirty(e.node);
@@ -1236,18 +1263,72 @@ impl QuickScene {
                     // only when the source changed.
                     Paint::Source(src) => {
                         self.items_gen += 1;
+                        sources.insert(obj);
                         let seen = self.source_base.remove(&obj).and_then(|(_, seen)| seen);
-                        let shown = src.with_picture(seen.as_ref().and_then(|s| s.2.clone()));
+                        let shown = src.with_picture(
+                            seen.as_ref().and_then(|s| s.image.clone()),
+                            self.scale_factor,
+                        );
                         self.source_base.insert(obj, (src, seen));
                         Paint::Source(shown)
+                    }
+                    Paint::Shader(fx) => {
+                        shaders = true;
+                        for (item, how) in fx.layers() {
+                            let had = self.layer_base.remove(&item);
+                            // A layer newly sampled draws its item and the
+                            // items in it even while hidden.
+                            if had.is_none() {
+                                self.items_gen += 1;
+                            }
+                            let seen = had.and_then(|(_, seen)| seen);
+                            let shown = how.with_picture(
+                                seen.as_ref().and_then(|s| s.image.clone()),
+                                self.scale_factor,
+                            );
+                            self.layer_base.insert(item, (shown, seen));
+                        }
+                        Paint::Shader(fx)
                     }
                     p => p,
                 };
                 self.paint.insert(obj, p);
             }
         }
+        // A layer no effect samples any more is no longer taken.
+        if shaders {
+            let paint = &self.paint;
+            let entries = &self.entries;
+            let sampled: FxHashSet<ObjectId> = paint
+                .iter()
+                .filter(|(o, _)| entries.contains_key(o))
+                .filter_map(|(_, p)| match p {
+                    Paint::Shader(fx) => Some(fx.layers().map(|(item, _)| item)),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            let had = self.layer_base.len();
+            self.layer_base.retain(|o, _| sampled.contains(o));
+            if self.layer_base.len() != had {
+                self.items_gen += 1;
+            }
+        }
+        // What a ShaderEffect samples of one is read from the scene's
+        // paint, so a change of how it is sampled paints the effect again.
+        if !sources.is_empty() {
+            for (obj, p) in &self.paint {
+                if let Paint::Shader(fx) = p
+                    && fx.sources().any(|s| sources.contains(&s))
+                    && let Some(e) = self.entries.get(obj)
+                {
+                    self.tree.mark_content_dirty(e.node);
+                }
+            }
+        }
         self.refresh_hidden();
         let paint = &self.paint;
+        let layers = &self.layer_base;
         let by_node = &self.by_node;
         let mut te = self.text.borrow_mut();
         self.tree.rebuild_content(self.scale_factor, |cx, b| {
@@ -1264,13 +1345,14 @@ impl QuickScene {
                 Paint::Effect(p) => p.paint(cx.size, b),
                 Paint::Shader(p) => p.paint(
                     cx.size,
-                    |s| match paint.get(&s) {
-                        Some(Paint::Source(src)) => src.image.clone(),
+                    |s| match (paint.get(&s), layers.get(&s)) {
+                        (Some(Paint::Source(src)), _) => Some(src.texture()),
+                        (_, Some((layer, _))) => Some(layer.texture()),
                         _ => None,
                     },
                     b,
                 ),
-                Paint::Source(p) => p.paint(cx.size, b),
+                Paint::Source(p) => p.paint(cx.size, cx.scale_factor, b),
                 Paint::External(p) => p.paint(cx.size, &mut te, b),
             }
         });
@@ -1283,7 +1365,8 @@ impl QuickScene {
     /// item", and hiding it is the user's choice. Drawn again only when
     /// what the source shows changed.
     fn draw_effect_sources(&mut self, engine: &Engine) {
-        if self.effect_base.is_empty() && self.source_base.is_empty() {
+        if self.effect_base.is_empty() && self.source_base.is_empty() && self.layer_base.is_empty()
+        {
             return;
         }
         let entries = &self.entries;
@@ -1332,35 +1415,75 @@ impl QuickScene {
     }
 
     /// Takes the picture of each `ShaderEffectSource`'s source that
-    /// changed, unless it is not `live` and has one, and marks the
-    /// `ShaderEffect`s that sample it. Returns whether any was taken.
+    /// changed, unless it is not `live` and has one (and `scheduleUpdate()`
+    /// was not called since), and marks the `ShaderEffect`s that sample it.
+    /// Returns whether any was taken.
+    ///
+    /// A source that holds the ShaderEffectSource changes with each picture
+    /// it is given, so it is drawn again in the next frame, until the
+    /// picture comes out the same: a tunnel that ends where its pictures
+    /// are smaller than a pixel, and then costs nothing.
     fn draw_shader_sources(&mut self) -> bool {
         let entries = &self.entries;
         self.source_base.retain(|o, _| entries.contains_key(o));
         let mut taken: FxHashSet<ObjectId> = FxHashSet::default();
+        let mut again = false;
         for (obj, (base, seen)) in &mut self.source_base {
-            if !base.live && seen.is_some() {
+            let asked = seen.as_ref().is_some_and(|s| s.update != base.update);
+            if !base.live && seen.is_some() && !asked {
                 continue;
             }
-            let (Some(fx), Some(src_entry)) = (
-                self.entries.get(obj),
-                base.source.and_then(|s| self.entries.get(&s)),
-            ) else {
+            let (Some(fx), Some(src)) = (self.entries.get(obj), base.source) else {
+                continue;
+            };
+            let Some(src_entry) = self.entries.get(&src) else {
                 continue;
             };
             let Some(snap) = self.tree.compose_subtree(src_entry.node) else {
                 continue;
             };
             let print = fingerprint(&snap);
-            if seen.as_ref().is_some_and(|(p, _, _)| *p == print) {
+            if !asked && seen.as_ref().is_some_and(|s| s.print == print) {
                 continue;
             }
-            let picture = crate::effects::picture(&snap);
-            let shown = base.with_picture(picture.clone());
-            *seen = Some((print, snap, picture));
+            let picture = crate::effects::picture_at(&snap, self.scale_factor);
+            let same = seen.as_ref().is_some_and(|s| match (&s.image, &picture) {
+                (Some(a), Some(b)) => {
+                    a.width() == b.width() && a.height() == b.height() && a.data() == b.data()
+                }
+                (None, None) => true,
+                _ => false,
+            });
+            if same && let Some(s) = seen {
+                s.print = print;
+                s._snap = snap;
+                s.update = base.update;
+                continue;
+            }
+            let inside = {
+                let mut at = Some(*obj);
+                std::iter::from_fn(|| {
+                    let o = at?;
+                    at = self.entries.get(&o).and_then(|e| e.parent);
+                    Some(o)
+                })
+                .any(|o| o == src)
+            };
+            again |= inside;
+            let shown = base.with_picture(picture.clone(), self.scale_factor);
+            *seen = Some(SourcePicture {
+                print,
+                _snap: snap,
+                image: picture,
+                update: base.update,
+            });
             self.paint.insert(*obj, Paint::Source(shown));
             self.tree.mark_content_dirty(fx.node);
             taken.insert(*obj);
+        }
+        taken.extend(self.draw_layers());
+        if again {
+            mark(&self.shared, |s| s.pictures = true);
         }
         if taken.is_empty() {
             return false;
@@ -1376,8 +1499,41 @@ impl QuickScene {
         true
     }
 
-    /// Hides the source items `hideSource` names, and shows again those it
-    /// no longer does.
+    /// Takes the picture of each sampled layer whose item changed, unless
+    /// the layer is not `live` and has one. Returns the items taken.
+    fn draw_layers(&mut self) -> Vec<ObjectId> {
+        let mut taken = Vec::new();
+        for (item, (shown, seen)) in &mut self.layer_base {
+            if !shown.live && seen.is_some() {
+                continue;
+            }
+            let Some(entry) = self.entries.get(item) else {
+                continue;
+            };
+            let Some(snap) = self.tree.compose_subtree(entry.node) else {
+                continue;
+            };
+            let print = fingerprint(&snap);
+            if seen.as_ref().is_some_and(|s| s.print == print) {
+                continue;
+            }
+            let picture = crate::effects::picture_at(&snap, self.scale_factor);
+            *shown = shown.with_picture(picture.clone(), self.scale_factor);
+            *seen = Some(SourcePicture {
+                print,
+                _snap: snap,
+                image: picture,
+                update: 0,
+            });
+            taken.push(*item);
+        }
+        taken
+    }
+
+    /// Stops painting the source items `hideSource` names, and paints again
+    /// those it no longer does. They still take the pointer, as in Qt:
+    /// "setting this property to true will not prevent mouse or keyboard
+    /// input from reaching the source item".
     fn refresh_hidden(&mut self) {
         let now: FxHashSet<ObjectId> = self
             .source_base
@@ -1391,15 +1547,9 @@ impl QuickScene {
         let changed: Vec<ObjectId> = now.symmetric_difference(&self.hidden).copied().collect();
         self.hidden = now;
         for obj in changed {
-            let Some(e) = self.entries.get(&obj) else {
-                continue;
-            };
-            let Some(g) = e.geom else { continue };
-            let covered = e.inherit.borrow().visible.is_some();
-            self.tree.set_visible(
-                e.node,
-                (g.visible || covered) && !g.faces_away && !self.hidden.contains(&obj),
-            );
+            if let Some(e) = self.entries.get(&obj) {
+                self.tree.set_drawn(e.node, !self.hidden.contains(&obj));
+            }
         }
     }
 
@@ -1412,6 +1562,7 @@ impl QuickScene {
             .values()
             .filter_map(|(b, _)| b.source())
             .chain(self.source_base.values().filter_map(|(b, _)| b.source))
+            .chain(self.layer_base.keys().copied())
             .collect();
         if sources.is_empty() {
             return FxHashSet::default();

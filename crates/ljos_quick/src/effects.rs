@@ -619,11 +619,16 @@ fn obj_prop(e: &Engine, obj: ObjectId, prop: ljos_engine::PropIndex) -> Option<O
 /// The pixels of a composed item and what it shows (from
 /// [`RenderTree::compose_subtree`]), one per logical pixel.
 pub(crate) fn picture(snap: &ljos_render::FrameSnapshot) -> Option<ImageHandle> {
+    picture_at(snap, 1.0)
+}
+
+/// The same, `scale` pixels per logical pixel.
+pub(crate) fn picture_at(snap: &ljos_render::FrameSnapshot, scale: f32) -> Option<ImageHandle> {
     if snap.viewport.width() < 1.0 || snap.viewport.height() < 1.0 {
         return None;
     }
     let mut r = VelloCpuReference::new(RasterConfig::default());
-    let rgba = r.render(&ljos_render::FrameView::new(snap, 1.0)).ok()?;
+    let rgba = r.render(&ljos_render::FrameView::new(snap, scale)).ok()?;
     ImageHandle::from_straight(rgba.width, rgba.height, rgba.data).ok()
 }
 

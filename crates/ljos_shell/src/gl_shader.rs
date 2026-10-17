@@ -32,12 +32,15 @@ struct Cache {
     linked: HashMap<usize, Linked>,
     /// Bound for a sampler that has no picture: transparent black.
     empty: Option<glow::Texture>,
-    smooth: Option<glow::Sampler>,
-    nearest: Option<glow::Sampler>,
+    /// By how they sample: [`Sampling`].
+    samplers: HashMap<Sampling, glow::Sampler>,
     ubo: Option<glow::Buffer>,
     /// Programs that failed to link, said once each.
     failed: HashMap<usize, Arc<Program>>,
 }
+
+/// Smooth, from mipmaps, and repeating across and down.
+type Sampling = (bool, bool, [bool; 2]);
 
 struct Linked {
     program: Arc<Program>,
@@ -73,7 +76,7 @@ impl Programs {
             if let Some(t) = cache.empty {
                 gl.delete_texture(t);
             }
-            for s in [cache.smooth, cache.nearest].into_iter().flatten() {
+            for s in cache.samplers.into_values() {
                 gl.delete_sampler(s);
             }
             if let Some(b) = cache.ubo {
@@ -128,12 +131,6 @@ fn draw(
     // SAFETY: as above; everything bound here is bound back to none.
     unsafe {
         let empty = *cache.empty.get_or_insert_with(|| empty_texture(gl));
-        let smooth = *cache
-            .smooth
-            .get_or_insert_with(|| sampler(gl, glow::LINEAR as i32));
-        let nearest = *cache
-            .nearest
-            .get_or_insert_with(|| sampler(gl, glow::NEAREST as i32));
         let ubo = *cache
             .ubo
             .get_or_insert_with(|| gl.create_buffer().expect("a GL buffer"));
@@ -172,12 +169,16 @@ fn draw(
             let tex = id.and_then(|id| painter.texture(id)).unwrap_or(empty);
             gl.active_texture(glow::TEXTURE0 + unit as u32);
             gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-            let filter = if texture.is_none_or(|t| t.smooth) {
-                smooth
-            } else {
-                nearest
+            // The empty texture has no mipmaps to sample.
+            let how = match texture {
+                Some(t) if id.is_some() => (t.smooth, t.mipmap, t.wrap),
+                _ => (true, false, [false; 2]),
             };
-            gl.bind_sampler(unit as u32, Some(filter));
+            let s = *cache
+                .samplers
+                .entry(how)
+                .or_insert_with(|| sampler(gl, how));
+            gl.bind_sampler(unit as u32, Some(s));
             for at in locations {
                 gl.uniform_1_i32(Some(at), unit as i32);
             }
@@ -375,16 +376,30 @@ unsafe fn empty_texture(gl: &glow::Context) -> glow::Texture {
     }
 }
 
-/// Sampler objects, so the filter a ShaderEffectSource asks for does not
-/// change the texture egui draws the same picture with elsewhere.
-unsafe fn sampler(gl: &glow::Context, filter: i32) -> glow::Sampler {
+/// Sampler objects, so the filter and the wrapping a ShaderEffectSource
+/// asks for do not change the texture egui draws the same picture with
+/// elsewhere.
+unsafe fn sampler(gl: &glow::Context, (smooth, mipmap, wrap): Sampling) -> glow::Sampler {
+    let mag = if smooth { glow::LINEAR } else { glow::NEAREST };
+    let min = match (smooth, mipmap) {
+        (true, true) => glow::LINEAR_MIPMAP_LINEAR,
+        (false, true) => glow::NEAREST_MIPMAP_NEAREST,
+        _ => mag,
+    };
+    let edge = |repeat: bool| {
+        if repeat {
+            glow::REPEAT
+        } else {
+            glow::CLAMP_TO_EDGE
+        }
+    };
     // SAFETY: the caller's context is current.
     unsafe {
         let s = gl.create_sampler().expect("a GL sampler");
-        gl.sampler_parameter_i32(s, glow::TEXTURE_MIN_FILTER, filter);
-        gl.sampler_parameter_i32(s, glow::TEXTURE_MAG_FILTER, filter);
-        gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-        gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_MIN_FILTER, min as i32);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_MAG_FILTER, mag as i32);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_S, edge(wrap[0]) as i32);
+        gl.sampler_parameter_i32(s, glow::TEXTURE_WRAP_T, edge(wrap[1]) as i32);
         s
     }
 }

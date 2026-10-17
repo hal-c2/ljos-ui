@@ -198,6 +198,8 @@ struct Walk {
 struct Parent {
     world: Affine,
     stamp: u64,
+    /// Whether the nodes below paint ([`RenderTree::set_drawn`]).
+    drawn: bool,
     opacity: f32,
     clip: Option<ClipId>,
     clip_bbox: Rect,
@@ -239,6 +241,7 @@ impl RenderTree {
         let top = Parent {
             world: Affine::IDENTITY,
             stamp: 0,
+            drawn: true,
             opacity: 1.0,
             clip: None,
             clip_bbox: viewport,
@@ -276,6 +279,7 @@ impl RenderTree {
         let top = Parent {
             world: Affine::IDENTITY,
             stamp: 0,
+            drawn: true,
             opacity: 1.0,
             clip: None,
             clip_bbox: viewport,
@@ -302,6 +306,7 @@ impl RenderTree {
         let mut here = Parent {
             world,
             stamp: 0,
+            drawn: true,
             opacity,
             clip: parent.clip,
             clip_bbox: parent.clip_bbox,
@@ -389,6 +394,7 @@ impl RenderTree {
         let mut here = Parent {
             world,
             stamp,
+            drawn: parent.drawn && n.drawn,
             opacity,
             clip: parent.clip,
             clip_bbox: parent.clip_bbox,
@@ -437,7 +443,7 @@ impl RenderTree {
             world,
             opacity,
             size: n.size,
-            list: n.content.clone(),
+            list: n.content.clone().filter(|_| here.drawn),
             clip: here.clip,
             hit_testable: n.hit_testable,
         });

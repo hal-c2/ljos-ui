@@ -127,6 +127,8 @@ pub struct Item {
     /// after `rotation` and `scale` (see [`crate::transform`]).
     #[qml(notify, list)]
     pub transform: QmlList,
+    #[qml(group)]
+    pub layer: ItemLayer,
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]
     pub accessible: AccessibleInfo,
@@ -189,6 +191,7 @@ impl Default for Item {
             state: Atom::EMPTY,
             transitions: QmlList::new(),
             transform: QmlList::new(),
+            layer: ItemLayer::default(),
             accessible: AccessibleInfo::default(),
             synced_parent: None,
             follows_implicit: [Weak::new(), Weak::new()],
@@ -206,6 +209,61 @@ pub struct AccessibleInfo {
     pub role: Option<Atom>,
     pub name: Option<Atom>,
     pub description: Option<Atom>,
+}
+
+/// The `layer` group of [`Item`]: a ShaderEffect that names an item whose
+/// layer is enabled samples a picture of it, taken as a
+/// `ShaderEffectSource` would take it (see [`crate::shader_effect`]).
+/// `effect`, `samplerName`, `format` and `samples` are kept and do nothing.
+#[derive(Debug, QmlObject)]
+#[qml(name = "ItemLayer", uncreatable)]
+pub struct ItemLayer {
+    #[qml(notify)]
+    pub enabled: bool,
+    #[qml(notify)]
+    pub smooth: bool,
+    #[qml(notify)]
+    pub mipmap: bool,
+    #[qml(notify)]
+    pub wrap_mode: i32,
+    #[qml(notify)]
+    pub texture_mirroring: i32,
+    #[qml(notify)]
+    pub sampler_name: Atom,
+    #[qml(notify)]
+    pub format: i32,
+    #[qml(notify)]
+    pub samples: i32,
+    #[qml(notify)]
+    pub live: bool,
+    #[qml(notify)]
+    pub effect: Option<ObjectId>,
+    #[qml(notify)]
+    pub texture_size: ljos_engine::Size,
+    #[qml(notify)]
+    pub source_rect: Rect,
+}
+
+impl Default for ItemLayer {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            smooth: false,
+            mipmap: false,
+            wrap_mode: 0,
+            texture_mirroring: 2,
+            sampler_name: Atom::from("source"),
+            format: 1,
+            samples: 0,
+            live: true,
+            effect: None,
+            texture_size: ljos_engine::Size {
+                width: -1.0,
+                height: -1.0,
+            },
+            source_rect: Rect::default(),
+        }
+    }
 }
 
 /// The `anchors` group of [`Item`].

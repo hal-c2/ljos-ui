@@ -29,6 +29,23 @@ pub struct ShaderTexture {
     /// The pixels, or none: an unset sampler reads transparent black.
     pub image: Option<ImageHandle>,
     pub smooth: bool,
+    /// Sampled from mipmaps when drawn smaller than it is.
+    pub mipmap: bool,
+    /// Whether it repeats past its edges, across and down; otherwise the
+    /// edge pixels are clamped.
+    pub wrap: [bool; 2],
+}
+
+impl ShaderTexture {
+    /// `image`, sampled clamped and without mipmaps.
+    pub fn new(image: Option<ImageHandle>, smooth: bool) -> Self {
+        Self {
+            image,
+            smooth,
+            mipmap: false,
+            wrap: [false; 2],
+        }
+    }
 }
 
 /// The op of one `ShaderEffect`, in an `Arc` that stays the same while

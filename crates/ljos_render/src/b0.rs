@@ -146,6 +146,8 @@ struct TextureKey {
     image: u64,
     smooth: bool,
     repeat: bool,
+    /// With mipmaps, for a shader that samples it smaller than it is.
+    mipmap: bool,
 }
 
 /// Quads of one image under one sampling mode. The mesh names its texture
@@ -298,7 +300,7 @@ fn texture_for(
         } else {
             TextureWrapMode::ClampToEdge
         },
-        mipmap_mode: None,
+        mipmap_mode: key.mipmap.then_some(TextureFilter::Linear),
     };
     let handle = ctx.load_texture(format!("ljos-image-{}", key.image), pixels, options);
     let id = handle.id();
@@ -1365,6 +1367,7 @@ fn image_segs(
             image: image.id(),
             smooth,
             repeat,
+            mipmap: false,
         };
         if let Some(LocalSeg::Image(last)) = segs.last_mut()
             && last.key == key
@@ -1621,7 +1624,9 @@ impl RenderBackend for EpaintBackend {
                                 let key = TextureKey {
                                     image: image.id(),
                                     smooth: t.smooth,
+                                    // The painter's sampler wraps.
                                     repeat: false,
+                                    mipmap: t.mipmap,
                                 };
                                 texture_for(
                                     &mut self.textures,

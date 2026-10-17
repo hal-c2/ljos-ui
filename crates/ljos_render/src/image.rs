@@ -230,6 +230,29 @@ impl ImageHandle {
         Self::from_premultiplied(w as u32, h as u32, data).ok()
     }
 
+    /// A mirrored copy: left to right when `across`, top to bottom when
+    /// `down`. The same pixels when neither.
+    pub fn flipped(&self, across: bool, down: bool) -> Self {
+        if !across && !down {
+            return self.clone();
+        }
+        let (w, h) = (self.0.width as usize, self.0.height as usize);
+        let mut data = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            let row = if down { h - 1 - y } else { y };
+            let row = &self.0.data[row * w * 4..(row + 1) * w * 4];
+            if across {
+                for px in row.as_chunks::<4>().0.iter().rev() {
+                    data.extend_from_slice(px);
+                }
+            } else {
+                data.extend_from_slice(row);
+            }
+        }
+        Self::from_premultiplied(self.0.width, self.0.height, data)
+            .expect("the same size as an image that exists")
+    }
+
     /// A resampled copy of the given size. Shrinking averages every source
     /// pixel a destination pixel covers (no aliasing); growing interpolates
     /// linearly. `None` for an empty size.
@@ -819,6 +842,27 @@ mod tests {
         assert!(flat.resized(0, 4).is_none());
         // The same size is the same pixels, not a copy.
         assert_eq!(flat.resized(3, 2).unwrap(), flat);
+    }
+
+    #[test]
+    fn flipped_mirrors_either_way() {
+        let img = ImageHandle::from_premultiplied(
+            2,
+            2,
+            [
+                [1, 0, 0, 255],
+                [2, 0, 0, 255],
+                [3, 0, 0, 255],
+                [4, 0, 0, 255],
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let firsts = |i: &ImageHandle| -> Vec<u8> { i.data().chunks(4).map(|p| p[0]).collect() };
+        assert_eq!(firsts(&img.flipped(true, false)), [2, 1, 4, 3]);
+        assert_eq!(firsts(&img.flipped(false, true)), [3, 4, 1, 2]);
+        assert_eq!(firsts(&img.flipped(true, true)), [4, 3, 2, 1]);
+        assert_eq!(img.flipped(false, false), img);
     }
 
     #[test]

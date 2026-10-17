@@ -25,6 +25,7 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, Rect, Size, Url, Value, qml_impl,
 };
 use ljos_platform::{Platform, Reply, url_path};
+use ljos_reactive::NodeId;
 use ljos_render::{Cull, DisplayListBuilder, DrawOp, ImageHandle, ShaderOp, ShaderTexture, kurbo};
 use ljos_runtime::{ComputePool, Lane};
 use ljos_shader::{Compiled, Located, Program, Stage, Type, write_member};
@@ -183,9 +184,11 @@ impl Default for GridMesh {
     }
 }
 
-/// `ShaderEffectSource`. `format`, `mipmap`, `samples`, `wrapMode`,
-/// `textureMirroring` and `recursive` are kept and do nothing: the picture
-/// is 8-bit RGBA, sampled clamped and the right way up.
+/// `ShaderEffectSource`. `format` and `samples` are kept and do nothing:
+/// the picture is 8-bit RGBA, and drawn with the scene's antialiasing.
+/// `recursive` does nothing either: a source that holds the
+/// ShaderEffectSource is drawn again until its picture stops changing,
+/// whether it is set or not, as Qt does on GL.
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick", name = "ShaderEffectSource", extends = Item, enums = source_enums)]
 pub struct ShaderEffectSource {
@@ -213,6 +216,10 @@ pub struct ShaderEffectSource {
     pub source_rect: Rect,
     #[qml(notify)]
     pub texture_size: Size,
+    /// Changed by `scheduleUpdate()`, so a picture that is not live is
+    /// taken again.
+    #[qml(skip)]
+    update_node: Option<NodeId>,
 }
 
 impl Default for ShaderEffectSource {
@@ -230,6 +237,34 @@ impl Default for ShaderEffectSource {
             samples: 0,
             source_rect: Rect::default(),
             texture_size: Size::default(),
+            update_node: None,
+        }
+    }
+}
+
+#[qml_impl]
+impl ShaderEffectSource {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let (e, me) = (cx.engine, cx.this);
+        if let Some(scope) = e.object_scope(me) {
+            let node = e.graph().property(scope, Value::Int(0))?;
+            let _ = e.with_mut::<ShaderEffectSource, _>(me, |s| s.update_node = Some(node));
+        }
+        Ok(())
+    }
+
+    /// `scheduleUpdate()`: take the picture again in the coming frame,
+    /// which is what a source that is not `live` shows from then on.
+    #[qml(invokable, name = "scheduleUpdate")]
+    fn schedule_update(cx: &Cx) {
+        let (e, me) = (cx.engine, cx.this);
+        if let Ok(Some(node)) = e.with::<ShaderEffectSource, _>(me, |s| s.update_node) {
+            let next = match e.graph().get_untracked(node) {
+                Value::Int(n) => n.wrapping_add(1),
+                _ => 1,
+            };
+            e.graph().set(node, Value::Int(next));
         }
     }
 }
@@ -431,7 +466,10 @@ pub(crate) enum Texture {
     None,
     Image(ImageHandle, bool),
     /// A ShaderEffectSource, whose picture the scene has.
-    Source(ObjectId, bool),
+    Source(ObjectId),
+    /// An item whose layer is enabled, and how its picture is taken; the
+    /// scene has the picture.
+    Layer(ObjectId, Box<SourcePaint>),
 }
 
 /// What a ShaderEffect paints, read under tracking.
@@ -496,16 +534,25 @@ impl ShaderEffectPaint {
     /// The ShaderEffectSources it samples.
     pub(crate) fn sources(&self) -> impl Iterator<Item = ObjectId> + '_ {
         self.textures.iter().filter_map(|t| match t {
-            Texture::Source(s, _) => Some(*s),
+            Texture::Source(s) | Texture::Layer(s, _) => Some(*s),
             _ => None,
         })
     }
 
-    /// Paints it over `size`; `picture` gives a ShaderEffectSource's.
+    /// The items whose layer it samples, and how each is taken.
+    pub(crate) fn layers(&self) -> impl Iterator<Item = (ObjectId, &SourcePaint)> + '_ {
+        self.textures.iter().filter_map(|t| match t {
+            Texture::Layer(s, how) => Some((*s, &**how)),
+            _ => None,
+        })
+    }
+
+    /// Paints it over `size`; `picture` gives a ShaderEffectSource's
+    /// texture.
     pub(crate) fn paint(
         &self,
         size: kurbo::Size,
-        picture: impl Fn(ObjectId) -> Option<ImageHandle>,
+        picture: impl Fn(ObjectId) -> Option<ShaderTexture>,
         out: &mut DisplayListBuilder,
     ) {
         if !self.compiled || size.width <= 0.0 || size.height <= 0.0 {
@@ -515,18 +562,11 @@ impl ShaderEffectPaint {
             .textures
             .iter()
             .map(|t| match t {
-                Texture::None => ShaderTexture {
-                    image: None,
-                    smooth: true,
-                },
-                Texture::Image(i, smooth) => ShaderTexture {
-                    image: Some(i.clone()),
-                    smooth: *smooth,
-                },
-                Texture::Source(s, smooth) => ShaderTexture {
-                    image: picture(*s),
-                    smooth: *smooth,
-                },
+                Texture::None => ShaderTexture::new(None, true),
+                Texture::Image(i, smooth) => ShaderTexture::new(Some(i.clone()), *smooth),
+                Texture::Source(s) | Texture::Layer(s, _) => {
+                    picture(*s).unwrap_or_else(|| ShaderTexture::new(None, true))
+                }
             })
             .collect();
         let rect = kurbo::Rect::from_origin_size((0.0, 0.0), size);
@@ -535,6 +575,7 @@ impl ShaderEffectPaint {
             if let Some(ShaderTexture {
                 image: Some(image),
                 smooth,
+                ..
             }) = textures.into_iter().next()
             {
                 out.push(DrawOp::Image {
@@ -623,10 +664,13 @@ fn texture(e: &Engine, v: &Value) -> Texture {
     let Value::Object(o) = v else {
         return Texture::None;
     };
-    let smooth = e.read(*o, Item::SMOOTH.index).to_boolean();
     if is_a::<ShaderEffectSource>(e, *o) {
-        return Texture::Source(*o, smooth);
+        return Texture::Source(*o);
     }
+    if crate::item::is_item(e, *o) && e.read_by_name(*o, "layer.enabled").to_boolean() {
+        return Texture::Layer(*o, Box::new(SourcePaint::read_layer(e, *o)));
+    }
+    let smooth = e.read(*o, Item::SMOOTH.index).to_boolean();
     if is_a::<crate::image::ImageBase>(e, *o) || is_a::<crate::canvas::Canvas>(e, *o) {
         return match crate::effects::read_item_image(e, *o) {
             Some(i) => Texture::Image(i, smooth),
@@ -636,17 +680,28 @@ fn texture(e: &Engine, v: &Value) -> Texture {
     Texture::None
 }
 
-/// What a ShaderEffectSource shows, read under tracking; the picture is
-/// the scene's to take.
-#[derive(Clone, Debug)]
+/// What a ShaderEffectSource shows, or how an item's layer is taken, read
+/// under tracking; the picture is the scene's to take.
+#[derive(Clone, Debug, PartialEq)]
 pub struct SourcePaint {
     pub(crate) source: Option<ObjectId>,
     pub(crate) hide: bool,
     pub(crate) live: bool,
+    /// How many times `scheduleUpdate()` was called.
+    pub(crate) update: i32,
     rect: Option<Rect>,
     texture_size: Option<(u32, u32)>,
     smooth: bool,
+    mipmap: bool,
+    /// `wrapMode`, across and down.
+    wrap: [bool; 2],
+    /// `textureMirroring`, as what a sampler is given is flipped: left to
+    /// right, and top to bottom.
+    flip: [bool; 2],
+    /// The picture as the ShaderEffectSource draws it.
     pub(crate) image: Option<ImageHandle>,
+    /// The same, as a ShaderEffect samples it.
+    sampled: Option<ImageHandle>,
 }
 
 impl SourcePaint {
@@ -665,27 +720,81 @@ impl SourcePaint {
             }
             _ => None,
         };
+        let update = e
+            .with::<ShaderEffectSource, _>(obj, |s| s.update_node)
+            .ok()
+            .flatten()
+            .map_or(0, |n| match e.graph().get(n) {
+                Value::Int(n) => n,
+                _ => 0,
+            });
+        let wrap = e.read(obj, ShaderEffectSource::WRAP_MODE.index).to_number() as i32;
+        // Qt's default, MirrorVertically, is what reads the right way up
+        // through `qt_TexCoord0`; it is the bits that are not set that
+        // flip, as qml6 on GL shows.
+        let mirror = e
+            .read(obj, ShaderEffectSource::TEXTURE_MIRRORING.index)
+            .to_number() as i32;
         Self {
             source,
             hide: e
                 .read(obj, ShaderEffectSource::HIDE_SOURCE.index)
                 .to_boolean(),
             live: e.read(obj, ShaderEffectSource::LIVE.index).to_boolean(),
+            update,
             rect,
             texture_size,
             smooth: e.read(obj, Item::SMOOTH.index).to_boolean(),
+            mipmap: e.read(obj, ShaderEffectSource::MIPMAP.index).to_boolean(),
+            wrap: [wrap & 1 != 0, wrap & 2 != 0],
+            flip: [mirror & 1 != 0, mirror & 2 == 0],
             image: None,
+            sampled: None,
         }
     }
 
-    /// The same, showing `picture`, the source at one pixel per logical
-    /// pixel: cut to `sourceRect` and resampled to `textureSize`.
-    pub(crate) fn with_picture(&self, picture: Option<ImageHandle>) -> Self {
+    /// How the layer of `item` is taken: as a ShaderEffectSource of it
+    /// with the layer's settings would take it.
+    pub(crate) fn read_layer(e: &Engine, item: ObjectId) -> Self {
+        let read = |name: &str| e.read_by_name(item, &format!("layer.{name}"));
+        let rect = match read("sourceRect") {
+            Value::Rect(r) if r.width > 0.0 && r.height > 0.0 => Some(*r),
+            _ => None,
+        };
+        let texture_size = match read("textureSize") {
+            Value::Size(s) if s.width >= 1.0 && s.height >= 1.0 => {
+                Some((s.width.round() as u32, s.height.round() as u32))
+            }
+            _ => None,
+        };
+        let wrap = read("wrapMode").to_number() as i32;
+        let mirror = read("textureMirroring").to_number() as i32;
+        Self {
+            source: Some(item),
+            hide: false,
+            live: read("live").to_boolean(),
+            update: 0,
+            rect,
+            texture_size,
+            smooth: read("smooth").to_boolean(),
+            mipmap: read("mipmap").to_boolean(),
+            wrap: [wrap & 1 != 0, wrap & 2 != 0],
+            flip: [mirror & 1 != 0, mirror & 2 == 0],
+            image: None,
+            sampled: None,
+        }
+    }
+
+    /// The same, showing `picture`, the source at `scale` pixels per
+    /// logical pixel: cut to `sourceRect` and resampled to `textureSize`,
+    /// which is in pixels.
+    pub(crate) fn with_picture(&self, picture: Option<ImageHandle>, scale: f32) -> Self {
+        let scale = f64::from(scale);
         let image = picture.and_then(|p| {
             let p = match self.rect {
                 Some(r) => {
-                    let (x, y) = (r.x.max(0.0).round() as u32, r.y.max(0.0).round() as u32);
-                    p.cropped(x, y, r.width.round() as u32, r.height.round() as u32)?
+                    let at = |v: f64| (v * scale).max(0.0).round() as u32;
+                    p.cropped(at(r.x), at(r.y), at(r.width), at(r.height))?
                 }
                 None => p,
             };
@@ -700,20 +809,45 @@ impl SourcePaint {
                 _ => Some(p),
             }
         });
+        let sampled = image
+            .as_ref()
+            .map(|i| i.flipped(self.flip[0], self.flip[1]));
         Self {
             image,
+            sampled,
             ..self.clone()
         }
     }
 
-    pub(crate) fn paint(&self, size: kurbo::Size, out: &mut DisplayListBuilder) {
+    /// What a ShaderEffect that names it samples.
+    pub(crate) fn texture(&self) -> ShaderTexture {
+        ShaderTexture {
+            image: self.sampled.clone(),
+            smooth: self.smooth,
+            mipmap: self.mipmap,
+            wrap: self.wrap,
+        }
+    }
+
+    /// Paints it over `size`, at `scale` device pixels per logical pixel.
+    pub(crate) fn paint(&self, size: kurbo::Size, scale: f32, out: &mut DisplayListBuilder) {
         let Some(image) = &self.image else { return };
         if size.width <= 0.0 || size.height <= 0.0 {
             return;
         }
+        // A mipmapped picture drawn smaller than it is averages what each
+        // pixel covers, as sampling from the mipmaps does.
+        let fit = |side: f64| (side * f64::from(scale)).ceil().max(1.0) as u32;
+        let (w, h) = (fit(size.width), fit(size.height));
+        let image = match (self.mipmap, image.width() > w || image.height() > h) {
+            (true, true) => image
+                .resized(w.min(image.width()), h.min(image.height()))
+                .unwrap_or_else(|| image.clone()),
+            _ => image.clone(),
+        };
         out.push(DrawOp::Image {
-            image: image.clone(),
             src: image.rect(),
+            image,
             dst: kurbo::Rect::from_origin_size((0.0, 0.0), size),
             tile: None,
             mirror: [false; 2],

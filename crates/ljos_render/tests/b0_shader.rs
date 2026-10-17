@@ -19,10 +19,10 @@ fn op() -> Arc<ShaderOp> {
     Arc::new(ShaderOp {
         uniforms: vec![0; program.size as usize],
         program,
-        textures: vec![ShaderTexture {
-            image: Some(ImageHandle::filled(4, 4, [255, 0, 0, 255]).unwrap()),
-            smooth: true,
-        }],
+        textures: vec![ShaderTexture::new(
+            Some(ImageHandle::filled(4, 4, [255, 0, 0, 255]).unwrap()),
+            true,
+        )],
         grid: (1, 1),
         blending: true,
         cull: Cull::None,
