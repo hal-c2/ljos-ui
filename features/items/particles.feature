@@ -138,6 +138,30 @@ Feature: Particles
     Then the property "empty" of "system" is true
 
   @qt-parity
+  Scenario: An emitter enabled later starts a system, and disabled lets it empty
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Particles
+      ParticleSystem {
+        objectName: "system"
+        width: 300; height: 300
+        Emitter { enabled: false; emitRate: 100; width: 10; height: 10 }
+        Emitter {
+          objectName: "emitter"
+          enabled: false; emitRate: 100; lifeSpan: 200; width: 10; height: 10
+        }
+        ImageParticle { source: "dot.png" }
+      }
+      """
+    When the property "enabled" of "emitter" is set to true
+    And 200 milliseconds pass
+    Then the property "empty" of "system" is false
+    When the property "enabled" of "emitter" is set to false
+    And 1 second passes
+    Then the property "empty" of "system" is true
+
+  @qt-parity
   Scenario: A paused system makes none
     Given the QML:
       """qml

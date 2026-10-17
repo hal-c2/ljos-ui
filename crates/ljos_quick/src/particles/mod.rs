@@ -331,6 +331,8 @@ struct EmitterRun {
     bursts: Vec<(u32, Option<(f64, f64)>)>,
     /// Seconds of `pulse()` left; the emitter emits while any are.
     pulse_left: f64,
+    /// The system it last counted for, and whether it was busy then.
+    told: Option<(Option<ObjectId>, bool)>,
 }
 
 #[qml_impl]
@@ -346,12 +348,24 @@ impl Emitter {
             for p in [Self::SYSTEM.index, Self::START_TIME.index] {
                 let _ = e.read(em, p);
             }
-            let enabled = e.read(em, Item::ENABLED.index).to_boolean();
-            if enabled && e.read(em, Self::EMIT_RATE.index).to_number() > 0.0 {
+            // An idle emitter cannot make its system busy, so only a change
+            // in this one's part is worth weighing every member again.
+            let sys = system_of(e, em, Self::SYSTEM.index);
+            let busy = emitter_busy(e, em);
+            if busy {
                 enliven(e, em);
             }
-            if let Some(sys) = system_of(e, em, Self::SYSTEM.index) {
-                sync_timer(e, sys);
+            let Some(run) = emitter_run(e, em) else {
+                return;
+            };
+            let before = run.borrow_mut().told.replace((sys, busy));
+            if let Some((Some(old), true)) = before
+                && (Some(old) != sys || !busy)
+            {
+                sync_timer(e, old);
+            }
+            if busy && let Some(sys) = sys {
+                sync_timer_busy(e, sys, true);
             }
         })?;
         Ok(())
@@ -794,21 +808,29 @@ fn busy(e: &Engine, sys: ObjectId) -> bool {
     if !run.borrow().particles.is_empty() {
         return true;
     }
-    lively_of(e, sys).into_iter().any(|em| {
-        let enabled = e.read(em, Item::ENABLED.index).to_boolean();
-        let owes = emitter_run(e, em).is_some_and(|r| {
-            let r = r.borrow();
-            !r.bursts.is_empty() || r.pulse_left > 0.0
-        });
-        owes || (enabled && number(e, em, Emitter::EMIT_RATE.index) > 0.0)
-    })
+    lively_of(e, sys).into_iter().any(|em| emitter_busy(e, em))
+}
+
+/// Whether an emitter has particles to emit.
+fn emitter_busy(e: &Engine, em: ObjectId) -> bool {
+    let enabled = e.read(em, Item::ENABLED.index).to_boolean();
+    let owes = emitter_run(e, em).is_some_and(|r| {
+        let r = r.borrow();
+        !r.bursts.is_empty() || r.pulse_left > 0.0
+    });
+    owes || (enabled && number(e, em, Emitter::EMIT_RATE.index) > 0.0)
 }
 
 /// Starts or stops the step timer to match what the system has to do.
 fn sync_timer(e: &Engine, sys: ObjectId) {
+    sync_timer_busy(e, sys, false);
+}
+
+/// As [`sync_timer`], told already that the system is busy when `known`.
+fn sync_timer_busy(e: &Engine, sys: ObjectId, known: bool) {
     let running = e.read(sys, ParticleSystem::RUNNING.index).to_boolean();
     let paused = e.read(sys, ParticleSystem::PAUSED.index).to_boolean();
-    let wanted = running && !paused && busy(e, sys);
+    let wanted = running && !paused && (known || busy(e, sys));
     let Some(run) = system_run(e, sys) else {
         return;
     };
