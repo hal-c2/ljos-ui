@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use arboard::{Clipboard, ImageData};
 
-use crate::clipboard::{ClipboardImage, ClipboardMode, ClipboardService};
+use crate::clipboard::{ClipboardError, ClipboardImage, ClipboardMode, ClipboardService};
 use crate::dialogs::{
     CANCEL, DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, NO, OK, YES,
     system_buttons,
@@ -19,7 +19,8 @@ use crate::dialogs::{
 use crate::open_url::OpenUrlService;
 
 /// The system clipboard. `None` inside when there is no clipboard to talk
-/// to (no display): then it holds nothing and copies go nowhere.
+/// to (no display): then it holds nothing and every write is
+/// [`ClipboardError::Unavailable`].
 pub struct SystemClipboard {
     // Kept for the life of the application: on X11 and Wayland what was
     // copied is served by whoever copied it, so dropping this would empty
@@ -43,8 +44,36 @@ impl SystemClipboard {
         })
     }
 
+    /// A clipboard connected to nothing: what a host without a display
+    /// has. It holds nothing and every write is
+    /// [`ClipboardError::Unavailable`].
+    pub fn disconnected() -> SystemClipboard {
+        SystemClipboard {
+            inner: RefCell::new(None),
+        }
+    }
+
     fn with<T>(&self, f: impl FnOnce(&mut Clipboard) -> Result<T, arboard::Error>) -> Option<T> {
-        self.inner.borrow_mut().as_mut().and_then(|c| f(c).ok())
+        self.write(f).ok()
+    }
+
+    /// As `with`, keeping the system's reason when it fails.
+    fn write<T>(
+        &self,
+        f: impl FnOnce(&mut Clipboard) -> Result<T, arboard::Error>,
+    ) -> Result<T, ClipboardError> {
+        match self.inner.borrow_mut().as_mut() {
+            Some(c) => f(c).map_err(clipboard_error),
+            None => Err(ClipboardError::Unavailable),
+        }
+    }
+}
+
+fn clipboard_error(e: arboard::Error) -> ClipboardError {
+    match e {
+        arboard::Error::ClipboardNotSupported => ClipboardError::Unavailable,
+        arboard::Error::ClipboardOccupied => ClipboardError::Denied,
+        other => ClipboardError::Other(other.to_string()),
     }
 }
 
@@ -104,19 +133,19 @@ impl ClipboardService for SystemClipboard {
         }
     }
 
-    fn set_text(&self, mode: ClipboardMode, text: &str) {
+    fn set_text(&self, mode: ClipboardMode, text: &str) -> Result<(), ClipboardError> {
         match mode {
-            ClipboardMode::Clipboard => self.with(|c| c.set_text(text)),
-            ClipboardMode::Selection => self.with(|c| selection::set_text(c, text)),
-        };
+            ClipboardMode::Clipboard => self.write(|c| c.set_text(text)),
+            ClipboardMode::Selection => self.write(|c| selection::set_text(c, text)),
+        }
     }
 
     fn html(&self) -> Option<String> {
         self.with(|c| c.get().html())
     }
 
-    fn set_html(&self, html: &str, alt_text: &str) {
-        self.with(|c| c.set_html(html, Some(alt_text)));
+    fn set_html(&self, html: &str, alt_text: &str) -> Result<(), ClipboardError> {
+        self.write(|c| c.set_html(html, Some(alt_text)))
     }
 
     fn image(&self) -> Option<ClipboardImage> {
@@ -127,25 +156,25 @@ impl ClipboardService for SystemClipboard {
         })
     }
 
-    fn set_image(&self, image: ClipboardImage) {
-        self.with(|c| {
+    fn set_image(&self, image: ClipboardImage) -> Result<(), ClipboardError> {
+        self.write(|c| {
             c.set_image(ImageData {
                 width: image.width,
                 height: image.height,
                 bytes: image.rgba.into(),
             })
-        });
+        })
     }
 
     fn has_selection(&self) -> bool {
         selection::PRESENT
     }
 
-    fn clear(&self, mode: ClipboardMode) {
+    fn clear(&self, mode: ClipboardMode) -> Result<(), ClipboardError> {
         match mode {
-            ClipboardMode::Clipboard => self.with(Clipboard::clear),
-            ClipboardMode::Selection => self.with(selection::clear),
-        };
+            ClipboardMode::Clipboard => self.write(Clipboard::clear),
+            ClipboardMode::Selection => self.write(selection::clear),
+        }
     }
 }
 
@@ -317,5 +346,43 @@ impl OpenUrlService for SystemOpener {
             }
             Err(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clipboard_connected_to_nothing_says_so_on_every_write() {
+        let c = SystemClipboard::disconnected();
+        let unavailable = Err(ClipboardError::Unavailable);
+        assert_eq!(c.set_text(ClipboardMode::Clipboard, "a"), unavailable);
+        assert_eq!(c.set_text(ClipboardMode::Selection, "a"), unavailable);
+        assert_eq!(c.set_html("<b>a</b>", "a"), unavailable);
+        let image = ClipboardImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        };
+        assert_eq!(c.set_image(image), unavailable);
+        assert_eq!(c.clear(ClipboardMode::Clipboard), unavailable);
+        assert_eq!(c.text(ClipboardMode::Clipboard), None);
+    }
+
+    #[test]
+    fn the_system_s_reasons_keep_their_kind() {
+        assert_eq!(
+            clipboard_error(arboard::Error::ClipboardNotSupported),
+            ClipboardError::Unavailable
+        );
+        assert_eq!(
+            clipboard_error(arboard::Error::ClipboardOccupied),
+            ClipboardError::Denied
+        );
+        assert!(matches!(
+            clipboard_error(arboard::Error::ConversionFailure),
+            ClipboardError::Other(_)
+        ));
     }
 }

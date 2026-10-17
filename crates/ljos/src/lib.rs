@@ -87,9 +87,9 @@ pub mod prelude {
         qml_singleton, tree_model,
     };
     pub use ljos_platform::{
-        BadgeService, ClipboardImage, ClipboardMode, ClipboardService, FetchError, Fetcher, Method,
-        OpenUrlService, Platform, RecordedBadge, RecordedUrls, Request, Response, is_remote,
-        url_path,
+        BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, FetchError,
+        Fetcher, Method, OpenUrlService, Platform, RecordedBadge, RecordedUrls, Request, Response,
+        is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item};
     pub use ljos_runtime::{Time, TimerId};

@@ -504,6 +504,16 @@ focus), and the `ColorScheme` that `ljos::color_scheme(engine)`
 gives. `ljos::CoalesceKey` sits beside `ljos::UiHandle`, for
 `send_coalesced`.
 
+A clipboard write says whether it happened: `set_text`, `set_html`,
+`set_image` and `clear` return `Result<(), ClipboardError>`, `Ok` only
+when the clipboard took the data, so a "Copy" command can show
+"Copied" only then. The system's clipboard passes on why it did not
+(`Unavailable` where there is no clipboard to write to, `Denied` while
+another program holds it, `Other` with the system's words); the
+application's own clipboard, which a host without one keeps, always
+takes the write. Qt's `QClipboard` returns nothing, and text items and
+QML's `copy()` ignore the result as Qt's do.
+
 Heavy work of your own follows the same shape: `ljos::task::spawn`
 runs a closure on the bounded compute pool and runs its `done` with the
 value on the Engine thread, so nothing heavy ever runs where QML lives.

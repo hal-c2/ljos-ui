@@ -36,14 +36,14 @@ fn the_clipboard_is_read_and_written_in_a_named_mode() {
     let engine = ljos::engine();
     let clipboard: std::rc::Rc<dyn ClipboardService> = Platform::of(&engine).clipboard();
     let mode: ClipboardMode = ClipboardMode::Clipboard;
-    clipboard.set_text(mode, "copied");
+    clipboard.set_text(mode, "copied").unwrap();
     assert_eq!(clipboard.text(mode).as_deref(), Some("copied"));
     let image = ClipboardImage {
         width: 1,
         height: 1,
         rgba: vec![0, 0, 0, 255],
     };
-    clipboard.set_image(image);
+    clipboard.set_image(image).unwrap();
     assert!(clipboard.image().is_some());
 }
 

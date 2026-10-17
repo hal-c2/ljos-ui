@@ -48,7 +48,9 @@ use std::cell::Cell;
 use ljos_engine::{Engine, LogLevel, Value, Version};
 
 pub use badge::{BadgeService, RecordedBadge};
-pub use clipboard::{ClipboardImage, ClipboardMode, ClipboardService, MemoryClipboard};
+pub use clipboard::{
+    ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, MemoryClipboard,
+};
 pub use dialogs::{
     AbstractDialog, CANCEL, ColorDialog, DialogAnswer, DialogKind, DialogReply, DialogRequest,
     DialogService, FileDialog, FolderDialog, FontDialog, MessageDialog, NO, NameFilter,

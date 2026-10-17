@@ -124,7 +124,8 @@ impl Clipboard {
     pub fn set_text(&self, engine: &Engine, text: &str) {
         let svc = service(engine);
         if !svc.is_system() {
-            svc.set_text(ClipboardMode::Clipboard, text);
+            // Ignored, as Qt's QClipboard::setText returns nothing.
+            let _ = svc.set_text(ClipboardMode::Clipboard, text);
         }
         if !self.store(engine, text) {
             // The same text as last time, but the service may have changed
@@ -137,7 +138,9 @@ impl Clipboard {
     /// well when the service is not the system's.
     pub fn copy(&self, engine: &Engine, text: &str) {
         let svc = service(engine);
-        svc.set_text(ClipboardMode::Clipboard, text);
+        // A copy that did not reach the system still fills the text
+        // items' own clipboard, as Qt's copy() ignores the system's answer.
+        let _ = svc.set_text(ClipboardMode::Clipboard, text);
         if !self.store(engine, text) {
             self.refresh(engine);
         }

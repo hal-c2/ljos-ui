@@ -1143,7 +1143,8 @@ impl Backend for LjosBackend {
         ljos_quick::Clipboard::of(&live.engine).set_text(&live.engine, &text);
         ljos_platform::Platform::of(&live.engine)
             .clipboard()
-            .set_html(html, &text);
+            .set_html(html, &text)
+            .map_err(failed)?;
         live.settle()
     }
 
@@ -1218,7 +1219,8 @@ impl Backend for LjosBackend {
         // Straight to the clipboard, behind the application's back.
         ljos_platform::Platform::of(&live.engine)
             .clipboard()
-            .set_text(ljos_platform::ClipboardMode::Clipboard, text);
+            .set_text(ljos_platform::ClipboardMode::Clipboard, text)
+            .map_err(failed)?;
         live.settle()
     }
 

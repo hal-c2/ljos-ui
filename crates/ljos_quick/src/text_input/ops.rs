@@ -317,7 +317,7 @@ pub(crate) fn copy(engine: &Engine, obj: ObjectId) -> bool {
     // The HTML goes beside the characters, to the service only: a host
     // that hands copies on is handed the characters.
     if let Some(html) = html {
-        ljos_platform::Platform::of(engine)
+        let _ = ljos_platform::Platform::of(engine)
             .clipboard()
             .set_html(&html, &text);
     }
