@@ -3,6 +3,7 @@
 //! keyboard focus is), and the session that ties an engine to a watcher.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, Mutex},
@@ -237,6 +238,11 @@ pub struct DevSession {
     settling: bool,
     more_errors: usize,
     reloads: u64,
+    /// The warnings the last reload had, by file and message: a later
+    /// reload tells only the ones that are new, so a save to one file does
+    /// not repeat what another's were. Not by line, which an edit above
+    /// moves.
+    told: HashMap<(String, String), usize>,
     /// The watcher answered a [`reload_now`](Self::reload_now).
     flushed: bool,
     /// What `Qt.createQmlObject` compiles against.
@@ -368,6 +374,7 @@ impl DevSession {
             properties,
             root,
             settling: false,
+            told: HashMap::new(),
             more_errors,
             reloads: 0,
             flushed: false,
@@ -532,7 +539,7 @@ impl DevSession {
         // The session compiles every file of the project, so that a save
         // to any is one patch; the developer hears of the ones the program
         // reached, as Qt never compiles the others.
-        let warnings = warnings
+        let warnings: Vec<CompileFault> = warnings
             .into_iter()
             .filter(|w| {
                 w.file
@@ -540,6 +547,21 @@ impl DevSession {
                     .is_some_and(|key| engine.has_loaded(key))
             })
             .collect();
+        let mut now = HashMap::new();
+        let warnings = warnings
+            .into_iter()
+            .filter(|w| {
+                let seen = now.entry((w.file.clone(), w.message.clone())).or_insert(0);
+                *seen += 1;
+                *seen
+                    > self
+                        .told
+                        .get(&(w.file.clone(), w.message.clone()))
+                        .copied()
+                        .unwrap_or(0)
+            })
+            .collect();
+        self.told = now;
         Report::Reloaded(ReloadStats {
             generation: done.generation,
             build,

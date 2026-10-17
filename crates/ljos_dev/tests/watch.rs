@@ -244,6 +244,34 @@ fn a_reload_tells_the_warnings_of_the_files_the_program_uses_only() {
 }
 
 #[test]
+fn a_reload_tells_a_warning_once_until_it_goes_away() {
+    let main = "import QtQuick\nItem {\n  Used { }\n  property int n: 1\n}\n";
+    let used = "import QtQuick\nItem {\n  property var v: usedUnknown\n}\n";
+    let mut app = app(&[("Main.qml", main), ("Used.qml", used)]);
+    let told = |reports: &[Report]| -> Vec<String> {
+        reloaded(reports)
+            .warnings
+            .iter()
+            .map(|w| format!("{}:{}", w.file, w.line))
+            .collect()
+    };
+    app.save("Main.qml", &main.replace("n: 1", "n: 2"));
+    assert_eq!(told(&app.wait()), ["Used.qml:3"]);
+    // Another save to a file that has none: the warning was told.
+    app.save("Main.qml", &main.replace("n: 1", "n: 3"));
+    assert_eq!(told(&app.wait()), Vec::<String>::new());
+    // A new one is told, the old one not again.
+    let two = used.replace("}\n", "  property var w: alsoUnknown\n}\n");
+    app.save("Used.qml", &two);
+    assert_eq!(told(&app.wait()), ["Used.qml:4"]);
+    // Gone, then back: told again.
+    app.save("Used.qml", "import QtQuick\nItem { }\n");
+    assert_eq!(told(&app.wait()), Vec::<String>::new());
+    app.save("Used.qml", used);
+    assert_eq!(told(&app.wait()), ["Used.qml:3"]);
+}
+
+#[test]
 fn a_broken_save_keeps_the_scene_and_a_mended_one_clears_the_error() {
     let mut app = app(&[("Main.qml", MAIN)]);
     app.call("box", "tap");
