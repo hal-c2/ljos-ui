@@ -247,6 +247,13 @@ engine.invoke_by_name(counter, "increment", &[]).unwrap();
 assert_eq!(engine.get(counter, Counter::COUNT), Ok(1));
 ```
 
+A type like this builds on `QtObject`, as every QML object does, so
+QML may give it an `objectName`; the struct needs no field for it. A
+visual type extends the toolkit's `Item` (in the prelude) instead:
+`#[qml(module = "Example", name = "Panel", extends = Item)]` with a
+`#[qml(base)] item: Item` field. It then takes `anchors`, `width` and
+the rest as an `Item` does.
+
 A native singleton is the same kind of struct with `#[qml_singleton]`
 under its derive, registered with
 `engine.register_singleton::<T>("Example", Version::new(1, 0))`; the

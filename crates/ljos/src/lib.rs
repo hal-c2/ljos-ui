@@ -68,7 +68,8 @@
 /// value types, the derive and its `qml_impl` and `qml_singleton`
 /// companions (with the [`Version`](prelude::Version) a singleton is
 /// registered under), list and tree models for Rust-owned rows, the `Timer` a
-/// host may run from Rust, and the platform
+/// host may run from Rust, the [`Item`](prelude::Item) a visual type extends
+/// (`extends = Item` with a `#[qml(base)]` field), and the platform
 /// services (fetch, settings, dialogs, opening a URL, the badge) a type may
 /// ask the host for.
 pub mod prelude {
@@ -84,6 +85,7 @@ pub mod prelude {
         BadgeService, FetchError, Fetcher, Method, OpenUrlService, Platform, RecordedBadge,
         RecordedUrls, Request, Response, is_remote, url_path,
     };
+    pub use ljos_quick::Item;
 }
 
 mod app;
