@@ -732,6 +732,9 @@ impl Live {
         // between, as a host woken at each deadline would. The scene's own
         // wakes (the frames of a running animation) are kept the same way.
         for _ in 0..MAX_TIMER_STEPS {
+            // An answer promised on the way (the next picture of a video
+            // stream) has come by the next deadline, and may set one.
+            ljos_platform::Platform::of(&self.engine).finish(&self.engine);
             let next = [
                 self.engine.next_timer_deadline(),
                 self.wake,

@@ -190,6 +190,17 @@ fn the_media_file(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.resource(&name, &bytes))
 }
 
+// The same, at `$SERVER/X` on the scenario's web server.
+#[given(regex = r#"^the web server serves the media file "([^"]+)"$"#)]
+fn a_served_media_file(w: &mut LjosWorld, name: String) -> StepResult {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../features/multimedia/media")
+        .join(&name);
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    w.web()?.serve(&name, bytes);
+    Ok(())
+}
+
 // A sprite sheet of features/animation/sprites, beside the QML under its
 // own name.
 #[given(regex = r#"^the sprite sheet "([^"]+)"$"#)]
