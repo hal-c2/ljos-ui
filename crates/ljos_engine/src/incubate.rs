@@ -30,7 +30,7 @@ use crate::cx::Cx;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::ObjectId;
-use crate::incubator::{CreationHandle, CreationJob, SharedCreation};
+use crate::incubator::{CreationHandle, CreationJob, Initial, SharedCreation};
 use crate::js::obj_to_u64;
 use crate::value::Value;
 use crate::{QmlObject, TypeTag, WriteKind, qml_impl};
@@ -132,14 +132,19 @@ impl Engine {
             WriteKind::Initial,
         )?;
         if synchronous {
-            let made = self.component_create(component, parent, props);
+            let made = self.component_template(component).and_then(|template| {
+                self.create_from_template_for_script(&template, parent, props, Initial::Incubated)
+            });
             self.incubated(inc, &made);
             return Ok(inc);
         }
         let owner = parent.map_or(APPLICATION_PROC, |p| self.proc_for(p));
         let (job, handle) =
             CreationJob::for_component(self, component, parent, props, Lane::Visible, owner);
-        let (job, shared) = job.on_done(move |e, made| e.incubated(inc, made)).shared();
+        let (job, shared) = job
+            .initial(Initial::Incubated)
+            .on_done(move |e, made| e.incubated(inc, made))
+            .shared();
         self.extension::<Running>()
             .handles
             .borrow_mut()

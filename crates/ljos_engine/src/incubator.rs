@@ -125,6 +125,22 @@ struct CompletionNode {
     children: Vec<ObjectId>,
 }
 
+/// Who gives the initial properties of an object being made, which
+/// decides how they are set.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Initial {
+    /// Native code: each names a property of the root, and one that
+    /// cannot be set stops the creation.
+    #[default]
+    Native,
+    /// `createObject`: one that cannot be set is a warning, and a member
+    /// of a value given `Qt.binding` takes the value it gives then.
+    Created,
+    /// `incubateObject`: as `createObject`, except that such a member
+    /// follows its binding.
+    Incubated,
+}
+
 #[derive(Default)]
 struct Creation {
     units: Vec<Unit>,
@@ -349,17 +365,18 @@ impl Engine {
         self.create_from_template_noting(template, parent, props, |_| {})
     }
 
-    /// [`Engine::create_from_template`] for a script (`createObject`):
-    /// an initial property that cannot be set is a warning and the object
-    /// is made all the same, and `Qt.binding(f)` is a binding. As Qt 6.11.2
-    /// does, by running qml6.
+    /// [`Engine::create_from_template`] for a script (`createObject`,
+    /// `incubateObject`): an initial property that cannot be set is a
+    /// warning and the object is made all the same, and `Qt.binding(f)` is
+    /// a binding. As Qt 6.11.2 does, by running qml6.
     pub(crate) fn create_from_template_for_script(
         &self,
         template: &Template,
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
+        how: Initial,
     ) -> Result<ObjectId, EngineError> {
-        self.create_from_template_with(template, parent, props, true, |_| {})
+        self.create_from_template_with(template, parent, props, how, |_| {})
     }
 
     /// [`Engine::create_from_template`], telling `allocated` the root once
@@ -371,7 +388,7 @@ impl Engine {
         props: Vec<(String, Value)>,
         allocated: impl FnOnce(ObjectId),
     ) -> Result<ObjectId, EngineError> {
-        self.create_from_template_with(template, parent, props, false, allocated)
+        self.create_from_template_with(template, parent, props, Initial::Native, allocated)
     }
 
     fn create_from_template_with(
@@ -379,11 +396,11 @@ impl Engine {
         template: &Template,
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
-        lenient: bool,
+        how: Initial,
         allocated: impl FnOnce(ObjectId),
     ) -> Result<ObjectId, EngineError> {
         let errors = self.open_creation();
-        let made = self.create_from_template_held(template, parent, props, lenient, allocated);
+        let made = self.create_from_template_held(template, parent, props, how, allocated);
         self.close_creation(errors);
         made
     }
@@ -393,7 +410,7 @@ impl Engine {
         template: &Template,
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
-        lenient: bool,
+        how: Initial,
         allocated: impl FnOnce(ObjectId),
     ) -> Result<ObjectId, EngineError> {
         let mut cr = Creation::default();
@@ -406,12 +423,7 @@ impl Engine {
                 for i in 0..cr.units.len() {
                     self.apply_unit(&cr, i);
                 }
-                if lenient {
-                    self.initial_props(&template.file.url, root, &props);
-                    Ok(())
-                } else {
-                    self.finish_props(root, &props)
-                }
+                self.set_initial(&template.file.url, root, &props, how)
             });
             cr.held = held;
             self.run_held(&cr);
@@ -547,6 +559,23 @@ impl Engine {
     }
 
     /// Initial properties, then the required check.
+    /// The initial properties, as `how` sets them.
+    pub(crate) fn set_initial(
+        &self,
+        url: &Atom,
+        root: ObjectId,
+        props: &[(String, Value)],
+        how: Initial,
+    ) -> Result<(), EngineError> {
+        match how {
+            Initial::Native => self.finish_props(root, props),
+            how => {
+                self.initial_props(url, root, props, how == Initial::Incubated);
+                Ok(())
+            }
+        }
+    }
+
     fn finish_props(&self, root: ObjectId, props: &[(String, Value)]) -> Result<(), EngineError> {
         for (name, v) in props {
             let p = self.property_index(root, name)?;
@@ -2625,6 +2654,8 @@ pub struct CreationJob {
     source: JobSource,
     parent: Option<ObjectId>,
     props: Vec<(String, Value)>,
+    /// How `props` are set.
+    initial: Initial,
     phase: Phase,
     lane: Lane,
     owner: ProcId,
@@ -2704,6 +2735,7 @@ impl CreationJob {
                 source,
                 parent,
                 props,
+                initial: Initial::Native,
                 phase: Phase::Load,
                 lane,
                 owner,
@@ -2714,6 +2746,12 @@ impl CreationJob {
             },
             handle,
         )
+    }
+
+    /// The job with its initial properties set as `how` sets them.
+    pub(crate) fn initial(mut self, how: Initial) -> Self {
+        self.initial = how;
+        self
     }
 
     /// [`Engine::create_delegate`] as a job.
@@ -2748,6 +2786,7 @@ impl CreationJob {
                 source: JobSource::Shared(inner.clone()),
                 parent: None,
                 props: Vec::new(),
+                initial: Initial::Native,
                 phase: Phase::Load,
                 lane,
                 owner,
@@ -2933,7 +2972,7 @@ impl CreationJob {
                         return JobPoll::Yield;
                     }
                     let props = std::mem::take(&mut self.props);
-                    self.phase = Phase::Finish(sliced::Finish::new(cr, root, props));
+                    self.phase = Phase::Finish(sliced::Finish::new(cr, root, props, self.initial));
                 }
                 Phase::Finish(mut f) => {
                     if !e.is_alive(f.root()) {

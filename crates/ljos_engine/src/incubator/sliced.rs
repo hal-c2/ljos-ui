@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use super::Creation;
+use super::{Creation, Initial};
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::ObjectId;
@@ -36,6 +36,7 @@ enum Stage {
     /// property of Qt's, from the last set up to the first.
     Evaluate {
         props: Option<Vec<(String, Value)>>,
+        how: Initial,
         /// Indices into `cr.held` and how many of them have run.
         todo: Option<(Vec<usize>, usize)>,
         result: Result<(), EngineError>,
@@ -62,12 +63,18 @@ enum Stage {
 }
 
 impl Finish {
-    pub(super) fn new(cr: Creation, root: ObjectId, props: Vec<(String, Value)>) -> Self {
+    pub(super) fn new(
+        cr: Creation,
+        root: ObjectId,
+        props: Vec<(String, Value)>,
+        how: Initial,
+    ) -> Self {
         Self {
             cr,
             root,
             stage: Stage::Evaluate {
                 props: Some(props),
+                how,
                 todo: None,
                 result: Ok(()),
             },
@@ -101,6 +108,7 @@ impl Finish {
             match std::mem::replace(&mut self.stage, Stage::Gone) {
                 Stage::Evaluate {
                     mut props,
+                    how,
                     mut todo,
                     mut result,
                 } => {
@@ -111,7 +119,8 @@ impl Finish {
                     // bindings, as when the object is made at once.
                     let stopped = e.batch(|| {
                         if let Some(p) = props.take() {
-                            result = e.finish_props(root, &p);
+                            let url = cr.top.as_ref().map(|t| t.file.url.clone());
+                            result = e.set_initial(&url.unwrap_or_default(), root, &p, how);
                         }
                         let (order, next) =
                             todo.get_or_insert_with(|| (e.held_order(cr, false), 0));
@@ -135,6 +144,7 @@ impl Finish {
                     if stopped {
                         self.stage = Stage::Evaluate {
                             props,
+                            how,
                             todo,
                             result,
                         };

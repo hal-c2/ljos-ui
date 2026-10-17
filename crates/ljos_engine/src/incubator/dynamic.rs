@@ -17,12 +17,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_ir::CompiledFile;
-use ljos_js::{HostError, HostFn, JsFault, JsValue};
+use ljos_js::{HostError, HostFn, JsFault, JsRef, JsValue};
 
 use super::{Instance, Template};
 use crate::WriteKind;
 use crate::atom::Atom;
-use crate::engine::Engine;
+use crate::engine::{Engine, Free};
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::js::{JsState, obj_to_u64, u64_to_obj};
@@ -159,10 +159,18 @@ impl Engine {
         CallingGuard { js: Some(js), prev }
     }
 
-    /// The initial properties of `createObject`. What cannot be set is a
-    /// warning in Qt's words and the others are still set; a value made
-    /// with `Qt.binding` is a binding. `url` is the component's.
-    pub(crate) fn initial_props(&self, url: &Atom, root: ObjectId, props: &[(String, Value)]) {
+    /// The initial properties of `createObject` and `incubateObject`. What
+    /// cannot be set is a warning in Qt's words and the others are still
+    /// set; a value made with `Qt.binding` is a binding, except on a member
+    /// of a value unless `follow`: that is given the value it gives now.
+    /// `url` is the component's.
+    pub(crate) fn initial_props(
+        &self,
+        url: &Atom,
+        root: ObjectId,
+        props: &[(String, Value)],
+        follow: bool,
+    ) {
         for (name, v) in props {
             let Some((obj, p, member)) = self.initial_target(root, name) else {
                 let ty = self
@@ -175,7 +183,7 @@ impl Engine {
                 continue;
             };
             let set = match member {
-                Some(member) => self.initial_member(obj, p, &member, v),
+                Some(member) => self.initial_member(obj, p, &member, v, follow),
                 None => {
                     let fits = self
                         .meta_of(obj)
@@ -231,12 +239,37 @@ impl Engine {
         Some((t.obj, t.prop, None))
     }
 
-    /// Sets the member `member` of the value `obj`'s `prop` holds. What
-    /// `Qt.binding` gave is not a value of a member.
-    fn initial_member(&self, obj: ObjectId, prop: PropIndex, member: &str, v: &Value) -> bool {
-        if matches!(v, Value::Js(_)) {
-            return false;
-        }
+    /// Sets the member `member` of the value `obj`'s `prop` holds, or binds
+    /// it when `v` is what `Qt.binding` gave and `follow`. Another script
+    /// object is not a value of a member.
+    fn initial_member(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        member: &str,
+        v: &Value,
+        follow: bool,
+    ) -> bool {
+        let v = match self.binding_function(obj, v) {
+            Some(f) if follow => {
+                let to = self.redirect(obj, prop);
+                return self
+                    .bind_member(
+                        (to.0, to.1, Atom::from(member)),
+                        Box::new(f),
+                        false,
+                        Free::Never,
+                    )
+                    .is_ok();
+            }
+            Some(mut f) => match f(self) {
+                Some(v) => v,
+                None => return false,
+            },
+            None if matches!(v, Value::Js(_)) => return false,
+            None => v.clone(),
+        };
+        let v = &v;
         let Some(ty) = self
             .meta_of(obj)
             .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
@@ -284,16 +317,7 @@ impl Engine {
         prop: PropIndex,
         v: &Value,
     ) -> Option<Result<(), EngineError>> {
-        let Value::Js(h) = v else {
-            return None;
-        };
-        let r = h.0.clone();
-        let f = self.run_js("Qt.binding", |s| {
-            Ok(match s.get_field(&r, "__ljosBinding")? {
-                JsValue::Handle(f) if s.is_function(&f) => Some(f),
-                _ => None,
-            })
-        })??;
+        let f = self.qt_binding(v)?;
         let (target, target_prop) = self.redirect(obj, prop);
         let hint = self
             .meta_of(target)
@@ -306,6 +330,37 @@ impl Engine {
                 Ok(e.js_to_value(s, out, &hint))
             })
         }))
+    }
+
+    /// The function `Qt.binding(f)` was given, when `v` is what it gave.
+    fn qt_binding(&self, v: &Value) -> Option<JsRef> {
+        let Value::Js(h) = v else {
+            return None;
+        };
+        let r = h.0.clone();
+        self.run_js("Qt.binding", |s| {
+            Ok(match s.get_field(&r, "__ljosBinding")? {
+                JsValue::Handle(f) if s.is_function(&f) => Some(f),
+                _ => None,
+            })
+        })?
+    }
+
+    /// What computes a member's value when `v` is what `Qt.binding(f)`
+    /// gave: `f`, called on `this` as a binding of a property of it is.
+    fn binding_function(
+        &self,
+        this: ObjectId,
+        v: &Value,
+    ) -> Option<impl FnMut(&Engine) -> Option<Value> + 'static> {
+        let f = self.qt_binding(v)?;
+        let this = JsValue::Object(obj_to_u64(this));
+        Some(move |e: &Engine| {
+            e.run_js("Qt.binding", |s| {
+                let out = s.call_ref(&f, &this, &[])?;
+                Ok(e.js_to_value(s, out, &TypeTag::Var))
+            })
+        })
     }
 
     /// `Qt.createComponent(url)` from a script of the file at `base`: the

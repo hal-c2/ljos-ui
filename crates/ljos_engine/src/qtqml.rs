@@ -21,6 +21,7 @@ use crate::cx::Cx;
 use crate::engine::Engine;
 use crate::error::{EngineError, JsError};
 use crate::ids::{ConnectionId, ContextId, ObjectId};
+use crate::incubator::Initial;
 use crate::incubator::Template;
 use crate::meta::MetaRef;
 use crate::object::{ObjectFlags, QmlType};
@@ -152,7 +153,7 @@ impl Component {
         let props = cx.engine.js_object_entries(&props);
         match cx
             .engine
-            .create_from_template_for_script(&template, parent, props)
+            .create_from_template_for_script(&template, parent, props, Initial::Created)
         {
             Ok(o) => Value::Object(o),
             // Qt's words, which say where; the message is whole already.
