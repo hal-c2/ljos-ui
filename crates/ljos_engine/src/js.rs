@@ -769,12 +769,26 @@ impl Engine {
             Value::Object(id) if self.is_alive(*id) => JsValue::Object(obj_to_u64(*id)),
             Value::Object(_) => JsValue::Null,
             Value::List(items) => JsValue::Array(items.iter().map(|i| self.to_js(i)).collect()),
-            Value::Map(fields) => JsValue::Map(
-                fields
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), self.to_js(v)))
-                    .collect(),
-            ),
+            Value::Map(fields) => {
+                let make = || {
+                    fields
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), self.to_js(v)))
+                        .collect()
+                };
+                match self
+                    .extension::<crate::records::Records>()
+                    .map(fields, make)
+                {
+                    Some(kept) => kept,
+                    None => JsValue::Map(
+                        fields
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), self.to_js(v)))
+                            .collect(),
+                    ),
+                }
+            }
             Value::Enum(e) => JsValue::Number(f64::from(e.value)),
             Value::Js(h) => JsValue::Handle(h.0.clone()),
         }

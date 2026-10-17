@@ -20,8 +20,9 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    PropDef, SignalDef, Slice, SourceMapper, TypeDef, ValueKind, objects::HostWrapper,
-    value::WeakRef,
+    PropDef, SignalDef, Slice, SourceMapper, TypeDef, ValueKind,
+    objects::HostWrapper,
+    value::{Pending, WeakRef},
 };
 
 /// A Rust function callable from JS as a global (see
@@ -293,24 +294,32 @@ impl<'js> Scope<'js> {
     }
 
     fn materialise(&self, r: &JsRef) -> rquickjs::Result<Value<'js>> {
-        let Some(items) = r.take_pending() else {
+        let Some(pending) = r.take_pending() else {
             return Err(self.stale());
         };
-        let arr = match Array::new(self.ctx.clone()) {
-            Ok(a) => a,
+        let made = (|| match &pending {
+            Pending::Array(items) => {
+                let arr = Array::new(self.ctx.clone())?;
+                for (i, item) in items.iter().enumerate() {
+                    arr.set(i, self.to_value(item)?)?;
+                }
+                Ok(arr.into_value())
+            }
+            Pending::Object(fields) => {
+                let o = Object::new(self.ctx.clone())?;
+                for (k, v) in fields {
+                    o.set(k.as_str(), self.to_value(v)?)?;
+                }
+                Ok(o.into_value())
+            }
+        })();
+        let v = match made {
+            Ok(v) => v,
             Err(e) => {
-                r.restore_pending(items);
+                r.restore_pending(pending);
                 return Err(e);
             }
         };
-        for (i, item) in items.iter().enumerate() {
-            let set = self.to_value(item).and_then(|v| arr.set(i, v));
-            if let Err(e) = set {
-                r.restore_pending(items);
-                return Err(e);
-            }
-        }
-        let v = arr.into_value();
         let key = self.next_key();
         let at = object_address(&v);
         self.state.handles.borrow_mut().insert(

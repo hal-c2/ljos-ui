@@ -550,6 +550,10 @@ fn record_fields(v: &Value) -> Result<&[(Atom, Value)], ConvertError> {
 /// number JSON cannot write (NaN, an infinity) is `null` as
 /// `JSON.stringify` writes it, `undefined` is `null`, and a url, colour or
 /// enum is its string or number. An object or a value type is refused.
+///
+/// A JSON object stored in a property or a `PropertyMap` entry is one
+/// script object until it is stored again: reads share it, and a field
+/// read does not copy it.
 impl QmlValue for serde_json::Value {
     fn type_tag() -> TypeTag {
         TypeTag::Data

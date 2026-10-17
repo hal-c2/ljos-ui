@@ -82,6 +82,7 @@ mod qml_types;
 mod qt_enums;
 mod qt_keys;
 mod qtqml;
+mod records;
 mod registry;
 mod reset;
 mod script_arrays;

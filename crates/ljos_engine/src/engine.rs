@@ -1104,6 +1104,13 @@ impl Engine {
             }
         };
         let v = match got {
+            // A record a native field holds is converted on each read; held
+            // in a node, it is one value, and so one script object
+            // (records.rs), until the field is set or notified again.
+            Got::Value(Value::Map(_)) if self.is_native_field(obj, prop) => {
+                let n = self.ensure_node(obj, prop)?;
+                self.inner.graph.try_get(n).unwrap_or_default()
+            }
             Got::Value(v) => v,
             Got::Node(n) => self.inner.graph.try_get(n).unwrap_or_default(),
             Got::Field(v) => {
@@ -1130,6 +1137,18 @@ impl Engine {
             Got::Alias(None) => Value::Undefined,
         };
         Ok(self.live(v))
+    }
+
+    fn is_native_field(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let store = self.inner.store.borrow();
+        store
+            .objects
+            .get(obj)
+            .and_then(|h| h.meta.property(prop))
+            .is_some_and(|p| {
+                matches!(p.access, PropertyAccess::Field { .. })
+                    && !p.flags.contains(PropertyFlags::CONSTANT)
+            })
     }
 
     /// A reference to a destroyed object reads as `null`; a tracked read

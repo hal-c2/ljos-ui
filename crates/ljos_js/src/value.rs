@@ -79,9 +79,15 @@ pub struct JsRef(Arc<RefSlot>);
 pub(crate) struct RefSlot {
     /// Where the value is in the host's table, once it is in the JS heap.
     live: OnceLock<Live>,
-    /// What an array made on the Rust side holds until a script gets it.
-    pending: Mutex<Option<Vec<JsValue>>>,
+    /// What a value made on the Rust side holds until a script gets it.
+    pending: Mutex<Option<Pending>>,
     array: bool,
+}
+
+/// What a [`JsRef`] made on the Rust side becomes in JS.
+pub(crate) enum Pending {
+    Array(Vec<JsValue>),
+    Object(Vec<(String, JsValue)>),
 }
 
 struct Live {
@@ -128,8 +134,18 @@ impl JsRef {
     pub fn array(items: Vec<JsValue>) -> Self {
         Self(Arc::new(RefSlot {
             live: OnceLock::new(),
-            pending: Mutex::new(Some(items)),
+            pending: Mutex::new(Some(Pending::Array(items))),
             array: true,
+        }))
+    }
+
+    /// A plain object with these fields, in order, that no script has seen
+    /// yet: as [`JsRef::array`], every clone is the same object.
+    pub fn object(fields: Vec<(String, JsValue)>) -> Self {
+        Self(Arc::new(RefSlot {
+            live: OnceLock::new(),
+            pending: Mutex::new(Some(Pending::Object(fields))),
+            array: false,
         }))
     }
 
@@ -145,7 +161,10 @@ impl JsRef {
         if self.0.live.get().is_some() {
             return None;
         }
-        self.0.pending.lock().ok()?.clone()
+        match self.0.pending.lock().ok()?.as_ref()? {
+            Pending::Array(items) => Some(items.clone()),
+            Pending::Object(_) => None,
+        }
     }
 
     /// [`JsRef::pending_items`] without the copy: `f` sees the entries of
@@ -154,21 +173,24 @@ impl JsRef {
         if self.0.live.get().is_some() {
             return None;
         }
-        self.0.pending.lock().ok()?.as_deref().map(f)
+        match self.0.pending.lock().ok()?.as_ref()? {
+            Pending::Array(items) => Some(f(items)),
+            Pending::Object(_) => None,
+        }
     }
 
     pub(crate) fn key(&self) -> Option<u64> {
         self.0.live.get().map(|l| l.key)
     }
 
-    /// Takes the entries to build the JS array from.
-    pub(crate) fn take_pending(&self) -> Option<Vec<JsValue>> {
+    /// Takes what to build the JS value from.
+    pub(crate) fn take_pending(&self) -> Option<Pending> {
         self.0.pending.lock().ok()?.take()
     }
 
     /// Puts back what [`JsRef::take_pending`] took, when the array could
     /// not be built after all.
-    pub(crate) fn restore_pending(&self, items: Vec<JsValue>) {
+    pub(crate) fn restore_pending(&self, items: Pending) {
         if let Ok(mut p) = self.0.pending.lock() {
             *p = Some(items);
         }
@@ -205,7 +227,7 @@ impl std::fmt::Debug for JsRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.key() {
             Some(key) => write!(f, "JsRef({key:#x})"),
-            None => f.write_str("JsRef(array not in JS yet)"),
+            None => f.write_str("JsRef(not in JS yet)"),
         }
     }
 }
