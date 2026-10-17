@@ -33,6 +33,7 @@ use crate::enums::EnumTable;
 use crate::image::{ImageKey, ImageStore, tinted_in};
 use crate::item::{Item, is_a, write_computed};
 use crate::paint_item::{ItemPaint, register_paint_item};
+use ljos_text::TextEngine;
 
 const CATEGORY: &str = "particles";
 
@@ -1234,7 +1235,7 @@ struct Pictures {
 }
 
 impl ItemPaint for Pictures {
-    fn paint(&self, _size: kurbo::Size, out: &mut DisplayListBuilder) {
+    fn paint(&self, _size: kurbo::Size, _text: &mut TextEngine, out: &mut DisplayListBuilder) {
         for (image, dst, opacity) in &self.quads {
             out.push(DrawOp::Image {
                 image: image.clone(),

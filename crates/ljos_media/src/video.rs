@@ -18,7 +18,7 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, MetaRef, NodeId, ObjectId, QmlObject, QmlType, Rect, Url, Value,
     qml_impl,
 };
-use ljos_quick::{Item, ItemPaint};
+use ljos_quick::{Item, ItemPaint, TextEngine};
 use ljos_render::{DisplayListBuilder, DrawOp, ImageHandle, kurbo};
 
 use crate::devices::AudioOutput;
@@ -285,7 +285,7 @@ struct FramePaint {
 }
 
 impl ItemPaint for FramePaint {
-    fn paint(&self, size: kurbo::Size, out: &mut DisplayListBuilder) {
+    fn paint(&self, size: kurbo::Size, _text: &mut TextEngine, out: &mut DisplayListBuilder) {
         let Some(image) = &self.image else {
             return;
         };

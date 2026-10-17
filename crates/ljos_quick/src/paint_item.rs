@@ -6,6 +6,9 @@
 //! what it reads is tracked and a change repaints the item, and paints the
 //! result into the item's render node with the same display list as the
 //! built-in items: other crates never see the renderer.
+//!
+//! Text is laid out in `paint` with the text engine the scene lends it,
+//! the one every `Text` is laid out with, and drawn as glyph runs.
 
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -13,11 +16,15 @@ use std::rc::Rc;
 
 use ljos_engine::{Engine, MetaRef, ObjectId};
 use ljos_render::{DisplayListBuilder, kurbo};
+use ljos_text::TextEngine;
 
 /// What an item shows, read from its properties.
 pub trait ItemPaint: Debug {
-    /// Paints into an item of `size`, in its own coordinates.
-    fn paint(&self, size: kurbo::Size, out: &mut DisplayListBuilder);
+    /// Paints into an item of `size`, in its own coordinates. `text` is the
+    /// scene's text engine, lent for the call: the scene holds the shared
+    /// one ([`crate::text_engine`]) while it paints, so borrowing that
+    /// here fails. Layouts made with it are cached as a `Text`'s are.
+    fn paint(&self, size: kurbo::Size, text: &mut TextEngine, out: &mut DisplayListBuilder);
 }
 
 /// Reads what `obj` shows. Tracked: whatever it reads repaints the item

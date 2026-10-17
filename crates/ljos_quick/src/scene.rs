@@ -1174,7 +1174,7 @@ impl QuickScene {
                 Paint::Shape(s) => s.paint(cx.size, b),
                 Paint::Canvas(c) => c.paint(cx.size, b),
                 Paint::Effect(p) => p.paint(cx.size, b),
-                Paint::External(p) => p.paint(cx.size, b),
+                Paint::External(p) => p.paint(cx.size, &mut te, b),
             }
         });
     }
