@@ -24,6 +24,9 @@ egui_kittest = { workspace = true, features = ["wgpu"] }
 # wraps.
 accesskit_consumer = "0.36.0"
 png.workspace = true
+# tests/scripts.rs compiles a QML string; the crate never links the parser.
+ljos_compiler = { path = "../ljos_compiler" }
+qml_front = { path = "../qml_front" }
 
 [lints]
 workspace = true

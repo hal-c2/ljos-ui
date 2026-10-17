@@ -192,6 +192,8 @@ pub struct QmlView {
     painted_frame: Option<u64>,
     /// Passes paint; off while the window is hidden ([`QmlView::set_drawn`]).
     drawn: bool,
+    /// Where the view is in preparing the scripts input may run.
+    scripts: Scripts,
     /// See [`QmlView::set_fold_backdrop`].
     fold_backdrop: bool,
     backdrop: Option<egui::Color32>,
@@ -220,6 +222,17 @@ pub struct QmlView {
     /// Files dragged over the view from outside, and where the scene was
     /// last told they are.
     file_drag: Option<(ljos_quick::PlatformDrag, Option<kurbo::Point>)>,
+}
+
+/// [`Engine::prepare_scripts`], once per view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Scripts {
+    /// No frame was painted yet.
+    Waiting,
+    /// The first frame was painted in this egui frame; the first pass of
+    /// another prepares them.
+    Due(u64),
+    Prepared,
 }
 
 impl std::fmt::Debug for QmlView {
@@ -262,6 +275,7 @@ impl QmlView {
             ppp: None,
             painted_frame: None,
             drawn: true,
+            scripts: Scripts::Waiting,
             fold_backdrop: false,
             backdrop: None,
             solid_rects: false,
@@ -789,6 +803,17 @@ impl QmlView {
 
     fn show_at(&mut self, ui: &mut Ui, rect: Rect) {
         let ctx = ui.ctx().clone();
+        // In the pass after the first frame, so that frame is not kept
+        // waiting, and before input, so the first click or key runs its
+        // handler and not the start of the JS host too.
+        // egui may run passes again within a frame and show only the last,
+        // so it is the next frame and not the next pass.
+        if let Scripts::Due(painted) = self.scripts
+            && ctx.cumulative_frame_nr() != painted
+        {
+            self.scripts = Scripts::Prepared;
+            self.engine.prepare_scripts();
+        }
         self.gate.held.set(true);
         self.gate.missed.set(false);
 
@@ -882,6 +907,9 @@ impl QmlView {
             self.backend.encode(&view, &mut sink);
             sink.paint(&painter);
             self.backdrop = sink.backdrop;
+            if self.scripts == Scripts::Waiting {
+                self.scripts = Scripts::Due(ctx.cumulative_frame_nr());
+            }
         }
 
         // Accessibility. Like the shapes, egui keeps no nodes between
@@ -912,7 +940,9 @@ impl QmlView {
         // Schedule the next pass.
         let missed = self.gate.missed.replace(false) && self.scene.needs_frame();
         match self.next_wake {
-            _ if missed => self.request_repaint(&ctx, None),
+            _ if missed || matches!(self.scripts, Scripts::Due(_)) => {
+                self.request_repaint(&ctx, None)
+            }
             Some(t) if t <= now => self.request_repaint(&ctx, None),
             // egui forgets a delayed repaint after each pass, so ask again
             // every pass until the timer fires.

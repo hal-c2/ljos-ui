@@ -3610,11 +3610,13 @@ dependencies = [
  "egui",
  "egui_kittest",
  "ljos_a11y",
+ "ljos_compiler",
  "ljos_engine",
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
  "png",
+ "qml_front",
  "thiserror 2.0.21",
 ]
 
