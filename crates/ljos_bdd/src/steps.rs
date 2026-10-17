@@ -28,7 +28,7 @@ fn docstring(step: &Step) -> Result<String, String> {
 
 fn strip_label(text: &str) -> &str {
     match text.split_once('\n') {
-        Some((first, rest)) if matches!(first.trim(), "qml" | "xml") => rest,
+        Some((first, rest)) if matches!(first.trim(), "qml" | "xml" | "js") => rest,
         _ => text,
     }
 }
@@ -637,12 +637,12 @@ fn input_method_commits(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| b.commit(&text))
 }
 
-#[when(regex = r#"^the file "([^"]+\.qml)" is changed to:$"#)]
+#[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is changed to:$"#)]
 fn file_changed(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     w.change_file(&name, Some(&docstring(step)?))
 }
 
-#[when(regex = r#"^the file "([^"]+\.qml)" is removed$"#)]
+#[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is removed$"#)]
 fn file_removed(w: &mut LjosWorld, name: String) -> StepResult {
     w.change_file(&name, None)
 }

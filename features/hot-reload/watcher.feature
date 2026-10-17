@@ -203,3 +203,48 @@ Feature: When a changed file is reloaded
       And a reload happens
       Then the reload error is in "Scenario.qml" at line 1
       And the property "width" of "root" is 10
+
+  Rule: A JavaScript file a QML file imports is watched as the QML files are
+
+    Background:
+      Given the file "logic.js":
+        """js
+        function size(n) { return n * 10 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "logic.js" as Logic
+        Item {
+          objectName: "root"
+          property int n: 1
+          width: Logic.size(n)
+        }
+        """
+
+    Scenario: A changed function is used after the quiet time, and assigned values stay
+      When the property "n" of "root" is set to 2
+      And the file "logic.js" is changed to:
+        """js
+        function size(n) { return n * 100 }
+        """
+      And 120 milliseconds pass
+      Then the property "width" of "root" is 200
+      And the property "n" of "root" is 2
+      And 1 reload has happened
+
+    Scenario: A script that does not parse is reported, and its fix is applied
+      When the file "logic.js" is changed to:
+        """js
+        function size(n) { return n * }
+        """
+      And 120 milliseconds pass
+      Then the property "width" of "root" is 10
+      And the reload error is in "logic.js" at line 1
+      When the file "logic.js" is changed to:
+        """js
+        function size(n) { return n * 3 }
+        """
+      And 120 milliseconds pass
+      Then there is no reload error
+      And the property "width" of "root" is 3

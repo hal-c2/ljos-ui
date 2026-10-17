@@ -131,6 +131,13 @@ impl<O: TypeOracle> Project<O> {
         self.scripts.get(path).map(String::as_str)
     }
 
+    /// Forgets the JavaScript file at `path`.
+    pub fn remove_script(&mut self, path: &str) {
+        if self.scripts.remove(path).is_some() {
+            self.callable.get_mut().clear();
+        }
+    }
+
     /// Forgets the file `key`. What a module was said to have stays said.
     pub fn remove(&mut self, key: &str) {
         self.front.remove(key);

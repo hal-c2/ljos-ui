@@ -291,6 +291,40 @@ fn a_reload_asked_for_takes_a_file_being_written_as_it_is() {
 }
 
 #[test]
+fn a_saved_script_recompiles_the_files_that_import_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let logic = root.join("logic.js");
+    fs::write(&logic, "function size() { return 10 }\n").unwrap();
+    let main = "import QtQuick\nimport \"logic.js\" as Logic\nItem {\n  width: Logic.size()\n}\n";
+    fs::write(root.join("Main.qml"), main).unwrap();
+    fs::write(root.join("Other.qml"), "import QtQuick\nItem {}\n").unwrap();
+    let mut r = Reloader::open(&root, QtTypeOracle).unwrap();
+    r.start();
+
+    fs::write(&logic, "function size() { return 20 }\n").unwrap();
+    assert!(r.closed(&logic));
+    let Build::Patch { patch, .. } = r.build() else {
+        panic!("expected a patch");
+    };
+    let files: Vec<&str> = patch.files.iter().map(|f| f.file.file.as_str()).collect();
+    assert_eq!(files, ["Main"]);
+    r.ack(patch.generation);
+
+    // A script that does not parse is refused where it is wrong, and the
+    // build after its fix is offered.
+    fs::write(&logic, "\nfunction size() { return 20 * }\n").unwrap();
+    assert!(r.closed(&logic));
+    let Build::Failed(faults) = r.build() else {
+        panic!("expected a failure");
+    };
+    assert_eq!((faults[0].file.as_str(), faults[0].line), ("logic.js", 2));
+    fs::write(&logic, "function size() { return 30 }\n").unwrap();
+    assert!(r.closed(&logic));
+    assert!(matches!(r.build(), Build::Patch { .. }));
+}
+
+#[test]
 fn a_new_directory_is_found_by_reading_again() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
@@ -318,6 +352,8 @@ fn paths_that_are_nothing_to_a_build_are_told_apart() {
     let c = |rel: &str, is_dir: bool| classify(&root, &root.join(rel), is_dir);
     assert_eq!(c("Main.qml", false), Touch::File);
     assert_eq!(c("ui/Page.qml", false), Touch::File);
+    assert_eq!(c("ui/logic.js", false), Touch::File);
+    assert_eq!(c("ui/logic.mjs", false), Touch::File);
     assert_eq!(c("ui/qmldir", false), Touch::Modules);
     assert_eq!(c("CMakeLists.txt", false), Touch::Modules);
     assert_eq!(c("ui", false), Touch::Rescan);

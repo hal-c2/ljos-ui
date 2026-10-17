@@ -112,16 +112,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     pub fn start(&mut self) -> FileSet {
         self.take_saves(false);
         let files = self.session.start().clone();
-        self.prints.replace(
-            self.session
-                .files()
-                .filter_map(|key| Some((key, self.session.source(key)?))),
-        );
+        self.prints.replace(texts(&self.session));
         files
     }
 
-    /// The file `key` (its path from the root without `.qml`) now has
-    /// this text; None: it is gone.
+    /// The file `key` (its path from the root without `.qml`, or with its
+    /// suffix for a JavaScript file) now has this text; None: it is gone.
     pub fn save(&mut self, key: &str, text: Option<String>) {
         self.unfinished.remove(key);
         self.staged.insert(key.to_owned(), text);
@@ -203,11 +199,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             // The directory is read whole, so what was touched is in it.
             self.touched.clear();
             if self.session.rescan().is_ok() {
-                changed |= self.prints.replace(
-                    self.session
-                        .files()
-                        .filter_map(|key| Some((key, self.session.source(key)?))),
-                );
+                changed |= self.prints.replace(texts(&self.session));
             }
         }
         for path in std::mem::take(&mut self.touched) {
@@ -295,12 +287,21 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     }
 }
 
+/// Every file of the session by key with its text, the JavaScript files
+/// too.
+fn texts<O: TypeOracle + Clone>(session: &ReloadSession<O>) -> impl Iterator<Item = (&str, &str)> {
+    session
+        .files()
+        .filter_map(|key| Some((key, session.source(key)?)))
+        .chain(session.scripts())
+}
+
 /// What a path under a project's root is to a build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Touch {
     /// Nothing: an editor's swap file, a picture, build output.
     Ignore,
-    /// A QML file, to read again.
+    /// A QML or JavaScript file, to read again.
     File,
     /// A directory came or went: the files are found again.
     Rescan,
@@ -340,7 +341,7 @@ pub fn classify(root: &Path, path: &Path, is_dir: bool) -> Touch {
     if name.starts_with('.') {
         return Touch::Ignore;
     }
-    if name.ends_with(".qml") {
+    if name.ends_with(".qml") || name.ends_with(".js") || name.ends_with(".mjs") {
         return Touch::File;
     }
     if !name.contains('.') && !skipped_dir(&name) && !path.exists() {

@@ -540,7 +540,8 @@ fn seg_name(seg: &KeySeg) -> String {
 /// Something wrong with a file, where a developer finds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileFault {
-    /// The file's path from the project's root, with `.qml`.
+    /// The file's path from the project's root, with `.qml` (or the
+    /// script's own suffix).
     pub file: String,
     /// 1-based; 0 when the place is not known.
     pub line: u32,
@@ -618,6 +619,9 @@ pub struct ReloadSession<O> {
     last: u64,
     pending: Option<(u64, FileSet, BTreeSet<String>)>,
     warnings: BTreeMap<String, Vec<CompileFault>>,
+    /// The scripts saved since the start that do not parse: no build is
+    /// offered while one is.
+    broken_scripts: BTreeMap<String, CompileFault>,
 }
 
 impl<O: TypeOracle + Clone> ReloadSession<O> {
@@ -639,6 +643,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             last: 0,
             pending: None,
             warnings: BTreeMap::new(),
+            broken_scripts: BTreeMap::new(),
         }
     }
 
@@ -663,6 +668,13 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             return Ok(());
         };
         self.project = Project::load(&root, self.oracle.clone())?;
+        // A broken script stays refused until it is mended or gone.
+        let project = &self.project;
+        self.broken_scripts.retain(|key, _| {
+            project.script(key).is_some_and(|text| {
+                crate::script::syntax_error(text, key.ends_with(".mjs")).is_some()
+            })
+        });
         self.sources = self
             .project
             .files()
@@ -676,17 +688,43 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     }
 
     /// The key of a path under the session's root: its path from there
-    /// without `.qml`. None for a path that is not a QML file of the
-    /// project.
+    /// without `.qml`, or with its suffix for a JavaScript file. None for
+    /// a path that is neither of the project.
     pub fn key_of(&self, path: &Path) -> Option<String> {
         let relative = path.strip_prefix(self.root.as_deref()?).ok()?;
         let text = relative.to_string_lossy().replace('\\', "/");
+        if is_script(&text) {
+            return Some(text);
+        }
         text.strip_suffix(".qml").map(str::to_owned)
     }
 
-    /// The file `key` now has this text. Whether it is new or not.
+    /// The file `key` now has this text. Whether it is new or not. A key
+    /// ending in `.js` or `.mjs` is a JavaScript file.
     pub fn set_file(&mut self, key: &str, source: impl Into<String>) {
         let source = source.into();
+        if is_script(key) {
+            if self.project.script(key) != Some(source.as_str()) {
+                match crate::script::syntax_error(&source, key.ends_with(".mjs")) {
+                    Some((line, column, message)) => {
+                        let file = key.to_owned();
+                        let fault = CompileFault {
+                            file,
+                            line,
+                            column,
+                            message,
+                        };
+                        self.broken_scripts.insert(key.to_owned(), fault);
+                    }
+                    None => {
+                        self.broken_scripts.remove(key);
+                    }
+                }
+                self.project.add_script(key, source);
+                self.script_changed(key);
+            }
+            return;
+        }
         if self.sources.get(key) == Some(&source) {
             return;
         }
@@ -701,6 +739,14 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
 
     /// The file `key` is gone.
     pub fn remove_file(&mut self, key: &str) {
+        if is_script(key) {
+            self.broken_scripts.remove(key);
+            if self.project.script(key).is_some() {
+                self.project.remove_script(key);
+                self.script_changed(key);
+            }
+            return;
+        }
         if self.sources.remove(key).is_none() {
             return;
         }
@@ -718,9 +764,37 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         self.all_dirty = true;
     }
 
-    /// The text of a file as the session has it.
+    /// The text of a file as the session has it, a JavaScript file's too.
     pub fn source(&self, key: &str) -> Option<&str> {
+        if is_script(key) {
+            return self.project.script(key);
+        }
         self.sources.get(key).map(String::as_str)
+    }
+
+    /// The JavaScript files: their keys and their text.
+    pub fn scripts(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.project.scripts()
+    }
+
+    /// The script `key` changed: a QML file that names it is compiled
+    /// again, as the script is part of what it compiles to. A script may
+    /// import another, so when one names it every file is.
+    fn script_changed(&mut self, key: &str) {
+        let name = key.rsplit('/').next().unwrap_or(key);
+        if self
+            .project
+            .scripts()
+            .any(|(other, text)| other != key && text.contains(name))
+        {
+            self.all_dirty = true;
+            return;
+        }
+        for (file, source) in &self.sources {
+            if source.contains(name) {
+                self.dirty.insert(file.clone());
+            }
+        }
     }
 
     /// The keys of the files, in order.
@@ -754,6 +828,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
     /// application already runs; `Err` with every error when a file does
     /// not compile, and then nothing of the change is offered.
     pub fn build(&mut self) -> Result<Option<ReloadPatch>, Vec<CompileFault>> {
+        // What imports a broken script would run without its functions.
+        if !self.broken_scripts.is_empty() {
+            return Err(self.broken_scripts.values().cloned().collect());
+        }
         self.compile_dirty(false)?;
         let failed: BTreeSet<String> = self.failed.keys().cloned().collect();
         if failed == self.live_failed
@@ -936,4 +1014,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         }
         out
     }
+}
+
+/// Whether the key or path names a JavaScript file.
+fn is_script(key: &str) -> bool {
+    key.ends_with(".js") || key.ends_with(".mjs")
 }

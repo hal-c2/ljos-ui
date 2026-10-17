@@ -182,6 +182,7 @@ impl Live {
                 self.compiled_from = session
                     .files()
                     .filter_map(|key| Some((format!("{key}.qml"), session.source(key)?.to_owned())))
+                    .chain(session.scripts().map(|(k, v)| (k.to_owned(), v.to_owned())))
                     .collect();
                 self.settle()
             }

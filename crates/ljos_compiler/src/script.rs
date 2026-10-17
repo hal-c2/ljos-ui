@@ -105,6 +105,28 @@ fn with_imports(source: &str, text: &str, key: &str, imports: &mut Vec<ScriptImp
         .collect()
 }
 
+/// Where and why a script does not parse: 1-based line and column (in
+/// characters), and the parser's message. None when it parses. `module`:
+/// an ECMAScript module (`.mjs`).
+pub(crate) fn syntax_error(source: &str, module: bool) -> Option<(u32, u32, String)> {
+    let (text, _) = without_directives(source);
+    let allocator = Allocator::default();
+    let kind = if module {
+        SourceType::mjs()
+    } else {
+        SourceType::script()
+    };
+    let parsed = Parser::new(&allocator, &text, kind).parse();
+    let error = parsed.diagnostics.first()?;
+    let offset = error.labels.first().map_or(0, |label| label.offset());
+    let (line, column) = qml_syntax::position(&text, offset);
+    Some((
+        u32::try_from(line).unwrap_or(u32::MAX),
+        u32::try_from(column).unwrap_or(u32::MAX),
+        error.message.to_string(),
+    ))
+}
+
 /// The names a script declares at its top level, in order.
 fn declared(text: &str) -> Vec<String> {
     let allocator = Allocator::default();
@@ -138,4 +160,21 @@ fn declared(text: &str) -> Vec<String> {
         }
     }
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::syntax_error;
+
+    #[test]
+    fn a_script_that_does_not_parse_says_where() {
+        let (line, column, _) = syntax_error("let a = 1\nfunction f(n) { return n * }\n", false)
+            .expect("does not parse");
+        assert_eq!((line, column), (2, 28));
+        assert_eq!(
+            syntax_error(".pragma library\nfunction f() {}\n", false),
+            None
+        );
+        assert_eq!(syntax_error("export function f() {}\n", true), None);
+    }
 }

@@ -924,7 +924,7 @@ subsecond (Rust hot-patching) is an optional extra for desktop development. It d
 - **Applying a patch.** The engine does not apply a patch op by op. It makes the application's roots again from the patched files and carries state across by `ObjectKey`: script-assigned values, the properties a type registers with `register_reload_state`, and whatever the type's `Migrate` carries. The old roots are destroyed only once every new one stands, so a patch applies whole or not at all.
 - **Message path.** There is no single `UiMsg` enum; `ljos_dev` owns a bounded `UiInbox<DevMsg>` of capacity 4 whose state messages coalesce. The devtools WebSocket comes with the first device target (M3).
 - **Incremental compile.** `ReloadSession` recompiles the changed files and the files that mention their types by name, which over-approximates the dependency set. salsa is not used yet.
-- **Watched files.** `.qml`, `qmldir` and `CMakeLists.txt`. `.js` and theme files are not watched yet.
+- **Watched files.** `.qml`, `.js`, `.mjs`, `qmldir` and `CMakeLists.txt`. A changed script recompiles the QML files that name it. Theme files are not watched yet.
 - **Where it links.** `ljos_shell` takes `ljos_dev` behind its `dev` feature, and `ljos run --watch` is the CLI entry. `ljos_shell/tests/no_parser.rs` checks that the shell without `dev` links no parser.
 
 ### 12.2 Production bundles
