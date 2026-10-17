@@ -46,6 +46,8 @@ pub const CAPS_LOCK: i32 = 0x0100_0024;
 pub const NUM_LOCK: i32 = 0x0100_0025;
 pub const SCROLL_LOCK: i32 = 0x0100_0026;
 pub const F1: i32 = 0x0100_0030;
+/// The edit key on most desktops.
+pub const F2: i32 = 0x0100_0031;
 pub const F35: i32 = 0x0100_0052;
 pub const SUPER_L: i32 = 0x0100_0053;
 pub const SUPER_R: i32 = 0x0100_0054;

@@ -220,7 +220,7 @@ pub(crate) fn key_opens(
 ) -> bool {
     use super::edit_trigger as t;
     let triggers = e.untrack(|| e.read(view, TableView::EDIT_TRIGGERS.index).to_number() as i32);
-    let edit_key = matches!(ev.key, key::RETURN | key::ENTER) || ev.key == key::F1 + 1;
+    let edit_key = matches!(ev.key, key::RETURN | key::ENTER | key::F2);
     let types = !ev.text.is_empty() && !ev.text.chars().any(char::is_control);
     if edit_key && triggers & (t::EDIT_KEY_PRESSED | t::ANY_KEY_PRESSED) != 0 {
         return open(e, view, st, current);

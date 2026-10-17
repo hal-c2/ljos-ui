@@ -262,9 +262,9 @@ fn a_window_shortcut_hears_only_its_own_window() {
     let e = engine();
     let (first, mut s1) = window(&e, "Qt.WindowShortcut");
     let (second, mut s2) = window(&e, "Qt.WindowShortcut");
-    assert!(s2.key_event(&e, &KeyEvent::press(key::F1 + 1)));
+    assert!(s2.key_event(&e, &KeyEvent::press(key::F2)));
     assert_eq!((log(&e, first), log(&e, second)), ("".into(), "f2".into()));
-    assert!(s1.key_event(&e, &KeyEvent::press(key::F1 + 1)));
+    assert!(s1.key_event(&e, &KeyEvent::press(key::F2)));
     assert_eq!(
         (log(&e, first), log(&e, second)),
         ("f2".into(), "f2".into())
@@ -281,7 +281,7 @@ fn an_application_shortcut_hears_every_window() {
         frame(&mut s, &e);
         (root, s)
     };
-    assert!(s2.key_event(&e, &KeyEvent::press(key::F1 + 1)));
+    assert!(s2.key_event(&e, &KeyEvent::press(key::F2)));
     assert_eq!(log(&e, first), "f2");
     assert_eq!(log(&e, second), "");
 }
@@ -308,7 +308,7 @@ fn a_destroyed_shortcut_takes_no_keys() {
     let (root, mut s) = window(&e, "Qt.WindowShortcut");
     let shortcut = e.children(root)[0];
     e.destroy_now(shortcut);
-    assert!(!s.key_event(&e, &KeyEvent::press(key::F1 + 1)));
+    assert!(!s.key_event(&e, &KeyEvent::press(key::F2)));
     assert_eq!(log(&e, root), "");
 }
 
