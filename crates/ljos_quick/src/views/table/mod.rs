@@ -35,7 +35,7 @@ use crate::item::{Item, is_a, is_item, write_computed};
 use crate::tree;
 
 pub(crate) use cells::Cells;
-pub(crate) use resize::catch as catch_resize;
+pub(crate) use resize::{catch as catch_resize, cursor as resize_cursor};
 pub use select::{CellBlock, CellSelector, cell_block_rect, select_by, set_cell_selector};
 
 /// `TableView.EditTrigger`.

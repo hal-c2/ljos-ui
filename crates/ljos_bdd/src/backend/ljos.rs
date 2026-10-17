@@ -1621,6 +1621,10 @@ impl Backend for LjosBackend {
         Ok(self.live()?.engine.quit_requested())
     }
 
+    fn pointer_cursor(&mut self) -> Result<i64> {
+        Ok(i64::from(self.live()?.scene.cursor_shape()))
+    }
+
     fn panic_in(&mut self, object: &str, message: &str) -> Result<()> {
         let live = self.live()?;
         let obj = live.find(object)?;

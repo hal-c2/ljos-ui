@@ -9,7 +9,9 @@
 //! (`resizableRows`) a press within [`REACH`] of the end of a column
 //! (row), or in the spacing after it, is the view's before its cells'.
 //! Once the pointer went past the drag threshold along it, the size
-//! follows the pointer from there.
+//! follows the pointer from there. Over such an end the pointer shows
+//! `Qt.SplitHCursor` (a column's) or `Qt.SplitVCursor` (a row's), as on
+//! qml6.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -136,6 +138,38 @@ fn press(e: &Engine, view: ObjectId, at: kurbo::Point) -> bool {
     let Some(st) = state_of(e, view) else {
         return false;
     };
+    let grab = ends(e, view, &st, at);
+    st.resize.grab.set(grab);
+    grab.iter().any(Option::is_some)
+}
+
+/// `Qt.SplitHCursor` and `Qt.SplitVCursor`.
+const SPLIT_H: i32 = 12;
+const SPLIT_V: i32 = 11;
+
+/// The cursor over the end of a column or row a view among `hits` lets
+/// the user resize: a column's when it is on both.
+pub(crate) fn cursor(
+    e: &Engine,
+    hits: &[ObjectId],
+    local: impl Fn(ObjectId) -> kurbo::Point,
+) -> Option<i32> {
+    hits.iter()
+        .copied()
+        .filter(|o| is_a::<TableView>(e, *o))
+        .find_map(|view| {
+            let st = state_of(e, view)?;
+            match ends(e, view, &st, local(view)) {
+                [Some(_), _] => Some(SPLIT_H),
+                [None, Some(_)] => Some(SPLIT_V),
+                [None, None] => None,
+            }
+        })
+}
+
+/// The column and the row of `view` whose ends are at `at`, as a press
+/// there would resize them.
+fn ends(e: &Engine, view: ObjectId, st: &TableState, at: kurbo::Point) -> [Option<Line>; 2] {
     let read = |p| e.untrack(|| e.read(view, p));
     let (x, y) = (
         at.x + read(Flickable::CONTENT_X.index).to_number(),
@@ -176,9 +210,7 @@ fn press(e: &Engine, view: ObjectId, at: kurbo::Point) -> bool {
             pressed: at.y,
             from: None,
         });
-    let grab = [column, row];
-    st.resize.grab.set(grab);
-    grab.iter().any(Option::is_some)
+    [column, row]
 }
 
 /// The line among `lines` (start and size each) whose end `at` is on,

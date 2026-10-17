@@ -1431,6 +1431,21 @@ fn asked_to_quit(w: &mut LjosWorld, not: String) -> StepResult {
     })
 }
 
+#[then(regex = r#"^the pointer shows the "([A-Za-z]+Cursor)" cursor$"#)]
+fn pointer_cursor(w: &mut LjosWorld, name: String) -> StepResult {
+    let want = ljos_engine::qt_namespace()
+        .into_iter()
+        .flat_map(|e| e.keys)
+        .find_map(|(key, value)| (key == name).then_some(value))
+        .ok_or_else(|| format!("Qt.{name} is not a cursor shape"))?;
+    w.each(|b| match b.pointer_cursor()? {
+        shape if shape == want => Ok(()),
+        shape => Err(BackendError::Failed(format!(
+            "the pointer shows cursor {shape}, expected Qt.{name} ({want})"
+        ))),
+    })
+}
+
 #[then("there is no reload error")]
 fn no_reload_error(w: &mut LjosWorld) -> StepResult {
     w.each(|b| match b.reload_error()? {

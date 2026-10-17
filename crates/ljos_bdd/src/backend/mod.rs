@@ -491,6 +491,14 @@ pub trait Backend: fmt::Debug {
             what: "seeing a request to quit",
         })
     }
+    /// The `Qt.CursorShape` the pointer shows. The oracle runs off-screen,
+    /// where there is no pointer to show one.
+    fn pointer_cursor(&mut self) -> Result<i64> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "seeing the pointer's cursor",
+        })
+    }
     /// Native code running for the object panics with `message`, as a
     /// bug in a type written in Rust does.
     fn panic_in(&mut self, _object: &str, _message: &str) -> Result<()> {

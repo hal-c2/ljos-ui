@@ -337,6 +337,8 @@ struct PointerState {
     item_hovered: Vec<ObjectId>,
     /// The buttons held after the last pointer event.
     held: MouseButtons,
+    /// The `Qt.CursorShape` the pointer shows.
+    cursor: i32,
 }
 
 /// An item tree, its render tree, and the frame pipeline between them.
@@ -1679,6 +1681,35 @@ impl QuickScene {
             PointerKind::Press | PointerKind::Move | PointerKind::Release => ev.buttons,
             PointerKind::Cancel | PointerKind::Leave => MouseButtons::empty(),
         };
+        let handled = self.deliver(engine, ev);
+        self.pointer.cursor = self.cursor_for(engine, ev);
+        handled
+    }
+
+    /// The `Qt.CursorShape` the pointer shows over the scene, as of the
+    /// last pointer event: `Qt.ArrowCursor` (0) unless something under it
+    /// says otherwise.
+    pub fn cursor_shape(&self) -> i32 {
+        self.pointer.cursor
+    }
+
+    /// The cursor after `ev`. While a button is held it stays as it was
+    /// at the press, so a resize drag keeps it off the column's end.
+    fn cursor_for(&self, engine: &Engine, ev: &PointerEvent) -> i32 {
+        match ev.kind {
+            PointerKind::Leave | PointerKind::Cancel => 0,
+            _ if !ev.buttons.is_empty() => self.pointer.cursor,
+            _ => {
+                let hits = self.hits(engine, ev.pos);
+                crate::views::table::resize_cursor(engine, &hits, |o| {
+                    local_point(engine, o, ev.pos)
+                })
+                .unwrap_or(0)
+            }
+        }
+    }
+
+    fn deliver(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         match ev.kind {
             PointerKind::Press => self.press(engine, ev),
             PointerKind::Move => self.moved(engine, ev),

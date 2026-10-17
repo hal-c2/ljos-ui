@@ -959,10 +959,19 @@ impl QmlView {
         }
     }
 
+    /// egui puts the arrow back every pass, so the scene's cursor is said
+    /// again in each one the pointer is over the view or held.
+    fn show_cursor(&self, ctx: &Context) {
+        if self.pointer.inside || !self.pointer.held.is_empty() {
+            ctx.set_cursor_icon(cursor_icon(self.scene.cursor_shape()));
+        }
+    }
+
     fn deliver_input(&mut self, ui: &Ui, rect: Rect, now: Time) {
         let ctx = ui.ctx();
         let (events, modifiers) = ui.input(|i| (i.events.clone(), i.modifiers));
         if events.is_empty() {
+            self.show_cursor(ctx);
             self.keep_wheel(ui);
             return;
         }
@@ -1159,6 +1168,7 @@ impl QmlView {
             self.scene.pointer_event(&self.engine, ev);
         }
         self.stats.pointer_events += out.len() as u64;
+        self.show_cursor(ctx);
         self.keep_wheel(ui);
         for key in focuses {
             if self.scene.accessible_focus(&self.engine, key) {
@@ -1269,5 +1279,32 @@ impl QmlView {
 impl egui::Widget for &mut QmlView {
     fn ui(self, ui: &mut Ui) -> Response {
         self.show(ui)
+    }
+}
+
+/// The egui cursor for a `Qt.CursorShape`; the arrow for one it has not.
+fn cursor_icon(shape: i32) -> egui::CursorIcon {
+    use egui::CursorIcon as C;
+    match shape {
+        2 => C::Crosshair,
+        3 => C::Wait,
+        4 => C::Text,
+        5 => C::ResizeVertical,
+        6 => C::ResizeHorizontal,
+        7 => C::ResizeNeSw,
+        8 => C::ResizeNwSe,
+        9 | 20 => C::Move,
+        10 => C::None,
+        11 => C::ResizeRow,
+        12 => C::ResizeColumn,
+        13 => C::PointingHand,
+        14 => C::NotAllowed,
+        15 => C::Help,
+        16 => C::Progress,
+        17 => C::Grab,
+        18 => C::Grabbing,
+        19 => C::Copy,
+        21 => C::Alias,
+        _ => C::Default,
     }
 }

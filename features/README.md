@@ -242,6 +242,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then there is no reload error` | no reload has failed, or one succeeded since (`@ljos-only`) |
 | `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
 | `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
+| `Then the pointer shows the "SplitHCursor" cursor` | the `Qt.CursorShape` the pointer shows where it is (`@ljos-only`: the oracle runs off-screen, without a pointer) |
 | `Then the application was asked to quit` / `Then the application was not asked to quit` | whether `Qt.quit()` was called, which a host answers by ending (`@ljos-only`: the oracle is itself the application that would end) |
 | `Then the application has nothing scheduled` | nothing would wake the application if no one touched it: no timer, no frame of something moving, no answer it waits for (`@ljos-only`: the oracle's event loop cannot be read) |
 | `Then the application has no fault` | no fault got past every boundary, or the one that did was cleared (`@ljos-only`) |
