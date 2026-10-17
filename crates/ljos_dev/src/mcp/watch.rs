@@ -177,9 +177,14 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     };
     let mut rx = feed.tx.subscribe();
     let mut waited = false;
+    let mut settled = false;
     if let Some(since) = &args.since {
         let differs = |c: &Counts| !changed(c, since, &wanted).is_empty();
-        if !differs(&rx.borrow_and_update()) {
+        // An application that changes every frame has changed again by
+        // the time a client asks anew. The burst is still gathered, or a
+        // client following it would ask as fast as answers come.
+        let mut came = differs(&rx.borrow_and_update());
+        if !came {
             waited = true;
             let wait = Duration::from_millis(args.wait_ms.unwrap_or(DEFAULT_WAIT_MS));
             let waiting = async {
@@ -192,12 +197,13 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
                     }
                 }
             };
-            let came = tokio::time::timeout(wait, waiting).await.unwrap_or(false);
-            if came && let Some(settle) = args.settle_ms.filter(|s| *s > 0) {
-                // Sleeps without looking: what comes meanwhile is in the
-                // counts read after.
-                tokio::time::sleep(Duration::from_millis(settle)).await;
-            }
+            came = tokio::time::timeout(wait, waiting).await.unwrap_or(false);
+        }
+        if came && let Some(settle) = args.settle_ms.filter(|s| *s > 0) {
+            // Sleeps without looking: what comes meanwhile is in the
+            // counts read after.
+            settled = true;
+            tokio::time::sleep(Duration::from_millis(settle)).await;
         }
     }
     let now = *feed.tx.borrow();
@@ -226,6 +232,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         },
         "changed": names,
         "waited": waited,
+        "settled": settled,
     }))
     .with_text(text)
 }
@@ -256,6 +263,33 @@ mod tests {
         let reply = run(watch(&feed, &args));
         assert_eq!(reply.structured["changed"], json!(["logs"]));
         assert_eq!(reply.structured["waited"], json!(false));
+        assert_eq!(reply.structured["settled"], json!(false));
+    }
+
+    #[test]
+    fn a_change_already_there_is_gathered_for_the_settle() {
+        let feed = ChangeFeed::new();
+        feed.paint();
+        let args = WatchArgs {
+            since: Some(Since {
+                paints: Some(0),
+                ..Since::default()
+            }),
+            settle_ms: Some(30),
+            ..WatchArgs::default()
+        };
+        let reply = run(async {
+            let painter = async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                feed.paint();
+            };
+            let (reply, ()) = tokio::join!(watch(&feed, &args), painter);
+            reply
+        });
+        assert_eq!(reply.structured["waited"], json!(false));
+        assert_eq!(reply.structured["settled"], json!(true));
+        // The pass drawn while it settled is in the counts.
+        assert_eq!(reply.structured["counts"]["paints"], json!(2));
     }
 
     #[test]

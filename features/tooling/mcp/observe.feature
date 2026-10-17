@@ -157,6 +157,15 @@ Feature: Processes and mailboxes from the inspector
       Then the answer's "/waited" is false
       And the answer's "/changed/0" is "reloads"
 
+    Scenario: A watch of an application that is changing all the time still gathers a burst
+      When the agent calls the tool "app_watch" with:
+        """json
+        {"since": {"reloads": 7}, "settle_ms": 20}
+        """
+      Then the answer's "/waited" is false
+      And the answer's "/settled" is true
+      And the answer's "/changed/0" is "reloads"
+
     Scenario: A watch for what does not change waits out its time
       When the agent calls the tool "app_watch" with:
         """json
