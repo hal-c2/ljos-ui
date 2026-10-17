@@ -69,6 +69,12 @@ const BACKGROUND: Duration = Duration::from_millis(100);
 /// atlas: 256 KiB of atlas instead of 2 MiB at llvmpipe's 16384.
 const EGUI_TEXTURE_SIDE: usize = 2048;
 
+/// How long after start-up, or after a burst of background picture loads,
+/// the memory they freed is given back ([`crate::give_back_freed_heap`]):
+/// long enough that what follows at once (the first frames, the next
+/// picture) reuses it instead.
+const HEAP_TRIM_AFTER: Duration = Duration::from_secs(1);
+
 /// What other threads, egui and the accessibility adapter post into the
 /// loop.
 pub(crate) enum ShellEvent {
@@ -550,6 +556,11 @@ struct Desktop<M> {
     /// The scripts the windows may run on input were prepared
     /// ([`Engine::prepare_scripts`]).
     scripts_prepared: bool,
+    /// When the heap is next given back to the system, once start-up or
+    /// a burst of picture loads is over.
+    heap_trim: Option<Instant>,
+    /// Pictures were loading in the background at the last settle.
+    loading: bool,
 }
 
 impl<M> std::fmt::Debug for Desktop<M> {
@@ -598,6 +609,8 @@ impl<M: Send + 'static> Desktop<M> {
             #[cfg(feature = "mcp")]
             began: Instant::now(),
             scripts_prepared: false,
+            heap_trim: None,
+            loading: false,
         }
     }
 
@@ -1024,6 +1037,7 @@ impl<M: Send + 'static> Desktop<M> {
         };
         view.set_drawn(false);
         view.trim(MemoryPressure::Critical);
+        crate::give_back_freed_heap();
     }
 
     /// The system is short of memory: hidden windows give back all they
@@ -1041,6 +1055,7 @@ impl<M: Send + 'static> Desktop<M> {
             };
             view.trim(level);
         }
+        crate::give_back_freed_heap();
     }
 
     /// One pass of slot `i`: input, the scene, and (`paint`) the picture
@@ -1256,7 +1271,9 @@ impl<M: Send + 'static> Desktop<M> {
             *screens_stale = true;
         }
         slot.drawn();
-        self.drawn_once = true;
+        if !std::mem::replace(&mut self.drawn_once, true) {
+            self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
+        }
     }
 
     fn window_event(
@@ -1581,7 +1598,7 @@ impl<M: Send + 'static> Desktop<M> {
 
     /// When the loop has to wake by itself.
     fn next_wake(&self) -> Option<Instant> {
-        let mut next = self.repaints.next();
+        let mut next = earlier(self.repaints.next(), self.heap_trim);
         for slot in &self.slots {
             let stall = slot
                 .redraw_asked
@@ -1641,6 +1658,7 @@ impl<M: Send + 'static> Desktop<M> {
             self.scripts_prepared = true;
             engine.prepare_scripts();
         }
+        self.trim_heap_when_done(&engine);
         let mut next = self.next_wake();
         if self.unsettled() {
             // Applying what the windows want keeps changing what they
@@ -1648,6 +1666,26 @@ impl<M: Send + 'static> Desktop<M> {
             next = earlier(next, Some(Instant::now() + HEARTBEAT));
         }
         host.wake_at(next);
+    }
+
+    /// Start-up and a burst of picture loads free most of what they used
+    /// (the GPU driver's shader compiles, QML being loaded, pictures being
+    /// decoded), but glibc keeps freed memory inside its heaps. A while
+    /// after either is over, it is given back. Each is an event: an
+    /// application that sits idle, or animates, trims nothing more.
+    fn trim_heap_when_done(&mut self, engine: &Engine) {
+        let loading = ljos_quick::ImageStore::of(engine).pending() > 0;
+        if std::mem::replace(&mut self.loading, loading) && !loading {
+            self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
+        }
+        if loading {
+            // Not in the middle of a burst: its pictures reuse the room.
+            self.heap_trim = self.heap_trim.map(|_| Instant::now() + HEAP_TRIM_AFTER);
+        }
+        if self.heap_trim.is_some_and(|t| t <= Instant::now()) {
+            self.heap_trim = None;
+            crate::give_back_freed_heap();
+        }
     }
 
     /// The loop ends. What draws goes while the display is still there.

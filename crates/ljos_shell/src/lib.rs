@@ -490,3 +490,51 @@ fn large_buffers_from_the_system() {
         libc::mallopt(libc::M_MMAP_THRESHOLD, 1 << 20);
     }
 }
+
+/// Gives the memory the allocator's heaps hold free back to the system.
+/// glibc returns only what is free at the top of a heap by itself; what
+/// was freed below something still live stays resident. Start-up (shader
+/// compiles, the first layout) and a burst of picture decodes leave such
+/// holes: about 1.5–2 MiB of a settled window on llvmpipe. Costs a walk of
+/// the heaps, so it is done after start-up, after a burst of picture loads
+/// and under memory pressure, never per frame.
+pub(crate) fn give_back_freed_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim takes the allocator's locks itself.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(all(test, target_os = "linux", target_env = "gnu"))]
+mod tests {
+    /// Resident bytes of this process.
+    fn resident() -> usize {
+        let statm = std::fs::read_to_string("/proc/self/statm").unwrap();
+        let pages: usize = statm.split_whitespace().nth(1).unwrap().parse().unwrap();
+        // SAFETY: sysconf only reads a constant of the system.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        pages * usize::try_from(page).unwrap()
+    }
+
+    #[test]
+    fn memory_freed_below_live_memory_goes_back_to_the_system() {
+        const BLOCK: usize = 16 << 10;
+        const FREED: usize = 32 << 20;
+        let blocks: Vec<Box<[u8]>> = (0..FREED / BLOCK)
+            .map(|i| vec![u8::try_from(i % 251).unwrap() | 1; BLOCK].into_boxed_slice())
+            .collect();
+        // Live above what is freed, so that the heap cannot shrink from
+        // its top by itself.
+        let above = std::hint::black_box(vec![1u8; BLOCK]);
+        drop(std::hint::black_box(blocks));
+        let before = resident();
+        super::give_back_freed_heap();
+        let saved = before.saturating_sub(resident());
+        assert!(
+            saved >= FREED * 3 / 4,
+            "{saved} of {FREED} freed bytes given back"
+        );
+        drop(above);
+    }
+}
