@@ -115,6 +115,51 @@ fn a_thrown_object_keeps_its_fields() {
     assert_eq!(err.message(&engine), "[object Object]");
 }
 
+const THROWS: &str = r#"
+import QtQuick
+Item {
+    Item { id: told; objectName: "told"; property string message: "busy" }
+    Item { id: mute; objectName: "mute" }
+    function fail(which) { throw which ? told : mute }
+}
+"#;
+
+#[test]
+fn a_thrown_qml_object_is_that_object() {
+    let engine = ljos::engine();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Main.qml"), THROWS).unwrap();
+    let source = ljos::dev::compile_dir_with(dir.path(), &engine).unwrap();
+    let root = ljos::create_root(&engine, source, "Main").unwrap();
+    let named = |name: &str| {
+        engine
+            .children(root)
+            .into_iter()
+            .find(|&c| engine.read_by_name(c, "objectName") == Value::from(name))
+            .unwrap()
+    };
+    let call = engine
+        .eval_js("(function (root, which) { root.fail(which) })")
+        .unwrap();
+    let fail = |which: bool| {
+        engine
+            .try_call_js(&call, &[Value::Object(root), Value::Bool(which)])
+            .unwrap_err()
+    };
+
+    // Thrown from a QML function, it comes back as the object, and its
+    // own `message` property is the message.
+    let err = fail(true);
+    assert_eq!(value_of(&err), &Value::Object(named("told")));
+    assert_eq!(err.message(&engine), "busy");
+
+    // One with no `message` is told by what it prints as.
+    let err = fail(false);
+    assert_eq!(value_of(&err), &Value::Object(named("mute")));
+    assert_eq!(err.message(&engine), err.to_string());
+    assert!(!err.message(&engine).is_empty());
+}
+
 #[test]
 fn a_thrown_primitive_is_the_value() {
     let engine = ljos::engine();
