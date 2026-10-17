@@ -107,7 +107,7 @@ fn locale_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
 
 /// `Component`: a template objects are made from (`Component { … }`, an
 /// inline `component`, a property of type `Component`).
-#[derive(Default, QmlObject)]
+#[derive(QmlObject)]
 #[qml(
     module = "QtQml",
     name = "Component",
@@ -122,11 +122,29 @@ pub struct Component {
     pub status: i32,
     #[qml(readonly)]
     pub url: Url,
+    /// Every component is made from a file read whole, or declared in
+    /// place: loaded all the way, whatever its status, as qml6 says of a
+    /// local file.
+    #[qml(notify, readonly)]
+    pub progress: f64,
     #[qml(skip)]
     pub(crate) template: Option<Rc<Template>>,
     /// Why there is no template: what `errorString()` says.
     #[qml(skip)]
     pub(crate) error: Atom,
+}
+
+impl Default for Component {
+    fn default() -> Self {
+        Self {
+            object: QtObject::default(),
+            status: 0,
+            url: Url::default(),
+            progress: 1.0,
+            template: None,
+            error: Atom::default(),
+        }
+    }
 }
 
 impl std::fmt::Debug for Component {

@@ -579,7 +579,9 @@ module QtQml
 		enum CompilationMode PreferSynchronous=0 Asynchronous=1
 		prop status Status readonly
 		prop url QtQml.url named readonly
+		prop progress QtQml.real named readonly
 		signal statusChanged
+		signal progressChanged
 		method createObject
 		method incubateObject
 		method errorString
