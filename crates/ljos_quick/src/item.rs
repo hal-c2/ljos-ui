@@ -466,6 +466,7 @@ fn follow_implicit_size(
     size: PropIndex,
 ) -> Result<(), EngineError> {
     let (axis, implicit) = implicit_of(size);
+    let editor = axis == 0 && is_a::<crate::text_input::TextEditor>(engine, obj);
     let token = Rc::new(());
     engine.with_mut(obj, |i: &mut Item| {
         i.follows_implicit[axis] = Rc::downgrade(&token);
@@ -473,6 +474,9 @@ fn follow_implicit_size(
     engine.bind_computed(obj, size, move |e| {
         // Held, not used: see `Item::follows_implicit`.
         let _alive = &token;
+        if editor {
+            return crate::text_input::followed_width(e, obj);
+        }
         e.read(obj, implicit)
     })
 }

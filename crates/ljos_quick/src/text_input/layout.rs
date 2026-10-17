@@ -421,7 +421,9 @@ pub(crate) fn relayout(
     let sized_by_text = |axis: usize, size: f64, implicit: ljos_engine::PropIndex| {
         inputs.follows[axis]
             && !inputs.own_size
-            && (size - engine.peek(obj, implicit).to_number()).abs() < 0.5
+            // A field is narrower than its implicit width, by what that
+            // was rounded up.
+            && (size - engine.peek(obj, implicit).to_number()).abs() < 1.0
     };
     let follows = [
         sized_by_text(0, inputs.width, Item::IMPLICIT_WIDTH.index),
@@ -468,14 +470,17 @@ pub(crate) fn relayout(
             })
             .collect();
     } else {
-        // A field is a whole number of pixels wide, as in Qt.
+        // A field's implicit width is a whole number of pixels, as in Qt;
+        // see `followed_width` for the width.
         implicit_width = content_width.ceil() + left + right;
         let avail = if follows[0] {
-            content_width.ceil()
+            content_width
         } else {
             inputs.width - left - right
         };
         let mut s = st.borrow_mut();
+        s.natural_width =
+            (!inputs.own_size).then_some((implicit_width, content_width + left + right));
         let x = if content_width <= avail {
             s.hscroll = 0.0;
             horizontal_offset(inputs.h_align, avail - content_width)

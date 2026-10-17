@@ -84,6 +84,9 @@ pub(crate) struct State {
     pub laid_spans: Vec<StyleSpan>,
     pub geo: Geometry,
     pub cursor_rect: Rect,
+    /// The implicit width a one-line editor last gave, and its text's
+    /// width plus padding to the fraction that was rounded up.
+    pub natural_width: Option<(f64, f64)>,
     /// How far a one-line text is moved left to keep the cursor in view.
     pub hscroll: f64,
     /// The blinking cursor is in its shown half.

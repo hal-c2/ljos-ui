@@ -234,6 +234,20 @@ pub fn register_own_implicit_size(engine: &Engine, meta: MetaRef) {
         .push(meta);
 }
 
+/// What the `width` of an editor that follows its implicit size is. A
+/// one-line editor is as wide as its text to the fraction, though its
+/// implicit width is rounded up, as Qt's is while nothing binds to it.
+pub(crate) fn followed_width(engine: &Engine, obj: ljos_engine::ObjectId) -> ljos_engine::Value {
+    let implicit = engine.read(obj, crate::item::Item::IMPLICIT_WIDTH.index);
+    // Read for the dependency: a new text may round up to the same width.
+    engine.read(obj, TextEditor::CONTENT_WIDTH.index);
+    let natural = base::state_of(engine, obj).and_then(|st| st.borrow().natural_width);
+    match natural {
+        Some((given, exact)) if given == implicit.to_number() => ljos_engine::Value::Real(exact),
+        _ => implicit,
+    }
+}
+
 /// Whether `obj`'s type was given to [`register_own_implicit_size`].
 pub(crate) fn has_own_implicit_size(engine: &Engine, obj: ljos_engine::ObjectId) -> bool {
     let reg = engine.extension::<OwnImplicitSize>();
