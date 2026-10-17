@@ -2599,11 +2599,7 @@ pub(crate) fn coerce_for(
         match store.objects.get(*id) {
             None => return Ok(Value::Null),
             Some(h) if !h.meta.inherits_name(name) => {
-                return Err(ConvertError {
-                    from: h.meta.name.to_string(),
-                    to: name.to_string(),
-                }
-                .into());
+                return Err(ConvertError::new(h.meta.name.to_string(), name.to_string()).into());
             }
             Some(_) => {}
         }

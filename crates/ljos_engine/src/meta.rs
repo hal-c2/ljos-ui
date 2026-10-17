@@ -514,10 +514,9 @@ impl MetaObject {
             }
             _ => None,
         };
-        whole.map(Value::Int).ok_or_else(|| ConvertError {
-            from: crate::types::describe(v),
-            to: self.enum_name(name),
-        })
+        whole
+            .map(Value::Int)
+            .ok_or_else(|| ConvertError::new(crate::types::describe(v), self.enum_name(name)))
     }
 
     /// The number of `key` in the enum `name`.

@@ -58,10 +58,8 @@ impl Engine {
             if !internal && (p.is_readonly() || constant) {
                 return Err(EngineError::ReadOnly(p.name.to_string()));
             }
-            p.reset.ok_or_else(|| ConvertError {
-                from: "[undefined]".into(),
-                to: p.ty.name(),
-            })?
+            p.reset
+                .ok_or_else(|| ConvertError::new("[undefined]", p.ty.name()))?
         };
         match reset {
             Reset::Default => self.reset_to_default(obj, prop),

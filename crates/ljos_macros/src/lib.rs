@@ -837,6 +837,18 @@ fn shape(sig: &Signature) -> Result<Shape> {
     Ok(s)
 }
 
+/// The last segment of an impl's type, as errors name it.
+fn type_name(t: &Type) -> String {
+    match t {
+        Type::Path(p) => p
+            .path
+            .segments
+            .last()
+            .map_or_else(String::new, |s| s.ident.to_string()),
+        _ => quote!(#t).to_string(),
+    }
+}
+
 /// For `-> Result<T, E>`, `Some(T)`.
 fn result_ok(t: &Type) -> Option<&Type> {
     let Type::Path(p) = t else { return None };
@@ -1037,11 +1049,17 @@ fn qml_impl_inner(mut item: ItemImpl) -> Result<TokenStream2> {
                 let thunk = format_ident!("__qml_thunk_{}", fn_ident);
                 let tys: Vec<&Type> = s.args.iter().map(|(_, t)| t).collect();
                 let names = s.args.iter().map(|(n, _)| n);
-                let conv = idents.iter().zip(&tys).enumerate().map(|(i, (id, t))| {
-                    quote! {
-                        let #id: #t = <#t as #e::QmlValue>::from_value(#p::arg(args, #i))?;
-                    }
-                });
+                let method = format!("{}.{qml_name}", type_name(&self_ty));
+                let conv = idents
+                    .iter()
+                    .zip(&s.args)
+                    .enumerate()
+                    .map(|(i, (id, (n, t)))| {
+                        quote! {
+                            let #id: #t = <#t as #e::QmlValue>::from_value(#p::arg(args, #i))
+                                .map_err(|e| e.in_call(#method, #n))?;
+                        }
+                    });
                 generated.push(quote! {
                     #[doc(hidden)]
                     fn #thunk(

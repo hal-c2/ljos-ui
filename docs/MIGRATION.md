@@ -325,6 +325,16 @@ script's nested object whole. `Value::map([("path", ..), ("size", ..)])`
 builds one record, and `engine.deep_copy(&v)` reads a `var` a method
 was handed. A `Serialize` type goes through `serde_json::to_value`.
 
+A `serde_json::Value` parameter reads what `JSON.stringify` would
+write: a function or `undefined` field is left out. A QML object or a
+value type (`point`, `font`) in it is refused, and the error names the
+method, the parameter and the path (`Sink.json: payload.item is a QML
+object, not JSON`); take a `Value` to be handed one. A `Vec<T>`
+parameter left out, or given `null`, is empty, and one value that is
+not a list is a list of it (`names("a")` is `["a"]`), as a QML `list`
+property takes one; `Option<Vec<T>>` tells a list left out from an
+empty one.
+
 `register` is the one seam a native module sits at: a host calls it
 on its Engine, and nothing else about the module needs to be
 public. Methods read and write through the `Cx` they are handed and

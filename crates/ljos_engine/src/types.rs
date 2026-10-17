@@ -170,12 +170,7 @@ impl TypeTag {
     /// Converts `v` for assignment to a property of this type. See the
     /// module docs for the rules. Object class checks are the engine's.
     pub fn coerce(&self, v: &Value) -> Result<Value, ConvertError> {
-        let fail = || {
-            Err(ConvertError {
-                from: describe(v),
-                to: self.name(),
-            })
-        };
+        let fail = || Err(ConvertError::new(describe(v), self.name()));
         if matches!(v, Value::Undefined) && !matches!(self, TypeTag::Var | TypeTag::Data) {
             return fail();
         }
@@ -348,12 +343,101 @@ pub(crate) fn describe(v: &Value) -> String {
     }
 }
 
-/// A value could not be assigned to a typed property.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("Unable to assign {from} to {to}")]
+/// A value could not be assigned to a typed property or argument.
+///
+/// A scalar says it as Qt does (`Unable to assign [undefined] to real`).
+/// Data (`serde_json::Value`, `Vec<T>`, maps) says where in what it was
+/// given, in the Rust author's terms: `Sink.json: payload.item is a QML
+/// object, not JSON`.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConvertError {
     pub from: String,
     pub to: String,
+    /// For data, the path below the value (`.item`, `[2].name`), empty
+    /// for the value itself; `None` for a scalar.
+    pub at: Option<String>,
+    /// The method and parameter a data argument was for.
+    pub call: Option<(String, String)>,
+}
+
+impl ConvertError {
+    pub fn new(from: impl Into<String>, to: impl Into<String>) -> Self {
+        Self {
+            from: from.into(),
+            to: to.into(),
+            at: None,
+            call: None,
+        }
+    }
+
+    /// Data refused `v` as `to` ("JSON", "a list").
+    pub fn data(v: &Value, to: impl Into<String>) -> Self {
+        Self {
+            at: Some(String::new()),
+            ..Self::new(describe_data(v), to)
+        }
+    }
+
+    /// The error of a part of data, at `step` (`.item`, `[2]`) in it.
+    #[must_use]
+    pub fn within(mut self, step: &str) -> Self {
+        self.at = Some(format!("{step}{}", self.at.as_deref().unwrap_or("")));
+        self
+    }
+
+    /// Names the method (`Sink.json`) and parameter (`payload`) a data
+    /// argument was for; a scalar's error is left as Qt words it.
+    #[must_use]
+    pub fn in_call(mut self, method: &str, param: &str) -> Self {
+        if self.at.is_some() {
+            self.call = Some((method.into(), param.into()));
+        }
+        self
+    }
+}
+
+impl std::fmt::Display for ConvertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Some(at) = &self.at else {
+            return write!(f, "Unable to assign {} to {}", self.from, self.to);
+        };
+        let param = match &self.call {
+            Some((method, param)) => {
+                write!(f, "{method}: ")?;
+                param.as_str()
+            }
+            None => "value",
+        };
+        write!(f, "{param}{at} is {}, not {}", self.from, self.to)
+    }
+}
+
+impl std::error::Error for ConvertError {}
+
+/// What a value is, for a data error: in a script's words, not Qt's.
+fn describe_data(v: &Value) -> String {
+    match v {
+        Value::Undefined => "undefined".into(),
+        Value::Null => "null".into(),
+        Value::Bool(_) => "a bool".into(),
+        Value::Int(_) | Value::Real(_) | Value::Enum(_) => "a number".into(),
+        Value::String(_) => "a string".into(),
+        Value::Url(_) => "a url".into(),
+        Value::Color(_) => "a color".into(),
+        Value::Object(_) => "a QML object".into(),
+        Value::List(_) => "a list".into(),
+        Value::Map(_) => "an object".into(),
+        Value::Js(_) => "a function".into(),
+        Value::Point(_)
+        | Value::IntPoint(_)
+        | Value::Size(_)
+        | Value::Rect(_)
+        | Value::Font(_)
+        | Value::Vector2d(_)
+        | Value::Vector3d(_)
+        | Value::Vector4d(_)
+        | Value::Quaternion(_) => format!("a {}", describe(v)),
+    }
 }
 
 /// A `url` value as a Rust type.
@@ -456,15 +540,17 @@ impl QmlValue for ObjectId {
 }
 
 fn convert_error(v: &Value, to: &str) -> ConvertError {
-    ConvertError {
-        from: describe(v),
-        to: to.into(),
-    }
+    ConvertError::new(describe(v), to)
 }
 
 /// A list: `list` for a `Vec<Value>`, which keeps a script's objects as
 /// the script's own; for any other item type data ([`TypeTag::Data`]),
 /// so a list of records arrives as one.
+///
+/// `undefined` (an argument left out) and `null` are the empty list, and
+/// one value that is not a list is a list of it, as a QML `list`
+/// property takes one: `names("a")` is `["a"]`. Use `Option<Vec<T>>` to
+/// tell a list left out from an empty one.
 impl<T: QmlValue> QmlValue for Vec<T> {
     fn type_tag() -> TypeTag {
         match T::type_tag() {
@@ -476,9 +562,12 @@ impl<T: QmlValue> QmlValue for Vec<T> {
         Value::list(self.iter().map(T::to_value).collect())
     }
     fn from_value(v: &Value) -> Result<Self, ConvertError> {
-        match TypeTag::List(None).coerce(v)? {
-            Value::List(items) => items.iter().map(T::from_value).collect(),
-            _ => unreachable!("coerce returns the tag's own variant"),
+        let item =
+            |(i, v): (usize, &Value)| T::from_value(v).map_err(|e| e.within(&format!("[{i}]")));
+        match v {
+            Value::Undefined | Value::Null => Ok(Vec::new()),
+            Value::List(items) => items.iter().enumerate().map(item).collect(),
+            _ => Ok(vec![T::from_value(v)?]),
         }
     }
 }
@@ -520,7 +609,12 @@ impl<T: QmlValue, S: std::hash::BuildHasher + Default + 'static> QmlValue
     fn from_value(v: &Value) -> Result<Self, ConvertError> {
         record_fields(v)?
             .iter()
-            .map(|(k, v)| Ok((k.to_string(), T::from_value(v)?)))
+            .map(|(k, v)| {
+                Ok((
+                    k.to_string(),
+                    T::from_value(v).map_err(|e| e.within(&field(k)))?,
+                ))
+            })
             .collect()
     }
 }
@@ -536,20 +630,48 @@ impl<T: QmlValue> QmlValue for std::collections::BTreeMap<String, T> {
     fn from_value(v: &Value) -> Result<Self, ConvertError> {
         record_fields(v)?
             .iter()
-            .map(|(k, v)| Ok((k.to_string(), T::from_value(v)?)))
+            .map(|(k, v)| {
+                Ok((
+                    k.to_string(),
+                    T::from_value(v).map_err(|e| e.within(&field(k)))?,
+                ))
+            })
             .collect()
     }
 }
 
 fn record_fields(v: &Value) -> Result<&[(Atom, Value)], ConvertError> {
-    v.as_map().ok_or_else(|| convert_error(v, "QVariantMap"))
+    v.as_map().ok_or_else(|| ConvertError::data(v, "a map"))
+}
+
+/// The step to a field in a data error's path: `.name`, or `["a b"]`
+/// for a key that is not a name.
+fn field(key: &str) -> String {
+    let name = key
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$')
+        && key
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if name {
+        format!(".{key}")
+    } else {
+        format!("[{key:?}]")
+    }
 }
 
 /// JSON as data: objects are records, arrays lists, numbers that fit an
-/// `int` are one. Coming back, a whole number is a JSON integer, a
-/// number JSON cannot write (NaN, an infinity) is `null` as
-/// `JSON.stringify` writes it, `undefined` is `null`, and a url, colour or
-/// enum is its string or number. An object or a value type is refused.
+/// `int` are one. Coming back, it reads what `JSON.stringify` would
+/// write: a field that is `undefined` or a function is left out, and in
+/// a list or on its own (an argument left out) either is `null`. A
+/// number JSON cannot write (NaN, an infinity) is `null`, and a url,
+/// colour or enum is its string or number.
+///
+/// A QML object or a value type (a `point`, a `font`) is refused, with
+/// the path to it (`Sink.json: payload.item is a QML object, not JSON`):
+/// it has no JSON form that would read back as the same thing. Take a
+/// [`Value`] to be handed one.
 ///
 /// A JSON object stored in a property or a `PropertyMap` entry is one
 /// script object until it is stored again: reads share it, and a field
@@ -582,7 +704,8 @@ impl QmlValue for serde_json::Value {
             }
         };
         Ok(match v {
-            Value::Undefined | Value::Null => J::Null,
+            // In a list, as `JSON.stringify` writes them.
+            Value::Undefined | Value::Null | Value::Js(_) => J::Null,
             Value::Bool(b) => J::Bool(*b),
             Value::Int(i) => J::from(*i),
             Value::Real(r) => number(*r),
@@ -592,16 +715,22 @@ impl QmlValue for serde_json::Value {
             Value::List(items) => J::Array(
                 items
                     .iter()
-                    .map(Self::from_value)
+                    .enumerate()
+                    .map(|(i, v)| Self::from_value(v).map_err(|e| e.within(&format!("[{i}]"))))
                     .collect::<Result<_, _>>()?,
             ),
             Value::Map(fields) => J::Object(
                 fields
                     .iter()
-                    .map(|(k, v)| Ok((k.to_string(), Self::from_value(v)?)))
+                    // A script's function arrives as its own value.
+                    .filter(|(_, v)| !matches!(v, Value::Undefined | Value::Js(_)))
+                    .map(|(k, v)| {
+                        let v = Self::from_value(v).map_err(|e| e.within(&field(k)))?;
+                        Ok((k.to_string(), v))
+                    })
                     .collect::<Result<_, ConvertError>>()?,
             ),
-            _ => return Err(convert_error(v, "QJsonValue")),
+            _ => return Err(ConvertError::data(v, "JSON")),
         })
     }
 }
