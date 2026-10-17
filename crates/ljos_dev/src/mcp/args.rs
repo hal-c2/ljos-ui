@@ -123,9 +123,9 @@ tools (at most 32). They run in order and stop at the first failure. One differe
 is given at the end; each step says what it cost. Every step's capability is needed up front.";
 
 pub const SET_PROPERTY: &str = "\
-Assign `value` to `property` of `target`, as a script would: a binding on it is replaced. The \
-assignment is recorded as made by devtools (`app_inspect` says so). Refused for a read-only \
-property or a value of the wrong kind. Answers with the value now, the previous one and what changed.";
+Assign `value` to `property` of `target` as a script would, replacing a binding; `keep_binding` \
+covers it instead. Recorded as devtools' (`app_inspect`). `revert` takes the edit back: the \
+binding, or the value before. Answers with the value now, the previous one and what changed.";
 
 pub const INVOKE: &str = "\
 Call the method `name` of `target` with `args`, or send the signal of that name so its handlers \
@@ -403,8 +403,22 @@ pub struct SetPropertyArgs {
     pub target: String,
     pub property: String,
     /// A JSON value: a number, text, true or false, null, a list, or an
-    /// object for a `var` property.
-    pub value: Value,
+    /// object for a `var` property. Not with `revert`.
+    #[serde(default, deserialize_with = "present")]
+    pub value: Option<Value>,
+    /// Cover a binding instead of replacing it, so that `revert` can bring
+    /// it back.
+    #[serde(default)]
+    pub keep_binding: bool,
+    /// Take back what devtools did to the property: the binding it
+    /// covered, or the value it had before.
+    #[serde(default)]
+    pub revert: bool,
+}
+
+/// A value that was given, `null` included: absent is `None`.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -531,6 +545,8 @@ pub enum Kind {
     Metrics,
     Processes(super::observe::ProcessesArgs),
     Mailboxes(super::observe::MailboxesArgs),
+    Watch(super::watch::WatchArgs),
+    Objects(super::objects::ObjectsArgs),
     Resource(Resource),
     /// Something that changes the application or its input.
     Act(Act),
@@ -574,10 +590,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 9;
+pub const FIRST_ACT: usize = 11;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 22] = [
+pub const TOOLS: [&str; 24] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -587,6 +603,8 @@ pub const TOOLS: [&str; 22] = [
     "app_metrics",
     "app_processes",
     "app_mailboxes",
+    "app_watch",
+    "app_objects",
     "app_click",
     "app_type",
     "app_press",
@@ -629,6 +647,14 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::observe::MailboxesArgs>(
             "app_mailboxes",
             super::observe::MAILBOXES,
+        )))
+        .declare(read(ToolDef::new::<super::watch::WatchArgs>(
+            "app_watch",
+            super::watch::WATCH,
+        )))
+        .declare(read(ToolDef::new::<super::objects::ObjectsArgs>(
+            "app_objects",
+            super::objects::OBJECTS,
         )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
@@ -782,7 +808,20 @@ fn parse_act(tool: &'static str, args: Value) -> Result<Act, SurfaceError> {
             }
             Act::Appearance(a)
         }
-        "app_set_property" => Act::SetProperty(read(tool, args)?),
+        "app_set_property" => {
+            let a: SetPropertyArgs = read(tool, args)?;
+            match (&a.value, a.revert) {
+                (Some(_), true) => {
+                    return Err(bad(
+                        tool,
+                        "`revert` takes back an edit and sets no value; give `value` or `revert`",
+                    ));
+                }
+                (None, false) => return Err(bad(tool, "missing field `value`")),
+                _ => {}
+            }
+            Act::SetProperty(a)
+        }
         "app_invoke" => Act::Invoke(read(tool, args)?),
         "app_reload" => {
             read::<Nothing>(tool, args)?;
@@ -927,6 +966,25 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 return Err(bad(tool, format!("`peek` is at most {most}")));
             }
             Kind::Mailboxes(a)
+        }
+        "app_watch" => {
+            let a: super::watch::WatchArgs = read(tool, args)?;
+            let most = super::watch::MAX_WAIT_MS;
+            if a.wait_ms.is_some_and(|w| w > most) {
+                return Err(bad(tool, format!("`wait_ms` is at most {most}")));
+            }
+            let most = super::watch::MAX_SETTLE_MS;
+            if a.settle_ms.is_some_and(|w| w > most) {
+                return Err(bad(tool, format!("`settle_ms` is at most {most}")));
+            }
+            Kind::Watch(a)
+        }
+        "app_objects" => {
+            let a: super::objects::ObjectsArgs = read(tool, args)?;
+            if a.max == Some(0) {
+                return Err(bad(tool, "`max` is at least 1"));
+            }
+            Kind::Objects(a)
         }
         other => {
             return Err(SurfaceError::not_found(format!(

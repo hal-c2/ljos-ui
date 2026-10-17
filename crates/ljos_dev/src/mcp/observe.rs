@@ -83,6 +83,8 @@ pub(crate) fn request_kind(req: &DevReq) -> &'static str {
         Kind::Metrics => "app_metrics",
         Kind::Processes(_) => "app_processes",
         Kind::Mailboxes(_) => "app_mailboxes",
+        Kind::Watch(_) => "app_watch",
+        Kind::Objects(_) => "app_objects",
         Kind::Resource(r) => match r {
             Resource::Tree => "resource tree",
             Resource::Logs => "resource logs",
@@ -179,13 +181,33 @@ struct Thread {
     preempted: u64,
 }
 
+/// The names the kernel cut to 15 bytes, whole again.
+const WHOLE_NAMES: [(&str, &str); 7] = [
+    ("zbus::Connectio", "zbus::Connection"),
+    ("ljos-screen-rea", "ljos-screen-reader"),
+    ("ljos-desktop-fo", "ljos-desktop-fonts"),
+    ("ljos-dev-watche", "ljos-dev-watcher"),
+    ("ljos-compute-wo", "ljos-compute-worker"),
+    ("ljos-mcp-server", "ljos-mcp-server"),
+    ("ljos-settings-w", "ljos-settings-watcher"),
+];
+
+/// The name a thread was given, as far as it can be told, and whether the
+/// kernel cut it: it keeps 15 bytes.
+fn whole_name(name: &str) -> (String, bool) {
+    if let Some((_, whole)) = WHOLE_NAMES.iter().find(|(cut, _)| *cut == name) {
+        return ((*whole).to_owned(), false);
+    }
+    (name.to_owned(), name.len() == 15)
+}
+
 /// What a thread is for, from the name it was given (cut to 15 bytes by
 /// the kernel).
 fn thread_kind(name: &str, ui: bool) -> &'static str {
     if ui {
         return "engine";
     }
-    let table: [(&str, &str); 16] = [
+    let table: [(&str, &str); 21] = [
         ("ljos-compute", "pool"),
         ("ljos-mcp", "inspector"),
         ("tokio", "tokio"),
@@ -202,6 +224,14 @@ fn thread_kind(name: &str, ui: bool) -> &'static str {
         ("ljos-gpu", "gpu"),
         ("ljos-dev-watche", "reload"),
         ("ljos-", "worker"),
+        // A D-Bus connection (accessibility, portals, settings) and the
+        // executor and blocking pool it runs on.
+        ("zbus", "dbus"),
+        ("async-io", "dbus"),
+        ("blocking-", "dbus"),
+        ("gdbus", "dbus"),
+        // Mesa's drawing threads when the device is the CPU.
+        ("llvmpipe", "gpu"),
     ];
     table
         .iter()
@@ -286,13 +316,15 @@ fn threads() -> Vec<Thread> {
     Vec::new()
 }
 
-/// `Timer#tick`, `NumberAnimation "fade"`: what to call an object.
+/// `Timer#tick`, `NumberAnimation "fade"`, `Timer (Clock.qml:42)`: what
+/// to call an object, and a target any tool takes for it.
 fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) {
     let report = engine.inspect_object(obj);
     let ty = report
         .as_ref()
         .and_then(|r| r.types.first().cloned())
         .unwrap_or_else(|| "object".to_owned());
+    let place = report.as_ref().and_then(|r| r.declared_at.clone());
     let id = report.and_then(|r| r.id);
     let object_name = engine
         .untrack(|| engine.read_by_name(obj, "objectName"))
@@ -305,9 +337,56 @@ fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) {
         )
     } else if let Some(id) = id {
         (format!("{ty}#{id}"), Some(format!("id={id}")))
+    } else if let Some(at) = place {
+        // Several Timers without a name are told apart by where they are
+        // written.
+        let file = at.file.rsplit('/').next().unwrap_or(&at.file);
+        (
+            format!("{ty} ({file}:{})", at.line),
+            Some(super::objects::handle(obj)),
+        )
     } else {
-        (ty, None)
+        (ty, Some(super::objects::handle(obj)))
     }
+}
+
+/// The process as a whole: its threads, its memory, the CPU it used.
+#[cfg(target_os = "linux")]
+fn process_block(threads: usize) -> Value {
+    // Pages, as `statm` counts them; 4 KiB on every Linux Ljós runs on
+    // but the few with larger pages, which `smaps` would tell.
+    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let mut pages = statm
+        .split_whitespace()
+        .map(|f| f.parse::<u64>().unwrap_or(0));
+    let virt = pages.next().unwrap_or(0);
+    let rss = pages.next().unwrap_or(0);
+    let shared = pages.next().unwrap_or(0);
+    const PAGE: u64 = 4096;
+    // utime and stime of every thread there was, ended ones too, in
+    // clock ticks of 10 ms.
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    let rest: Vec<&str> = stat
+        .rfind(')')
+        .and_then(|c| stat.get(c + 2..))
+        .unwrap_or("")
+        .split_whitespace()
+        .collect();
+    let field = |i: usize| rest.get(i).and_then(|f| f.parse::<u64>().ok()).unwrap_or(0);
+    let cpu_us = (field(11) + field(12)) * 10_000;
+    json!({
+        "pid": std::process::id(),
+        "threads": threads,
+        "rss_bytes": rss * PAGE,
+        "shared_bytes": shared * PAGE,
+        "virtual_bytes": virt * PAGE,
+        "cpu_us": cpu_us,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_block(threads: usize) -> Value {
+    json!({ "pid": std::process::id(), "threads": threads })
 }
 
 /// Answers `app_processes`, on the UI thread.
@@ -321,9 +400,11 @@ pub(crate) fn processes(
     let wants = |k: ProcessKind| args.kind.is_none_or(|w| w == k);
     let mut rows: Vec<Value> = Vec::new();
     let mut text = String::new();
+    let mut thread_count = 0;
     if wants(ProcessKind::Thread) {
         let ui = current_tid();
         let mut all = threads();
+        thread_count = all.len();
         // The UI thread first: it is the one the rest serve.
         all.sort_by_key(|t| Some(t.tid) != ui);
         for t in &all {
@@ -336,9 +417,10 @@ pub(crate) fn processes(
             } else {
                 thread_state(t.state)
             };
+            let (name, cut) = whole_name(&t.name);
             let mut row = json!({
                 "kind": "thread",
-                "name": if is_ui { "UI thread" } else { t.name.as_str() },
+                "name": if is_ui { "UI thread" } else { name.as_str() },
                 "role": kind,
                 "tid": t.tid,
                 "state": state,
@@ -350,10 +432,14 @@ pub(crate) fn processes(
                 row["thread_name"] = json!(t.name);
                 row["platform_requests"] = json!(pending_requests);
             }
+            if cut && !is_ui {
+                // The kernel kept 15 bytes of a longer name.
+                row["truncated"] = json!(true);
+            }
             let _ = writeln!(
                 text,
                 "thread {} [{kind}] tid {} {state}, cpu {:.1} ms, wakeups {}",
-                if is_ui { "UI thread" } else { t.name.as_str() },
+                if is_ui { "UI thread" } else { name.as_str() },
                 t.tid,
                 t.work_us as f64 / 1000.0,
                 t.wakeups
@@ -373,6 +459,7 @@ pub(crate) fn processes(
             rows.push(json!({
                 "kind": "timer",
                 "name": name,
+                "handle": super::objects::handle(t.object),
                 "locator": locator,
                 "state": state,
                 "interval_ms": t.interval,
@@ -396,6 +483,7 @@ pub(crate) fn processes(
             rows.push(json!({
                 "kind": "animation",
                 "name": name,
+                "handle": super::objects::handle(anim),
                 "locator": locator,
                 "state": state,
             }));
@@ -417,7 +505,21 @@ pub(crate) fn processes(
     if rows.is_empty() {
         text.push_str("nothing of that kind is running\n");
     }
-    ToolReply::from(json!({ "processes": rows })).with_text(text.trim_end().to_owned())
+    let mut value = json!({ "processes": rows });
+    if wants(ProcessKind::Thread) {
+        let process = process_block(thread_count);
+        if let Some(rss) = process["rss_bytes"].as_u64() {
+            let _ = writeln!(
+                text,
+                "process {}: {} threads, {:.1} MiB resident",
+                process["pid"],
+                thread_count,
+                rss as f64 / (1024.0 * 1024.0)
+            );
+        }
+        value["process"] = process;
+    }
+    ToolReply::from(value).with_text(text.trim_end().to_owned())
 }
 
 #[cfg(test)]
@@ -429,8 +531,24 @@ mod tests {
         assert_eq!(thread_kind("ljos-compute", false), "pool");
         assert_eq!(thread_kind("ljos-screen-rea", false), "screen_reader");
         assert_eq!(thread_kind("ljos-xml", false), "worker");
-        assert_eq!(thread_kind("gdbus", false), "other");
+        assert_eq!(thread_kind("gdbus", false), "dbus");
+        assert_eq!(thread_kind("zbus::Connectio", false), "dbus");
+        assert_eq!(thread_kind("llvmpipe-3", false), "gpu");
+        assert_eq!(thread_kind("pipewire", false), "other");
         assert_eq!(thread_kind("gdbus", true), "engine");
+    }
+
+    #[test]
+    fn a_cut_name_is_made_whole_or_said_to_be_cut() {
+        assert_eq!(
+            whole_name("zbus::Connectio"),
+            ("zbus::Connection".into(), false)
+        );
+        assert_eq!(
+            whole_name("some-long-threa"),
+            ("some-long-threa".into(), true)
+        );
+        assert_eq!(whole_name("tokio-rt"), ("tokio-rt".into(), false));
     }
 
     #[cfg(target_os = "linux")]

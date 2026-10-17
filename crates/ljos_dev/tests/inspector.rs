@@ -1718,3 +1718,60 @@ fn app_mailboxes_names_kinds_never_contents() {
     assert_eq!(code, "invalid_argument", "{message}");
     assert!(message.contains("at most 20"), "{message}");
 }
+
+#[test]
+fn app_watch_tells_a_log_line_without_waking_the_ui_thread() {
+    let mut app = app();
+    let first = app.call("app_watch", json!({}));
+    let counts = first.structured["counts"].clone();
+    assert_eq!(app.pumps, 0, "a watch is answered on the server's thread");
+
+    // Nothing happened: the watch waits out its time and says so.
+    let quiet = app.call(
+        "app_watch",
+        json!({ "since": counts, "topics": ["logs", "reloads"], "wait_ms": 20 }),
+    );
+    assert_eq!(quiet.structured["waited"], true);
+    assert_eq!(quiet.structured["changed"], json!([]));
+    assert_eq!(app.pumps, 0);
+
+    app.engine.log(LogLevel::Warning, "app", "low battery");
+    let told = app.call(
+        "app_watch",
+        json!({ "since": counts, "topics": ["logs"], "wait_ms": 5000 }),
+    );
+    assert_eq!(told.structured["changed"], json!(["logs"]));
+    assert_eq!(told.structured["waited"], false);
+    assert_eq!(
+        told.structured["counts"]["logs"].as_u64(),
+        counts["logs"].as_u64().map(|n| n + 1)
+    );
+    assert_eq!(app.pumps, 0);
+}
+
+#[test]
+fn app_objects_hands_out_handles_that_every_tool_takes() {
+    let mut app = app();
+    let reply = app.call("app_objects", json!({}));
+    let rows = reply.structured["objects"].as_array().unwrap().clone();
+    assert!(!rows.is_empty(), "{}", reply.text);
+    assert_eq!(rows[0]["depth"], 0);
+    // Depth never jumps by more than one going down: a tree, in order.
+    for pair in rows.windows(2) {
+        let (a, b) = (pair[0]["depth"].as_u64(), pair[1]["depth"].as_u64());
+        assert!(b <= a.map(|d| d + 1), "{}", reply.text);
+    }
+    let root = rows[0]["handle"].as_str().unwrap().to_owned();
+    let inspected = app.call("app_inspect", json!({ "target": root }));
+    assert_eq!(
+        inspected.structured["type"], rows[0]["type"],
+        "{}",
+        inspected.text
+    );
+
+    // From a handle down, one level.
+    let below = app.call("app_objects", json!({ "root": root, "depth": 1 }));
+    let below = below.structured["objects"].as_array().unwrap().clone();
+    assert_eq!(below[0]["handle"], rows[0]["handle"]);
+    assert!(below.iter().all(|r| r["depth"].as_u64() <= Some(1)));
+}

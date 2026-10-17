@@ -136,6 +136,73 @@ Feature: An agent that may change the application
       And the answer's "/value" is "<redacted>"
       And the answer does not contain "hunter2"
 
+  Rule: An edit can be taken back
+
+    Scenario: An edit that keeps the binding covers it
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "twice", "value": 99, "keep_binding": true}
+        """
+      And the property "count" of "root" is set to 4
+      Then the property "twice" of "root" is 99
+
+    Scenario: Reverting an edit that kept the binding brings the binding back
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "twice", "value": 99, "keep_binding": true}
+        """
+      And the property "count" of "root" is set to 4
+      And the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "twice", "revert": true}
+        """
+      Then the property "twice" of "root" is 8
+      And the answer's "/restored" is "binding"
+
+    Scenario: Reverting an assignment gives back the value from before it
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "title", "value": "second"}
+        """
+      And the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "title", "revert": true}
+        """
+      Then the property "title" of "root" is "first"
+      And the answer's "/restored" is "value"
+
+    Scenario: An edit that keeps the binding is recorded as the agent's
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "twice", "value": 99, "keep_binding": true}
+        """
+      And the agent inspects "#root"
+      Then the inspected property "twice" is assigned by "devtools"
+
+    Scenario: A property the agent did not edit cannot be reverted
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "count", "revert": true}
+        """
+      Then the agent is refused with "not_actionable"
+      And the refusal mentions "count"
+
+    Scenario: A value and a revert together are refused
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#root", "property": "count", "value": 1, "revert": true}
+        """
+      Then the agent is refused with "invalid_argument"
+
+  Rule: A list or an object is told as what it holds
+
+    Scenario: A list of objects is told by its length
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#root", "all": true}
+        """
+      Then the inspected property "children" has the value "2 objects"
+
   Rule: A method is called and a signal is sent as the application would
 
     Scenario: A method is called with its arguments and answers its result

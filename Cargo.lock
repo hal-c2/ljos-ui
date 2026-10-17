@@ -3629,6 +3629,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "slotmap",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

@@ -361,6 +361,166 @@
     "read_only": true
   },
   {
+    "description": "Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads. Give the `counts` of the last answer as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst into one answer. Wakes nothing in the app.",
+    "input_schema": {
+      "$defs": {
+        "Since": {
+          "additionalProperties": false,
+          "description": "The counts a client was last told; a topic left out is not compared.",
+          "properties": {
+            "frames": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "logs": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "paints": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reloads": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "Topic": {
+          "description": "What a watch can wait for.",
+          "oneOf": [
+            {
+              "const": "frames",
+              "description": "Frames the application ran, including ones an inspector's request\nasked for.",
+              "type": "string"
+            },
+            {
+              "const": "paints",
+              "description": "Passes of the primary window that drew something: the picture\nchanged.",
+              "type": "string"
+            },
+            {
+              "const": "logs",
+              "description": "Lines in the log `app_logs` reads.",
+              "type": "string"
+            },
+            {
+              "const": "reloads",
+              "description": "Reloads, applied or failed.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "settle_ms": {
+          "default": null,
+          "description": "After the first change, wait this much longer so that a burst is\none answer (at most 5000).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "since": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Since"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The `counts` of the last answer. Without them the counts are\nanswered at once."
+        },
+        "topics": {
+          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`. All by\ndefault.",
+          "items": {
+            "$ref": "#/$defs/Topic"
+          },
+          "type": "array"
+        },
+        "wait_ms": {
+          "default": null,
+          "description": "How long to wait at most, in milliseconds (default 10000, at most\n30000).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "WatchArgs",
+      "type": "object"
+    },
+    "name": "app_watch",
+    "read_only": true
+  },
+  {
+    "description": "Every object below `root` (a target; default the scene's root), items or not: Timers, models, animations, items without a role. Each has a `@handle` any tool takes as its target, its type, id, objectName and depth. `depth` limits how far down; `hidden` counts what it left out.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "default": null,
+          "description": "How many levels below the root to list (0 is the root alone).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max": {
+          "default": null,
+          "description": "The most objects to list (default 500, at most 5000).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "root": {
+          "default": null,
+          "description": "The object to start at: a `@handle` or a locator. Default: the\nscene's root.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "ObjectsArgs",
+      "type": "object"
+    },
+    "name": "app_objects",
+    "read_only": true
+  },
+  {
     "description": "Click the item `target` (a reference or locator) at its centre: a move, a press and a release through the same hit test as a mouse, so what is on top gets it. `button` is left (default), right or middle; `count` 2 is a double click. Answers once the frame settled, with what changed.",
     "input_schema": {
       "$defs": {
@@ -713,25 +873,35 @@
     "read_only": false
   },
   {
-    "description": "Assign `value` to `property` of `target`, as a script would: a binding on it is replaced. The assignment is recorded as made by devtools (`app_inspect` says so). Refused for a read-only property or a value of the wrong kind. Answers with the value now, the previous one and what changed.",
+    "description": "Assign `value` to `property` of `target` as a script would, replacing a binding; `keep_binding` covers it instead. Recorded as devtools' (`app_inspect`). `revert` takes the edit back: the binding, or the value before. Answers with the value now, the previous one and what changed.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "keep_binding": {
+          "default": false,
+          "description": "Cover a binding instead of replacing it, so that `revert` can bring\nit back.",
+          "type": "boolean"
+        },
         "property": {
           "type": "string"
+        },
+        "revert": {
+          "default": false,
+          "description": "Take back what devtools did to the property: the binding it\ncovered, or the value it had before.",
+          "type": "boolean"
         },
         "target": {
           "description": "A reference or a locator that matches exactly one object.",
           "type": "string"
         },
         "value": {
-          "description": "A JSON value: a number, text, true or false, null, a list, or an\nobject for a `var` property."
+          "default": null,
+          "description": "A JSON value: a number, text, true or false, null, a list, or an\nobject for a `var` property. Not with `revert`."
         }
       },
       "required": [
         "target",
-        "property",
-        "value"
+        "property"
       ],
       "title": "SetPropertyArgs",
       "type": "object"

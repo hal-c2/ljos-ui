@@ -11,11 +11,12 @@
 //! Every act answers once the frame has settled, with what changed: the
 //! difference between the outline before the act and the one after it.
 
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use ljos_engine::{Engine, EngineError, ObjectId, Value as QmlValue};
+use ljos_engine::{
+    Engine, EngineError, ObjectId, OverrideContent, PropIndex, RestoreMode, Value as QmlValue,
+};
 use ljos_mcp_core::{ErrorCode, RefTable, SurfaceError, ToolReply, delta};
 use ljos_quick::keys::key;
 use ljos_quick::{
@@ -30,6 +31,7 @@ use super::args::{
     ResizeArgs, Scheme, ScrollArgs, SetPropertyArgs, TouchAction, TouchArgs, TypeArgs,
 };
 use super::capture::{self, Capture, REDACTED};
+use super::edits::{Edit, Edits};
 use super::surface::Answer;
 use super::tools::{Look, TYPED, Target, clip, flag, num, visible_to_the_top, window_box};
 use super::{Inspector, MAX_DELTA_LINES, View};
@@ -328,7 +330,7 @@ struct Hands<'a> {
     clock: &'a dyn Clock,
     vclock: Option<&'a VirtualClock>,
     refs: &'a mut RefTable,
-    assigned: &'a mut HashSet<(ObjectId, String)>,
+    edits: &'a mut Edits,
     redact_all: bool,
     /// The scene as it was after the last act; replaced by [`refresh`](Self::refresh).
     capture: Rc<Capture>,
@@ -780,12 +782,34 @@ impl Hands<'_> {
                 other => engine_error(&a.target, other),
             });
         }
-        let value = to_qml(engine, &a.value)?;
-        let previous = engine.read_by_name(obj, &a.property);
-        engine
-            .write_by_name(obj, &a.property, value)
+        let prop = engine
+            .property_index(obj, &a.property)
             .map_err(|e| engine_error(&a.target, e))?;
-        self.assigned.insert((obj, a.property.clone()));
+        if a.revert {
+            return self.revert_property(obj, prop, a);
+        }
+        let value = to_qml(engine, a.value.as_ref().unwrap_or(&Value::Null))?;
+        let previous = engine.read_by_name(obj, &a.property);
+        let earlier = self.edits.take(obj, &a.property);
+        let had = earlier.is_some();
+        let mut cover = earlier.as_ref().and_then(|e| e.cover);
+        let wrote = if cover.is_none() && a.keep_binding && engine.is_bound(obj, prop) {
+            engine
+                .push_override(obj, prop, OverrideContent::Value(value))
+                .map(|id| cover = Some(id))
+        } else {
+            // With a cover in place this writes the cover, which is the
+            // top layer: the binding under it stays.
+            engine.write_by_name(obj, &a.property, value)
+        };
+        let before = earlier.map_or_else(|| previous.clone(), |e| e.before);
+        if let Err(e) = wrote {
+            if had {
+                self.edits.put(obj, &a.property, Edit { before, cover });
+            }
+            return Err(engine_error(&a.target, e));
+        }
+        self.edits.put(obj, &a.property, Edit { before, cover });
         let now = engine.read_by_name(obj, &a.property);
         // What is typed into a field that hides it is not said back.
         let hidden = TYPED.contains(&a.property.as_str())
@@ -797,12 +821,70 @@ impl Hands<'_> {
                 to_json(engine, v, 0)
             }
         };
-        Ok(
-            Done::new(format!("assigned `{}` of `{}`", a.property, a.target))
-                .with("property", json!(a.property))
-                .with("value", show(&now))
-                .with("previous", show(&previous)),
-        )
+        let done = if cover.is_some() {
+            format!("covered the binding of `{}` of `{}`", a.property, a.target)
+        } else {
+            format!("assigned `{}` of `{}`", a.property, a.target)
+        };
+        Ok(Done::new(done)
+            .with("property", json!(a.property))
+            .with("value", show(&now))
+            .with("previous", show(&previous))
+            .with("binding_kept", json!(cover.is_some())))
+    }
+
+    /// Takes back what devtools did to a property: the layer over its
+    /// binding goes, or the value from before the first edit comes back.
+    fn revert_property(
+        &mut self,
+        obj: ObjectId,
+        prop: PropIndex,
+        a: &SetPropertyArgs,
+    ) -> Result<Done, SurfaceError> {
+        let engine = self.engine;
+        let Some(edit) = self.edits.take(obj, &a.property) else {
+            return Err(not_actionable(format!(
+                "devtools did not change `{}` of `{}`, so there is nothing to revert",
+                a.property, a.target
+            )));
+        };
+        let previous = engine.read_by_name(obj, &a.property);
+        let restored = match edit.cover {
+            Some(id) => {
+                engine
+                    .remove_override(obj, prop, id, RestoreMode::BindingOrValue)
+                    .map_err(|e| engine_error(&a.target, e))?;
+                if engine.is_bound(obj, prop) {
+                    "binding"
+                } else {
+                    "value"
+                }
+            }
+            None => {
+                engine
+                    .write_by_name(obj, &a.property, edit.before)
+                    .map_err(|e| engine_error(&a.target, e))?;
+                "value"
+            }
+        };
+        let now = engine.read_by_name(obj, &a.property);
+        let hidden = TYPED.contains(&a.property.as_str())
+            && capture::is_secret(engine, obj, self.redact_all);
+        let show = |v: &QmlValue| {
+            if hidden {
+                json!(REDACTED)
+            } else {
+                to_json(engine, v, 0)
+            }
+        };
+        Ok(Done::new(format!(
+            "reverted `{}` of `{}` to its {restored}",
+            a.property, a.target
+        ))
+        .with("property", json!(a.property))
+        .with("value", show(&now))
+        .with("previous", show(&previous))
+        .with("restored", json!(restored)))
     }
 
     fn invoke(&mut self, a: &InvokeArgs) -> Result<Done, SurfaceError> {
@@ -995,7 +1077,7 @@ impl Inspector {
             clock,
             vclock: self.vclock.as_ref(),
             refs: &mut self.refs,
-            assigned: &mut self.devtools_assigned,
+            edits: &mut self.edits,
             redact_all: self.cfg.redact_all,
             capture,
             per_copy,

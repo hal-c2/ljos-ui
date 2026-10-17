@@ -4,7 +4,6 @@
 //! program. Each is kept under the size its tool allows by leaving out the
 //! end of a list and saying so, never by cutting in the middle of a line.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use ljos_engine::{
@@ -210,7 +209,29 @@ impl Look<'_> {
     }
 
     /// The one item `what` names, for `tool`.
+    /// The object `what` names, listed or not.
+    pub(crate) fn object(&mut self, what: &str, tool: &str) -> Result<ObjectId, SurfaceError> {
+        match self.resolve(what, tool)? {
+            Target::Node(index) => self.capture.items[index].ok_or_else(|| {
+                SurfaceError::new(
+                    ErrorCode::NotActionable,
+                    format!("`{what}` is a line of the outline with no object behind it"),
+                )
+            }),
+            Target::Unlisted(obj) => Ok(obj),
+        }
+    }
+
     pub(crate) fn resolve(&mut self, what: &str, tool: &str) -> Result<Target, SurfaceError> {
+        if let Some(found) = super::objects::parse_handle(self.engine, what) {
+            let obj = found?;
+            return Ok(
+                match self.capture.items.iter().position(|i| *i == Some(obj)) {
+                    Some(index) => Target::Node(index),
+                    None => Target::Unlisted(obj),
+                },
+            );
+        }
         let locator = Locator::parse(what)?;
         let found = locator.find(&self.capture.tree, self.refs)?;
         match found.as_slice() {
@@ -375,7 +396,7 @@ impl Look<'_> {
         &mut self,
         args: &InspectArgs,
         per_copy: usize,
-        assigned: &HashSet<(ObjectId, String)>,
+        edits: &super::edits::Edits,
     ) -> Answer {
         let target = self.resolve(&args.target, "app_inspect")?;
         let engine = self.engine;
@@ -558,10 +579,13 @@ impl Look<'_> {
                 Provenance::Bound => "bound",
                 Provenance::Animated => "animated",
             };
+            let mut held = None;
             let value = match &p.value {
                 None => Value::Null,
                 Some(v) => {
-                    let text = engine.to_js_string(v).to_string();
+                    let seen = super::values::shown(engine, v);
+                    let text = seen.text;
+                    held = Some((seen.handle, seen.items));
                     let typed = secret && TYPED.contains(&p.name.as_str());
                     let leaked =
                         matches!(v, QmlValue::String(_)) && self.capture.shown(&text) == REDACTED;
@@ -577,10 +601,22 @@ impl Look<'_> {
             row.insert("type".into(), json!(p.ty));
             row.insert("value".into(), value.clone());
             row.insert("provenance".into(), json!(provenance));
+            if let Some((handle, items)) = held {
+                if let Some(h) = handle {
+                    row.insert("handle".into(), json!(h));
+                }
+                if let Some(items) = items {
+                    row.insert("items".into(), Value::Array(items));
+                }
+            }
+            let covered = edits.covers(obj, &p.name);
             let by_devtools =
-                p.provenance == Provenance::Assigned && assigned.contains(&(obj, p.name.clone()));
+                covered || (p.provenance == Provenance::Assigned && edits.contains(obj, &p.name));
             if by_devtools {
                 row.insert("assigned_by".into(), json!("devtools"));
+            }
+            if covered {
+                row.insert("binding_kept".into(), json!(true));
             }
             let mut line = format!(
                 "  {}: {} = {}  ({provenance}",

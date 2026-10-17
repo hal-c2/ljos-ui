@@ -21,6 +21,7 @@ mcp = [
     "dep:serde",
     "dep:serde_json",
     "dep:schemars",
+    "dep:slotmap",
 ]
 
 [dependencies]
@@ -46,6 +47,8 @@ tokio = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
+# A handle names an object by its generational key.
+slotmap = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The end-to-end test makes a scene of the right size.

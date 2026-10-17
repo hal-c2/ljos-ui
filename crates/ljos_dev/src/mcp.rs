@@ -38,23 +38,27 @@
 mod act;
 mod args;
 mod capture;
+mod edits;
 mod frames;
 mod logs;
+mod objects;
 mod observe;
 mod paint;
 mod reload;
 mod surface;
 mod tools;
+mod values;
+mod watch;
 
 use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ljos_engine::{Engine, LogEntry, ObjectId};
+use ljos_engine::{Engine, LogEntry};
 use ljos_mcp_core::{
     ErrorCode, LineOptions, OutlineOptions, OutlineWriter, RefTable, SurfaceError, ToolReply, delta,
 };
@@ -86,6 +90,7 @@ use paint::{PaintStats, Startup};
 use reload::ReloadFeed;
 use surface::{Answer, DevReq, SlotGuard};
 use tools::{Look, Target};
+use watch::ChangeFeed;
 
 use crate::top::{FrameStats, INSPECTOR_PROC};
 
@@ -247,6 +252,8 @@ pub struct Inspector {
     /// The clock `app_advance` moves; none on the system clock.
     vclock: Option<VirtualClock>,
     feed: Arc<ReloadFeed>,
+    /// What `app_watch` waits on.
+    changes: Arc<ChangeFeed>,
     /// The reload generation and error as of the last [`observe`](Self::observe).
     seen: Option<(u64, Option<String>)>,
     parked: Option<Parked>,
@@ -260,7 +267,7 @@ pub struct Inspector {
     frames: FrameLog,
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
-    devtools_assigned: HashSet<(ObjectId, String)>,
+    edits: edits::Edits,
     /// The mailbox and timer counters move while an inspector is served
     /// (`ljos_runtime::observe`).
     _observing: ljos_runtime::ObserveGuard,
@@ -300,7 +307,13 @@ impl Inspector {
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX_CAPACITY, wake.clone());
         inbox.observe_as("inspector", Some(observe::request_kind));
         let feed = ReloadFeed::new();
-        let surface = Arc::new(InspectorSurface::new(handle, cfg.timeout, feed.clone()));
+        let changes = ChangeFeed::new();
+        let surface = Arc::new(InspectorSurface::new(
+            handle,
+            cfg.timeout,
+            feed.clone(),
+            changes.clone(),
+        ));
         let inspector = Inspector {
             cfg,
             inbox,
@@ -314,6 +327,7 @@ impl Inspector {
             work: None,
             vclock: None,
             feed,
+            changes,
             seen: None,
             parked: None,
             reload_wanted: false,
@@ -322,7 +336,7 @@ impl Inspector {
             startup: Startup::default(),
             paint: PaintStats::default(),
             frames: FrameLog::default(),
-            devtools_assigned: HashSet::new(),
+            edits: edits::Edits::default(),
             _observing: ljos_runtime::observe::enable(),
         };
         (inspector, surface)
@@ -364,6 +378,9 @@ impl Inspector {
     /// Records a pass of the primary window the host painted or found
     /// unchanged, for `app_metrics`.
     pub fn record_paint(&mut self, report: &PaintReport) {
+        if report.drawn != Drawn::Unchanged {
+            self.changes.paint();
+        }
         self.paint.record(report);
         self.frames.record_paint(report);
     }
@@ -395,11 +412,13 @@ impl Inspector {
             *was = generation;
             *was_error = error;
             self.feed.applied(generation);
+            self.changes.reload();
         } else {
             match error {
                 Some(e) if was_error.as_deref() != Some(e.as_str()) => {
                     *was_error = Some(e.clone());
                     self.feed.failed(e);
+                    self.changes.reload();
                 }
                 Some(_) => {}
                 None => *was_error = None,
@@ -495,14 +514,17 @@ impl Inspector {
     /// goes in `also`.
     pub fn watch_log(&self, engine: &Engine, mut also: impl FnMut(&LogEntry) + 'static) {
         let ring = self.logs.clone();
+        let changes = self.changes.clone();
         engine.set_log_handler_with_origin(move |entry, at| {
             ring.borrow_mut().push(entry, at);
+            changes.log();
             also(entry);
         });
     }
 
     /// Records a frame the host ran, for `app_metrics`.
     pub fn record_frame(&mut self, report: &FrameReport) {
+        self.changes.frame();
         self.stats.record(report);
         self.frames.record_frame(report);
     }
@@ -674,6 +696,27 @@ impl Inspector {
                 args,
             )),
             (Kind::Mailboxes(args), _) => Ok(observe::mailboxes(args)),
+            (Kind::Objects(args), capture) => {
+                let found = match capture {
+                    Some(capture) if objects::needs_scene(args) => {
+                        let mut look = Look {
+                            engine,
+                            scene,
+                            capture,
+                            refs: &mut self.refs,
+                        };
+                        let what = args.root.as_deref().unwrap_or_default();
+                        look.object(what, "app_objects").map(Some)
+                    }
+                    _ => Ok(None),
+                };
+                found.and_then(|found| objects::objects(engine, scene, args, found, per_copy))
+            }
+            // The server answers it without the UI thread.
+            (Kind::Watch(_), _) => Err(SurfaceError::new(
+                ErrorCode::Internal,
+                "a watch reached the UI thread",
+            )),
             (Kind::Resource(Resource::Metrics), _) => Ok(tools::metrics(
                 engine,
                 &self.stats,
@@ -734,7 +777,7 @@ impl Inspector {
                 match kind {
                     Kind::Status(_) => look.status(virtual_clock, caps, &reload, windows, host),
                     Kind::Find(args) => look.find(args, per_copy),
-                    Kind::Inspect(args) => look.inspect(args, per_copy, &self.devtools_assigned),
+                    Kind::Inspect(args) => look.inspect(args, per_copy, &self.edits),
                     Kind::Screenshot(args) => look.screenshot(args, background),
                     // Answered above.
                     _ => Err(SurfaceError::new(
@@ -914,7 +957,12 @@ enum Started {
 /// already taken.
 fn needs_scene(kind: &Kind) -> bool {
     match kind {
-        Kind::Logs(_) | Kind::Metrics | Kind::Processes(_) | Kind::Mailboxes(_) => false,
+        Kind::Logs(_)
+        | Kind::Metrics
+        | Kind::Processes(_)
+        | Kind::Mailboxes(_)
+        | Kind::Watch(_) => false,
+        Kind::Objects(args) => objects::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,
         Kind::Snapshot(args) => args.cursor.is_none() || args.image,
         Kind::Act(act) => !matches!(act, Act::Reload),

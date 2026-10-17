@@ -22,6 +22,7 @@ use tokio::sync::oneshot;
 
 use super::args::{self, Act, INSTRUCTIONS, Kind, Resource, SERVER_NAME};
 use super::reload::{ReloadFeed, ReloadState};
+use super::watch::ChangeFeed;
 
 /// Requests that may wait for the UI thread at one time (§19.5). One more
 /// is answered `busy`.
@@ -88,6 +89,7 @@ pub struct InspectorSurface {
     snapshots: Arc<AtomicUsize>,
     timeout: Duration,
     feed: Arc<ReloadFeed>,
+    changes: Arc<ChangeFeed>,
 }
 
 impl fmt::Debug for InspectorSurface {
@@ -137,13 +139,19 @@ fn refusal(what: &str, needs: Cap, held: CapSet) -> SurfaceError {
 }
 
 impl InspectorSurface {
-    pub(crate) fn new(handle: UiHandle<DevReq>, timeout: Duration, feed: Arc<ReloadFeed>) -> Self {
+    pub(crate) fn new(
+        handle: UiHandle<DevReq>,
+        timeout: Duration,
+        feed: Arc<ReloadFeed>,
+        changes: Arc<ChangeFeed>,
+    ) -> Self {
         InspectorSurface {
             registry: args::registry(),
             handle,
             snapshots: Arc::new(AtomicUsize::new(0)),
             timeout,
             feed,
+            changes,
         }
     }
 
@@ -263,6 +271,11 @@ impl McpSurface for InspectorSurface {
                 // Read here, so a UI thread that is stuck still shows its
                 // inbox filling up.
                 return Ok(super::observe::mailboxes(a));
+            }
+            if let Kind::Watch(a) = &kind {
+                // Sleeps here until the UI thread has something to tell:
+                // a watch never wakes it.
+                return Ok(super::watch::watch(&self.changes, a).await);
             }
             if let Kind::Act(Act::Batch(steps)) = &kind {
                 // Everything a batch will do is allowed before any of it is.
