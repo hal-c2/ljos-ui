@@ -60,6 +60,14 @@ pub trait ItemTree {
     /// `undefined` for a row, column or role the model does not have.
     fn data(&self, engine: &Engine, path: &[usize], column: usize, role: &str) -> Value;
 
+    /// What `modelData` is in the delegate of a cell; `None` for a
+    /// model that does not say, whose cells have their one role as it
+    /// when they have one.
+    fn model_data(&self, engine: &Engine, path: &[usize], column: usize) -> Option<Value> {
+        let _ = (engine, path, column);
+        None
+    }
+
     /// False: the model is read-only, or refused the value.
     fn set_data(
         &self,

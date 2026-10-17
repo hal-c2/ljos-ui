@@ -1103,12 +1103,6 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.ListView",
         "the default property is the Flickable's `flickableData`, not `data`",
     ),
-    // TreeView is built on a TableView of its own; a TableView of a table
-    // model is not.
-    (
-        "QtQuick.TableView",
-        "a file cannot make one yet (only TreeView)",
-    ),
     (
         "QtQuick.ViewSection",
         "only what a view's `section` is; Qt lets a file make one as well",

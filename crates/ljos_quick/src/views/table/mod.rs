@@ -135,9 +135,8 @@ impl TableState {
     }
 }
 
-/// `TableView` (QtQuick): cells in rows and columns. Not made from QML
-/// here: without a table model a table has one column, which only a
-/// `TreeView` shows as it should.
+/// `TableView` (QtQuick): cells in rows and columns. A model of one
+/// column (a list, a number, a `ListModel`) shows as one column.
 ///
 /// Kept and read back, with no effect yet: `syncView`, `syncDirection`,
 /// `animate`, `alternatingRows`, the edit settings, `resizableColumns`
@@ -148,8 +147,7 @@ impl TableState {
     name = "TableView",
     extends = Flickable,
     enums = table_view_enums,
-    attached = TableViewAttached,
-    uncreatable
+    attached = TableViewAttached
 )]
 pub struct TableView {
     #[qml(base)]
@@ -454,13 +452,16 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
         } else {
             Value::Undefined
         };
+        // A model made in completion, after the view, is read when made.
+        e.track_model(&model);
         e.untrack(|| {
             let object = e.plain(&model).as_object();
             let list =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));
             source.model.set(object);
-            // No model: no rows and no columns either.
-            let tree = (!model.is_nullish()).then(|| cells::tree_of(list));
+            // No model: no rows, and no columns in a tree; a table has
+            // one column still (observed on qml6).
+            let tree = (!model.is_nullish() || !is_tree).then(|| cells::tree_of(list));
             let root = e
                 .model_index_place(&root, object)
                 .map(|p| p.iter().map(|(r, _)| *r as usize).collect())
@@ -558,6 +559,16 @@ fn delegate_at(e: &Engine, me: ObjectId, row: i64, column: i64) -> Value {
 
 #[qml_impl]
 impl TableView {
+    /// A `TreeView` starts as a tree, from its own completion.
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let tree = cx
+            .engine
+            .untrack(|| cx.engine.with::<TreeView, _>(cx.this, |_| ()))
+            .is_ok();
+        start(cx, tree)
+    }
+
     /// `forceLayout()`: lays the cells out once more.
     #[qml(invokable, name = "forceLayout")]
     fn force_layout(cx: &Cx) {
@@ -759,11 +770,6 @@ fn settle(e: &Engine, st: &TableState) {
 
 #[qml_impl]
 impl TreeView {
-    #[qml(on_complete)]
-    fn completed(cx: &Cx) -> Result<(), EngineError> {
-        start(cx, true)
-    }
-
     /// `depth(row)`: how far below the root the row is; -1 for a row the
     /// view does not have.
     #[qml(invokable)]

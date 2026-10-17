@@ -2468,7 +2468,6 @@ module QtQuick
 	type QtQuick.TableView TableView
 		prototype QtQuick.Flickable named
 		attached QtQuick.TableViewAttached
-		is uncreatable
 		enum SelectionBehavior SelectionDisabled=0 SelectCells=1 SelectRows=2 SelectColumns=3
 		enum SelectionMode SingleSelection=0 ContiguousSelection=1 ExtendedSelection=2
 		enum EditTrigger NoEditTriggers=0 SingleTapped=1 DoubleTapped=2 SelectedTapped=4 EditKeyPressed=8 AnyKeyPressed=16

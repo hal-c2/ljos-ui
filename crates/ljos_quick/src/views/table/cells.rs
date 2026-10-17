@@ -66,6 +66,13 @@ impl ItemTree for ListTree {
         }
     }
 
+    fn model_data(&self, engine: &Engine, path: &[usize], column: usize) -> Option<Value> {
+        match (path, column) {
+            ([row], 0) => self.0.model_data(engine, *row),
+            _ => None,
+        }
+    }
+
     fn set_data(
         &self,
         engine: &Engine,
@@ -468,6 +475,11 @@ impl ItemModel for Cells {
 
     fn model_data(&self, engine: &Engine, index: usize) -> Option<Value> {
         let tree = self.tree()?;
+        let (row, column) = self.cell(index)?;
+        let path = self.lines.borrow().get(row).map(|l| l.path.clone())?;
+        if let Some(data) = tree.model_data(engine, &path, column) {
+            return Some(data);
+        }
         let roles = tree.role_names();
         let [only] = roles.as_slice() else {
             return None;
