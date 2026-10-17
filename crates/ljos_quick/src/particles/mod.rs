@@ -636,6 +636,8 @@ struct Registry {
     /// How many emitters steps have looked at.
     looked: Cell<u64>,
     painters: RefCell<Vec<ObjectId>>,
+    /// How many particles painters have looked at.
+    painted: Cell<u64>,
     affectors: RefCell<Vec<ObjectId>>,
     shown: RefCell<FxHashMap<ObjectId, Shown>>,
     /// Each `MaskShape` picture's alpha, by URL, with the picture it was
@@ -1191,16 +1193,33 @@ fn paint(e: &Engine, sys: ObjectId, only: Option<ObjectId>) {
         Some(p) => vec![p],
         None => painters_of(e, sys),
     };
+    let run = run.borrow();
+    // The particles of each group, found once: a painter walks only the
+    // groups it draws, where each walking all of them costs the painters
+    // times the particles on every step.
+    let mut by_group: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (i, p) in run.particles.iter().enumerate() {
+        match by_group.iter_mut().find(|(g, _)| *g == &*p.group) {
+            Some((_, at)) => at.push(i),
+            None => by_group.push((&p.group, vec![i])),
+        }
+    }
     let so = e.untrack(|| origin(e, sys));
+    let reg = registry(e);
     for pa in painters.into_iter().filter(|p| e.is_alive(*p)) {
         let groups = groups_of(e, pa, ParticlePainter::GROUPS.index);
-        let wanted = |g: &str| {
-            if groups.is_empty() {
-                g.is_empty()
-            } else {
-                groups.iter().any(|x| x == g)
-            }
-        };
+        let mine: Vec<usize> = by_group
+            .iter()
+            .filter(|(g, _)| {
+                if groups.is_empty() {
+                    g.is_empty()
+                } else {
+                    groups.iter().any(|x| x == g)
+                }
+            })
+            .flat_map(|(_, at)| at.iter().copied())
+            .collect();
+        reg.painted.set(reg.painted.get() + mine.len() as u64);
         let po = e.untrack(|| origin(e, pa));
         let off = (po.0 - so.0, po.1 - so.1);
         let color = match e.untrack(|| e.read(pa, ImageParticle::COLOR.index)) {
@@ -1212,55 +1231,56 @@ fn paint(e: &Engine, sys: ObjectId, only: Option<ObjectId>) {
         let alpha = number(e, pa, ImageParticle::ALPHA.index);
         let av = number(e, pa, ImageParticle::ALPHA_VARIATION.index);
         let effect = number(e, pa, ImageParticle::ENTRY_EFFECT.index) as i32;
-        let sprites: Vec<Sprite> = run
-            .borrow()
-            .particles
-            .iter()
-            .filter(|p| wanted(&p.group))
-            .map(|p| {
-                let fade = sim::entry_factor(p.age, p.life);
-                let size = p.current_size() * if effect == 2 { fade } else { 1.0 };
-                let a = ((ca * alpha + p.dice[3] * av).clamp(0.0, 1.0))
-                    * if effect == 1 { fade } else { 1.0 };
-                let shift = p.dice[0] * cv;
-                let (r, g, b) = (
-                    (cr + shift).clamp(0.0, 1.0),
-                    (cg + shift).clamp(0.0, 1.0),
-                    (cb + shift).clamp(0.0, 1.0),
-                );
-                let white = r >= 0.999 && g >= 0.999 && b >= 0.999;
-                Sprite {
-                    x: p.x - off.0 - size / 2.0,
-                    y: p.y - off.1 - size / 2.0,
-                    size,
-                    opacity: a,
-                    tint: if white {
-                        Color::TRANSPARENT
-                    } else {
-                        Color::from_rgba_f(r, g, b, 1.0)
-                    },
-                }
-            })
-            .collect();
+        let sprites = mine.into_iter().map(|i| {
+            let p = &run.particles[i];
+            let fade = sim::entry_factor(p.age, p.life);
+            let size = p.current_size() * if effect == 2 { fade } else { 1.0 };
+            let a = ((ca * alpha + p.dice[3] * av).clamp(0.0, 1.0))
+                * if effect == 1 { fade } else { 1.0 };
+            let shift = p.dice[0] * cv;
+            let (r, g, b) = (
+                (cr + shift).clamp(0.0, 1.0),
+                (cg + shift).clamp(0.0, 1.0),
+                (cb + shift).clamp(0.0, 1.0),
+            );
+            let white = r >= 0.999 && g >= 0.999 && b >= 0.999;
+            Sprite {
+                x: p.x - off.0 - size / 2.0,
+                y: p.y - off.1 - size / 2.0,
+                size,
+                opacity: a,
+                tint: if white {
+                    Color::TRANSPARENT
+                } else {
+                    Color::from_rgba_f(r, g, b, 1.0)
+                },
+            }
+        });
         let raw = e
             .untrack(|| e.read(pa, ImageParticle::SOURCE.index))
             .to_js_string();
-        let source = if raw.as_str().is_empty() {
-            Atom::from("")
-        } else {
-            Atom::from(e.resolve_url(pa, raw.as_str()).as_str())
-        };
-        place(e, pa, &source, &sprites);
+        place(e, pa, raw.as_str(), sprites);
     }
+}
+
+/// How many particles painters have looked at.
+#[doc(hidden)]
+pub fn particles_painted(engine: &Engine) -> u64 {
+    registry(engine).painted.get()
 }
 
 /// What a painter shows, and the serial its paint follows.
 #[derive(Default)]
 struct Shown {
     serial: Option<NodeId>,
-    /// The picture of `url`; none when it could not be read.
-    url: Option<Atom>,
+    /// The `source` as written, and the picture of where it resolves to;
+    /// none when it could not be read.
+    source: Option<String>,
     image: Option<ImageHandle>,
+    /// The picture in each colour a particle was given, kept while a step
+    /// uses it: a particle keeps its colour for its life, and looking it
+    /// up here is cheaper than in the engine's table of tints.
+    tints: FxHashMap<Color, ImageHandle>,
     paint: Rc<Pictures>,
 }
 
@@ -1300,42 +1320,51 @@ fn read_pictures(e: &Engine, pa: ObjectId) -> Rc<dyn ItemPaint> {
     s.paint.clone()
 }
 
-fn place(e: &Engine, pa: ObjectId, source: &Atom, sprites: &[Sprite]) {
+fn place(e: &Engine, pa: ObjectId, raw: &str, sprites: impl Iterator<Item = Sprite>) {
     let reg = registry(e);
-    let (serial, image) = {
-        let mut shown = reg.shown.borrow_mut();
-        let Some(s) = shown.get_mut(&pa) else {
-            return;
-        };
-        if s.url.as_ref() != Some(source) {
-            s.url = Some(source.clone());
-            s.image = load_picture(e, source);
-        }
-        (s.serial, s.image.clone())
+    let mut shown = reg.shown.borrow_mut();
+    let Some(s) = shown.get_mut(&pa) else {
+        return;
     };
-    let quads = match image {
+    if s.source.as_deref() != Some(raw) {
+        let url = if raw.is_empty() {
+            Atom::from("")
+        } else {
+            Atom::from(e.resolve_url(pa, raw).as_str())
+        };
+        s.source = Some(raw.to_owned());
+        s.image = load_picture(e, &url);
+        s.tints.clear();
+    }
+    let serial = s.serial;
+    let quads = match s.image.clone() {
         Some(image) => {
-            // With a `colorVariation` each particle has a colour of its own.
-            let mut tints: FxHashMap<Color, ImageHandle> = FxHashMap::default();
-            sprites
-                .iter()
+            let mut kept: FxHashMap<Color, ImageHandle> = FxHashMap::default();
+            let old = &mut s.tints;
+            let quads = sprites
                 .filter(|sp| sp.opacity > 0.0 && sp.size > 0.0)
                 .map(|sp| {
+                    // With a `colorVariation` each particle has a colour of its own.
                     let image = if sp.tint.a == 0 {
                         image.clone()
                     } else {
-                        tints
-                            .entry(sp.tint)
-                            .or_insert_with(|| tinted_in(e, image.clone(), sp.tint))
+                        kept.entry(sp.tint)
+                            .or_insert_with(|| {
+                                old.remove(&sp.tint)
+                                    .unwrap_or_else(|| tinted_in(e, image.clone(), sp.tint))
+                            })
                             .clone()
                     };
                     let dst = kurbo::Rect::new(sp.x, sp.y, sp.x + sp.size, sp.y + sp.size);
                     (image, dst, sp.opacity.clamp(0.0, 1.0) as f32)
                 })
-                .collect()
+                .collect();
+            s.tints = kept;
+            quads
         }
         None => Vec::new(),
     };
+    drop(shown);
     let still_empty = {
         let mut shown = reg.shown.borrow_mut();
         let Some(s) = shown.get_mut(&pa) else {

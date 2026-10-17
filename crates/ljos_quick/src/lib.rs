@@ -39,7 +39,7 @@ mod mouse_drag;
 mod paint_item;
 mod particles;
 #[doc(hidden)]
-pub use particles::emitters_looked_at;
+pub use particles::{emitters_looked_at, particles_painted};
 mod pointer_item;
 mod positioners;
 mod press_and_hold;

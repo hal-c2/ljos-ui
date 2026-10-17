@@ -196,3 +196,62 @@ fn a_step_looks_only_at_the_emitters_that_may_give_birth() {
     // The rate emitter on each of the ~62 steps, the burst on its first.
     assert!(few <= 2 * 64 + 2, "{few} looks");
 }
+
+/// How many particles a second of steps hands painters, with ten
+/// particles in each of four groups, a painter for each group and `idle`
+/// painters of groups that have none.
+fn particles_painted_with(idle: usize) -> u64 {
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let idle_painters = (0..idle)
+        .map(|i| format!(r#"ImageParticle {{ groups: ["none{i}"] }}"#))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let emitters = ["a", "b", "c", "d"]
+        .map(|g| {
+            format!(
+                r#"Emitter {{ objectName: "{g}"; group: "{g}"; enabled: false; lifeSpan: 5000; width: 10; height: 10 }}
+      ImageParticle {{ groups: ["{g}"] }}"#
+            )
+        })
+        .join("\n");
+    let root = load(
+        &e,
+        &format!(
+            r#"
+    import QtQuick
+    import QtQuick.Particles
+    ParticleSystem {{
+      width: 300; height: 300
+      {emitters}
+      {idle_painters}
+    }}"#
+        ),
+    );
+    for g in ["a", "b", "c", "d"] {
+        e.invoke_by_name(find(&e, root, g), "burst", &[Value::Int(10)])
+            .unwrap();
+    }
+    let before = ljos_quick::particles_painted(&e);
+    for t in (16..=1000u32).step_by(16) {
+        clock.set(Time::from_millis(u64::from(t)));
+        e.advance_timers(Time::from_millis(u64::from(t)));
+    }
+    ljos_quick::particles_painted(&e) - before
+}
+
+#[test]
+fn a_painter_looks_only_at_the_particles_of_its_groups() {
+    // samegame has a painter for each colour of block and of paint: a
+    // step costs the particles, not the painters times the particles.
+    let few = particles_painted_with(0);
+    let many = particles_painted_with(20);
+    assert_eq!(
+        few, many,
+        "{few} looks with no idle painters, {many} with 20"
+    );
+    // Forty particles on each of the ~62 steps.
+    assert!(few <= 40 * 64, "{few} looks");
+    assert!(few >= 40 * 60, "{few} looks");
+}
