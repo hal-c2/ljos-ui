@@ -39,6 +39,7 @@ use crate::enums::{EnumTable, layout_direction};
 use crate::flickable::{self, Flickable};
 use crate::item::{is_a, write_computed};
 
+pub(crate) use changes::{incubation_begins, incubation_ends};
 pub use models::{
     DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,
     object_model_changed, object_model_rows,
@@ -520,6 +521,12 @@ pub(crate) fn view_of(e: &Engine, item: ObjectId) -> Option<(ObjectId, Part)> {
 /// has delegates only for the rows near what it shows.
 pub fn view_item_at(e: &Engine, view: ObjectId, index: usize) -> Option<ObjectId> {
     state_of(e, view)?.delegates()?.object_at(index)
+}
+
+/// How many times `view` laid its rows out. For tests and tools: an idle
+/// view never adds to it.
+pub fn view_layout_passes(e: &Engine, view: ObjectId) -> u64 {
+    state_of(e, view).map_or(0, |st| st.passes.get())
 }
 
 /// The row `item` is the delegate of in `view`.

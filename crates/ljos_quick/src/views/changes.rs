@@ -6,6 +6,8 @@
 //! number up and leave its place alone, so the content grows upwards (the
 //! origin moves) and nothing in sight jumps. qml6 does the same.
 
+use std::cell::{Cell, RefCell};
+
 use ljos_engine::{Engine, LogLevel, ModelChange, ObjectId, Value, ViewHost};
 
 use super::state::{OpKind, PendingOp, Targets, ViewState};
@@ -22,6 +24,31 @@ use crate::tree;
 /// those that got a delegate: a model that grows by a million rows has
 /// none of them in sight but the first few.
 const MAX_ADDED: usize = 4096;
+
+/// The views told of delegates that are ready while the scene runs its
+/// creation jobs: each lays its rows out once when the jobs stop, not
+/// once a delegate.
+#[derive(Default)]
+struct Incubating {
+    open: Cell<bool>,
+    due: RefCell<Vec<ObjectId>>,
+}
+
+/// The scene starts running creation jobs.
+pub(crate) fn incubation_begins(e: &Engine) {
+    e.extension::<Incubating>().open.set(true);
+}
+
+/// The scene stops running creation jobs: the views whose delegates were
+/// made lay their rows out, before the frame shows them.
+pub(crate) fn incubation_ends(e: &Engine) {
+    let inc = e.extension::<Incubating>();
+    inc.open.set(false);
+    let due = std::mem::take(&mut *inc.due.borrow_mut());
+    for view in due {
+        pass::refresh(e, view);
+    }
+}
 
 /// What the engine's delegates call on a view.
 pub(crate) struct Host(pub ObjectId);
@@ -60,7 +87,15 @@ impl ViewHost for Host {
     }
 
     fn ready(&self, e: &Engine, _: usize, _: ObjectId) {
-        pass::refresh(e, self.0);
+        let inc = e.extension::<Incubating>();
+        if inc.open.get() {
+            let mut due = inc.due.borrow_mut();
+            if !due.contains(&self.0) {
+                due.push(self.0);
+            }
+        } else {
+            pass::refresh(e, self.0);
+        }
     }
 
     fn destroying(&self, e: &Engine, object: ObjectId) {

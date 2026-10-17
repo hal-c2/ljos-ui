@@ -157,7 +157,7 @@ pub use views::{
     ViewSection, ViewTransition, ViewTransitionAttached,
 };
 pub use views::{PathView, PathViewAttached, path_view};
-pub use views::{view_index_of, view_item_at};
+pub use views::{view_index_of, view_item_at, view_layout_passes};
 pub use wheel_handler::WheelHandler;
 
 /// The text engine's types, for hosts that configure fonts.

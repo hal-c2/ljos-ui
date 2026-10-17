@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use common::*;
 use ljos_engine::{Atom, Engine, ModelSignals, ObjectId, QmlListModel, QtObject, Value};
-use ljos_quick::{QuickScene, child_items, update_system_prefs};
+use ljos_quick::{QuickScene, child_items, update_system_prefs, view_layout_passes};
 use ljos_runtime::Time;
 
 /// A scene on `root` whose delegates are all made: frames until nothing
@@ -137,6 +137,32 @@ fn the_rows_outside_what_is_shown_are_made_over_later_frames() {
     let mut s = scene(&e, root, 400.0, 400.0);
     settle(&mut s, &e, 0);
     assert_eq!(rows(&e, root).len(), 32);
+}
+
+#[test]
+fn the_rows_made_in_one_frame_are_laid_out_together() {
+    let e = engine();
+    let root = load(&e, HUNDRED_THOUSAND);
+    let mut s = scene(&e, root, 400.0, 400.0);
+    let mut t = 0;
+    let mut frame = |s: &mut QuickScene| {
+        let before = view_layout_passes(&e, root);
+        s.frame(&e, Time::from_millis(t));
+        t += 16;
+        view_layout_passes(&e, root) - before
+    };
+    // The buffer's rows are made by the incubator. Each was laid out
+    // twice as it became ready; a frame now lays out what it made once.
+    let passes: Vec<u64> = (0..40).map(|_| frame(&mut s)).collect();
+    assert_eq!(rows(&e, root).len(), 32);
+    assert!(passes.iter().all(|p| *p <= 1), "{passes:?}");
+    // Scrolling by five rows a frame makes five rows a frame.
+    for i in 1..=20 {
+        set(&e, root, "contentY", Value::Real(f64::from(i) * 100.0));
+        assert_eq!(frame(&mut s), 1, "frame {i}");
+    }
+    // Idle: nothing is laid out.
+    assert_eq!(frame(&mut s), 0);
 }
 
 #[test]

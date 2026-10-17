@@ -225,6 +225,8 @@ pub(crate) struct ViewState {
     pub in_pass: Cell<bool>,
     /// Something asked for a pass while one was running.
     pub dirty: Cell<bool>,
+    /// How many times the rows were laid out.
+    pub passes: Cell<u64>,
     /// The first row in sight after the last pass and where it starts:
     /// what stays put when rows come and go before it.
     pub anchor: Cell<(usize, f64)>,
@@ -303,6 +305,7 @@ impl Default for ViewState {
             trigger: Cell::new(None),
             in_pass: Cell::new(false),
             dirty: Cell::new(false),
+            passes: Cell::new(0),
             anchor: Cell::new((0, 0.0)),
             sizes: RefCell::default(),
             places: RefCell::default(),

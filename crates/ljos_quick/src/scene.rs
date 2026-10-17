@@ -801,7 +801,9 @@ impl QuickScene {
         }
         let clock = engine.clock();
         let budget = FrameBudget::new(clock.now(), self.incubation_budget);
+        crate::views::incubation_begins(engine);
         let report = self.incubator.run_frame(&mut (), budget, &*clock);
+        crate::views::incubation_ends(engine);
         for (owner, fault) in &report.faults {
             // A fault of the boundary the job was making something in.
             engine.report_fault(engine.proc_owner(*owner), fault.clone());

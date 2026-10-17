@@ -82,9 +82,14 @@ pub(crate) fn refresh(e: &Engine, view: ObjectId) {
     let Some(st) = state_of(e, view) else {
         return;
     };
-    e.untrack(|| pass(e, view, &st, None));
-    // The effect reads the sizes of the delegates there are now.
+    // The layout effect lays the rows out and reads the sizes of the
+    // delegates there are now. Where it cannot run at once (in a batch,
+    // or behind the effect that is running) the rows are laid out here.
+    let before = st.passes.get();
     bump(e, &st);
+    if st.passes.get() == before {
+        e.untrack(|| pass(e, view, &st, None));
+    }
 }
 
 /// Whether the rows of `view` run from right to left.
@@ -718,6 +723,7 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
         st.dirty.set(true);
         return;
     }
+    st.passes.set(st.passes.get() + 1);
     run(e, view, st, over);
     st.in_pass.set(false);
     if st.dirty.replace(false) {
