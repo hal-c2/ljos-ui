@@ -462,6 +462,17 @@ impl ItemModel for Cells {
         self.lines.borrow().len() * self.columns.get()
     }
 
+    // Reaching the end of a table asks the model for more top-level rows.
+    fn can_fetch_more(&self) -> bool {
+        self.tree().is_some_and(|t| t.can_fetch_more(&[]))
+    }
+
+    fn fetch_more(&self, engine: &Engine) {
+        if let Some(t) = self.tree() {
+            t.fetch_more(engine, &[]);
+        }
+    }
+
     fn role_names(&self) -> Vec<Atom> {
         self.roles.borrow().clone()
     }

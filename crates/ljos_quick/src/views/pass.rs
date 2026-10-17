@@ -766,6 +766,21 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>
     if st.dirty.replace(false) {
         bump(e, st);
     }
+    fetch_at_end(e, view, st);
+}
+
+/// When the last row has a delegate (or there are none), the model may
+/// have more to read.
+fn fetch_at_end(e: &Engine, view: ObjectId, st: &ViewState) {
+    let Some(model) = st.delegates().and_then(|d| d.model()) else {
+        return;
+    };
+    let rows = model.row_count();
+    let at_end = rows == 0 || st.placed.borrow().iter().any(|p| p.0 + 1 == rows);
+    if at_end {
+        let current = |e: &Engine, view| state_of(e, view)?.delegates()?.model();
+        super::fetch::soon(e, view, model, current);
+    }
 }
 
 fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {

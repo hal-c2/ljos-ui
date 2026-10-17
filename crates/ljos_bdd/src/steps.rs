@@ -257,6 +257,21 @@ fn lazy_tree(w: &mut LjosWorld, name: String, delay: u64, step: &Step) -> StepRe
     w.each(|b| b.lazy_tree(&name, delay, &rows))
 }
 
+// Before the QML: a list model the application writes in Rust, read a
+// page at a time.
+#[given(
+    regex = r#"^a list model "([^"]+)" of (\d+) rows that reads (\d+) at a time, (\d+) ms after a view asks for more$"#
+)]
+fn paged_model(
+    w: &mut LjosWorld,
+    name: String,
+    total: usize,
+    page: usize,
+    delay: u64,
+) -> StepResult {
+    w.each(|b| b.paged_model(&name, total, page, delay))
+}
+
 // Before the QML: what the application reads at the start.
 #[given("the system asks the user before it grants a permission")]
 fn permissions_ask(w: &mut LjosWorld) -> StepResult {

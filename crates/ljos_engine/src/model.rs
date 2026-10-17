@@ -110,8 +110,9 @@ pub trait ItemModel {
     }
 
     /// Something wants the rows past the last, which
-    /// [`ItemModel::can_fetch_more`] said are not read yet. The model reads
-    /// them, now or later, and tells its listeners
+    /// [`ItemModel::can_fetch_more`] said are not read yet: a list, grid
+    /// or table view calls it after a layout pass that reached its last
+    /// row. The model reads them, now or later, and tells its listeners
     /// ([`ModelChange::RowsInserted`]) when it has them.
     fn fetch_more(&self, engine: &Engine) {
         let _ = engine;

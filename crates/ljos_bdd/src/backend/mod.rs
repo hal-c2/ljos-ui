@@ -360,6 +360,19 @@ pub trait Backend: fmt::Debug {
     fn lazy_tree(&mut self, _name: &str, _delay_ms: u64, _rows: &[(String, String)]) -> Result<()> {
         Err(BackendError::NotImplemented("tree models written in Rust"))
     }
+    /// The application gives the QML a list model named `name` of
+    /// `total` rows ("row 0" on) that it reads `page` at a time, each page
+    /// `delay_ms` after a view asks for more. None is read at the start.
+    /// Given before anything is loaded.
+    fn paged_model(
+        &mut self,
+        _name: &str,
+        _total: usize,
+        _page: usize,
+        _delay_ms: u64,
+    ) -> Result<()> {
+        Err(BackendError::NotImplemented("list models written in Rust"))
+    }
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))

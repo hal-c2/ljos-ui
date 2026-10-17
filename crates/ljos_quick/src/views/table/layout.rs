@@ -12,10 +12,11 @@
 //! to the pool with `reuseItems`, hidden there.
 
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use ljos_engine::{
-    Engine, ItemSelectionModel, Made, ObjectId, OverrideContent, PropIndex, PropertyFlags,
-    RestoreMode, Urgency, Value, WriteKind,
+    Engine, ItemModel, ItemSelectionModel, Made, ObjectId, OverrideContent, PropIndex,
+    PropertyFlags, RestoreMode, Urgency, Value, WriteKind,
 };
 
 use super::{TableState, TableView, state_of};
@@ -252,6 +253,13 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     let right = shown.last();
     // The rows loaded are the rows in sight.
     let (top, bottom) = (first(loaded_rows.first()), first(loaded_rows.last()));
+    if rows == 0 || loaded_rows.last() == Some(&(rows - 1)) {
+        let cells: Rc<dyn ItemModel> = st.cells.clone();
+        let current = |e: &Engine, view| -> Option<Rc<dyn ItemModel>> {
+            Some(state_of(e, view)?.cells.clone())
+        };
+        crate::views::fetch::soon(e, view, cells, current);
+    }
     put(e, view, TableView::TOP_ROW.index, Value::Int(top));
     put(e, view, TableView::BOTTOM_ROW.index, Value::Int(bottom));
     put(

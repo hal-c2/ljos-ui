@@ -29,6 +29,7 @@ use super::{
 
 mod inspect;
 mod lazy;
+mod paged;
 mod platform;
 mod reload;
 mod text;
@@ -203,6 +204,7 @@ pub struct LjosBackend {
     controls_style: Option<ControlsStyle>,
     /// Tree models in Rust the QML is given, by name, before it is loaded.
     lazy_trees: Vec<(String, lazy::LazyTree)>,
+    paged_models: Vec<(String, paged::PagedModel)>,
 }
 
 impl Drop for LjosBackend {
@@ -977,6 +979,15 @@ impl Backend for LjosBackend {
                 e.set_object_tree(obj, Rc::new(tree)).map_err(failed)?;
                 e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
             }
+            for (name, model) in self.paged_models.drain(..) {
+                let e = &live.engine;
+                let obj = e
+                    .create_by_name("QtQml", "QtObject", None)
+                    .map_err(failed)?;
+                e.set_object_model(obj, Some(Rc::new(model)))
+                    .map_err(failed)?;
+                e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
+            }
             let images = ljos_quick::ImageStore::of(&live.engine);
             for (url, bytes) in self.resources.drain(..) {
                 ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
@@ -1220,6 +1231,17 @@ impl Backend for LjosBackend {
         }
         let tree = lazy::LazyTree::new(rows, Duration::from_millis(delay_ms));
         self.lazy_trees.push((name.to_owned(), tree));
+        Ok(())
+    }
+
+    fn paged_model(&mut self, name: &str, total: usize, page: usize, delay_ms: u64) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "a list model is given to the QML before it is loaded",
+            ));
+        }
+        let model = paged::PagedModel::new(total, page, Duration::from_millis(delay_ms));
+        self.paged_models.push((name.to_owned(), model));
         Ok(())
     }
 

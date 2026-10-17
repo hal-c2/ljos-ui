@@ -18,6 +18,7 @@
 mod changes;
 mod current;
 pub(crate) mod delegate_groups;
+pub(crate) mod fetch;
 mod models;
 mod pass;
 pub mod path_view;
