@@ -652,3 +652,64 @@ Feature: What survives a reload
       And a reload happens
       Then the property "checked" of "option" is true
       And the property "text" of "option" is "Choice"
+
+  Rule: A view stays scrolled where the user left it
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 200; height: 100
+          ListView {
+            id: view
+            objectName: "view"
+            anchors.fill: parent
+            orientation: ListView.Horizontal
+            model: 7
+            delegate: Rectangle { required property int index; width: 160; height: 100 }
+          }
+        }
+        """
+
+    Scenario: A list scrolled by a method is still scrolled there
+      When the method "positionViewAtIndex" of "view" is called with 3, 0
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          width: 200; height: 100
+          ListView {
+            id: view
+            objectName: "view"
+            anchors.fill: parent
+            orientation: ListView.Horizontal
+            model: 7
+            delegate: Rectangle { required property int index; width: 160; height: 100; color: "red" }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "contentX" of "view" is 480
+
+    Scenario: A list scrolled away from its current row stays where it was
+      When the property "currentIndex" of "view" is set to 1
+      And the method "positionViewAtIndex" of "view" is called with 4, 0
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          width: 200; height: 100
+          ListView {
+            id: view
+            objectName: "view"
+            anchors.fill: parent
+            orientation: ListView.Horizontal
+            model: 7
+            delegate: Rectangle { required property int index; width: 160; height: 100; color: "red" }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "contentX" of "view" is 640
+      And the property "currentIndex" of "view" is 1
