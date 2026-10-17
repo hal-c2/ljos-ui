@@ -44,7 +44,6 @@ mod atom;
 mod boundary;
 mod builtins;
 mod chooser;
-mod color_names;
 mod context;
 mod cx;
 mod delayed_errors;

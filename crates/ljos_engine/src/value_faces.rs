@@ -669,6 +669,17 @@ pub(crate) const COLORS: &str = r##"
     return one(a) === one(b);
   };
 
+  // A colour has the same four of its own: `c.lighter(2)` is
+  // `Qt.lighter(c, 2)`, seen in qml6.
+  for (const [name, f] of [
+    ["lighter", function (factor) { return Qt.lighter(this, factor); }],
+    ["darker", function (factor) { return Qt.darker(this, factor); }],
+    ["alpha", function (value) { return Qt.alpha(this, value); }],
+    ["tint", function (tint) { return Qt.tint(this, tint); }],
+  ]) {
+    Object.defineProperty(proto, name, { value: f, writable: true, configurable: true });
+  }
+
   // `rect.color.a = 0.5`, compiled, asks the colour for itself with one
   // channel changed (see `__ljos_vt`).
   Object.defineProperty(proto, "__ljos_with", {

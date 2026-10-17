@@ -44,7 +44,7 @@ use crate::value_types::{IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, fon
 /// what a declared `property color` starts as, and what `""` makes). It
 /// still has channels, as in Qt (black, opaque, unless an alpha was set on
 /// it), so it reads and prints as those, but `valid` is false, it equals no
-/// valid colour, and it paints nothing.
+/// valid colour, and it paints as its channels do, as in qml6.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Color {
     pub r: u16,
@@ -89,12 +89,13 @@ impl Color {
         }
     }
 
-    /// The colour to paint: an invalid one paints nothing.
+    /// The same channels, valid: what an invalid colour paints (black,
+    /// unless an alpha was set on it), and what Qt keeps where a property
+    /// holds plain channels, as Text's colours do.
     pub const fn painted(self) -> Self {
-        if self.invalid {
-            Color::TRANSPARENT
-        } else {
-            self
+        Color {
+            invalid: false,
+            ..self
         }
     }
 
@@ -134,38 +135,11 @@ impl Color {
         [f(self.r), f(self.g), f(self.b), f(self.a)]
     }
 
-    /// Parses `#rgb`, `#argb`, `#rrggbb`, `#aarrggbb` (alpha first, as QML
-    /// writes it) and the CSS/SVG colour keywords, case-insensitively.
+    /// Parses the colour text QML reads (see [`ljos_ir::color::parse`]):
+    /// `#rrggbb`, `#aarrggbb` (alpha first, as QML writes it), the other hex
+    /// forms, and the CSS/SVG colour keywords.
     pub fn parse(s: &str) -> Option<Color> {
-        let s = s.trim();
-        if let Some(hex) = s.strip_prefix('#') {
-            let digit = |i: usize| -> Option<u8> {
-                hex.as_bytes()
-                    .get(i)
-                    .and_then(|c| (*c as char).to_digit(16))
-                    .map(|d| d as u8)
-            };
-            let pair = |i: usize| -> Option<u8> { Some(digit(i)? * 16 + digit(i + 1)?) };
-            let short = |i: usize| -> Option<u8> { Some(digit(i)? * 17) };
-            return match hex.len() {
-                3 => Some(Color::from_rgba8(short(0)?, short(1)?, short(2)?, 255)),
-                4 => Some(Color::from_rgba8(
-                    short(1)?,
-                    short(2)?,
-                    short(3)?,
-                    short(0)?,
-                )),
-                6 => Some(Color::from_rgba8(pair(0)?, pair(2)?, pair(4)?, 255)),
-                8 => Some(Color::from_rgba8(pair(2)?, pair(4)?, pair(6)?, pair(0)?)),
-                _ => None,
-            };
-        }
-        let lower = s.to_ascii_lowercase();
-        if lower == "transparent" {
-            return Some(Color::TRANSPARENT);
-        }
-        crate::color_names::lookup(&lower)
-            .map(|rgb| Color::from_rgba8((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255))
+        ljos_ir::color::parse(s).map(|[r, g, b, a]| Color::rgba16(r, g, b, a))
     }
 }
 

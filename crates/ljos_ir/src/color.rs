@@ -1,5 +1,50 @@
-//! The CSS Color Module Level 4 named colours (W3C, the same list SVG 1.1
-//! uses), which QML accepts as colour strings. Sorted for binary search.
+//! The colours QML reads from text: `#rgb`, `#rrggbb`, `#aarrggbb`,
+//! `#rrrgggbbb`, `#rrrrggggbbbb`, `transparent`, and the CSS Color Module
+//! Level 4 named colours (W3C, the same list SVG 1.1 uses). Here because the
+//! compiler refuses a colour written in a file that names none, and the
+//! engine reads the same names at run time.
+
+/// The 16-bit red, green, blue and alpha that `text` names, or `None` when
+/// it names no colour. As qml6 reads them: `#` and its digits exactly (no
+/// space round them, no `#argb`), and a keyword in any case, with spaces
+/// and tabs anywhere in it ignored.
+pub fn parse(text: &str) -> Option<[u16; 4]> {
+    if let Some(hex) = text.strip_prefix('#') {
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        // `digits` hex digits from the `i`th group, widened to 16 bits.
+        let channel = |i: usize, digits: usize| -> u16 {
+            let v = u16::from_str_radix(&hex[i * digits..(i + 1) * digits], 16).unwrap_or(0);
+            match digits {
+                1 => v * 0x1111,
+                2 => v * 0x101,
+                3 => (v << 4) | (v >> 8),
+                _ => v,
+            }
+        };
+        return match hex.len() {
+            3 => Some([channel(0, 1), channel(1, 1), channel(2, 1), 0xffff]),
+            6 => Some([channel(0, 2), channel(1, 2), channel(2, 2), 0xffff]),
+            8 => Some([channel(1, 2), channel(2, 2), channel(3, 2), channel(0, 2)]),
+            9 => Some([channel(0, 3), channel(1, 3), channel(2, 3), 0xffff]),
+            12 => Some([channel(0, 4), channel(1, 4), channel(2, 4), 0xffff]),
+            _ => None,
+        };
+    }
+    let name: String = text
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '\t'))
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if name == "transparent" {
+        return Some([0; 4]);
+    }
+    let wide = |c: u32| (c & 0xff) as u16 * 0x101;
+    lookup(&name).map(|rgb| [wide(rgb >> 16), wide(rgb >> 8), wide(rgb), 0xffff])
+}
+
+// Sorted for binary search.
 
 const NAMES: &[(&str, u32)] = &[
     ("aliceblue", 0xF0F8FF),
@@ -153,7 +198,7 @@ const NAMES: &[(&str, u32)] = &[
 ];
 
 /// `0xRRGGBB` for a lowercase keyword.
-pub(crate) fn lookup(name: &str) -> Option<u32> {
+fn lookup(name: &str) -> Option<u32> {
     NAMES
         .binary_search_by(|(n, _)| (*n).cmp(name))
         .ok()
@@ -166,5 +211,25 @@ mod tests {
     fn sorted() {
         assert!(super::NAMES.windows(2).all(|w| w[0].0 < w[1].0));
         assert_eq!(super::lookup("rebeccapurple"), Some(0x663399));
+    }
+
+    // Each seen in qml6.
+    #[test]
+    fn text_reads_as_qml_reads_it() {
+        use super::parse;
+        assert_eq!(parse("#f0a"), Some([0xffff, 0, 0xaaaa, 0xffff]));
+        assert_eq!(parse("#80ff0000"), Some([0xffff, 0, 0, 0x8080]));
+        assert_eq!(parse("#123456789"), Some([0x1231, 0x4564, 0x7897, 0xffff]));
+        assert_eq!(
+            parse("#ABCDEF123456"),
+            Some([0xabcd, 0xef12, 0x3456, 0xffff])
+        );
+        assert_eq!(parse(" l i g h t blue\t"), parse("lightblue"));
+        assert_eq!(parse("TRANSPARENT"), Some([0; 4]));
+        for none in [
+            "#8f00", "#12345", " #f00", "#f00 ", "#ggg", "red\n", "", "f00",
+        ] {
+            assert_eq!(parse(none), None, "{none:?}");
+        }
     }
 }

@@ -210,12 +210,10 @@ impl TypeTag {
             },
             TypeTag::Color => match v {
                 Value::Color(_) => v.clone(),
-                // `""` unsets a colour, as in Qt.
-                Value::String(s) if s.is_empty() => Value::Color(Color::INVALID),
-                Value::String(s) => match Color::parse(s) {
-                    Some(c) => Value::Color(c),
-                    None => return fail(),
-                },
+                // Text that names no colour, `""` too, makes an invalid
+                // colour without a word, as in qml6. A literal one is refused
+                // when the file is compiled, before this.
+                Value::String(s) => Value::Color(Color::parse(s).unwrap_or(Color::INVALID)),
                 _ => return fail(),
             },
             TypeTag::Url => match v {
@@ -771,7 +769,9 @@ mod tests {
             Color::from_value(&Value::string("Red")),
             Ok(Color::from_rgba8(255, 0, 0, 255))
         );
-        assert!(Color::from_value(&Value::string("#12")).is_err());
+        // Text that names no colour is an invalid colour, as in qml6.
+        assert_eq!(Color::from_value(&Value::string("#12")), Ok(Color::INVALID));
+        assert!(Color::from_value(&Value::Bool(true)).is_err());
         assert_eq!(<Option<ObjectId>>::from_value(&Value::Undefined), Ok(None));
         let err = f64::from_value(&Value::Undefined).unwrap_err();
         assert_eq!(err.to_string(), "Unable to assign [undefined] to real");

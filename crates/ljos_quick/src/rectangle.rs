@@ -246,7 +246,7 @@ impl RectanglePaint {
 }
 
 /// Engine colour (16-bit straight channels) to render colour. An invalid
-/// colour paints nothing.
+/// colour paints its channels, black unless an alpha was set, as in qml6.
 pub fn to_rgba(c: Color) -> Rgba {
     let [r, g, b, a] = c.painted().to_rgba_f();
     Rgba::from_straight(r as f32, g as f32, b as f32, a as f32)

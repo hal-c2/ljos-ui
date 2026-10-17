@@ -23,6 +23,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod color;
+
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.

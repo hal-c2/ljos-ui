@@ -266,3 +266,81 @@ Feature: Making one colour from another
         """
       When the method "fade" of "root" is called
       Then the property "color" of "swatch" is "#80902030"
+
+  Rule: A colour has lighter, darker, alpha and tint of its own
+
+    Scenario Outline: <expression> is <colour>
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "o"
+          property color c: "#336699"
+          property color t: "#80336699"
+          property string seen: String(<expression>)
+        }
+        """
+      Then the property "seen" of "o" is "<colour>"
+
+      Examples:
+        | expression             | colour    |
+        | c.lighter()            | #4c99e5   |
+        | c.lighter(2)           | #88c4ff   |
+        | t.lighter(1.2)         | #803d7ab8 |
+        | c.darker()             | #19334c   |
+        | c.darker(3)            | #112233   |
+        | c.alpha(0.5)           | #80336699 |
+        | t.alpha(1)             | #336699   |
+        | c.tint("#80ff0000")    | #99334c   |
+        | t.tint("#80ffffff")    | #c099b3cc |
+        | c.lighter() === Qt.lighter(c) | true |
+
+    Scenario Outline: What Qt makes from an invalid colour with <expression> is valid <valid>
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "o"
+          property string bad: "bogus"
+          property color i: bad
+          property string seen: String(<expression>)
+          property bool valid: (<expression>).valid
+        }
+        """
+      Then the property "seen" of "o" is "<colour>"
+      And the property "valid" of "o" is <valid>
+
+      Examples:
+        | expression         | colour    | valid |
+        | Qt.lighter(i)      | #000000   | false |
+        | i.darker()         | #000000   | false |
+        | Qt.alpha(i, 0.5)   | #80000000 | false |
+        | i.alpha(0.5)       | #80000000 | false |
+        | Qt.tint(i, "red")  | #ff0000   | true  |
+        | Qt.tint("red", i)  | #000000   | false |
+
+    Scenario Outline: <expression> is <colour>, as Qt makes it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "o"; property string seen: String(<expression>) }
+        """
+      Then the property "seen" of "o" is "<colour>"
+
+      Examples:
+        | expression                                 | colour    |
+        | Qt.lighter("#336699", -1)                  | #336699   |
+        | Qt.darker("#336699", 0)                    | #336699   |
+        | Qt.darker("#336699", -2)                   | #336699   |
+        | Qt.lighter(Qt.hsla(0.5, 0.5, 0.5, 1), 1.3) | #53f9f9   |
+        | Qt.darker(Qt.hsla(0.1, 0.9, 0.3, 0.5), 1.7) | #80563504 |
+        | Qt.lighter("#123456", 1.1)                 | #14395f   |
+        | Qt.darker("#fedcba", 1.1)                  | #e7c8a9   |
+        | Qt.lighter("#808080", 1.7)                 | #dadada   |
+        | Qt.darker("#ff8040", 1.3)                  | #c46231   |
+        | Qt.tint("#123456", "#33abcdef")            | #315375   |
+        | Qt.tint("#7f00ff00", "#7fff0000")          | #bf7f8000 |
+        | Qt.tint("#00000000", "#80ffffff")          | #80808080 |
+        | Qt.alpha("#80336699", 2)                   | #336699   |
+        | Qt.alpha("#80336699", 0)                   | #00336699 |
+        | Qt.tint("red", "blue")                     | #0000ff   |

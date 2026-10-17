@@ -781,6 +781,18 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     Some(key) => Some(key),
                     None => self.literal(expression, color),
                 };
+                if let Some(Literal::Color(text)) = &literal
+                    && ljos_ir::color::parse(text).is_none()
+                {
+                    // qml6 refuses the file; text that only a binding gives
+                    // makes an invalid colour instead.
+                    let span = self.span(expression.span());
+                    self.diagnostics.push(Diagnostic::error(
+                        "Invalid property assignment: color expected",
+                        span,
+                    ));
+                    return;
+                }
                 if let Some(literal) = literal {
                     let span = self.span(expression.span());
                     self.members_mut(at, &slot).assignments.push(Assignment {
@@ -1234,8 +1246,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     _ => return None,
                 }
             }
+            // `("name")` is an expression to qml6, not a colour written in
+            // the file: a name that is no colour is not refused.
             Expression::ParenthesizedExpression(inner) => {
-                return self.literal(&inner.expression, color);
+                return self.literal(&inner.expression, false);
             }
             Expression::ArrayExpression(array) => {
                 let mut items = Vec::new();
