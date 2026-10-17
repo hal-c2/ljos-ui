@@ -10,9 +10,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use ljos_engine::{Engine, LogEntry, LogLevel, MapSource};
+use ljos::dev::EngineOracle;
+use ljos_engine::{Engine, LogEntry, LogLevel};
 use ljos_mcp_core::{Cap, CapSet};
 use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, ShellConfig};
+
+use crate::demand::{OnDemand, Say};
 
 #[derive(Args)]
 pub struct Run {
@@ -223,20 +226,24 @@ fn entry(file: &Path) -> anyhow::Result<(PathBuf, String)> {
     }
 }
 
-/// Compiles the project once, for a run that does not watch, as
-/// `ljos render` loads it: a file with a mistake is said to be one to
-/// whatever makes an object of it, so only the entry's own mistake stops
-/// the run. With an example, its registered backends are types of the
-/// project too (see `ljos render --example`).
-fn compile(dir: &Path, key: &str, example: Option<&str>) -> anyhow::Result<MapSource> {
-    let loaded = match example {
-        Some(id) => crate::render::load_project(dir, key, crate::render::oracle_for_example(id)),
-        None => crate::render::load_project(dir, key, ljos::dev::EngineOracle::table_only()),
-    }?;
-    for warning in &loaded.warnings {
-        eprintln!("{warning}");
-    }
-    loaded.into_source(dir, key)
+/// The project of a run that does not watch, as a program loads it: the
+/// entry is compiled now, and each other file when the program first
+/// makes an object of it, which tells `say` its warnings then. A file the
+/// entry never reaches is not compiled and says nothing. A file with a
+/// mistake is said to be one to whatever makes an object of it, so only
+/// the entry's own mistake stops the run. With an example, its registered
+/// backends are types of the project too (see `ljos render --example`).
+fn compile(
+    dir: &Path,
+    key: &str,
+    example: Option<&str>,
+    say: Say,
+) -> anyhow::Result<OnDemand<EngineOracle>> {
+    let oracle = match example {
+        Some(id) => crate::render::oracle_for_example(id),
+        None => EngineOracle::table_only(),
+    };
+    OnDemand::open(dir, key, oracle, say)
 }
 
 /// One line for the developer's terminal about what the watcher brought.
@@ -365,7 +372,12 @@ impl Run {
                 Ok(root)
             })?;
         } else {
-            let source = compile(&dir, &key, example.as_deref())?;
+            let source = compile(
+                &dir,
+                &key,
+                example.as_deref(),
+                Box::new(crate::stderr::line),
+            )?;
             ljos_shell::run::<()>(config, move |setup| {
                 // The application's databases where Qt keeps them.
                 ljos_localstorage::register(setup.engine());
@@ -553,6 +565,77 @@ mod tests {
         assert!(entry_in(&dir.path().join("App/Main.qml"), other.path()).is_err());
     }
 
+    fn quiet() -> Say {
+        Box::new(|_| {})
+    }
+
+    fn write(dir: &Path, files: &[(&str, &str)]) {
+        for (name, text) in files {
+            let path = dir.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_run_compiles_and_tells_only_what_its_entry_reaches() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &[
+                (
+                    "Main.qml",
+                    "import QtQuick\nimport \"parts\"\nItem {\n  property alias page: loader.item\n  \
+                     Sibling { }\n  Panel { objectName: \"panel\" }\n  \
+                     Loader { id: loader; source: \"pages/Page.qml\" }\n}\n",
+                ),
+                (
+                    "Sibling.qml",
+                    "import QtQuick\nItem {\n  property var v: siblingUnknown\n}\n",
+                ),
+                // Beside the entry, with a mistake, and nothing uses it.
+                (
+                    "Broken.qml",
+                    "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
+                ),
+                ("parts/Panel.qml", "import QtQuick\nItem { }\n"),
+                (
+                    "pages/Page.qml",
+                    "import QtQuick\nItem {\n  objectName: \"page\"\n  property var v: pageUnknown\n}\n",
+                ),
+                // Below the entry, and nothing imports it.
+                (
+                    "stray/Stray.qml",
+                    "import QtQuick\nItem {\n  property var v: strayUnknown\n}\n",
+                ),
+            ],
+        );
+        let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let to = said.clone();
+        let source = compile(
+            dir.path(),
+            "Main",
+            None,
+            Box::new(move |line| to.borrow_mut().push(line.to_owned())),
+        )
+        .unwrap();
+        // Nothing but the entry is compiled before an object is made.
+        assert!(said.borrow().is_empty(), "{said:?}");
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        engine.set_component_source(source);
+        let root = engine.create_from_url("Main", None, Vec::new()).unwrap();
+        let page = engine.read_by_name(root, "page").as_object().unwrap();
+        let name = engine.read_by_name(page, "objectName");
+        assert_eq!(name.to_js_string().to_string(), "page");
+        let said = said.borrow();
+        let told = |file: &str| said.iter().any(|line| line.starts_with(file));
+        assert!(told("Sibling.qml: 3:"), "{said:?}");
+        assert!(told("pages/Page.qml: 4:"), "{said:?}");
+        assert!(!told("stray/") && !told("Broken"), "{said:?}");
+        assert_eq!(said.len(), 2, "{said:?}");
+    }
+
     #[test]
     fn a_project_with_a_mistake_in_its_entry_says_where() {
         let dir = tempfile::tempdir().unwrap();
@@ -561,13 +644,15 @@ mod tests {
             "import QtQuick\nItem {\n  width: 20 +\n}\n",
         )
         .unwrap();
-        let e = compile(dir.path(), "Main", None).unwrap_err().to_string();
+        let e = compile(dir.path(), "Main", None, quiet())
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("Main.qml:"), "{e}");
         std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
-        assert!(compile(dir.path(), "Main", None).is_ok());
+        assert!(compile(dir.path(), "Main", None, quiet()).is_ok());
         // An example without a backend compiles as before.
-        assert!(compile(dir.path(), "Main", Some("no-such-example")).is_ok());
-        assert!(compile(dir.path(), "Gone", None).is_err());
+        assert!(compile(dir.path(), "Main", Some("no-such-example"), quiet()).is_ok());
+        assert!(compile(dir.path(), "Gone", None, quiet()).is_err());
     }
 
     #[test]
@@ -579,7 +664,7 @@ mod tests {
             "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
         )
         .unwrap();
-        let source = compile(dir.path(), "Main", None).unwrap();
+        let source = compile(dir.path(), "Main", None, quiet()).unwrap();
         let engine = Engine::new();
         ljos_quick::register(&engine);
         engine.set_component_source(source);

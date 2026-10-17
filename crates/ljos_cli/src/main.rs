@@ -10,6 +10,7 @@ use ljos_mcp_core::CapSet;
 
 mod bench;
 mod check;
+mod demand;
 mod fmt;
 #[cfg(feature = "dhat-heap")]
 mod heap;

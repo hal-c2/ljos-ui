@@ -272,28 +272,26 @@ pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
     EngineOracle::from_engine(&engine)
 }
 
-/// A project compiled the way a program loads it: every file that
-/// compiled, and for each one that did not, why, which whatever makes an
-/// object of it is told. Shared with `ljos run`.
-pub(crate) struct Loaded {
-    pub(crate) source: MapSource,
-    pub(crate) files: usize,
-    pub(crate) compiled: usize,
+/// A project compiled whole: every file that compiled, and for each one
+/// that did not, why, which whatever makes an object of it is told. The
+/// gallery's report counts the project's files, so a render compiles them
+/// all; `ljos run` compiles only what the entry reaches (`demand.rs`).
+struct Loaded {
+    source: MapSource,
+    files: usize,
+    compiled: usize,
     /// The first error of each file that did not compile, by file name.
-    pub(crate) compile_errors: BTreeMap<String, String>,
-    /// Whatever the compiler could not settle in the files that compiled,
-    /// one a line with the file's name.
-    pub(crate) warnings: Vec<String>,
+    compile_errors: BTreeMap<String, String>,
     /// The entry is in the project.
-    pub(crate) entry_seen: bool,
+    entry_seen: bool,
     /// The entry's own first error, with its name.
-    pub(crate) entry_error: Option<String>,
+    entry_error: Option<String>,
 }
 
 impl Loaded {
     /// The source, unless the entry cannot be made: it is not in the
     /// project, or it did not compile.
-    pub(crate) fn into_source(self, dir: &Path, entry: &str) -> anyhow::Result<MapSource> {
+    fn into_source(self, dir: &Path, entry: &str) -> anyhow::Result<MapSource> {
         if let Some(error) = self.entry_error {
             anyhow::bail!("{error}");
         }
@@ -307,7 +305,7 @@ impl Loaded {
 /// Compiles every file under `dir` against `oracle`, as Qt loads a
 /// program: a file with a mistake stops nothing until an object of it is
 /// made, so only the entry's own mistake stops the program.
-pub(crate) fn load_project<O: TypeOracle<Type = EngineType>>(
+fn load_project<O: TypeOracle<Type = EngineType>>(
     dir: &Path,
     entry: &str,
     oracle: O,
@@ -318,7 +316,6 @@ pub(crate) fn load_project<O: TypeOracle<Type = EngineType>>(
         files: 0,
         compiled: 0,
         compile_errors: BTreeMap::new(),
-        warnings: Vec::new(),
         entry_seen: false,
         entry_error: None,
     };
@@ -346,8 +343,6 @@ pub(crate) fn load_project<O: TypeOracle<Type = EngineType>>(
         }
         let Ok(c) = r.result else { continue };
         out.compiled += 1;
-        out.warnings
-            .extend(c.diagnostics.iter().map(|d| format!("{}.qml: {d}", r.key)));
         out.source.insert(r.key, c.file);
     }
     Ok(out)
