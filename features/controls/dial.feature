@@ -133,6 +133,37 @@ Feature: Dial
       Then the property "value" of "d" is 0
       And the property "moves" of "d" is 0
 
+    # Further than half a turn of the circle the short way is through the
+    # gap: the dial goes to the end on that way. Less far, it stays put.
+    Scenario Outline: A dial that does not wrap, at <from> and pressed at <x>, <y>, goes to <value>
+      When the property "value" of "d" is set to <from>
+      And the user presses the pointer at <x>, <y>
+      Then the property "value" of "d" is <value>
+      And the property "moves" of "d" is <moves>
+
+      Examples:
+        | from | x   | y  | value | moves |
+        | 0.1  | 172 | 84 | 0     | 1     |
+        | 0.25 | 172 | 84 | 0.25  | 0     |
+        | 0.9  | 12  | 84 | 1     | 1     |
+        | 0.75 | 12  | 84 | 0.75  | 0     |
+
+    Scenario Outline: Pressed in the gap at <x>, <y>, a dial that wraps goes to the nearer end, <value>
+      When the property "value" of "w" is set to 0.5
+      And the user presses the pointer at <x>, <y>
+      Then the property "value" of "w" is <value>
+
+      Examples:
+        | x   | y   | value |
+        | 306 | 371 | 1     |
+        | 292 | 375 | 1     |
+        | 278 | 371 | 0     |
+
+    Scenario: A press at the very middle turns the dial to twelve o'clock
+      When the user presses the pointer at 92, 92
+      Then the property "value" of "d" is 0.5
+      And the property "moves" of "d" is 1
+
     @api-QtQuick.Controls.Dial.wrap
     Scenario: A dial that wraps goes across the gap
       When the user presses the pointer at 230, 360

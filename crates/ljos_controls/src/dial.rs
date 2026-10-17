@@ -5,10 +5,12 @@
 //! documentation leaves open:
 //!
 //! - The angle is clockwise from twelve o'clock; one before `startAngle`
-//!   is read a turn later, so the gap at the bottom is the end of the
-//!   value.
+//!   is read a turn later, and one in the gap after `endAngle` belongs to
+//!   the nearer end, the gap split in its middle.
 //! - A dial that does not `wrap` ignores a pointer that would take it more
-//!   than half the way at once: across the gap.
+//!   than half the way at once, unless the short way round to the pointer,
+//!   more than half a circle, is through the gap: then it goes to the end
+//!   on that way. The very middle is twelve o'clock.
 //! - In the `Horizontal` and `Vertical` input modes a press changes
 //!   nothing, and the value follows the pointer from there, the whole way
 //!   being twice the dial's width (or height).
@@ -249,10 +251,16 @@ fn position_at(e: &Engine, obj: ObjectId, held: (kurbo::Point, f64), p: kurbo::P
             _ => {
                 let start = num(e, obj, Dial::START_ANGLE.index);
                 let end = num(e, obj, Dial::END_ANGLE.index);
-                let (dx, dy) = (p.x - w / 2.0, p.y - h / 2.0);
-                let mut angle = dx.atan2(-dy).to_degrees();
+                let (dx, up) = (p.x - w / 2.0, h / 2.0 - p.y);
+                // The very middle is twelve o'clock to qml6 (atan2 of +0, +0).
+                let mut angle = (dx + 0.0).atan2(up + 0.0).to_degrees();
                 if angle < start {
                     angle += 360.0;
+                }
+                // In the gap, the pointer is at the nearer end: past the
+                // middle of the gap, before the start.
+                if angle > end && angle - end > start + 360.0 - angle {
+                    angle -= 360.0;
                 }
                 // Not held to the ends: a release past one is a move.
                 if end == start {
@@ -285,14 +293,23 @@ fn turn_to(e: &Engine, obj: ObjectId, st: &Held, p: kurbo::Point, release: bool)
         )
     });
     let raw = position_at(e, obj, held, p);
-    let free = raw.clamp(0.0, 1.0);
+    let mut free = raw.clamp(0.0, 1.0);
     if !wrap && (free - shown_now).abs() > 0.5 {
-        // Across the gap: the dial stays at the end it was at. Letting go
-        // there is still a move to qml6.
-        if release && raw != shown_now {
-            moved_signal(e, obj);
+        let circular =
+            e.untrack(|| num(e, obj, Dial::INPUT_MODE.index)) as i32 == input_mode::CIRCULAR;
+        let turn =
+            e.untrack(|| num(e, obj, Dial::END_ANGLE.index) - num(e, obj, Dial::START_ANGLE.index));
+        if circular && (free - shown_now).abs() * turn.abs() > 180.0 {
+            // The short way round is through the gap: to the end on that way.
+            free = if free < shown_now { 1.0 } else { 0.0 };
+        } else {
+            // Too far to be a turn: the dial stays. Letting go there is
+            // still a move to qml6.
+            if release && raw != shown_now {
+                moved_signal(e, obj);
+            }
+            return;
         }
-        return;
     }
     // Unlike a slider's, the value of a dial that snaps on release is
     // free until then too (qml6).
