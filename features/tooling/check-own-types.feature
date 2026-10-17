@@ -5,6 +5,9 @@
 # `ljos check` is Ljós's own program, and `Ljos` its own module: Qt has nothing to compare them with.
 # A reported column counts the characters of the line as it is in the file, and a file given here is
 # written with the eight spaces it is indented by: the first visible column is 9.
+# A member Ljós's own table does not list is a warning: the table may lack what Qt has. One of Qt's
+# types is read against Qt's table where the build has it (`@qt-table`), where a member it does not
+# list is an error, as Qt fails to load the file; a build without it runs `@no-qt-table`.
 
 @ljos-only @headless
 Feature: Checking files that use the modules Ljós adds
@@ -197,7 +200,25 @@ Feature: Checking files that use the modules Ljós adds
 
   Rule: A misspelt member of one of Qt's types is reported the same way
 
-    Scenario: A misspelt property of a rectangle is reported
+    @qt-table
+    Scenario: A misspelt property of a rectangle is an error where Qt's table lists its members
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          colr: "red"
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:3:11: error: `colr` is not a property of `Rectangle`; did you mean `color`? [unknown-property]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    @no-qt-table
+    Scenario: A misspelt property of a rectangle is a warning where Ljós's own table describes it
       Given the file "Main.qml":
         """qml
         import QtQuick

@@ -17,6 +17,10 @@ const SURFACES: &[&str] = &["headless", "desktop", "android", "ios", "wgpu"];
 /// says something else there, so the scenario is for the other build alone.
 const NO_QT_TABLE: &str = "no-qt-table";
 
+/// On a scenario of what only a build with a table of Qt's types says: one without reads QML
+/// against Ljós's own types alone, and says less.
+const QT_TABLE: &str = "qt-table";
+
 /// What a run keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -30,7 +34,7 @@ pub struct Selection {
     /// Qt agrees, and verifying backlog expectations on Qt is the point of the oracle.
     pub oracle_only: bool,
     /// The build reads QML against a table of Qt's types (`qt_types::has_qt_table`), so a
-    /// `@no-qt-table` scenario is not about it.
+    /// `@no-qt-table` scenario is not about it, and a `@qt-table` one is.
     pub qt_table: bool,
 }
 
@@ -60,7 +64,7 @@ impl Selection {
         {
             return false;
         }
-        if self.qt_table && has(NO_QT_TABLE) {
+        if self.qt_table && has(NO_QT_TABLE) || !self.qt_table && has(QT_TABLE) {
             return false;
         }
         // A scenario for another surface does not belong in this runner at all.
@@ -230,6 +234,8 @@ mod tests {
         assert!(without.keeps(&tags(&["ljos-only", "no-qt-table"])));
         assert!(with.keeps(&tags(&["ljos-only"])));
         assert!(without.keeps(&tags(&["ljos-only"])));
+        assert!(with.keeps(&tags(&["qt-parity", "qt-table"])));
+        assert!(!without.keeps(&tags(&["qt-parity", "qt-table"])));
     }
 
     #[test]

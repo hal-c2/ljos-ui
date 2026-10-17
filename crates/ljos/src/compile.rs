@@ -820,8 +820,29 @@ impl TypeOracle for EngineOracle {
         // table's types reach too is the toolkit's, and is left as the
         // table's types are.
         match ty {
-            EngineType::Qt(_) => false,
+            EngineType::Qt(ty) => QtTypeOracle.members_checked(ty),
             EngineType::Native(i) => self.native(i).checked,
+        }
+    }
+
+    fn members_warned(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.members_warned(ty),
+            EngineType::Native(_) => false,
+        }
+    }
+
+    fn reads_checked(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.reads_checked(ty),
+            EngineType::Native(_) => self.members_checked(ty),
+        }
+    }
+
+    fn adds_member(&self, ty: EngineType, name: &str) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.adds_member(ty, name),
+            EngineType::Native(_) => false,
         }
     }
 

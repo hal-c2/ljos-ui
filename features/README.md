@@ -66,7 +66,7 @@ Tags on a `Feature`, `Rule` or `Examples` table apply to everything below them.
 | Status | none = passes everywhere it applies · `@backlog` (passes nowhere yet) · `@backlog-<surface>` (does not pass on that surface yet) · `@dropped` (decided against; a comment gives the reason) · `@blocked` (a comment names what it waits for) · `@priority-high` / `@priority-low` |
 | Oracle | `@qt-parity` · `@qt-diverges` · `@ljos-only` · `@qt-pixels` |
 | Ledger | `@api-<Module>.<Type>.<member>` · `@a11y` |
-| Build | `@no-qt-table`: what only a build says that reads QML against Ljós's own description of its types alone (`LJOS_QT_TYPES=none`, or a checkout where `mise run types` never ran). A build with a table of Qt's types does not run it. |
+| Build | `@no-qt-table`: what only a build says that reads QML against Ljós's own description of its types alone (`LJOS_QT_TYPES=none`, or a checkout where `mise run types` never ran). A build with a table of Qt's types does not run it. `@qt-table`: what only a build with a table of Qt's types says; a build without one does not run it. |
 
 **Status, as the runner applies it.** A normal run drops `@backlog`, `@backlog-<own surface>`,
 `@dropped` and `@blocked`. `--backlog` runs only the backlog (`@backlog*` that is neither `@dropped`

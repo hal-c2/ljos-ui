@@ -180,7 +180,8 @@ impl Component {
     }
 }
 
-/// What `Component.` attaches: `onCompleted`, `onDestruction`.
+/// What `Component.` attaches: `onCompleted`, `onDestruction`, and
+/// Ljós's `onReloaded` (see `incubator/reload.rs`).
 ///
 /// Not `uncreatable`: the engine makes an attached object with the
 /// attached type's constructor. It is in no module, so QML cannot name it.
@@ -195,6 +196,12 @@ impl ComponentAttached {
 
     #[qml(signal)]
     fn destruction();
+
+    /// Never emitted: the engine runs `Component.onReloaded` itself, in
+    /// place of `onCompleted` for an object a reload kept. Declared so
+    /// that what reads QML knows the name.
+    #[qml(signal)]
+    fn reloaded();
 }
 
 /// One context's share of a destruction: the attached objects to tell,

@@ -132,6 +132,7 @@ impl Checked {
     /// under `label`.
     pub fn project(&mut self, dir: &Path, label: &str) -> anyhow::Result<()> {
         let mut keys = Vec::new();
+        let mut compiled_lines = 0;
         for file in compile_project(dir)? {
             self.files += 1;
             keys.push(file.key.clone());
@@ -159,13 +160,30 @@ impl Checked {
                     self.warnings += 1;
                 }
                 self.diagnostics.push(format!("{name}.qml:{diagnostic}"));
+                compiled_lines += 1;
             }
         }
         // What the compiler does not say and the run would: a name that is
-        // no member of the type it is written on.
-        let unknown = members::project(dir, label, &keys)?;
-        self.warnings += unknown.len();
-        self.diagnostics.extend(unknown);
+        // no member of the type it is written on. Where the compiler said
+        // it too, the finding, which may name what was meant, stands for
+        // both, as an error when the compiler's was one.
+        let start = self.diagnostics.len() - compiled_lines;
+        for finding in members::project(dir, label, &keys)? {
+            let said = self.diagnostics[start..]
+                .iter()
+                .position(|line| same_member(line, &finding));
+            let Some(said) = said.map(|i| start + i) else {
+                self.warnings += 1;
+                self.diagnostics.push(finding);
+                continue;
+            };
+            // Counted once already, as the compiler's.
+            self.diagnostics[said] = if self.diagnostics[said].contains(": error: ") {
+                finding.replacen(": warning: ", ": error: ", 1)
+            } else {
+                finding
+            };
+        }
         if self.lint {
             // After the compiler's own: a lint is never an error, and a
             // file that does not parse has none.
@@ -268,5 +286,21 @@ impl Checked {
                 .map(|(reason, fell)| (reason.as_str(), *fell)),
         );
         out
+    }
+}
+
+/// Whether the compiler's `line` and the finding `finding` are about one
+/// name: they are at one place, and the compiler's names what the finding
+/// names first.
+fn same_member(line: &str, finding: &str) -> bool {
+    let place = |l: &str| {
+        l.find(": warning: ")
+            .or_else(|| l.find(": error: "))
+            .map(|at| l[..at].to_owned())
+    };
+    let named = finding.split('`').nth(1).filter(|name| !name.is_empty());
+    match (place(line), place(finding), named) {
+        (Some(a), Some(b), Some(name)) => a == b && line.contains(&format!("`{name}`")),
+        _ => false,
     }
 }

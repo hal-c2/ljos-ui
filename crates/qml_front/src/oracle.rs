@@ -102,10 +102,34 @@ pub trait TypeOracle {
     /// Whether a name written as a member of the type that it does not
     /// have is an error where it is written, not something left for the
     /// running program to find. The oracle says so of a type it describes
-    /// in full and the runtime holds to the description (an application's
-    /// native type, whose members are all registered); Qt's table, which a
-    /// back end's types may outgrow, does not.
+    /// in full, as Qt's table does every type whose members it lists, and
+    /// an application's native type, whose members are all registered. Qt
+    /// fails to make an object a file binds such a name on.
     fn members_checked(&self, _ty: Self::Type) -> bool {
+        false
+    }
+
+    /// Whether a script that reads `Type.member` or `Singleton.member` of
+    /// what the type does not have is an error where it is written. Qt
+    /// reads such a name of its own types as `undefined`, and a file that
+    /// asks `typeof Text.Nowhere` loads; an application's native type,
+    /// described in full, says the name is wrong.
+    fn reads_checked(&self, ty: Self::Type) -> bool {
+        self.members_checked(ty)
+    }
+
+    /// Whether such a name is a warning where it is written: the oracle
+    /// lists every member the runtime has, but not every member QML may
+    /// name (Ljós's own description of a Qt type, which may lack what Qt
+    /// has).
+    fn members_warned(&self, _ty: Self::Type) -> bool {
+        false
+    }
+
+    /// Whether the runtime gives `ty` a member called `name` that the
+    /// description of `ty` does not list: what a back end adds to one of
+    /// Qt's types. Such a name is not reported as missing.
+    fn adds_member(&self, _ty: Self::Type, _name: &str) -> bool {
         false
     }
 
@@ -361,6 +385,24 @@ impl TypeOracle for QtTypeOracle {
             ty = found.prototype();
         }
         true
+    }
+
+    fn members_checked(&self, ty: QtType) -> bool {
+        // Ljós's own table describes what the runtime has, which may lack
+        // a member Qt has: a name it does not list may still be right.
+        !ty.0.is_own && self.members_known(ty)
+    }
+
+    fn members_warned(&self, ty: QtType) -> bool {
+        ty.0.is_own && self.members_known(ty)
+    }
+
+    fn adds_member(&self, ty: QtType, name: &str) -> bool {
+        ty.0.adds(name)
+    }
+
+    fn reads_checked(&self, _ty: QtType) -> bool {
+        false
     }
 
     fn unknown_type_note(&self, name: &str) -> Option<&'static str> {

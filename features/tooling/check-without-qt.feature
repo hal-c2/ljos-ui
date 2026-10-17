@@ -7,7 +7,9 @@
 # A build reads QML against a table of types. Where a table of Qt's types was generated from a
 # local Qt it is that one; a build without Qt reads against what Ljós's own types declare. What is
 # not tagged here holds of both builds. `@no-qt-table` is what only the second says, and a build
-# with Qt's table does not run it.
+# with Qt's table does not run it; `@qt-table` is what only the first says. A member Qt's table does
+# not list is an error, as Qt fails to load the file; one Ljós's own table does not list is a
+# warning, as that table may lack what Qt has.
 # A reported column counts the characters of the line as it is in the file, and a file given here is
 # written with the eight spaces it is indented by: the first visible column is 9.
 
@@ -85,7 +87,25 @@ Feature: Checking files on a machine that has no Qt
         1 files, 0 errors, 0 warnings
         """
 
-    Scenario: A misspelt property of a button is reported
+    @qt-table
+    Scenario: A misspelt property of a button is an error where Qt's table lists its members
+      Given the file "Main.qml":
+        """qml
+        import QtQuick.Controls
+        Button {
+          txt: "Greet"
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:3:11: error: `txt` is not a property of `Button`; did you mean `text`? [unknown-property]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    @no-qt-table
+    Scenario: A misspelt property of a button is a warning where Ljós's own table describes it
       Given the file "Main.qml":
         """qml
         import QtQuick.Controls
@@ -100,7 +120,25 @@ Feature: Checking files on a machine that has no Qt
         1 files, 0 errors, 1 warnings
         """
 
-    Scenario: A part a font does not have is reported
+    @qt-table
+    Scenario: A part a font does not have is an error where Qt's table lists its members
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Text {
+          font.sparkle: true
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:3:11: error: `sparkle` is not a property of `font` [unknown-property]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    @no-qt-table
+    Scenario: A part a font does not have is a warning where Ljós's own table describes it
       Given the file "Main.qml":
         """qml
         import QtQuick

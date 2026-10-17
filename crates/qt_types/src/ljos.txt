@@ -619,6 +619,7 @@ module QtQml
 		is uncreatable
 		signal completed
 		signal destruction
+		signal reloaded
 
 module QtQml.Models
 	DelegateChoice QtQml.Models.DelegateChoice

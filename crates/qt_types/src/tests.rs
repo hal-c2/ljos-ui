@@ -506,6 +506,35 @@ fn a_module_is_described_by_one_table() {
     assert!(module("QtQuick.NoSuchModule").is_none());
 }
 
+/// What the runtime adds to one of Qt's types is known by name where Qt's
+/// table describes the type; without it, Ljós's own table lists it.
+#[test]
+fn ljos_adds_members_to_qt_types() {
+    let quick = module("QtQuick").unwrap();
+    let font = quick.type_named("font").unwrap();
+    let area = quick.type_named("MouseArea").unwrap();
+    let accessible = quick.type_named("Accessible").unwrap().attached().unwrap();
+    let component = module("QtQml").unwrap().type_named("Component").unwrap();
+    let component = component.attached().unwrap();
+    for (ty, name) in [
+        (font, "scaleWithSystem"),
+        (accessible, "showOnScreenAction"),
+        (component, "reloaded"),
+    ] {
+        let listed = ty.property(name).is_some() || ty.signal(name).is_some();
+        assert_eq!(
+            ty.adds(name),
+            has_qt_table() && !listed,
+            "{}.{name}",
+            ty.name
+        );
+        assert!(listed || ty.adds(name), "{}.{name}", ty.name);
+    }
+    // Inherited, as what Ljós adds to `Item` is a `MouseArea`'s too.
+    assert!(!area.adds("widht"));
+    assert!(!font.adds("sparkle"));
+}
+
 /// The listing is every module `module` finds, once, in order.
 #[test]
 fn modules_lists_every_module_in_order() {

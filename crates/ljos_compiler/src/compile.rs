@@ -26,7 +26,7 @@ use qml_syntax::{
 };
 
 use crate::{
-    Compiled, Diagnostic, Project,
+    Compiled, Diagnostic, Project, Severity,
     js::{self, ArgValue, Form},
     oracle::is_color,
 };
@@ -418,20 +418,34 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         let object = &self.tree.objects[owner];
         let Some(kind) = &object.kind else { return };
-        if !self
-            .types
-            .base(kind)
-            .is_some_and(|ty| self.types.oracle.members_checked(ty))
-            || !matches!(self.tree.lookup(self.types, owner, name), Lookup::Missing)
+        let Some(ty) = self.types.base(kind) else {
+            return;
+        };
+        let Some(severity) = self.missing_member(ty) else {
+            return;
+        };
+        if !matches!(self.tree.lookup(self.types, owner, name), Lookup::Missing)
+            || self.types.oracle.adds_member(ty, name)
         {
             return;
         }
         let message = match handled(name) {
             Some(signal) => {
-                if !matches!(
-                    self.tree.lookup_signal(self.types, owner, &signal),
-                    Lookup::Missing
-                ) {
+                // `onContainsMouseChanged` is the change of `containsMouse`,
+                // whatever its notifying signal is called.
+                let changed = signal.strip_suffix("Changed").is_some_and(|property| {
+                    matches!(
+                        self.tree.lookup(self.types, owner, property),
+                        Lookup::Found(Member::Property(_))
+                    )
+                });
+                if changed
+                    || self.types.oracle.adds_member(ty, &signal)
+                    || !matches!(
+                        self.tree.lookup_signal(self.types, owner, &signal),
+                        Lookup::Missing
+                    )
+                {
                     return;
                 }
                 format!(
@@ -441,8 +455,30 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             None => format!("`{name}` is not a property of `{}`", object.name),
         };
-        self.diagnostics
-            .push(Diagnostic::error(message, self.span(span)));
+        self.report_missing(severity, message, span);
+    }
+
+    /// How a name `ty` lacks is reported where it is written, if it is
+    /// ([`TypeOracle::members_checked`], [`TypeOracle::members_warned`]).
+    fn missing_member(&self, ty: O::Type) -> Option<Severity> {
+        if self.types.oracle.members_checked(ty) {
+            Some(Severity::Error)
+        } else if self.types.oracle.members_warned(ty) {
+            Some(Severity::Warning)
+        } else {
+            None
+        }
+    }
+
+    fn report_missing(&mut self, severity: Severity, message: String, span: Span) {
+        let span = self.span(span);
+        self.diagnostics.push(match severity {
+            Severity::Error => Diagnostic::error(message, span),
+            // Only Ljós's own description says so, and Qt may have it.
+            Severity::Warning => {
+                Diagnostic::warning(format!("{message} in Ljós's table of types"), span)
+            }
+        });
     }
 
     /// [`check_member`](Self::check_member) for a member of a group
@@ -484,15 +520,28 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     None => return,
                 },
                 Lookup::Found(_) if last => return,
-                Lookup::Missing if self.types.oracle.members_checked(ty) => {
-                    let signal = handled(name).filter(|_| last);
-                    if let Some(signal) = &signal
-                        && !matches!(
-                            self.types.lookup_signal(&Kind::Builtin(ty), signal),
-                            Lookup::Missing
-                        )
-                    {
+                Lookup::Missing => {
+                    let Some(severity) = self.missing_member(ty) else {
                         return;
+                    };
+                    if self.types.oracle.adds_member(ty, name) {
+                        return;
+                    }
+                    let signal = handled(name).filter(|_| last);
+                    if let Some(signal) = &signal {
+                        let kind = Kind::Builtin(ty);
+                        let changed = signal.strip_suffix("Changed").is_some_and(|property| {
+                            matches!(
+                                self.types.lookup(&kind, property),
+                                Lookup::Found(Member::Property(_))
+                            )
+                        });
+                        if changed
+                            || self.types.oracle.adds_member(ty, signal)
+                            || !matches!(self.types.lookup_signal(&kind, signal), Lookup::Missing)
+                        {
+                            return;
+                        }
                     }
                     let written = path.join(".");
                     let of = path[..at].join(".");
@@ -500,8 +549,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         Some(signal) => format!("`{written}`: `{of}` has no signal `{signal}`"),
                         None => format!("`{written}`: `{of}` has no property `{name}`"),
                     };
-                    self.diagnostics
-                        .push(Diagnostic::error(message, self.span(span)));
+                    self.report_missing(severity, message, span);
                     return;
                 }
                 _ => return,
@@ -511,7 +559,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     /// `Type.Key` or `Singleton.member` naming what the type does not
-    /// have, where the type says that is an error.
+    /// have, where the type says that is an error
+    /// ([`TypeOracle::reads_checked`]).
     fn check_type_member(
         &mut self,
         name: &str,
@@ -523,7 +572,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             return;
         };
         let Some(first) = chain.first() else { return };
-        if !self.types.oracle.members_checked(ty) {
+        if !self.types.oracle.reads_checked(ty) {
             return;
         }
         let missing = if first.starts_with(|c: char| c.is_ascii_uppercase()) {
@@ -911,7 +960,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             }
             Slot::Attached(parts) => {
                 if parts.as_slice() == ["Component"]
-                    && matches!(signal, "completed" | "destruction")
+                    && matches!(signal, "completed" | "destruction" | "reloaded")
                 {
                     return Some(Vec::new());
                 }

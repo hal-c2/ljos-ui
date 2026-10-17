@@ -42,6 +42,10 @@
 //! So the two never describe one module at once, and a build without Qt's
 //! table is held to the other by tests that compare the two where both
 //! exist (`crates/ljos_cli/tests/own_types.rs`), not by mixing them.
+//! One thing of a passed-over module is kept: the names of the members
+//! Ljós adds to a type Qt's table has (`font.scaleWithSystem`, the actions
+//! of `Accessible.`), which [`Type::adds`] answers for. A name that is no
+//! member of Qt's type is wrong only if the runtime lacks it too.
 //!
 //! `LJOS_QT_TYPES=/path/to/types.txt` at build time takes Qt's table from
 //! elsewhere; `LJOS_QT_TYPES=none` builds without one on a machine that has
@@ -290,11 +294,22 @@ pub struct Type {
     /// The extension is there for its enums only (`Qt.AlignLeft`).
     extension_is_namespace: bool,
     attached: Option<usize>,
+    /// What Ljós's own table gives the type that Qt's does not: the
+    /// properties, signals and methods the runtime adds to one of Qt's
+    /// types (`font.scaleWithSystem`).
+    added: Vec<&'static str>,
 }
 
 impl Type {
     pub fn prototype(&self) -> Option<&'static Type> {
         self.prototype.map(|index| &table().types[index])
+    }
+
+    /// Whether Ljós adds a member called `name` to the type or to one it
+    /// inherits, where Qt's table describes them: the runtime has it,
+    /// though Qt does not.
+    pub fn adds(&self, name: &str) -> bool {
+        self.added.contains(&name) || self.prototype().is_some_and(|ty| ty.adds(name))
     }
 
     /// Whether the type is, or inherits, one of `classes`. The same type has
@@ -577,8 +592,10 @@ fn read(qt: &'static str, own: &'static str) -> Table {
     let mut named = Vec::new();
     let mut module = "";
     // A module of the own table that Qt's has described already is passed
-    // over, with everything in it.
+    // over, with everything in it but the names of what its types have:
+    // what the runtime adds to Qt's types.
     let mut passed_over = false;
+    let mut over = PassedOver::default();
 
     let lines = |text: &'static str, is_own| text.lines().map(move |line| (line, is_own));
     for (line, is_own) in lines(qt, false).chain(lines(own, true)) {
@@ -601,7 +618,22 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                 table.modules.insert(module, empty);
             }
             (0, _) => {}
-            _ if passed_over => {}
+            (1, "import") if passed_over => {}
+            (1, "type") if passed_over => {
+                over.classes.insert(word(), over.types.len());
+                over.types.push((Vec::new(), None));
+            }
+            (1, name) if passed_over => over.exports.push((module, name, word())),
+            (_, member) if passed_over => {
+                let Some((names, attached)) = over.types.last_mut() else {
+                    continue;
+                };
+                match member {
+                    "prop" | "signal" | "method" => names.push(word()),
+                    "attached" => *attached = Some(word()),
+                    _ => {}
+                }
+            }
             (1, "import") => {
                 let import = Import {
                     module: word(),
@@ -641,6 +673,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     extension: None,
                     extension_is_namespace: false,
                     attached: None,
+                    added: Vec::new(),
                 });
             }
             (1, name) => exports.push((module, name, word())),
@@ -756,5 +789,30 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             _ => ty.attached = to,
         }
     }
+    for (module, name, class) in over.exports {
+        let (Some(own), Some(index)) = (
+            over.classes.get(class),
+            table.type_named(module, name, &mut Vec::new()),
+        ) else {
+            continue;
+        };
+        let (names, attached) = &over.types[*own];
+        table.types[index].added.extend(names);
+        // What one attaches is the same type of the other: `Accessible.`.
+        let attached = attached.and_then(|class| over.classes.get(class));
+        if let (Some(own), Some(to)) = (attached, table.types[index].attached) {
+            table.types[to].added.extend(&over.types[*own].0);
+        }
+    }
     table
+}
+
+/// What a module of Ljós's own table that Qt's describes has.
+#[derive(Default)]
+struct PassedOver {
+    /// Of each type, the names of its members, and the class it attaches.
+    types: Vec<(Vec<&'static str>, Option<&'static str>)>,
+    classes: HashMap<&'static str, usize>,
+    /// The module, the name and the class.
+    exports: Vec<(&'static str, &'static str, &'static str)>,
 }
