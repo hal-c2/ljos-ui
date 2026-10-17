@@ -30,10 +30,6 @@ use crate::control::{Control, hover, is_left, takes_input};
 use crate::ticker;
 use crate::util::{check, num, object, warn};
 
-/// How long a press is held before `pressAndHold` (Qt's platform default,
-/// as for a button).
-const PRESS_AND_HOLD_MS: i32 = 800;
-
 const COLUMNS: usize = 7;
 const MONTH_ROWS: usize = 6;
 
@@ -810,7 +806,13 @@ fn press_cell(e: &Engine, obj: ObjectId, cells: &Cells, cell: Option<usize>) {
     ticker::stop(e, &cells.timer);
     if let Some(c) = cell {
         emit(e, obj, cells, "pressed", c);
-        ticker::start(e, obj, &cells.timer, PRESS_AND_HOLD_MS, held);
+        ticker::start(
+            e,
+            obj,
+            &cells.timer,
+            ljos_quick::press_and_hold_interval(e),
+            held,
+        );
     }
 }
 

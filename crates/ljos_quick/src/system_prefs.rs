@@ -183,7 +183,7 @@ fn objects(engine: &Engine) -> Option<(ObjectId, ObjectId)> {
                 keyboard_auto_repeat_rate_f: 30.0,
                 keyboard_input_interval: 400,
                 mouse_double_click_interval: 400,
-                mouse_press_and_hold_interval: 500,
+                mouse_press_and_hold_interval: PRESS_AND_HOLD_INTERVAL,
                 password_mask_character: "\u{2022}".to_string(),
                 password_mask_delay: 0,
                 set_focus_on_touch_release: false,
@@ -394,13 +394,22 @@ pub fn start_drag_distance(engine: &Engine) -> f64 {
     f64::from(state(engine).drag_distance.get())
 }
 
-/// `Qt.styleHints.mousePressAndHoldInterval` in seconds, for what decides
-/// at a press how long it waits. Not tracked.
-pub(crate) fn press_and_hold_seconds(engine: &Engine) -> f64 {
-    style_hints(engine).map_or(0.5, |hints| {
+/// Qt's platform default for `Qt.styleHints.mousePressAndHoldInterval`,
+/// in milliseconds; no desktop platform theme changes it.
+pub const PRESS_AND_HOLD_INTERVAL: i32 = 800;
+
+/// `Qt.styleHints.mousePressAndHoldInterval` in milliseconds, for what
+/// decides at a press how long it waits. Not tracked.
+pub fn press_and_hold_interval(engine: &Engine) -> i32 {
+    style_hints(engine).map_or(PRESS_AND_HOLD_INTERVAL, |hints| {
         let p = StyleHints::MOUSE_PRESS_AND_HOLD_INTERVAL.index;
-        engine.untrack(|| engine.read(hints, p)).to_number() / 1000.0
+        engine.untrack(|| engine.read(hints, p)).to_number() as i32
     })
+}
+
+/// [`press_and_hold_interval`] in seconds.
+pub(crate) fn press_and_hold_seconds(engine: &Engine) -> f64 {
+    f64::from(press_and_hold_interval(engine)) / 1000.0
 }
 
 /// [`reduced_motion`] for the animation driver, which asks once per run

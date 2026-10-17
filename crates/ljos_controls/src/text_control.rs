@@ -6,12 +6,11 @@
 //! The press is the part that differs from a plain editor. A field keeps
 //! a press to itself until it knows what it is: a press that moves or
 //! ends is the editor's (it takes the keyboard, puts the cursor, selects),
-//! a press that stays for [`PRESS_AND_HOLD`] is a press and hold and never
-//! reaches the editor. So a long press does not take the keyboard, which
-//! is what `features/controls/text-field.feature` shows of Qt.
+//! a press that stays for `Qt.styleHints.mousePressAndHoldInterval` is a
+//! press and hold and never reaches the editor. So a long press does not
+//! take the keyboard, which is what `features/controls/text-field.feature` shows of Qt.
 
 use std::cell::Cell;
-use std::time::Duration;
 
 use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlType, Value};
 use ljos_quick::focus::focus_reason;
@@ -27,10 +26,6 @@ use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::ticker;
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
-
-/// How long a press stays before it is a press and hold: Qt's default
-/// (`QStyleHints::mousePressAndHoldInterval`).
-const PRESS_AND_HOLD: Duration = Duration::from_millis(800);
 
 /// What a field remembers of the pointer.
 #[derive(Debug, Default)]
@@ -177,7 +172,7 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) ->
         engine,
         obj,
         &st.timer,
-        PRESS_AND_HOLD.as_millis() as i32,
+        ljos_quick::press_and_hold_interval(engine),
         held_long,
     );
     tell(engine, obj, "pressed", ev, at, false);

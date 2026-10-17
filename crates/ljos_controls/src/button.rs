@@ -15,7 +15,6 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use ljos_engine::{
     Atom, Color, ConnectionId, Cx, Engine, EngineError, MetaRef, ObjectId, OverrideContent,
@@ -37,10 +36,6 @@ use crate::parts::{PartKind, manage_part};
 use crate::util::{
     bind_default, check, flag, is_a, is_unset, mnemonic_of, num, object, set_computed,
 };
-
-/// How long a press is held before `pressAndHold` (Qt's platform default,
-/// as the offscreen platform has it).
-const PRESS_AND_HOLD: Duration = Duration::from_millis(800);
 
 /// `Qt.CheckState`.
 pub(crate) mod check_state {
@@ -631,7 +626,12 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) ->
         let delay = engine.untrack(|| num(engine, obj, AbstractButton::AUTO_REPEAT_DELAY.index));
         start_timer(engine, obj, &st, delay as i32);
     } else if hold_is_wanted(engine, obj) {
-        start_timer(engine, obj, &st, PRESS_AND_HOLD.as_millis() as i32);
+        start_timer(
+            engine,
+            obj,
+            &st,
+            ljos_quick::press_and_hold_interval(engine),
+        );
     }
     true
 }

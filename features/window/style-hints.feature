@@ -47,7 +47,7 @@ Feature: Style hints
       | dragDistance     | 8     |
       | flash            | 1200  |
       | keyboardInterval | 400   |
-      | pressAndHold     | 500   |
+      | pressAndHold     | 800   |
       | hover            | true  |
       | wheelLines       | 3     |
 

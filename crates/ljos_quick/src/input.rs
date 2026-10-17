@@ -418,7 +418,7 @@ impl Default for TapHandler {
             accepted_pointer_types: 0x7FFF,
             accepted_modifiers: -0x0200_0000,
             cursor_shape: 0,
-            long_press_threshold: 0.5,
+            long_press_threshold: f64::from(crate::system_prefs::PRESS_AND_HOLD_INTERVAL) / 1000.0,
             time_held: -1.0,
             long_press: Default::default(),
         }
