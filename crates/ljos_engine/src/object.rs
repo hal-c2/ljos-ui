@@ -208,6 +208,17 @@ impl FieldReads {
         self.entries.iter().map(|(_, r)| *r)
     }
 
+    /// What the runs of `reader` read, each with the run that read it.
+    pub(crate) fn readers_of(
+        &self,
+        reader: NodeId,
+    ) -> impl Iterator<Item = (PropIndex, Reader)> + '_ {
+        self.entries
+            .iter()
+            .filter(move |(_, r)| r.node == reader)
+            .copied()
+    }
+
     /// The readers of `prop`, left in place.
     pub(crate) fn readers(&self, prop: PropIndex) -> impl Iterator<Item = Reader> + '_ {
         self.entries

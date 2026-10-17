@@ -2322,6 +2322,9 @@ impl<V: Clone + 'static> Inner<V> {
         }
         let node = &mut self.nodes[n];
         node.binding_gen = node.binding_gen.wrapping_add(1);
+        // Its last run's reads are no longer its sources: what it read
+        // without a node (`Graph::reader`) must not reach it either.
+        node.done_stamp = 0;
         node.held = false;
         node.height = 0;
         if node.state != NodeState::Computing {

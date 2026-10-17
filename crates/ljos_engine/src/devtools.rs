@@ -167,6 +167,7 @@ impl Engine {
             // it reads nothing.
             return Ok(BindingGraph::default());
         };
+        self.give_field_reads_nodes(node);
         let g = &self.inner.graph;
         let ends = |nodes: Vec<crate::NodeId>| {
             let truncated = nodes.len() > limit;
@@ -189,9 +190,34 @@ impl Engine {
         })
     }
 
+    /// The node of a property, made if only a read without one
+    /// (`FieldReads`) observes it, so that its readers are listed.
     fn existing_node(&self, obj: ObjectId, prop: PropIndex) -> Option<crate::NodeId> {
         let (obj, prop) = self.redirect(obj, prop);
-        self.inner.store.borrow().objects.get(obj)?.node(prop)
+        self.observed_node(obj, prop)
+    }
+
+    /// Gives a node to each property `reader` read without one, as its
+    /// next change would: the node takes the read over, so the reader's
+    /// sources list it. A walk of every object, which only a tool asks for.
+    fn give_field_reads_nodes(&self, reader: crate::NodeId) {
+        let g = &self.inner.graph;
+        let read: Vec<(ObjectId, PropIndex)> = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .iter()
+                .filter_map(|(id, h)| Some((id, h.field_reads.as_ref()?)))
+                .flat_map(|(id, r)| {
+                    r.readers_of(reader)
+                        .filter(|(_, r)| g.is_current(*r))
+                        .map(move |(p, _)| (id, p))
+                })
+                .collect()
+        };
+        for (obj, prop) in read {
+            let _ = self.observed_node(obj, prop);
+        }
     }
 
     fn dependency_at(&self, n: crate::NodeId) -> DependencyReport {

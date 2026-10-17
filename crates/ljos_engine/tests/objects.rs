@@ -830,6 +830,23 @@ fn a_property_read_without_a_node_is_followed_only_while_it_is_read() {
 }
 
 #[test]
+fn a_binding_replaced_by_a_value_stops_following_what_it_read_without_a_node() {
+    let e = engine();
+    let r = rect(&e);
+    e.bind(r, Item::WIDTH.index, move |e| {
+        Value::Real(e.get(r, Item::X).unwrap() * 2.0)
+    })
+    .unwrap();
+    assert_eq!(e.get(r, Item::WIDTH).unwrap(), 0.0);
+    assert_eq!(e.observers_of(r, Item::X.index).len(), 1);
+    e.set(r, Item::WIDTH, 5.0).unwrap();
+    assert_eq!(e.observers_of(r, Item::X.index), []);
+    e.set(r, Item::X, 1.0).unwrap();
+    assert_eq!(e.get(r, Item::WIDTH).unwrap(), 5.0);
+    e.graph().check_invariants().unwrap();
+}
+
+#[test]
 fn engine_handles_reach_the_engine_inside_closures() {
     let e = engine();
     let r = rect(&e);
