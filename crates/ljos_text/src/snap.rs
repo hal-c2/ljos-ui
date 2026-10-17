@@ -40,7 +40,7 @@ pub(crate) fn advances(
     glyphs: &[(u32, f32)],
 ) -> Vec<f32> {
     let ids: Vec<u32> = glyphs.iter().map(|(id, _)| *id).collect();
-    let Some((units_per_em, units)) = ljos_render::glyph_advances(font, normalized_coords, &ids)
+    let Some((units_per_em, units)) = crate::measure::advances(font, normalized_coords, &ids)
     else {
         return glyphs.iter().map(|(_, advance)| *advance).collect();
     };

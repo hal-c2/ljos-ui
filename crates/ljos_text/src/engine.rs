@@ -23,6 +23,7 @@ use crate::elide::{Clusters, ELLIPSIS};
 use crate::face;
 use crate::fonts::{self, FontError};
 use crate::layout::{FontMetrics, Line, LineRun, PlacedBox, TextLayout};
+use crate::measure;
 use crate::snap;
 use crate::style::{
     BoxAlign, ElideMode, InlineObject, LayoutParams, LineHeight, ParamsKey, Ranged, StyleSpan,
@@ -64,6 +65,9 @@ pub struct CacheStats {
     pub layout_misses: u64,
     /// Texts that had to be shaped (the expensive step).
     pub shapes_built: u64,
+    /// Glyphs whose advance or ink was read from a font, by every engine on
+    /// this thread: each is read once and then kept.
+    pub glyphs_measured: u64,
 }
 
 /// How a text may break, which Parley decides while shaping. Texts of
@@ -304,11 +308,14 @@ impl Families {
         if !self.system {
             return None;
         }
+        if let Some(known) = self.substitutes.borrow().get(name) {
+            return known.clone();
+        }
+        let sub = substitute::platform_substitute(name).map(Arc::from);
         self.substitutes
             .borrow_mut()
-            .entry(name.into())
-            .or_insert_with(|| substitute::platform_substitute(name).map(Arc::from))
-            .clone()
+            .insert(name.into(), sub.clone());
+        sub
     }
 }
 
@@ -842,26 +849,12 @@ fn overhang(
     glyph: u32,
     advance: f32,
 ) -> f32 {
-    let run = GlyphRun {
-        font: font.clone(),
-        font_size,
-        glyphs: vec![PositionedGlyph {
-            id: glyph,
-            x: 0.0,
-            y: 0.0,
-        }],
-        baseline: 0.0,
-        bounds: Rect::ZERO,
-        normalized_coords: coords.to_vec(),
-        embolden,
-        skew,
-    };
-    let Some(Some(ink)) = ljos_render::glyph_ink_bounds(&run).first().copied() else {
+    let Some(right) = measure::ink_right(font, font_size, coords, embolden, skew, glyph) else {
         return 0.0;
     };
     // On Qt's 1/64 px grid before rounding, so an edge on a whole pixel
     // stays there.
-    let right = ((ink.x1 * 64.0).round() / 64.0).ceil() as f32;
+    let right = ((right * 64.0).round() / 64.0).ceil() as f32;
     (right - advance.round()).max(0.0)
 }
 
@@ -1113,6 +1106,7 @@ impl TextEngine {
         CacheStats {
             layouts: self.layouts.len(),
             shapes: self.shapes.len(),
+            glyphs_measured: measure::measured(),
             ..self.stats
         }
     }

@@ -158,3 +158,28 @@ fn a_default_family_applies_to_styles_that_name_none() {
     let l = e.layout("Hello", &TextStyle::default(), &LayoutParams::default());
     assert!(l.natural_width > 20.0);
 }
+
+#[test]
+fn a_glyph_is_read_from_its_font_once() {
+    // Rows of a list: new texts, so each is shaped, of the same few glyphs.
+    let mut e = TextEngine::new();
+    let s = TextStyle::default();
+    let first = e.layout("Row 1", &s, &LayoutParams::default());
+    let after_first = e.stats().glyphs_measured;
+    assert!(after_first > 0);
+    let again = e.layout("Row 11", &s, &LayoutParams::default());
+    assert_eq!(e.stats().shapes_built, 2);
+    assert_eq!(
+        e.stats().glyphs_measured,
+        after_first,
+        "every glyph of the second row was read for the first"
+    );
+    // And the measurement is the one a fresh read gives.
+    let mut fresh = TextEngine::new();
+    let alone = fresh.layout("Row 11", &s, &LayoutParams::default());
+    assert_eq!(
+        (again.advance, again.natural_width),
+        (alone.advance, alone.natural_width)
+    );
+    assert!(first.advance < again.advance);
+}

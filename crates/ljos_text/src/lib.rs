@@ -46,6 +46,7 @@ mod engine;
 mod face;
 mod fonts;
 mod layout;
+mod measure;
 mod model;
 pub mod rich;
 mod snap;
