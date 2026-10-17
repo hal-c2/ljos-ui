@@ -861,3 +861,189 @@ Feature: What survives a reload
       And a reload happens
       And the method "hit" of "root" is called
       Then the property "hits" of "root" is 3
+
+  Rule: An object a singleton holds still fits a property typed by its file
+
+    Background:
+      Given the file "qmldir":
+        """
+        singleton Rooms Rooms.qml
+        Room Room.qml
+        """
+      And the file "Room.qml":
+        """qml
+        import QtQuick
+        QtObject { property string name }
+        """
+      And the file "Rooms.qml":
+        """qml
+        pragma Singleton
+        import QtQuick
+        QtObject {
+          property list<Room> all: [ Room { name: "Kitchen" }, Room { name: "Study" } ]
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property Room first: Rooms.all[0]
+          property string names: ""
+          Repeater {
+            model: Rooms.all
+            Item {
+              required property Room modelData
+              Component.onCompleted: root.names += modelData.name + " "
+            }
+          }
+        }
+        """
+
+    Scenario: A property typed by the file still holds the singleton's object
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          width: 10
+          property Room first: Rooms.all[0]
+          property string names: ""
+          property string firstName: first ? first.name : "none"
+          Repeater {
+            model: Rooms.all
+            Item {
+              required property Room modelData
+              Component.onCompleted: root.names += modelData.name + " "
+            }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "firstName" of "root" is "Kitchen"
+      And the log has no warnings
+
+    Scenario: A delegate's required property typed by the file takes the singleton's object
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          width: 10
+          property Room first: Rooms.all[0]
+          property string names: ""
+          Repeater {
+            model: Rooms.all
+            Item {
+              objectName: "made"
+              required property Room modelData
+              Component.onCompleted: root.names += modelData.name + " "
+            }
+          }
+        }
+        """
+      And a reload happens
+      Then the log has no warnings
+
+  Rule: A page given a singleton's objects keeps them across a reload
+
+    Background:
+      Given the file "qmldir":
+        """
+        singleton Rooms Rooms.qml
+        Room Room.qml
+        """
+      And the file "Room.qml":
+        """qml
+        import QtQuick
+        QtObject { property string name }
+        """
+      And the file "Rooms.qml":
+        """qml
+        pragma Singleton
+        import QtQuick
+        QtObject {
+          property list<Room> all: [ Room { name: "Kitchen" }, Room { name: "Study" } ]
+        }
+        """
+      And the file "Page.qml":
+        """qml
+        import QtQuick
+        Item {
+          required property list<Room> rooms
+          property string names: ""
+          Repeater {
+            model: rooms
+            Item {
+              required property Room modelData
+              property string seen: modelData.name
+            }
+          }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 200
+          StackView {
+            id: stack
+            objectName: "stack"
+            anchors.fill: parent
+            initialItem: Item {}
+          }
+          function open() { stack.replace("Page.qml", { rooms: Rooms.all }, StackView.Immediate) }
+        }
+        """
+
+    Scenario: The page still has the objects after its file changes
+      When the method "open" of "root" is called
+      And the file "Page.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          width: 10
+          required property list<Room> rooms
+          property string names: ""
+          Repeater {
+            model: rooms
+            Item {
+              required property Room modelData
+              property string seen: modelData.name
+            }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "currentItem.rooms.length" of "stack" is 2
+      And the property "currentItem.width" of "stack" is 10
+      And the log has no warnings
+
+    Scenario: The page still has the objects after the file that pushed it changes
+      When the method "open" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 201
+          StackView {
+            id: stack
+            objectName: "stack"
+            anchors.fill: parent
+            initialItem: Item {}
+          }
+          function open() { stack.replace("Page.qml", { rooms: Rooms.all }, StackView.Immediate) }
+        }
+        """
+      And a reload happens
+      Then the property "currentItem.rooms.length" of "stack" is 2
+      And the log has no warnings
