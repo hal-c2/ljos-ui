@@ -242,10 +242,8 @@ fn a_positioner_tells_each_child_its_place() {
     let e = engine();
     let root = load(&e, ROW);
     let item = |n: &str| find(&e, root, n);
-    // Asked before the first layout: no place yet.
-    for n in ["a", "hidden", "empty", "b"] {
-        assert_eq!(place(&e, item(n)), (-1, false, false));
-    }
+    // Laid out on completion: the places are there before any frame.
+    assert_eq!(place(&e, item("a")), (0, true, false));
     let mut s = scene(&e, root, 400.0, 300.0);
     frame(&mut s, &e);
 

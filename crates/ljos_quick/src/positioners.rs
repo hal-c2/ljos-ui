@@ -1,7 +1,11 @@
 //! `Row`, `Column`, `Grid` and `Flow`, and the attached `Positioner`.
 //!
-//! The scene runs [`polish`] in the polish pass (pipeline step 6) for every
-//! positioner whose inputs changed; nothing is laid out synchronously.
+//! A positioner lays its children out once as it is completed, as Qt's
+//! does: a script run on completion reads the places, and a child that
+//! comes to fill it later (which stops it working) finds them made. After
+//! that the scene runs [`polish`] in the polish pass (pipeline step 6) for
+//! every positioner whose inputs changed; a change is not laid out
+//! synchronously, in Qt either.
 //!
 //! A positioner places its children and takes its implicit size from them.
 //! It never sizes a child. Children that are invisible by themselves or
@@ -649,7 +653,8 @@ fn init(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError>
             })
         })?;
     }
-    Ok(())
+    // The children were completed first, their own positioners laid out.
+    polish(engine, obj, which)
 }
 
 /// `rowSpacing = undefined`: the grid uses `spacing` between its rows
