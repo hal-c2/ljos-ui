@@ -12,11 +12,14 @@
 //! the item behind, when there is one).
 //!
 //! `open()` and `close()` move the position with `swipe.transition`, then
-//! say `completed` and `opened`, or `closed`. A position written directly
-//! says nothing.
+//! say `completed` and `opened`, or `closed`; `open()` leaves a row open
+//! to the other side as it is. A position written directly says nothing.
 //!
 //! The pointer swipes once it has gone more than the start drag distance
-//! across the row; the press then ends as `canceled`, not as a click. Let
+//! across the row; the press then ends as `canceled`, not as a click. The
+//! position is the one at the press plus the way the pointer went over
+//! the width of the item of the side the row would be on if it followed
+//! the pointer, so it jumps across the middle where the items differ. Let
 //! go, the row opens to the side it was swiped to if it went more than
 //! half the way, or if the pointer went that way at more than
 //! [`FLICK_SPEED`] on average since the press; otherwise it closes. A
@@ -195,6 +198,14 @@ impl SwipeDelegateSwipe {
         } else {
             1.0
         };
+        // A row open to one side has to be closed before it opens to the
+        // other, as in Qt; one only partly open goes either way.
+        let at = cx
+            .engine
+            .untrack(|| num(cx.engine, cx.this, Swipe::POSITION.index));
+        if at == -to {
+            return Ok(());
+        }
         go(cx.engine, cx.this, to);
         Ok(())
     }
@@ -503,6 +514,10 @@ fn position_at(engine: &Engine, swipe: ObjectId, start: f64, dx: f64) -> f64 {
     let width_of = |position: f64| {
         item_for(engine, swipe, position).map_or(0.0, |i| num(engine, i, Item::WIDTH.index))
     };
+    // The side is the one the row would be on if it followed the pointer,
+    // but the way the pointer went is counted in that side's width from
+    // the position at the press, so the position jumps as the side
+    // changes when the items differ in width: Qt's measure.
     let moved = start * width_of(start) + dx;
     if moved == 0.0 {
         return 0.0;
@@ -511,7 +526,7 @@ fn position_at(engine: &Engine, swipe: ObjectId, start: f64, dx: f64) -> f64 {
     if w <= 0.0 {
         return 0.0;
     }
-    (moved / w).clamp(-1.0, 1.0)
+    (start + dx / w).clamp(-1.0, 1.0)
 }
 
 /// A move with the press held. True while the row is swiped: the press
