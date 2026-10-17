@@ -255,6 +255,72 @@ impl<'js> Scope<'js> {
         self.invoke(&func, this, args)
     }
 
+    /// After a call of the function `export` of `file`'s module threw:
+    /// a `not a function` thrown by that function's own code, at a call
+    /// `root.a.name(...)` whose `root` is one of its `params`, is worded
+    /// as Qt's engine words it, with what `root.a` is: `Property 'name' of
+    /// object QQuickItem(0x…) is not a function`. The function's values
+    /// are gone once it has thrown, but its parameters are the caller's
+    /// `args`; what is called through a local of its own keeps QuickJS's
+    /// words. Only a call that threw pays for this. Gives the exception
+    /// back, pending again.
+    pub fn retell_failed_call(
+        &self,
+        file: &str,
+        export: &str,
+        params: &[&str],
+        args: &[JsArg],
+    ) -> rquickjs::Error {
+        let thrown = self.ctx.catch();
+        let _ = self.retell(&thrown, file, export, params, args);
+        // What the retelling threw is dropped; the call's error stands.
+        let _ = self.ctx.catch();
+        self.ctx.throw(thrown)
+    }
+
+    fn retell(
+        &self,
+        thrown: &Value<'js>,
+        file: &str,
+        export: &str,
+        params: &[&str],
+        args: &[JsArg],
+    ) -> Option<()> {
+        let e = Exception::from_object(thrown.as_object()?.clone())?;
+        if e.message()? != "not a function" {
+            return None;
+        }
+        let stack = e.stack()?;
+        // It threw in the function itself, or in the method it applies; in
+        // one nested in it a parameter's name may be a local of its own.
+        let mut frames = named_frames(&stack);
+        let (name, at) = frames.next()?;
+        if name != export && (frames.next()? != ("apply", "native") || frames.next()?.0 != export) {
+            return None;
+        }
+        let mut place = at.rsplitn(3, ':');
+        let (col, line, module) = (place.next()?, place.next()?, place.next()?);
+        let (line, col) = (line.parse().ok()?, col.parse().ok()?);
+        let mapper = self.state.mapper.borrow().clone()?;
+        if mapper(module, line)?.0 != file {
+            return None;
+        }
+        let text = self.state.text.borrow().clone()?;
+        let (path, prop) = called_member(&text(module, line)?, col)?;
+        let at = params.iter().position(|p| *p == path[0])?;
+        let mut v = self.to_value(args.get(at)?).ok()?;
+        for m in &path[1..] {
+            v = v.as_object()?.get(m.as_str()).ok()?;
+        }
+        let shown = v.get::<rquickjs::convert::Coerced<String>>().ok()?.0;
+        e.as_object()
+            .set(
+                "message",
+                format!("Property '{prop}' of object {shown} is not a function"),
+            )
+            .ok()
+    }
+
     fn invoke(
         &self,
         func: &Function<'js>,
@@ -1804,6 +1870,17 @@ fn describe_exception(
                 }
                 None => message,
             };
+            // Writing through nothing, Qt's engine says nothing is not an
+            // object, as it says of deleting through it.
+            let message = match message
+                .strip_prefix("cannot set property '")
+                .and_then(|r| r.rsplit_once("' of "))
+            {
+                Some((_, what @ ("undefined" | "null"))) => {
+                    format!("Value is {what} and could not be converted to an object")
+                }
+                _ => message,
+            };
             let message = match o.get::<_, Option<String>>("name").ok().flatten() {
                 // Heap exhaustion is told apart by its bare message below.
                 Some(name) if !name.is_empty() && name != "InternalError" => {
@@ -1870,6 +1947,99 @@ fn frames(stack: &str) -> impl Iterator<Item = (&str, u32)> {
         .map(str::trim)
         .filter(|l| l.starts_with("at "))
         .filter_map(frame_place)
+}
+
+/// Each frame's function and the line it is at: `("f", "m.js:5:45")`,
+/// `("apply", "native")`; an anonymous function's name is empty.
+fn named_frames(stack: &str) -> impl Iterator<Item = (&str, &str)> {
+    stack
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("at "))
+        .map(|f| match f.rfind(" (") {
+            Some(open) if f.ends_with(')') => (&f[..open], &f[open + 2..f.len() - 1]),
+            _ => ("", f),
+        })
+}
+
+/// The member called at column `col` (1-based) of `line`: `prop` and the
+/// names it is read through, `["root", "a"]` of `root.a.prop(`. QuickJS
+/// puts the column at the member's name; past a space, at the bracket or
+/// at what follows it. None unless the callee is such a chain of names,
+/// whole.
+pub(crate) fn called_member(line: &str, col: u32) -> Option<(Vec<String>, String)> {
+    let s: Vec<char> = line.chars().collect();
+    let i = col.checked_sub(1)? as usize;
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let back_ws = |mut i: usize| {
+        while i > 0 && s[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+    let mut ends = Vec::new();
+    // At the name, which a bracket follows.
+    let mut end = i;
+    while s.get(end).copied().is_some_and(ident) {
+        end += 1;
+    }
+    let mut open = end;
+    while s.get(open).is_some_and(|c| c.is_whitespace()) {
+        open += 1;
+    }
+    if end > i && s.get(open) == Some(&'(') {
+        ends.push(end);
+    }
+    // At the bracket, or at what follows it.
+    if s.get(i) == Some(&'(') {
+        ends.push(back_ws(i));
+    } else if i < s.len() {
+        let open = back_ws(i);
+        if open > 0 && s[open - 1] == '(' {
+            ends.push(back_ws(open - 1));
+        }
+    }
+    ends.into_iter().find_map(|end| chain_before(&s, end))
+}
+
+/// The chain of names `a.b.prop` that ends at `end` of `s`, whole.
+fn chain_before(s: &[char], end: usize) -> Option<(Vec<String>, String)> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let back_ws = |mut i: usize| {
+        while i > 0 && s[i - 1].is_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+    // The name read backwards from just before `end`: its start.
+    let name_start = |end: usize| {
+        let mut i = end;
+        while i > 0 && ident(s[i - 1]) {
+            i -= 1;
+        }
+        (i < end && !s[i].is_ascii_digit()).then_some(i)
+    };
+    let start = name_start(end)?;
+    let prop: String = s[start..end].iter().collect();
+    let mut path = Vec::new();
+    let mut at = start;
+    loop {
+        let dot = back_ws(at);
+        if dot == 0 || s[dot - 1] != '.' {
+            break;
+        }
+        let end = back_ws(dot - 1);
+        let start = name_start(end)?;
+        path.push(s[start..end].iter().collect::<String>());
+        at = start;
+    }
+    // The chain is whole: nothing it is read off, `?.`, or a call before it.
+    let before = back_ws(at);
+    if path.is_empty() || (before > 0 && matches!(s[before - 1], '.' | ')' | ']' | '?')) {
+        return None;
+    }
+    path.reverse();
+    Some((path, prop))
 }
 
 /// The file, line and column of the frame that threw.
@@ -2003,7 +2173,7 @@ fn panic_message(p: &(dyn Any + Send)) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::calls;
+    use super::{called_member, calls};
 
     #[test]
     fn a_call_is_told_from_a_read() {
@@ -2019,5 +2189,30 @@ mod tests {
         assert!(!at("x = nothing[0]", "0"));
         assert!(!at("x = nothing['bar']()", "foo"));
         assert!(!at("x = nothing.foo", "bar"));
+    }
+
+    #[test]
+    fn the_member_called_is_found_at_its_column() {
+        // The column is that of the text `at` begins.
+        let at = |line: &str, at: &str| {
+            let col = line.find(at).unwrap() as u32 + 1;
+            called_member(line, col).map(|(path, prop)| (path.join("."), prop))
+        };
+        let some = |path: &str, prop: &str| Some((path.to_owned(), prop.to_owned()));
+        assert_eq!(
+            at("{ $scope.kid.spawn() }", "spawn"),
+            some("$scope.kid", "spawn")
+        );
+        assert_eq!(at("{ root.obj.a.b(1) }", "b("), some("root.obj.a", "b"));
+        assert_eq!(at("{ kid . spawn ( 1 ) }", "1"), some("kid", "spawn"));
+        assert_eq!(at("{ kid . spawn (x) }", "x"), some("kid", "spawn"));
+        assert_eq!(at("{ kid.spawn  (k(1)) }", "k("), some("kid", "spawn"));
+        assert_eq!(at("{ a.f(b.g(1)) }", "g"), some("b", "g"));
+        assert_eq!(at("{ kid.spawn () }", "("), some("kid", "spawn"));
+        assert_eq!(at("{ spawn() }", "spawn"), None);
+        assert_eq!(at("{ a?.b() }", "b"), None);
+        assert_eq!(at("{ f().a.b() }", "b"), None);
+        assert_eq!(at("{ x[0].a.b() }", "b"), None);
+        assert_eq!(at("{ a.b.c }", "c"), None);
     }
 }

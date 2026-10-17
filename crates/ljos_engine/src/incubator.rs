@@ -2259,7 +2259,25 @@ impl Engine {
             a.extend(args.iter().map(|v| self.to_js(v)));
             let out = match s.call_with_this(f, &this, &a) {
                 Ok(out) => out,
-                Err(ljos_js::rquickjs::Error::Exception) if propagate => {
+                Err(ljos_js::rquickjs::Error::Exception) => {
+                    if let Some(js) = file.ir.js.functions.get(b.js_fn.index()) {
+                        // A parameter a local of the method shadows is no
+                        // name of it: the empty name matches nothing.
+                        let local = |n: &str| {
+                            b.refs.iter().any(|r| {
+                                r.name == n && matches!(r.resolved, ljos_ir::Resolved::Local)
+                            })
+                        };
+                        let names: Vec<&str> = b
+                            .params
+                            .iter()
+                            .map(|p| if local(&p.name) { "" } else { p.name.as_str() })
+                            .collect();
+                        s.retell_failed_call(&file.url, &js.export, &names, &a);
+                    }
+                    if !propagate {
+                        return Err(ljos_js::rquickjs::Error::Exception);
+                    }
                     self.inner.faults.thrown.set(true);
                     return Ok(None);
                 }
