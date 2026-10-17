@@ -421,13 +421,13 @@ Creation is a resumable state machine, the `Incubator`. Its phases:
 **Decision (D2): one Engine per app.**
 - Each `Window` is a root with its own `ProcId` boundary and its own a11y and focus trees.
 - Singletons are per Engine by default.
-- Per-window singletons (`#[qml_singleton(scope = "window")]`) are planned, not built: the macro rejects the scope. They are for apps that are used to a `QQmlEngine` per window, HAL-C2 among them. Until then such an app keeps its per-window state in one engine singleton, keyed by the window object: QML passes `Window.window` to the singleton's methods, and the host fills a window's entry when it opens the window.
+- A native singleton type can be one per window (`#[qml_singleton(scope = "window")]`), for apps that are used to a `QQmlEngine` per window. The scope is chosen when a root is made: a root the host makes with no parent (`create_from_url`, `Component.create` from Rust) opens a window's scope; a root made under an object, and one a script makes with no parent (`createObject(null)`), is in the scope of that object or of the script's file. Everything under the root reads the scope's object by the type's name, through either tier. The object is made when something under the window first reads it, and destroyed after the window's own objects when the root is destroyed. From Rust, `Engine::singleton_in::<T>(obj)` gives the object of `obj`'s window (`singleton::<T>()` is an error for such a type), and `Engine::on_scoped_singleton` hears each one made and dropped (while it still stands). A reload keeps each window's object: the new root takes the old root's scope. QML `pragma Singleton` files, the module cache and compiled components stay shared, and a window type read where no window is, such as in a `pragma Singleton` file, warns once and reads `null`. `app_inspect` lists the singletons an object's window has made. Scenarios: `features/language/singletons-per-window.feature`, `features/tooling/mcp/window-singletons.feature`.
 - A singleton is made when first read, by `T::default()` (`Engine::register_singleton`) or by a closure given the Engine (`Engine::register_singleton_with`), which hands it what it depends on. `uncreatable` keeps QML from making one of its own and nothing else.
 - Windows that are really independent apps can run separate Engines that talk through messages.
 
 This keeps models and singletons shared without proxies (01 §4.8, 03 §3.1, 07 P1-27).
 
-**As built (M2).** A `Window` says what it wants (title, size, visibility, modality, flags, transient parent) and a host that owns platform windows reads that as a `WindowSpec` and tells the window what the platform made of it (`ljos_controls::window::system`). Without a host a window is an item of the scene it was put in and showing, sizing and activating happen there, so a test without a display behaves the same. `Application`, `Qt.application` and `Screen` report what the host says; without one there is a single 800 by 800 screen and the application is active. `ljos render` is such a host for its root: a root window that leaves its size unsaid gets the size of the picture, as a platform window would give it. `Application.styleHints` is `Qt.styleHints`, one object with Qt's documented constants as an offscreen desktop reports them. The attached `SafeArea` reports per item how far it reaches into what the host covers (`ljos_quick::set_safe_area_insets`, logical pixels from the scene's edges; 0 without a host) plus its own `additionalMargins`; the shell does not report platform insets yet, and an ancestor's `additionalMargins` is not passed on, as in Qt 6.11. Not built: `SafeArea.margins` as a value (`SafeArea.margins.top` only), window-scoped singletons, attached `Screen.*` per window, `Screen.primaryOrientation`, `WindowContainer`, and a `closing` handler refusing `Qt.quit()`.
+**As built (M2).** A `Window` says what it wants (title, size, visibility, modality, flags, transient parent) and a host that owns platform windows reads that as a `WindowSpec` and tells the window what the platform made of it (`ljos_controls::window::system`). Without a host a window is an item of the scene it was put in and showing, sizing and activating happen there, so a test without a display behaves the same. `Application`, `Qt.application` and `Screen` report what the host says; without one there is a single 800 by 800 screen and the application is active. `ljos render` is such a host for its root: a root window that leaves its size unsaid gets the size of the picture, as a platform window would give it. `Application.styleHints` is `Qt.styleHints`, one object with Qt's documented constants as an offscreen desktop reports them. The attached `SafeArea` reports per item how far it reaches into what the host covers (`ljos_quick::set_safe_area_insets`, logical pixels from the scene's edges; 0 without a host) plus its own `additionalMargins`; the shell does not report platform insets yet, and an ancestor's `additionalMargins` is not passed on, as in Qt 6.11. Not built: `SafeArea.margins` as a value (`SafeArea.margins.top` only), attached `Screen.*` per window, `Screen.primaryOrientation`, `WindowContainer`, and a `closing` handler refusing `Qt.quit()`.
 
 ---
 
@@ -1085,7 +1085,7 @@ Many QML apps are a thin QML view over native controllers. The QML reads state f
 **What Ljós provides:**
 - **`PropertyMap`**, the equivalent of `QQmlPropertyMap`. It has per-key reactivity and accepts whole-object assignment.
 - **The `QmlListModel` trait.** It has roles and the full row-signal set: `rowsAboutToBeInserted`, `rowsInserted`, `rowsRemoved`, `rowsMoved`, `dataChanged` and `modelReset`. `ListView`, `Repeater` and `Instantiator` consume it, and so do JS arrays and ints. `TreeView` reads a tree model (`ItemTree`), and a list model as a tree of one level.
-- **Native QML types written in Rust:** per-Engine singletons (per-window ones are planned, §6.4), creatable types and enums.
+- **Native QML types written in Rust:** per-Engine and per-window singletons (§6.4), creatable types and enums.
 - **Module registration:** native modules from Rust, and QML modules from a directory with `qmldir`.
 - **Runtime creation:** `Qt.createQmlObject`, `Qt.createComponent` and `Component.createObject`.
 - **The `QtTest` module (`ljos_test`),** so existing `tst_*.qml` suites keep running. It supports:
@@ -1555,7 +1555,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 - States, transitions and the `Binding` element.
 
 **Platform**
-- Multi-window; window-scoped singletons are still planned (§6.4).
+- Multi-window; window-scoped singletons are built (§6.4).
 - `ljos_shell` on its own loop with the AccessKit graft.
 - File dialogs (rfd), clipboard and drag-and-drop.
 
@@ -1647,7 +1647,7 @@ Each milestone ends on Gherkin exit criteria, not on lists of features. The spik
 | Incubation budget | 01: 4 ms at 60 Hz, 2 ms at 120 Hz. 04: 3 ms. | 3 ms at 60 Hz, scaled with the refresh period; configurable. |
 | Polish pass cap | 01: 10. 02: 8. | 10, then a warning. |
 | Parley version | 02: 0.12 shares egui's font crates. 05: pin 0.11.1. | Pick the newest version without duplicate skrifa/harfrust under the current egui, checked with `cargo tree -d`. egui tracks the latest release (D9). |
-| Engine per window | 01: open. 03: one per app. 07: HAL-C2 uses an engine per window. | One per app, with window-scoped singletons (D2; planned, §6.4). |
+| Engine per window | 01: open. 03: one per app. 07: HAL-C2 uses an engine per window. | One per app, with window-scoped singletons (D2; built, §6.4). |
 | egui_mobius | Brief: use it for slots and message passing. 03: its implementation does not fit. | Use the idea, not the crate (section 3.3). |
 | External ledger tag | Early plan: a Ljós surface tag. 09: an allowlist instead. | Allowlist plus ratchet; `@backlog-ljos` only for scenarios that cannot be ported. |
 | `qsTr` count | 05: 4,132. 07: 1,562. | 1,562 in 109 files. 05's figure included `build/` copies, as did its `Accessible.name` and `elide` counts. |
@@ -1662,7 +1662,7 @@ All decided by the user on 2026-10-10. Every decision except D9 took the recomme
 | # | Decision | Outcome |
 |---|---|---|
 | D1 | Licensing of `types.txt` and the Qt reference PNGs, which are derived from a Qt install | **Generate locally and git-ignore.** Publish only Ljós's own type dump. |
-| D2 | One Engine per app or one per window | **One per app,** with window-scoped singletons (planned, §6.4). |
+| D2 | One Engine per app or one per window | **One per app,** with window-scoped singletons (§6.4). |
 | D3 | *(Consumer)* HAL-C2's 52k lines of C++ controllers | **Port to a shared Rust core (`hal-c2-core`) over time.** The shell double and FakeMc stand in meanwhile. |
 | D4 | *(Consumer)* May `HalC2.Bricks` be adapted? | **Yes, targeted adaptations** that keep the same contract and pass the same tests on Qt and Ljós. |
 | D5 | Plugin trust | **Trusted in v1, isolated by supervision;** sandboxing later. |

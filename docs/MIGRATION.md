@@ -323,6 +323,49 @@ handed what it depends on, or is not `Default`, is registered with
 `engine.register_singleton_with("Example", Version::new(1, 0), |engine| T { .. })`
 instead; the closure runs when the singleton is first read.
 
+### From a `QQmlEngine` per window
+
+A Qt application that makes a `QQmlEngine` for each window, so that
+each window has its own singletons, makes one Ljós `Engine` and marks
+those singleton types as one for each window:
+
+```rust
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Document")]
+#[qml_singleton(scope = "window")]
+pub struct Document {
+    #[qml(notify)]
+    pub title: String,
+}
+
+engine.register_singleton::<Document>("Example", Version::new(1, 0));
+let first = engine.create_from_url("Main", None, Vec::new())?;
+let second = engine.create_from_url("Main", None, Vec::new())?;
+let doc = engine.singleton_in::<Document>(second)?;
+engine.on_scoped_singleton(|engine, s| {
+    if s.is::<Document>() && s.event == ScopedEvent::Dropped {
+        // save what s.object holds before it goes
+    }
+});
+```
+
+Each root the application makes with no parent is a window: the QML
+under it, the components it uses and the objects its scripts make with
+`createObject(null)` read that window's `Document` by name, and
+`Document.title = …` in one window is not seen in another. A window's
+object is made when the window first reads it (by the closure of
+`register_singleton_with`, once per window, when one is given) and is
+destroyed after the window's root. A root made under an object of a
+window is in that window. Hot reload keeps each window's object.
+
+What was shared between the engines through C++ becomes an ordinary
+singleton, which every window shares; so are the compiled components and
+the module cache, which a second engine would have loaded again.
+`engine.singleton::<Document>()` is an error, since there is one for
+each window: ask for a window's with `singleton_in`, giving it any
+object of the window. A `pragma Singleton` QML file is one for the
+engine, and a window's singleton read from it is `null`, with a warning.
+
 Structured data crosses as Qt's `QVariantMap` and `QVariantList` do,
 without JSON text. A field, parameter or return of `Vec<T>`,
 `Option<T>` (`None` is `null`), `HashMap<String, T>` or
@@ -662,4 +705,6 @@ variant field by field adds `value` (or `..`); the same holds for
 - [ ] Add `--deny-missing` to CI once the missing count is zero.
 - [ ] Move native controllers to `QmlObject` types and list data to
       `QmlListModel`.
+- [ ] Replace a `QQmlEngine` per window with one `Engine` and
+      `#[qml_singleton(scope = "window")]` for the state of each window.
 - [ ] Run `ljos check`, then `ljos test` on the existing `tst_*.qml`.
