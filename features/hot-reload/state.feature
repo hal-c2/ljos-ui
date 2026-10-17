@@ -770,3 +770,94 @@ Feature: What survives a reload
       Then the property "contentX" of "view" is 640
       And the property "originX" of "view" is 0
       And the property "currentIndex" of "view" is 3
+
+  Rule: What a script library holds survives a change to the library
+    A library is made again from its new text, and each of its top-level
+    variables takes the value the old library held, unless the value the
+    file starts it with changed. The objects that use it are kept and do not
+    run Component.onCompleted again, so they cannot set it up a second time.
+
+    Background:
+      Given the file "logic.js":
+        """js
+        .pragma library
+        var game
+        var step = 1
+        function start() { game = { count: 5 } }
+        function next() { game.count += step; return game.count }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "logic.js" as Logic
+        Item {
+          objectName: "root"
+          property int count: 0
+          Component.onCompleted: Logic.start()
+          function tick() { count = Logic.next() }
+        }
+        """
+
+    Scenario: A variable the library set while running keeps its value
+      When the method "tick" of "root" is called
+      And the file "logic.js" is changed to:
+        """js
+        .pragma library
+        var game
+        var step = 1
+        function start() { game = { count: 5 } }
+        function next() { game.count += step * 10; return game.count }
+        """
+      And a reload happens
+      And the method "tick" of "root" is called
+      Then the property "count" of "root" is 16
+      And the log has no warning matching "TypeError"
+
+    Scenario: A variable whose starting value was edited takes the new value
+      When the method "tick" of "root" is called
+      And the file "logic.js" is changed to:
+        """js
+        .pragma library
+        var game
+        var step = 3
+        function start() { game = { count: 5 } }
+        function next() { game.count += step; return game.count }
+        """
+      And a reload happens
+      And the method "tick" of "root" is called
+      Then the property "count" of "root" is 9
+
+  Rule: What a script of an object holds survives a reload
+
+    Scenario: A script without ".pragma library" keeps its variables
+      Given the file "counter.js":
+        """js
+        var hits = 0
+        function hit() { hits += 1; return hits }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "counter.js" as Counter
+        Item {
+          objectName: "root"
+          property int hits: 0
+          function hit() { hits = Counter.hit() }
+        }
+        """
+      When the method "hit" of "root" is called
+      And the method "hit" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import "counter.js" as Counter
+        Item {
+          objectName: "root"
+          width: 10
+          property int hits: 0
+          function hit() { hits = Counter.hit() }
+        }
+        """
+      And a reload happens
+      And the method "hit" of "root" is called
+      Then the property "hits" of "root" is 3
