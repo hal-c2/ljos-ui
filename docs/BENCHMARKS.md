@@ -445,6 +445,36 @@ The Qt documentation does not promise either behaviour, so it was not changed. A
 starts and scrolls makes no more delegates than Qt's. The pictures rssnews asks for beyond Qt's 7
 are not explained by the buffer.
 
+### Per-frame work on a GPU, and rssnews's delegates (2026-10-17)
+
+Instructions are callgrind's, over the whole process.
+
+| | Before | After |
+|---|---:|---:|
+| listview.qml, 330 frames: `QuickScene::frame` | 1.69 G | 1.20 G |
+| listview.qml, 330 frames: `pass::run` | 573 M | 224 M |
+| listview.qml, 300 frames: `ensure_node` | 153 M | 56 M |
+| animations on a GPU, per frame | 4.99 M | 2.03 M |
+| Effect runs for 10 ListView rows of Text | 180 | 170 |
+| 1000 rows of 23 px in a 300 px view: delegates made | 66 (Qt 27) | 27 |
+
+- **listview.** A row the incubator makes is laid out once when the frame's creation jobs stop,
+  not twice. A property that is read and never changed has no graph node until something writes
+  it.
+- **animations.** The frame's redraw areas are merged in one sweep (4.99 M → 3.90 M). Small solid
+  rectangles join the mesh, where before each was a scissored clear and a draw of its own
+  (→ 2.07 M). The frame's lists start at the size of the last frame's (→ 2.03 M).
+- **Delegates.** An effect that a check found dirty ran a second time on its first write. The
+  anchors of every Text in a delegate ran twice.
+- **A new list of text rows.** On its first pass, nothing had been measured, so every row was
+  taken as 1 px long. It now waits for the first row's length. In rssnews, the first pass found all
+  40 rows unmeasured, so it laid all of them; it now makes 9 (Qt 8).
+
+rssnews in the sandbox still asked for 24 pictures, where it asked for 26 before. The sandbox's
+cua-driver listens over AT-SPI, and while a screen reader listens Ljós keeps 20 rows either side
+of the view (ARCHITECTURE.md §14). Qt does not. The count without a listener was not measured in
+the sandbox.
+
 **What is left.**
 
 - **listview on a GPU** costs about three times Qt's CPU. Nearly all of it is making and dropping
