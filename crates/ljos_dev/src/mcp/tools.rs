@@ -497,6 +497,38 @@ impl Look<'_> {
             state["visible"], state["enabled"], state["focus"], state["lattice"]
         );
 
+        // What the object reads by the names of the types that are one
+        // for each window: its window's objects of them.
+        let window = engine.singleton_scope_root(obj);
+        let singletons = window
+            .map(|w| engine.scoped_singletons(w))
+            .unwrap_or_default();
+        let mut shown = Vec::new();
+        for s in singletons {
+            let ty = engine
+                .inspect_object(s)
+                .and_then(|r| r.types.first().cloned());
+            let mut props = Vec::new();
+            let mut said = Vec::new();
+            for p in engine.untrack(|| engine.inspect_properties(s)) {
+                let Some(v) = p.value.filter(|_| p.provenance != Provenance::Default) else {
+                    continue;
+                };
+                let js = engine.to_js_string(&v).to_string();
+                let text = clip(self.capture.shown(&js), MAX_VALUE_CHARS);
+                said.push(format!("{}={text}", p.name));
+                props.push(json!({ "name": p.name, "value": text }));
+            }
+            let _ = writeln!(
+                head,
+                "window singleton {} {}",
+                ty.as_deref().unwrap_or("(unknown type)"),
+                said.join(" ")
+            );
+            shown.push(json!({ "type": ty, "properties": props }));
+        }
+        out.insert("window_singletons".into(), json!(shown));
+
         if let Some(name) = &args.dependencies {
             let graph = engine
                 .untrack(|| engine.binding_graph(obj, name, MAX_DEPENDENCIES))

@@ -52,10 +52,10 @@ Find items by locator: `role=button[name=\"Save\"]`, `text=notes`, `#objectName`
 reference, path, bounds and states per match. No match is an empty list, not an error.";
 
 pub const INSPECT: &str = "\
-One item in depth: type, id, declaring file and line, geometry, and its properties with where \
-each value comes from (assigned, bound at tier 0, 1 or js, animated, default). `target` is a \
-reference or locator. `all` adds defaults; `dependencies` names a property: its reads, \
-readers and tier.";
+One item in depth: type, id, file and line, geometry, its window's singletons, its \
+properties with where each value comes from (assigned, bound at tier 0, 1 or js, animated, \
+default). `target` is a reference or locator. `all` adds defaults; `dependencies` names a \
+property: its reads, readers, tier.";
 
 pub const SCREENSHOT: &str = "\
 PNG of the window, or of one item when `target` is given, drawn by the software renderer (works \
