@@ -4127,7 +4127,7 @@ module QtQuick.Controls.Material
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
 	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
-	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	ItemDelegate QtQuick/Controls/Material/ItemDelegate.qml
 	Label QtQuick/Controls/Material/Label.qml
 	Material QtQuick.Controls.Material.Material
 	Menu QtQuick/Controls/Basic/Menu.qml
@@ -4181,6 +4181,8 @@ module QtQuick.Controls.Material
 		prototype QtQuick.Templates.CheckBox named
 	type QtQuick/Controls/Material/Dialog.qml Dialog
 		prototype QtQuick.Templates.Dialog named
+	type QtQuick/Controls/Material/ItemDelegate.qml ItemDelegate
+		prototype QtQuick.Templates.ItemDelegate named
 	type QtQuick/Controls/Material/Label.qml Label
 		prototype QtQuick.Templates.Label named
 	type QtQuick.Controls.Material.Material Material
