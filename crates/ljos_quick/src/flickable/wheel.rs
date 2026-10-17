@@ -99,13 +99,14 @@ fn wheel(e: &Engine, f: ObjectId, ev: &WheelEvent, _at: kurbo::Point) -> bool {
     }
     let physics = scroll_physics(e);
     let distance = wheel_distance(ev);
+    let by_pixel = ev.pixel_delta != kurbo::Vec2::ZERO;
     let mut moved = [false; 2];
     for axis in [X, Y] {
         if distance[axis] == 0.0 || !e.untrack(|| can_flick(e, f, axis)) {
             continue;
         }
         let state = e.untrack(|| bounds(e, f, axis));
-        match physics.wheel(&state, distance[axis]) {
+        match physics.wheel(&state, distance[axis], by_pixel) {
             Motion::Jump(to) => {
                 stop_fling(e, f, axis);
                 scroll_to(e, f, axis, to);

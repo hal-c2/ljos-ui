@@ -333,6 +333,12 @@ fn notch(x: f64, y: f64, dx: f64, dy: f64) -> WheelEvent {
     WheelEvent::notches(x, y, dx, dy, ms(0))
 }
 
+/// A notch glides there over 300 ms.
+fn glided(s: &mut QuickScene, e: &Engine) {
+    s.frame(e, ms(0));
+    s.frame(e, ms(400));
+}
+
 fn text(e: &Engine, o: ObjectId, name: &str) -> String {
     get(e, o, name).to_js_string().to_string()
 }
@@ -382,6 +388,7 @@ fn an_area_nobody_listens_to_lets_the_wheel_through() {
         "{OVER_A_FLICKABLE}\n    MouseArea {{ anchors.fill: parent }}"
     ));
     assert!(s.wheel_event(&e, &notch(10.0, 10.0, 0.0, -1.0)));
+    glided(&mut s, &e);
     assert_eq!(num(&e, find(&e, root, "f"), "contentY"), 72.0);
 }
 
@@ -401,6 +408,7 @@ fn an_area_that_listens_keeps_the_wheel_unless_it_refuses_it() {
     assert_eq!(num(&e, f, "contentY"), 0.0);
     set(&e, find(&e, root, "a"), "keep", Value::Bool(false));
     assert!(s.wheel_event(&e, &notch(10.0, 10.0, 0.0, -1.0)));
+    glided(&mut s, &e);
     assert_eq!(num(&e, f, "contentY"), 72.0);
     assert_eq!(text(&e, root, "log"), "a|a|");
 }

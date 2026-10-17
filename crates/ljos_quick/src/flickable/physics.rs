@@ -223,9 +223,9 @@ pub struct Kinetic {
 }
 
 impl Kinetic {
-    /// A desktop Qt 6.11's values. The wheel does not glide: Qt eases a
-    /// notch over about 300 ms; Ljós puts it there at once until the
-    /// scenarios that read the wheel's end position wait for it.
+    /// A desktop Qt 6.11's values. A notch of the wheel glides for 300 ms,
+    /// each frame of 16 ms leaving 0.69 of the way still to go, as qml6
+    /// shows.
     pub const DESKTOP: Kinetic = Kinetic {
         overshoot_brake: 8.0,
         max_overshoot: 150.0,
@@ -233,7 +233,7 @@ impl Kinetic {
         rebound_in: Duration::from_millis(100),
         rebound_out: Duration::from_millis(300),
         release_rest: Duration::from_millis(100),
-        wheel_glide: None,
+        wheel_glide: Some(Duration::from_millis(300)),
     };
 }
 
@@ -403,8 +403,9 @@ impl ScrollPhysics {
     /// The wheel asks the content to move by `distance` (positive: towards
     /// the end). Content already past a bound is not moved further out,
     /// and not pulled in either: only something that asks for the bounds
-    /// ([`ScrollPhysics::settle`]) does that.
-    pub fn wheel(&self, axis: &AxisState, distance: f64) -> Motion {
+    /// ([`ScrollPhysics::settle`]) does that. Only a wheel with notches
+    /// glides: a device that scrolls `by_pixel` follows the fingers.
+    pub fn wheel(&self, axis: &AxisState, distance: f64, by_pixel: bool) -> Motion {
         let p = axis.position;
         let max = axis.max.max(axis.min);
         let to = if distance > 0.0 {
@@ -416,12 +417,12 @@ impl ScrollPhysics {
             return Motion::Rest;
         }
         match self.kinetic().and_then(|k| k.wheel_glide) {
-            Some(duration) => Motion::Start(Segment::Glide {
+            Some(duration) if !by_pixel => Motion::Start(Segment::Glide {
                 from: p,
                 to,
                 duration,
             }),
-            None => Motion::Jump(to),
+            _ => Motion::Jump(to),
         }
     }
 
@@ -719,11 +720,8 @@ mod tests {
 
     #[test]
     fn a_wheel_that_glides_eases_out() {
-        let glide = ScrollPhysics::Kinetic(Kinetic {
-            wheel_glide: Some(Duration::from_millis(300)),
-            ..K
-        });
-        let Motion::Start(seg) = glide.wheel(&axis(0.0), 72.0) else {
+        let glide = ScrollPhysics::default();
+        let Motion::Start(seg) = glide.wheel(&axis(0.0), 72.0, false) else {
             panic!("no glide");
         };
         // qml6 shows 26.67 of 72 after 21 ms of a notch.
@@ -731,6 +729,7 @@ mod tests {
         assert!((at - 72.0 * (1.0 - 2f64.powf(-0.7))).abs() < 1e-9);
         assert_eq!(end(&seg), (72.0, 0.0));
         assert_eq!(glide.wheel_rest(), Duration::from_millis(300));
+        assert_eq!(glide.wheel(&axis(0.0), 30.0, true), Motion::Jump(30.0));
     }
 
     #[test]
@@ -746,19 +745,19 @@ mod tests {
     #[test]
     fn the_wheel_stops_at_the_bounds_and_says_when_nothing_moves() {
         let p = ScrollPhysics::Immediate;
-        assert_eq!(p.wheel(&axis(0.0), 72.0), Motion::Jump(72.0));
-        assert_eq!(p.wheel(&axis(280.0), 72.0), Motion::Jump(300.0));
-        assert_eq!(p.wheel(&axis(300.0), 72.0), Motion::Rest);
-        assert_eq!(p.wheel(&axis(0.0), -72.0), Motion::Rest);
-        assert_eq!(p.wheel(&axis(30.0), -72.0), Motion::Jump(0.0));
+        assert_eq!(p.wheel(&axis(0.0), 72.0, false), Motion::Jump(72.0));
+        assert_eq!(p.wheel(&axis(280.0), 72.0, false), Motion::Jump(300.0));
+        assert_eq!(p.wheel(&axis(300.0), 72.0, false), Motion::Rest);
+        assert_eq!(p.wheel(&axis(0.0), -72.0, false), Motion::Rest);
+        assert_eq!(p.wheel(&axis(30.0), -72.0, false), Motion::Jump(0.0));
     }
 
     #[test]
     fn the_wheel_does_not_pull_content_that_is_outside_back_in() {
         let p = ScrollPhysics::Immediate;
-        assert_eq!(p.wheel(&axis(900.0), 72.0), Motion::Rest);
-        assert_eq!(p.wheel(&axis(900.0), -72.0), Motion::Jump(828.0));
-        assert_eq!(p.wheel(&axis(-50.0), -72.0), Motion::Rest);
+        assert_eq!(p.wheel(&axis(900.0), 72.0, false), Motion::Rest);
+        assert_eq!(p.wheel(&axis(900.0), -72.0, false), Motion::Jump(828.0));
+        assert_eq!(p.wheel(&axis(-50.0), -72.0, false), Motion::Rest);
     }
 
     #[test]

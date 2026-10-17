@@ -241,6 +241,10 @@ Feature: An agent that may give input
         """json
         {"target": "#flick", "dy": -3}
         """
+      And the agent calls the tool "app_advance" with:
+        """json
+        {"ms": 400}
+        """
       Then the property "contentY" of "flick" is at least 1
 
     Scenario: A tap is a touch that is lifted where it began

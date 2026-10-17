@@ -145,19 +145,32 @@ fn a_wheel_event_that_moves_nothing_costs_nothing() {
     assert!(!frame(&mut s, &e).changed);
 }
 
+/// A notch glides there over 300 ms, so it is seen at each frame of them.
+fn glided(s: &mut QuickScene, e: &Engine) {
+    s.frame(e, ms(0));
+    s.frame(e, ms(400));
+}
+
 #[test]
-fn a_wheel_event_that_moves_the_content_asks_for_one_frame() {
+fn a_wheel_notch_asks_for_frames_until_it_has_glided_there() {
     let e = engine();
     let root = load(&e, PLAIN);
     let f = find(&e, root, "f");
     let mut s = ready(&e, root);
 
     assert!(s.wheel_event(&e, &WheelEvent::notches(100.0, 100.0, 0.0, -1.0, ms(0))));
-    assert_eq!(num(&e, f, "contentY"), flickable::WHEEL_NOTCH_PIXELS);
     assert!(s.needs_frame());
-    assert!(frame(&mut s, &e).changed);
-    assert!(!s.needs_frame());
-    assert!(!frame(&mut s, &e).changed);
+    assert!(s.frame(&e, ms(0)).next_wake.is_some());
+    let mid = s.frame(&e, ms(100));
+    assert!(mid.changed && mid.next_wake.is_some());
+    let part = num(&e, f, "contentY");
+    assert!(part > 0.0 && part < flickable::WHEEL_NOTCH_PIXELS, "{part}");
+    assert!(s.frame(&e, ms(300)).changed);
+    assert_eq!(num(&e, f, "contentY"), flickable::WHEEL_NOTCH_PIXELS);
+    // No more frames: what is left is the timer that ends the movement.
+    let rested = s.frame(&e, ms(400));
+    assert!(rested.next_wake.is_none_or(|t| t > ms(500)), "{rested:?}");
+    assert!(!s.frame(&e, ms(500)).changed);
 }
 
 #[test]
@@ -211,6 +224,7 @@ fn a_view_can_turn_the_wheel_off_for_its_flickable() {
     assert_eq!(num(&e, f, "contentY"), 0.0);
     flickable::set_wheel_enabled(&e, f, true);
     assert!(s.wheel_event(&e, &down));
+    glided(&mut s, &e);
     assert_eq!(num(&e, f, "contentY"), 72.0);
 }
 

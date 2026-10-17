@@ -4,8 +4,8 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-flickable.html
 # The Qt oracle cannot send wheel events (see items/flickable-wheel.feature),
 # so these scenarios run on Ljós only. The distances and who gets the wheel
-# were measured on Qt 6.11.2 with Qt Test's mouseWheel. Qt eases the content
-# to where the wheel sends it; Ljós puts it there at once.
+# were measured on Qt 6.11.2 with Qt Test's mouseWheel. A notch glides there,
+# as items/flickable-wheel.feature says, so the scenarios wait for it.
 
 @ljos-only
 Feature: Scrolling a ScrollView with the wheel
@@ -44,6 +44,7 @@ Feature: Scrolling a ScrollView with the wheel
 
   Scenario Outline: A notch of the wheel scrolls a view as far as a Flickable
     When the user turns the wheel <notches> notches <direction> at 100, 50
+    And 400 milliseconds pass
     Then the property "contentItem.contentX" of "view" is <x>
     And the property "contentItem.contentY" of "view" is <y>
 
@@ -56,10 +57,12 @@ Feature: Scrolling a ScrollView with the wheel
 
   Scenario: The bars follow the wheel
     When the user turns the wheel 1 notch down at 100, 50
+    And 400 milliseconds pass
     Then the property "ScrollBar.vertical.position" of "view" is within 0.0001 of 0.072
 
   Scenario: The wheel scrolls the view from over one of its bars
     When the user turns the wheel 1 notch down at 197, 50
+    And 400 milliseconds pass
     Then the property "contentItem.contentY" of "view" is 72
 
   Scenario: Both bars are active while the wheel moves the content
@@ -73,20 +76,24 @@ Feature: Scrolling a ScrollView with the wheel
   @api-QtQuick.Controls.Control.wheelEnabled
   Scenario: A view that does not take the wheel is not scrolled by it
     When the user turns the wheel 1 notch down at 100, 150
+    And 400 milliseconds pass
     Then the property "contentItem.contentY" of "deaf" is 0
 
   @api-QtQuick.Controls.Control.wheelEnabled
   Scenario: A view that takes the wheel again is scrolled again
     When the property "wheelEnabled" of "deaf" is set to true
     And the user turns the wheel 1 notch down at 100, 150
+    And 400 milliseconds pass
     Then the property "contentItem.contentY" of "deaf" is 72
 
   Scenario: The wheel a view does not take goes to what the view is in
     When the user turns the wheel 1 notch down at 300, 50
+    And 400 milliseconds pass
     Then the property "contentItem.contentY" of "inner" is 0
     And the property "contentY" of "outer" is 72
 
   Scenario: A view that is not enabled is not scrolled
     When the property "enabled" of "view" is set to false
     And the user turns the wheel 1 notch down at 100, 50
+    And 400 milliseconds pass
     Then the property "contentItem.contentY" of "view" is 0
