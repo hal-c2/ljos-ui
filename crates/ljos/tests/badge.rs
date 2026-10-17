@@ -1,5 +1,6 @@
 //! The application's badge, a count on its icon, set from Rust through
-//! the one service the host installs, as `QGuiApplication::setBadgeNumber`.
+//! the one service the host installs, as `QGuiApplication::setBadgeNumber`,
+//! and the desktop entry the desktop shows it by.
 
 use std::rc::Rc;
 
@@ -40,4 +41,31 @@ fn without_a_host_service_the_count_is_only_kept() {
     let platform = Platform::of(&engine);
     platform.set_badge_number(2);
     assert_eq!(platform.badge_number(), 2);
+}
+
+#[test]
+fn the_desktop_entry_is_the_programs_name_until_the_application_names_it() {
+    let engine = ljos::engine();
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .expect("the test program's name");
+    assert_eq!(Platform::of(&engine).desktop_file_name(), program);
+
+    Platform::of(&engine).set_desktop_file_name("org.example.Notes.desktop");
+    assert_eq!(
+        Platform::of(&engine).desktop_file_name(),
+        "org.example.Notes"
+    );
+}
+
+#[test]
+fn the_app_builder_names_the_desktop_entry() {
+    let engine = ljos::App::new("Notes")
+        .desktop_file_name("org.example.Notes")
+        .build_engine();
+    assert_eq!(
+        Platform::of(&engine).desktop_file_name(),
+        "org.example.Notes"
+    );
 }

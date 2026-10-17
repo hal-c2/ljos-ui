@@ -43,6 +43,16 @@ ljos_dev = { path = "../ljos_dev", optional = true }
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc.workspace = true
 
+# The application's badge: the launcher-entry signal on the session bus.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+
+# The application's badge: the Dock tile.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
 # GL on EGL (src/gl.rs; build.rs says where): wgpu's GL present copies
 # every frame once more, which on a software rasteriser is most of what a
 # frame costs.

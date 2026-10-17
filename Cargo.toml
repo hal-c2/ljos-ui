@@ -125,6 +125,14 @@ constant_time_eq = "0.4"
 # system calls `ljos bench`'s cgroup gate needs.
 libc = "0.2.190"
 
+# The application's badge (ljos_shell). On Linux the launcher-entry signal
+# on the session bus, sent by zbus, pure Rust: the version accesskit_unix
+# already brings. On macOS the Dock tile: the versions arboard and rfd bring.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
+objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
+
 # Proc macros
 proc-macro2 = "1.0.107"
 quote = "1.0.47"

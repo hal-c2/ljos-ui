@@ -27,6 +27,7 @@ pub use ljos_dev::{TopRow, TopView};
 #[cfg(feature = "mcp")]
 pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
+mod badge;
 mod desktop;
 #[cfg(gl_painter)]
 mod gl;

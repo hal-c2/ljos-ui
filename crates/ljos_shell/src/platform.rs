@@ -1,8 +1,7 @@
 //! The desktop's platform services (ARCHITECTURE.md §15): the system
 //! clipboard and dialogs, the system's opener of URLs, an HTTPS fetcher,
-//! and the window system's name for `Qt.platform`. The application's badge
-//! keeps the in-process service on every desktop for now: it is kept and
-//! read back (`Platform::badge_number`), and not shown.
+//! the application's badge where the desktop has one (`badge.rs`), and the
+//! window system's name for `Qt.platform`.
 //!
 //! Files dragged in from other applications are not handled here: winit's
 //! file events reach each window's egui input, and the window's `QmlView`
@@ -40,6 +39,9 @@ pub(crate) fn install(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) 
                 std::env::consts::OS
             ),
         );
+    }
+    if let Some(badge) = crate::badge::service(&platform) {
+        platform.set_badge(badge);
     }
     platform.set_fetcher(Arc::new(HttpFetcher::new()));
     platform.set_plugin_name(plugin_name());

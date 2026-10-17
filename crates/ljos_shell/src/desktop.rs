@@ -775,8 +775,9 @@ impl<M: Send + 'static> Desktop<M> {
         attrs.size = attrs.size.map(|s| scaled(s, zoom));
         attrs.min_size = attrs.min_size.map(|s| scaled(s, zoom));
         attrs.max_size = attrs.max_size.map(|s| scaled(s, zoom));
-        // Every window of the application goes by the application's name.
-        attrs.app_id = Some(self.config.title.clone());
+        // Every window of the application goes by its desktop entry, which
+        // is how the desktop finds its icon and its badge.
+        attrs.app_id = Some(ljos_platform::Platform::of(engine).desktop_file_name());
         let id = match host.create_window(&attrs) {
             Ok(id) => id,
             Err(e) => return self.fail(host, i, ShellError::Window(e), engine),

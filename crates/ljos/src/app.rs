@@ -117,6 +117,21 @@ impl<M> App<M> {
         self
     }
 
+    /// Names the application's desktop entry, the base name of its
+    /// `.desktop` file (`org.example.Notes`), as
+    /// `QGuiApplication::setDesktopFileName` does: its windows go by it
+    /// (the Wayland app id, the X11 class) and the desktop finds its icon
+    /// and shows its badge by it. Without it the program's file name is
+    /// used ([`Platform::desktop_file_name`](crate::prelude::Platform::desktop_file_name)).
+    #[must_use]
+    pub fn desktop_file_name(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        self.modules.push(Box::new(move |engine: &Engine| {
+            ljos_platform::Platform::of(engine).set_desktop_file_name(&name);
+        }));
+        self
+    }
+
     /// A whole shell configuration, replacing the title and size the
     /// builder would make one from. For the settings with no builder
     /// shorthand: the background colour, the inbox bounds, fonts.

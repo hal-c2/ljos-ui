@@ -179,6 +179,7 @@ pub struct Platform {
     env: RefCell<Rc<PathEnv>>,
     plugin_name: RefCell<Atom>,
     application: RefCell<Option<(String, String)>>,
+    desktop_file_name: RefCell<Option<String>>,
     drop_handler: RefCell<Option<DropHandler>>,
     fetches: RefCell<HashMap<u64, FetchDone>>,
     // A parallel map to `fetches`, not one map of an enum: a request's
@@ -224,6 +225,7 @@ impl Default for Platform {
             // What a run without a window system is called (Qt.platform).
             plugin_name: RefCell::new(Atom::from("offscreen")),
             application: RefCell::new(None),
+            desktop_file_name: RefCell::new(None),
             drop_handler: RefCell::new(None),
             fetches: RefCell::new(HashMap::new()),
             requests: RefCell::new(HashMap::new()),
@@ -493,6 +495,30 @@ impl Platform {
                 .unwrap_or_else(|| "ljos".to_owned());
         }
         (organization, name)
+    }
+
+    /// Names the application's desktop entry, as
+    /// `QGuiApplication::setDesktopFileName` does: the base name of its
+    /// `.desktop` file (`org.example.Notes`), by which the desktop finds
+    /// its icon, groups its windows and shows its badge. A trailing
+    /// `.desktop` is dropped.
+    pub fn set_desktop_file_name(&self, name: &str) {
+        let name = name.strip_suffix(".desktop").unwrap_or(name);
+        *self.desktop_file_name.borrow_mut() = Some(name.to_owned());
+    }
+
+    /// The base name of the application's desktop entry: what
+    /// [`Platform::set_desktop_file_name`] gave, or the program's file
+    /// name without its extension. The shell gives it to every window as
+    /// its Wayland app id and X11 class.
+    pub fn desktop_file_name(&self) -> String {
+        if let Some(name) = self.desktop_file_name.borrow().clone() {
+            return name;
+        }
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "ljos".to_owned())
     }
 
     /// Who hears of drags from other applications: the drag-and-drop of
