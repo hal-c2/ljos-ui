@@ -2270,7 +2270,10 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
         mark(shared, |s| s.dead.push(obj));
         return;
     }
-    let _ = crate::tree::child_items(e, obj);
+    // Only for the subscription: the list is read when the structure is
+    // rebuilt, and copying it here made each child added cost as much as
+    // all the children before it.
+    let _ = e.read(obj, Item::CHILDREN.index);
     if is_a::<Loader>(e, obj) {
         // A Loader's item is its child from the start but shown only once
         // it is made (`shown_children`).
