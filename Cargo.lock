@@ -3419,6 +3419,7 @@ name = "ljos"
 version = "0.0.0"
 dependencies = [
  "ljos",
+ "ljos_a11y",
  "ljos_compiler",
  "ljos_controls",
  "ljos_engine",

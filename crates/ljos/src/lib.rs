@@ -81,27 +81,35 @@
 /// on, and what the Engine's own
 /// methods hand out: the [`Time`](prelude::Time) of `Engine::now`, the
 /// [`TimerId`](prelude::TimerId) of `Engine::call_at`, the
-/// [`Application`](prelude::Application) singleton (`Qt.application`)
-/// and the [`ColorScheme`](prelude::ColorScheme) of [`color_scheme`].
+/// [`ConnectionId`](prelude::ConnectionId) of `Engine::connect`, the
+/// [`MetaRef`](prelude::MetaRef) of `Engine::meta_of`, the
+/// [`Prop`](prelude::Prop) handles a derive makes (`Counter::COUNT`), the
+/// [`Application`](prelude::Application) singleton (`Qt.application`),
+/// the [`StyleHints`](prelude::StyleHints) object of [`style_hints`]
+/// and the [`ColorScheme`](prelude::ColorScheme) of [`color_scheme`];
+/// and the standard locations ([`Location`](prelude::Location), Qt's
+/// `QStandardPaths`) a [`PathEnv`](prelude::PathEnv) is read with.
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_controls::{Application, ApplicationState};
     pub use ljos_engine::{
-        Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, ItemTree, JsError,
-        LogEntry, LogLevel, ModelChange, ModelListener, ModelListeners, ModelSignals, ObjectId,
-        Point, PropertyMap, QmlList, QmlListModel, QmlObject, QmlType, QmlValue, QtObject, Rect,
-        RowKey, SignalIndex, Size, Timer, TreeChange, TreeListener, TreeListeners, Url, Value,
-        Version, list_model, qml_impl, qml_singleton, tree_model,
+        Atom, Color, ConnectionId, ContextId, Cx, Engine, EngineError, Handler, ItemModel,
+        ItemTree, JsError, LogEntry, LogLevel, MetaRef, ModelChange, ModelListener, ModelListeners,
+        ModelSignals, ObjectId, Point, Prop, PropertyMap, QmlList, QmlListModel, QmlObject,
+        QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, TreeChange,
+        TreeListener, TreeListeners, Url, Value, Version, list_model, qml_impl, qml_singleton,
+        tree_model,
     };
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,
         DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, ExternalDrag,
-        FakeSensors, FetchError, Fetcher, Measurement, Method, NameFilter, NoSensors,
+        FakeSensors, FetchError, Fetcher, Location, Measurement, Method, NameFilter, NoSensors,
         OpenUrlService, PathEnv, Permission, PermissionAnswer, PermissionService, PermissionStatus,
         Platform, RecordedBadge, RecordedUrls, Request, Response, SensorKind, SensorRequest,
-        SensorService, SensorSink, encoded_url, external_drag, file_url, is_remote, url_path,
+        SensorService, SensorSink, StandardPaths, encoded_url, external_drag, file_url, is_remote,
+        url_path,
     };
-    pub use ljos_quick::{ColorScheme, Item};
+    pub use ljos_quick::{ColorScheme, Item, StyleHints};
     pub use ljos_runtime::{Time, TimerId};
 }
 
@@ -112,10 +120,14 @@ pub mod build;
 mod compile;
 #[cfg(feature = "dev-qml")]
 pub mod dev;
+#[cfg(any(feature = "render", feature = "testing"))]
+mod drive;
 pub mod item;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod task;
+#[cfg(feature = "testing")]
+pub mod testing;
 pub mod types;
 
 pub use app::{App, create_root};
@@ -210,6 +222,22 @@ pub fn font_families() -> Vec<String> {
 /// a native type's tracked read that asks follows a change of scheme.
 pub fn color_scheme(engine: &Engine) -> prelude::ColorScheme {
     ljos_quick::color_scheme(engine)
+}
+
+/// `Qt.styleHints` (`Application.styleHints`): the object whose
+/// [`StyleHints`](prelude::StyleHints) properties a native type reads,
+/// and whose `colorScheme` it may write to choose the application's
+/// scheme (`Qt.ColorScheme.Unknown` follows the system's again). `None`
+/// only when the Engine cannot make it.
+pub fn style_hints(engine: &Engine) -> Option<ObjectId> {
+    ljos_quick::style_hints(engine)
+}
+
+/// Whether the user asked for less motion
+/// (`Qt.styleHints.accessibility.motionPreference`). Tracked: a binding
+/// or a native type's tracked read that asks follows the setting.
+pub fn reduced_motion(engine: &Engine) -> bool {
+    ljos_quick::reduced_motion(engine)
 }
 
 /// Opens the application's windows and runs until the last of them is

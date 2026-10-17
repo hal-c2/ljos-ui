@@ -32,6 +32,8 @@ ljos_runtime = { path = "../ljos_runtime" }
 ljos_render = { path = "../ljos_render", default-features = false }
 # The text engine a native item lays its text out with (`ljos::item`).
 ljos_text = { path = "../ljos_text" }
+# Only with `testing`: the system's preferences a test plays.
+ljos_a11y = { path = "../ljos_a11y", optional = true }
 # Only with `dev-qml` or `build`: compiles QML directories at start-up or
 # in a build script, which links the parser. A shipped application's own
 # `ljos` leaves both off and embeds compiled IR
@@ -51,7 +53,7 @@ tempfile.workspace = true
 # An application that hands QML JSON (`records.rs`).
 serde_json.workspace = true
 # So the tests see the facade as an application with dev-qml does.
-ljos = { path = ".", features = ["dev-qml", "build", "render"] }
+ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 
 [features]
 default = ["shell", "media"]
@@ -71,6 +73,10 @@ build = ["dep:ljos_compiler", "dep:qml_front"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = []
+# For an application's tests (`[dev-dependencies]`): `ljos::testing`, a
+# window without a platform on a virtual clock that a test hands input
+# to, and the host's and the system's part a test plays.
+testing = ["dep:ljos_a11y"]
 
 [lints]
 workspace = true

@@ -31,17 +31,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use ljos_engine::{Engine, ObjectId, QmlType as _, Value};
-use ljos_quick::{ImageStore, QuickScene, TextEngine};
-use ljos_render::{FrameView, RasterConfig, Rgba, VelloCpuReference, kurbo};
-use ljos_runtime::{Clock as _, Time, VirtualClock};
+use ljos_quick::{QuickScene, TextEngine};
 
-/// Frames a scene may need to come to rest before something is wrong
-/// with it, and timer firings before the settle time is given up on.
-const MAX_SETTLE_FRAMES: usize = 64;
-const MAX_TIMER_STEPS: usize = 100_000;
+use crate::drive::Run;
+use ljos_render::{FrameView, RasterConfig, Rgba, VelloCpuReference, kurbo};
+use ljos_runtime::{Clock as _, VirtualClock};
 
 /// The fonts text is set in on this thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -175,11 +171,12 @@ impl Picture {
             let size = [f64::from(width), f64::from(height)];
             ljos_controls::WindowSystem::of(engine).resized(engine, root, size);
         }
+        let mut wake = None;
         let mut run = Run {
             engine,
             scene: &mut scene,
             clock: &self.clock,
-            wake: None,
+            wake: &mut wake,
         };
         run.settle()?;
         run.advance(self.settle_ms)?;
@@ -192,80 +189,22 @@ impl Picture {
                 .write_by_name(root, "color", Value::from("transparent"))
                 .map_err(|e| e.to_string())?;
         }
-        run.picture(window)
+        picture(&mut run, window)
     }
 }
 
-/// The scene and the clock it runs on, being driven as a host drives them.
-struct Run<'a> {
-    engine: &'a Engine,
-    scene: &'a mut QuickScene,
-    clock: &'a Arc<VirtualClock>,
-    /// When the scene last said it next needs a frame.
-    wake: Option<Time>,
-}
-
-impl Run<'_> {
-    /// Frames until the scene is idle: layout, anchors, deferred deletes.
-    fn settle(&mut self) -> Result<(), String> {
-        for _ in 0..MAX_SETTLE_FRAMES {
-            let now = self.clock.now();
-            let out = self.scene.frame(self.engine, now);
-            if !self.scene.needs_frame() && out.next_wake.is_none_or(|t| t > now) {
-                self.wake = out.next_wake;
-                return Ok(());
-            }
-        }
-        Err(format!(
-            "the scene did not settle in {MAX_SETTLE_FRAMES} frames"
-        ))
-    }
-
-    /// Lets `ms` pass, firing each timer at its own deadline and settling in
-    /// between, as a host woken at each deadline would.
-    fn advance(&mut self, ms: u64) -> Result<(), String> {
-        let images = ImageStore::of(self.engine);
-        images.finish(self.engine);
-        let end = self.clock.now() + Duration::from_millis(ms);
-        for _ in 0..MAX_TIMER_STEPS {
-            let next = [self.engine.next_timer_deadline(), self.wake]
-                .into_iter()
-                .flatten()
-                .min();
-            match next {
-                Some(t) if t <= end => {
-                    if t > self.clock.now() {
-                        self.clock.set(t);
-                    }
-                    self.engine.advance_timers(self.clock.now());
-                    self.settle()?;
-                }
-                _ => {
-                    self.clock.set(end);
-                    self.engine.advance_timers(end);
-                    images.finish(self.engine);
-                    return self.settle();
-                }
-            }
-        }
-        Err(format!(
-            "timers fired more than {MAX_TIMER_STEPS} times in {ms} ms"
-        ))
-    }
-
-    /// A PNG of the scene: on white, or on nothing for a window, which
-    /// paints its own colour.
-    fn picture(&mut self, window: bool) -> Result<Vec<u8>, String> {
-        self.settle()?;
-        let out = self.scene.frame(self.engine, self.clock.now());
-        let backdrop = if window { 0.0 } else { 1.0 };
-        let mut r = VelloCpuReference::new(RasterConfig {
-            background: Rgba::from_straight(backdrop, backdrop, backdrop, backdrop),
-            ..RasterConfig::default()
-        });
-        let image = r
-            .render(&FrameView::new(&out.snapshot, 1.0))
-            .map_err(|e| e.to_string())?;
-        image.to_png().map_err(|e| e.to_string())
-    }
+/// A PNG of the scene: on white, or on nothing for a window, which
+/// paints its own colour.
+fn picture(run: &mut Run<'_>, window: bool) -> Result<Vec<u8>, String> {
+    run.settle()?;
+    let out = run.scene.frame(run.engine, run.clock.now());
+    let backdrop = if window { 0.0 } else { 1.0 };
+    let mut r = VelloCpuReference::new(RasterConfig {
+        background: Rgba::from_straight(backdrop, backdrop, backdrop, backdrop),
+        ..RasterConfig::default()
+    });
+    let image = r
+        .render(&FrameView::new(&out.snapshot, 1.0))
+        .map_err(|e| e.to_string())?;
+    image.to_png().map_err(|e| e.to_string())
 }
