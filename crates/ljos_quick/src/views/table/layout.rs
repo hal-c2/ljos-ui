@@ -17,7 +17,7 @@ use ljos_engine::{
     Value, WriteKind,
 };
 
-use super::{TableState, TableView, index_of_cell, state_of};
+use super::{TableState, TableView, state_of};
 use crate::flickable::Flickable;
 use crate::item::{Item, write_computed, write_placed};
 use crate::views::{put, warn};
@@ -267,7 +267,7 @@ fn place_of_cell(st: &TableState, index: usize) -> Option<Vec<(i32, i32)>> {
 }
 
 /// The view's cell the selection model has as current.
-fn current_cell(e: &Engine, view: ObjectId, st: &TableState) -> Option<(usize, usize)> {
+pub(crate) fn current_cell(e: &Engine, view: ObjectId, st: &TableState) -> Option<(usize, usize)> {
     let sm = e.read(view, TableView::SELECTION_MODEL.index).as_object()?;
     let index = e.read(sm, ItemSelectionModel::CURRENT_INDEX.index);
     super::cell_of_index(e, st, &index)
@@ -335,27 +335,19 @@ pub(crate) fn decorate(
 }
 
 /// A delegate was tapped: its cell is the current one.
-pub(crate) fn tapped(e: &Engine, view: ObjectId, obj: ObjectId) {
+pub(crate) fn tapped(e: &Engine, view: ObjectId, obj: ObjectId, double: bool) {
     let Some(st) = state_of(e, view) else {
-        return;
-    };
-    if !e
-        .read(view, TableView::POINTER_NAVIGATION_ENABLED.index)
-        .to_boolean()
-    {
-        return;
-    }
-    let Some(sm) = e.read(view, TableView::SELECTION_MODEL.index).as_object() else {
         return;
     };
     let Some(i) = st.delegates().and_then(|d| d.index_of(obj)) else {
         return;
     };
     let cols = st.cells.columns().max(1);
-    let index = index_of_cell(e, &st, i / cols, i % cols);
-    // `NoUpdate`: a tap moves the current cell and leaves the selection.
-    let r = e.invoke_by_name(sm, "setCurrentIndex", &[index, Value::Int(0)]);
-    warn(e, "setCurrentIndex", r.map(drop));
+    if double {
+        super::nav::double_tapped(e, view, i / cols);
+    } else {
+        super::nav::tapped(e, view, &st, (i / cols, i % cols));
+    }
 }
 
 /// The cell at a point of the content, as last laid out.
@@ -386,9 +378,14 @@ pub(crate) fn show_row(e: &Engine, view: ObjectId, row: i32) {
     else {
         return;
     };
+    show_y(e, view, top);
+}
+
+/// Moves the content to `y`, as far as there is content.
+pub(crate) fn show_y(e: &Engine, view: ObjectId, y: f64) {
     let h = rd(e, view, Item::HEIGHT.index);
     let content = rd(e, view, Flickable::CONTENT_HEIGHT.index);
-    let y = top.min((content - h).max(0.0));
+    let y = y.min((content - h).max(0.0)).max(0.0);
     put(e, view, Flickable::CONTENT_Y.index, Value::Real(y));
 }
 

@@ -883,13 +883,21 @@ fn expand(
 }
 
 /// The ranges `what` names: an index, a range, or a list of ranges (a
-/// selection).
+/// selection). A view in Rust names a range by a record of its
+/// `topLeft` and `bottomRight`.
 fn ranges_in(cx: &Cx, what: &Value, command: i64) -> Vec<Range> {
     let e = cx.engine;
     let model = model_of(cx);
+    let member = |v: &Value, key: &str| match v.as_map() {
+        Some(fields) => fields
+            .iter()
+            .find(|(k, _)| &**k == key)
+            .map(|(_, v)| v.clone()),
+        None => e.js_member(v, key),
+    };
     let one = |v: &Value| -> Option<Range> {
-        if let Some(tl) = e.js_member(v, "topLeft") {
-            let br = e.js_member(v, "bottomRight")?;
+        if let Some(tl) = member(v, "topLeft") {
+            let br = member(v, "bottomRight")?;
             let (tl, br) = (place_of(e, &tl, model)?, place_of(e, &br, model)?);
             return expand(cx, &tl, &br, command);
         }

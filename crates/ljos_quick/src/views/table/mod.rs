@@ -12,6 +12,7 @@
 
 mod cells;
 mod layout;
+mod nav;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -108,6 +109,12 @@ pub(crate) struct TableState {
     /// Where each row starts and how wide each column is, as laid out.
     pub row_y: RefCell<Vec<f64>>,
     pub column_x: RefCell<Vec<(f64, f64)>>,
+    /// The cell the Shift moves of the keys began on.
+    pub anchor: Cell<Option<(usize, usize)>>,
+    /// Where the pointer was pressed, and where the content was then.
+    pub press: Cell<Option<(ljos_render::kurbo::Point, (f64, f64))>>,
+    /// The last tap, which a tap on its cell soon after makes double.
+    pub last_tap: Cell<Option<(ljos_runtime::Time, (usize, usize))>>,
 }
 
 impl std::fmt::Debug for TableState {
@@ -130,8 +137,8 @@ impl TableState {
 /// `TreeView` shows as it should.
 ///
 /// Kept and read back, with no effect yet: `syncView`, `syncDirection`,
-/// `animate`, `alternatingRows`, the selection and edit settings,
-/// `resizableColumns` and `resizableRows`.
+/// `animate`, `alternatingRows`, the edit settings, `resizableColumns`
+/// and `resizableRows`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -303,12 +310,15 @@ impl ViewHost for Host {
                 layout::decorate(e, view, &st, index, object, true);
             }
         });
-        // A tap on a cell makes it the current one.
-        if e.signal_index(object, "clicked").is_ok() {
-            let r = e.connect_by_name(object, "clicked", move |e, _| {
-                layout::tapped(e, view, object);
-            });
-            warn(e, "clicked", r.map(drop));
+        // A delegate that takes the press (a TreeViewDelegate) is tapped
+        // through its own signals.
+        for signal in ["clicked", "doubleClicked"] {
+            if e.signal_index(object, signal).is_ok() {
+                let r = e.connect_by_name(object, signal, move |e, _| {
+                    layout::tapped(e, view, object, signal == "doubleClicked");
+                });
+                warn(e, signal, r.map(drop));
+            }
         }
     }
 
@@ -875,4 +885,7 @@ pub(crate) fn register(engine: &Engine) {
     for meta in [TableView::static_meta(), TreeView::static_meta()] {
         engine.register_type("QtQuick", Version::new(2, 15), MetaRef::Static(meta));
     }
+    let meta = MetaRef::Static(TableView::static_meta());
+    crate::keys::register_key_item(engine, meta.clone(), nav::key_hooks());
+    crate::pointer_item::register_pointer_item(engine, meta, nav::pointer_hooks());
 }
