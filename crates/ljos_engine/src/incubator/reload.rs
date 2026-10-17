@@ -37,9 +37,9 @@
 //! A kept object does not run `Component.onCompleted` again; it runs
 //! `Component.onReloaded`.
 
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -310,7 +310,7 @@ type MetaCache = rustc_hash::FxHashMap<(u32, u32), MetaRef>;
 /// What [`Engine::reload`] puts back when the new files do not work.
 struct SavedLoader {
     source: Rc<dyn ComponentSource>,
-    files: HashMap<String, Rc<LoadedFile>>,
+    files: std::collections::HashMap<String, Rc<LoadedFile>>,
     metas: Vec<(Rc<LoadedFile>, MetaCache)>,
     overlay: Option<Overlay>,
 }
@@ -364,12 +364,49 @@ pub(crate) struct ReloadState {
     overlay: RefCell<Option<Overlay>>,
 }
 
-fn seg_name(seg: &KeySeg) -> String {
+// Paths and prints are made for every object a reload makes, so they are
+// pushed piece by piece rather than formatted.
+fn push_seg(out: &mut String, seg: &KeySeg) {
     match seg {
-        KeySeg::Id(id) => format!("#{id}"),
-        KeySeg::Named(name) => format!("'{name}'"),
-        KeySeg::ModelRow(row) => format!("[{row}]"),
-        KeySeg::Typed { ty, nth } => format!("{ty}[{nth}]"),
+        KeySeg::Id(id) => {
+            out.push('#');
+            out.push_str(id);
+        }
+        KeySeg::Named(name) => {
+            out.push('\'');
+            out.push_str(name);
+            out.push('\'');
+        }
+        KeySeg::ModelRow(row) => {
+            let _ = write!(out, "[{row}]");
+        }
+        KeySeg::Typed { ty, nth } => {
+            out.push_str(ty);
+            let _ = write!(out, "[{nth}]");
+        }
+    }
+}
+
+fn push_type(out: &mut String, ty: &ljos_ir::TypeRef) {
+    match ty {
+        ljos_ir::TypeRef::Native { module, name } => {
+            out.push_str("N:");
+            out.push_str(module);
+            out.push(':');
+            out.push_str(name);
+        }
+        ljos_ir::TypeRef::Component { file, inline } => {
+            out.push_str("C:");
+            out.push_str(file);
+            if let Some(i) = inline {
+                out.push(':');
+                out.push_str(i);
+            }
+        }
+        ljos_ir::TypeRef::Unresolved(name) => {
+            out.push_str("U:");
+            out.push_str(name);
+        }
     }
 }
 
@@ -402,36 +439,57 @@ impl Walk {
             let id = inst.objects[i];
             let mut p = match (&od.key, od.parent) {
                 (_, None) => prefix.to_owned(),
-                (KeySeg::Id(name), _) => format!("{prefix}#{name}"),
-                (seg, Some(parent)) => format!("{}/{}", local[parent.index()], seg_name(seg)),
+                (KeySeg::Id(name), _) => {
+                    let mut p = String::with_capacity(prefix.len() + name.len() + 1);
+                    p.push_str(prefix);
+                    p.push('#');
+                    p.push_str(name);
+                    p
+                }
+                (seg, Some(parent)) => {
+                    let above = &local[parent.index()];
+                    let mut p = String::with_capacity(above.len() + 16);
+                    p.push_str(above);
+                    p.push('/');
+                    push_seg(&mut p, seg);
+                    p
+                }
             };
             if i > 0 || owns_root {
                 // Two siblings of one objectName: numbered, as the
                 // compiler's diff numbers them.
-                let n = self.seen.entry(p.clone()).or_insert(0);
-                *n += 1;
-                if *n > 1 {
+                let n = match self.seen.get_mut(p.as_str()) {
+                    Some(n) => {
+                        *n += 1;
+                        *n
+                    }
+                    None => {
+                        self.seen.insert(p.clone(), 1);
+                        1
+                    }
+                };
+                if n > 1 {
                     let _ = write!(p, "~{n}");
                 }
                 self.order.push(id);
                 self.path.insert(id, p.clone());
             }
-            let _ = write!(
-                self.print.entry(id).or_default(),
-                "{}|{}|{:?};",
-                inst.file.key,
-                def.id,
-                od.ty
-            );
+            let print = self.print.entry(id).or_default();
+            print.push_str(&inst.file.key);
+            print.push('|');
+            print.push_str(&def.id);
+            print.push('|');
+            push_type(print, &od.ty);
+            print.push(';');
             if reset {
                 self.reset.insert(id);
             }
             if let Some(Some(inner)) = inst.inner.get(i) {
-                let below = format!(
-                    "{p}>{}|{}",
-                    inner.file.key,
-                    inner.file.ir.component(inner.comp).id
-                );
+                let mut below = p.clone();
+                below.push('>');
+                below.push_str(&inner.file.key);
+                below.push('|');
+                below.push_str(&inner.file.ir.component(inner.comp).id);
                 self.instance(inner, &below, false);
             }
             local.push(p);
@@ -859,7 +917,7 @@ impl Engine {
         };
         // Names, not the type: a type held here would keep its script
         // prototype from being released.
-        let mut by_type: HashMap<*const MetaObject, Rc<OldMembers>> = HashMap::new();
+        let mut by_type: HashMap<*const MetaObject, Rc<OldMembers>> = HashMap::default();
         for (old, new) in &p.counterpart {
             if !js.seen(*old) {
                 continue;
@@ -1046,7 +1104,7 @@ impl Engine {
         let (base, mut files) = match &previous {
             Some(o) if ours => (o.base.clone(), o.files.clone()),
             // The host gave the engine other files since.
-            _ => (current.clone(), HashMap::new()),
+            _ => (current.clone(), HashMap::default()),
         };
         for f in &patch.files {
             files.insert(f.file.file.clone(), Some(Arc::new(f.file.clone())));
@@ -1377,17 +1435,17 @@ impl Engine {
     pub(super) fn reload_adopt(&self, cr: &Creation) -> HashSet<ObjectId> {
         let st = &self.inner.reload;
         if !st.tracking.get() || st.pending.borrow().is_none() {
-            return HashSet::new();
+            return HashSet::default();
         }
         type Work = (ObjectId, Vec<Carried>, Vec<(usize, Box<dyn Any>)>);
         let mut work: Vec<Work> = Vec::new();
         // (object, the edited properties as written)
         let mut edited: Vec<(ObjectId, Vec<String>)> = Vec::new();
-        let mut inside_edited: HashSet<ObjectId> = HashSet::new();
+        let mut inside_edited: HashSet<ObjectId> = HashSet::default();
         {
             let mut pending = st.pending.borrow_mut();
             let Some(p) = pending.as_mut() else {
-                return HashSet::new();
+                return HashSet::default();
             };
             for o in &cr.all {
                 let Some(path) = p.kept.get(o) else { continue };
@@ -1398,7 +1456,7 @@ impl Engine {
                 }
             }
             if work.is_empty() {
-                return HashSet::new();
+                return HashSet::default();
             }
             for u in &cr.units {
                 if !p.changed_files.contains(&u.inst.file.key) {
@@ -1421,7 +1479,7 @@ impl Engine {
             }
         }
         // The file's word for a property it declares differently now.
-        let mut skip: HashSet<(ObjectId, PropIndex)> = HashSet::new();
+        let mut skip: HashSet<(ObjectId, PropIndex)> = HashSet::default();
         for (id, props) in edited {
             for written in props {
                 let mut path: Vec<String> = written.split('.').map(str::to_owned).collect();
@@ -1442,7 +1500,8 @@ impl Engine {
             }
         }
         let migrators = st.migrators.borrow().clone();
-        let mut kept: HashSet<ObjectId> = HashSet::with_capacity(work.len());
+        let mut kept: HashSet<ObjectId> =
+            HashSet::with_capacity_and_hasher(work.len(), Default::default());
         let mut failed: Vec<ObjectId> = Vec::new();
         // A value coming back is not news: `onCheckedChanged` ran when
         // the user checked the box.

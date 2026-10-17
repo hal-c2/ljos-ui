@@ -12,7 +12,7 @@
 //! slice, so change handlers of what has run so far are called before the
 //! remaining bindings run, not after all of them.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet as HashSet;
 
 use super::{Creation, Initial};
 use crate::engine::Engine;
