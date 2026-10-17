@@ -1551,6 +1551,11 @@ fn reload_error_matches(w: &mut LjosWorld, pattern: String) -> StepResult {
     })
 }
 
+#[when(regex = r"^the application is opened again$")]
+fn reopened(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.reopen())
+}
+
 #[then(regex = r"^the application was (not )?asked to quit$")]
 fn asked_to_quit(w: &mut LjosWorld, not: String) -> StepResult {
     let want = not.is_empty();

@@ -9,7 +9,7 @@
 
 use ljos_engine::{
     Atom, Engine, EngineError, Font, ObjectId, QmlList, QmlObject, QmlType, QtObject, Value,
-    WriteKind, qml_singleton,
+    WriteKind, qml_impl, qml_singleton,
 };
 
 use super::system::WindowSystem;
@@ -168,6 +168,10 @@ pub(super) fn update_screen(engine: &Engine, obj: ObjectId, spec: &ScreenSpec) {
 ///
 /// One for the engine. `Application.onStateChanged` as an attached
 /// handler is not there: connect to the singleton.
+///
+/// `quitOnLastWindowClosed` and `reopened` are Ljós's: Qt has the first
+/// on `QGuiApplication` only, and nothing in QML for the second
+/// (features/window/keep-running.feature).
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtQuick", name = "Application")]
 #[qml_singleton]
@@ -199,6 +203,20 @@ pub struct Application {
     /// `Qt.styleHints`: the same object, made when the engine starts.
     #[qml(readonly)]
     pub style_hints: Option<ObjectId>,
+    /// Whether the host ends the application when its last window has
+    /// closed, as `QGuiApplication::quitOnLastWindowClosed`. Without it
+    /// the application runs on with no window until `Qt.quit()`.
+    #[qml(notify)]
+    pub quit_on_last_window_closed: bool,
+}
+
+#[qml_impl]
+impl Application {
+    /// The user opened the application again while it runs: on macOS a
+    /// click on its icon in the Dock. With no window shown it is the time
+    /// to show one.
+    #[qml(signal)]
+    fn reopened(has_visible_windows: bool);
 }
 
 impl Default for Application {
@@ -216,6 +234,7 @@ impl Default for Application {
             screens: QmlList::default(),
             arguments: Vec::new(),
             style_hints: None,
+            quit_on_last_window_closed: true,
         }
     }
 }
@@ -235,6 +254,38 @@ pub fn set_application_arguments(engine: &Engine, args: impl IntoIterator<Item =
             Value::list(args),
             WriteKind::Imperative,
         );
+    }
+}
+
+/// The host or the application says whether closing the last window ends
+/// the application (`Qt.application.quitOnLastWindowClosed`).
+pub fn set_quit_on_last_window_closed(engine: &Engine, quits: bool) {
+    if let Ok(app) = engine.singleton::<Application>() {
+        let _ = engine.write_internal(
+            app,
+            Application::QUIT_ON_LAST_WINDOW_CLOSED.index,
+            Value::Bool(quits),
+            WriteKind::Imperative,
+        );
+    }
+}
+
+/// Whether the host ends the application when its last window has
+/// closed: what [`set_quit_on_last_window_closed`] or the application
+/// said last, true when neither did.
+pub fn quit_on_last_window_closed(engine: &Engine) -> bool {
+    let Ok(app) = engine.singleton::<Application>() else {
+        return true;
+    };
+    let quits = engine.untrack(|| engine.read(app, Application::QUIT_ON_LAST_WINDOW_CLOSED.index));
+    !matches!(quits, Value::Bool(false))
+}
+
+/// The host says the user opened the application again
+/// (`Qt.application.reopened`), and whether a window of it was shown.
+pub fn application_reopened(engine: &Engine, has_visible_windows: bool) {
+    if let Ok(app) = engine.singleton::<Application>() {
+        let _ = engine.emit_by_name(app, "reopened", &[Value::Bool(has_visible_windows)]);
     }
 }
 

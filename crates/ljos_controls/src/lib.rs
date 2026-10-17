@@ -111,7 +111,8 @@ pub use window::{
     Application, ApplicationState, ApplicationWindow, CloseEvent, FRAMELESS, KIND_MASK, Modality,
     ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, Screen, ScreenAttached, ScreenInfo, ScreenSpec,
     Window, WindowBackdrop, WindowRequest, WindowShow, WindowSpec, WindowSystem,
-    device_pixel_ratio, set_application_arguments,
+    application_reopened, device_pixel_ratio, quit_on_last_window_closed,
+    set_application_arguments, set_quit_on_last_window_closed,
 };
 
 use style::{BASIC, FUSION, MATERIAL, StyleLibrary, UNIVERSAL};

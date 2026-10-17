@@ -1687,6 +1687,18 @@ impl Backend for LjosBackend {
         Ok(what)
     }
 
+    fn reopen(&mut self) -> Result<()> {
+        let live = self.live()?;
+        let engine = &live.engine;
+        let sys = ljos_controls::WindowSystem::of(engine);
+        let shown = sys
+            .windows(engine)
+            .iter()
+            .any(|w| sys.spec(engine, *w).is_some_and(|s| s.visible));
+        ljos_controls::application_reopened(engine, shown);
+        live.settle()
+    }
+
     fn quit_requested(&mut self) -> Result<bool> {
         Ok(self.live()?.engine.quit_requested())
     }

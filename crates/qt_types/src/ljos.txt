@@ -1130,6 +1130,7 @@ module QtQuick
 		prop screens QtQml.var named list
 		prop arguments QtQml.var named list
 		prop styleHints QtQml.QtObject named pointer readonly
+		prop quitOnLastWindowClosed QtQml.bool named
 		signal stateChanged
 		signal activeChanged
 		signal nameChanged
@@ -1140,6 +1141,8 @@ module QtQuick
 		signal layoutDirectionChanged
 		signal screensChanged
 		signal argumentsChanged
+		signal quitOnLastWindowClosedChanged
+		signal reopened hasVisibleWindows
 	type QtQuick.Behavior Behavior
 		prototype QtQml.QtObject named
 		default animation

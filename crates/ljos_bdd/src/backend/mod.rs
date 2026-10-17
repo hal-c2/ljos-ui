@@ -519,6 +519,14 @@ pub trait Backend: fmt::Debug {
             what: "seeing what the application has scheduled",
         })
     }
+    /// The user opens the application again, as a click on its icon in
+    /// the Dock does. Qt's QML is not told.
+    fn reopen(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "opening the application again",
+        })
+    }
     /// Whether the application asked to end (`Qt.quit()`). The oracle is
     /// itself the application that would end, so it cannot say.
     fn quit_requested(&mut self) -> Result<bool> {
