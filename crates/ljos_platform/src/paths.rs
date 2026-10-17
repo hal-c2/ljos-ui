@@ -307,51 +307,8 @@ fn user_dir(env: &PathEnv, location: Location) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// A `file:` URL of an absolute path, with what a URL cannot hold
-/// percent-encoded.
-pub fn file_url(path: &Path) -> String {
-    let mut out = String::from("file://");
-    let s = path.to_string_lossy();
-    if !s.starts_with('/') {
-        out.push('/');
-    }
-    for b in s.bytes() {
-        let plain = b.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@".contains(&b);
-        if plain {
-            out.push(char::from(b));
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
-}
-
-/// The path of a `file:` URL, or of a plain absolute path; `None` for any
-/// other URL.
-pub fn url_path(url: &str) -> Option<PathBuf> {
-    let rest = match url.strip_prefix("file://") {
-        Some(rest) => rest.strip_prefix("localhost").unwrap_or(rest),
-        None if url.starts_with('/') => url,
-        None => url.strip_prefix("file:").filter(|r| r.starts_with('/'))?,
-    };
-    let bytes = rest.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = |b: u8| char::from(b).to_digit(16);
-        match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
-            (b'%', Some(&h), Some(&l)) if hex(h).is_some() && hex(l).is_some() => {
-                out.push((hex(h)? * 16 + hex(l)?) as u8);
-                i += 3;
-            }
-            (b, ..) => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    Some(PathBuf::from(String::from_utf8_lossy(&out).into_owned()))
-}
+// One way of writing a file's address for every crate: the engine's.
+pub use ljos_engine::{encoded_url, file_url, url_path};
 
 /// Looks for `name` on `PATH` (or in `paths`), as an executable file.
 fn find_executable(env: &PathEnv, name: &str, paths: &[PathBuf]) -> Option<PathBuf> {
@@ -536,16 +493,6 @@ mod tests {
             Location::Config.all(&env, "", "App"),
             vec![PathBuf::from("/cfg"), "/a".into(), "/b".into()]
         );
-    }
-
-    #[test]
-    fn file_urls_round_trip() {
-        let p = Path::new("/b c/ä%.txt");
-        let url = file_url(p);
-        assert_eq!(url, "file:///b%20c/%C3%A4%25.txt");
-        assert_eq!(url_path(&url).as_deref(), Some(p));
-        assert_eq!(url_path("http://x/y"), None);
-        assert_eq!(url_path("/plain").as_deref(), Some(Path::new("/plain")));
     }
 
     #[test]

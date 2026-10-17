@@ -72,7 +72,15 @@ impl DragData {
 
     fn get(&self, format: &str) -> Option<String> {
         match format {
-            "text/uri-list" if !self.urls.is_empty() => Some(self.urls.join("\r\n")),
+            // The list leaves the process, so each address in it is written
+            // the strict way a reader can parse without guessing.
+            "text/uri-list" if !self.urls.is_empty() => Some(
+                self.urls
+                    .iter()
+                    .map(|u| ljos_engine::encoded_url(u))
+                    .collect::<Vec<_>>()
+                    .join("\r\n"),
+            ),
             "text/plain" => self.text.clone(),
             "text/html" => self.html.clone(),
             _ => self
@@ -739,4 +747,21 @@ pub(crate) fn register(engine: &Engine) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DragData;
+
+    #[test]
+    fn a_uri_list_is_written_strictly() {
+        let d = DragData::files([
+            std::path::PathBuf::from("/data/b c.png"),
+            std::path::PathBuf::from("/data/ljós#1.txt"),
+        ]);
+        assert_eq!(
+            d.get("text/uri-list").as_deref(),
+            Some("file:///data/b%20c.png\r\nfile:///data/lj%C3%B3s%231.txt")
+        );
+    }
 }

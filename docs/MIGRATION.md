@@ -430,6 +430,14 @@ pack says nothing of where its files were: a shipped application whose
 QML names its assets relatively says where they live with
 `MapSource::with_base_url`.
 
+A file's URL is written as Qt writes one for a person to read: a space
+or a letter outside ASCII stays as it is, and only what would change
+the address (`#`, `?`, `%` and the like) is escaped, so a warning reads
+`file:///home/me/my app/Main.qml:3: …` as `qml` prints it. `file_url`
+writes that form and `url_path` reads any form back to a path; hand
+`encoded_url(url)` (in the prelude) to anything outside the process that
+wants every byte escaped.
+
 The printed diagnostics are one line each,
 `path:line:column: severity: message`. An application that shows them
 its own way (a `--check` command, a log, a test that wants no

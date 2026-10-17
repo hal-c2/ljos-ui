@@ -191,7 +191,7 @@ pub(crate) fn compile_found<O: TypeOracle>(dirs: &[&Path], oracle: O) -> Result<
             message: d.message.clone(),
         }));
         if let Some(path) = &r.path {
-            source.insert_url(r.key.clone(), file_url(path));
+            source.insert_url(r.key.clone(), absolute_url(path));
         }
         match r.result {
             Ok(c) if !c.has_errors() => source.insert(r.key, c.file),
@@ -249,7 +249,7 @@ pub(crate) fn checked(
 /// absolute against the working directory and without `.` and `..`, so
 /// that it is the same text the engine reaches when it resolves a
 /// relative address beside another file.
-fn file_url(path: &Path) -> String {
+fn absolute_url(path: &Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
     let mut clean = PathBuf::new();
     for part in absolute.components() {

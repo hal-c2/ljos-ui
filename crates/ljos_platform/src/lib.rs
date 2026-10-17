@@ -64,7 +64,7 @@ pub use fetch::{
 #[cfg(feature = "http")]
 pub use http::HttpFetcher;
 pub use open_url::{OpenUrl, OpenUrlService, RecordedUrls};
-pub use paths::{Location, PathEnv, StandardPaths, file_url, url_path};
+pub use paths::{Location, PathEnv, StandardPaths, encoded_url, file_url, url_path};
 pub use permissions::{
     BluetoothPermission, CalendarPermission, CameraPermission, ContactsPermission, FakePermissions,
     LocationPermission, MicrophonePermission, Permission, PermissionAnswer, PermissionService,

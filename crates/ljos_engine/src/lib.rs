@@ -127,7 +127,7 @@ pub use introspect::{BindingTier, ObjectReport, PropertyReport, SourcePlace};
 pub use item_selection::ItemSelectionModel;
 pub use list::QmlList;
 pub use listmodel::{CarriedCell, CarriedRows, ListElement, ListModel};
-pub use loader::{ComponentSource, MapSource, file_url};
+pub use loader::{ComponentSource, MapSource, encoded_url, file_url, url_path};
 pub use log::{LogEntry, LogLevel};
 pub use meta::{
     AttachedTypeId, CompleteThunk, EnumInfo, Getter, GroupGet, GroupGetMut, ImplInfo, ListAppend,

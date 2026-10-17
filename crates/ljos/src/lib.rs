@@ -98,7 +98,7 @@ pub mod prelude {
         DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, ExternalDrag,
         FetchError, Fetcher, Method, NameFilter, OpenUrlService, PathEnv, Permission,
         PermissionAnswer, PermissionService, PermissionStatus, Platform, RecordedBadge,
-        RecordedUrls, Request, Response, external_drag, file_url, is_remote, url_path,
+        RecordedUrls, Request, Response, encoded_url, external_drag, file_url, is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item};
     pub use ljos_runtime::{Time, TimerId};

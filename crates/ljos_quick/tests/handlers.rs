@@ -258,8 +258,8 @@ fn a_file_url_escapes_what_a_url_cannot_hold() {
     assert_eq!(
         d.urls,
         vec![
-            "file:///data/b%20c.png".to_string(),
-            "file:///data/lj%C3%B3s%231.txt".to_string()
+            "file:///data/b c.png".to_string(),
+            "file:///data/ljós%231.txt".to_string()
         ]
     );
     assert_eq!(d.formats(), vec!["text/uri-list".to_string()]);

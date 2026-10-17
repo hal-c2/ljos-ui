@@ -329,8 +329,9 @@ impl OpenUrlService for SystemOpener {
         } else {
             std::process::Command::new("xdg-open")
         };
+        // The opener is another program: hand it the strict form.
         command
-            .arg(url)
+            .arg(ljos_engine::encoded_url(url))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());

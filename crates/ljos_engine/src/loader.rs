@@ -58,27 +58,91 @@ pub(crate) fn strip_query(url: &str) -> &str {
     }
 }
 
-/// The `file://` URL of the absolute `path`. Only what would break the
-/// address is escaped (a space, `#`, `%`, `?`, control bytes) and every
-/// byte of a character outside ASCII, as Qt's file URLs have them; a
-/// reader of the URL percent-decodes it back to the path.
+/// The `file://` URL of the absolute `path`, written as Qt writes a URL
+/// for a script or a person to read (`QUrl::toString`): only what would
+/// change what the address means is escaped — `%`, `#`, `?`, control
+/// bytes and the characters a URL may never hold (quotes, angle and square
+/// brackets, backslash, caret, backquote, braces and bar) — while a space and a character outside ASCII stay as they are. Every
+/// reader percent-decodes it back to the path ([`url_path`]); what goes
+/// out of the process takes [`encoded_url`] of it.
 pub fn file_url(path: &std::path::Path) -> String {
     let s = path.to_string_lossy();
     let mut out = String::from("file://");
-    for b in s.bytes() {
-        match b {
-            b' ' | b'#' | b'%' | b'?' | 0..0x20 | 0x7f.. => {
-                out.push_str(&format!("%{b:02X}"));
-            }
-            _ => out.push(b as char),
-        }
-    }
     if !s.starts_with('/') {
         // A Windows path: file:///C:/...
-        out.insert(7, '/');
-        return out.replace('\\', "/");
+        out.push('/');
+    }
+    for c in s.chars() {
+        match c {
+            '\\' if !s.starts_with('/') => out.push('/'),
+            '%'
+            | '#'
+            | '?'
+            | '"'
+            | '<'
+            | '>'
+            | '['
+            | '\\'
+            | ']'
+            | '^'
+            | '`'
+            | '{'
+            | '|'
+            | '}'
+            | '\0'..='\x1f'
+            | '\x7f' => out.push_str(&format!("%{:02X}", c as u32)),
+            c => out.push(c),
+        }
     }
     out
+}
+
+/// `url` as it is written for another program (`QUrl::toEncoded`): a
+/// space and every byte of a character outside ASCII escaped as well, so
+/// that what [`file_url`] gives is a URL any reader takes.
+pub fn encoded_url(url: &str) -> String {
+    let mut out = String::with_capacity(url.len());
+    for b in url.bytes() {
+        match b {
+            b' ' | 0..0x20 | 0x7f.. => out.push_str(&format!("%{b:02X}")),
+            _ => out.push(char::from(b)),
+        }
+    }
+    out
+}
+
+/// The path of a `file:` URL, or of a plain absolute path; `None` for any
+/// other URL.
+pub fn url_path(url: &str) -> Option<std::path::PathBuf> {
+    let rest = match url.strip_prefix("file://") {
+        Some(rest) => rest.strip_prefix("localhost").unwrap_or(rest),
+        None if url.starts_with('/') => url,
+        None => url.strip_prefix("file:").filter(|r| r.starts_with('/'))?,
+    };
+    // `file:///C:/x` names `C:/x`.
+    let rest = match rest.as_bytes() {
+        [b'/', d, b':', ..] if d.is_ascii_alphabetic() => &rest[1..],
+        _ => rest,
+    };
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| char::from(b).to_digit(16);
+        match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
+            (b'%', Some(&h), Some(&l)) if hex(h).is_some() && hex(l).is_some() => {
+                out.push((hex(h)? * 16 + hex(l)?) as u8);
+                i += 3;
+            }
+            (b, ..) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    Some(std::path::PathBuf::from(
+        String::from_utf8_lossy(&out).into_owned(),
+    ))
 }
 
 /// `file:///Main.qml` and `Main.qml` are `Main`.
@@ -637,6 +701,28 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_url_is_written_as_qt_writes_it() {
+        // What qml6 gives for Qt.resolvedUrl beside a file in this directory.
+        let p = std::path::Path::new("/d/a b#c%d[e]{f}|g^h`i\"j<k>l;m=n@o'p ä?q\\r\ts~!$&()*+,:/x");
+        let url = file_url(p);
+        assert_eq!(
+            url,
+            "file:///d/a b%23c%25d%5Be%5D%7Bf%7D%7Cg%5Eh%60i%22j%3Ck%3El;m=n@o'p ä%3Fq%5Cr%09s~!$&()*+,:/x"
+        );
+        assert_eq!(url_path(&url).as_deref(), Some(p));
+        assert_eq!(
+            encoded_url(&url),
+            "file:///d/a%20b%23c%25d%5Be%5D%7Bf%7D%7Cg%5Eh%60i%22j%3Ck%3El;m=n@o'p%20%C3%A4%3Fq%5Cr%09s~!$&()*+,:/x"
+        );
+        assert_eq!(url_path(&encoded_url(&url)).as_deref(), Some(p));
+        assert_eq!(url_path("http://x/y"), None);
+        assert_eq!(
+            url_path("/plain").as_deref(),
+            Some(std::path::Path::new("/plain"))
+        );
+    }
+
     use super::*;
 
     #[test]

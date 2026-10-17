@@ -123,9 +123,10 @@ fn a_directory_name_a_url_cannot_hold_is_escaped() {
         .unwrap()
         .build()
         .unwrap();
-    // `#` would end the path and start a fragment; the space and `#`
-    // are escaped, and what is resolved beside the file keeps them so.
-    let escaped = format!("file://{}/a%20b%23c", top.path().display());
+    // `#` would end the path and start a fragment, so it is escaped; the
+    // space stays as it is, as Qt writes it, and what is resolved beside
+    // the file keeps both so.
+    let escaped = format!("file://{}/a b%23c", top.path().display());
     assert_eq!(
         text(&engine, root, "icon"),
         format!("{escaped}/icons/a.svg")
@@ -137,6 +138,29 @@ fn a_directory_name_a_url_cannot_hold_is_escaped() {
         .as_object()
         .expect("the Loader found parts/Panel.qml under `a b#c`");
     assert_eq!(text(&engine, panel, "here"), format!("{escaped}/parts/"));
+}
+
+#[test]
+fn a_warning_names_the_file_as_qt_writes_it() {
+    let top = tempfile::tempdir().unwrap();
+    let dir = top.path().join("a b#c");
+    write(
+        &dir,
+        "Main.qml",
+        "import QtQuick\nItem {\n    Component.onCompleted: null.foo()\n}\n",
+    );
+    let engine = ljos::engine();
+    let logged: Rc<RefCell<Vec<String>>> = Rc::default();
+    let into = logged.clone();
+    engine.set_log_handler(move |e| into.borrow_mut().push(e.message.to_string()));
+    let source = ljos::dev::compile_dir_with(&dir, &engine).unwrap();
+    ljos::create_root(&engine, source, "Main").unwrap();
+    let want = format!("file://{}/a b%23c/Main.qml:3: ", top.path().display());
+    assert!(
+        logged.borrow().iter().any(|m| m.starts_with(&want)),
+        "{want} in {:?}",
+        logged.borrow()
+    );
 }
 
 #[test]

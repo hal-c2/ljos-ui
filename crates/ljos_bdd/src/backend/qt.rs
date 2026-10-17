@@ -512,7 +512,7 @@ fn ts_language(ts: &str) -> Option<String> {
 }
 
 fn file_url(p: &Path) -> String {
-    format!("file://{}/", p.display())
+    format!("{}/", ljos_engine::file_url(p))
 }
 
 /// Split Qt's stderr into driver observations and log entries.
