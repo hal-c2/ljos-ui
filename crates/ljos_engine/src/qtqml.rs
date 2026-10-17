@@ -733,12 +733,16 @@ impl Engine {
         st.sched.next_wake()
     }
 
-    /// Whether `Qt.quit()` was called.
+    /// Whether `Qt.quit()` was called, or [`request_quit`](Self::request_quit).
     pub fn quit_requested(&self) -> bool {
         self.inner.timers.borrow().quit
     }
 
-    pub(crate) fn request_quit(&self) {
+    /// Asks the host to quit, as `Qt.quit()` does: the request is noted
+    /// ([`quit_requested`](Self::quit_requested)) and the host woken, and
+    /// the host ends its loop when it next looks. What a Rust application
+    /// calls where Qt's calls `QCoreApplication::quit()`.
+    pub fn request_quit(&self) {
         self.inner.timers.borrow_mut().quit = true;
         self.wake_host();
     }
