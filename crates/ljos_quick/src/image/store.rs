@@ -316,6 +316,11 @@ struct State {
     shown_by: Option<HashMap<ObjectId, String>>,
     /// The size `shown_by` had when it was last rid of dead items.
     shown_pruned: usize,
+    /// The key whose decode is being delivered. Its result holds the
+    /// pixels too until then, so a release of it waits ([`Self::released`]).
+    delivering: Option<ImageKey>,
+    /// Whether `delivering` was released by an item it was delivered to.
+    released: bool,
 }
 
 impl State {
@@ -379,6 +384,8 @@ impl Default for ImageStore {
                 next_reply: 0,
                 shown_by: None,
                 shown_pruned: 0,
+                delivering: None,
+                released: false,
             }),
             inbox,
             tx,
@@ -877,7 +884,11 @@ impl ImageStore {
     pub(crate) fn release(&self, key: &ImageKey) {
         let dropped = {
             let mut s = self.state.borrow_mut();
-            if s.cache.peek(key).is_some_and(|p| p.image.holders() == 1) {
+            if s.delivering.as_ref() == Some(key) {
+                // Others may wait for it yet; let go once all have it.
+                s.released = true;
+                None
+            } else if s.cache.peek(key).is_some_and(|p| p.image.holders() == 1) {
                 s.cache.remove(key)
             } else {
                 None
@@ -1138,6 +1149,14 @@ impl ImageStore {
             {
                 self.keep(&key, &Picture::of(loaded));
             }
+            let loaded_by: Vec<ObjectId> = waiters
+                .iter()
+                .filter_map(|w| match w {
+                    Waiter::Load { item, .. } => Some(*item),
+                    _ => None,
+                })
+                .collect();
+            self.state.borrow_mut().delivering = Some(key.clone());
             for waiter in waiters {
                 if let Waiter::Reply { id } = waiter {
                     let reply = self.state.borrow_mut().replies.remove(&id);
@@ -1148,6 +1167,16 @@ impl ImageStore {
                     continue;
                 }
                 super::delivered(engine, waiter, &key, &result);
+            }
+            let released = {
+                let mut s = self.state.borrow_mut();
+                s.delivering = None;
+                std::mem::take(&mut s.released)
+            };
+            // Kept for an item it went to that still shows it as it is.
+            if released && !loaded_by.iter().any(|&i| super::shows(engine, i, &key)) {
+                drop(result);
+                self.release(&key);
             }
         }
         count

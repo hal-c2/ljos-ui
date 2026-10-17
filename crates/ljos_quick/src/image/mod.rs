@@ -622,6 +622,8 @@ fn finish(
             report_size(e, me, w, h);
         }
     });
+    // After the batch: the item's size may follow the picture's.
+    fit_unpainted(e, me);
 }
 
 /// The item shows nothing: its source is empty (`Null`) or failed
@@ -938,13 +940,28 @@ fn shrunk(
     let source = pixels(e, me)?;
     // Painting may have found them kept for another limit.
     let key = with_run(e, me, |r| r.key.clone()).flatten()?;
+    Some(shrink_kept(e, me, &key, natural, limit, source, pinned))
+}
+
+/// Makes `source`, the pixels of `key` the item has, smaller for `limit`
+/// and keeps them in their place: the item's own when `pinned`, the
+/// cache's otherwise. `source` itself when that cannot be done.
+fn shrink_kept(
+    e: &Engine,
+    me: ObjectId,
+    key: &ImageKey,
+    natural: (u32, u32),
+    limit: u32,
+    source: ImageHandle,
+    pinned: bool,
+) -> ImageHandle {
     let kept = decode::kept_size(natural, limit);
     if kept.0 >= source.width() || kept.1 >= source.height() {
-        return Some(source);
+        return source;
     }
     let image = match decode::Raw::of(&source).shrunk_to(kept, &key.url) {
         Ok(image) => image,
-        Err(_) => return Some(source),
+        Err(_) => return source,
     };
     let smaller = ImageKey {
         request: Request {
@@ -969,9 +986,70 @@ fn shrunk(
             },
         );
         drop(source);
-        store.release(&key);
+        store.release(key);
     }
-    Some(image)
+    image
+}
+
+/// The size in pixels of the picture kept for the image item `item`,
+/// which may be smaller than the picture itself: what the item draws, or
+/// the view, needs no more. None while nothing is kept for it.
+pub fn kept_pixels(e: &Engine, item: ObjectId) -> Option<(u32, u32)> {
+    let (key, held) = with_run(e, item, |r| (r.key.clone(), r.held.clone()))?;
+    let image = held.or_else(|| ImageStore::of(e).cached(&key?))?;
+    Some((image.width(), image.height()))
+}
+
+/// Whether `me` shows the picture kept under `key`.
+pub(crate) fn shows(e: &Engine, me: ObjectId, key: &ImageKey) -> bool {
+    with_run(e, me, |r| r.key.as_ref() == Some(key)) == Some(true)
+}
+
+/// Keeps the picture of an item that is made and not painted (a list's
+/// row kept beyond the view, a page not shown) at the size the item
+/// draws it, as its first paint would. Without this it stays at the
+/// view's size until then, for as long as the item lives. Nothing is read
+/// or fetched again: the pixels are made from what is kept, and a row
+/// scrolled back in at the same size paints them as they are. Only once a
+/// scene has said how large it is, which is also what the device scale
+/// is known from.
+fn fit_unpainted(e: &Engine, me: ObjectId) {
+    if !is_a::<Image>(e, me) {
+        return;
+    }
+    let Some((key, natural, pinned, held)) = with_run(e, me, |r| {
+        let idle = !r.shown && r.frames.is_none() && r.sharp.is_none() && r.sharpening.is_none();
+        idle.then(|| {
+            r.key
+                .clone()
+                .map(|k| (k, r.natural, r.pinned, r.held.clone()))
+        })
+        .flatten()
+    })
+    .flatten() else {
+        return;
+    };
+    let store = ImageStore::of(e);
+    if key.request.animated || store.limit() == 0 || store.is_vector(&key.url) {
+        return;
+    }
+    let limit = e.untrack(|| {
+        let sized = e.read(me, Item::WIDTH.index).to_number() > 0.0
+            && e.read(me, Item::HEIGHT.index).to_number() > 0.0;
+        sized.then(|| wanted_limit(e, me, natural, store.device_scale(e)))
+    });
+    let Some(limit) = limit else { return };
+    let longest = |(w, h): (u32, u32)| w.max(h);
+    let kept = longest(decode::kept_size(natural, key.request.limit));
+    let wanted = longest(decode::kept_size(natural, limit));
+    // As at a paint: only when that saves at least half the bytes.
+    if wanted * 3 > kept * 2 {
+        return;
+    }
+    let source = if pinned { held } else { store.cached(&key) };
+    if let Some(source) = source {
+        shrink_kept(e, me, &key, natural, limit, source, pinned);
+    }
 }
 
 /// The `limit` a picture of `natural` size needs to be as sharp as the

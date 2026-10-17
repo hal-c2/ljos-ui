@@ -1663,3 +1663,144 @@ Item {
     assert_eq!((image.width(), image.height()), (448, 224));
     assert_eq!(store.decodes(), 2);
 }
+
+/// A fetcher that counts what it is asked for.
+struct Counting {
+    bytes: Vec<u8>,
+    asked: Arc<AtomicUsize>,
+}
+
+impl ljos_platform::Fetcher for Counting {
+    fn fetch(&self, _url: &str) -> Result<Vec<u8>, ljos_platform::FetchError> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        Ok(self.bytes.clone())
+    }
+}
+
+#[test]
+fn a_picture_of_an_item_not_painted_is_kept_at_the_items_size() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image { objectName: "picture"; visible: false; width: 100; height: 50 }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    set(&e, picture, "source", Value::Url("file:///big.png".into()));
+    frame(&mut s, &e);
+    // Never painted, it keeps what its size needs, not the view's 448.
+    assert_eq!(store.bytes(), 112 * 56 * 4);
+    assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
+    assert_eq!(source_size(&e, picture), (2048.0, 1024.0));
+    // Shown, it paints those pixels, with nothing read again.
+    set(&e, picture, "visible", Value::from(true));
+    frame(&mut s, &e);
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (112, 56));
+    assert_eq!(image.pixel(5, 5), BLUE);
+    assert_eq!(store.decodes(), 1);
+}
+
+#[test]
+fn a_picture_not_painted_follows_its_fill_mode_source_size_and_scale() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image {
+        objectName: "fit"; visible: false; width: 100; height: 400
+        fillMode: Image.PreserveAspectFit
+    }
+    Image {
+        objectName: "asked"; visible: false; width: 100; height: 50
+        sourceSize.width: 512
+    }
+    Image {
+        objectName: "tiled"; visible: false; width: 100; height: 50
+        fillMode: Image.Tile
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let mut bytes = |name: &str| {
+        let item = find(&e, root, name);
+        let before = store.bytes();
+        set(&e, item, "source", Value::Url("file:///big.png".into()));
+        frame(&mut s, &e);
+        let kept = store.bytes() - before;
+        set(&e, item, "source", Value::from(""));
+        store.trim(MemoryPressure::Critical);
+        kept
+    };
+    // Fitted into 100 by 400 it is drawn 100 by 50.
+    assert_eq!(bytes("fit"), 112 * 56 * 4);
+    // Asked for at 512 by 256 and drawn at 100 by 50; it still says 512.
+    assert_eq!(bytes("asked"), 112 * 56 * 4);
+    assert_eq!(source_size(&e, find(&e, root, "asked")), (512.0, 0.0));
+    // A tile is drawn at the picture's size: as much as the view shows.
+    assert_eq!(bytes("tiled"), 448 * 224 * 4);
+
+    // On a display of two device pixels to the logical pixel, twice as
+    // many.
+    store.show_at(&e, 7, 2.0, 400.0);
+    assert_eq!(bytes("fit"), 224 * 112 * 4);
+}
+
+#[test]
+fn a_network_picture_of_a_row_not_painted_is_kept_small_and_not_fetched_again() {
+    let (e, store) = pictures();
+    let asked = Arc::new(AtomicUsize::new(0));
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(Counting {
+        bytes: png(2048, 1024, GREEN),
+        asked: asked.clone(),
+    }));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image {
+        objectName: "row"; visible: false
+        width: Math.min(200, sourceSize.width)
+        fillMode: Image.PreserveAspectFit
+    }
+}
+"#,
+    );
+    let row = find(&e, root, "row");
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    set(
+        &e,
+        row,
+        "source",
+        Value::from("http://example.invalid/a.png"),
+    );
+    store.finish(&e);
+    frame(&mut s, &e);
+    assert_eq!(status(&e, row), image_status::READY);
+    // 200 wide, its height the picture's: drawn 200 by 100.
+    assert_eq!(store.bytes(), 224 * 112 * 4);
+    set(&e, row, "visible", Value::from(true));
+    frame(&mut s, &e);
+    store.finish(&e);
+    frame(&mut s, &e);
+    let image = painted(&s, row).unwrap();
+    assert_eq!((image.width(), image.height()), (224, 112));
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+}
