@@ -1462,6 +1462,8 @@ impl Engine {
         // (object, the edited properties as written)
         let mut edited: Vec<(ObjectId, Vec<String>)> = Vec::new();
         let mut inside_edited: HashSet<ObjectId> = HashSet::default();
+        // (old, new) for each kept object
+        let mut pairs: Vec<(ObjectId, ObjectId)> = Vec::new();
         {
             let mut pending = st.pending.borrow_mut();
             let Some(p) = pending.as_mut() else {
@@ -1473,6 +1475,7 @@ impl Engine {
                     // Cloned: an object made again for the same place
                     // takes them too.
                     work.push((*o, s.values.clone(), std::mem::take(&mut s.native)));
+                    pairs.push((s.old, *o));
                 }
             }
             if work.is_empty() {
@@ -1589,6 +1592,21 @@ impl Engine {
         });
         st.muting.set(was_muting.0);
         st.muted_all.set(was_muting.1);
+        // A kept instance's scripts hold what the application set them up
+        // with, which its kept objects do not do again. The objects of an
+        // instance share its context, so each pair of contexts is told once.
+        let mut told: HashSet<(ContextId, ContextId)> = HashSet::default();
+        for (old, new) in pairs {
+            if !kept.contains(&new) {
+                continue;
+            }
+            if let (Some(was), Some(is)) = (self.context_of(old), self.context_of(new))
+                && was != is
+                && told.insert((was, is))
+            {
+                self.scripts_go_on(was, is);
+            }
+        }
         if !failed.is_empty()
             && let Some(p) = st.pending.borrow_mut().as_mut()
         {

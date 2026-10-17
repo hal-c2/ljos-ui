@@ -4,9 +4,16 @@
 //! object. A script without `.pragma library` is evaluated once per
 //! instance of the importing component, as Qt does, so what it keeps is
 //! that instance's own; a library is evaluated once for the engine.
+//!
+//! Across a reload a script keeps what it holds: an instance kept by the
+//! reload takes the old instance's object, and a script whose text
+//! changed is made again with each top-level variable carried over unless
+//! the value the file starts it with changed. The objects that set a
+//! script up in `Component.onCompleted` are kept and do not run it again.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use ljos_ir::Script;
 use ljos_js::{JsRef, JsValue, Scope};
@@ -17,10 +24,40 @@ use crate::ids::ContextId;
 use crate::log::LogLevel;
 
 /// Each script's object: by the importing context (none for a library)
-/// and the script's file, with the text it was made from. A context's
-/// entries go with it ([`Engine::release_scripts`]), so a delegate that
-/// imports a script leaves nothing behind.
-type Made = HashMap<(Option<ContextId>, String), (String, JsRef)>;
+/// and the script's file. A context's entries go with it
+/// ([`Engine::release_scripts`]), so a delegate that imports a script
+/// leaves nothing behind.
+type Made = HashMap<(Option<ContextId>, String), Held>;
+
+/// The value each top-level variable of a script started with, as JSON,
+/// by name; functions are left out, as they are always the new file's.
+type Starts = HashMap<String, String>;
+
+#[derive(Clone)]
+struct Held {
+    /// The text the object was made from.
+    text: String,
+    object: JsRef,
+    /// Taken only while reloads are tracked, for a reload to tell a
+    /// variable whose declaration was edited from one the script set.
+    starts: Option<Rc<Starts>>,
+}
+
+/// The top-level variables of a script object and what they hold, as
+/// `name\tJSON` lines. What JSON cannot say is told by its type, so two
+/// values JSON cannot tell apart count as the same start.
+const STARTS: &str = r#"(o) => Object.keys(o).flatMap((k) => {
+    const v = o[k];
+    if (typeof v === "function") return [];
+    let j;
+    try { j = JSON.stringify(v); } catch (e) { j = undefined; }
+    return [k + "\t" + (j === undefined ? "?" + typeof v : j)];
+}).join("\n")"#;
+
+/// Gives `to` what `from` holds in the variables named, one per line.
+const CARRY: &str = r#"(from, to, names) => {
+    for (const k of names.split("\n")) if (k) to[k] = from[k];
+}"#;
 
 #[derive(Default)]
 pub(crate) struct ScriptObjects {
@@ -86,17 +123,60 @@ impl Engine {
     ) -> Option<JsRef> {
         let objects = self.extension::<ScriptObjects>();
         let key = (owner, script.key.clone());
-        if let Some((text, held)) = objects.made.borrow().get(&key)
-            && *text == script.source
-        {
-            return Some(held.clone());
+        let old = match objects.made.borrow().get(&key) {
+            Some(h) if h.text == script.source => return Some(h.object.clone()),
+            Some(h) => Some(h.clone()),
+            None => None,
+        };
+        let object = self.evaluate_script(s, all, script, url, &mut Vec::new())?;
+        let starts = self
+            .reload_tracking()
+            .then(|| Rc::new(script_starts(s, &object)));
+        let held = Held {
+            text: script.source.clone(),
+            object: object.clone(),
+            starts,
+        };
+        if let Some(old) = &old {
+            carry(s, old, &held);
         }
-        let held = self.evaluate_script(s, all, script, url, &mut Vec::new())?;
-        objects
-            .made
-            .borrow_mut()
-            .insert(key, (script.source.clone(), held.clone()));
-        Some(held)
+        objects.made.borrow_mut().insert(key, held);
+        Some(object)
+    }
+
+    /// The scripts of `old`, an instance a reload replaces with `new`, go
+    /// on in `new`: as they are, or into what `new` has made of them.
+    pub(crate) fn scripts_go_on(&self, old: ContextId, new: ContextId) {
+        let objects = self.extension::<ScriptObjects>();
+        let mut into: Vec<(Held, Held)> = Vec::new();
+        {
+            let mut made = objects.made.borrow_mut();
+            let theirs: Vec<(String, Held)> = made
+                .iter()
+                .filter(|((o, _), _)| *o == Some(old))
+                .map(|((_, k), h)| (k.clone(), h.clone()))
+                .collect();
+            for (k, h) in theirs {
+                match made.get(&(Some(new), k.clone())) {
+                    Some(ours) => into.push((h, ours.clone())),
+                    None => {
+                        made.insert((Some(new), k), h);
+                    }
+                }
+            }
+        }
+        if into.is_empty() {
+            return;
+        }
+        let Ok(js) = self.js() else { return };
+        let _ = js
+            .host
+            .enter("reload scripts", js.host.config().slice, |s| {
+                for (old, new) in &into {
+                    carry(s, old, new);
+                }
+                Ok(())
+            });
     }
 
     /// Makes `script` and what it imports: a library is the one the engine
@@ -165,4 +245,42 @@ impl Engine {
             }
         }
     }
+}
+
+fn script_starts(s: &Scope<'_>, object: &JsRef) -> Starts {
+    let lines: Option<String> = (|| {
+        let f: ljos_js::rquickjs::Function = s.ctx().eval(STARTS).ok()?;
+        f.call((s.restore(object).ok()?,)).ok()
+    })();
+    lines
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect()
+}
+
+/// Gives `new` the variables of `old` whose start is the same in both.
+/// Without the starts of both, nothing is known to be the same.
+fn carry(s: &Scope<'_>, old: &Held, new: &Held) {
+    let (Some(was), Some(is)) = (&old.starts, &new.starts) else {
+        return;
+    };
+    let names: Vec<&str> = was
+        .iter()
+        .filter(|(k, v)| is.get(*k) == Some(*v))
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if names.is_empty() {
+        return;
+    }
+    let _ = (|| {
+        let f: ljos_js::rquickjs::Function = s.ctx().eval(CARRY).ok()?;
+        f.call::<_, ()>((
+            s.restore(&old.object).ok()?,
+            s.restore(&new.object).ok()?,
+            names.join("\n"),
+        ))
+        .ok()
+    })();
 }
