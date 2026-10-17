@@ -335,6 +335,11 @@ pub trait Backend: fmt::Debug {
     ) -> Result<()> {
         Err(BackendError::NotImplemented("a desktop's settings"))
     }
+    /// The system says what it knows of its network: before anything is
+    /// loaded, what it had at start.
+    fn network(&mut self, _status: ljos_platform::NetworkStatus) -> Result<()> {
+        Err(BackendError::NotImplemented("the system's network"))
+    }
     /// An assistive technology asks the node with this role and name to
     /// select or change its text. A node that refuses is not an error.
     fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {

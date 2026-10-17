@@ -42,6 +42,26 @@ fn the_table_says_what_its_types_have() {
 }
 
 #[test]
+fn a_scoped_key_is_the_key_of_that_enum() {
+    let qt = QtTypeOracle;
+    // Both of its enums have an `Unknown`; Ljós's own table has the type.
+    let network = qt
+        .module_type("QtNetwork", "NetworkInformation")
+        .expect("QtNetwork has a NetworkInformation");
+    assert!(qt.has_enum_key(network, Some("TransportMedium"), "Unknown"));
+    assert!(qt.has_enum_key(network, Some("Reachability"), "Unknown"));
+    assert_eq!(
+        qt.enum_value(network, Some("TransportMedium"), "WiFi"),
+        Some(3)
+    );
+    assert_eq!(
+        qt.enum_value(network, Some("Reachability"), "Online"),
+        Some(4)
+    );
+    assert!(!qt.has_enum_key(network, Some("Reachability"), "WiFi"));
+}
+
+#[test]
 fn the_table_names_the_type_of_a_property_and_the_module_of_a_type() {
     let qt = QtTypeOracle;
     let rectangle = qt.module_type("QtQuick", "Rectangle").unwrap();

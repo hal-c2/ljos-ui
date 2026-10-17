@@ -442,6 +442,21 @@ module QtMultimedia
 		signal videoSizeChanged
 		signal videoFrameChanged frame
 
+module QtNetwork
+	NetworkInformation QtNetwork.NetworkInformation
+	type QtNetwork.NetworkInformation NetworkInformation
+		is singleton
+		enum Reachability Unknown=0 Disconnected=1 Local=2 Site=3 Online=4
+		enum TransportMedium Unknown=0 Ethernet=1 Cellular=2 WiFi=3 Bluetooth=4
+		prop reachability QtQml.int named readonly
+		prop isBehindCaptivePortal QtQml.bool named readonly
+		prop transportMedium QtQml.int named readonly
+		prop isMetered QtQml.bool named readonly
+		signal reachabilityChanged
+		signal isBehindCaptivePortalChanged
+		signal transportMediumChanged
+		signal isMeteredChanged
+
 module QtQml
 	import QtQml.Models
 	Binding QtQml.Binding

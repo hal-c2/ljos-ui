@@ -34,6 +34,7 @@ mod desktop_font;
 mod gl;
 #[cfg(gl_painter)]
 mod gl_shader;
+mod network;
 mod platform;
 mod present;
 mod repaint;

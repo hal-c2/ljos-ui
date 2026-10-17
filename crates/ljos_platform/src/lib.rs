@@ -35,6 +35,7 @@ mod fetch;
 #[cfg(feature = "http")]
 mod http;
 mod library;
+mod network;
 
 use library::DialogLibrary;
 #[cfg(feature = "native")]
@@ -67,6 +68,10 @@ pub use fetch::{
 };
 #[cfg(feature = "http")]
 pub use http::HttpFetcher;
+pub use network::{
+    NetworkInformation, NetworkStatus, Reachability, TransportMedium, network_status,
+    report_network_status,
+};
 pub use open_url::{OpenUrl, OpenUrlService, RecordedUrls};
 pub use paths::{Location, PathEnv, StandardPaths, encoded_url, file_url, url_path};
 pub use permissions::{
@@ -89,7 +94,8 @@ pub use window_handle::NativeWindow;
 #[derive(Default)]
 struct Registered(Cell<bool>);
 
-/// Registers `QtQuick.Dialogs`, `QtCore`, `QtSensors`, `Qt.platform` and
+/// Registers `QtQuick.Dialogs`, `QtCore`, `QtSensors`, `QtNetwork`'s
+/// `NetworkInformation`, `Qt.platform` and
 /// `Qt.openUrlExternally`. Calling it
 /// again does nothing. The drawn dialogs are QtQuick.Controls, so a host
 /// registers those too.
@@ -109,6 +115,7 @@ pub fn register(engine: &Engine) {
     ]));
 
     sensors::register(engine);
+    network::register(engine);
 
     let (library, undecoded) = DialogLibrary::embedded();
     let empty = library.is_empty();

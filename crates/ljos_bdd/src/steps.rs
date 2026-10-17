@@ -487,6 +487,48 @@ fn app_setting(w: &mut LjosWorld, setting: String, value: String) -> StepResult 
     w.each(|b| b.app_setting(setting))
 }
 
+// What the system says of its network, as a scenario writes it: how far it
+// reaches, then what carries it and anything else it says, comma-separated.
+fn network_status(said: &str) -> Result<ljos_platform::NetworkStatus, String> {
+    use ljos_platform::{Reachability as R, TransportMedium as M};
+    let mut parts = said.split(',').map(str::trim);
+    let mut status = ljos_platform::NetworkStatus {
+        reachability: match parts.next().unwrap_or("") {
+            "unknown" => R::Unknown,
+            "disconnected" => R::Disconnected,
+            "local" => R::Local,
+            "site" => R::Site,
+            "online" => R::Online,
+            other => return Err(format!("{other:?} is not a reachability")),
+        },
+        ..Default::default()
+    };
+    for part in parts {
+        match part {
+            "ethernet" => status.transport_medium = M::Ethernet,
+            "cellular" => status.transport_medium = M::Cellular,
+            "wifi" => status.transport_medium = M::WiFi,
+            "bluetooth" => status.transport_medium = M::Bluetooth,
+            "behind a captive portal" => status.behind_captive_portal = true,
+            "metered" => status.metered = true,
+            other => return Err(format!("{other:?} is not something a network is")),
+        }
+    }
+    Ok(status)
+}
+
+#[given(regex = r#"^the system's network is "([^"]+)"$"#)]
+fn network_is(w: &mut LjosWorld, said: String) -> StepResult {
+    let status = network_status(&said)?;
+    w.each(|b| b.network(status))
+}
+
+#[when(regex = r#"^the system's network changes to "([^"]+)"$"#)]
+fn network_changes(w: &mut LjosWorld, said: String) -> StepResult {
+    let status = network_status(&said)?;
+    w.each(|b| b.network(status))
+}
+
 #[given(regex = r#"^the desktop setting "([^"]+)" "([^"]+)" is (.+)$"#)]
 fn desktop_setting_is(
     w: &mut LjosWorld,

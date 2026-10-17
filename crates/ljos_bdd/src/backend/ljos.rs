@@ -236,6 +236,7 @@ enum Said {
     System(super::SystemSetting),
     App(super::SystemSetting),
     Desktop(ljos_a11y::HostPrefs),
+    Network(ljos_platform::NetworkStatus),
 }
 
 fn apply(engine: &Engine, said: Said) {
@@ -254,6 +255,7 @@ fn apply(engine: &Engine, said: Said) {
             ljos_quick::update_system_prefs(engine, |p| change_setting(p, setting))
         }
         Said::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
+        Said::Network(status) => ljos_platform::report_network_status(engine, status),
     }
 }
 
@@ -1479,6 +1481,10 @@ impl Backend for LjosBackend {
         }
         let report = self.desktop.prefs();
         self.said(Said::Desktop(report))
+    }
+
+    fn network(&mut self, status: ljos_platform::NetworkStatus) -> Result<()> {
+        self.said(Said::Network(status))
     }
 
     fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {
