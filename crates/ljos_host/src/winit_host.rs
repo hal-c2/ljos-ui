@@ -799,17 +799,46 @@ mod appkit_backdrop {
         let Some(frame) = (unsafe { content.superview() }) else {
             return;
         };
-        let ours = ns_string!("ljos.backdrop");
+        let blur_id = ns_string!("ljos.backdrop.blur");
+        let glass_id = ns_string!("ljos.backdrop.glass");
+        // Looked up first: an absent class would panic when sent `new`.
+        let glass = backdrop == Backdrop::Glass && AnyClass::get(c"NSGlassEffectView").is_some();
+        let wanted = match backdrop {
+            Backdrop::None => None,
+            _ if glass => Some(glass_id),
+            _ => Some(blur_id),
+        };
+        // `None` inherits the window's, which follows the system's.
+        // SAFETY: the names are AppKit's constants.
+        let named = unsafe {
+            match appearance {
+                Appearance::System => None,
+                Appearance::Light => NSAppearance::appearanceNamed(NSAppearanceNameAqua),
+                Appearance::Dark => NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua),
+            }
+        };
+        let mut kept = false;
         for view in frame.subviews().iter() {
-            if view.identifier().is_some_and(|id| id.isEqualToString(ours)) {
+            let Some(id) = view.identifier() else {
+                continue;
+            };
+            if !id.isEqualToString(blur_id) && !id.isEqualToString(glass_id) {
+                continue;
+            }
+            if !kept && wanted.is_some_and(|w| id.isEqualToString(w)) {
+                // A change of look leaves the view where it is: taking a
+                // view out of the frame view and putting it back has AppKit
+                // lay the title bar out again with the title over the
+                // window's buttons.
+                view.setAppearance(named.as_deref());
+                kept = true;
+            } else {
                 view.removeFromSuperview();
             }
         }
-        if backdrop == Backdrop::None {
+        let Some(ours) = wanted.filter(|_| !kept) else {
             return;
-        }
-        // Looked up first: an absent class would panic when sent `new`.
-        let glass = backdrop == Backdrop::Glass && AnyClass::get(c"NSGlassEffectView").is_some();
+        };
         let view: Retained<NSView> = if glass {
             Retained::into_super(NSGlassEffectView::new(mtm))
         } else {
@@ -824,15 +853,6 @@ mod appkit_backdrop {
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,
         );
-        // `None` inherits the window's, which follows the system's.
-        // SAFETY: the names are AppKit's constants.
-        let named = unsafe {
-            match appearance {
-                Appearance::System => None,
-                Appearance::Light => NSAppearance::appearanceNamed(NSAppearanceNameAqua),
-                Appearance::Dark => NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua),
-            }
-        };
         view.setAppearance(named.as_deref());
         frame.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, Some(content));
     }
