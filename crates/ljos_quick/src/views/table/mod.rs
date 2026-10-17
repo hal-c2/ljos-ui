@@ -121,6 +121,12 @@ pub(crate) struct TableState {
     pub last_tap: Cell<Option<(ljos_runtime::Time, (usize, usize))>>,
     /// The cell an editor is open on.
     pub editing: Cell<Option<edit::Editing>>,
+    /// Bumped when a pass moved a column or a row, for the views synced
+    /// to this one.
+    pub laid: Cell<Option<NodeId>>,
+    /// The content position this view and its `syncView` last shared,
+    /// across and down; tells which of the two moved since.
+    pub synced_at: Cell<(f64, f64)>,
 }
 
 impl std::fmt::Debug for TableState {
@@ -141,8 +147,11 @@ impl TableState {
 /// `TableView` (QtQuick): cells in rows and columns. A model of one
 /// column (a list, a number, a `ListModel`) shows as one column.
 ///
-/// Kept and read back, with no effect yet: `syncView`, `syncDirection`,
-/// `animate`, `alternatingRows`, `resizableColumns` and `resizableRows`.
+/// With a `syncView`, the view takes its column widths and spacing, and
+/// shares its `contentX`, across, and its row heights, row spacing and
+/// `contentY` down, as `syncDirection` says ([`layout`]).
+///
+/// Kept and read back, with no effect yet: `animate`, `alternatingRows`, `resizableColumns` and `resizableRows`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -433,6 +442,8 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
     let scope = e.object_scope(me).ok_or(EngineError::DeadObject(me))?;
     st.trigger
         .set(Some(e.graph().property(scope, Value::Int(0))?));
+    st.laid.set(Some(e.graph().property(scope, Value::Int(0))?));
+    st.synced_at.set((f64::NAN, f64::NAN));
     let delegates = ViewDelegates::new(me, Rc::new(Host(me)));
     *st.delegates.borrow_mut() = Some(delegates.clone());
 
@@ -508,7 +519,10 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
     let lay = st.clone();
     e.effect_in(me, move |e| {
         layout::read_inputs(e, me, &lay);
-        e.untrack(|| layout::pass(e, me, &lay));
+        e.untrack(|| {
+            layout::follow(e, me, &lay);
+            layout::pass(e, me, &lay);
+        });
         layout::read_sizes(e, &lay);
     })?;
     Ok(())

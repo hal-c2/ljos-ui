@@ -10,6 +10,10 @@
 //! `contentWidth`. A column is as wide as its widest delegate in sight,
 //! or as the `columnWidthProvider` says. Delegates of cells that leave go
 //! to the pool with `reuseItems`, hidden there.
+//!
+//! A view with a `syncView` lays out by it in the directions
+//! `syncDirection` gives: the other's columns, rows, spacing and content
+//! size stand for its own, and the two share a content position.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -74,6 +78,125 @@ pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &TableState) {
     if let Some(n) = st.trigger.get() {
         let _ = e.graph().get(n);
     }
+    let _ = e.read(view, TableView::SYNC_DIRECTION.index);
+    if let Some((sync, other)) = synced_to(e, view) {
+        for p in [
+            Flickable::CONTENT_X.index,
+            Flickable::CONTENT_Y.index,
+            TableView::ROW_SPACING.index,
+            TableView::COLUMN_SPACING.index,
+            // Its first pass may come after this view's: it has no lines
+            // to tell of until then.
+            Flickable::CONTENT_WIDTH.index,
+            Flickable::CONTENT_HEIGHT.index,
+        ] {
+            let _ = e.read(sync, p);
+        }
+        if let Some(n) = other.laid.get() {
+            let _ = e.graph().get(n);
+        }
+    }
+}
+
+/// `Qt.Horizontal` and `Qt.Vertical`, as `syncDirection` has them.
+const ACROSS: i32 = 1;
+const DOWN: i32 = 2;
+
+/// The view `view` is synced to, and its state.
+fn synced_to(e: &Engine, view: ObjectId) -> Option<(ObjectId, std::rc::Rc<TableState>)> {
+    let sync = e.read(view, TableView::SYNC_VIEW.index).as_object()?;
+    if sync == view || !e.is_alive(sync) {
+        return None;
+    }
+    Some((sync, state_of(e, sync)?))
+}
+
+/// What a view takes from the view it is synced to.
+struct Sync {
+    across: Option<(Vec<f64>, f64, f64)>,
+    down: Option<(Vec<f64>, f64, f64)>,
+}
+
+/// The other view's column widths, column spacing and content width
+/// across, and row heights, row spacing and content height down, as it
+/// last laid them out.
+fn sync_of(e: &Engine, view: ObjectId) -> Option<Sync> {
+    let (sync, other) = synced_to(e, view)?;
+    let dir = rd(e, view, TableView::SYNC_DIRECTION.index) as i32;
+    let n = |p: PropIndex| rd(e, sync, p);
+    let across = (dir & ACROSS != 0).then(|| {
+        let widths = other.column_x.borrow().iter().map(|c| c.1).collect();
+        (
+            widths,
+            n(TableView::COLUMN_SPACING.index).max(0.0),
+            n(Flickable::CONTENT_WIDTH.index),
+        )
+    });
+    let down = (dir & DOWN != 0).then(|| {
+        let gap = n(TableView::ROW_SPACING.index).max(0.0);
+        let content = n(Flickable::CONTENT_HEIGHT.index);
+        let ys = other.row_y.borrow();
+        let heights = ys
+            .iter()
+            .enumerate()
+            .map(|(r, y)| ys.get(r + 1).map_or(content, |next| next - gap) - y)
+            .collect();
+        (heights, gap, content)
+    });
+    Some(Sync { across, down })
+}
+
+/// Shares the content position with the view `view` is synced to, in
+/// the synced directions: whichever of the two moved since they last
+/// shared it moves the other, and the spacing is the other's.
+pub(crate) fn follow(e: &Engine, view: ObjectId, st: &TableState) {
+    let Some((sync, _)) = synced_to(e, view) else {
+        st.synced_at.set((f64::NAN, f64::NAN));
+        return;
+    };
+    let dir = rd(e, view, TableView::SYNC_DIRECTION.index) as i32;
+    let mut at = st.synced_at.get();
+    for (bit, content, spacing, last) in [
+        (
+            ACROSS,
+            Flickable::CONTENT_X.index,
+            TableView::COLUMN_SPACING.index,
+            &mut at.0,
+        ),
+        (
+            DOWN,
+            Flickable::CONTENT_Y.index,
+            TableView::ROW_SPACING.index,
+            &mut at.1,
+        ),
+    ] {
+        if dir & bit == 0 {
+            *last = f64::NAN;
+            continue;
+        }
+        let gap = rd(e, sync, spacing);
+        if rd(e, view, spacing) != gap {
+            warn(
+                e,
+                "spacing",
+                write_computed(e, view, spacing, Value::Real(gap)),
+            );
+        }
+        let (mine, theirs) = (rd(e, view, content), rd(e, sync, content));
+        if mine != theirs {
+            // Followed until this one moves on its own.
+            let (to, moved) = if theirs != *last || last.is_nan() {
+                (view, theirs)
+            } else {
+                (sync, mine)
+            };
+            put(e, to, content, Value::Real(moved));
+            *last = moved;
+        } else {
+            *last = mine;
+        }
+    }
+    st.synced_at.set(at);
 }
 
 /// Reads, tracked, the implicit sizes the last pass laid the cells out
@@ -112,16 +235,25 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     let n = |p: PropIndex| rd(e, view, p);
     let (w, h) = (n(Item::WIDTH.index), n(Item::HEIGHT.index));
     let (cx, cy) = (n(Flickable::CONTENT_X.index), n(Flickable::CONTENT_Y.index));
+    let sync = sync_of(e, view);
+    let across = sync.as_ref().and_then(|s| s.across.as_ref());
+    let down = sync.as_ref().and_then(|s| s.down.as_ref());
     let (row_gap, col_gap) = (
-        n(TableView::ROW_SPACING.index).max(0.0),
-        n(TableView::COLUMN_SPACING.index).max(0.0),
+        down.map_or_else(|| n(TableView::ROW_SPACING.index).max(0.0), |d| d.1),
+        across.map_or_else(|| n(TableView::COLUMN_SPACING.index).max(0.0), |a| a.1),
     );
+    let synced_height = |row: usize| down.and_then(|d| d.0.get(row).copied());
     let row_provider = e.read(view, TableView::ROW_HEIGHT_PROVIDER.index);
     let col_provider = e.read(view, TableView::COLUMN_WIDTH_PROVIDER.index);
     let reuse = e.read(view, TableView::REUSE_ITEMS.index).to_boolean();
 
     let mut heights = std::mem::take(&mut *st.heights.borrow_mut());
     heights.resize(rows, f64::NAN);
+    for (row, h) in heights.iter_mut().enumerate() {
+        if let Some(synced) = synced_height(row) {
+            *h = synced;
+        }
+    }
     let known: Vec<f64> = heights.iter().copied().filter(|x| !x.is_nan()).collect();
     let mut average = if known.is_empty() {
         0.0
@@ -132,7 +264,11 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     let mut widths = std::mem::take(&mut *st.widths.borrow_mut());
     widths.resize(cols, f64::NAN);
     let given: Vec<Option<f64>> = (0..cols)
-        .map(|c| provided(e, view, &col_provider, c))
+        .map(|c| {
+            across
+                .and_then(|a| a.0.get(c).copied())
+                .or_else(|| provided(e, view, &col_provider, c))
+        })
         .collect();
     let sight = (cx, cx + w.max(0.0));
 
@@ -166,7 +302,8 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
                 }
             }
             // A row with no column in sight is not measured.
-            if let Some(t) = provided(e, view, &row_provider, row).or(tallest) {
+            let fixed = synced_height(row).or_else(|| provided(e, view, &row_provider, row));
+            if let Some(t) = fixed.or(tallest) {
                 tall = t;
                 heights[row] = tall;
             }
@@ -178,7 +315,11 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         let tall = if tall.is_nan() { average } else { tall };
         y += tall + row_gap;
     }
-    let content_h = if rows > 0 { y - row_gap } else { 0.0 };
+    let content_h = match down {
+        Some(d) => d.2,
+        None if rows > 0 => y - row_gap,
+        None => 0.0,
+    };
     let shown = shown.unwrap_or_default();
 
     // Cells that left: their delegates go.
@@ -209,7 +350,11 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         column_x.push((x, wide));
         x += wide + col_gap;
     }
-    let content_w = if cols > 0 { x - col_gap } else { 0.0 };
+    let content_w = match across {
+        Some(a) => a.2,
+        None if cols > 0 => x - col_gap,
+        None => 0.0,
+    };
 
     for &row in &loaded_rows {
         for &c in &shown {
@@ -232,6 +377,8 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
 
     *st.heights.borrow_mut() = heights;
     *st.widths.borrow_mut() = widths;
+    // The views synced to this one lay out again when its lines moved.
+    let moved = *st.row_y.borrow() != row_y || *st.column_x.borrow() != column_x;
     *st.row_y.borrow_mut() = row_y;
 
     put(
@@ -275,6 +422,11 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         Value::Int(first(right)),
     );
     *st.column_x.borrow_mut() = column_x;
+    if moved && let Some(n) = st.laid.get() {
+        let g = e.graph();
+        let now = g.get_untracked(n).to_number() as i32;
+        g.set(n, Value::Int(now.wrapping_add(1)));
+    }
 
     let (row, column) = current_cell(e, view, st).map_or((-1, -1), |(r, c)| (r as i32, c as i32));
     put(e, view, TableView::CURRENT_ROW.index, Value::Int(row));
