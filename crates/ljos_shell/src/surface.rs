@@ -177,9 +177,7 @@ impl Painter {
         #[cfg(not(gl_painter))]
         let _ = pixels_per_point;
         match self {
-            // egui-wgpu draws every frame whole.
-            Painter::Wgpu(_) if change == Change::None && pending.is_empty() => Frame::Nothing,
-            Painter::Wgpu(_) => Frame::Whole,
+            Painter::Wgpu(_) => wgpu_frame(change, pending),
             #[cfg(gl_painter)]
             Painter::Gl(painter) => painter.frame(change, pending, pixels_per_point),
         }
@@ -198,7 +196,9 @@ impl Painter {
     ) {
         match self {
             Painter::Wgpu(painter) => {
-                let _ = frame;
+                if !wgpu_presents(frame) {
+                    return;
+                }
                 painter.paint_and_update_textures(
                     ViewportId::ROOT,
                     pixels_per_point,
@@ -215,6 +215,25 @@ impl Painter {
             }
         }
     }
+}
+
+/// What egui-wgpu draws of a picture that makes `change`: every frame
+/// whole, or nothing when neither the picture nor its pictures changed.
+fn wgpu_frame(change: Change, pending: &egui::TexturesDelta) -> Frame {
+    if change == Change::None && pending.is_empty() {
+        Frame::Nothing
+    } else {
+        Frame::Whole
+    }
+}
+
+/// Whether egui-wgpu is handed `frame`. It clears and presents whatever it
+/// is handed, even no shapes at all, so a frame of nothing must not reach
+/// it: the window would show only its clear colour until the next change,
+/// and flicker on every input that changes nothing. Nothing is pending
+/// then ([`wgpu_frame`]), so no picture waits for an upload.
+fn wgpu_presents(frame: &Frame) -> bool {
+    *frame != Frame::Nothing
 }
 
 /// The graphics drivers being started while the application is built, on
@@ -606,6 +625,22 @@ mod tests {
             pending.free.contains(&TextureId::Managed(1)),
             "the painter may have an earlier upload to drop"
         );
+        pending.clear();
+    }
+
+    #[test]
+    fn a_wgpu_window_whose_picture_did_not_change_is_not_presented_again() {
+        let mut pending = egui::TexturesDelta::default();
+        let frame = wgpu_frame(Change::None, &pending);
+        assert_eq!(frame, Frame::Nothing);
+        assert!(
+            !wgpu_presents(&frame),
+            "egui-wgpu would show only the clear colour"
+        );
+
+        pending.push(TextureId::Managed(1), picture());
+        let frame = wgpu_frame(Change::None, &pending);
+        assert!(wgpu_presents(&frame), "a picture waits to be uploaded");
         pending.clear();
     }
 
