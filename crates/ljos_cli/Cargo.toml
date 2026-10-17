@@ -33,6 +33,8 @@ ljos_controls = { path = "../ljos_controls" }
 # QtQuick.LocalStorage, which `ljos render` and `ljos run` offer.
 ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_quick = { path = "../ljos_quick" }
+# `ljos shaders`: `.ljsh` artifacts made at build time.
+ljos_shader = { path = "../ljos_shader", features = ["compile"] }
 ljos_media = { path = "../ljos_media" }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }

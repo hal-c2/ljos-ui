@@ -41,7 +41,7 @@ pub struct Fmt {
 /// Directories a walk does not enter: tools' own, and build output that
 /// holds copies of the sources. The same ones the compiler skips, so `ljos
 /// fmt .` and `ljos check .` see one set of files.
-fn skipped(name: &str) -> bool {
+pub(crate) fn skipped(name: &str) -> bool {
     name.starts_with('.')
         || matches!(name, "target" | "node_modules" | "build")
         || name.starts_with("build-")
@@ -69,7 +69,7 @@ fn qml_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
 
 /// A path as a report names it: as it was given, without the `./` a walk
 /// from `.` puts in front.
-fn shown(path: &Path) -> String {
+pub(crate) fn shown(path: &Path) -> String {
     let text = path.to_string_lossy();
     text.strip_prefix("./").unwrap_or(&text).to_owned()
 }

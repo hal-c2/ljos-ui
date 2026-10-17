@@ -16,6 +16,7 @@ mod heap;
 mod i18n;
 mod render;
 mod run;
+mod shaders;
 mod stderr;
 mod test;
 
@@ -65,6 +66,10 @@ enum Command {
     /// Lay QML files out the one way the formatter knows: `--check` says
     /// which files are not laid out, `--diff` shows what would change.
     Fmt(fmt::Fmt),
+    /// Compile the GLSL 440 shaders of `ShaderEffect`s to `.ljsh` files
+    /// beside them, for an application that compiles none at run time:
+    /// `--check` says which are missing or out of date.
+    Shaders(shaders::Shaders),
     /// Measure QML applications on Ljós and on Qt inside a limit on
     /// memory and CPU (a systemd scope); writes `report.json` and
     /// `report.md`. Exits with 2 when an application was not inside the
@@ -151,6 +156,11 @@ fn run() -> anyhow::Result<()> {
         Command::Fmt(fmt) => match fmt.run() {
             0 => Ok(()),
             status => exit(status),
+        },
+        // As `fmt`: 1 is `--check` finding work, 2 a shader in error.
+        Command::Shaders(shaders) => match shaders.run() {
+            0 => Ok(()),
+            status => std::process::exit(status),
         },
         Command::Bench(bench) => match bench.run()? {
             0 => Ok(()),
