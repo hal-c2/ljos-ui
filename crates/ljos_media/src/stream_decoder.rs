@@ -23,8 +23,10 @@ pub enum DecodeError {
     Codec(String),
 }
 
-/// Decodes MJPEG or H.264 written in pieces of any size into RGBA
-/// pictures, in the order they are shown.
+/// Decodes MJPEG or H.264 written in pieces of any size into pictures, in
+/// the order they are shown. A picture is handed out as it was decoded
+/// (Y'CbCr, mostly): [`VideoFrame::into_rgba`] converts the ones a program
+/// keeps.
 pub struct Decoder {
     #[cfg(feature = "decode")]
     splitter: Splitter,
@@ -112,7 +114,7 @@ impl Decoder {
             self.pts += 1;
             out.extend(self.decode(&unit)?);
         }
-        out.extend(self.decoder.flush().into_iter().filter_map(rgba));
+        out.extend(self.decoder.flush().into_iter().map(picture));
         Ok(out)
     }
 
@@ -129,12 +131,30 @@ impl Decoder {
             .decoder
             .decode(unit, self.pts)
             .map_err(|e| DecodeError::Codec(e.to_string()))?;
-        Ok(frames.into_iter().filter_map(rgba).collect())
+        Ok(frames.into_iter().map(picture).collect())
     }
 }
 
 #[cfg(feature = "decode")]
-fn rgba(f: filmcraft_codecs::DecodedFrame) -> Option<VideoFrame> {
-    let (width, height) = (f.frame.width, f.frame.height);
-    VideoFrame::rgba(width, height, f.frame.to_rgba8()).ok()
+fn picture(f: filmcraft_codecs::DecodedFrame) -> VideoFrame {
+    VideoFrame::decoded(f.frame)
+}
+
+#[cfg(all(test, feature = "decode"))]
+mod tests {
+    use super::*;
+
+    const H264: &[u8] = include_bytes!("../../../features/multimedia/media/clip.h264");
+
+    #[test]
+    fn pictures_are_handed_out_unconverted() {
+        let mut decoder = Decoder::new(&StreamFormat::H264AnnexB).unwrap();
+        let mut frames = decoder.push(H264).unwrap();
+        frames.extend(decoder.finish().unwrap());
+        assert_eq!(frames.len(), 10);
+        assert!(frames.iter().all(VideoFrame::is_yuv));
+        // The program converts the one it keeps.
+        let last = frames.pop().unwrap();
+        assert_eq!(last.into_rgba().unwrap().len(), 64 * 48 * 4);
+    }
 }

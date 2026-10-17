@@ -17,7 +17,8 @@ use ljos_render::ImageHandle;
 
 use crate::video_sink;
 
-/// A picture to show: straight-alpha RGBA, or 8-bit planar Y'CbCr 4:2:0.
+/// A picture to show: straight-alpha RGBA, or Y'CbCr as a program or a
+/// decoder made it, converted only when [`VideoFrame::into_rgba`] asks.
 #[derive(Clone, Debug)]
 pub struct VideoFrame {
     width: u32,
@@ -28,11 +29,10 @@ pub struct VideoFrame {
 #[derive(Clone, Debug)]
 enum Pixels {
     Rgba(Vec<u8>),
-    #[cfg_attr(not(feature = "decode"), allow(dead_code))]
-    Yuv420 {
-        planes: [Vec<u8>; 3],
-        colour: YuvColour,
-    },
+    /// In FilmCraft's form, which its conversion takes: any subsampling
+    /// and depth a decoder gives.
+    #[cfg(feature = "decode")]
+    Yuv(Box<filmcraft_frame::VideoFrame>),
 }
 
 /// How a Y'CbCr frame's numbers are colours.
@@ -66,6 +66,15 @@ pub enum FrameError {
     },
     #[error("this build has no media decoder to convert Y'CbCr with")]
     NoDecoder,
+    /// A decoder's picture whose planes are short of its size.
+    #[error("a {width} by {height} picture's plane {plane} has {given} samples, not {wanted}")]
+    Plane {
+        width: u32,
+        height: u32,
+        plane: usize,
+        wanted: usize,
+        given: usize,
+    },
 }
 
 impl VideoFrame {
@@ -98,14 +107,31 @@ impl VideoFrame {
         check(width, height, w * h, planes[0].len())?;
         check(width, height, chroma, planes[1].len())?;
         check(width, height, chroma, planes[2].len())?;
-        if !cfg!(feature = "decode") {
-            return Err(FrameError::NoDecoder);
+        #[cfg(feature = "decode")]
+        return Ok(VideoFrame::decoded(yuv420_frame(
+            width, height, planes, colour,
+        )));
+        #[cfg(not(feature = "decode"))]
+        {
+            let _ = colour;
+            Err(FrameError::NoDecoder)
         }
-        Ok(VideoFrame {
-            width,
-            height,
-            pixels: Pixels::Yuv420 { planes, colour },
-        })
+    }
+
+    /// A decoder's picture, kept as it decoded it.
+    #[cfg(feature = "decode")]
+    pub(crate) fn decoded(frame: filmcraft_frame::VideoFrame) -> Self {
+        VideoFrame {
+            width: frame.width,
+            height: frame.height,
+            pixels: Pixels::Yuv(Box::new(frame)),
+        }
+    }
+
+    /// Still in the form it was made in, not yet converted.
+    #[cfg(all(test, feature = "decode"))]
+    pub(crate) fn is_yuv(&self) -> bool {
+        matches!(self.pixels, Pixels::Yuv(_))
     }
 
     pub fn width(&self) -> u32 {
@@ -118,24 +144,39 @@ impl VideoFrame {
 
     /// The frame as straight-alpha RGBA, 4 bytes a pixel, row after row:
     /// Y'CbCr converted as the decoder converts a played file's frames,
-    /// on the calling thread. None only in a build with no decoder,
-    /// which makes no Y'CbCr frame.
-    pub fn into_rgba(self) -> Option<Vec<u8>> {
+    /// here, on the calling thread. A [`crate::Decoder`]'s pictures are
+    /// converted only when this is called, so a program that keeps the
+    /// newest of several pays for that one. A picture that cannot be
+    /// converted says why.
+    pub fn into_rgba(self) -> Result<Vec<u8>, FrameError> {
         match self.pixels {
-            Pixels::Rgba(p) => Some(p),
+            Pixels::Rgba(p) => Ok(p),
             #[cfg(feature = "decode")]
-            Pixels::Yuv420 { planes, colour } => {
-                Some(yuv_to_rgba(self.width, self.height, planes, colour))
+            Pixels::Yuv(frame) => {
+                planes_fit(&frame)?;
+                let rgba = frame.to_rgba8();
+                check(
+                    self.width,
+                    self.height,
+                    self.width as usize * self.height as usize * 4,
+                    rgba.len(),
+                )?;
+                Ok(rgba)
             }
-            #[cfg(not(feature = "decode"))]
-            Pixels::Yuv420 { .. } => None,
         }
     }
 
     /// The frame as the image the scene paints.
-    pub(crate) fn into_image(self) -> Option<ImageHandle> {
+    pub(crate) fn into_image(self) -> Result<ImageHandle, FrameError> {
         let (width, height) = (self.width, self.height);
-        ImageHandle::from_straight(width, height, self.into_rgba()?).ok()
+        let rgba = self.into_rgba()?;
+        let given = rgba.len();
+        ImageHandle::from_straight(width, height, rgba).map_err(|_| FrameError::Size {
+            width,
+            height,
+            wanted: width as usize * height as usize * 4,
+            given,
+        })
     }
 }
 
@@ -152,19 +193,66 @@ fn check(width: u32, height: u32, wanted: usize, given: usize) -> Result<(), Fra
     }
 }
 
-/// Converts with the decoder's own conversion, the one a played file's
-/// frames take.
+/// FilmCraft's conversion indexes the planes by the picture's size: one
+/// short of it is refused here rather than read past.
 #[cfg(feature = "decode")]
-pub(crate) fn yuv_to_rgba(
+fn planes_fit(frame: &filmcraft_frame::VideoFrame) -> Result<(), FrameError> {
+    use filmcraft_frame::PixelData;
+
+    let (width, height) = (frame.width, frame.height);
+    let full = width as usize * height as usize;
+    let chroma = |c: filmcraft_frame::Chroma| {
+        let (sx, sy) = c.shifts();
+        (width as usize).div_ceil(1 << sx) * (height as usize).div_ceil(1 << sy)
+    };
+    let lens: Vec<(usize, usize)> = match &frame.data {
+        PixelData::Rgba8(d) => vec![(full * 4, d.len())],
+        PixelData::RgbaF32(d) => vec![(full * 4, d.len())],
+        PixelData::Yuv8 {
+            planes,
+            chroma: c,
+            alpha,
+        } => [(full, planes[0].len()), (chroma(*c), planes[1].len())]
+            .into_iter()
+            .chain([(chroma(*c), planes[2].len())])
+            .chain(alpha.iter().map(|a| (full, a.len())))
+            .collect(),
+        PixelData::Yuv16 {
+            planes,
+            chroma: c,
+            alpha,
+            ..
+        } => [(full, planes[0].len()), (chroma(*c), planes[1].len())]
+            .into_iter()
+            .chain([(chroma(*c), planes[2].len())])
+            .chain(alpha.iter().map(|a| (full, a.len())))
+            .collect(),
+    };
+    match lens.iter().position(|&(wanted, given)| given < wanted) {
+        None => Ok(()),
+        Some(plane) => Err(FrameError::Plane {
+            width,
+            height,
+            plane,
+            wanted: lens[plane].0,
+            given: lens[plane].1,
+        }),
+    }
+}
+
+/// A program's 4:2:0 picture in the form the decoder's own conversion,
+/// the one a played file's frames take, converts.
+#[cfg(feature = "decode")]
+fn yuv420_frame(
     width: u32,
     height: u32,
     planes: [Vec<u8>; 3],
     colour: YuvColour,
-) -> Vec<u8> {
+) -> filmcraft_frame::VideoFrame {
     use filmcraft_color::{ColorInfo, Matrix, Range};
     use filmcraft_frame::{Chroma, PixelData};
 
-    let frame = filmcraft_frame::VideoFrame {
+    filmcraft_frame::VideoFrame {
         width,
         height,
         data: PixelData::Yuv8 {
@@ -187,8 +275,7 @@ pub(crate) fn yuv_to_rgba(
         },
         par: (1, 1),
         pts: Default::default(),
-    };
-    frame.to_rgba8()
+    }
 }
 
 /// Hands frames to one sink from any thread. Clones feed the same sink
@@ -241,11 +328,11 @@ impl VideoFrameInput {
 
     /// Shows `frame` at the Engine thread's next frame, unless a newer
     /// one comes first. Converting it happens here, on the caller's
-    /// thread.
-    pub fn send(&self, frame: VideoFrame) {
-        if let Some(image) = frame.into_image() {
-            self.put(Next::Show(image));
-        }
+    /// thread; a frame that cannot be converted is not shown, and the
+    /// one before it stays.
+    pub fn send(&self, frame: VideoFrame) -> Result<(), FrameError> {
+        self.put(Next::Show(frame.into_image()?));
+        Ok(())
     }
 
     /// Takes the video away, as the end of a stream does.
@@ -300,11 +387,35 @@ mod tests {
     #[cfg(feature = "decode")]
     #[test]
     fn video_range_grey_is_grey() {
-        let planes = [vec![126; 4], vec![128; 1], vec![128; 1]];
-        let rgba = yuv_to_rgba(2, 2, planes, YuvColour::default());
-        assert_eq!(&rgba[..4], &[128, 128, 128, 255]);
+        let rgba = |luma| {
+            let planes = [vec![luma; 4], vec![128; 1], vec![128; 1]];
+            let frame = VideoFrame::yuv420(2, 2, planes, YuvColour::default()).unwrap();
+            frame.into_rgba().unwrap()
+        };
+        assert_eq!(&rgba(126)[..4], &[128, 128, 128, 255]);
+        assert_eq!(&rgba(16)[..4], &[0, 0, 0, 255]);
+    }
+
+    #[cfg(feature = "decode")]
+    #[test]
+    fn a_decoded_picture_short_of_its_size_is_refused_not_dropped() {
         let planes = [vec![16; 4], vec![128; 1], vec![128; 1]];
-        let rgba = yuv_to_rgba(2, 2, planes, YuvColour::default());
-        assert_eq!(&rgba[..4], &[0, 0, 0, 255]);
+        let mut frame = yuv420_frame(2, 2, planes, YuvColour::default());
+        if let filmcraft_frame::PixelData::Yuv8 { planes, .. } = &mut frame.data {
+            planes[2] = Arc::new(Vec::new());
+        }
+        let got = VideoFrame::decoded(frame).into_rgba();
+        assert!(
+            matches!(
+                got,
+                Err(FrameError::Plane {
+                    plane: 2,
+                    wanted: 1,
+                    given: 0,
+                    ..
+                })
+            ),
+            "{got:?}"
+        );
     }
 }

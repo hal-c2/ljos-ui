@@ -460,15 +460,28 @@ fn decode(format: StreamFormat, bytes: &Receiver<Vec<u8>>, wake: &Wake) {
         Err(err) => return wake.end(Some(err.to_string())),
     };
     // False when the player let the stream go or it cannot be decoded.
-    let give = |got: Result<Vec<VideoFrame>, DecodeError>| match got {
-        Ok(frames) => frames
-            .into_iter()
-            .filter_map(VideoFrame::into_image)
-            .all(|p| wake.picture(p)),
-        Err(err) => {
-            wake.end(Some(err.to_string()));
+    // A picture that cannot be converted is a format error, as one that
+    // cannot be decoded is.
+    let give = |got: Result<Vec<VideoFrame>, DecodeError>| {
+        let fail = |err: String| {
+            wake.end(Some(err));
             false
+        };
+        let frames = match got {
+            Ok(frames) => frames,
+            Err(err) => return fail(err.to_string()),
+        };
+        for frame in frames {
+            match frame.into_image() {
+                Ok(image) => {
+                    if !wake.picture(image) {
+                        return false;
+                    }
+                }
+                Err(err) => return fail(err.to_string()),
+            }
         }
+        true
     };
     // FilmCraft's H.264 decoder works on threads of its own and hands out
     // a finished picture only when it is next called. After a write it is

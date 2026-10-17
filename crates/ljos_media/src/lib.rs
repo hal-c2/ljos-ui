@@ -42,7 +42,7 @@
 //!   ([`MediaStream`]), paced or live, and MJPEG or H.264 from a web
 //!   server as it arrives. A program that wants the pictures itself
 //!   decodes with the same [`Decoder`] on a thread of its own, and
-//!   converts a Y'CbCr frame with [`VideoFrame::into_rgba`].
+//!   converts the pictures it keeps with [`VideoFrame::into_rgba`].
 //!
 //! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
 //! WindowCapture, AudioInput and subtitles are not built.

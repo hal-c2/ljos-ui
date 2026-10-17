@@ -74,3 +74,14 @@ fn yuv_converts_on_the_calling_thread() {
     let plain = VideoFrame::rgba(1, 1, vec![1, 2, 3, 4]).unwrap();
     assert_eq!(plain.into_rgba().unwrap(), [1, 2, 3, 4]);
 }
+
+#[test]
+fn a_program_that_skips_to_the_newest_picture_converts_that_one() {
+    let mut decoder = Decoder::new(&StreamFormat::H264AnnexB).unwrap();
+    let mut frames = decoder.push(H264).unwrap();
+    frames.extend(decoder.finish().unwrap());
+    let newest = frames.pop().expect("pictures");
+    let rgba = newest.into_rgba().unwrap();
+    assert_eq!(rgba.len(), 64 * 48 * 4);
+    assert!(rgba.chunks(4).all(|px| px[3] == 255));
+}

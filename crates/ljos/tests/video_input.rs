@@ -57,7 +57,7 @@ fn frames_from_another_thread_show_the_newest_once() {
     let sender = input.clone();
     std::thread::spawn(move || {
         for n in 1..=100 {
-            sender.send(solid(4, 2, n));
+            sender.send(solid(4, 2, n)).unwrap();
         }
     })
     .join()
@@ -87,7 +87,7 @@ fn a_sink_of_the_programs_takes_frames_too() {
     assert_eq!(input.sink(), sink);
     let grey = YuvColour::default();
     let frame = VideoFrame::yuv420(2, 2, [vec![126; 4], vec![128], vec![128]], grey).unwrap();
-    input.send(frame);
+    input.send(frame).unwrap();
     Platform::of(&engine).deliver(&engine);
     assert_eq!(engine.read_by_name(root, "own").to_number(), 1.0);
     let size = engine.read_by_name(sink, "videoSize");
@@ -114,7 +114,7 @@ fn a_frame_sent_after_its_sink_is_gone_is_dropped() {
     let sink = object(&engine, root, "sink");
     let input = VideoFrameInput::new(&engine, sink).unwrap();
     engine.destroy_now(sink);
-    input.send(solid(1, 1, 9));
+    input.send(solid(1, 1, 9)).unwrap();
     assert_eq!(Platform::of(&engine).deliver(&engine), 1);
 }
 
@@ -154,7 +154,7 @@ fn a_frame_is_turned_clockwise_then_mirrored() {
         .flat_map(|c| [c[0], c[1], c[2], 255])
         .collect();
     let input = VideoFrameInput::new(&engine, output).unwrap();
-    input.send(VideoFrame::rgba(2, 2, pixels).unwrap());
+    input.send(VideoFrame::rgba(2, 2, pixels).unwrap()).unwrap();
     Platform::of(&engine).deliver(&engine);
     let corners = |orientation: i32, mirrored: bool| {
         engine
