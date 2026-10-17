@@ -135,6 +135,15 @@ pub mod system {
     };
 }
 
+/// The platform's own windows, for what only the platform's API does
+/// (a window manager's hint, a native view added to the window):
+/// [`App::on_window`] is handed each window the host opens, as a
+/// [`NativeWindow`] whose handles are `raw-window-handle`'s, re-exported
+/// here at the version the host uses.
+pub mod window {
+    pub use ljos_platform::{NativeWindow, raw_window_handle};
+}
+
 /// Key events as a host delivers them, and the application-wide key
 /// filters that see each before a window's shortcuts and focused item.
 pub mod keys {

@@ -25,6 +25,7 @@ use crate::open_url::{OpenUrlService, RecordedUrls};
 use crate::paths::PathEnv;
 use crate::permissions::{PermissionService, UngatedPermissions};
 use crate::sensors::{NoSensors, SensorService};
+use crate::window_handle::NativeWindow;
 
 /// The log category of platform services.
 pub const CATEGORY: &str = "ljos.platform";
@@ -214,8 +215,10 @@ pub struct Platform {
     requests: RefCell<HashMap<u64, RequestDone>>,
     next_fetch: Cell<u64>,
     resources: RefCell<HashMap<String, Rc<[u8]>>>,
+    window_hooks: RefCell<Vec<WindowHook>>,
 }
 
+type WindowHook = Box<dyn FnMut(&Engine, Option<ObjectId>, &dyn NativeWindow)>;
 type FetchDone = Box<dyn FnOnce(&Engine, Result<Vec<u8>, FetchError>)>;
 type RequestDone = Box<dyn FnOnce(&Engine, Result<Response, FetchError>)>;
 
@@ -258,6 +261,7 @@ impl Default for Platform {
             requests: RefCell::new(HashMap::new()),
             next_fetch: Cell::new(0),
             resources: RefCell::new(HashMap::new()),
+            window_hooks: RefCell::new(Vec::new()),
         }
     }
 }
@@ -479,6 +483,39 @@ impl Platform {
         if count != 0 {
             service.show(count);
         }
+    }
+
+    /// Calls `hook` with each window the host opens for the application,
+    /// as it opens it and before anything is drawn into it: the QML
+    /// `Window` it is for (`None` for the window a host gives a root that
+    /// is a plain item) and the platform's window, for what only the
+    /// platform's own API does. A window the host opens again in another's
+    /// place (one whose colour stops or starts letting what is behind it
+    /// through) is handed over again. Hooks run in the order they were
+    /// given; a host without native windows calls none.
+    pub fn on_native_window(
+        &self,
+        hook: impl FnMut(&Engine, Option<ObjectId>, &dyn NativeWindow) + 'static,
+    ) {
+        self.window_hooks.borrow_mut().push(Box::new(hook));
+    }
+
+    /// For a host: hands a window it has just opened to the application's
+    /// hooks ([`Platform::on_native_window`]).
+    pub fn native_window_opened(
+        &self,
+        engine: &Engine,
+        window: Option<ObjectId>,
+        native: &dyn NativeWindow,
+    ) {
+        // Out of the cell while they run, so that a hook may add another.
+        let mut hooks = std::mem::take(&mut *self.window_hooks.borrow_mut());
+        for hook in &mut hooks {
+            hook(engine, window, native);
+        }
+        let mut kept = self.window_hooks.borrow_mut();
+        hooks.append(&mut kept);
+        *kept = hooks;
     }
 
     /// What reads the device's sensors. Until a host installs one it is

@@ -840,6 +840,9 @@ impl<M: Send + 'static> Desktop<M> {
         // While the window is unseen: the adapter has to be there before
         // the platform asks about the window.
         state.init_accesskit(host.event_loop(), &window, host.proxy().clone());
+        // Before the first picture, so that what the application does to the
+        // platform's window is there when it is first seen.
+        ljos_platform::Platform::of(engine).native_window_opened(engine, slot.window, &*window);
         slot.forget_platform();
         slot.surface = Some(Surface::new(id, window, state));
         slot.told_state = Some(attrs.state);

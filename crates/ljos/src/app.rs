@@ -74,6 +74,7 @@ pub struct App<M = ()> {
     source: Option<MapSource>,
     root: Option<String>,
     context: Vec<PutContext>,
+    on_window: Vec<PutContext>,
     on_message: Option<MessageHandler<M>>,
 }
 
@@ -86,6 +87,7 @@ impl<M> std::fmt::Debug for App<M> {
             .field("source", &self.source.is_some())
             .field("root", &self.root)
             .field("context", &self.context.len())
+            .field("on_window", &self.on_window.len())
             .field("on_message", &self.on_message.is_some())
             .finish_non_exhaustive()
     }
@@ -110,6 +112,7 @@ impl App<()> {
             source: None,
             root: None,
             context: Vec::new(),
+            on_window: Vec::new(),
             on_message: None,
         }
     }
@@ -327,6 +330,25 @@ impl<M> App<M> {
         self
     }
 
+    /// Calls `hook` with each window of the platform's the host opens for
+    /// the application, before anything is drawn in it: the QML `Window`
+    /// it is for (`None` for the window a root that is a plain item is
+    /// given) and the platform's window, whose handles
+    /// ([`raw_window_handle`](crate::window::raw_window_handle)) reach
+    /// what only the platform's own API does. A host may open a window
+    /// again in another's place, and hands that one over too. A headless
+    /// [`build`](App::build) opens no window, and calls no hook.
+    #[must_use]
+    pub fn on_window(
+        mut self,
+        hook: impl FnMut(&Engine, Option<ObjectId>, &dyn crate::window::NativeWindow) + 'static,
+    ) -> Self {
+        self.on_window.push(Box::new(move |engine: &Engine| {
+            ljos_platform::Platform::of(engine).on_native_window(hook);
+        }));
+        self
+    }
+
     /// Runs on the Engine thread for every message a worker thread
     /// posts through the shell's handle, and so chooses the message
     /// type `N` of the application. Each message is a turn of its own:
@@ -348,6 +370,7 @@ impl<M> App<M> {
             source,
             root,
             context,
+            on_window,
             ..
         } = self;
         App {
@@ -363,6 +386,7 @@ impl<M> App<M> {
             source,
             root,
             context,
+            on_window,
             on_message: Some(Box::new(handler)),
         }
     }
@@ -375,10 +399,11 @@ impl<M> App<M> {
             modules,
             source,
             context,
+            on_window,
             ..
         } = self;
         let engine = crate::engine();
-        prepare(&engine, modules, source, context);
+        prepare(&engine, modules, source, context, on_window);
         engine
     }
 
@@ -441,6 +466,7 @@ impl<M> App<M> {
             modules,
             source,
             context,
+            on_window,
             mut on_message,
             ..
         } = self;
@@ -450,7 +476,7 @@ impl<M> App<M> {
             // The shell's Engine already holds the standard modules;
             // `prepare` must not register them a second time, so it
             // is the same function `build_engine` uses on its own.
-            prepare(s.engine(), modules, source, context);
+            prepare(s.engine(), modules, source, context, on_window);
             if let Some(handler) = on_message.take() {
                 s.on_message(handler);
             }
@@ -462,12 +488,14 @@ impl<M> App<M> {
 /// Registers the application's modules, hands over its components
 /// and puts its context state in scope, in that order: a context
 /// value may be an object of a type a module just registered, and
-/// the root — made next — sees all of it.
+/// the root — made next — sees all of it. The window hooks go in before
+/// the root too: its windows open after.
 fn prepare(
     engine: &Engine,
     modules: Vec<Module>,
     source: Option<MapSource>,
     context: Vec<PutContext>,
+    on_window: Vec<PutContext>,
 ) {
     for module in modules {
         module(engine);
@@ -477,6 +505,9 @@ fn prepare(
     }
     for put in context {
         put(engine);
+    }
+    for hook in on_window {
+        hook(engine);
     }
 }
 

@@ -23,6 +23,7 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_ir = { path = "../ljos_ir" }
 ljos_reactive = { path = "../ljos_reactive" }
 ljos_runtime = { path = "../ljos_runtime" }
+raw-window-handle.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 # Not in the workspace pins: only the shell turns them on.

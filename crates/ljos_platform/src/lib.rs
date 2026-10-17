@@ -45,6 +45,7 @@ mod permissions;
 mod platform;
 mod sensors;
 mod settings;
+mod window_handle;
 
 use std::cell::Cell;
 
@@ -74,6 +75,7 @@ pub use permissions::{
     PermissionStatus, UngatedPermissions,
 };
 pub use platform::{CATEGORY, Job, Platform, Post, Reply};
+pub use raw_window_handle;
 pub use sensors::{
     Accelerometer, AccelerometerReading, AmbientLightReading, AmbientLightSensor, Compass,
     CompassReading, FakeSensors, Gyroscope, GyroscopeReading, Magnetometer, MagnetometerReading,
@@ -81,6 +83,7 @@ pub use sensors::{
     Sensor, SensorKind, SensorReading, SensorRequest, SensorService, SensorSink,
 };
 pub use settings::{Settings, flush_writes};
+pub use window_handle::NativeWindow;
 
 /// Set once the modules are in an engine.
 #[derive(Default)]

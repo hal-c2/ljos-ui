@@ -3888,6 +3888,7 @@ dependencies = [
  "ljos_test",
  "qml_front",
  "qt_types",
+ "raw-window-handle",
  "rfd",
  "rustls",
  "serde_json",
