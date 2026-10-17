@@ -702,6 +702,35 @@ impl Engine {
         }
     }
 
+    /// Runs JS and gives its failure back, for a caller that reports it
+    /// itself; nothing is logged.
+    pub(crate) fn try_run_js<R>(
+        &self,
+        label: &str,
+        f: impl for<'js> FnOnce(&Scope<'js>) -> rquickjs::Result<R>,
+    ) -> Result<R, crate::JsError> {
+        let js = self
+            .js()
+            .map_err(|e| crate::JsError::Failed(e.to_string()))?;
+        let slice = js.slice();
+        js.host
+            .enter_naming(label, String::new, slice, f)
+            .map_err(|fault| match fault {
+                JsFault::JsException {
+                    message,
+                    stack,
+                    file,
+                    line,
+                } => crate::JsError::Thrown {
+                    stack: self.js_trace(&stack).1,
+                    message,
+                    file,
+                    line,
+                },
+                other => crate::JsError::Failed(other.to_string()),
+            })
+    }
+
     /// Evaluates a classic script in the global scope, for hosts and tests.
     /// Returns its completion value.
     pub fn eval_js(&self, source: &str) -> Result<Value, EngineError> {

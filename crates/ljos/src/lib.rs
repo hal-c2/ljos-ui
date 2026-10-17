@@ -74,11 +74,11 @@
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_engine::{
-        Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, ItemTree, LogEntry,
-        LogLevel, ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList, QmlListModel,
-        QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size, Timer, TreeChange,
-        TreeListener, TreeListeners, Url, Value, Version, list_model, qml_impl, qml_singleton,
-        tree_model,
+        Atom, Color, ContextId, Cx, Engine, EngineError, Handler, ItemModel, ItemTree, JsError,
+        LogEntry, LogLevel, ModelChange, ModelSignals, ObjectId, Point, PropertyMap, QmlList,
+        QmlListModel, QmlObject, QmlType, QmlValue, QtObject, Rect, RowKey, SignalIndex, Size,
+        Timer, TreeChange, TreeListener, TreeListeners, Url, Value, Version, list_model, qml_impl,
+        qml_singleton, tree_model,
     };
     pub use ljos_platform::{
         FetchError, Fetcher, Method, OpenUrlService, Platform, RecordedUrls, Request, Response,

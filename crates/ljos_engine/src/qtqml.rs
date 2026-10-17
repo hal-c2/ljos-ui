@@ -19,7 +19,7 @@ use crate::atom::Atom;
 use crate::builtins::QtObject;
 use crate::cx::Cx;
 use crate::engine::Engine;
-use crate::error::EngineError;
+use crate::error::{EngineError, JsError};
 use crate::ids::{ConnectionId, ContextId, ObjectId};
 use crate::incubator::Template;
 use crate::meta::MetaRef;
@@ -1092,9 +1092,22 @@ impl Engine {
         (!matches!(out, Value::Undefined)).then_some(out)
     }
 
+    /// Whether `v` is a JS function, as `QJSValue::isCallable` tells: what
+    /// [`Engine::call_js`] can call. A plain object, a number or a QML
+    /// object is not.
+    pub fn is_callable(&self, v: &Value) -> bool {
+        let Value::Js(h) = v else {
+            return false;
+        };
+        let r = h.0.clone();
+        self.try_run_js("is_callable", |s| Ok(s.is_function(&r)))
+            .unwrap_or(false)
+    }
+
     /// Calls a JS function a property holds (`SpinBox.textFromValue`).
     /// `None` when `f` is not a function or it threw; the exception is
-    /// logged as Qt logs it.
+    /// logged as Qt logs it. [`Engine::try_call_js`] gives the error back
+    /// instead.
     pub fn call_js(&self, f: &Value, args: &[Value]) -> Option<Value> {
         let Value::Js(h) = f else {
             return None;
@@ -1107,8 +1120,44 @@ impl Engine {
         })
     }
 
+    /// [`Engine::call_js`] for a caller that reports the failure itself:
+    /// the thrown error (its message, where it was thrown and the QML
+    /// trace) or [`JsError::NotCallable`] comes back, and nothing is
+    /// logged.
+    pub fn try_call_js(&self, f: &Value, args: &[Value]) -> Result<Value, JsError> {
+        self.try_call(&JsValue::Undefined, f, args)
+    }
+
+    /// [`Engine::call_value`] for a caller that reports the failure itself,
+    /// as [`Engine::try_call_js`].
+    pub fn try_call_value(
+        &self,
+        this: ObjectId,
+        func: &Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.try_call(&JsValue::Object(crate::js::obj_to_u64(this)), func, args)
+    }
+
+    fn try_call(&self, this: &JsValue, f: &Value, args: &[Value]) -> Result<Value, JsError> {
+        let Value::Js(h) = f else {
+            return Err(JsError::NotCallable);
+        };
+        if !self.is_callable(f) {
+            return Err(JsError::NotCallable);
+        }
+        let r = h.0.clone();
+        let args: Vec<JsValue> = args.iter().map(|a| self.to_js(a)).collect();
+        self.try_run_js("call", |s| {
+            let out = s.call_ref(&r, this, &args)?;
+            Ok(self.js_to_value(s, out, &crate::TypeTag::Var))
+        })
+    }
+
     /// Calls a JS function a property holds with `this` bound to `this`
-    /// (`CheckBox.nextCheckState`).
+    /// (`CheckBox.nextCheckState`). `None` when it is not a function or it
+    /// threw, logged as [`Engine::call_js`] logs it;
+    /// [`Engine::try_call_value`] gives the error back instead.
     pub fn call_value(&self, this: ObjectId, func: &Value, args: &[Value]) -> Option<Value> {
         let Value::Js(h) = func else {
             return None;

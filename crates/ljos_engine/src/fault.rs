@@ -231,6 +231,27 @@ impl Engine {
         });
     }
 
+    /// The QML frames a JS exception's stack passed through, and the trace
+    /// printed under its message: one `    at function (file:line)` line per
+    /// frame, given only when there is more than the frame that threw.
+    pub(crate) fn js_trace(&self, stack: &str) -> (Vec<StackFrame>, Option<String>) {
+        let frames = self.qml_stack(stack);
+        let trace = (frames.len() > 1).then(|| {
+            frames
+                .iter()
+                .map(|f| {
+                    let file = f.file.rsplit('/').next().unwrap_or(&f.file);
+                    match &f.function {
+                        Some(name) => format!("    at {name} ({file}:{})", f.line),
+                        None => format!("    at {file}:{}", f.line),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        (frames, trace)
+    }
+
     /// A failed JS run. An exception keeps the line Qt logs for it
     /// (`file:line: message`), followed by the QML functions it passed
     /// through when there is more than the one that threw.
@@ -244,24 +265,11 @@ impl Engine {
                 file,
                 line,
             } => {
-                let frames = self.qml_stack(stack);
+                let (frames, trace) = self.js_trace(stack);
                 let mut text = match (file, line) {
                     (Some(file), Some(line)) => format!("{file}:{line}: {message}"),
                     _ => message.clone(),
                 };
-                let trace = (frames.len() > 1).then(|| {
-                    frames
-                        .iter()
-                        .map(|f| {
-                            let file = f.file.rsplit('/').next().unwrap_or(&f.file);
-                            match &f.function {
-                                Some(name) => format!("    at {name} ({file}:{})", f.line),
-                                None => format!("    at {file}:{}", f.line),
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                });
                 if let Some(trace) = &trace {
                     text.push('\n');
                     text.push_str(trace);

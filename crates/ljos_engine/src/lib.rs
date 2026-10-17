@@ -109,7 +109,7 @@ pub use delegates::{Made, Urgency, ViewDelegates, ViewHost};
 pub use describe::{QtNamespaceEnum, VALUE_TYPES, ValueType, qt_namespace};
 pub use devtools::{BindingGraph, DependencyReport, EvalJson, MAX_EVAL_TIME};
 pub use engine::{Engine, OverrideContent, ParentListener};
-pub use error::EngineError;
+pub use error::{EngineError, JsError};
 pub use fault::{FaultReport, StackFrame, fault_kind};
 pub use foreign::{ForeignBinding, ForeignKeeper, ForeignMember, ForeignValue};
 pub use hooks::{Interception, Interceptor};

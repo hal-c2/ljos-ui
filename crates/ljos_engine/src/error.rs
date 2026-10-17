@@ -62,6 +62,31 @@ pub enum EngineError {
     Js(String),
 }
 
+/// Why [`Engine::try_call_js`](crate::Engine::try_call_js) or
+/// [`Engine::try_call_value`](crate::Engine::try_call_value) gave no value:
+/// what Qt's `QJSValue::call` answers with an error value for.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum JsError {
+    /// The function threw. `message` is what the thrown value prints as
+    /// (`Error: why it failed`); `file` and `line` place the throw, in QML
+    /// terms when the code came from QML; `stack` is the QML trace, given
+    /// when the throw passed through more than one function.
+    #[error("{message}")]
+    Thrown {
+        message: String,
+        file: Option<String>,
+        line: Option<u32>,
+        stack: Option<String>,
+    },
+    /// What was called is not a JS function (`QJSValue::isCallable` false).
+    #[error("not a function")]
+    NotCallable,
+    /// The call did not finish: interrupted over its time budget, out of
+    /// heap, or the JS host could not start.
+    #[error("{0}")]
+    Failed(String),
+}
+
 /// Lets a native method return `Result<T, String>` (or `&str`): the
 /// message becomes an [`EngineError::Invoke`].
 impl EngineError {
