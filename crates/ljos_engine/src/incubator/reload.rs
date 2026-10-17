@@ -408,12 +408,49 @@ impl Walk {
     }
 }
 
-/// Whether a value means the same in another tree of objects.
-fn portable(v: &Value) -> bool {
+/// `v` for the new tree: an object of the old tree is the object that
+/// goes on for it, or, in a list or record, `null` when nothing does. An
+/// object the reload does not make again is itself. `None` when `v` is
+/// an object of the old tree that nothing goes on for.
+fn translate(
+    v: Value,
+    alive: &dyn Fn(ObjectId) -> bool,
+    new_for: &dyn Fn(ObjectId) -> Option<Option<ObjectId>>,
+) -> Option<Value> {
     match v {
-        Value::Object(_) => false,
-        Value::List(items) => items.iter().all(portable),
-        _ => true,
+        Value::Object(o) => match new_for(o) {
+            Some(new) => new.map(Value::Object),
+            None => alive(o).then_some(Value::Object(o)),
+        },
+        Value::List(items) if items.iter().any(holds_object) => Some(Value::List(Arc::new(
+            items
+                .iter()
+                .map(|i| translate(i.clone(), alive, new_for).unwrap_or(Value::Null))
+                .collect(),
+        ))),
+        Value::Map(fields) if fields.iter().any(|(_, v)| holds_object(v)) => {
+            Some(Value::Map(Arc::new(
+                fields
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            translate(v.clone(), alive, new_for).unwrap_or(Value::Null),
+                        )
+                    })
+                    .collect(),
+            )))
+        }
+        v => Some(v),
+    }
+}
+
+fn holds_object(v: &Value) -> bool {
+    match v {
+        Value::Object(_) => true,
+        Value::List(items) => items.iter().any(holds_object),
+        Value::Map(fields) => fields.iter().any(|(_, v)| holds_object(v)),
+        _ => false,
     }
 }
 
@@ -767,8 +804,10 @@ impl Engine {
         if node.is_some_and(|n| self.inner.graph.override_count(n) > 0) {
             return None;
         }
+        // An object it holds is put right for the new tree when the value
+        // is given back (`reload_adopt`).
         let value = self.untrack(|| self.read(obj, prop));
-        portable(&value).then(|| Carried {
+        Some(Carried {
             name: info.name.clone(),
             ty: info.ty.clone(),
             value,
@@ -1075,6 +1114,24 @@ impl Engine {
         }
     }
 
+    /// A carried value with its objects of the old tree swapped for the
+    /// ones that go on for them (see [`translate`]). An object made later
+    /// than the one the value goes to (a delegate) is not known yet, and
+    /// counts as gone.
+    fn reload_translate(&self, v: Value) -> Option<Value> {
+        let st = &self.inner.reload;
+        let tree = st.tree.get();
+        let pending = st.pending.borrow();
+        let info = st.info.borrow();
+        let new_for = |o: ObjectId| {
+            if let Some(new) = pending.as_ref().and_then(|p| p.counterpart.get(&o)) {
+                return Some(Some(*new));
+            }
+            info.get(&o).filter(|i| i.tree != tree).map(|_| None)
+        };
+        translate(v, &|o| self.is_alive(o), &new_for)
+    }
+
     /// Gives the kept objects of a creation what their old objects held,
     /// before the creation completes. Returns the kept objects: they do
     /// not run `Component.onCompleted`.
@@ -1177,7 +1234,13 @@ impl Engine {
                     continue;
                 }
                 kept.insert(obj);
-                for c in values {
+                for mut c in values {
+                    if holds_object(&c.value) {
+                        let Some(v) = self.reload_translate(c.value) else {
+                            continue;
+                        };
+                        c.value = v;
+                    }
                     let Ok(p) = self.property_index(obj, &c.name) else {
                         continue;
                     };

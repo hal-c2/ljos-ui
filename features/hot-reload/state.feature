@@ -92,6 +92,69 @@ Feature: What survives a reload
       And a reload happens
       Then the property "width" of "root" is 40
 
+  Rule: An object the application stored is the same object after the reload
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property Item chosen
+          property var held
+          readonly property string chosenName: chosen ? chosen.objectName : "none"
+          readonly property string heldName: held ? held.objectName : "none"
+          function choose() { chosen = two; held = two }
+          function tap() { held.taps += 1 }
+          Item { id: one; objectName: "one" }
+          Item { id: two; objectName: "two"; property int taps: 0 }
+        }
+        """
+
+    Scenario: A stored object is the new object at its place
+      When the method "choose" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          width: 10
+          property Item chosen
+          property var held
+          readonly property string chosenName: chosen ? chosen.objectName : "none"
+          readonly property string heldName: held ? held.objectName : "none"
+          function choose() { chosen = two; held = two }
+          function tap() { held.taps += 1 }
+          Item { id: one; objectName: "one" }
+          Item { id: two; objectName: "two"; property int taps: 0 }
+        }
+        """
+      And a reload happens
+      And the method "tap" of "root" is called
+      Then the property "chosenName" of "root" is "two"
+      And the property "heldName" of "root" is "two"
+      And the property "taps" of "two" is 1
+      And the log has no warnings
+
+    Scenario: An object gone from the file is no longer stored
+      When the method "choose" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property Item chosen
+          property var held
+          readonly property string chosenName: chosen ? chosen.objectName : "none"
+          readonly property string heldName: held ? held.objectName : "none"
+          function choose() { chosen = one; held = one }
+          Item { id: one; objectName: "one" }
+        }
+        """
+      And a reload happens
+      Then the property "chosenName" of "root" is "none"
+      And the property "heldName" of "root" is "none"
+
   Rule: The rows of a ListModel survive
 
     Background:
