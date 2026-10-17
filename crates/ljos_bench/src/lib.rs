@@ -25,7 +25,7 @@ use std::{
 
 use serde::Deserialize;
 
-pub use measure::{Error, Outcome, Phases, Run, Runtime, Setup};
+pub use measure::{Error, Gesture, Outcome, Phases, Run, Runtime, Setup};
 pub use profile::Profile;
 pub use report::Report;
 
@@ -183,6 +183,7 @@ pub fn run(
                     settle: Duration::from_millis(500),
                     idle: Duration::ZERO,
                     load: Duration::ZERO,
+                    gesture: measure::Gesture::Click,
                     detail: false,
                 };
                 measure::run(setup, &app.id, &rt, &Profile::desktop(), warm, false)?;

@@ -179,12 +179,20 @@ const METRICS: &[Metric] = &[
         value: |r| r.idle.as_ref()?.frames.as_ref()?.max_ms,
     },
     Metric {
-        title: "CPU while clicked (% of one core)",
+        title: "CPU while driven (% of one core)",
         value: |r| r.load.as_ref().map(|s| s.cpu_percent),
     },
     Metric {
-        title: "Frames shown while clicked (per second)",
+        title: "Frames shown while driven (per second)",
         value: |r| r.load.as_ref()?.frames.as_ref().map(|f| f.fps),
+    },
+    Metric {
+        title: "Median frame interval while driven (ms)",
+        value: |r| r.load.as_ref()?.frames.as_ref()?.p50_ms,
+    },
+    Metric {
+        title: "95th percentile frame interval while driven (ms)",
+        value: |r| r.load.as_ref()?.frames.as_ref()?.p95_ms,
     },
     Metric {
         title: "Mapped install (MiB on disk: runtime, libraries, plugins, fonts)",

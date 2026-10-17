@@ -100,7 +100,8 @@ outside a limit.
 | Settled PSS | PSS of all pages |
 | Idle CPU, idle wakeups | CPU use and context switches over `--idle` seconds (10) with no input |
 | Frames while idle | screencopy frames over the idle window: non-zero only for apps that animate |
-| CPU and frames while clicked | over `--load` seconds (10) of clicks on a grid over the window (wlr virtual pointer) |
+| CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks a grid over the window, `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up |
+| Frame interval while driven | the median and 95th percentile time between the frames the compositor showed then |
 | Mapped install | the files the app maps: runtime, libraries, plugins, fonts |
 | Least memory | the smallest `MemoryMax`, found by bisection, at which the first frame is shown and the app is still running a second later |
 

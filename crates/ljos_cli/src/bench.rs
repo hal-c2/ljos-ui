@@ -9,7 +9,9 @@ use std::{
 
 use anyhow::Context;
 use clap::Args;
-use ljos_bench::{App, Manifest, Phases, Plan, Profile, Programs, Setup, profile, sway::Sway};
+use ljos_bench::{
+    App, Gesture, Manifest, Phases, Plan, Profile, Programs, Setup, profile, sway::Sway,
+};
 
 #[derive(Args)]
 // `mise run bench` gives defaults that options after them override.
@@ -76,9 +78,13 @@ pub struct Bench {
     /// Seconds of idle CPU and frames.
     #[arg(long, default_value_t = 10.0)]
     idle: f64,
-    /// Seconds of clicking a grid over the window.
+    /// Seconds of driving the window with `--gesture`.
     #[arg(long, default_value_t = 10.0)]
     load: f64,
+    /// What drives the window under load: `click` (a grid of clicks over
+    /// it), `drag` (up and down from its middle) or `scroll` (the wheel).
+    #[arg(long, default_value = "click", value_parser = gesture)]
+    gesture: Gesture,
     /// Measure each application this many times; the tables show the
     /// median. 0 with `--bisect` only searches for the least memory.
     #[arg(long, default_value_t = 1)]
@@ -245,6 +251,7 @@ impl Bench {
                 settle: secs(self.settle),
                 idle: secs(self.idle),
                 load: secs(self.load),
+                gesture: self.gesture,
                 detail: true,
             },
             warm_up: self.warm_up,
@@ -296,5 +303,14 @@ impl Bench {
             }
             Err(e) => Err(e.into()),
         }
+    }
+}
+
+fn gesture(s: &str) -> Result<Gesture, String> {
+    match s {
+        "click" => Ok(Gesture::Click),
+        "drag" => Ok(Gesture::Drag),
+        "scroll" => Ok(Gesture::Scroll),
+        _ => Err(format!("{s}: the gestures are click, drag and scroll")),
     }
 }

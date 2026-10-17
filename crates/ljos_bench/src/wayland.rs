@@ -203,6 +203,65 @@ impl Pointer {
         self.queue.flush().map_err(protocol)?;
         pump(&mut self.queue, &mut self.state, Duration::ZERO)
     }
+
+    /// Moves to `(x, y)` and holds the left button down there.
+    ///
+    /// # Errors
+    /// The compositor went away.
+    pub fn press(&mut self, x: u32, y: u32, extent: (u32, u32)) -> Result<(), Error> {
+        let p = &self.pointer;
+        p.motion_absolute(self.time(), x, y, extent.0, extent.1);
+        p.frame();
+        p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Pressed);
+        p.frame();
+        self.queue.flush().map_err(protocol)?;
+        pump(&mut self.queue, &mut self.state, Duration::ZERO)
+    }
+
+    /// Moves to `(x, y)`, dragging if a button is down.
+    ///
+    /// # Errors
+    /// The compositor went away.
+    pub fn move_to(&mut self, x: u32, y: u32, extent: (u32, u32)) -> Result<(), Error> {
+        let p = &self.pointer;
+        p.motion_absolute(self.time(), x, y, extent.0, extent.1);
+        p.frame();
+        self.queue.flush().map_err(protocol)?;
+        pump(&mut self.queue, &mut self.state, Duration::ZERO)
+    }
+
+    /// Lets the left button go.
+    ///
+    /// # Errors
+    /// The compositor went away.
+    pub fn release(&mut self) -> Result<(), Error> {
+        let p = &self.pointer;
+        p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Released);
+        p.frame();
+        self.queue.flush().map_err(protocol)?;
+        pump(&mut self.queue, &mut self.state, Duration::ZERO)
+    }
+
+    /// Turns the wheel `steps` notches at `(x, y)`: down for positive.
+    ///
+    /// # Errors
+    /// The compositor went away.
+    pub fn wheel(&mut self, x: u32, y: u32, extent: (u32, u32), steps: i32) -> Result<(), Error> {
+        let p = &self.pointer;
+        p.motion_absolute(self.time(), x, y, extent.0, extent.1);
+        p.frame();
+        p.axis_source(wl_pointer::AxisSource::Wheel);
+        // 15 is what a notch scrolls by in libinput's units.
+        p.axis_discrete(
+            self.time(),
+            wl_pointer::Axis::VerticalScroll,
+            15.0 * f64::from(steps),
+            steps,
+        );
+        p.frame();
+        self.queue.flush().map_err(protocol)?;
+        pump(&mut self.queue, &mut self.state, Duration::ZERO)
+    }
 }
 
 /// Frames the compositor showed of a region while the counter ran.

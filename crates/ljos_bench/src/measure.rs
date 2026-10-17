@@ -72,8 +72,24 @@ pub struct Phases {
     pub settle: Duration,
     pub idle: Duration,
     pub load: Duration,
+    /// What the application is driven with under load.
+    pub gesture: Gesture,
     /// Read `/proc` for resident memory and mapped files.
     pub detail: bool,
+}
+
+/// What drives an application under load.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Gesture {
+    /// Clicks on a grid over the window, as a user going through it would.
+    #[default]
+    Click,
+    /// The left button held in the middle of the window and moved up and
+    /// down, which flicks a list or drags what is there.
+    Drag,
+    /// The wheel turned down and up again in the middle of the window.
+    Scroll,
 }
 
 /// How a run ended.
@@ -136,7 +152,7 @@ pub struct Span {
     /// Times a thread slept and was woken, a second.
     pub wakeups_per_s: f64,
     pub frames: Option<Frames>,
-    /// Clicks given, for a driven window.
+    /// Clicks, moves or wheel notches given, for a driven window.
     pub clicks: Option<u32>,
 }
 
@@ -181,6 +197,9 @@ pub struct Run {
     pub settled: Option<Settled>,
     pub idle: Option<Span>,
     pub load: Option<Span>,
+    /// What drove it under load.
+    #[serde(default)]
+    pub gesture: Gesture,
     pub install: Option<Install>,
     pub log: String,
 }
@@ -377,12 +396,13 @@ fn frames(times: &[u64], seconds: f64) -> Frames {
 }
 
 /// Measures a window of time: CPU, wakeups and, when the compositor can
-/// be asked, frames; `drive` clicks a grid over the window meanwhile.
+/// be asked, frames; `drive` is the window `gesture` drives meanwhile.
 fn span(
     setup: &Setup,
     w: &mut Watch<'_>,
     pid: u32,
     time: Duration,
+    gesture: Gesture,
     drive: Option<(i32, i32, i32, i32)>,
     region: Option<(i32, i32, i32, i32)>,
 ) -> Option<Span> {
@@ -397,7 +417,11 @@ fn span(
     let mut clicks = None;
     match (drive, &setup.wayland, &setup.sway) {
         (Some(rect), Some(display), Some(sway)) => {
-            clicks = Some(click_grid(display, sway, rect, time, w));
+            clicks = Some(match gesture {
+                Gesture::Click => click_grid(display, sway, rect, time, w),
+                Gesture::Drag => drag(display, sway, rect, time, w),
+                Gesture::Scroll => scroll(display, sway, rect, time, w),
+            });
         }
         _ => {
             w.wait(time);
@@ -470,6 +494,108 @@ fn click_grid(
         }
     }
     clicks
+}
+
+/// The size of the compositor's layout, which pointer positions are in,
+/// and the point `(x, y)` in it.
+fn on_layout(
+    sway: &Sway,
+    rect: (i32, i32, i32, i32),
+    x: i32,
+    y: i32,
+) -> Option<(u32, u32, (u32, u32))> {
+    let extent = sway
+        .layout()
+        .ok()
+        .flatten()
+        .unwrap_or((rect.0 + rect.2, rect.1 + rect.3));
+    Some((
+        u32::try_from(x).ok()?,
+        u32::try_from(y).ok()?,
+        (u32::try_from(extent.0).ok()?, u32::try_from(extent.1).ok()?),
+    ))
+}
+
+/// Presses in the middle of the window and moves up and down a third of
+/// its height each way, once a second, a move every 16 ms, over `time`.
+fn drag(
+    display: &Path,
+    sway: &Sway,
+    rect @ (x, y, width, height): (i32, i32, i32, i32),
+    time: Duration,
+    w: &mut Watch<'_>,
+) -> u32 {
+    let Ok(mut pointer) = Pointer::new(display) else {
+        w.wait(time);
+        return 0;
+    };
+    let (cx, cy, reach) = (x + width / 2, y + height / 2, height / 3);
+    let start = Instant::now();
+    let mut moves = 0;
+    let mut held = false;
+    while start.elapsed() < time {
+        // A triangle wave from -1 to 1 and back.
+        let t = start.elapsed().as_secs_f64().fract();
+        let wave = if t < 0.5 {
+            4.0 * t - 1.0
+        } else {
+            3.0 - 4.0 * t
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let py = cy + (f64::from(reach) * wave).round() as i32;
+        let Some((px, py, extent)) = on_layout(sway, rect, cx, py) else {
+            break;
+        };
+        let sent = if held {
+            pointer.move_to(px, py, extent)
+        } else {
+            pointer.press(px, py, extent)
+        };
+        if sent.is_err() {
+            break;
+        }
+        held = true;
+        moves += 1;
+        if !w.wait(Duration::from_millis(16)) {
+            break;
+        }
+    }
+    if held {
+        let _ = pointer.release();
+    }
+    moves
+}
+
+/// Turns the wheel in the middle of the window, ten notches down and ten
+/// up, a notch every 50 ms, over `time`.
+fn scroll(
+    display: &Path,
+    sway: &Sway,
+    rect @ (x, y, width, height): (i32, i32, i32, i32),
+    time: Duration,
+    w: &mut Watch<'_>,
+) -> u32 {
+    let Ok(mut pointer) = Pointer::new(display) else {
+        w.wait(time);
+        return 0;
+    };
+    let Some((px, py, extent)) = on_layout(sway, rect, x + width / 2, y + height / 2) else {
+        w.wait(time);
+        return 0;
+    };
+    let start = Instant::now();
+    let mut notches = 0;
+    while start.elapsed() < time {
+        let steps = if (notches / 10) % 2 == 0 { 1 } else { -1 };
+        if pointer.wheel(px, py, extent, steps).is_err() {
+            break;
+        }
+        notches += 1;
+        if !w.wait(Duration::from_millis(50)) {
+            break;
+        }
+    }
+    notches
 }
 
 fn install(pid: u32) -> Install {
@@ -644,6 +770,7 @@ pub fn run(
         settled: None,
         idle: None,
         load: None,
+        gesture: phases.gesture,
         install: None,
         log: log_path.display().to_string(),
     };
@@ -664,7 +791,7 @@ pub fn run(
             _ => None,
         };
         if !phases.idle.is_zero() {
-            out.idle = span(setup, &mut w, pid, phases.idle, None, rect);
+            out.idle = span(setup, &mut w, pid, phases.idle, phases.gesture, None, rect);
         }
         if !phases.load.is_zero() && w.exited.is_none() {
             out.load = span(
@@ -672,6 +799,7 @@ pub fn run(
                 &mut w,
                 pid,
                 phases.load,
+                phases.gesture,
                 rect.filter(|_| drive),
                 rect,
             );
@@ -742,6 +870,7 @@ pub fn min_memory(
         settle: Duration::from_secs(1),
         idle: Duration::ZERO,
         load: Duration::ZERO,
+        gesture: Gesture::Click,
         detail: false,
     };
     let mut probes = Vec::new();

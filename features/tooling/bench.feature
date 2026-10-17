@@ -14,8 +14,9 @@ Feature: Measuring an application under a limit
   `ljos bench` starts an application inside a limit on memory and CPU and
   reports what it used as JSON: its peak and settled memory from the
   limit's own accounting, the CPU it took, and whether the kernel killed it
-  for want of memory. It never measures an application that is not inside
-  the limit it asked for.
+  for want of memory. Under load it is clicked, dragged or scrolled, as
+  asked. It never measures an application that is not inside the limit it
+  asked for.
 
   Background:
     Given the file "Main.qml":
@@ -75,6 +76,18 @@ Feature: Measuring an application under a limit
       And the JSON file "out/report.json" has "/runs/0/oom_killed" equal to false
       And the JSON file "out/report.json" has "/runs/0/first_frame_ms" equal to null
       And the JSON file "out/report.json" has "/runs/0/outcome" equal to "no-frame"
+      And the JSON file "out/report.json" has "/runs/0/gesture" equal to "click"
+
+    Scenario Outline: The application is driven with <gesture> while it is measured under load
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 64M --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --gesture <gesture> --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/gesture" equal to "<gesture>"
+
+      Examples:
+        | gesture |
+        | click   |
+        | drag    |
+        | scroll  |
 
     Scenario: The limit is asked for in the scope's own settings
       When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 64M --cpus 4 --cpu-list 0-3 --cpu-factor 20 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
