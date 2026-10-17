@@ -685,6 +685,7 @@ impl QuickScene {
         self.sync_layer(engine);
         // 5. Animations, from the frame's time and nothing else.
         crate::animation::tick(engine, now);
+        crate::long_press::tick(engine, now);
         crate::flickable::fling::tick(engine, now);
         crate::canvas::tick(engine);
         crate::views::path_view::tick(engine, now);
@@ -752,6 +753,12 @@ impl QuickScene {
                 let fling_wake = crate::flickable::fling::next_wake(engine, now);
                 let canvas_wake = crate::canvas::next_wake(engine, now);
                 let path_view_wake = crate::views::path_view::next_wake(engine, now);
+                let held_wake = crate::long_press::next_wake(
+                    engine,
+                    now,
+                    changed,
+                    crate::animation::frame_period(engine),
+                );
                 [
                     engine_wake,
                     self.next_timer,
@@ -759,6 +766,7 @@ impl QuickScene {
                     fling_wake,
                     canvas_wake,
                     path_view_wake,
+                    held_wake,
                 ]
                 .into_iter()
                 .flatten()
@@ -1460,7 +1468,7 @@ impl QuickScene {
                 crate::input::tap_point_pressed(engine, h, ev);
                 set(engine, h, TapHandler::PRESSED.index, Value::Bool(true));
                 crate::input::tap_point_changed(engine, h);
-                crate::long_press::pressed(engine, h);
+                crate::long_press::pressed(engine, h, ev.time);
                 let policy = num(engine, h, TapHandler::GESTURE_POLICY.index) as i32;
                 if policy == gesture_policy::DRAG_THRESHOLD {
                     self.pointer.passive.push(h);
@@ -1524,6 +1532,7 @@ impl QuickScene {
         }
         self.pointer.grab = Some(Grab::Mouse(m));
         crate::mouse_drag::pressed(engine, m, ev);
+        crate::press_and_hold::pressed(engine, m);
         if let Some((last, t, p)) = self.pointer.last_click
             && last == m
             && ev.time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL
@@ -1677,8 +1686,13 @@ impl QuickScene {
                 set_mouse_pos(engine, m, local);
                 set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
                 set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
-                emit_mouse(engine, m, "released", ev, local, inside);
-                if inside && !self.pointer.double {
+                let was_held = crate::press_and_hold::ended(engine, m);
+                let released = MouseEvent {
+                    was_held,
+                    ..mouse_event(ev, local, inside)
+                };
+                emit_mouse_event(engine, m, "released", released);
+                if inside && !was_held && !self.pointer.double {
                     emit_mouse(engine, m, "clicked", ev, local, true);
                     self.pointer.last_click = Some((m, ev.time, ev.pos));
                 }
@@ -1735,6 +1749,7 @@ impl QuickScene {
         let mut handled = false;
         match self.pointer.grab.take() {
             Some(Grab::Mouse(m)) if engine.is_alive(m) => {
+                crate::press_and_hold::ended(engine, m);
                 set(engine, m, MouseArea::PRESSED.index, Value::Bool(false));
                 set(engine, m, MouseArea::PRESSED_BUTTONS.index, Value::Int(0));
                 if !hover_enabled(engine, m) {
@@ -2217,7 +2232,11 @@ pub(crate) fn emit_mouse(
     local: kurbo::Point,
     is_click: bool,
 ) -> bool {
-    let native = MouseEvent {
+    emit_mouse_event(engine, m, name, mouse_event(ev, local, is_click))
+}
+
+fn mouse_event(ev: &PointerEvent, local: kurbo::Point, is_click: bool) -> MouseEvent {
+    MouseEvent {
         x: local.x,
         y: local.y,
         button: ev.button.map_or(0, |b| b.bits() as i32),
@@ -2225,7 +2244,17 @@ pub(crate) fn emit_mouse(
         modifiers: ev.modifiers.bits() as i32,
         is_click,
         ..MouseEvent::default()
-    };
+    }
+}
+
+/// Emits `name` of `m` with `native` as its `mouse`. Returns whether the
+/// handler left the event accepted.
+pub(crate) fn emit_mouse_event(
+    engine: &Engine,
+    m: ObjectId,
+    name: &str,
+    native: MouseEvent,
+) -> bool {
     let Ok(me) = engine.create_native_incomplete(native, Some(m)) else {
         return true;
     };

@@ -93,6 +93,11 @@ pub fn set_animation_frame_period(engine: &Engine, period: Duration) {
     driver::set_frame_period(engine, period);
 }
 
+/// The display's refresh period, as [`set_animation_frame_period`] gave it.
+pub(crate) fn frame_period(engine: &Engine) -> Duration {
+    driver::frame_period(engine)
+}
+
 /// How many animations are under way in `engine`, paused ones included.
 /// Zero means the animations ask for no frames.
 pub fn running_animation_count(engine: &Engine) -> usize {

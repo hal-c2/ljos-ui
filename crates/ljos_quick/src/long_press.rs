@@ -4,11 +4,18 @@
 //!
 //! The wait is an engine `Timer`, made the first time it is needed and
 //! armed only while a press is held: an idle handler has no deadline.
+//!
+//! `timeHeld` is brought up to date by every frame drawn while the press
+//! is held ([`tick`]), as Qt's is. A frame that showed something new asks
+//! for the next one ([`next_wake`]): what is drawn from `timeHeld` keeps
+//! moving, and with nothing drawn from it no frames are drawn for it.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 use ljos_engine::{Engine, LogLevel, ObjectId, Timer, Value};
+use ljos_runtime::Time;
 
 use crate::input::TapHandler;
 use crate::scene::{SCENE_CATEGORY, emit, set};
@@ -20,6 +27,10 @@ pub(crate) struct LongPress {
     /// The press held now has been a long press.
     done: Cell<bool>,
 }
+
+/// The handlers pressed now, with the time of their press.
+#[derive(Debug, Default)]
+struct Holding(RefCell<Vec<(ObjectId, Time)>>);
 
 fn state(engine: &Engine, h: ObjectId) -> Option<Rc<LongPress>> {
     engine
@@ -39,13 +50,18 @@ fn threshold(engine: &Engine, h: ObjectId) -> f64 {
     }
 }
 
-/// The handler was pressed: the wait for a long press begins.
-pub(crate) fn pressed(engine: &Engine, h: ObjectId) {
+/// The handler was pressed at `at`: the wait for a long press begins.
+pub(crate) fn pressed(engine: &Engine, h: ObjectId, at: Time) {
     let Some(st) = state(engine, h) else {
         return;
     };
     st.done.set(false);
     set(engine, h, TapHandler::TIME_HELD.index, Value::Real(0.0));
+    let holding = engine.extension::<Holding>();
+    let mut list = holding.0.borrow_mut();
+    list.retain(|(o, _)| *o != h);
+    list.push((h, at));
+    drop(list);
     let seconds = threshold(engine, h);
     if seconds > 0.0 {
         arm(engine, h, &st, (seconds * 1000.0).round() as i32);
@@ -68,8 +84,46 @@ pub(crate) fn ended(engine: &Engine, h: ObjectId) -> bool {
         return false;
     };
     stop(engine, &st);
+    release(engine, h);
     set(engine, h, TapHandler::TIME_HELD.index, Value::Real(-1.0));
     st.done.replace(false)
+}
+
+fn release(engine: &Engine, h: ObjectId) {
+    engine
+        .extension::<Holding>()
+        .0
+        .borrow_mut()
+        .retain(|(o, _)| *o != h);
+}
+
+/// Frame step 5: every press held now has been held until `now`.
+pub(crate) fn tick(engine: &Engine, now: Time) {
+    let holding = engine.extension::<Holding>();
+    if holding.0.borrow().is_empty() {
+        return;
+    }
+    let list = holding.0.borrow().clone();
+    for (h, at) in list {
+        if !engine.is_alive(h) {
+            release(engine, h);
+            continue;
+        }
+        let seconds = now.saturating_since(at).as_secs_f64();
+        set(engine, h, TapHandler::TIME_HELD.index, Value::Real(seconds));
+    }
+}
+
+/// The next frame for the presses held now: one frame period on when this
+/// frame showed something new (`changed`), none otherwise.
+pub(crate) fn next_wake(
+    engine: &Engine,
+    now: Time,
+    changed: bool,
+    period: Duration,
+) -> Option<Time> {
+    let holding = engine.extension::<Holding>();
+    (changed && !holding.0.borrow().is_empty()).then(|| now + period)
 }
 
 fn held(engine: &Engine, h: ObjectId) {

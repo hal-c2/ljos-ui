@@ -208,6 +208,12 @@ pub struct MouseArea {
     /// area holds, and disabling or hiding the area leaves it as it was.
     #[qml(notify, reset, enumeration = "Qt.CursorShape")]
     pub cursor_shape: i32,
+    /// Milliseconds a press is held before it says `pressAndHold`. A
+    /// negative value reads as the system's (`crate::press_and_hold`).
+    #[qml(notify, reset)]
+    pub press_and_hold_interval: i32,
+    #[qml(skip)]
+    pub(crate) hold: std::rc::Rc<crate::press_and_hold::Hold>,
 }
 
 impl Default for MouseArea {
@@ -224,12 +230,23 @@ impl Default for MouseArea {
             prevent_stealing: false,
             drag: crate::drag::Drag::default(),
             cursor_shape: 0,
+            press_and_hold_interval: crate::system_prefs::PRESS_AND_HOLD_INTERVAL,
+            hold: Default::default(),
         }
     }
 }
 
 #[qml_impl]
 impl MouseArea {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        crate::press_and_hold::completed(cx.engine, cx.this);
+        Ok(())
+    }
+
+    /// The press was held for `pressAndHoldInterval`.
+    #[qml(signal, name = "pressAndHold")]
+    fn press_and_hold(mouse: Option<ObjectId>);
     #[qml(signal, name = "pressed")]
     fn press_signal(mouse: Option<ObjectId>);
     #[qml(signal)]
@@ -390,9 +407,9 @@ pub struct TapHandler {
     /// system's press-and-hold interval (`crate::long_press`).
     #[qml(notify, reset)]
     pub long_press_threshold: f64,
-    /// Seconds the press has been held; -1 while nothing is pressed. It
-    /// changes when the press begins, when it becomes a long press and
-    /// when it ends, not while it is held.
+    /// Seconds the press has been held; -1 while nothing is pressed. While
+    /// it is held it is brought up to date once for each frame
+    /// (`crate::long_press::tick`).
     #[qml(notify, readonly)]
     pub time_held: f64,
     #[qml(skip)]

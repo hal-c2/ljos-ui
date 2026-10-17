@@ -512,6 +512,10 @@ pub(crate) fn set_frame_period(engine: &Engine, period: Duration) {
     driver(engine).sched.borrow_mut().set_frame_period(period);
 }
 
+pub(crate) fn frame_period(engine: &Engine) -> Duration {
+    driver(engine).sched.borrow().frame_period()
+}
+
 /// Frame step 5: brings every run to `now`, the frame's time.
 pub(crate) fn tick(engine: &Engine, now: Time) {
     let d = driver(engine);

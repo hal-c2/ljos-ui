@@ -40,6 +40,7 @@ mod paint_item;
 mod particles;
 mod pointer_item;
 mod positioners;
+mod press_and_hold;
 mod rectangle;
 mod repeater;
 mod safe_area;

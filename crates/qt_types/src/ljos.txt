@@ -1759,6 +1759,7 @@ module QtQuick
 		prop preventStealing QtQml.bool named
 		prop drag QtQuick.Drag pointer readonly
 		prop cursorShape Qt::CursorShape reset
+		prop pressAndHoldInterval QtQml.int named reset
 		signal hoverEnabledChanged
 		signal containsMouseChanged
 		signal pressedChanged
@@ -1768,6 +1769,8 @@ module QtQuick
 		signal acceptedButtonsChanged
 		signal preventStealingChanged
 		signal cursorShapeChanged
+		signal pressAndHoldIntervalChanged
+		signal pressAndHold mouse
 		signal pressed mouse
 		signal released mouse
 		signal clicked mouse
