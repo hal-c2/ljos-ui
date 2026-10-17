@@ -102,7 +102,9 @@ mcp = ["dev", "ljos_dev/mcp"]
 ljos_shell = { path = ".", features = ["eframe"] }
 # The demo_qml example starts through the facade's App builder, as an
 # application does (a dev-only cycle: the facade's shell is this crate).
-ljos = { path = "../ljos" }
+# tests/dev.rs watches files against the types a program registers, which
+# `dev-qml`'s EngineOracle knows.
+ljos = { path = "../ljos", features = ["dev-qml"] }
 # Only the demo_qml example compiles QML; the shell itself never links the
 # compiler.
 ljos_compiler = { path = "../ljos_compiler" }

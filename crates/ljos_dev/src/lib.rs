@@ -47,6 +47,8 @@ pub use host::{
     fault_of, prepare,
 };
 pub use overlay::Overlay;
+/// What the watched files are compiled against.
+pub use qml_front::{QtTypeOracle, TypeOracle};
 pub use reloader::{Build, Reloader, Touch, classify};
 pub use text::{ProjectTexts, text_compiler};
 pub use top::{FrameStats, Top, TopRow, TopView};

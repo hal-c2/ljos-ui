@@ -348,10 +348,13 @@ impl Run {
                 setup.on_reload(|report| {
                     crate::stderr::line(&format!("ljos: {}", describe(report)))
                 });
-                let root = setup.watch_with_properties(
+                // The compiler knows what the engine was given above.
+                let oracle = ljos::dev::EngineOracle::from_engine(setup.engine());
+                let root = setup.watch_with(
                     &main,
                     project.as_deref(),
                     crate::render::example_properties(example.as_deref()),
+                    oracle,
                 )?;
                 // A project that does not compile opens all the same: the
                 // window says why, and so does the terminal.

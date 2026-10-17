@@ -12,7 +12,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos_dev::{DevSession, Host, Overlay, Report};
+use ljos_dev::{DevSession, Host, Overlay, QtTypeOracle, Reloader, Report, TypeOracle};
 use ljos_egui::QmlView;
 use ljos_engine::{Engine, LogLevel, ObjectId, Value};
 use ljos_quick::Item;
@@ -85,26 +85,34 @@ impl<M> Setup<'_, M> {
         main: &Path,
         project: Option<&Path>,
     ) -> Result<ObjectId, SetupError> {
-        self.watch_with_properties(main, project, Vec::new())
+        self.watch_with(main, project, Vec::new(), QtTypeOracle)
     }
 
     /// As [`watch_in`](Self::watch_in), the root given `properties` as it
-    /// is made, and again each time a reload makes it.
+    /// is made and again each time a reload makes it, and the files
+    /// compiled against `oracle`: one that knows the types the program
+    /// registers on the engine, where it registers any.
     ///
     /// # Errors
     /// As [`watch_in`](Self::watch_in).
-    pub fn watch_with_properties(
+    pub fn watch_with<O>(
         &mut self,
         main: &Path,
         project: Option<&Path>,
         properties: Vec<(String, Value)>,
-    ) -> Result<ObjectId, SetupError> {
+        oracle: O,
+    ) -> Result<ObjectId, SetupError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         let engine = self.engine;
-        let session = DevSession::open_with_properties(
+        let session = DevSession::open_with(
             engine,
             main,
             project,
             properties,
+            oracle,
             Arc::clone(&self.dev.wake),
         )?;
         let (root, placeholder) = match session.root() {

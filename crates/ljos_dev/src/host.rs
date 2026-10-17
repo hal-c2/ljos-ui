@@ -224,19 +224,26 @@ impl DevSession {
         project: Option<&Path>,
         wake: WakeHook,
     ) -> Result<Self, DevError> {
-        Self::open_with_properties(engine, main, project, Vec::new(), wake)
+        Self::open_with(engine, main, project, Vec::new(), QtTypeOracle, wake)
     }
 
     /// As [`open_in`](Self::open_in), the root given `properties` as it is
-    /// made (a `required property` the program sets). A reload makes it
-    /// again with the same ones.
-    pub fn open_with_properties(
+    /// made (a `required property` the program sets), and the files
+    /// compiled against `oracle`: Qt's types, and the ones the program
+    /// registers on `engine`. A reload makes the root again with the same
+    /// properties.
+    pub fn open_with<O>(
         engine: &Engine,
         main: &Path,
         project: Option<&Path>,
         properties: Vec<(String, Value)>,
+        oracle: O,
         wake: WakeHook,
-    ) -> Result<Self, DevError> {
+    ) -> Result<Self, DevError>
+    where
+        O: TypeOracle + Clone + Send + 'static,
+        Reloader<O>: Send,
+    {
         // The watcher is told absolute paths; with the same root they
         // are the project's.
         let main = std::fs::canonicalize(main).map_err(|_| DevError::NotQml(main.to_owned()))?;
@@ -258,7 +265,7 @@ impl DevSession {
         };
         let dir = dir.as_path();
         prepare(engine);
-        let mut reloader = Reloader::open(dir, QtTypeOracle)?;
+        let mut reloader = Reloader::open(dir, oracle)?;
         let texts = ProjectTexts::new(dir);
         engine.set_qml_text_compiler(Some(texts.compiler()));
         let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));

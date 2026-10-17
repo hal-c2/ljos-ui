@@ -33,6 +33,18 @@ struct Window {
 }
 
 fn window(main: &str) -> Window {
+    window_with(main, |setup, entry| setup.watch(entry))
+}
+
+/// As [`window`], the root made by `watch`.
+fn window_with(
+    main: &str,
+    watch: impl FnOnce(
+        &mut ljos_shell::Setup<'_, ()>,
+        &std::path::Path,
+    ) -> Result<ObjectId, ljos_shell::SetupError>
+    + 'static,
+) -> Window {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().canonicalize().unwrap();
     fs::write(dir.join("Main.qml"), main).unwrap();
@@ -50,7 +62,7 @@ fn window(main: &str) -> Window {
                 &cc.egui_ctx,
                 &ShellConfig::default(),
                 Arc::new(SystemClock::new()),
-                |setup| setup.watch(&entry),
+                |setup| watch(setup, &entry),
             )
             .unwrap()
         });
@@ -235,4 +247,39 @@ fn a_window_that_is_not_watched_has_no_reloads() {
     });
     assert_eq!(h.state().reloads(), None);
     assert!(h.state().reload_overlay().is_none());
+}
+
+/// A type the program registers, which no table of Qt's types has.
+#[derive(Debug, Default, ljos::prelude::QmlObject)]
+#[qml(module = "Example", name = "Stepper")]
+pub struct Stepper {
+    #[qml(notify)]
+    pub step: i32,
+}
+
+#[test]
+fn a_type_the_program_registers_is_known_to_the_watched_files() {
+    const OWN: &str = r#"import QtQuick
+import Example
+Item {
+  objectName: "root"
+  property int taps: 0
+  Stepper { id: stepper; step: 2 }
+  Rectangle { objectName: "box"; width: 10 * stepper.step; height: 10 }
+}
+"#;
+    let mut w = window_with(OWN, |setup, entry| {
+        setup
+            .engine()
+            .register_module(ljos::module!("Example" 1.0 => [Stepper]));
+        let oracle = ljos::dev::EngineOracle::from_engine(setup.engine());
+        setup.watch_with(entry, None, Vec::new(), oracle)
+    });
+    assert!(w.h.state().reload_overlay().is_none());
+    assert_eq!(w.num("box", "width"), 20.0);
+
+    w.save(&OWN.replace("step: 2", "step: 3"));
+    w.until(|app| app.reloads() == Some(1));
+    assert!(w.h.state().reload_overlay().is_none());
+    assert_eq!(w.num("box", "width"), 30.0);
 }

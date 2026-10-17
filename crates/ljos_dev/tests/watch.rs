@@ -17,6 +17,7 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::QuickScene;
 use ljos_render::kurbo;
 use ljos_runtime::{Clock as _, SystemClock};
+use qml_front::QtTypeOracle;
 
 /// Long enough for a debug build on a loaded machine; a wake ends the
 /// wait at once.
@@ -59,11 +60,12 @@ fn app_with(files: &[(&str, &str)], properties: Vec<(String, Value)>) -> App {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     let (tx, woke) = mpsc::channel();
-    let session = DevSession::open_with_properties(
+    let session = DevSession::open_with(
         &engine,
         &dir.join("Main.qml"),
         None,
         properties,
+        QtTypeOracle,
         Arc::new(move || {
             let _ = tx.send(());
         }),
