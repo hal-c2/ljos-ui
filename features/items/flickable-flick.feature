@@ -65,6 +65,15 @@ Feature: Flicking a Flickable
       Then the property "flicking" of "f" is false
       And the property "moving" of "f" is false
 
+    Scenario: Content a program moves stops where it is put
+      When the method "flick" of "f" is called with 0, -2000
+      And 100 milliseconds pass
+      And the property "contentY" of "f" is set to 500
+      Then the property "flicking" of "f" is false
+      And the property "moving" of "f" is false
+      When 100 milliseconds pass
+      Then the property "contentY" of "f" is 500
+
     # On Ljós the steps of this scenario happen at one instant of the
     # virtual clock, so the pointer has no speed when it is let go; the
     # same drag with time between the moves flicks there

@@ -83,6 +83,9 @@ pub(crate) struct FlingState {
     caught: Cell<[bool; 2]>,
     /// What was caught was a fling, which has `flickEnded` to say.
     caught_flick: Cell<bool>,
+    /// Where the curves last put the content: content found elsewhere was
+    /// moved by someone else.
+    placed: Cell<[f64; 2]>,
 }
 
 impl FlingState {
@@ -181,6 +184,11 @@ pub(crate) fn place(e: &Engine, f: ObjectId, axis: usize, at: f64, velocity: f64
     let state = e.untrack(|| bounds(e, f, axis));
     let inside = state.clamp(at);
     let shown = if stops_at_bounds(e, f) { inside } else { at };
+    if let Some(st) = state_of(e, f) {
+        let mut placed = st.fling.placed.get();
+        placed[axis] = shown;
+        st.fling.placed.set(placed);
+    }
     e.batch(|| {
         scroll_to(e, f, axis, shown);
         put(e, f, overshoot_prop(axis), Value::Real(at - inside));
@@ -223,10 +231,12 @@ pub(crate) fn begin(
     kind: Kind,
 ) {
     let mut runs = st.fling.runs.get();
+    let mut placed = st.fling.placed.get();
     let mut any = false;
     for axis in [X, Y] {
         let Some(seg) = segs[axis] else { continue };
         let b = e.untrack(|| bounds(e, f, axis));
+        placed[axis] = b.position;
         runs[axis] = Some(AxisRun {
             seg,
             start: Start::Called(e.now()),
@@ -241,6 +251,7 @@ pub(crate) fn begin(
         return;
     }
     st.fling.runs.set(runs);
+    st.fling.placed.set(placed);
     let list = active(e);
     if !list.0.borrow().contains(&f) {
         list.0.borrow_mut().push(f);
@@ -287,6 +298,27 @@ pub(crate) fn stop(e: &Engine, f: ObjectId, st: &FlickState, axes: [bool; 2]) {
     }
     show_flicking(e, f, st);
     sync_moving(e, f, st);
+}
+
+/// The content of `f` moved in one direction. Content that something
+/// else put somewhere other than where its curve has it (a program that
+/// sets `contentY`) stops there, and stops moving, as on qml6. Half a
+/// pixel is `pixelAligned` rounding what the curve put.
+pub(crate) fn moved(e: &Engine, f: ObjectId, axis: usize) {
+    let Some(st) = state_of(e, f) else { return };
+    let Some(run) = st.fling.runs.get()[axis] else {
+        return;
+    };
+    let at = e.untrack(|| bounds(e, f, axis).position);
+    if run.driven || (at - st.fling.placed.get()[axis]).abs() <= 0.5 {
+        return;
+    }
+    let mut axes = [false; 2];
+    axes[axis] = true;
+    stop(e, f, &st, axes);
+    if run.kind == Kind::Wheel {
+        super::wheel_rested(e, f);
+    }
 }
 
 /// Stops whatever moves `f` by itself.

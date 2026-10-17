@@ -740,8 +740,11 @@ impl Flickable {
                 })?;
             }
             // `pixelAligned`: the content rests on whole pixels, whoever
-            // put it where it is.
-            e.watch(me, d.position, move |e, _| align(e, me, axis))?;
+            // put it where it is. Content someone else moved stops moving.
+            e.watch(me, d.position, move |e, _| {
+                align(e, me, axis);
+                fling::moved(e, me, axis);
+            })?;
         }
         e.watch(me, Flickable::PIXEL_ALIGNED.index, move |e, _| {
             for axis in [X, Y] {
