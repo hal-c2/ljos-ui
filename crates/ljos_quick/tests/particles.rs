@@ -197,22 +197,23 @@ fn a_step_looks_only_at_the_emitters_that_may_give_birth() {
     assert!(few <= 2 * 64 + 2, "{few} looks");
 }
 
-/// How many particles a second of steps hands painters, with ten
-/// particles in each of four groups, a painter for each group and `idle`
-/// painters of groups that have none.
+/// How many particles a second of steps and frames hands painters, with
+/// ten particles in each of four groups, a painter for each group and
+/// `idle` painters of groups that have none.
 fn particles_painted_with(idle: usize) -> u64 {
     let e = engine();
+    ImageStore::of(&e).register_resource("file:///dot.png", png(8, 8, [255, 0, 0, 255]));
     let clock = Arc::new(VirtualClock::new());
     e.set_clock(Rc::new(clock.clone()));
     let idle_painters = (0..idle)
-        .map(|i| format!(r#"ImageParticle {{ groups: ["none{i}"] }}"#))
+        .map(|i| format!(r#"ImageParticle {{ source: "file:///dot.png"; groups: ["none{i}"] }}"#))
         .collect::<Vec<_>>()
         .join("\n");
     let emitters = ["a", "b", "c", "d"]
         .map(|g| {
             format!(
                 r#"Emitter {{ objectName: "{g}"; group: "{g}"; enabled: false; lifeSpan: 5000; width: 10; height: 10 }}
-      ImageParticle {{ groups: ["{g}"] }}"#
+      ImageParticle {{ source: "file:///dot.png"; groups: ["{g}"] }}"#
             )
         })
         .join("\n");
@@ -233,10 +234,13 @@ fn particles_painted_with(idle: usize) -> u64 {
         e.invoke_by_name(find(&e, root, g), "burst", &[Value::Int(10)])
             .unwrap();
     }
+    let mut s = scene(&e, root, 300.0, 300.0);
+    frame(&mut s, &e);
     let before = ljos_quick::particles_painted(&e);
     for t in (16..=1000u32).step_by(16) {
         clock.set(Time::from_millis(u64::from(t)));
         e.advance_timers(Time::from_millis(u64::from(t)));
+        frame(&mut s, &e);
     }
     ljos_quick::particles_painted(&e) - before
 }
@@ -299,4 +303,44 @@ fn particles_of_many_colours_draw_one_picture() {
     // A picture made for each colour was a texture and a batch each.
     assert!(tints.len() > 50, "{} colours", tints.len());
     assert_eq!(pictures.len(), 1, "one picture for every colour");
+}
+
+#[test]
+fn a_wake_that_catches_up_on_steps_places_the_pictures_once() {
+    let e = engine();
+    ImageStore::of(&e).register_resource("file:///dot.png", png(8, 8, [255, 0, 0, 255]));
+    let root = load(
+        &e,
+        r#"
+    import QtQuick
+    import QtQuick.Particles
+    ParticleSystem {
+      objectName: "system"
+      width: 300; height: 300
+      Emitter { objectName: "emitter"; enabled: false; lifeSpan: 5000; width: 10; height: 10 }
+      ImageParticle { source: "file:///dot.png" }
+    }"#,
+    );
+    let sys = find(&e, root, "system");
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let mut s = scene(&e, root, 300.0, 300.0);
+    frame(&mut s, &e);
+    e.invoke_by_name(find(&e, root, "emitter"), "burst", &[Value::Int(50)])
+        .unwrap();
+    clock.set(Time::from_millis(16));
+    e.advance_timers(Time::from_millis(16));
+    frame(&mut s, &e);
+    assert!(!get(&e, sys, "empty").to_boolean());
+    // A host away for 160 ms: ten steps in one wake, then one frame.
+    let before = ljos_quick::particles_painted(&e);
+    clock.set(Time::from_millis(176));
+    e.advance_timers(Time::from_millis(176));
+    assert_eq!(
+        ljos_quick::particles_painted(&e),
+        before,
+        "nothing is placed before a frame asks"
+    );
+    frame(&mut s, &e);
+    assert_eq!(ljos_quick::particles_painted(&e) - before, 50);
 }

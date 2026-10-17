@@ -491,9 +491,10 @@ impl ImageParticle {
             ] {
                 let _ = e.read(pa, p);
             }
-            if let Some(sys) = system_of(e, pa, ParticlePainter::SYSTEM.index) {
-                paint(e, sys, Some(pa));
-            }
+            let _ = system_of(e, pa, ParticlePainter::SYSTEM.index);
+            // Placed when the scene next asks, so that this follows only
+            // the look and not every step.
+            e.untrack(|| restale(e, pa));
         })?;
         Ok(())
     }
@@ -612,6 +613,10 @@ struct SystemRun {
     timer: Option<ObjectId>,
     /// Whether the `startTime` run-ahead was done.
     warmed: bool,
+    /// Where the particles of each group are, found once after they
+    /// change: a painter walks only the groups it draws, where each
+    /// walking all of them costs the painters times the particles.
+    groups: Option<Vec<(Rc<str>, Vec<usize>)>>,
 }
 
 impl Default for SystemRun {
@@ -621,7 +626,24 @@ impl Default for SystemRun {
             particles: Vec::new(),
             timer: None,
             warmed: false,
+            groups: None,
         }
+    }
+}
+
+impl SystemRun {
+    fn grouped(&mut self) {
+        if self.groups.is_some() {
+            return;
+        }
+        let mut by_group: Vec<(Rc<str>, Vec<usize>)> = Vec::new();
+        for (i, p) in self.particles.iter().enumerate() {
+            match by_group.iter_mut().find(|(g, _)| *g == p.group) {
+                Some((_, at)) => at.push(i),
+                None => by_group.push((p.group.clone(), vec![i])),
+            }
+        }
+        self.groups = Some(by_group);
     }
 }
 
@@ -835,6 +857,7 @@ fn reset(e: &Engine, sys: ObjectId) {
     if let Some(run) = system_run(e, sys) {
         let mut r = run.borrow_mut();
         r.particles.clear();
+        r.groups = None;
         r.rng = Rng::new(SEED);
         r.warmed = false;
     }
@@ -1028,6 +1051,7 @@ type Burst = (u32, Option<(f64, f64)>);
 
 /// Advances the live particles one step, then lets the emitters add theirs.
 fn step_particles(run: &mut SystemRun, reaches: &[Reach], emitters: &[(EmitterSpec, Vec<Burst>)]) {
+    run.groups = None;
     let SystemRun { rng, particles, .. } = run;
     particles.retain_mut(|p| {
         let reached: Vec<&Reach> = reaches
@@ -1161,9 +1185,10 @@ fn step_system(e: &Engine, sys: ObjectId) {
     finish(e, sys);
 }
 
-/// Draws, reports `empty`, and stops the timer when there is nothing left.
+/// Asks for a repaint, reports `empty`, and stops the timer when there is
+/// nothing left.
 fn finish(e: &Engine, sys: ObjectId) {
-    paint(e, sys, None);
+    mark(e, sys);
     let empty = system_run(e, sys).is_none_or(|r| r.borrow().particles.is_empty());
     write_internal_bool(e, sys, ParticleSystem::EMPTY.index, empty);
     sync_timer(e, sys);
@@ -1175,89 +1200,60 @@ fn write_internal_bool(e: &Engine, obj: ObjectId, p: PropIndex, v: bool) {
 
 // ------------------------------------------------------------ painting
 
-/// What one picture shows.
-struct Sprite {
-    x: f64,
-    y: f64,
-    size: f64,
-    opacity: f64,
-    /// What the picture's colours are multiplied by; none leaves them.
-    tint: Option<Rgba>,
-}
-
-/// Places the pictures of `only`, or of every painter of the system.
-fn paint(e: &Engine, sys: ObjectId, only: Option<ObjectId>) {
+/// The particles changed: every painter that shows some, or did, is drawn
+/// again. Its pictures are placed when the scene draws, so a wake that
+/// catches up on several steps places them once, and a window that shows
+/// no frame places none.
+fn mark(e: &Engine, sys: ObjectId) {
     let Some(run) = system_run(e, sys) else {
         return;
     };
-    let painters = match only {
-        Some(p) => vec![p],
-        None => painters_of(e, sys),
-    };
-    let run = run.borrow();
-    // The particles of each group, found once: a painter walks only the
-    // groups it draws, where each walking all of them costs the painters
-    // times the particles on every step.
-    let mut by_group: Vec<(&str, Vec<usize>)> = Vec::new();
-    for (i, p) in run.particles.iter().enumerate() {
-        match by_group.iter_mut().find(|(g, _)| *g == &*p.group) {
-            Some((_, at)) => at.push(i),
-            None => by_group.push((&p.group, vec![i])),
+    if run.borrow().groups.is_none() {
+        run.borrow_mut().grouped();
+    }
+    let groups: Vec<Rc<str>> = run
+        .borrow()
+        .groups
+        .iter()
+        .flatten()
+        .map(|(g, _)| g.clone())
+        .collect();
+    let groups: Vec<&str> = groups.iter().map(|g| &**g).collect();
+    let reg = registry(e);
+    for pa in painters_of(e, sys).into_iter().filter(|p| e.is_alive(*p)) {
+        let mine = groups_of(e, pa, ParticlePainter::GROUPS.index);
+        let has = if mine.is_empty() {
+            groups.contains(&"")
+        } else {
+            mine.iter().any(|g| groups.contains(&g.as_str()))
+        };
+        let serial = {
+            let mut shown = reg.shown.borrow_mut();
+            let Some(s) = shown.get_mut(&pa) else {
+                continue;
+            };
+            // Nothing shown before or now: no repaint.
+            let again = has || s.has;
+            s.has = has;
+            s.serial.filter(|_| again)
+        };
+        if let Some(n) = serial {
+            bump(e, n);
         }
     }
-    let so = e.untrack(|| origin(e, sys));
-    let reg = registry(e);
-    for pa in painters.into_iter().filter(|p| e.is_alive(*p)) {
-        let groups = groups_of(e, pa, ParticlePainter::GROUPS.index);
-        let mine: Vec<usize> = by_group
-            .iter()
-            .filter(|(g, _)| {
-                if groups.is_empty() {
-                    g.is_empty()
-                } else {
-                    groups.iter().any(|x| x == g)
-                }
-            })
-            .flat_map(|(_, at)| at.iter().copied())
-            .collect();
-        reg.painted.set(reg.painted.get() + mine.len() as u64);
-        let po = e.untrack(|| origin(e, pa));
-        let off = (po.0 - so.0, po.1 - so.1);
-        let color = match e.untrack(|| e.read(pa, ImageParticle::COLOR.index)) {
-            Value::Color(c) => c,
-            _ => Color::WHITE,
-        };
-        let [cr, cg, cb, ca] = color.to_rgba_f();
-        let cv = number(e, pa, ImageParticle::COLOR_VARIATION.index);
-        let alpha = number(e, pa, ImageParticle::ALPHA.index);
-        let av = number(e, pa, ImageParticle::ALPHA_VARIATION.index);
-        let effect = number(e, pa, ImageParticle::ENTRY_EFFECT.index) as i32;
-        let sprites = mine.into_iter().map(|i| {
-            let p = &run.particles[i];
-            let fade = sim::entry_factor(p.age, p.life);
-            let size = p.current_size() * if effect == 2 { fade } else { 1.0 };
-            let a = ((ca * alpha + p.dice[3] * av).clamp(0.0, 1.0))
-                * if effect == 1 { fade } else { 1.0 };
-            let shift = p.dice[0] * cv;
-            let (r, g, b) = (
-                (cr + shift).clamp(0.0, 1.0),
-                (cg + shift).clamp(0.0, 1.0),
-                (cb + shift).clamp(0.0, 1.0),
-            );
-            let white = r >= 0.999 && g >= 0.999 && b >= 0.999;
-            Sprite {
-                x: p.x - off.0 - size / 2.0,
-                y: p.y - off.1 - size / 2.0,
-                size,
-                opacity: a,
-                tint: (!white).then(|| Rgba::from_straight(r as f32, g as f32, b as f32, 1.0)),
-            }
-        });
-        let raw = e
-            .untrack(|| e.read(pa, ImageParticle::SOURCE.index))
-            .to_js_string();
-        place(e, pa, raw.as_str(), sprites);
+}
+
+/// The look of `pa` changed: it is drawn again.
+fn restale(e: &Engine, pa: ObjectId) {
+    let serial = registry(e).shown.borrow().get(&pa).and_then(|s| s.serial);
+    if let Some(n) = serial {
+        bump(e, n);
     }
+}
+
+fn bump(e: &Engine, n: NodeId) {
+    let next = e.graph().get_untracked(n).to_number() as i32 + 1;
+    e.graph().set(n, Value::Int(next));
 }
 
 /// How many particles painters have looked at.
@@ -1274,7 +1270,8 @@ struct Shown {
     /// none when it could not be read.
     source: Option<String>,
     image: Option<ImageHandle>,
-    paint: Rc<Pictures>,
+    /// Whether the painter had particles to draw when last looked at.
+    has: bool,
 }
 
 /// Every particle of a painter, drawn into the painter's own node: one
@@ -1284,87 +1281,145 @@ struct Shown {
 /// Every particle draws the one picture and carries its colour as a tint,
 /// as Qt colours a particle: a picture for each colour cost its pixels and
 /// a texture, and drew each particle as a batch of its own.
-#[derive(Debug, Default)]
+///
+/// The particles are placed when the scene draws, not when it reads this:
+/// a timer that catches up fires several steps before one frame.
 struct Pictures {
-    image: Option<ImageHandle>,
-    quads: Vec<(kurbo::Rect, f32, Option<Rgba>)>,
+    image: ImageHandle,
+    run: Rc<RefCell<SystemRun>>,
+    reg: Rc<Registry>,
+    /// The groups drawn; none draws the default group.
+    groups: Vec<String>,
+    /// The painter's place in the system's coordinates.
+    off: (f64, f64),
+    color: [f64; 4],
+    color_variation: f64,
+    alpha: f64,
+    alpha_variation: f64,
+    entry_effect: i32,
+}
+
+impl std::fmt::Debug for Pictures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pictures")
+            .field("groups", &self.groups)
+            .field("off", &self.off)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
+struct NoPictures;
+
+impl ItemPaint for NoPictures {
+    fn paint(&self, _size: kurbo::Size, _text: &mut TextEngine, _out: &mut DisplayListBuilder) {}
 }
 
 impl ItemPaint for Pictures {
     fn paint(&self, _size: kurbo::Size, _text: &mut TextEngine, out: &mut DisplayListBuilder) {
-        let Some(image) = &self.image else {
-            return;
-        };
-        let src = image.rect();
-        for (dst, opacity, tint) in &self.quads {
+        if self.run.borrow().groups.is_none() {
+            self.run.borrow_mut().grouped();
+        }
+        let run = self.run.borrow();
+        let src = self.image.rect();
+        let [cr, cg, cb, ca] = self.color;
+        let mut looked = 0;
+        let mine = run.groups.iter().flatten().filter(|(g, _)| {
+            if self.groups.is_empty() {
+                g.is_empty()
+            } else {
+                self.groups.iter().any(|x| **x == **g)
+            }
+        });
+        for i in mine.flat_map(|(_, at)| at.iter().copied()) {
+            looked += 1;
+            let p = &run.particles[i];
+            let fade = sim::entry_factor(p.age, p.life);
+            let size = p.current_size() * if self.entry_effect == 2 { fade } else { 1.0 };
+            let a = ((ca * self.alpha + p.dice[3] * self.alpha_variation).clamp(0.0, 1.0))
+                * if self.entry_effect == 1 { fade } else { 1.0 };
+            if a <= 0.0 || size <= 0.0 {
+                continue;
+            }
+            let shift = p.dice[0] * self.color_variation;
+            let (r, g, b) = (
+                (cr + shift).clamp(0.0, 1.0),
+                (cg + shift).clamp(0.0, 1.0),
+                (cb + shift).clamp(0.0, 1.0),
+            );
+            let white = r >= 0.999 && g >= 0.999 && b >= 0.999;
+            let (x, y) = (p.x - self.off.0 - size / 2.0, p.y - self.off.1 - size / 2.0);
             out.push(DrawOp::Image {
-                image: image.clone(),
+                image: self.image.clone(),
                 src,
-                dst: *dst,
+                dst: kurbo::Rect::new(x, y, x + size, y + size),
                 tile: None,
                 mirror: [false; 2],
                 smooth: true,
-                opacity: *opacity,
-                tint: *tint,
+                opacity: a as f32,
+                tint: (!white).then(|| Rgba::from_straight(r as f32, g as f32, b as f32, 1.0)),
             });
         }
+        self.reg.painted.set(self.reg.painted.get() + looked);
     }
 }
 
+/// What `pa` shows. Only its serial is followed: the look effect and the
+/// steps bump it, and what is read here is read untracked.
 fn read_pictures(e: &Engine, pa: ObjectId) -> Rc<dyn ItemPaint> {
     let reg = registry(e);
-    let shown = reg.shown.borrow();
-    let Some(s) = shown.get(&pa) else {
-        return Rc::new(Pictures::default());
+    let serial = reg.shown.borrow().get(&pa).map(|s| s.serial);
+    let Some(serial) = serial else {
+        return Rc::new(NoPictures);
     };
-    if let Some(n) = s.serial {
+    if let Some(n) = serial {
         let _ = e.graph().get(n);
     }
-    s.paint.clone()
+    match e.untrack(|| look_of(e, pa)) {
+        Some(p) => Rc::new(p),
+        None => Rc::new(NoPictures),
+    }
 }
 
-fn place(e: &Engine, pa: ObjectId, raw: &str, sprites: impl Iterator<Item = Sprite>) {
+fn look_of(e: &Engine, pa: ObjectId) -> Option<Pictures> {
+    if !e.is_alive(pa) {
+        return None;
+    }
+    let sys = system_of(e, pa, ParticlePainter::SYSTEM.index)?;
+    let run = system_run(e, sys)?;
     let reg = registry(e);
-    let mut shown = reg.shown.borrow_mut();
-    let Some(s) = shown.get_mut(&pa) else {
-        return;
-    };
-    if s.source.as_deref() != Some(raw) {
-        let url = if raw.is_empty() {
-            Atom::from("")
-        } else {
-            Atom::from(e.resolve_url(pa, raw).as_str())
-        };
-        s.source = Some(raw.to_owned());
-        s.image = load_picture(e, &url);
-    }
-    let serial = s.serial;
-    let image = s.image.clone();
-    let quads = match &image {
-        Some(_) => sprites
-            .filter(|sp| sp.opacity > 0.0 && sp.size > 0.0)
-            .map(|sp| {
-                let dst = kurbo::Rect::new(sp.x, sp.y, sp.x + sp.size, sp.y + sp.size);
-                (dst, sp.opacity.clamp(0.0, 1.0) as f32, sp.tint)
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-    drop(shown);
-    let still_empty = {
+    let raw = e.read(pa, ImageParticle::SOURCE.index).to_js_string();
+    let image = {
         let mut shown = reg.shown.borrow_mut();
-        let Some(s) = shown.get_mut(&pa) else {
-            return;
-        };
-        let still_empty = s.paint.quads.is_empty() && quads.is_empty();
-        s.paint = Rc::new(Pictures { image, quads });
-        still_empty
+        let s = shown.get_mut(&pa)?;
+        if s.source.as_deref() != Some(raw.as_str()) {
+            let url = if raw.is_empty() {
+                Atom::from("")
+            } else {
+                Atom::from(e.resolve_url(pa, raw.as_str()).as_str())
+            };
+            s.source = Some(raw.as_str().to_owned());
+            s.image = load_picture(e, &url);
+        }
+        s.image.clone()?
     };
-    // Nothing shown before or now: no repaint.
-    if !still_empty && let Some(n) = serial {
-        let next = e.graph().get_untracked(n).to_number() as i32 + 1;
-        e.graph().set(n, Value::Int(next));
-    }
+    let (so, po) = (origin(e, sys), origin(e, pa));
+    let color = match e.read(pa, ImageParticle::COLOR.index) {
+        Value::Color(c) => c,
+        _ => Color::WHITE,
+    };
+    Some(Pictures {
+        image,
+        run,
+        groups: groups_of(e, pa, ParticlePainter::GROUPS.index),
+        off: (po.0 - so.0, po.1 - so.1),
+        color: color.to_rgba_f(),
+        color_variation: number(e, pa, ImageParticle::COLOR_VARIATION.index),
+        alpha: number(e, pa, ImageParticle::ALPHA.index),
+        alpha_variation: number(e, pa, ImageParticle::ALPHA_VARIATION.index),
+        entry_effect: number(e, pa, ImageParticle::ENTRY_EFFECT.index) as i32,
+        reg,
+    })
 }
 
 /// The picture of `url`, read on this thread as `Image` reads a local
