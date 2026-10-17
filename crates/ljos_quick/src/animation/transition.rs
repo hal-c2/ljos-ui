@@ -4,7 +4,9 @@
 //! The type holds its animations; [`run_transition`] runs them all at
 //! once, the way a `Behavior` runs its one: as driven runs, which show
 //! `running` and emit nothing. An animation that names no target moves
-//! the object the transition is run on, and only the properties it names.
+//! the object the transition is run on, and only the properties it names;
+//! [`run_transition_to`] gives such an animation a property and a value
+//! to move it to instead, as a `Behavior` does.
 //!
 //! A popup runs its `enter` and `exit` transitions this way, and a view
 //! the ones for its delegates.
@@ -19,7 +21,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use ljos_engine::{Atom, Engine, ObjectId, QmlList, QmlObject, QtObject, Value};
+use ljos_engine::{Atom, Engine, ObjectId, PropIndex, QmlList, QmlObject, QtObject, Value};
 use ljos_reactive::WriteKind;
 
 use super::driver;
@@ -106,6 +108,36 @@ pub fn run_transition(
     target: ObjectId,
     done: impl Fn(&Engine) + 'static,
 ) {
+    let defaults = Defaults {
+        obj: target,
+        prop: NO_PROPERTY,
+        to: None,
+    };
+    run(engine, transition, &defaults, Rc::new(done));
+}
+
+/// Runs `transition` as [`run_transition`] does, except that an animation
+/// that names no property moves `prop` of `target` to `to`, as one in a
+/// `Behavior` does; with nothing to run, `prop` is `to` at once. A control
+/// whose own value a transition animates (a swipe's position) runs it this
+/// way.
+pub fn run_transition_to(
+    engine: &Engine,
+    transition: ObjectId,
+    target: ObjectId,
+    prop: PropIndex,
+    to: Value,
+    done: impl Fn(&Engine) + 'static,
+) {
+    let defaults = Defaults {
+        obj: target,
+        prop,
+        to: Some(to),
+    };
+    run(engine, transition, &defaults, Rc::new(done));
+}
+
+fn run(engine: &Engine, transition: ObjectId, defaults: &Defaults, done: Rc<dyn Fn(&Engine)>) {
     let Ok(run) = engine.with::<Transition, _>(transition, |t| t.run.clone()) else {
         return;
     };
@@ -120,17 +152,24 @@ pub fn run_transition(
         Vec::new()
     };
     if anims.is_empty() {
+        // What a `Behavior` without an animation does: the value is there
+        // at once.
+        if let Some(to) = &defaults.to
+            && defaults.prop != NO_PROPERTY
+            && engine.is_alive(defaults.obj)
+        {
+            let _ = engine.write_internal(
+                defaults.obj,
+                defaults.prop,
+                to.clone(),
+                WriteKind::Animation,
+            );
+        }
         done(engine);
         return;
     }
     show_running(engine, transition, true);
     let left = Rc::new(Cell::new(anims.len()));
-    let done: Rc<dyn Fn(&Engine)> = Rc::new(done);
-    let defaults = Defaults {
-        obj: target,
-        prop: NO_PROPERTY,
-        to: None,
-    };
     for anim in anims {
         let (now, left, done) = (run.clone(), left.clone(), done.clone());
         let ended: driver::Done = Rc::new(move |e| {
@@ -143,7 +182,7 @@ pub fn run_transition(
                 done(e);
             }
         });
-        driver::start_driven(engine, anim, &defaults, Some(ended));
+        driver::start_driven(engine, anim, defaults, Some(ended));
         if run.get() != id {
             // Something an animation did stopped the transition.
             return;

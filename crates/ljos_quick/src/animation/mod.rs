@@ -39,7 +39,7 @@ use crate::item::is_a;
 
 pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
-pub use transition::{Transition, run_transition, stop_transition};
+pub use transition::{Transition, run_transition, run_transition_to, stop_transition};
 pub use types::{
     AnchorAnimation, Animation, ColorAnimation, Easing, EasingGroup, NumberAnimation,
     ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction, PropertyAnimation,

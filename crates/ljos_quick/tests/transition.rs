@@ -8,7 +8,9 @@ use std::rc::Rc;
 
 use common::*;
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::{QuickScene, run_transition, running_animation_count, stop_transition};
+use ljos_quick::{
+    QuickScene, run_transition, run_transition_to, running_animation_count, stop_transition,
+};
 use ljos_runtime::Time;
 
 const QML: &str = r#"
@@ -25,6 +27,7 @@ Item {
         NumberAnimation { target: other; property: "y"; to: 30; duration: 50 }
     }
     Transition { objectName: "empty" }
+    Transition { objectName: "plain"; NumberAnimation { duration: 100 } }
     Transition {
         objectName: "off"; enabled: false
         NumberAnimation { property: "x"; to: 7; duration: 100 }
@@ -102,4 +105,47 @@ fn a_transition_with_nothing_to_run_is_over_at_once() {
         assert_eq!(running_animation_count(&e), 0, "{name}");
     }
     assert_eq!(num(&e, b, "x"), 0.0);
+}
+
+#[test]
+fn a_transition_run_to_a_value_moves_the_property_it_is_given() {
+    let (e, mut s, root) = rig();
+    let (t, b) = (find(&e, root, "plain"), find(&e, root, "box"));
+    let x = e.property_index(b, "x").unwrap();
+    let ended = Rc::new(Cell::new(0));
+    let n = ended.clone();
+    run_transition_to(&e, t, b, x, ljos_engine::Value::Real(80.0), move |_| {
+        n.set(n.get() + 1);
+    });
+    frames(&mut s, &e, 0);
+    frames(&mut s, &e, 50);
+    assert_eq!(num(&e, b, "x"), 40.0);
+    frames(&mut s, &e, 150);
+    assert_eq!(num(&e, b, "x"), 80.0);
+    assert_eq!(ended.get(), 1);
+    // The others are left alone.
+    assert_eq!(num(&e, b, "y"), 0.0);
+}
+
+#[test]
+fn a_transition_run_to_a_value_with_nothing_to_run_puts_it_there_at_once() {
+    let (e, _s, root) = rig();
+    let b = find(&e, root, "box");
+    let y = e.property_index(b, "y").unwrap();
+    for name in ["empty", "off"] {
+        let ended = Rc::new(Cell::new(0));
+        let n = ended.clone();
+        run_transition_to(
+            &e,
+            find(&e, root, name),
+            b,
+            y,
+            ljos_engine::Value::Real(9.0),
+            move |_| {
+                n.set(n.get() + 1);
+            },
+        );
+        assert_eq!(ended.get(), 1, "{name}");
+        assert_eq!(num(&e, b, "y"), 9.0, "{name}");
+    }
 }

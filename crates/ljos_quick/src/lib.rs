@@ -72,7 +72,7 @@ pub use animation::{
     RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation, easing,
     running_animation_count, set_animation_frame_period,
 };
-pub use animation::{Transition, run_transition, stop_transition};
+pub use animation::{Transition, run_transition, run_transition_to, stop_transition};
 pub use drag::{Drag, DragAttached, drag_attached, drag_type};
 pub use drop_area::{
     DragData, DragEvent, DropArea, DropAreaDrag, PlatformDrag, PlatformDragKind, platform_drag,
