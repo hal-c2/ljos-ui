@@ -513,7 +513,13 @@ pub(crate) fn attach(
     }
 
     let roles = roles_of(kind);
-    if roles.iter().any(|p| author_set(engine, obj, *p)) {
+    // Only the first colour anybody sets has to tell everything to look.
+    // After that, the objects made with this one read its colours as they
+    // resolve (a creation assigns before anything completes), and one
+    // bump per object would resolve every palette again for each.
+    if !engine.untrack(|| in_use(engine, Which::Palette))
+        && roles.iter().any(|p| author_set(engine, obj, *p))
+    {
         bump(engine, Which::Palette);
     }
     if has_children {
