@@ -220,6 +220,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Then the "role" named "name" has the value "text"` | what the node holds besides its name: the text of an editor; `""` when it has none |
 | `Then the "role" named "name" has "text" selected` | the part of its value that is selected; `""` when none is |
 | `Then the clipboard holds "text"` | the text a paste would insert |
+| `Then the window system is asked for a blurred backdrop behind "w"` | what the host asks the window system to draw behind a `Window` (`backdrop`); also `no backdrop` (`@ljos-only`) |
 | `Then the text file "X" has the line "text"` | a file the application wrote beside the QML files (or `Given` there) has that whole line, once what it writes in the background is on disk (`@ljos-only`: the oracle's files cannot be read back) |
 | `Then the text file "X" does not exist` | the application has not written that file (`@ljos-only`) |
 | `Then the system shows a "kind" dialog titled "title"` | the system's own dialog is up: `"open file"`, `"open files"`, `"save file"`, `"folder"`, `"message"`, `"color"`, `"font"` (`@ljos-only`) |

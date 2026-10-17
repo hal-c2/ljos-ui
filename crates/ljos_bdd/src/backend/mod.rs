@@ -279,6 +279,11 @@ pub trait Backend: fmt::Debug {
     fn wheel(&mut self, _at: (f64, f64), _by: WheelBy) -> Result<()> {
         Err(BackendError::NotImplemented("the wheel"))
     }
+    /// Whether the window system is asked to blur what is behind the
+    /// window at `object`.
+    fn window_backdrop_blurred(&mut self, _object: &str) -> Result<bool> {
+        Err(BackendError::NotImplemented("window backdrops"))
+    }
     /// An assistive technology asks the node with this role and name to
     /// do something. A node that refuses is not an error.
     fn a11y_act(&mut self, _role: &str, _name: &str, _action: A11yAction) -> Result<()> {

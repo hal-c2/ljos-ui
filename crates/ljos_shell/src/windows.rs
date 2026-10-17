@@ -4,9 +4,11 @@
 //! Nothing here touches a window: the functions say what to ask of the
 //! host, so that they can be tested without a display.
 
-use ljos_controls::{FRAMELESS, KIND_MASK, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowShow, WindowSpec};
+use ljos_controls::{
+    FRAMELESS, KIND_MASK, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowBackdrop, WindowShow, WindowSpec,
+};
 use ljos_host::{
-    Capabilities, WindowAttributes, WindowChange, WindowKind, WindowLevel, WindowState,
+    Backdrop, Capabilities, WindowAttributes, WindowChange, WindowKind, WindowLevel, WindowState,
 };
 
 /// `Qt.WindowDoesNotAcceptFocus`.
@@ -92,6 +94,13 @@ fn resizable(spec: &WindowSpec) -> bool {
 }
 
 /// The window's background lets through what is behind it.
+fn backdrop(spec: &WindowSpec) -> Backdrop {
+    match spec.backdrop {
+        WindowBackdrop::None => Backdrop::None,
+        WindowBackdrop::Blur => Backdrop::Blur,
+    }
+}
+
 pub(crate) fn transparent(spec: &WindowSpec) -> bool {
     spec.color[3] < 255
 }
@@ -123,6 +132,7 @@ pub(crate) fn attributes(spec: &WindowSpec, caps: Capabilities) -> WindowAttribu
         level: level(spec.flags),
         kind,
         transparent: transparent(spec),
+        backdrop: backdrop(spec),
         active: spec.flags & NO_FOCUS == 0 && kind != WindowKind::ToolTip,
         // The application's, not the window's: the shell says it.
         app_id: None,
@@ -159,6 +169,9 @@ pub(crate) fn changes(old: &WindowSpec, new: &WindowSpec, caps: Capabilities) ->
     }
     if level(old.flags) != level(new.flags) {
         out.push(WindowChange::Level(level(new.flags)));
+    }
+    if old.backdrop != new.backdrop {
+        out.push(WindowChange::Backdrop(backdrop(new)));
     }
     if old.show != new.show {
         out.push(WindowChange::State(state(new.show)));
@@ -207,6 +220,7 @@ mod tests {
             color: [255; 4],
             opacity: 1.0,
             transient_parent: None,
+            backdrop: WindowBackdrop::None,
         }
     }
 
@@ -335,6 +349,25 @@ mod tests {
         let mut s = spec();
         s.color = [0, 0, 0, 128];
         assert!(attributes(&s, desktop()).transparent);
+    }
+
+    #[test]
+    fn a_backdrop_is_asked_for_when_the_window_opens_and_when_it_changes() {
+        let mut blurred = spec();
+        blurred.color = [0, 0, 0, 128];
+        blurred.backdrop = WindowBackdrop::Blur;
+        let attrs = attributes(&blurred, desktop());
+        assert_eq!(attrs.backdrop, Backdrop::Blur);
+        assert!(attrs.transparent);
+        assert_eq!(attributes(&spec(), desktop()).backdrop, Backdrop::None);
+
+        let mut plain = blurred.clone();
+        plain.backdrop = WindowBackdrop::None;
+        assert_eq!(
+            changes(&blurred, &plain, desktop()),
+            vec![WindowChange::Backdrop(Backdrop::None)]
+        );
+        assert!(!needs_new_window(&blurred, &plain, desktop()));
     }
 
     #[test]

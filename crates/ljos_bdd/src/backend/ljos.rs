@@ -1420,6 +1420,15 @@ impl Backend for LjosBackend {
         self.said(Said::App(setting))
     }
 
+    fn window_backdrop_blurred(&mut self, object: &str) -> Result<bool> {
+        let live = self.live()?;
+        let win = live.find(object)?;
+        let spec = ljos_controls::WindowSystem::of(&live.engine)
+            .spec(&live.engine, win)
+            .ok_or_else(|| failed(format!("\"{object}\" is no window")))?;
+        Ok(spec.backdrop == ljos_controls::WindowBackdrop::Blur)
+    }
+
     fn desktop_setting(
         &mut self,
         namespace: &str,

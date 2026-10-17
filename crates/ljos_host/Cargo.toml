@@ -12,12 +12,15 @@ publish.workspace = true
 default = ["winit"]
 # `WinitHost`: the desktop (and later iOS) host. Without it the crate is the
 # trait and the portable event types only, for a host of another kind.
-winit = ["dep:winit"]
+winit = ["dep:winit", "dep:x11rb"]
 
 [dependencies]
 thiserror.workspace = true
 # The version ARCHITECTURE.md section 24 pins; not in the workspace pins.
 winit = { version = "0.30.13", optional = true }
+
+[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android"), not(target_os = "emscripten"), not(target_os = "redox")))'.dependencies]
+x11rb = { workspace = true, optional = true }
 
 [lints]
 workspace = true

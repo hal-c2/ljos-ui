@@ -2868,6 +2868,7 @@ module QtQuick
 		prototype QtQuick.Rectangle named
 		attached QtQuick.WindowAttached
 		enum Visibility Hidden=0 AutomaticVisibility=1 Windowed=2 Minimized=3 Maximized=4 FullScreen=5
+		enum Backdrop NoBackdrop=0 BlurBackdrop=1
 		prop title QtQml.string named
 		prop visible QtQml.bool named
 		prop x QtQml.int named
@@ -2879,6 +2880,7 @@ module QtQuick
 		prop flags Qt::WindowFlags
 		prop modality Qt::WindowModality
 		prop visibility Visibility
+		prop backdrop Backdrop
 		prop active QtQml.bool named readonly
 		prop transientParent QtQml.QtObject named pointer
 		prop screen QtQml.QtObject named pointer readonly
@@ -2896,6 +2898,7 @@ module QtQuick
 		signal flagsChanged
 		signal modalityChanged
 		signal visibilityChanged
+		signal backdropChanged
 		signal activeChanged
 		signal transientParentChanged
 		signal screenChanged

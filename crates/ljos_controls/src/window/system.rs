@@ -48,6 +48,26 @@ impl WindowShow {
     }
 }
 
+/// What the window system draws behind a window, seen through what the
+/// window's colour leaves see-through (`Window.backdrop`, Ljós's own).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowBackdrop {
+    #[default]
+    None,
+    /// What is behind the window, blurred.
+    Blur,
+}
+
+impl WindowBackdrop {
+    /// From a `Window.Backdrop`; a number that names none is none.
+    pub(super) fn from_qt(v: i32) -> WindowBackdrop {
+        match v {
+            1 => WindowBackdrop::Blur,
+            _ => WindowBackdrop::None,
+        }
+    }
+}
+
 /// `Qt.WindowModality`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Modality {
@@ -126,6 +146,7 @@ pub struct WindowSpec {
     pub color: [u8; 4],
     pub opacity: f64,
     pub transient_parent: Option<ObjectId>,
+    pub backdrop: WindowBackdrop,
 }
 
 /// `Qt.FramelessWindowHint`.
@@ -256,6 +277,7 @@ impl WindowSystem {
                     .read(win, Window::TRANSIENT_PARENT.index)
                     .as_object()
                     .filter(|p| engine.is_alive(*p)),
+                backdrop: WindowBackdrop::from_qt(int(Window::BACKDROP.index)),
             })
         }
     }

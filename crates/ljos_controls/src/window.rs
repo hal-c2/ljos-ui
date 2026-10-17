@@ -37,8 +37,8 @@ pub use app::{Application, ApplicationState, ScreenInfo, ScreenSpec};
 pub use screen::{Screen, ScreenAttached};
 use system::NO_MAXIMUM;
 pub use system::{
-    FRAMELESS, KIND_MASK, Modality, ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowRequest,
-    WindowShow, WindowSpec, WindowSystem,
+    FRAMELESS, KIND_MASK, Modality, ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowBackdrop,
+    WindowRequest, WindowShow, WindowSpec, WindowSystem,
 };
 
 use crate::containers::{Host, bar_height, host_append, host_complete};
@@ -51,19 +51,22 @@ use crate::util::{check, flag, is_a, is_unset, num, object, set_computed};
 const DEPTH: usize = 256;
 
 /// `Window.Windowed`: what `visibility` holds (numbers read off qml6
-/// 6.11.2).
+/// 6.11.2), and `Window.BlurBackdrop`: what `backdrop` holds, Ljós's own.
 fn window_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
-    vec![(
-        "Visibility",
-        vec![
-            ("Hidden", 0),
-            ("AutomaticVisibility", 1),
-            ("Windowed", 2),
-            ("Minimized", 3),
-            ("Maximized", 4),
-            ("FullScreen", 5),
-        ],
-    )]
+    vec![
+        (
+            "Visibility",
+            vec![
+                ("Hidden", 0),
+                ("AutomaticVisibility", 1),
+                ("Windowed", 2),
+                ("Minimized", 3),
+                ("Maximized", 4),
+                ("FullScreen", 5),
+            ],
+        ),
+        ("Backdrop", vec![("NoBackdrop", 0), ("BlurBackdrop", 1)]),
+    ]
 }
 
 const HIDDEN: i32 = 0;
@@ -173,6 +176,11 @@ pub struct Window {
     pub modality: i32,
     #[qml(notify, enumeration = "Visibility")]
     pub visibility: i32,
+    /// What the window system draws behind the window (Ljós's own; Qt
+    /// has no such property). Reads what was asked for, whether or not
+    /// the window system has it.
+    #[qml(notify, enumeration = "Backdrop")]
+    pub backdrop: i32,
     #[qml(notify, readonly)]
     pub active: bool,
     /// The window this one belongs to: the window it was declared in,
@@ -213,6 +221,7 @@ impl Default for Window {
             flags: 1,
             modality: 0,
             visibility: HIDDEN,
+            backdrop: 0,
             active: false,
             transient_parent: None,
             screen: None,

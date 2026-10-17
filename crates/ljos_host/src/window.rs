@@ -37,6 +37,17 @@ pub enum WindowKind {
     Splash,
 }
 
+/// What the window system draws behind a window, seen through what is
+/// transparent in it. A request: a window system without the effect
+/// draws nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Backdrop {
+    #[default]
+    None,
+    /// What is behind the window, blurred.
+    Blur,
+}
+
 /// Everything about a window that is decided when it is opened. Sizes and
 /// positions are in logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +70,7 @@ pub struct WindowAttributes {
     pub kind: WindowKind,
     /// The window's background may show what is behind it.
     pub transparent: bool,
+    pub backdrop: Backdrop,
     /// Takes the keyboard when it is shown.
     pub active: bool,
     /// The application the window belongs to, as the desktop names it
@@ -83,6 +95,7 @@ impl Default for WindowAttributes {
             level: WindowLevel::Normal,
             kind: WindowKind::Normal,
             transparent: false,
+            backdrop: Backdrop::None,
             active: true,
             app_id: None,
         }
@@ -102,6 +115,7 @@ pub enum WindowChange {
     Decorations(bool),
     Resizable(bool),
     Level(WindowLevel),
+    Backdrop(Backdrop),
     /// Take the keyboard.
     Activate,
     /// Ask for the user's attention without taking the keyboard.

@@ -1012,6 +1012,20 @@ fn a11y_described(w: &mut LjosWorld, role: String, name: String, text: String) -
     })
 }
 
+#[then(regex = r#"^the window system is asked for (a blurred|no) backdrop behind "([^"]+)"$"#)]
+fn window_backdrop(w: &mut LjosWorld, which: String, object: String) -> StepResult {
+    let wanted = which == "a blurred";
+    w.each(|b| {
+        if b.window_backdrop_blurred(&object)? == wanted {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the window system is not asked for {which} backdrop behind \"{object}\""
+            )))
+        }
+    })
+}
+
 #[then(regex = r#"^the clipboard holds "([^"]*)"$"#)]
 fn clipboard_holds(w: &mut LjosWorld, text: String) -> StepResult {
     w.each(|b| {

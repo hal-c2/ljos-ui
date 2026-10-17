@@ -136,6 +136,9 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 block2 = { version = "0.6.2", default-features = false, features = ["std"] }
 # Win32 for the shell; the version winit already brings.
 windows-sys = { version = "0.52.0", default-features = false }
+# A window property winit has no setter for (KDE's blur on X11); the
+# version winit already brings.
+x11rb = { version = "0.13.2", default-features = false }
 
 # Proc macros
 proc-macro2 = "1.0.107"

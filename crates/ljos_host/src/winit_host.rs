@@ -25,7 +25,8 @@ use crate::event::{
 };
 use crate::schedule::{Schedule, Sleep};
 use crate::window::{
-    Capabilities, Screen, WindowAttributes, WindowChange, WindowId, WindowLevel, WindowState,
+    Backdrop, Capabilities, Screen, WindowAttributes, WindowChange, WindowId, WindowLevel,
+    WindowState,
 };
 use crate::{HostApp, HostControl, HostError, PlatformHost, Wake, Waker};
 
@@ -235,6 +236,9 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
         if a.state == WindowState::Minimized {
             window.set_minimized(true);
         }
+        if a.backdrop != Backdrop::None {
+            platform::set_backdrop(&window, a.backdrop);
+        }
         let id = WindowId(self.state.next_id);
         self.state.next_id += 1;
         self.state.ids.insert(window.id(), id);
@@ -282,6 +286,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             WindowChange::Decorations(on) => w.set_decorations(on),
             WindowChange::Resizable(on) => w.set_resizable(on),
             WindowChange::Level(l) => w.set_window_level(level(l)),
+            WindowChange::Backdrop(b) => platform::set_backdrop(w, b),
             WindowChange::Activate => w.focus_window(),
             WindowChange::Alert => w.request_user_attention(Some(UserAttentionType::Informational)),
             // A platform that cannot says so here; the application was
@@ -573,9 +578,9 @@ fn translate(raw: &Raw, window: &Window, pointer: Option<[f64; 2]>) -> WindowEve
 /// What differs between window systems.
 mod platform {
     use winit::event_loop::{ActiveEventLoop, EventLoop};
-    use winit::window::WindowAttributes;
+    use winit::window::{Window, WindowAttributes};
 
-    use crate::window::WindowKind;
+    use crate::window::{Backdrop, WindowKind};
 
     #[cfg(all(
         unix,
@@ -619,6 +624,73 @@ mod platform {
             // both of its traits have this method, hence by name.
             winit::platform::wayland::WindowAttributesExtWayland::with_name(attrs, id, id)
         }
+
+        /// KDE's blur: its Wayland protocol through winit, its window
+        /// property on X11, which winit does not set. Elsewhere nothing
+        /// answers either.
+        pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop) {
+            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let on = backdrop == Backdrop::Blur;
+            let x11 = match window.window_handle().map(|h| h.as_raw()) {
+                Ok(RawWindowHandle::Xlib(h)) => u32::try_from(h.window).ok(),
+                Ok(RawWindowHandle::Xcb(h)) => Some(h.window.get()),
+                _ => None,
+            };
+            match x11 {
+                Some(id) => kde_blur::set(id, on),
+                None => window.set_blur(on),
+            }
+        }
+
+        /// `_KDE_NET_WM_BLUR_BEHIND_REGION`, empty for all of the window:
+        /// set on a connection of its own, since window ids are the
+        /// server's and winit lends out no connection to write on.
+        mod kde_blur {
+            use std::cell::OnceCell;
+
+            use x11rb::connection::Connection;
+            use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
+            use x11rb::rust_connection::RustConnection;
+            use x11rb::wrapper::ConnectionExt as _;
+
+            thread_local! {
+                static SERVER: OnceCell<Option<(RustConnection, u32)>> = const { OnceCell::new() };
+            }
+
+            fn open() -> Option<(RustConnection, u32)> {
+                let (conn, _) = x11rb::connect(None).ok()?;
+                let atom = conn
+                    .intern_atom(false, b"_KDE_NET_WM_BLUR_BEHIND_REGION")
+                    .ok()?
+                    .reply()
+                    .ok()?
+                    .atom;
+                Some((conn, atom))
+            }
+
+            pub(super) fn set(window: u32, on: bool) {
+                SERVER.with(|server| {
+                    let Some((conn, atom)) = server.get_or_init(open) else {
+                        return;
+                    };
+                    let sent = if on {
+                        conn.change_property32(
+                            PropMode::REPLACE,
+                            window,
+                            *atom,
+                            AtomEnum::CARDINAL,
+                            &[],
+                        )
+                        .is_ok()
+                    } else {
+                        conn.delete_property(window, *atom).is_ok()
+                    };
+                    if sent {
+                        let _ = conn.flush();
+                    }
+                });
+            }
+        }
     }
 
     #[cfg(not(all(
@@ -648,9 +720,27 @@ mod platform {
         pub(crate) fn with_app_id(attrs: WindowAttributes, _: &str) -> WindowAttributes {
             attrs
         }
+
+        /// Windows' system backdrop: the acrylic of transient windows is
+        /// its blur, and `Auto` its default. Elsewhere winit's blur, which
+        /// macOS has and the others ignore.
+        pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop) {
+            #[cfg(target_os = "windows")]
+            {
+                use winit::platform::windows::{BackdropType, WindowExtWindows};
+                window.set_system_backdrop(match backdrop {
+                    Backdrop::Blur => BackdropType::TransientWindow,
+                    Backdrop::None => BackdropType::Auto,
+                });
+            }
+            #[cfg(not(target_os = "windows"))]
+            window.set_blur(backdrop == Backdrop::Blur);
+        }
     }
 
-    pub(crate) use imp::{HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, with_app_id, with_kind};
+    pub(crate) use imp::{
+        HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, set_backdrop, with_app_id, with_kind,
+    };
 }
 
 fn resize_direction(edge: crate::ResizeEdge) -> ResizeDirection {

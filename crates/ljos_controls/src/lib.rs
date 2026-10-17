@@ -107,7 +107,7 @@ pub use util::CATEGORY;
 pub use window::{
     Application, ApplicationState, ApplicationWindow, CloseEvent, FRAMELESS, KIND_MASK, Modality,
     ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, Screen, ScreenAttached, ScreenInfo, ScreenSpec,
-    Window, WindowRequest, WindowShow, WindowSpec, WindowSystem,
+    Window, WindowBackdrop, WindowRequest, WindowShow, WindowSpec, WindowSystem,
 };
 
 use style::{BASIC, FUSION, MATERIAL, StyleLibrary, UNIVERSAL};

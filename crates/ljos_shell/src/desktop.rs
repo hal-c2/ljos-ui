@@ -525,6 +525,7 @@ impl<M: Send + 'static> Desktop<M> {
             color: self.config.background.to_rgba8(),
             opacity: 1.0,
             transient_parent: None,
+            backdrop: ljos_controls::WindowBackdrop::None,
         }
     }
 
