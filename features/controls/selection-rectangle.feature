@@ -262,3 +262,84 @@ Feature: SelectionRectangle
     And the user releases the pointer at 250, 100
     And the method "go" of "root" is called
     Then the property "out" of "root" is "true false 1,1 1 1 0"
+
+  Rule: A drag beyond the view's edge scrolls it
+    While a drag selects with the pointer beyond an edge of the view, the
+    view scrolls that way, faster the further the pointer is beyond it
+    (some 6.6 points a second for each point), until its content ends,
+    and the block reaches to the cell at that edge. The scrolling stops
+    when the pointer is back in the view, or released.
+
+    Background:
+      Given the file "Far.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Sel {
+          mode: SelectionRectangle.Drag
+          property real cx: tv.contentX; property real cy: tv.contentY
+          property bool atEdge: tv.currentRow === Math.min(19, Math.floor((cy + tv.height) / 30))
+          property int column: tv.currentColumn; property bool dragging: sr.dragging
+        }
+        """
+
+    Scenario Outline: A drag to <x>, <y> scrolls the view to <least> to <most> in 800 ms
+      Given the QML:
+        """qml
+        Far {}
+        """
+      When 50 milliseconds pass
+      And the user presses the pointer at 25, 15
+      And the user moves the pointer to 60, 40
+      And the user moves the pointer to <x>, <y>
+      And 800 milliseconds pass
+      Then the property "<axis>" of "root" is at least <least>
+      And the property "<axis>" of "root" is at most <most>
+      And the property "dragging" of "root" is true
+
+      Examples:
+        | x   | y   | axis | least | most |
+        | 125 | 190 | cy   | 0     | 0    |
+        | 125 | 210 | cy   | 25    | 65   |
+        | 125 | 240 | cy   | 160   | 250  |
+        | 125 | 290 | cy   | 399.9 | 400  |
+        | 310 | 100 | cx   | 25    | 65   |
+        | 330 | 100 | cx   | 99.9  | 100  |
+
+    Scenario: The block reaches to the cell at the edge the view scrolls past
+      Given the QML:
+        """qml
+        Far {}
+        """
+      When 50 milliseconds pass
+      And the user presses the pointer at 25, 15
+      And the user moves the pointer to 60, 40
+      And the user moves the pointer to 125, 240
+      And 500 milliseconds pass
+      Then the property "atEdge" of "root" is true
+      When the user moves the pointer to 330, 290
+      And 1000 milliseconds pass
+      Then the property "atEdge" of "root" is true
+      And the property "column" of "root" is 3
+      And the property "cy" of "root" is at least 399.9
+
+    Scenario Outline: The view stops scrolling when the pointer is <how>
+      Given the QML:
+        """qml
+        Far { property real was: -1; property bool still: cy === was; function keep() { was = cy } }
+        """
+      When 50 milliseconds pass
+      And the user presses the pointer at 25, 15
+      And the user moves the pointer to 60, 40
+      And the user moves the pointer to 125, 240
+      And 300 milliseconds pass
+      And the user <does>
+      And the method "keep" of "root" is called
+      And 500 milliseconds pass
+      Then the property "was" of "root" is at least 50
+      And the property "still" of "root" is true
+
+      Examples:
+        | how        | does                             |
+        | back in it | moves the pointer to 125, 150    |
+        | released   | releases the pointer at 125, 240 |

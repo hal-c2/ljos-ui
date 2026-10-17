@@ -12,6 +12,12 @@
 //! of the block, the other corner staying. The cell the pointer selects
 //! to is current. The selector is told every block it gets, and whether
 //! the pointer is dragging.
+//!
+//! While a drag is beyond an edge of the view, a timer scrolls the view
+//! that way, as fast as qml6 does for how far beyond it the pointer is,
+//! and the block reaches to the cell at that edge. The timer stops when
+//! the content ends there, the pointer is back or the drag ends, so a
+//! pointer held still beyond a view that cannot scroll costs nothing.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -99,6 +105,11 @@ pub(crate) struct SelectState {
     pub block: Cell<Option<CellBlock>>,
     /// The timer of a press and hold, made when first needed.
     hold: Cell<Option<ObjectId>>,
+    /// The timer that scrolls the view while a drag is beyond its edge,
+    /// made when first needed.
+    scroll: Cell<Option<ObjectId>>,
+    /// Where in the view the drag last was.
+    pointer: Cell<kurbo::Point>,
 }
 
 /// Makes `selector` select the cells of `view` with the pointer, in
@@ -283,16 +294,125 @@ fn drag_to(
     handle: Option<usize>,
     at: kurbo::Point,
 ) {
+    st.select.pointer.set(at);
+    reach(e, view, st, anchor, handle, at);
+    if speed(e, view, at) == kurbo::Vec2::ZERO {
+        stop_scrolling(e, st);
+    } else {
+        scroll(e, view, st);
+    }
+}
+
+/// Selects to the cell under `at`, or at the edge of the view it is
+/// beyond.
+fn reach(
+    e: &Engine,
+    view: ObjectId,
+    st: &TableState,
+    anchor: (usize, usize),
+    handle: Option<usize>,
+    at: kurbo::Point,
+) {
+    let (w, h) = size(e, view);
+    let at = kurbo::Point::new(at.x.clamp(0.0, w), at.y.clamp(0.0, h));
     let p = content_at(e, view, at);
     if let Some(to) = nearest_cell(st, p) {
         select(e, view, st, anchor, to, true, handle);
     }
 }
 
+fn size(e: &Engine, view: ObjectId) -> (f64, f64) {
+    e.untrack(|| {
+        (
+            e.read(view, Item::WIDTH.index).to_number(),
+            e.read(view, Item::HEIGHT.index).to_number(),
+        )
+    })
+}
+
+/// How often the view scrolls while a drag is beyond its edge.
+const SCROLL_MS: i32 = 16;
+
+/// How fast the view scrolls, in points a second, for a drag at `at`:
+/// as on qml6, 6.6 for each point beyond an edge past the first 2.
+fn speed(e: &Engine, view: ObjectId, at: kurbo::Point) -> kurbo::Vec2 {
+    let (w, h) = size(e, view);
+    let beyond = |p: f64, end: f64| {
+        let over = if p < 0.0 { p } else { (p - end).max(0.0) };
+        over.signum() * (over.abs() - 2.0).max(0.0) * 6.6
+    };
+    kurbo::Vec2::new(beyond(at.x, w), beyond(at.y, h))
+}
+
+fn scroll(e: &Engine, view: ObjectId, st: &TableState) {
+    let timer = match st.select.scroll.get().filter(|t| e.is_alive(*t)) {
+        Some(t) => Ok(t),
+        None => e
+            .create_native_incomplete(Timer::default(), Some(view))
+            .and_then(|t| {
+                e.set(t, Timer::INTERVAL, SCROLL_MS)?;
+                e.set(t, Timer::REPEAT, true)?;
+                e.complete(t)?;
+                e.connect_by_name(t, "triggered", move |e, _| scrolled(e, view))?;
+                st.select.scroll.set(Some(t));
+                Ok(t)
+            }),
+    };
+    let r = timer.and_then(|t| {
+        if e.untrack(|| e.read(t, Timer::RUNNING.index).to_boolean()) {
+            return Ok(());
+        }
+        e.set(t, Timer::RUNNING, true)
+    });
+    super::warn(e, "selection scrolling", r);
+}
+
+fn stop_scrolling(e: &Engine, st: &TableState) {
+    if let Some(t) = st.select.scroll.get().filter(|t| e.is_alive(*t)) {
+        let _ = e.set(t, Timer::RUNNING, false);
+    }
+}
+
+/// A step of scrolling while the drag is beyond the view's edge.
+fn scrolled(e: &Engine, view: ObjectId) {
+    let Some(st) = state_of(e, view) else {
+        return;
+    };
+    let Some(Grab::Dragging { anchor, handle }) = st.select.grab.get() else {
+        stop_scrolling(e, &st);
+        return;
+    };
+    let at = st.select.pointer.get();
+    let step = speed(e, view, at) * (SCROLL_MS as f64 / 1000.0);
+    let (w, h) = size(e, view);
+    let read = |p: ljos_engine::PropIndex| e.untrack(|| e.read(view, p).to_number());
+    let mut moved = false;
+    for (step, pos, extent, size) in [
+        (step.x, Flickable::CONTENT_X, Flickable::CONTENT_WIDTH, w),
+        (step.y, Flickable::CONTENT_Y, Flickable::CONTENT_HEIGHT, h),
+    ] {
+        let was = read(pos.index);
+        let to = (was + step)
+            .min((read(extent.index) - size).max(0.0))
+            .max(0.0);
+        if step != 0.0 && to != was {
+            crate::views::put(e, view, pos.index, Value::Real(to));
+            moved = true;
+        }
+    }
+    if !moved {
+        // The content ends there: nothing more to do until it moves.
+        stop_scrolling(e, &st);
+        return;
+    }
+    reach(e, view, &st, anchor, handle, at);
+}
+
 /// The press ended. Returns whether it was the selector's, which is no
 /// tap.
 pub(crate) fn release(e: &Engine, view: ObjectId, st: &TableState) -> bool {
     stop(e, st);
+    stop_scrolling(e, st);
     keep_pointer_grab(e, view, false);
     let grab = st.select.grab.take();
     if let Some(Grab::Dragging { .. }) = grab
