@@ -573,6 +573,8 @@ pub(crate) fn register(engine: &Engine) {
         Version::new(2, 15),
         MetaRef::Static(PathView::static_meta()),
     );
+    // A focus scope whose focus item is the current item, as a list's.
+    crate::focus::register_focus_scope(engine, MetaRef::Static(PathView::static_meta()));
     crate::pointer_item::register_pointer_item(
         engine,
         MetaRef::Static(PathView::static_meta()),

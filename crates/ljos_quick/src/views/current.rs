@@ -282,6 +282,23 @@ fn send(
     }
 }
 
+/// A view is a focus scope whose focus item is its current item, as on
+/// qml6: the item gets `focus` each time it becomes current, without
+/// losing a binding the delegate has for it. No current item leaves the
+/// focus where it was.
+pub(crate) fn give_focus(e: &Engine, item: ObjectId) {
+    warn(
+        e,
+        "focus",
+        e.write_internal(
+            item,
+            Item::FOCUS.index,
+            Value::Bool(true),
+            WriteKind::Animation,
+        ),
+    );
+}
+
 /// After a layout: the current item, and the highlight on its way to it.
 /// `span` is where the current row is, logically, when it has an item.
 pub(crate) fn sync(
@@ -297,9 +314,12 @@ pub(crate) fn sync(
         .and(row)
         .and_then(|row| st.delegates()?.object_at(row))
         .filter(|o| is_item(e, *o));
-    st.current.set(item);
+    let was = st.current.replace(item);
     st.current_span.set(item.and(span));
     pass::put_object(e, view, ItemView::CURRENT_ITEM, item);
+    if let Some(item) = item.filter(|i| was != Some(*i)) {
+        give_focus(e, item);
+    }
 
     let component = e.get(view, ItemView::HIGHLIGHT).ok().flatten();
     let keep = item.is_some()

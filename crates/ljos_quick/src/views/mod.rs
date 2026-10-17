@@ -16,7 +16,7 @@
 //! mapped to content coordinates at the end.
 
 mod changes;
-mod current;
+pub(crate) mod current;
 pub(crate) mod delegate_groups;
 pub(crate) mod fetch;
 mod models;
@@ -771,6 +771,8 @@ pub(crate) fn register(engine: &Engine) {
     ] {
         engine.register_type("QtQuick", Version::new(2, 15), MetaRef::Static(meta));
     }
+    // A focus scope, as on qml6: the current item has the focus in it.
+    crate::focus::register_focus_scope(engine, MetaRef::Static(ItemView::static_meta()));
     crate::keys::register_key_item(
         engine,
         MetaRef::Static(ItemView::static_meta()),

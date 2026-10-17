@@ -232,6 +232,9 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &State) {
             "currentItem",
             e.set_internal(view, PathView::CURRENT_ITEM, current_item),
         );
+        if let Some(item) = current_item {
+            crate::views::current::give_focus(e, item);
+        }
     }
     highlight(e, view, st, frame.as_ref());
 }
