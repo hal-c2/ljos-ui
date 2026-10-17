@@ -122,6 +122,8 @@ pub(crate) struct PopupState {
     pub placing: Cell<bool>,
     /// Where the author put the popup; `x` and `y` read as where it is.
     pub requested: Cell<(f64, f64)>,
+    /// What the position code last wrote back to `x` and `y`.
+    pub placed: Cell<Option<(f64, f64)>>,
     /// The press that is down began outside the popup.
     pub pressed_outside: Cell<bool>,
     /// What the control the popup belongs to does each time the popup is

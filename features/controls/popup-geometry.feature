@@ -339,6 +339,50 @@ Feature: Popup sizing and positioning
       And the property "width" of "inParent" is set to 60
       Then the property "contentItem.parent.x" of "inParent" is 170
 
+  Rule: A popup placed by bindings on x and y follows them
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Item {
+          width: 400; height: 400
+          Popup {
+            objectName: "p"
+            x: Math.round((parent.width - width) / 2)
+            y: Math.round((parent.height - height) / 2)
+            padding: 0
+            contentItem: Rectangle { implicitWidth: 100; implicitHeight: 40 }
+          }
+          Dialog {
+            objectName: "d"
+            x: Math.round((parent.width - width) / 2)
+            y: Math.round((parent.height - height) / 2)
+            title: "Add"
+            standardButtons: DialogButtonBox.Ok | DialogButtonBox.Cancel
+            contentItem: RowLayout { Tumbler { model: 24 } Tumbler { model: 60 } }
+          }
+        }
+        """
+
+    Scenario: An open popup that grows stays where its bindings put it
+      When the method "open" of "p" is called
+      And the property "contentItem.implicitWidth" of "p" is set to 200
+      And the property "contentItem.implicitHeight" of "p" is set to 100
+      Then the property "width" of "p" is 200
+      And the property "x" of "p" is 100
+      And the property "y" of "p" is 150
+      And the property "contentItem.parent.x" of "p" is 100
+
+    Scenario: A dialog that grows as it opens is where its bindings put it
+      When the method "open" of "d" is called
+      And 1 second passes
+      Then the property "width" of "d" is 225
+      And the property "x" of "d" is 88
+      And the property "y" of "d" is 37
+
   Rule: A popup in a popup
 
     Background:

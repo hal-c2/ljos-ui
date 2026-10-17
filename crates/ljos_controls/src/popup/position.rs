@@ -102,6 +102,26 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
             kurbo::Point::new(middle.x - w / 2.0, middle.y - h / 2.0)
         }
         None => {
+            // A binding on `x` or `y` that reads the size runs when the
+            // size changes, but its watch may not see the new value: what
+            // is written back below can put the old one there again first.
+            // A value that is not the one written back is asked for.
+            let now = engine.untrack(|| {
+                (
+                    num(engine, popup, Popup::X.index),
+                    num(engine, popup, Popup::Y.index),
+                )
+            });
+            if let Some((px, py)) = state.placed.get() {
+                let (mut x, mut y) = state.requested.get();
+                if now.0 != px {
+                    x = now.0;
+                }
+                if now.1 != py {
+                    y = now.1;
+                }
+                state.requested.set((x, y));
+            }
             let (x, y) = state.requested.get();
             to_scene * kurbo::Point::new(x, y)
         }
@@ -137,6 +157,7 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
         let wrote = put(engine, popup, Popup::X.index, Value::Real(local.x))
             .and_then(|()| put(engine, popup, Popup::Y.index, Value::Real(local.y)));
         state.placing.set(false);
+        state.placed.set(Some((local.x, local.y)));
         wrote
     })
 }
