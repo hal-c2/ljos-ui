@@ -256,6 +256,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then there is no reload error` | no reload has failed, or one succeeded since (`@ljos-only`) |
 | `Then the reload error is in "X.qml" at line N` | where the mistake is (`@ljos-only`) |
 | `Then N reloads have happened` / `Then 1 reload has happened` | changes applied since the application started (`@ljos-only`) |
+| `Then the picture of "photo" is kept at 224 by 112 pixels` | the size in pixels of the picture kept for an Image, which may be smaller than the picture itself (`@ljos-only`: the oracle does not say what it keeps) |
 | `Then the pointer shows the "SplitHCursor" cursor` | the `Qt.CursorShape` the pointer shows where it is (`@ljos-only`: the oracle runs off-screen, without a pointer) |
 | `Then the application was asked to quit` / `Then the application was not asked to quit` | whether `Qt.quit()` was called, which a host answers by ending (`@ljos-only`: the oracle is itself the application that would end) |
 | `Then the application has nothing scheduled` | nothing would wake the application if no one touched it: no timer, no frame of something moving, no answer it waits for (`@ljos-only`: the oracle's event loop cannot be read) |
