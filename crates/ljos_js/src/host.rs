@@ -464,6 +464,68 @@ impl<'js> Scope<'js> {
         Ok(out)
     }
 
+    /// A copy of `v` that shares no array or plain object with it, as a
+    /// sequence copies what it is given: arrays and objects made by a
+    /// literal (or `Object.create(null)`) are copied all the way down.
+    /// Anything else (a host object, a function, an instance of a class,
+    /// a proxy) is the value itself.
+    pub fn copied(&self, v: &JsValue) -> rquickjs::Result<JsValue> {
+        self.copied_at(v, 0)
+    }
+
+    fn copied_at(&self, v: &JsValue, depth: u32) -> rquickjs::Result<JsValue> {
+        // Deeper than this is a cycle, which is left shared.
+        if depth > 32 {
+            return Ok(v.clone());
+        }
+        let each = |items: &[JsValue]| {
+            items
+                .iter()
+                .map(|i| self.copied_at(i, depth + 1))
+                .collect::<rquickjs::Result<Vec<_>>>()
+        };
+        Ok(match v {
+            JsValue::Array(items) => JsValue::Array(each(items)?),
+            JsValue::Typed(kind, fields) => JsValue::Typed(*kind, each(fields)?),
+            JsValue::Handle(r) => {
+                if let Some(items) = r.pending_items() {
+                    return Ok(JsValue::Array(each(&items)?));
+                }
+                let value = self.restore(r)?;
+                if value.is_proxy() {
+                    return Ok(v.clone());
+                }
+                if value.is_array() {
+                    let items = self.array_items(r)?;
+                    return Ok(JsValue::Array(each(&items)?));
+                }
+                let Some(o) = value
+                    .as_object()
+                    .filter(|_| value.type_of() == Type::Object)
+                else {
+                    return Ok(v.clone());
+                };
+                let object_proto: Object<'js> = self
+                    .ctx
+                    .globals()
+                    .get::<_, Object<'js>>("Object")?
+                    .get("prototype")?;
+                match o.get_prototype() {
+                    Some(p) if p != object_proto => return Ok(v.clone()),
+                    _ => {}
+                }
+                let mut fields = Vec::new();
+                for kv in o.props::<String, Value>() {
+                    let (k, f) = kv?;
+                    let f = self.read_value_at(&f, depth + 1)?;
+                    fields.push((k, self.copied_at(&f, depth + 1)?));
+                }
+                JsValue::Handle(JsRef::object(fields))
+            }
+            other => other.clone(),
+        })
+    }
+
     /// `String(value)` for a value from JS, as `console.log` prints it.
     pub fn display(&self, v: &JsValue) -> String {
         let Ok(value) = self.to_value(v) else {

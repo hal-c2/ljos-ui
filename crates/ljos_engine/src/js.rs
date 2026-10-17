@@ -613,7 +613,7 @@ fn group_proxy<'js>(
 }
 
 /// Whether `v` is or holds a script's own value.
-fn holds_js(v: &Value) -> bool {
+pub(crate) fn holds_js(v: &Value) -> bool {
     match v {
         Value::Js(_) => true,
         Value::List(items) => items.iter().any(holds_js),

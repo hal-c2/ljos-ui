@@ -16,6 +16,9 @@
 //! from native code) is not built in the JS heap until a script asks for
 //! it, so a UI that never runs JS still never starts the JS host.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use ljos_js::{JsRef, JsValue};
 
 use crate::engine::Engine;
@@ -145,25 +148,89 @@ impl Engine {
         )))
     }
 
+    /// `v` with copies of the script's arrays and plain objects in it, as
+    /// a sequence keeps what it is given ([`ljos_js::Scope::copied`]).
+    fn copied(&self, v: Value) -> Value {
+        if !crate::js::holds_js(&v) {
+            return v;
+        }
+        let js = self.to_js(&v);
+        self.run_js("copy", |s| {
+            let made = s.copied(&js)?;
+            Ok(self.js_to_value(s, made, &TypeTag::Var))
+        })
+        .unwrap_or(v)
+    }
+
+    /// [`Engine::copied`] for the entries of a list going into the
+    /// property, except those it holds already: a list a script changed in
+    /// place (`push`) comes back with the entries it had, and they stay
+    /// the ones a script may be holding.
+    fn copied_entries(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        items: &Arc<Vec<Value>>,
+    ) -> Arc<Vec<Value>> {
+        if !items.iter().any(crate::js::holds_js) {
+            return items.clone();
+        }
+        // Ids, which stay unique while `now` keeps the entries alive.
+        let now = self.peek(obj, prop);
+        let held: HashSet<u64> = match &now {
+            Value::List(now) => now
+                .iter()
+                .filter_map(|e| match e {
+                    Value::Js(h) => Some(h.0.id()),
+                    _ => None,
+                })
+                .collect(),
+            _ => HashSet::new(),
+        };
+        let kept = |e: &Value| matches!(e, Value::Js(h) if held.contains(&h.0.id()));
+        let fresh: Vec<Value> = items.iter().filter(|e| !kept(e)).cloned().collect();
+        let Value::List(fresh) = self.copied(Value::list(fresh)) else {
+            return items.clone();
+        };
+        let mut fresh = fresh.iter();
+        Arc::new(
+            items
+                .iter()
+                .map(|e| {
+                    if kept(e) {
+                        e.clone()
+                    } else {
+                        fresh.next().cloned().unwrap_or(Value::Undefined)
+                    }
+                })
+                .collect(),
+        )
+    }
+
     /// What `v` is once it is in the property `prop` of `obj` (the
     /// property itself, not an alias of it): a `var` declared in QML holds
     /// an array, everything else a list.
     pub(crate) fn for_slot(&self, obj: ObjectId, prop: PropIndex, v: Value) -> Value {
         let v = match &v {
-            Value::List(items) => match self.slot_of(obj, prop) {
-                Slot::Var => self.script_array(items),
-                Slot::Other => v,
-            },
-            Value::Js(h) if h.0.is_array() => match self.slot_of(obj, prop) {
-                Slot::Var => v,
-                Slot::Other => self.plain(&v),
-            },
-            // A list property a script handed on: the entries it has now,
-            // and no longer that property's list.
-            Value::Js(h) => match self.face_list(&h.0) {
-                Some(Value::List(items)) => match self.slot_of(obj, prop) {
+            Value::List(items) => {
+                let items = self.copied_entries(obj, prop, items);
+                match self.slot_of(obj, prop) {
                     Slot::Var => self.script_array(&items),
                     Slot::Other => Value::List(items),
+                }
+            }
+            // A var's array is that array to another var; a list is given
+            // a copy of it, entries and all.
+            Value::Js(h) if h.0.is_array() => match self.slot_of(obj, prop) {
+                Slot::Var => v,
+                Slot::Other => self.copied(self.plain(&v)),
+            },
+            // A list property a script handed on: a copy of the entries it
+            // has now, and no longer that property's list.
+            Value::Js(h) => match self.face_list(&h.0) {
+                Some(list) => match (self.slot_of(obj, prop), self.copied(list)) {
+                    (Slot::Var, Value::List(items)) => self.script_array(&items),
+                    (_, list) => list,
                 },
                 _ => v,
             },
