@@ -5,7 +5,7 @@
 use std::io::Read as _;
 use std::time::Duration;
 
-use crate::fetch::{FetchError, Fetcher, Request, Response};
+use crate::fetch::{FetchError, Fetcher, Incoming, Request, Response};
 
 /// How long one fetch — DNS, connect, redirects and the body — may
 /// take before it is given up as failed.
@@ -25,6 +25,7 @@ const FETCH_MAX_REDIRECTS: u32 = 10;
 /// rides along.
 pub struct HttpFetcher {
     agent: ureq::Agent,
+    timeout: Duration,
     max_bytes: u64,
 }
 
@@ -58,6 +59,7 @@ impl HttpFetcher {
             .build();
         Self {
             agent: ureq::Agent::new_with_config(config),
+            timeout,
             max_bytes,
         }
     }
@@ -97,6 +99,42 @@ impl Fetcher for HttpFetcher {
             )));
         }
         Ok(bytes)
+    }
+
+    fn stream(&self, url: &str) -> Result<Incoming, FetchError> {
+        let failed = |why: String| FetchError::Failed(format!("fetching {url} failed: {why}"));
+        let scheme = url.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
+        if !matches!(scheme.as_deref(), Some("http" | "https")) {
+            return Err(FetchError::Failed(format!(
+                "cannot fetch {url}: only http and https URLs can be fetched"
+            )));
+        }
+        // A stream may never end, so only reaching the server and its
+        // first answer are timed; the body takes as long as it takes.
+        let response = self
+            .agent
+            .get(url)
+            .config()
+            .timeout_global(None)
+            .timeout_connect(Some(self.timeout))
+            .timeout_recv_response(Some(self.timeout))
+            .build()
+            .call()
+            .map_err(|e| transport(url, e, failed))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(failed(format!("HTTP {status}")));
+        }
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(';').next())
+            .map(|v| v.trim().to_ascii_lowercase());
+        Ok(Incoming {
+            content_type,
+            body: Box::new(response.into_body().into_reader()),
+        })
     }
 
     fn request(&self, request: &Request) -> Result<Response, FetchError> {
@@ -329,6 +367,50 @@ mod tests {
             HttpFetcher::new().fetch(&url).unwrap(),
             b"hello from loopback"
         );
+    }
+
+    #[test]
+    fn a_stream_is_read_as_it_comes_whatever_its_size() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/live", listener.local_addr().unwrap());
+        let (sent, told) = std::sync::mpsc::channel();
+        let (more, go_on) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: Multipart/X-Mixed-Replace; boundary=b\r\nConnection: close\r\n\r\n";
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(b"first").unwrap();
+            sent.send(()).unwrap();
+            // The rest only once the first part was read: what came
+            // was handed over without waiting for the end.
+            go_on.recv().unwrap();
+            stream.write_all(&[7; 64]).unwrap();
+        });
+        // A cap of 8 bytes, which a stream is not held to.
+        let fetcher = HttpFetcher::with_limits(Duration::from_secs(5), 8, 0);
+        let mut incoming = fetcher.stream(&url).unwrap();
+        assert_eq!(
+            incoming.content_type.as_deref(),
+            Some("multipart/x-mixed-replace")
+        );
+        told.recv().unwrap();
+        let mut first = [0; 5];
+        incoming.body.read_exact(&mut first).unwrap();
+        assert_eq!(&first, b"first");
+        more.send(()).unwrap();
+        let mut rest = Vec::new();
+        incoming.body.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, [7; 64]);
+    }
+
+    #[test]
+    fn a_stream_that_is_refused_says_why() {
+        let url = serve(vec![
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        ]);
+        let err = HttpFetcher::new().stream(&url).unwrap_err();
+        assert!(err.to_string().contains("HTTP 404"), "{err}");
     }
 
     #[test]

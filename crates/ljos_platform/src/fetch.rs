@@ -115,9 +115,41 @@ impl Response {
     }
 }
 
+/// A reply whose body is read as it arrives, for what is used before
+/// the whole of it is there (a stream of video) or has no end at all.
+pub struct Incoming {
+    /// What the server said the body is, without its parameters
+    /// (`multipart/x-mixed-replace`, `image/jpeg`), lower case.
+    pub content_type: Option<String>,
+    /// The body. Dropping it lets the connection go.
+    pub body: Box<dyn std::io::Read + Send>,
+}
+
+impl fmt::Debug for Incoming {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Incoming")
+            .field("content_type", &self.content_type)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Reads a URL. Called on a thread of its own, so it may block.
 pub trait Fetcher: Send + Sync {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError>;
+
+    /// Opens a URL to read its body as it arrives, with no limit on its
+    /// size or on how long it takes: the reader decides when it has
+    /// had enough. Called on a thread of its own, so it may block.
+    ///
+    /// The default fetches the body whole through [`Fetcher::fetch`]
+    /// and hands it over at once, with no content type.
+    fn stream(&self, url: &str) -> Result<Incoming, FetchError> {
+        let bytes = self.fetch(url)?;
+        Ok(Incoming {
+            content_type: None,
+            body: Box::new(std::io::Cursor::new(bytes)),
+        })
+    }
 
     /// Sends a full [`Request`]. Called on its own thread, so it may
     /// block. An HTTP status is a [`Response`], not an `Err`: `Err` is

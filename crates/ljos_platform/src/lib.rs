@@ -63,7 +63,7 @@ pub use dialogs::{
 pub use drop::{ExternalDrag, external_drag};
 pub use fakes::FakeDialogs;
 pub use fetch::{
-    FetchError, Fetcher, Method, NoNetwork, Request, Response, is_remote, reason_phrase,
+    FetchError, Fetcher, Incoming, Method, NoNetwork, Request, Response, is_remote, reason_phrase,
 };
 #[cfg(feature = "http")]
 pub use http::HttpFetcher;
