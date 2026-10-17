@@ -392,7 +392,7 @@ impl Shared {
         };
         if !asynchronous {
             let r = engine.create_delegate(component, Some(s.owner), setup);
-            s.finish_row(engine, id, r);
+            s.finish_row(engine, id, component, r);
             return;
         }
         let (job, handle) = CreationJob::for_delegate(
@@ -416,7 +416,7 @@ impl Shared {
             if let Some(s) = weak.upgrade()
                 && e.is_alive(s.owner)
             {
-                s.finish_row(e, id, r.clone());
+                s.finish_row(e, id, component, r.clone());
             }
         }));
     }
@@ -442,7 +442,13 @@ impl Shared {
         self.host.allocated(engine, index, root, before);
     }
 
-    fn finish_row(&self, engine: &Engine, id: u64, made: Result<ObjectId, EngineError>) {
+    fn finish_row(
+        &self,
+        engine: &Engine,
+        id: u64,
+        component: ObjectId,
+        made: Result<ObjectId, EngineError>,
+    ) {
         let index = {
             let mut st = self.state.borrow_mut();
             let i = st.position(id);
@@ -467,11 +473,7 @@ impl Shared {
             }
             (Err(_), None) => {}
             (Err(e), Some(_)) => {
-                engine.log(
-                    LogLevel::Info,
-                    "qml",
-                    "QML Component: Cannot create delegate",
-                );
+                cannot_create(engine, component);
                 match e {
                     // The message is whole already, a line for each
                     // property.
@@ -1207,7 +1209,8 @@ impl ViewDelegates {
         match urgency {
             Urgency::Now => {
                 let r = engine.create_delegate(component, Some(s.owner), setup);
-                s.finish(engine, id, r, false).map(|o| (o, Made::Created))
+                s.finish(engine, id, component, r, false)
+                    .map(|o| (o, Made::Created))
             }
             Urgency::Later => {
                 let (job, handle) = CreationJob::for_delegate(
@@ -1227,7 +1230,7 @@ impl ViewDelegates {
                             && e.is_alive(s.owner)
                         {
                             let tell = !s.forcing.get();
-                            s.finish(e, id, r.clone(), tell);
+                            s.finish(e, id, component, r.clone(), tell);
                         }
                     })
                     .shared();
@@ -1409,6 +1412,7 @@ impl ViewShared {
         &self,
         engine: &Engine,
         id: u64,
+        component: ObjectId,
         made: Result<ObjectId, EngineError>,
         tell: bool,
     ) -> Option<ObjectId> {
@@ -1450,11 +1454,7 @@ impl ViewShared {
             }
             (Err(_), None) => None,
             (Err(e), Some(_)) => {
-                engine.log(
-                    LogLevel::Info,
-                    "qml",
-                    "QML Component: Cannot create delegate",
-                );
+                cannot_create(engine, component);
                 match e {
                     // The message is whole already, a line for each
                     // property.
@@ -1662,4 +1662,26 @@ impl ViewShared {
             s.host.ready(engine, 0, s.owner);
         }
     }
+}
+
+/// Told at the delegate's component, as Qt does, before what stopped it:
+/// a `Component` written as one, or else the object written as the
+/// delegate (the `Component` made around it has no place of its own).
+fn cannot_create(engine: &Engine, component: ObjectId) {
+    let at = engine
+        .location_of(component)
+        .or_else(|| {
+            let t = engine.component_template(component).ok()?;
+            let o = t.file.ir.component(t.comp).objects.first()?;
+            Some(format!(
+                "{}:{}:{}: ",
+                t.file.url, o.span.line, o.span.column
+            ))
+        })
+        .unwrap_or_default();
+    engine.log(
+        LogLevel::Info,
+        "qml",
+        format!("{at}QML Component: Cannot create delegate"),
+    );
 }

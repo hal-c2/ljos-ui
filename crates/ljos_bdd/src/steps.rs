@@ -844,6 +844,11 @@ fn log_has_warning(w: &mut LjosWorld, pattern: String) -> StepResult {
     log_matches(w, &pattern, LogLevel::Warning, true)
 }
 
+#[then(regex = r#"^the log has an info matching "([^"]+)"$"#)]
+fn log_has_info(w: &mut LjosWorld, pattern: String) -> StepResult {
+    log_matches(w, &pattern, LogLevel::Info, true)
+}
+
 #[then(regex = r#"^the log has no warning matching "([^"]+)"$"#)]
 fn log_has_no_warning(w: &mut LjosWorld, pattern: String) -> StepResult {
     log_matches(w, &pattern, LogLevel::Warning, false)
