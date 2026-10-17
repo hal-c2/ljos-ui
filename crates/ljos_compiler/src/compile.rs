@@ -375,6 +375,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 }
                 QmlMember::Property(declaration) => self.property(owner, declaration),
                 QmlMember::Signal(signal) => {
+                    self.check_name(
+                        Declared::Signal,
+                        signal.name.name.as_ref(),
+                        signal.name.span,
+                    );
                     let declaration = SignalDecl {
                         name: signal.name.name.to_string(),
                         params: signal
@@ -640,6 +645,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             self.def_mut(at).required.push(name);
             return;
         };
+        self.check_name(Declared::Property, &name, declaration.name.span);
         let is_alias = type_name.name.as_simple() == Some("alias");
         let alias = is_alias
             .then(|| alias_target(declaration))
@@ -907,6 +913,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 .push(Handler { signal, expr });
             return;
         }
+        self.check_name(Declared::Method, &name, id.span);
         let target = format!("{}.{name}()", self.tree.objects[owner].name);
         let expr = self.expr(
             BindingKind::Function,
@@ -918,6 +925,31 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         self.def_mut(self.place[owner])
             .functions
             .push(FunctionDecl { name, expr });
+    }
+
+    /// A property, signal or method declared with a name Qt's engine
+    /// refuses: one with a capital first, or one of the script
+    /// environment's own, which the member would hide from the file's
+    /// scripts.
+    fn check_name(&mut self, declared: Declared, name: &str, span: Span) {
+        let capital = name.starts_with(|c: char| c.is_uppercase());
+        let global = SCRIPT_GLOBALS.contains(&name);
+        let (kind, said) = match declared {
+            Declared::Property => ("property", "Property"),
+            Declared::Signal => ("signal", "Signal"),
+            Declared::Method => ("method", "Method"),
+        };
+        // A method or a signal is told of its capital first, a property of
+        // its name (Qt 6.11.2).
+        let message = match (capital, global, declared) {
+            (true, _, Declared::Signal | Declared::Method) | (true, false, Declared::Property) => {
+                format!("{said} names cannot begin with an upper case letter")
+            }
+            (_, true, _) => format!("Illegal {kind} name"),
+            _ => return,
+        };
+        self.diagnostics
+            .push(Diagnostic::error(Code::Semantic, message, self.span(span)));
     }
 
     /// `Rectangle.anchors.left`, for the comment above a function.
@@ -2685,6 +2717,84 @@ fn import_source(source: &Source) -> ImportSource {
         Source::Path(path) => ImportSource::Path(path.clone()),
     }
 }
+
+#[derive(Clone, Copy)]
+enum Declared {
+    Property,
+    Signal,
+    Method,
+}
+
+/// The names of Qt's script environment that no member may have: its
+/// globals (Qt 6.11.2, by declaring each with qml6).
+const SCRIPT_GLOBALS: &[&str] = &[
+    "Array",
+    "ArrayBuffer",
+    "Atomics",
+    "Boolean",
+    "DOMException",
+    "DataView",
+    "Date",
+    "Error",
+    "EvalError",
+    "Float32Array",
+    "Float64Array",
+    "Function",
+    "Infinity",
+    "Int16Array",
+    "Int32Array",
+    "Int8Array",
+    "JSON",
+    "Map",
+    "Math",
+    "NaN",
+    "Number",
+    "Object",
+    "Promise",
+    "Proxy",
+    "QT_TRANSLATE_NOOP",
+    "QT_TRID_NOOP",
+    "QT_TR_NOOP",
+    "Qt",
+    "RangeError",
+    "ReferenceError",
+    "Reflect",
+    "RegExp",
+    "Set",
+    "SharedArrayBuffer",
+    "String",
+    "Symbol",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "URL",
+    "URLSearchParams",
+    "Uint16Array",
+    "Uint32Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "WeakMap",
+    "WeakSet",
+    "XMLHttpRequest",
+    "console",
+    "decodeURI",
+    "decodeURIComponent",
+    "encodeURI",
+    "encodeURIComponent",
+    "escape",
+    "eval",
+    "gc",
+    "isFinite",
+    "isNaN",
+    "parseFloat",
+    "parseInt",
+    "print",
+    "qsTr",
+    "qsTrId",
+    "qsTranslate",
+    "undefined",
+    "unescape",
+];
 
 /// A declared property's type as the compiler names it: `list<T>` for a
 /// list, so that it is not taken for what it holds a list of.

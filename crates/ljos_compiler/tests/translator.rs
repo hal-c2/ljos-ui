@@ -86,13 +86,16 @@ Item {
 
 #[test]
 fn a_name_of_the_file_that_hides_qstr_is_left_alone() {
+    // A member may not be named so (member-names.feature); a local may.
     let file = compile(
         "Page",
         r#"
 import QtQuick
 Item {
-    function qsTr(text) { return text.toUpperCase() }
-    property string shout: qsTr("open")
+    property string shout: {
+        var qsTr = function (text) { return text.toUpperCase() }
+        return qsTr("open")
+    }
 }
 "#,
     );
