@@ -677,34 +677,31 @@ fn count_compared() {
 /// were compared with the last picture (a callback is never the same as
 /// another).
 pub(crate) fn fill_rects(shapes: &mut [ClippedShape], pixels_per_point: f32) {
-    // The mesh the quads just before went into, while nothing came between
-    // them: one more joins it, so a run of bars is one mesh made, not one
-    // each, and drawn in the same order.
-    let mut quads: Option<usize> = None;
+    // The quads since something else came between them, all in the same
+    // clip rectangle: they become one mesh, made at its size once the run
+    // ends (grown a quad at a time, two hundred bars were a hundred
+    // reallocations a frame), in the first one's place.
+    let mut run: Vec<(usize, egui::Rect, egui::Color32)> = Vec::new();
     for i in 0..shapes.len() {
         let fill = match &shapes[i].shape {
             Shape::Rect(rect) => clearable(rect, pixels_per_point).map(|color| (rect.rect, color)),
             _ => None,
         };
         let Some((r, color)) = fill else {
-            quads = None;
+            quads_into_mesh(shapes, &mut run);
             continue;
         };
         if r.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
-            let clip = shapes[i].clip_rect;
-            let run = quads.filter(|&j| shapes[j].clip_rect == clip);
-            if let Some(Shape::Mesh(mesh)) = run.map(|j| &mut shapes[j].shape) {
-                Arc::make_mut(mesh).add_colored_rect(r, color);
-                shapes[i].shape = Shape::Noop;
-            } else {
-                let mut mesh = egui::Mesh::default();
-                mesh.add_colored_rect(r, color);
-                shapes[i].shape = Shape::mesh(mesh);
-                quads = Some(i);
+            if run
+                .first()
+                .is_some_and(|&(j, ..)| shapes[j].clip_rect != shapes[i].clip_rect)
+            {
+                quads_into_mesh(shapes, &mut run);
             }
+            run.push((i, r, color));
             continue;
         }
-        quads = None;
+        quads_into_mesh(shapes, &mut run);
         let color = color.to_normalized_gamma_f32();
         let clear = egui_glow::CallbackFn::new(move |info, painter| {
             clear_in(&info, painter.gl(), color);
@@ -714,6 +711,24 @@ pub(crate) fn fill_rects(shapes: &mut [ClippedShape], pixels_per_point: f32) {
             callback: Arc::new(clear),
         });
     }
+    quads_into_mesh(shapes, &mut run);
+}
+
+/// Makes the quads of `run` one mesh in the first one's place, and leaves
+/// `run` empty.
+fn quads_into_mesh(shapes: &mut [ClippedShape], run: &mut Vec<(usize, egui::Rect, egui::Color32)>) {
+    let Some(&(first, ..)) = run.first() else {
+        return;
+    };
+    let mut mesh = egui::Mesh::default();
+    mesh.reserve_vertices(4 * run.len());
+    mesh.reserve_triangles(2 * run.len());
+    for &(i, r, color) in run.iter() {
+        mesh.add_colored_rect(r, color);
+        shapes[i].shape = Shape::Noop;
+    }
+    shapes[first].shape = Shape::mesh(mesh);
+    run.clear();
 }
 
 /// The colour of `rect` when a clear draws the same pixels it does.
