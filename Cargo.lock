@@ -3913,6 +3913,7 @@ dependencies = [
  "ljos_reactive",
  "ljos_render",
  "ljos_runtime",
+ "ljos_shader",
  "ljos_text",
  "png",
  "qml_front",

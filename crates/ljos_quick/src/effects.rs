@@ -626,7 +626,7 @@ pub(crate) fn picture(snap: &ljos_render::FrameSnapshot) -> Option<ImageHandle> 
     ImageHandle::from_straight(rgba.width, rgba.height, rgba.data).ok()
 }
 
-fn read_item_image(e: &Engine, item: ObjectId) -> Option<ImageHandle> {
+pub(crate) fn read_item_image(e: &Engine, item: ObjectId) -> Option<ImageHandle> {
     if is_a::<crate::image::Image>(e, item) {
         return ImagePaint::read(e, item).image().cloned();
     }

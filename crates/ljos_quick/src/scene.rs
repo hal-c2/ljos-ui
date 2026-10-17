@@ -32,7 +32,7 @@ use ljos_engine::{
     Engine, EngineError, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent, OverrideId,
     Point, PropIndex, Provenance, RestoreMode, Value,
 };
-use ljos_render::{ClipSpec, FrameSnapshot, NodeId, RenderTree, hit_test, kurbo};
+use ljos_render::{ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, kurbo};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
 use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::SecondaryMap;
@@ -103,6 +103,10 @@ enum Kind {
     Canvas,
     /// A `MultiEffect`: paints its source with its mask applied.
     Effect,
+    /// A `ShaderEffect`: its programs, or its `source` with none.
+    Shader,
+    /// A `ShaderEffectSource`: a picture of its source item.
+    Source,
     /// An item of another crate that paints itself
     /// (`crate::register_paint_item`).
     External,
@@ -130,6 +134,10 @@ impl Kind {
             Kind::Canvas
         } else if is_a::<crate::effects::MultiEffect>(engine, obj) {
             Kind::Effect
+        } else if is_a::<crate::shader_effect::ShaderEffect>(engine, obj) {
+            Kind::Shader
+        } else if is_a::<crate::shader_effect::ShaderEffectSource>(engine, obj) {
+            Kind::Source
         } else if crate::paint_item::paint_item(engine, obj).is_some() {
             Kind::External
         } else {
@@ -147,6 +155,8 @@ impl Kind {
                 | Kind::Shape
                 | Kind::Canvas
                 | Kind::Effect
+                | Kind::Shader
+                | Kind::Source
                 | Kind::External
         )
     }
@@ -212,6 +222,8 @@ enum Paint {
     Shape(crate::shapes::ShapePaint),
     Canvas(crate::canvas::CanvasPicture),
     Effect(crate::effects::EffectPaint),
+    Shader(crate::shader_effect::ShaderEffectPaint),
+    Source(crate::shader_effect::SourcePaint),
     External(Rc<dyn crate::paint_item::ItemPaint>),
 }
 
@@ -241,6 +253,11 @@ impl Shared {
 }
 
 type SharedRc = Rc<RefCell<Shared>>;
+
+/// What a `ShaderEffectSource` was last given of its source: the
+/// fingerprint and snapshot it was made from (held, as `effect_base`'s
+/// are), and the picture.
+type SourcePicture = (u64, FrameSnapshot, Option<ImageHandle>);
 
 /// Records a change; calls the waker on the clean-to-dirty edge only.
 fn mark(shared: &SharedRc, f: impl FnOnce(&mut Shared)) {
@@ -326,6 +343,12 @@ pub struct QuickScene {
     /// with what it was made from (held, so no display list it names is
     /// freed and its address taken by another).
     effect_base: HashMap<ObjectId, (crate::effects::EffectPaint, Option<(u64, FrameSnapshot)>)>,
+    /// Each `ShaderEffectSource` as read, and the fingerprint, snapshot
+    /// and picture of its source it was last given.
+    source_base: HashMap<ObjectId, (crate::shader_effect::SourcePaint, Option<SourcePicture>)>,
+    /// The source items a `ShaderEffectSource` hides (`hideSource`): not
+    /// shown in the tree, whatever `visible` says.
+    hidden: FxHashSet<ObjectId>,
     root: Option<ObjectId>,
     /// The layer above the root item (`crate::layer`), once one was made.
     layer: Option<ObjectId>,
@@ -399,6 +422,8 @@ impl QuickScene {
             by_node: SecondaryMap::new(),
             paint: FxHashMap::default(),
             effect_base: HashMap::new(),
+            source_base: HashMap::new(),
+            hidden: FxHashSet::default(),
             root: None,
             layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
@@ -892,6 +917,8 @@ impl QuickScene {
                     | Kind::Image
                     | Kind::Shape
                     | Kind::Effect
+                    | Kind::Shader
+                    | Kind::Source
                     | Kind::External => Ok(()),
                 };
                 if let Err(e) = r {
@@ -1146,8 +1173,10 @@ impl QuickScene {
             // left shown in the tree: the parent prunes it anyway, and a
             // `MultiEffect` drawing that parent shows it as Qt does.
             let covered = e.inherit.borrow().visible.is_some();
-            self.tree
-                .set_visible(node, (g.visible || covered) && !g.faces_away);
+            self.tree.set_visible(
+                node,
+                (g.visible || covered) && !g.faces_away && !self.hidden.contains(&obj),
+            );
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
             self.tree.set_z(node, g.z as f32);
@@ -1174,12 +1203,26 @@ impl QuickScene {
         for (obj, p) in content {
             if let Some(e) = self.entries.get(&obj) {
                 self.tree.mark_content_dirty(e.node);
-                if let Paint::Effect(fx) = &p {
-                    self.effect_base.insert(obj, (fx.clone(), None));
-                }
+                let p = match p {
+                    Paint::Effect(fx) => {
+                        self.effect_base.insert(obj, (fx.clone(), None));
+                        Paint::Effect(fx)
+                    }
+                    // What it was given of the source stays: one that is
+                    // not live keeps it, and one that is takes it again
+                    // only when the source changed.
+                    Paint::Source(src) => {
+                        let seen = self.source_base.remove(&obj).and_then(|(_, seen)| seen);
+                        let shown = src.with_picture(seen.as_ref().and_then(|s| s.2.clone()));
+                        self.source_base.insert(obj, (src, seen));
+                        Paint::Source(shown)
+                    }
+                    p => p,
+                };
                 self.paint.insert(obj, p);
             }
         }
+        self.refresh_hidden();
         let paint = &self.paint;
         let by_node = &self.by_node;
         let mut te = self.text.borrow_mut();
@@ -1195,6 +1238,15 @@ impl QuickScene {
                 Paint::Shape(s) => s.paint(cx.size, b),
                 Paint::Canvas(c) => c.paint(cx.size, b),
                 Paint::Effect(p) => p.paint(cx.size, b),
+                Paint::Shader(p) => p.paint(
+                    cx.size,
+                    |s| match paint.get(&s) {
+                        Some(Paint::Source(src)) => src.image.clone(),
+                        _ => None,
+                    },
+                    b,
+                ),
+                Paint::Source(p) => p.paint(cx.size, b),
                 Paint::External(p) => p.paint(cx.size, &mut te, b),
             }
         });
@@ -1207,18 +1259,25 @@ impl QuickScene {
     /// item", and hiding it is the user's choice. Drawn again only when
     /// what the source shows changed.
     fn draw_effect_sources(&mut self, engine: &Engine) {
-        if self.effect_base.is_empty() {
+        if self.effect_base.is_empty() && self.source_base.is_empty() {
             return;
         }
         let entries = &self.entries;
         self.effect_base.retain(|o, _| entries.contains_key(o));
+        let redrawn = self.draw_shader_sources();
+        if self.effect_base.is_empty() {
+            if redrawn {
+                self.apply_content();
+            }
+            return;
+        }
         let mut parents: FxHashSet<ObjectId> = FxHashSet::default();
         for e in self.entries.values() {
             if let Some(p) = e.parent {
                 parents.insert(p);
             }
         }
-        let mut redrawn = false;
+        let mut redrawn = redrawn;
         for (obj, (base, seen)) in &mut self.effect_base {
             let Some(src) = base.source().filter(|s| parents.contains(s)) else {
                 continue;
@@ -1248,13 +1307,87 @@ impl QuickScene {
         }
     }
 
-    /// The items that are drawn as part of a `MultiEffect`'s source: the
-    /// source and what is below it, shown or not.
+    /// Takes the picture of each `ShaderEffectSource`'s source that
+    /// changed, unless it is not `live` and has one, and marks the
+    /// `ShaderEffect`s that sample it. Returns whether any was taken.
+    fn draw_shader_sources(&mut self) -> bool {
+        let entries = &self.entries;
+        self.source_base.retain(|o, _| entries.contains_key(o));
+        let mut taken: FxHashSet<ObjectId> = FxHashSet::default();
+        for (obj, (base, seen)) in &mut self.source_base {
+            if !base.live && seen.is_some() {
+                continue;
+            }
+            let (Some(fx), Some(src_entry)) = (
+                self.entries.get(obj),
+                base.source.and_then(|s| self.entries.get(&s)),
+            ) else {
+                continue;
+            };
+            let Some(snap) = self.tree.compose_subtree(src_entry.node) else {
+                continue;
+            };
+            let print = fingerprint(&snap);
+            if seen.as_ref().is_some_and(|(p, _, _)| *p == print) {
+                continue;
+            }
+            let picture = crate::effects::picture(&snap);
+            let shown = base.with_picture(picture.clone());
+            *seen = Some((print, snap, picture));
+            self.paint.insert(*obj, Paint::Source(shown));
+            self.tree.mark_content_dirty(fx.node);
+            taken.insert(*obj);
+        }
+        if taken.is_empty() {
+            return false;
+        }
+        for (obj, p) in &self.paint {
+            if let Paint::Shader(fx) = p
+                && fx.sources().any(|s| taken.contains(&s))
+                && let Some(e) = self.entries.get(obj)
+            {
+                self.tree.mark_content_dirty(e.node);
+            }
+        }
+        true
+    }
+
+    /// Hides the source items `hideSource` names, and shows again those it
+    /// no longer does.
+    fn refresh_hidden(&mut self) {
+        let now: FxHashSet<ObjectId> = self
+            .source_base
+            .iter()
+            .filter(|(o, (b, _))| b.hide && self.entries.contains_key(o))
+            .filter_map(|(_, (b, _))| b.source)
+            .collect();
+        if now == self.hidden {
+            return;
+        }
+        let changed: Vec<ObjectId> = now.symmetric_difference(&self.hidden).copied().collect();
+        self.hidden = now;
+        for obj in changed {
+            let Some(e) = self.entries.get(&obj) else {
+                continue;
+            };
+            let Some(g) = e.geom else { continue };
+            let covered = e.inherit.borrow().visible.is_some();
+            self.tree.set_visible(
+                e.node,
+                (g.visible || covered) && !g.faces_away && !self.hidden.contains(&obj),
+            );
+        }
+    }
+
+    /// The items that are drawn as part of a `MultiEffect`'s or a
+    /// `ShaderEffectSource`'s source: the source and what is below it,
+    /// shown or not.
     fn effect_drawn(&self) -> FxHashSet<ObjectId> {
         let sources: FxHashSet<ObjectId> = self
             .effect_base
             .values()
             .filter_map(|(b, _)| b.source())
+            .chain(self.source_base.values().filter_map(|(b, _)| b.source))
             .collect();
         if sources.is_empty() {
             return FxHashSet::default();
@@ -1298,7 +1431,9 @@ impl QuickScene {
             // A Shape paints where its paths are, which need not be where
             // the item is: only its display list tells whether it is in the
             // frame, so it has one from the start and keeps it.
-            let shown = shown || e.kind == Kind::Shape;
+            // A ShaderEffectSource is often not shown itself, only
+            // sampled: it reads its source all the same.
+            let shown = shown || matches!(e.kind, Kind::Shape | Kind::Source);
             match (shown, e.content_effect) {
                 (true, None) => {
                     let shared = Rc::clone(&self.shared);
@@ -1969,6 +2104,8 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         | Kind::Editor
         | Kind::Shape
         | Kind::Effect
+        | Kind::Shader
+        | Kind::Source
         | Kind::External => {
             return;
         }
@@ -1990,6 +2127,8 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Shape => Paint::Shape(crate::shapes::ShapePaint::read(e, obj)),
         Kind::Canvas => Paint::Canvas(crate::canvas::CanvasPicture::read(e, obj)),
         Kind::Effect => Paint::Effect(crate::effects::EffectPaint::read(e, obj)),
+        Kind::Shader => Paint::Shader(crate::shader_effect::ShaderEffectPaint::read(e, obj)),
+        Kind::Source => Paint::Source(crate::shader_effect::SourcePaint::read(e, obj)),
         Kind::External => match crate::paint_item::paint_item(e, obj) {
             Some(read) => Paint::External(read(e, obj)),
             None => return,

@@ -8,6 +8,13 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["shader-compile"]
+# A ShaderEffect's GLSL source is compiled when it is shown (with naga).
+# Without it only the `.ljsh` files `ljos shaders` makes are read, which is
+# what a shipped application wants.
+shader-compile = ["ljos_shader/compile"]
+
 [dependencies]
 ljos_a11y = { path = "../ljos_a11y" }
 ljos_engine = { path = "../ljos_engine" }
@@ -17,6 +24,7 @@ ljos_platform = { path = "../ljos_platform" }
 ljos_reactive = { path = "../ljos_reactive" }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
+ljos_shader = { path = "../ljos_shader" }
 ljos_text = { path = "../ljos_text" }
 bitflags.workspace = true
 # Image decoding: PNG and JPEG are the formats Image reads.

@@ -45,6 +45,7 @@ mod rectangle;
 mod repeater;
 mod safe_area;
 mod scene;
+mod shader_effect;
 mod shapes;
 mod sprites;
 mod states;
@@ -129,6 +130,7 @@ pub use scene::{
     DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD, FrameOutput, INCUBATION_BUDGET, MAX_POLISH_PASSES,
     POLISH_CATEGORY, QuickScene, SCENE_CATEGORY, TimerHook,
 };
+pub use shader_effect::{GridMesh, ShaderEffect, ShaderEffectSource};
 pub use shapes::{Shape, ShapePaint, ShapePath};
 pub use states::{
     AnchorChanges, AnchorChangesAnchors, Binding, ParentChange, PropertyChanges, State,
@@ -225,6 +227,7 @@ pub fn register(engine: &Engine) {
     flipable::register(engine);
     canvas::register(engine);
     effects::register(engine);
+    shader_effect::register(engine);
     particles::register(engine);
     sprites::register(engine);
     handlers::register(engine);

@@ -898,6 +898,7 @@ module QtQuick
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
 	Grid QtQuick.Grid
+	GridMesh QtQuick.GridMesh
 	GridView QtQuick.GridView
 	HoverHandler QtQuick.HoverHandler
 	Image QtQuick.Image
@@ -952,6 +953,8 @@ module QtQuick
 	ScreenInfo QtQuick.ScreenInfo
 	ScriptAction QtQuick.ScriptAction
 	SequentialAnimation QtQuick.SequentialAnimation
+	ShaderEffect QtQuick.ShaderEffect
+	ShaderEffectSource QtQuick.ShaderEffectSource
 	Shear QtQuick.Shear
 	Shortcut QtQuick.Shortcut
 	SmoothedAnimation QtQuick.SmoothedAnimation
@@ -1532,6 +1535,10 @@ module QtQuick
 		signal populateChanged
 		signal addChanged
 		signal moveChanged
+	type QtQuick.GridMesh GridMesh
+		prototype QtQml.QtObject named
+		prop resolution QtQml.size named
+		signal resolutionChanged
 	type QtQuick.GridView GridView
 		prototype QtQuick.ItemView
 		attached QtQuick.ItemViewAttached
@@ -2300,6 +2307,53 @@ module QtQuick
 		prototype QtQuick.Animation named
 		default animations
 		prop animations QtQml.var named list
+	type QtQuick.ShaderEffect ShaderEffect
+		prototype QtQuick.Item named
+		enum CullMode NoCulling=0 BackFaceCulling=1 FrontFaceCulling=2
+		enum Status Compiled=0 Uncompiled=1 Error=2
+		prop fragmentShader QtQml.url named
+		prop vertexShader QtQml.url named
+		prop blending QtQml.bool named
+		prop cullMode CullMode
+		prop supportsAtlasTextures QtQml.bool named
+		prop mesh QtQml.var named
+		prop status Status readonly
+		prop log QtQml.string named readonly
+		signal fragmentShaderChanged
+		signal vertexShaderChanged
+		signal blendingChanged
+		signal cullModeChanged
+		signal supportsAtlasTexturesChanged
+		signal meshChanged
+		signal statusChanged
+		signal logChanged
+	type QtQuick.ShaderEffectSource ShaderEffectSource
+		prototype QtQuick.Item named
+		enum Format RGBA8=1 RGBA16F=2 RGBA32F=3
+		enum WrapMode ClampToEdge=0 RepeatHorizontally=1 RepeatVertically=2 Repeat=3
+		enum TextureMirroring NoMirroring=0 MirrorHorizontally=1 MirrorVertically=2
+		prop sourceItem QtQml.QtObject named pointer
+		prop hideSource QtQml.bool named
+		prop live QtQml.bool named
+		prop recursive QtQml.bool named
+		prop format Format
+		prop mipmap QtQml.bool named
+		prop wrapMode WrapMode
+		prop textureMirroring TextureMirroring
+		prop samples QtQml.int named
+		prop sourceRect QtQml.rect named
+		prop textureSize QtQml.size named
+		signal sourceItemChanged
+		signal hideSourceChanged
+		signal liveChanged
+		signal recursiveChanged
+		signal formatChanged
+		signal mipmapChanged
+		signal wrapModeChanged
+		signal textureMirroringChanged
+		signal samplesChanged
+		signal sourceRectChanged
+		signal textureSizeChanged
 	type QtQuick.Shear Shear
 		prototype QtQuick.Transform
 		prop origin QtQuick.vector3d named
