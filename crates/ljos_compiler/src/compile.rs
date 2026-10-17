@@ -15,7 +15,7 @@ use qml_front::{
     names::{self, Global, Names, Resolution, Target},
     project::Source,
     scope::{Tree, alias_target, handled, is_group},
-    types::{Found, Kind, Lookup, Origin, Types},
+    types::{Found, Kind, Lookup, Member, Origin, Types},
 };
 use qml_syntax::{
     Allocator, GetSpan, Span,
@@ -412,7 +412,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     /// type says that is an error ([`TypeOracle::members_checked`]) and
     /// not a name for the running program to look for.
     fn check_member(&mut self, owner: usize, path: &[&str], span: Span) {
-        let [name] = path else { return };
+        let [name] = path else {
+            self.check_path_member(owner, path, span);
+            return;
+        };
         let object = &self.tree.objects[owner];
         let Some(kind) = &object.kind else { return };
         if !self
@@ -440,6 +443,71 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         };
         self.diagnostics
             .push(Diagnostic::error(message, self.span(span)));
+    }
+
+    /// [`check_member`](Self::check_member) for a member of a group
+    /// (`info.label`) or of what a type attaches (`Native.flag`, or
+    /// `Module.Native.flag`): each step is looked up on the type the step
+    /// before it gives.
+    fn check_path_member(&mut self, owner: usize, path: &[&str], span: Span) {
+        let Some(first) = path.first() else { return };
+        let (mut ty, mut at) = if first.starts_with(|c: char| c.is_ascii_uppercase()) {
+            let of = if path.len() > 2 && self.types.find(&path[..2]).is_some() {
+                2
+            } else {
+                1
+            };
+            let Some(attached) = self
+                .types
+                .find(&path[..of])
+                .and_then(|found| self.types.base(&found.kind))
+                .and_then(|ty| self.types.oracle.attached(ty))
+            else {
+                return;
+            };
+            (attached, of)
+        } else {
+            match self.tree.lookup(self.types, owner, first) {
+                Lookup::Found(Member::Property(property)) => match property.value {
+                    Some(ty) => (ty, 1),
+                    None => return,
+                },
+                _ => return,
+            }
+        };
+        while let Some(name) = path.get(at) {
+            let last = at + 1 == path.len();
+            let found = self.types.lookup(&Kind::Builtin(ty), name);
+            match found {
+                Lookup::Found(Member::Property(property)) if !last => match property.value {
+                    Some(next) => ty = next,
+                    None => return,
+                },
+                Lookup::Found(_) if last => return,
+                Lookup::Missing if self.types.oracle.members_checked(ty) => {
+                    let signal = handled(name).filter(|_| last);
+                    if let Some(signal) = &signal
+                        && !matches!(
+                            self.types.lookup_signal(&Kind::Builtin(ty), signal),
+                            Lookup::Missing
+                        )
+                    {
+                        return;
+                    }
+                    let written = path.join(".");
+                    let of = path[..at].join(".");
+                    let message = match signal {
+                        Some(signal) => format!("`{written}`: `{of}` has no signal `{signal}`"),
+                        None => format!("`{written}`: `{of}` has no property `{name}`"),
+                    };
+                    self.diagnostics
+                        .push(Diagnostic::error(message, self.span(span)));
+                    return;
+                }
+                _ => return,
+            }
+            at += 1;
+        }
     }
 
     /// `Type.Key` or `Singleton.member` naming what the type does not

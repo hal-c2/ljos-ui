@@ -327,8 +327,11 @@ cargo test                    # fails, naming that command, when it is stale
 The natives stay in the application's crate, and only `ljos` with
 `build` is a build dependency. A file with an error fails the build,
 and so does a binding of a property or signal handler a native type
-does not have (`lable: 1`, `onBumpd:`) or an enum key it lacks
-(`Counter.Eleven`). While `LJOS_TYPES=write` is set the build lets
+does not have (`lable: 1`, `onBumpd:`), including one written through
+its group property or attached type (`limits.mx: 1`,
+`Counter.onTalied:`), or an enum key it lacks (`Counter.Eleven`). A
+group or attached type that the toolkit's own types reach too, such as
+`anchors`, is left for the runtime as the toolkit's types are. While `LJOS_TYPES=write` is set the build lets
 such files through as components that fail when made, so that the
 test can run and write the file. `crates/ljos_facade_aot` is this
 application.

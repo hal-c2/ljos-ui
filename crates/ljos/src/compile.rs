@@ -2,6 +2,7 @@
 //! types: what [`crate::dev`] does at start-up and [`crate::build`]
 //! does in a build script. Either feature links the parser.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use ljos_engine::{
@@ -167,6 +168,9 @@ struct NativeType {
     /// Group and attached types reached through the type's toolkit bases,
     /// which no dump lists.
     reached: Vec<MetaRef>,
+    /// A name written on it that it lacks is an error
+    /// ([`TypeOracle::members_checked`]).
+    checked: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -180,16 +184,8 @@ struct NativeProperty {
 
 impl NativeType {
     fn from_meta(meta: &MetaObject, module: String, singleton: bool) -> NativeType {
-        let mut reached: Vec<MetaRef> = meta
-            .properties
-            .iter()
-            .filter_map(|p| match p.access {
-                PropertyAccess::Group { meta, .. } => Some(MetaRef::Static(meta)),
-                _ => None,
-            })
-            .collect();
-        reached.extend(meta.attached.map(|f| f()));
         NativeType {
+            checked: !module.is_empty(),
             module,
             name: meta.name.to_string(),
             singleton,
@@ -223,7 +219,7 @@ impl NativeType {
                     (e.name.to_string(), keys)
                 })
                 .collect(),
-            reached,
+            reached: reaches(meta),
         }
     }
 
@@ -231,6 +227,7 @@ impl NativeType {
     /// would have flattened it.
     fn from_entry(entry: &TypeEntry, module: String, base: Option<NativeType>) -> NativeType {
         let mut ty = base.unwrap_or_default();
+        ty.checked = !module.is_empty();
         ty.module = module;
         ty.name.clone_from(&entry.name);
         ty.singleton = entry.singleton;
@@ -329,7 +326,7 @@ impl EngineOracle {
                 }
             }
         }
-        Self::with_reached(natives)
+        Self::with_reached(natives, &table_reached(engine))
     }
 
     /// The native types `dump` describes ([`Engine::type_dump`], written
@@ -350,14 +347,17 @@ impl EngineOracle {
         for ty in &dump.unnamed {
             natives.push(flatten(dump, engine, ty, String::new(), 0)?);
         }
-        Ok(Self::with_reached(natives))
+        Ok(Self::with_reached(natives, &table_reached(engine)))
     }
 
     /// `natives` and the group and attached types reachable from them:
     /// a grouped property's type and an attached type are types the
     /// compiler is asked about too, and no module exports them by a name
-    /// of their own.
-    fn with_reached(mut natives: Vec<NativeType>) -> Self {
+    /// of their own. Those are checked as the application's types are,
+    /// except the ones the table's types reach (`table`): a toolkit's
+    /// group, as `anchors` of an application's `Item`, is left as the
+    /// table's types are.
+    fn with_reached(mut natives: Vec<NativeType>, table: &HashSet<String>) -> Self {
         let mut seen: Vec<MetaRef> = Vec::new();
         let mut i = 0;
         while i < natives.len() {
@@ -372,6 +372,11 @@ impl EngineOracle {
             }
             i += 1;
         }
+        for native in &mut natives {
+            if native.module.is_empty() {
+                native.checked = !table.contains(&native.name);
+            }
+        }
         EngineOracle { natives }
     }
 
@@ -385,6 +390,48 @@ impl EngineOracle {
             .position(|n| n.name == name)
             .map(|i| EngineType::Native(i as u32))
     }
+}
+
+/// The types of `meta`'s grouped properties, and the type it attaches.
+fn reaches(meta: &MetaObject) -> Vec<MetaRef> {
+    let mut reached: Vec<MetaRef> = meta
+        .properties
+        .iter()
+        .filter_map(|p| match p.access {
+            PropertyAccess::Group { meta, .. } => Some(MetaRef::Static(meta)),
+            _ => None,
+        })
+        .collect();
+    reached.extend(meta.attached.map(|f| f()));
+    reached
+}
+
+/// The names of the group and attached types the table's types reach
+/// in `engine`, however deep: the toolkit's, which the table describes
+/// only in part.
+fn table_reached(engine: &Engine) -> HashSet<String> {
+    let qt = QtTypeOracle;
+    let mut todo: Vec<MetaRef> = engine
+        .type_dump()
+        .modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .types
+                .iter()
+                .filter(|ty| qt.module_type(&module.uri, &ty.name).is_some())
+                .filter_map(|ty| engine.lookup_type(&module.uri, &ty.name))
+        })
+        .collect();
+    let mut names = HashSet::new();
+    while let Some(meta) = todo.pop() {
+        for next in reaches(&meta) {
+            if names.insert(next.name.to_string()) {
+                todo.push(next);
+            }
+        }
+    }
+    names
 }
 
 /// How deep a dump's chain of bases is followed before it is taken to
@@ -629,11 +676,12 @@ impl TypeOracle for EngineOracle {
     fn members_checked(&self, ty: EngineType) -> bool {
         // A native type's members are what it registered, and the Engine
         // makes none at run time: a name it lacks is a mistake in the file.
-        // An attached or group type reached through a toolkit base is not
-        // the application's, and is left as the table's types are.
+        // So are those of the group and attached types it reaches; one the
+        // table's types reach too is the toolkit's, and is left as the
+        // table's types are.
         match ty {
             EngineType::Qt(_) => false,
-            EngineType::Native(i) => !self.native(i).module.is_empty(),
+            EngineType::Native(i) => self.native(i).checked,
         }
     }
 

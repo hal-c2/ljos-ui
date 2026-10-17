@@ -6,12 +6,42 @@
 use ljos::prelude::*;
 
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "Example", name = "Counter", enums = counter_enums)]
+#[qml(
+    module = "Example",
+    name = "Counter",
+    enums = counter_enums,
+    attached = Tally
+)]
 pub struct Counter {
     #[qml(notify)]
     pub count: i32,
     #[qml(notify)]
     pub label: Atom,
+    #[qml(group)]
+    pub limits: Limits,
+}
+
+/// `Counter`'s `limits` group: a type of the application's that no module
+/// exports by name.
+#[derive(Debug, Default, QmlObject)]
+#[qml(name = "CounterLimits", uncreatable)]
+pub struct Limits {
+    #[qml(notify)]
+    pub max: i32,
+}
+
+/// What `Counter.` attaches to an object.
+#[derive(Debug, Default, QmlObject)]
+#[qml(name = "CounterTally", uncreatable)]
+pub struct Tally {
+    #[qml(notify)]
+    pub weight: i32,
+}
+
+#[qml_impl]
+impl Tally {
+    #[qml(signal)]
+    fn tallied();
 }
 
 fn counter_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -52,6 +82,7 @@ Item {
         id: counter
         count: 41 + Settings.start
         label: "n"
+        limits.max: 100
         onBumped: (by) => counter.count += by
         onCountChanged: root.changes++
     }
@@ -59,6 +90,8 @@ Item {
     property int changes: 0
     property int seen: counter.count + 1
     property int step: Counter.Ten
+    Counter.weight: 2
+    Counter.onTallied: changes++
 }
 "#;
 
@@ -147,6 +180,35 @@ fn a_member_of_a_singleton_the_native_type_lacks_fails_the_build() {
     let dir = project(&MAIN.replace("Settings.start", "Settings.strat"));
     let err = build_error(&dir);
     assert!(err.contains("Settings.strat"), "{err}");
+}
+
+#[test]
+fn a_member_of_a_native_group_the_type_lacks_fails_the_build() {
+    let dir = project(&MAIN.replace("limits.max:", "limits.mx:"));
+    let err = build_error(&dir);
+    assert!(err.contains("`limits.mx`"), "{err}");
+}
+
+#[test]
+fn a_member_of_a_native_attached_type_it_lacks_fails_the_build() {
+    let dir = project(&MAIN.replace("Counter.weight:", "Counter.wieght:"));
+    let err = build_error(&dir);
+    assert!(err.contains("`Counter.wieght`"), "{err}");
+    let dir = project(&MAIN.replace("Counter.onTallied:", "Counter.onTalied:"));
+    let err = build_error(&dir);
+    assert!(err.contains("`Counter.onTalied`"), "{err}");
+}
+
+#[test]
+fn the_live_engine_build_checks_groups_and_attached_types_too() {
+    let dir = project(&MAIN.replace("limits.max:", "limits.mx:"));
+    let err = ljos::build::compile_dir(
+        &dir.path().join("qml"),
+        register,
+        &dir.path().join("qml.pack"),
+    )
+    .expect_err("the build succeeded");
+    assert!(err.contains("`limits.mx`"), "{err}");
 }
 
 #[test]
