@@ -86,7 +86,7 @@ fn unknown_type_is_an_error_with_a_suggestion() {
 }
 
 #[test]
-fn unknown_properties_signals_and_attached_members_are_errors() {
+fn unknown_properties_signals_and_attached_members_are_found() {
     let diagnostics = check("unknown_property.qml");
     assert_eq!(
         brief(&diagnostics),
@@ -101,7 +101,15 @@ fn unknown_properties_signals_and_attached_members_are_errors() {
     assert!(diagnostics[0].message.contains("did you mean `color`"));
     assert!(diagnostics[1].message.contains("did you mean `fill`"));
     assert!(diagnostics[3].message.contains("Layout"));
-    assert!(diagnostics.iter().all(|d| d.severity == Severity::Error));
+    // Errors where Qt's table describes the types, as Qt fails to load
+    // the file; read against Ljós's own table, which may lack what Qt
+    // has, warnings, as the compiler's are.
+    let severity = if qt_types::has_qt_table() {
+        Severity::Error
+    } else {
+        Severity::Warning
+    };
+    assert!(diagnostics.iter().all(|d| d.severity == severity));
 }
 
 #[test]

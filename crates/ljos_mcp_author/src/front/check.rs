@@ -555,6 +555,22 @@ impl<'a> Walker<'_, 'a> {
         }
     }
 
+    /// Whether Ljós gives the type of `owner` a member `name` that Qt's
+    /// table does not list (`font.scaleWithSystem`): the runtime has it,
+    /// so it is no finding, as it is none of the compiler's.
+    fn adds(&self, owner: usize, name: &str) -> bool {
+        matches!(self.shapes[owner], Shape::Complete(base) if base.0.adds(name))
+    }
+
+    /// How sure a name the type of `owner` lacks is wrong: see
+    /// [`missing_severity`].
+    fn missing_severity(&self, owner: usize) -> Severity {
+        match self.shapes[owner] {
+            Shape::Complete(base) => missing_severity(base),
+            _ => Severity::Error,
+        }
+    }
+
     fn type_label(&self, owner: usize) -> String {
         self.tree.objects[owner].name.clone()
     }
@@ -569,7 +585,19 @@ impl<'a> Walker<'_, 'a> {
         if !matches!(
             self.tree.lookup_signal(self.types, owner, &signal),
             Lookup::Missing
-        ) {
+        ) || self.adds(owner, &signal)
+        {
+            return;
+        }
+        // `on<Property>Changed` handles the property's change, whatever
+        // its notifying signal is called, as the compiler takes it.
+        let changed = signal.strip_suffix("Changed").is_some_and(|property| {
+            matches!(
+                self.tree.lookup(self.types, owner, property),
+                Lookup::Found(Member::Property(_))
+            )
+        });
+        if changed {
             return;
         }
         let mut message = format!(
@@ -587,13 +615,15 @@ impl<'a> Walker<'_, 'a> {
                 message.push_str(&format!("; did you mean `{}`?", handler_name(near)));
             }
         }
-        self.report(at, Severity::Error, Code::UnknownSignal.as_str(), message);
+        let severity = self.missing_severity(owner);
+        self.report(at, severity, Code::UnknownSignal.as_str(), message);
     }
 
     fn property(&mut self, owner: usize, path: &[&'a str], at: u32) {
         let first = path[0];
         match self.tree.lookup(self.types, owner, first) {
             Lookup::Undecided => {}
+            Lookup::Missing if self.adds(owner, first) => {}
             Lookup::Missing => {
                 let mut message = format!(
                     "`{first}` is not a property of `{}`",
@@ -610,7 +640,8 @@ impl<'a> Walker<'_, 'a> {
                         message.push_str(&format!("; did you mean `{near}`?"));
                     }
                 }
-                self.report(at, Severity::Error, Code::UnknownProperty.as_str(), message);
+                let severity = self.missing_severity(owner);
+                self.report(at, severity, Code::UnknownProperty.as_str(), message);
             }
             Lookup::Found(Member::Property(mut property)) => {
                 // `anchors.fill`, `font.pixelSize`: the rest are properties
@@ -629,7 +660,8 @@ impl<'a> Walker<'_, 'a> {
                         Some(next) => property = next,
                         // Not assignable perhaps, but not unknown either.
                         None if self.types.oracle.signal(value, name).is_some()
-                            || self.types.oracle.has_method(value, name) =>
+                            || self.types.oracle.has_method(value, name)
+                            || value.0.adds(name) =>
                         {
                             return;
                         }
@@ -647,7 +679,7 @@ impl<'a> Walker<'_, 'a> {
                             }
                             self.report(
                                 at,
-                                Severity::Error,
+                                missing_severity(value),
                                 Code::UnknownProperty.as_str(),
                                 message,
                             );
@@ -696,12 +728,14 @@ impl<'a> Walker<'_, 'a> {
         if ty.0.attached().is_none() {
             return;
         }
-        let known =
-            ty.0.attaches(member) || handled(member).is_some_and(|signal| ty.0.attaches(&signal));
+        let attaches = |name: &str| {
+            ty.0.attaches(name) || ty.0.attached().is_some_and(|attached| attached.adds(name))
+        };
+        let known = attaches(member) || handled(member).is_some_and(|signal| attaches(&signal));
         if !known {
             self.report(
                 at,
-                Severity::Error,
+                missing_severity(ty),
                 Code::UnknownProperty.as_str(),
                 format!(
                     "`{member}` is not a member of what `{}` attaches",
@@ -709,6 +743,18 @@ impl<'a> Walker<'_, 'a> {
                 ),
             );
         }
+    }
+}
+
+/// A name `ty` lacks is an error where Qt's table describes it, as Qt
+/// fails to load the file and the compiler stops it. Where only Ljós's own
+/// table does, which may lack what Qt has, it is a warning, as the
+/// compiler's is.
+fn missing_severity(ty: QtType) -> Severity {
+    if ty.0.is_own {
+        Severity::Warning
+    } else {
+        Severity::Error
     }
 }
 

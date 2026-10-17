@@ -22,8 +22,8 @@
 //! | `syntax` | error | The parser rejected the file. The file is then not analysed further. |
 //! | `unknown-module` | warning | An `import` names a module that neither Qt's table nor the project's `qmldir`/CMake files know. Type errors in that file are held back, because the module may provide the type. |
 //! | `unknown-type` | error | An object type, or the type an attached property is written on (`Layout.fillWidth`), is not provided by anything the file imports. |
-//! | `unknown-property` | error | A binding names a property the object's type definitely does not have. Held back where the type chain is not fully known, including a component whose file did not parse whole. |
-//! | `unknown-signal` | error | A handler (`onFoo`) for a signal the object's type definitely does not have (same holds as above). |
+//! | `unknown-property` | error, warning | A binding names a property the object's type definitely does not have. Held back where the type chain is not fully known, including a component whose file did not parse whole. A warning where only Ljós's own table describes the type, as the compiler's is: that table may lack what Qt has. |
+//! | `unknown-signal` | error, warning | A handler (`onFoo`) for a signal the object's type definitely does not have (same holds and same severity as above). |
 //! | `duplicate-id` | error | Two objects of one component share an `id`. |
 //! | `unknown-alias-target` | error | A `property alias` points at an id the component does not have. |
 //! | `unresolved-name` | warning | A free name in a binding that QML's lookup order cannot find, and that nothing else in the project provides. Warning, not error: a delegate's model role or a name the creating component supplies cannot be seen from one file. |
