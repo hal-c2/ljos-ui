@@ -43,6 +43,19 @@ fn infinite_loop_is_interrupted_and_context_survives() {
     assert_eq!(eval_num(&host, "1 + 1").unwrap(), 2.0);
 }
 
+/// A debug build runs scripts several times slower, so the default slice
+/// lets a dispatch that an optimised build finishes in time finish there
+/// too: a handler that builds a board of objects is not cut off half way.
+#[cfg(debug_assertions)]
+#[test]
+fn a_debug_build_does_not_interrupt_what_an_optimised_build_finishes() {
+    let host = plain();
+    let out = host.enter("handler", host.config().slice, |s| {
+        s.eval::<f64, _>("const t = Date.now(); while (Date.now() - t < 150) {} 1")
+    });
+    assert_eq!(out.unwrap(), 1.0);
+}
+
 #[test]
 fn out_of_memory_is_reported_and_context_survives() {
     let host = JsHost::new(JsConfig {

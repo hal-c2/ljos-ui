@@ -49,7 +49,11 @@ impl Default for Slice {
     fn default() -> Self {
         Self {
             soft: Duration::from_millis(4),
-            hard: Duration::from_millis(100),
+            // The interrupt is for runaway scripts. A debug build runs
+            // them several times slower (as the soft warning allows for in
+            // `JsHost::enter`), and cutting off there what a user's build
+            // finishes leaves half a scene and a misleading warning.
+            hard: Duration::from_millis(if cfg!(debug_assertions) { 800 } else { 100 }),
         }
     }
 }
