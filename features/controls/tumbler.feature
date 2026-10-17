@@ -304,26 +304,6 @@ Feature: Tumbler
       And 1 second passes
       Then the property "currentIndex" of "t" is 0
 
-  Rule: The wheel
-
-    @ljos-only
-    Scenario: A notch of the wheel goes to the next row
-      When the user turns the wheel 1 notch down at 30, 100
-      And 1 second passes
-      Then the property "currentIndex" of "t" is 1
-
-    @ljos-only
-    Scenario: A notch up from the first row of a wrapping tumbler is the last
-      When the user turns the wheel 1 notch up at 30, 100
-      And 1 second passes
-      Then the property "currentIndex" of "t" is 9
-
-    @ljos-only
-    Scenario: The wheel stops at the end of a tumbler that does not wrap
-      When the user turns the wheel 1 notch up at 130, 100
-      And 1 second passes
-      Then the property "currentIndex" of "s" is 0
-
   @a11y @ljos-only
   Rule: What an assistive technology reads
 

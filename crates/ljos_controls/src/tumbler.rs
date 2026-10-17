@@ -41,7 +41,7 @@ use ljos_render::kurbo;
 
 use crate::control::{Control, focus_policy, takes_input};
 use crate::rows;
-use crate::util::{bind_default, check, is_a, num, object, on_model_made, set_computed};
+use crate::util::{bind_default, check, flag, is_a, num, object, on_model_made, set_computed};
 
 /// `Tumbler.PositionMode`: the same numbers as a list view's.
 mod position_mode {
@@ -260,6 +260,12 @@ impl Tumbler {
         e.effect_in(me, move |e| follow(e, me))?;
         // Each delegate is the size of a row.
         e.effect_in(me, move |e| size_delegates(e, me))?;
+        // The wheel is the tumbler's to take or pass on, never its view's.
+        e.effect_in(me, move |e| {
+            if let Some(view) = view_of(e, me) {
+                ljos_quick::flickable::set_wheel_enabled(e, view, false);
+            }
+        })?;
         crate::a11y::defaults(e, me, Role::SpinBox, None)
     }
 
@@ -630,18 +636,10 @@ fn no_key(_: &Engine, _: ObjectId, _: &KeyEvent) -> bool {
     false
 }
 
-fn wheel(e: &Engine, me: ObjectId, ev: &WheelEvent, _p: kurbo::Point) -> bool {
-    if !takes_input(e, me) {
-        return false;
-    }
-    let turned = ev.angle_delta.y;
-    if turned == 0.0 {
-        return false;
-    }
-    let notches = ((turned.abs() / WheelEvent::NOTCH).trunc() as i32).max(1);
-    // Down, away from the user, is the next row, as the keys are.
-    step(e, me, if turned < 0.0 { notches } else { -notches });
-    true
+// qml6 turns no tumbler by the wheel. One that takes the wheel keeps it
+// from what it is in; by default it leaves it, so a page still scrolls.
+fn wheel(e: &Engine, me: ObjectId, _ev: &WheelEvent, _p: kurbo::Point) -> bool {
+    e.untrack(|| flag(e, me, Control::WHEEL_ENABLED.index)) && takes_input(e, me)
 }
 
 // ------------------------------------------------- assistive technology
