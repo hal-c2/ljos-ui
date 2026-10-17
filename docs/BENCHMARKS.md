@@ -99,6 +99,7 @@ outside a limit.
 | Settled private memory | PSS of anonymous pages (`smaps_rollup`) |
 | Settled PSS | PSS of all pages |
 | Idle CPU, idle wakeups | CPU use and context switches over `--idle` seconds (10) with no input |
+| Idle CPU of threads that ended | the part of idle CPU no thread alive at the end of the window used: the cgroup's usage less the live threads' `schedstat`. Wakeups are read from live threads, so a short worker shows here and not as wakeups |
 | Frames while idle | screencopy frames over the idle window: non-zero only for apps that animate |
 | CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks a grid over the window, `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up |
 | Frame interval while driven | the median and 95th percentile time between the frames the compositor showed then |
@@ -486,5 +487,71 @@ the sandbox.
   binding depends on: bindings rerun when nothing they read changed, and the counting tests fail.
 - **animations and clocks on a GPU** still cost Ljós 2× Qt's CPU.
 - **samegame clicks on a GPU** cost 14 % against Qt's 4 %.
-- **rssnews keeps working after it settles.** It uses 3–4 % with no frames and no wakeups, while
-  pictures are still fetched and decoded. Qt has finished by then.
+- **rssnews keeps working after it settles.** It used 3–4 % with no frames and no wakeups. That
+  was the tail of its picture loads, not work after them: see "Memory against Qt" below.
+
+### Memory against Qt (2026-10-18)
+
+The desktop profile on llvmpipe in the default sandbox, `--warm-up --repeat 3`, medians in MiB.
+"Anon PSS" is the private memory the app made; "PSS" adds its share of mapped files, the binary and
+libraries included. Qt is the 2026-10-17 run (load 18–47). Ljós before (88f0762) and after were run
+back to back under load 66–148 and 16–143. Other workers' builds never let the machine get quiet,
+so the CPU columns are noisy; anon PSS hardly moves with load.
+
+| App | Peak, before → after (Qt) | Settled | Anon PSS | PSS |
+|---|---:|---:|---:|---:|
+| animations | 87.4 → 71.9 (103) | 85.2 → 69.2 (106) | 61.3 → 57.4 (92.7) | 188 → 130 (144) |
+| listview | 86.6 → 64.2 (110) | 89.2 → 67.1 (106) | 61.0 → 58.0 (87.3) | 185 → 123 (142) |
+| calqlatr | 81.9 → 75.6 (112) | 81.7 → 69.3 (113) | 64.6 → 60.3 (90.9) | 192 → 123 (159) |
+| clocks | 86.9 → 76.6 (107) | 82.5 → 69.8 (110) | 61.7 → 58.5 (98.2) | 189 → 122 (151) |
+| maroon | 91.6 → 80.8 (115) | 94.2 → 81.5 (120) | 77.1 → 72.2 (108) | 149 → 134 (157) |
+| rssnews | 126 → 84.5 (116) | 167 → 116 (261) | 101 → 91.2 (245) | 179 → 158 (307) |
+| samegame | 90.4 → 71.1 (111) | 88.0 → 72.9 (116) | 65.6 → 61.3 (104) | 144 → 118 (166) |
+
+Peak, settled and PSS count file pages, and those come and go with the page cache. In the quieter
+2026-10-17 run, Ljós's peak was 112 and 140 MiB for listview and calqlatr, above Qt, and its PSS of
+files was up to 70 MiB against Qt's 47. Both were page cache: the 97 MiB static binary has 36–43 MiB
+resident where Qt's libraries have 25–33 MiB. In the run before → after above, the PSS of the before
+binary was high in four apps for the same reason. Anon PSS is the column the changes moved.
+
+**What held it.** A dhat profile of clocks had 15.6 MiB of Rust heap live. The largest items were
+the reactive graph's metadata (2.0 MiB), egui's text atlas (2.0 MiB), the graph (1.2 MiB) and the
+type oracle read for `--example` (1.0 MiB). In rssnews, it had 39 MiB, of which 17 MiB were pictures
+of rows that are made but not painted, kept at the window's size. `smaps` showed a 35 MiB `[heap]`
+and 13 MiB of 1–8 MiB anonymous mappings. Most of both is outside Rust: llvmpipe's JIT, Mesa and
+fontconfig.
+
+- **egui's text atlas** is as wide as the texture limit egui is told. llvmpipe's limit is 16384, so
+  the atlas was 2 MiB on the CPU and again as a texture, for the little text egui itself draws.
+  egui is now told 2048. Ljós's own textures (pictures, shapes, its glyph atlas) keep the GPU's
+  limit (`ljos_render::b0::set_max_texture_side`). About 3.5 MiB.
+- **Freed memory inside glibc's heaps.** glibc gives back only what is free at a heap's top.
+  Start-up and a burst of picture decodes leave holes below live memory. The shell calls
+  `malloc_trim` a second after the first frame, a second after a burst of background picture loads,
+  under memory pressure and when a window hides. It is never periodic. About 1.7 MiB in clocks
+  and rssnews.
+
+Both are counted by tests: `egui_is_told_a_small_limit_and_pictures_keep_the_gpus` (b0_image) and
+`memory_freed_below_live_memory_goes_back_to_the_system` (ljos_shell).
+
+**rssnews after it settles.** The bench's idle window starts 3 s after the first frame. rssnews's
+feed names pictures up to 7728 × 5152, and they arrive over the network for up to 4 s after
+start. Each is fetched and decoded on a short-lived `ljos-image-fetch` thread, scaled down while it
+is decoded, and that thread ends. Wakeups are read from the threads alive at the end of the window,
+which is why there was CPU and no wakeups. The new "threads that ended" row puts all of rssnews's
+idle CPU there: 1.1 % of 1.1 %. Run in the sandbox and sampled each second, rssnews uses no CPU at all
+from 4–5 s after start, on llvmpipe and on a GPU alike, and with or without a screen reader. Nothing
+was left running to stop. It asks for 9 pictures with no screen reader and 14 with one, against Qt's
+7, because rows kept for a screen reader load theirs (ARCHITECTURE.md §14).
+
+**What is left.**
+
+- **Decoded pictures stay on the CPU after upload.** Effects, tinting, Canvas, particles, the R
+  backend, re-shrinking and video all read `ImageHandle`'s pixels, so they cannot simply go.
+  Dropping them needs a way to read pixels back or decode again when one of those asks.
+- **Pictures of unpainted rows** stay at the window's size (896 px for 800 × 600). Only painted
+  items are shrunk to what they draw. Shrinking the others to their item's size would save most of
+  rssnews's 17 MiB. Dropping them would cost a network fetch when they scroll in.
+- **Memory outside Rust**, chiefly llvmpipe and Mesa, is about half of anon PSS.
+- **The binary's resident text** (36–43 MiB of PSS) is above Qt's shared libraries. On a system that
+  runs several Ljós apps, it is shared like theirs.
