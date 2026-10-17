@@ -157,6 +157,13 @@ pub enum Reset {
         apply: ResetApply,
         value: ResetValue,
     },
+    /// [`Reset::Custom`], and a new object holds what `value` gives before
+    /// any of its bindings runs, as with [`Reset::FollowFromCreation`]: a
+    /// control's `locale` is a locale while the control is being made.
+    CustomFromCreation {
+        apply: ResetApply,
+        value: ResetValue,
+    },
     /// The property holds what `value` gives while it was given nothing,
     /// and a value `absent` says yes to counts as nothing given: an empty
     /// `baseUrl` is the document's address. `value` is asked once each
@@ -343,8 +350,11 @@ impl MetaObject {
             let mut l = Lookup::default();
             for (i, p) in self.properties.iter().enumerate() {
                 l.props.insert(p.name.clone(), PropIndex(i as u32));
-                if let Some(Reset::Absent { value, .. } | Reset::FollowFromCreation(value)) =
-                    p.reset
+                if let Some(
+                    Reset::Absent { value, .. }
+                    | Reset::FollowFromCreation(value)
+                    | Reset::CustomFromCreation { value, .. },
+                ) = p.reset
                 {
                     l.absent.push((PropIndex(i as u32), value));
                 }

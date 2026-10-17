@@ -70,7 +70,9 @@ impl Engine {
             Reset::Follow(value) | Reset::FollowFromCreation(value) => {
                 self.bind_computed(obj, prop, move |e| value(e, obj, prop))
             }
-            Reset::Custom { apply, .. } => apply(self, obj, prop),
+            Reset::Custom { apply, .. } | Reset::CustomFromCreation { apply, .. } => {
+                apply(self, obj, prop)
+            }
             Reset::Absent { value, .. } => {
                 let v = self.untrack(|| value(self, obj, prop));
                 self.reset_to(obj, prop, v)
@@ -78,7 +80,8 @@ impl Engine {
         }
     }
 
-    /// Gives the [`Reset::Absent`] and [`Reset::FollowFromCreation`] properties of an object that was just
+    /// Gives the [`Reset::Absent`], [`Reset::FollowFromCreation`] and
+    /// [`Reset::CustomFromCreation`] properties of an object that was just
     /// created their first values. Nothing reads or watches them yet, so
     /// nobody is told: the object has had them from the start.
     pub(crate) fn give_absent(&self, obj: ObjectId) {
@@ -119,6 +122,7 @@ impl Engine {
             Reset::Follow(value)
             | Reset::FollowFromCreation(value)
             | Reset::Custom { value, .. }
+            | Reset::CustomFromCreation { value, .. }
             | Reset::Absent { value, .. } => value(self, obj, prop),
         }
     }

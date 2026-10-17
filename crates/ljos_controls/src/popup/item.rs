@@ -228,7 +228,12 @@ pub(super) const FONT_RESET: Reset = Reset::Custom {
     apply: take_back,
     value: from_above,
 };
-pub(super) const LOCALE_RESET: Reset = FONT_RESET;
+/// A popup has a locale from the start, before it has an item to take
+/// one from: the application's.
+pub(super) const LOCALE_RESET: Reset = Reset::CustomFromCreation {
+    apply: take_back,
+    value: locale_from_above,
+};
 
 /// The property of the popup's item that `prop` of the popup is kept the
 /// same as.
@@ -247,6 +252,11 @@ fn from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Value {
     look_from_above(engine, popup, prop).unwrap_or_else(|| engine.default_value(popup, prop))
 }
 
+fn locale_from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Value {
+    look_from_above(engine, popup, prop)
+        .unwrap_or_else(|| crate::inherit::application_locale(engine))
+}
+
 /// What the popup's item would have in the property of a popup's look if
 /// nobody gave it one (tracked). None for an object that is no popup, a
 /// popup without an item, or another property.
@@ -262,6 +272,7 @@ pub(crate) fn look_from_above(engine: &Engine, popup: ObjectId, prop: PropIndex)
         Reset::Follow(value)
         | Reset::FollowFromCreation(value)
         | Reset::Custom { value, .. }
+        | Reset::CustomFromCreation { value, .. }
         | Reset::Absent { value, .. } => value(engine, item, theirs),
     })
 }

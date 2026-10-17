@@ -554,7 +554,7 @@ fn inherited_locale(engine: &Engine, obj: ObjectId) -> Value {
 /// The application's locale, the object `Qt.locale()` gives: what a
 /// control has when nothing above it gave one. Made once per locale name,
 /// so every such control has the same object.
-fn application_locale(engine: &Engine) -> Value {
+pub(crate) fn application_locale(engine: &Engine) -> Value {
     #[derive(Default)]
     struct Cached(RefCell<Option<(String, Value)>>);
     let cached = engine.extension::<Cached>();
@@ -590,7 +590,7 @@ fn resolve_locale(engine: &Engine, obj: ObjectId, lp: PropIndex) -> Result<(), E
 }
 
 /// `locale = undefined`: the locale is the one from above again.
-pub(crate) const LOCALE_RESET: Reset = Reset::Custom {
+pub(crate) const LOCALE_RESET: Reset = Reset::CustomFromCreation {
     apply: take_locale_back,
     value: locale_from_above,
 };
