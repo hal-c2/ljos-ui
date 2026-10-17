@@ -29,6 +29,7 @@ use crate::devices::gain_of;
 use crate::meta::{Entry, MediaMetaData};
 use crate::open::{self, OpenError, Opened, VideoInfo};
 use crate::sink::{Audio, Voice};
+use crate::stream::{Look, Played};
 use crate::video;
 
 fn player_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -220,6 +221,8 @@ struct Run {
     /// Times the source has played through since `play()`.
     loops_done: i32,
     completed: bool,
+    /// The stream a program writes, played in place of the source.
+    stream: Option<Played>,
 }
 
 impl fmt::Debug for Run {
@@ -392,10 +395,30 @@ fn report(e: &Engine, me: ObjectId, pos: f64) {
 
 /// Opens the current source, dropping whatever the last one was doing.
 fn load(e: &Engine, me: ObjectId) {
+    load_with(e, me, None);
+}
+
+/// The player `target` is: itself, or a `Video`'s own.
+pub(crate) fn of(e: &Engine, target: ObjectId) -> Option<ObjectId> {
+    if e.with::<MediaPlayer, _>(target, |_| ()).is_ok() {
+        return Some(target);
+    }
+    video::player_of(e, target)
+}
+
+/// Plays `stream` in place of the source, which the player keeps. The
+/// generation the stream's answers must carry.
+pub(crate) fn load_stream(e: &Engine, me: ObjectId, stream: Played) -> u64 {
+    load_with(e, me, Some(stream))
+}
+
+fn load_with(e: &Engine, me: ObjectId, stream: Option<Played>) -> u64 {
     halt(e, me);
+    let is_stream = stream.is_some();
     let generation = run(e, me, |r| {
         r.generation += 1;
         r.media = None;
+        r.stream = stream;
         r.loops_done = 0;
         r.generation
     })
@@ -416,13 +439,118 @@ fn load(e: &Engine, me: ObjectId) {
     put(e, me, MediaPlayer::SEEKABLE, false);
     put(e, me, MediaPlayer::HAS_AUDIO, false);
     put(e, me, MediaPlayer::HAS_VIDEO, false);
+    if is_stream {
+        set_status(e, me, status::LOADING);
+        return generation;
+    }
     if source.is_empty() {
         set_status(e, me, status::NO_MEDIA);
-        return;
+        return generation;
     }
     set_status(e, me, status::LOADING);
     let url = e.resolve_url(me, &source);
     open::start(e, me, generation, url, None, opened);
+    generation
+}
+
+/// The stream's decode thread has something for the player.
+pub(crate) fn stream_woke(e: &Engine, me: ObjectId, generation: u64) {
+    if !e.is_alive(me) || run(e, me, |r| r.generation) != Some(generation) {
+        return;
+    }
+    run(e, me, |r| r.stream.as_ref().map(Played::rearm));
+    #[cfg(feature = "decode")]
+    if let Some(o) = run(e, me, |r| r.stream.as_ref().and_then(Played::take_opened)).flatten() {
+        // A container written whole plays as the file it is.
+        run(e, me, |r| r.stream = None);
+        match o {
+            Ok(o) => loaded(e, me, o),
+            Err(err) => failed(e, me, &err),
+        }
+        return;
+    }
+    if media_status(e, me) == status::LOADING {
+        match run(e, me, |r| r.stream.as_ref().and_then(Played::first)).flatten() {
+            Some(Ok(size)) => stream_loaded(e, me, size),
+            Some(Err(why)) => return failed(e, me, &OpenError::Format(why)),
+            None => return,
+        }
+    }
+    if playing(e, me) {
+        pump(e, me);
+    }
+}
+
+/// A stream's first picture: what it is, as far as a stream says.
+fn stream_loaded(e: &Engine, me: ObjectId, (width, height): (u32, u32)) {
+    let has_video = width > 0 && height > 0;
+    put(e, me, MediaPlayer::HAS_VIDEO, has_video);
+    if has_video {
+        let output = get(e, me, MediaPlayer::VIDEO_OUTPUT);
+        video::sized(e, output, f64::from(width), f64::from(height));
+    }
+    set_status(e, me, status::LOADED);
+    if run(e, me, |r| std::mem::take(&mut r.want_play)).unwrap_or(false) {
+        play(e, me);
+    }
+}
+
+/// Shows what a playing stream has for now, and arms its next picture.
+fn pump(e: &Engine, me: ObjectId) {
+    loop {
+        let now = e.now();
+        let Some(look) = run(e, me, |r| r.stream.as_mut().map(|s| s.look(now))).flatten() else {
+            return;
+        };
+        match look {
+            Look::Show(image) => {
+                let output = get(e, me, MediaPlayer::VIDEO_OUTPUT);
+                video::show(e, output, image);
+                let pos = clock(e, me);
+                if pos != run(e, me, |r| r.reported).unwrap_or(0.0) {
+                    report(e, me, pos);
+                }
+            }
+            Look::Due(wait) => {
+                if run(e, me, |r| r.frame.is_some()).unwrap_or(true) {
+                    return;
+                }
+                let generation = run(e, me, |r| r.generation).unwrap_or(0);
+                let id = e.call_at(now + wait, move |e| {
+                    if run(e, me, |r| r.generation) != Some(generation) {
+                        return;
+                    }
+                    run(e, me, |r| r.frame = None);
+                    if playing(e, me) {
+                        pump(e, me);
+                    }
+                });
+                run(e, me, |r| r.frame = Some(id));
+                return;
+            }
+            Look::Wait => return,
+            Look::Ended => return stream_ended(e, me),
+            Look::Failed(why) => {
+                halt(e, me);
+                put(e, me, MediaPlayer::PLAYING, false);
+                put(e, me, MediaPlayer::PLAYBACK_STATE, state::STOPPED);
+                return failed(e, me, &OpenError::Format(why));
+            }
+        }
+    }
+}
+
+/// The writer ended the stream and every picture was shown. A stream
+/// is played once: it cannot be read again.
+fn stream_ended(e: &Engine, me: ObjectId) {
+    halt(e, me);
+    let output = get(e, me, MediaPlayer::VIDEO_OUTPUT);
+    if video::clears_at_end(e, output) {
+        video::clear(e, output);
+    }
+    put(e, me, MediaPlayer::PLAYING, false);
+    put(e, me, MediaPlayer::PLAYBACK_STATE, state::STOPPED);
+    set_status(e, me, status::END);
 }
 
 fn opened(e: &Engine, me: ObjectId, generation: u64, outcome: Result<Opened, OpenError>) {
@@ -639,6 +767,9 @@ fn halt(e: &Engine, me: ObjectId) {
     let Some((tick, frame, voice)) = run(e, me, |r| {
         r.anchor_at = None;
         r.frame_asked = None;
+        if let Some(s) = &mut r.stream {
+            s.halted();
+        }
         (r.tick.take(), r.frame.take(), r.voice.take())
     }) else {
         return;
@@ -662,6 +793,10 @@ fn clock(e: &Engine, me: ObjectId) -> f64 {
     let rate = get(e, me, MediaPlayer::PLAYBACK_RATE);
     let format = Audio::of(e).format();
     run(e, me, |r| {
+        if let Some(s) = &r.stream {
+            // A stream's time is the pictures it has shown.
+            return s.position();
+        }
         let Some(at) = r.anchor_at else {
             return r.reported;
         };
@@ -718,6 +853,7 @@ fn restart_clock(e: &Engine, me: ObjectId, pos: f64) {
     }
     arm_tick(e, me);
     arm_frames(e, me);
+    pump(e, me);
 }
 
 fn arm_tick(e: &Engine, me: ObjectId) {

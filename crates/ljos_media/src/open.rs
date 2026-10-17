@@ -134,7 +134,7 @@ fn spawn(
 }
 
 #[cfg(not(feature = "decode"))]
-fn from_bytes(_: &str, _: Vec<u8>, _: Option<Format>) -> Result<Opened, OpenError> {
+pub(crate) fn from_bytes(_: &str, _: Vec<u8>, _: Option<Format>) -> Result<Opened, OpenError> {
     Err(no_decoder())
 }
 
@@ -153,7 +153,11 @@ fn no_decoder() -> OpenError {
 }
 
 #[cfg(feature = "decode")]
-fn from_bytes(name: &str, bytes: Vec<u8>, samples: Option<Format>) -> Result<Opened, OpenError> {
+pub(crate) fn from_bytes(
+    name: &str,
+    bytes: Vec<u8>,
+    samples: Option<Format>,
+) -> Result<Opened, OpenError> {
     let reader: filmcraft_media::SharedReader =
         Arc::new(filmcraft_media::reader::MemReader(bytes.into()));
     from_reader(name, reader, samples)

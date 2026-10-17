@@ -130,7 +130,8 @@ pub mod item;
 #[cfg(feature = "media")]
 pub mod media {
     pub use ljos_media::{
-        FrameError, VideoFrame, VideoFrameInput, VideoSink, YuvColour, YuvMatrix,
+        FrameError, MediaStream, StreamError, StreamFormat, StreamOptions, VideoFrame,
+        VideoFrameInput, VideoSink, YuvColour, YuvMatrix,
     };
 }
 #[cfg(feature = "render")]

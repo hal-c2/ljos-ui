@@ -38,6 +38,8 @@
 //! - **Sinks**: every frame goes through a `VideoSink`, a `VideoOutput`'s
 //!   own or one of the program's. A program hands in frames of its own,
 //!   from any thread, through a [`VideoFrameInput`].
+//! - **Streams**: a player plays bytes a program writes as they come
+//!   ([`MediaStream`]), paced or live.
 //!
 //! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
 //! WindowCapture, AudioInput and subtitles are not built.
@@ -53,6 +55,8 @@ mod open;
 mod player;
 mod sink;
 mod sound;
+mod stream;
+mod units;
 mod video;
 mod video_sink;
 
@@ -66,6 +70,7 @@ pub use frame_input::{FrameError, VideoFrame, VideoFrameInput, YuvColour, YuvMat
 pub use meta::MediaMetaData;
 pub use player::MediaPlayer;
 pub use sound::SoundEffect;
+pub use stream::{MediaStream, StreamError, StreamFormat, StreamOptions};
 pub use video::{Video, VideoOutput};
 pub use video_sink::VideoSink;
 

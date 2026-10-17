@@ -653,6 +653,11 @@ fn inner(cx: &Cx) -> Option<ObjectId> {
     cx.with::<Video, _>(|v| v.player).ok().flatten()
 }
 
+/// The player of `video`, when it is a `Video`.
+pub(crate) fn player_of(e: &Engine, video: ObjectId) -> Option<ObjectId> {
+    e.with::<Video, _>(video, |v| v.player).ok().flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
