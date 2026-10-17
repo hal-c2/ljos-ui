@@ -48,22 +48,49 @@ pub fn threads(pid: u32) -> Option<u64> {
 /// not wake at all.
 #[must_use]
 pub fn switches(pid: u32) -> u64 {
+    thread_switches(pid).values().map(|(_, n)| n).sum()
+}
+
+/// [`switches`] by thread: its id, its name and its count.
+#[must_use]
+pub fn thread_switches(pid: u32) -> BTreeMap<u32, (String, u64)> {
     let Ok(tasks) = fs::read_dir(format!("/proc/{pid}/task")) else {
-        return 0;
+        return BTreeMap::new();
     };
     tasks
         .flatten()
-        .filter_map(|t| fs::read_to_string(t.path().join("status")).ok())
-        .map(|text| {
-            text.lines()
+        .filter_map(|t| {
+            let id = t.file_name().to_str()?.parse().ok()?;
+            let status = fs::read_to_string(t.path().join("status")).ok()?;
+            let name = fs::read_to_string(t.path().join("comm")).ok()?;
+            let count = status
+                .lines()
                 .filter_map(|l| {
                     l.strip_prefix("voluntary_ctxt_switches:")
                         .or_else(|| l.strip_prefix("nonvoluntary_ctxt_switches:"))
                 })
                 .filter_map(|v| v.trim().parse::<u64>().ok())
-                .sum::<u64>()
+                .sum::<u64>();
+            Some((id, (name.trim().to_owned(), count)))
         })
-        .sum()
+        .collect()
+}
+
+/// The wakeups between two [`thread_switches`], by thread name: what woke
+/// the process. A thread started between them counts from nothing.
+#[must_use]
+pub fn woken(
+    before: &BTreeMap<u32, (String, u64)>,
+    after: &BTreeMap<u32, (String, u64)>,
+) -> BTreeMap<String, u64> {
+    let mut by_name = BTreeMap::new();
+    for (id, (name, n)) in after {
+        let was = before.get(id).map_or(0, |(_, n)| *n);
+        if *n > was {
+            *by_name.entry(name.clone()).or_insert(0) += n - was;
+        }
+    }
+    by_name
 }
 
 /// The program a process runs.
@@ -152,6 +179,31 @@ pub fn group(path: &str, runtime: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_woke_is_told_by_thread_name() {
+        let t = |list: &[(u32, &str, u64)]| -> BTreeMap<u32, (String, u64)> {
+            list.iter()
+                .map(|(id, name, n)| (*id, ((*name).to_owned(), *n)))
+                .collect()
+        };
+        let before = t(&[
+            (1, "main", 10),
+            (2, "pool", 4),
+            (3, "pool", 7),
+            (4, "gone", 1),
+        ]);
+        let after = t(&[
+            (1, "main", 10),
+            (2, "pool", 6),
+            (3, "pool", 8),
+            (5, "new", 2),
+        ]);
+        let woke = woken(&before, &after);
+        assert_eq!(woke.get("pool"), Some(&3));
+        assert_eq!(woke.get("new"), Some(&2));
+        assert!(!woke.contains_key("main"), "{woke:?}");
+    }
 
     #[test]
     fn this_process_is_resident() {

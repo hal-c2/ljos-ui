@@ -151,6 +151,10 @@ pub struct Span {
     pub throttled_ms: Option<f64>,
     /// Times a thread slept and was woken, a second.
     pub wakeups_per_s: f64,
+    /// The threads that woke, by name, and how often: what wakes an
+    /// application that should sleep.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub woken: BTreeMap<String, u64>,
     pub frames: Option<Frames>,
     /// Clicks, moves or wheel notches given, for a driven window.
     pub clicks: Option<u32>,
@@ -412,7 +416,7 @@ fn span(
     };
     let cpu0 = w.cg.cpu_usec()?;
     let thr0 = w.cg.throttled_usec();
-    let sw0 = procfs::switches(pid);
+    let sw0 = procfs::thread_switches(pid);
     let start = Instant::now();
     let mut clicks = None;
     match (drive, &setup.wayland, &setup.sway) {
@@ -429,7 +433,8 @@ fn span(
     }
     let seconds = start.elapsed().as_secs_f64();
     let cpu1 = w.cg.cpu_usec().unwrap_or(cpu0);
-    let sw1 = procfs::switches(pid);
+    let sw1 = procfs::thread_switches(pid);
+    let woken = procfs::woken(&sw0, &sw1);
     let times = counter.and_then(|c| c.finish().ok());
     let cpu_ms = ms(cpu1.saturating_sub(cpu0));
     #[allow(clippy::cast_precision_loss)]
@@ -445,12 +450,13 @@ fn span(
             .zip(w.cg.throttled_usec())
             .map(|(a, b)| ms(b.saturating_sub(a))),
         wakeups_per_s: if seconds > 0.0 {
-            sw1.saturating_sub(sw0) as f64 / seconds
+            woken.values().sum::<u64>() as f64 / seconds
         } else {
             0.0
         },
         frames: times.map(|t| frames(&t, seconds)),
         clicks,
+        woken,
     })
 }
 
