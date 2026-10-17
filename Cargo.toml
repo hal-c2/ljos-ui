@@ -132,6 +132,10 @@ zbus = { version = "5.19.0", default-features = false, features = ["async-io", "
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
+# Blocks for AppKit's notifications; the version objc2-foundation 0.3 takes.
+block2 = { version = "0.6.2", default-features = false, features = ["std"] }
+# Win32 for the shell; the version winit already brings.
+windows-sys = { version = "0.52.0", default-features = false }
 
 # Proc macros
 proc-macro2 = "1.0.107"

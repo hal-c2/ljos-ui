@@ -89,11 +89,12 @@ pub struct Reply {
     kept: bool,
 }
 
-/// The way into the inbox, from any thread. Unlike a [`Reply`] it
-/// promises nothing, so [`Platform::finish`] does not wait for it: a
-/// stream (a sensor's readings) has no last answer to wait for.
+/// The way into the inbox, from any thread, as often as there is news.
+/// Unlike a [`Reply`] it promises nothing, so [`Platform::finish`] does not
+/// wait for it: a stream (a sensor's readings, the desktop's settings) has
+/// no last answer to wait for. Made by [`Platform::poster`].
 #[derive(Clone)]
-pub(crate) struct Post {
+pub struct Post {
     tx: UiHandle<Job>,
     signal: Arc<Signal>,
     /// Where it was made: the one thread that drains the inbox.
@@ -117,7 +118,19 @@ impl Reply {
     }
 }
 
+impl std::fmt::Debug for Post {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Post").finish_non_exhaustive()
+    }
+}
+
 impl Post {
+    /// Hands `job` to the Engine thread, which runs it at its next frame.
+    /// A sender on another thread waits while the inbox is full.
+    pub fn send(&self, job: impl FnOnce(&Engine) + Send + 'static) {
+        self.post(Box::new(job));
+    }
+
     pub(crate) fn post(&self, job: Job) {
         // Off the Engine thread waiting costs the UI nothing, and the frame
         // that drains wakes it. An error is only ever a gone engine, and
@@ -264,7 +277,9 @@ impl Platform {
         }
     }
 
-    pub(crate) fn poster(&self) -> Post {
+    /// A way into the inbox for news that keeps coming. Made on the Engine
+    /// thread.
+    pub fn poster(&self) -> Post {
         Post {
             tx: self.tx.clone(),
             signal: Arc::clone(&self.signal),

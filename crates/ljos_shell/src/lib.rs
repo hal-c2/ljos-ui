@@ -35,7 +35,10 @@ mod gl;
 mod platform;
 mod present;
 mod repaint;
+mod settings;
 mod surface;
+#[cfg(all(test, target_os = "linux"))]
+mod test_bus;
 mod windows;
 
 use std::rc::Rc;

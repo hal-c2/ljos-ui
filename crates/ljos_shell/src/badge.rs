@@ -214,8 +214,6 @@ pub(crate) mod launcher {
 
     #[cfg(test)]
     mod tests {
-        use std::io::{BufRead, BufReader};
-        use std::process::{Command, Stdio};
         use std::rc::Rc;
         use std::sync::mpsc;
         use std::time::Duration;
@@ -225,53 +223,9 @@ pub(crate) mod launcher {
         use zbus::zvariant::OwnedValue;
 
         use super::{INTERFACE, LauncherEntry};
+        use crate::test_bus::Bus;
 
         type Update = (String, std::collections::HashMap<String, OwnedValue>);
-
-        /// A bus of the test's own, so nothing reaches the desktop's.
-        struct Bus {
-            daemon: std::process::Child,
-            address: String,
-            _dir: tempfile::TempDir,
-        }
-
-        impl Bus {
-            fn start() -> Option<Self> {
-                let dir = tempfile::tempdir().ok()?;
-                let mut daemon = Command::new("dbus-daemon")
-                    .args(["--session", "--nofork", "--print-address"])
-                    .arg(format!(
-                        "--address=unix:path={}",
-                        dir.path().join("bus").display()
-                    ))
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .ok()?;
-                let mut address = String::new();
-                BufReader::new(daemon.stdout.take()?)
-                    .read_line(&mut address)
-                    .ok()?;
-                Some(Bus {
-                    daemon,
-                    address: address.trim().to_owned(),
-                    _dir: dir,
-                })
-            }
-
-            fn connect(&self) -> Connection {
-                connection::Builder::address(self.address.as_str())
-                    .and_then(connection::Builder::build)
-                    .expect("the test's bus")
-            }
-        }
-
-        impl Drop for Bus {
-            fn drop(&mut self) {
-                let _ = self.daemon.kill();
-                let _ = self.daemon.wait();
-            }
-        }
 
         #[test]
         fn a_count_is_sent_as_the_launcher_entry_update_of_the_desktop_entry() {

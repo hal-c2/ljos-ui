@@ -73,7 +73,7 @@ pub use permissions::{
     LocationPermission, MicrophonePermission, Permission, PermissionAnswer, PermissionService,
     PermissionStatus, UngatedPermissions,
 };
-pub use platform::{CATEGORY, Job, Platform, Reply};
+pub use platform::{CATEGORY, Job, Platform, Post, Reply};
 pub use sensors::{
     Accelerometer, AccelerometerReading, AmbientLightReading, AmbientLightSensor, Compass,
     CompassReading, FakeSensors, Gyroscope, GyroscopeReading, Magnetometer, MagnetometerReading,

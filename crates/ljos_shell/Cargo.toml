@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+ljos_a11y = { path = "../ljos_a11y" }
 ljos_controls = { path = "../ljos_controls" }
 ljos_egui = { path = "../ljos_egui" }
 ljos_engine = { path = "../ljos_engine" }
@@ -43,15 +44,32 @@ ljos_dev = { path = "../ljos_dev", optional = true }
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc.workspace = true
 
-# The application's badge: the launcher-entry signal on the session bus.
+# The application's badge: the launcher-entry signal on the session bus;
+# the desktop's settings portal.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus.workspace = true
 
-# The application's badge: the Dock tile.
+# The application's badge: the Dock tile. The workspace's accessibility
+# display options and their change notification.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-app-kit.workspace = true
-objc2-foundation.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility"] }
+objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2"] }
+block2.workspace = true
+
+# What the system prefers: system parameters, the Accessibility key, and a
+# hidden window that hears WM_SETTINGCHANGE.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 # GL on EGL (src/gl.rs; build.rs says where): wgpu's GL present copies
 # every frame once more, which on a software rasteriser is most of what a

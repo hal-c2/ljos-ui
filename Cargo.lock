@@ -3969,6 +3969,7 @@ name = "ljos_shell"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "block2 0.6.2",
  "eframe",
  "egui",
  "egui-wgpu",
@@ -3979,6 +3980,7 @@ dependencies = [
  "glutin",
  "libc",
  "ljos",
+ "ljos_a11y",
  "ljos_compiler",
  "ljos_controls",
  "ljos_dev",
@@ -3999,6 +4001,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "windows-sys 0.52.0",
  "zbus",
 ]
 
