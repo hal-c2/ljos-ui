@@ -6,7 +6,8 @@
 # Verified on Qt 6.11.2 (qml6, offscreen): a line is as wide as its
 # advances plus the whole pixels its last glyph's ink reaches past its own
 # advance. TextMetrics' advanceWidth leaves that out, and eliding fits by
-# advances only.
+# advances only. Wrapping counts it: a line whose last glyph's ink would
+# cross the width breaks before that glyph.
 
 @qt-parity
 Feature: The ink of a line's last glyph
@@ -46,3 +47,27 @@ Feature: The ink of a line's last glyph
   Scenario: Eliding fits the advances, not the ink
     Then the property "truncated" of "elided" is true
     And the property "keepsItsText" of "root" is true
+
+  Rule: Wrapping keeps the last glyph's ink inside the width
+
+    Scenario Outline: "aWaW" at <width> wraps into <lines> lines
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          TextMetrics { id: aw; font.pixelSize: 12; text: "aW" }
+          Text { id: ink; font.pixelSize: 12; text: "aW" }
+          Text {
+            objectName: "wrapped"; font.pixelSize: 12; text: "aWaW"
+            wrapMode: Text.WrapAnywhere; width: <width>
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "lineCount" of "wrapped" is <lines>
+
+      Examples:
+        | width                   | lines |
+        | aw.advanceWidth + 0.2   | 3     |
+        | ink.implicitWidth       | 2     |

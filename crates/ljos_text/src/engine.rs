@@ -502,7 +502,10 @@ fn shape(
 /// Break lines at `max` and put every line at x 0. Alignment is the item's
 /// business, so one layout serves every alignment.
 fn break_lines(shape: &mut Shape, max: Option<f32>, justify: bool) {
-    shape.break_all_lines(max);
+    match max {
+        Some(max) => break_inside(shape, max),
+        None => shape.break_all_lines(None),
+    }
     let (alignment, last) = if justify {
         // Qt leaves the last line of a paragraph unstretched.
         (Alignment::Justify, Some(Alignment::Left))
@@ -684,6 +687,114 @@ fn extract(
     out
 }
 
+/// Break lines at `max` so that each line's last glyph keeps its ink inside
+/// it, as Qt's breaker does: measured on Qt 6.11, "aWaW" broken anywhere at
+/// a width the advances of "aW" fit but the ink of its `W` crosses takes
+/// three lines. Parley breaks by advances alone, so a line whose ink
+/// crosses is broken again a little shorter, and the lines after it anew.
+/// That is rare, and costs nothing where no line comes near the width.
+fn break_inside(shape: &mut Shape, max: f32) {
+    // Each line's own limit, below `max` where it was broken again.
+    let mut limits: Vec<f32> = Vec::new();
+    // Lines before this one are as they stay. One that could be no
+    // shorter (a single cluster, or none sooner Parley would break at)
+    // keeps its ink past the width.
+    let mut from = 0;
+    break_by(shape, max, &limits);
+    loop {
+        let Some((index, advance)) = shape
+            .lines()
+            .enumerate()
+            .skip(from)
+            .find_map(|(i, l)| ink_crosses(&l, max).then(|| (i, l.metrics().advance)))
+        else {
+            return;
+        };
+        let before = shape.get(index).map(|l| l.text_range());
+        limits.resize(index, max);
+        // Never past `max`, which Parley asks of every line's limit.
+        limits.push((advance - 0.01).min(max));
+        break_by(shape, max, &limits);
+        from = if shape.get(index).map(|l| l.text_range()) == before {
+            index + 1
+        } else {
+            index
+        };
+    }
+}
+
+/// Break lines at `max`, each line at its own limit where `limits` has one.
+fn break_by(shape: &mut Shape, max: f32, limits: &[f32]) {
+    let mut breaker = shape.break_lines();
+    breaker.state_mut().set_layout_max_advance(max);
+    let mut line = 0;
+    loop {
+        let limit = limits.get(line).copied().unwrap_or(max);
+        breaker.state_mut().set_line_max_advance(limit);
+        match breaker.break_next() {
+            None => break,
+            Some(parley::YieldData::InlineBoxBreak(_)) => {
+                // As `break_remaining` does: placed where it is, so
+                // breaking goes on.
+                let x = breaker.state().line_x();
+                breaker.state_mut().append_inline_box_to_line(x, 0.0, 0.0);
+            }
+            Some(_) => line += 1,
+        }
+    }
+    breaker.finish();
+}
+
+/// Whether a line is wider than `max` as Qt counts it: its advances and
+/// the ink its last glyph reaches past them.
+fn ink_crosses(line: &parley::Line<'_, u32>, max: f32) -> bool {
+    // Ink past an advance is a few pixels at most: a line well inside
+    // the width needs no glyph's outline.
+    if line.metrics().advance + line_reach(line) <= max {
+        return false;
+    }
+    let (width, past) = line_widths(line);
+    past > 0.0 && width + past > max
+}
+
+/// The most a line's last glyph can reach past its advance.
+fn line_reach(line: &parley::Line<'_, u32>) -> f32 {
+    line.runs().last().map_or(0.0, |r| r.font_size())
+}
+
+/// A line's width by Qt's advances, and how far its last glyph's ink
+/// reaches past them ([`overhang`]).
+fn line_widths(line: &parley::Line<'_, u32>) -> (f32, f32) {
+    let mut width = 0.0;
+    let mut last = 0.0;
+    for item in line.items() {
+        match item {
+            PositionedLayoutItem::GlyphRun(gr) => {
+                let (placed, qt) = snapped(&gr);
+                width += qt.iter().sum::<f32>();
+                if let (Some(g), Some(a)) = (placed.last(), qt.last()) {
+                    let run = gr.run();
+                    let synthesis = run.synthesis();
+                    last = overhang(
+                        run.font(),
+                        run.font_size(),
+                        &coords(run),
+                        synthesis.embolden(),
+                        synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
+                        g.id,
+                        *a,
+                    );
+                }
+            }
+            PositionedLayoutItem::InlineBox(placed) => {
+                width += placed.width;
+                last = 0.0;
+            }
+        }
+    }
+    (width, last)
+}
+
 /// The glyphs of a run where Parley put them, and the advance Qt gives each
 /// (see [`snap`]).
 fn snapped(gr: &parley::GlyphRun<'_, u32>) -> (Vec<parley::Glyph>, Vec<f32>) {
@@ -708,33 +819,7 @@ fn coords(run: &parley::Run<'_, u32>) -> Vec<i16> {
 fn snapped_widths(shape: &Shape) -> (f32, f32) {
     let (mut advance, mut natural) = (0.0_f32, 0.0_f32);
     for line in shape.lines() {
-        let mut width = 0.0;
-        let mut last = 0.0;
-        for item in line.items() {
-            match item {
-                PositionedLayoutItem::GlyphRun(gr) => {
-                    let (placed, qt) = snapped(&gr);
-                    width += qt.iter().sum::<f32>();
-                    if let (Some(g), Some(a)) = (placed.last(), qt.last()) {
-                        let run = gr.run();
-                        let synthesis = run.synthesis();
-                        last = overhang(
-                            run.font(),
-                            run.font_size(),
-                            &coords(run),
-                            synthesis.embolden(),
-                            synthesis.skew().map_or(0.0, |d| d.to_radians().tan()),
-                            g.id,
-                            *a,
-                        );
-                    }
-                }
-                PositionedLayoutItem::InlineBox(placed) => {
-                    width += placed.width;
-                    last = 0.0;
-                }
-            }
-        }
+        let (width, last) = line_widths(&line);
         advance = advance.max(width);
         natural = natural.max(width + last);
     }
