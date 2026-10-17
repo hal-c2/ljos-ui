@@ -55,6 +55,11 @@ serde_json.workspace = true
 # So the tests see the facade as an application with dev-qml does.
 ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 
+# The `native_window` example asks the X server about the windows it is
+# handed.
+[target.'cfg(all(unix, not(any(target_vendor = "apple", target_os = "android", target_os = "emscripten", target_os = "redox"))))'.dev-dependencies]
+x11rb.workspace = true
+
 [features]
 default = ["shell", "media"]
 shell = ["dep:ljos_shell"]

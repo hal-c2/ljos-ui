@@ -3434,6 +3434,7 @@ dependencies = [
  "qt_types",
  "serde_json",
  "tempfile",
+ "x11rb",
 ]
 
 [[package]]
