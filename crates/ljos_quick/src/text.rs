@@ -403,7 +403,13 @@ pub(crate) fn read_style(
         Value::Font(f) => f,
         _ => Default::default(),
     };
-    let mut style = text_style(&f);
+    shown_text_style(engine, &f)
+}
+
+/// A QML `font` as a `Text` lays it out: [`text_style`], at the system's
+/// text size when the font follows it (tracked).
+pub fn shown_text_style(engine: &Engine, f: &Font) -> TextStyle {
+    let mut style = text_style(f);
     if f.scale_with_system {
         // The system's text size: applied here, where text is laid out,
         // so `font.pixelSize` reads as it was written and nothing but text

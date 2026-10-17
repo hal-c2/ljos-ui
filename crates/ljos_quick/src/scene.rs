@@ -2130,7 +2130,10 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::Shader => Paint::Shader(crate::shader_effect::ShaderEffectPaint::read(e, obj)),
         Kind::Source => Paint::Source(crate::shader_effect::SourcePaint::read(e, obj)),
         Kind::External => match crate::paint_item::paint_item(e, obj) {
-            Some(read) => Paint::External(read(e, obj)),
+            Some(read) => {
+                crate::paint_item::track_repaint(e, obj);
+                Paint::External(read(e, obj))
+            }
             None => return,
         },
         _ => return,

@@ -116,7 +116,7 @@ pub use loader::Loader;
 pub use log::{LogEntry, QuickLog};
 pub use metrics::{FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
-pub use paint_item::{ItemPaint, ReadPaint, register_paint_item};
+pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};
 pub use pointer_item::{
     HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored,
     register_hover_move, register_pointer_item,
@@ -145,7 +145,7 @@ pub use system_prefs::{
 };
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, font_families, set_text_engine,
-    text_engine, text_style,
+    shown_text_style, text_engine, text_style,
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{

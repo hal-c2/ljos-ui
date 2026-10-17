@@ -9,14 +9,21 @@
 //!
 //! Text is laid out in `paint` with the text engine the scene lends it,
 //! the one every `Text` is laid out with, and drawn as glyph runs.
+//!
+//! What an item shows may change where no property sees it (a frame
+//! decoded, a grid of cells written by a program): [`request_repaint`]
+//! repaints it then, through a node of the reactive graph that the read
+//! depends on and that QML cannot see.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Debug;
 use std::rc::Rc;
 
-use ljos_engine::{Engine, MetaRef, ObjectId};
+use ljos_engine::{Engine, MetaRef, ObjectId, Value};
+use ljos_reactive::NodeId;
 use ljos_render::{DisplayListBuilder, kurbo};
 use ljos_text::TextEngine;
+use rustc_hash::FxHashMap;
 
 /// What an item shows, read from its properties.
 pub trait ItemPaint: Debug {
@@ -59,4 +66,55 @@ pub(crate) fn paint_item(engine: &Engine, obj: ObjectId) -> Option<ReadPaint> {
         .rev()
         .find(|(m, _)| meta.inherits(m))
         .map(|(_, r)| *r)
+}
+
+/// Each painted item's repaint node, made the first time the item is read.
+#[derive(Default)]
+struct Repaints {
+    nodes: RefCell<FxHashMap<ObjectId, NodeId>>,
+    /// How many there were after the last sweep of the gone.
+    swept: Cell<usize>,
+}
+
+/// Makes the read of `obj` that is running depend on its repaint node.
+pub(crate) fn track_repaint(engine: &Engine, obj: ObjectId) {
+    let reg = engine.extension::<Repaints>();
+    let known = reg.nodes.borrow().get(&obj).copied();
+    let node = match known.filter(|n| engine.graph().is_alive(*n)) {
+        Some(n) => n,
+        None => {
+            // In the item's scope, so that it goes with the item.
+            let Some(scope) = engine.object_scope(obj) else {
+                return;
+            };
+            let Ok(n) = engine.graph().property(scope, Value::Int(0)) else {
+                return;
+            };
+            let mut nodes = reg.nodes.borrow_mut();
+            // Swept when the map has doubled: each item costs its entry
+            // once, not a walk of all the others.
+            if nodes.len() >= reg.swept.get().max(32) * 2 {
+                nodes.retain(|o, n| engine.is_alive(*o) && engine.graph().is_alive(*n));
+                reg.swept.set(nodes.len());
+            }
+            nodes.insert(obj, n);
+            n
+        }
+    };
+    let _ = engine.graph().get(node);
+}
+
+/// Paints `obj` again in the next frame, with what its type's read
+/// returns then. Nothing happens for an item that has not been painted:
+/// its first paint reads afresh anyway.
+pub fn request_repaint(engine: &Engine, obj: ObjectId) {
+    let node = engine
+        .extension::<Repaints>()
+        .nodes
+        .borrow()
+        .get(&obj)
+        .copied();
+    if let Some(n) = node.filter(|n| engine.graph().is_alive(*n)) {
+        let _ = engine.graph().notify(n);
+    }
 }

@@ -129,6 +129,22 @@ fn screen_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
         .or_else(|| engine.untrack(|| WindowSystem::of(engine).screen(engine, 0)))
 }
 
+/// `Screen.devicePixelRatio` as `obj` would read it, without making a
+/// `Screen` attached object: the ratio of the display its window is on,
+/// of the primary display for an object in no window, and 1 when no
+/// display says. Tracked, so that a binding or a paint item's read follows
+/// the window to another display and the display's ratio as it changes.
+pub fn device_pixel_ratio(engine: &Engine, obj: ObjectId) -> f64 {
+    screen_of(engine, obj)
+        .map(|s| {
+            engine
+                .read(s, ScreenInfo::DEVICE_PIXEL_RATIO.index)
+                .to_number()
+        })
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .unwrap_or(1.0)
+}
+
 /// The attached property and the display's property it follows.
 fn pairs() -> [(PropIndex, PropIndex, Value); 15] {
     let s = Value::String(Atom::default());

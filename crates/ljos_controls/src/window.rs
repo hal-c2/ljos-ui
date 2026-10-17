@@ -34,7 +34,7 @@ use ljos_quick::focus::{
 use ljos_quick::{Item, Rectangle, is_item, set_parent_item, window_of};
 
 pub use app::{Application, ApplicationState, ScreenInfo, ScreenSpec};
-pub use screen::{Screen, ScreenAttached};
+pub use screen::{Screen, ScreenAttached, device_pixel_ratio};
 use system::NO_MAXIMUM;
 pub use system::{
     FRAMELESS, KIND_MASK, Modality, ResizeEdges, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowBackdrop,
