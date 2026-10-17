@@ -1212,20 +1212,24 @@ impl QuickScene {
 
     /// Step 8b.
     fn apply_geometry(&mut self) {
-        let (mut geoms, mut places) = {
+        // Each item's tree node is set on its own, so neither list needs
+        // an order; what only moved is told apart while both maps stand.
+        let (geoms, moved) = {
             let mut s = self.shared.borrow_mut();
-            let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
-            let places: Vec<(ObjectId, Place)> = s.place.drain().collect();
-            (geoms, places)
-        };
-        geoms.sort_unstable_by_key(|g| g.0);
-        places.sort_unstable_by_key(|p| p.0);
-        for &(obj, place) in &places {
-            if let Some(e) = self.entries.get_mut(&obj) {
-                e.place = place;
+            let s = &mut *s;
+            let mut moved = Vec::new();
+            for (obj, place) in s.place.drain() {
+                if let Some(e) = self.entries.get_mut(&obj) {
+                    e.place = place;
+                    if !s.geom.contains_key(&obj) {
+                        moved.push(obj);
+                    }
+                }
             }
-        }
-        for (obj, g) in geoms.iter().copied() {
+            let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
+            (geoms, moved)
+        };
+        for (obj, g) in geoms {
             let Some(e) = self.entries.get_mut(&obj) else {
                 continue;
             };
@@ -1254,10 +1258,7 @@ impl QuickScene {
             self.tree.set_z(node, g.z as f32);
         }
         // What only moved: its transform, and nothing else.
-        for (obj, _) in places {
-            if geoms.binary_search_by_key(&obj, |g| g.0).is_ok() {
-                continue;
-            }
+        for obj in moved {
             if let Some(e) = self.entries.get(&obj)
                 && let Some(g) = &e.geom
             {
