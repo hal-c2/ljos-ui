@@ -585,8 +585,9 @@ mod tests {
             &[
                 (
                     "Main.qml",
-                    "import QtQuick\nimport \"parts\"\nItem {\n  property alias page: loader.item\n  \
-                     Sibling { }\n  Panel { objectName: \"panel\" }\n  \
+                    "import QtQuick\nimport \"parts\"\nimport Widgets\nItem {\n  \
+                     property alias page: loader.item\n  \
+                     Sibling { }\n  Panel { objectName: \"panel\" }\n  Gauge { }\n  \
                      Loader { id: loader; source: \"pages/Page.qml\" }\n}\n",
                 ),
                 (
@@ -599,6 +600,8 @@ mod tests {
                     "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
                 ),
                 ("parts/Panel.qml", "import QtQuick\nItem { }\n"),
+                ("widgets/qmldir", "module Widgets\nGauge 1.0 Gauge.qml\n"),
+                ("widgets/Gauge.qml", "import QtQuick\nItem { }\n"),
                 (
                     "pages/Page.qml",
                     "import QtQuick\nItem {\n  objectName: \"page\"\n  property var v: pageUnknown\n}\n",
@@ -619,12 +622,26 @@ mod tests {
             Box::new(move |line| to.borrow_mut().push(line.to_owned())),
         )
         .unwrap();
-        // Nothing but the entry is compiled before an object is made.
+        // Nothing but the entry is compiled before an object is made, and
+        // only what it imports is read.
         assert!(said.borrow().is_empty(), "{said:?}");
+        let read = ["Broken", "Main", "Sibling", "parts/Panel", "widgets/Gauge"];
+        assert_eq!(source.read(), read);
         let engine = Engine::new();
         ljos_quick::register(&engine);
-        engine.set_component_source(source);
+        let source = std::rc::Rc::new(source);
+        engine.set_component_source(Shared(source.clone()));
         let root = engine.create_from_url("Main", None, Vec::new()).unwrap();
+        // The page's directory is read when the Loader asks for it.
+        let read = [
+            "Broken",
+            "Main",
+            "Sibling",
+            "pages/Page",
+            "parts/Panel",
+            "widgets/Gauge",
+        ];
+        assert_eq!(source.read(), read);
         let page = engine.read_by_name(root, "page").as_object().unwrap();
         let name = engine.read_by_name(page, "objectName");
         assert_eq!(name.to_js_string().to_string(), "page");
@@ -634,6 +651,24 @@ mod tests {
         assert!(told("pages/Page.qml: 4:"), "{said:?}");
         assert!(!told("stray/") && !told("Broken"), "{said:?}");
         assert_eq!(said.len(), 2, "{said:?}");
+    }
+
+    /// The source as the engine has it, still in the test's hands.
+    struct Shared(std::rc::Rc<OnDemand<EngineOracle>>);
+
+    impl ljos_engine::ComponentSource for Shared {
+        fn load(&self, key: &str) -> Option<std::sync::Arc<ljos_ir::CompiledFile>> {
+            self.0.load(key)
+        }
+        fn failure(&self, key: &str) -> Option<String> {
+            self.0.failure(key)
+        }
+        fn url(&self, key: &str) -> String {
+            self.0.url(key)
+        }
+        fn key(&self, url: &str) -> String {
+            self.0.key(url)
+        }
     }
 
     #[test]
