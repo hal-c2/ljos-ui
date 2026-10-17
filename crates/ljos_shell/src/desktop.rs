@@ -1516,6 +1516,11 @@ pub(crate) fn run<M: Send + 'static>(
     config: ShellConfig,
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
+    // Only with the system's fonts: the bundled ones have none of the
+    // desktop's families.
+    let desktop_font = config
+        .system_fonts
+        .then(crate::desktop_font::Reading::start);
     let host = WinitHost::<ShellEvent>::new()?;
     // The drivers start while the application is built.
     let painter_choice = surface::Choice::from_env(std::env::var("LJOS_PAINTER").ok().as_deref());
@@ -1524,6 +1529,10 @@ pub(crate) fn run<M: Send + 'static>(
     // built.
     if config.system_fonts {
         ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+    }
+    // Before the engine is built: `font` defaults to it everywhere.
+    if let Some(font) = desktop_font {
+        font.apply();
     }
     let proxy: Proxy = Arc::new(Mutex::new(host.proxy()));
     let ctx = new_context(0, &proxy);

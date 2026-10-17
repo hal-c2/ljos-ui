@@ -217,8 +217,9 @@ pub struct Rect {
 
 /// `font` value type. Unset sizes are `-1`, as in QML.
 ///
-/// The default is the application font, as in Qt: the platform's default
-/// family at its default point size ([`Font::DEFAULT_FAMILY`],
+/// The default is the application font, as in Qt: the desktop's when the
+/// host read one ([`Font::set_application_font`]), else the platform's
+/// default family at its default point size ([`Font::DEFAULT_FAMILY`],
 /// [`Font::DEFAULT_POINT_SIZE`]). The fields are what was asked for;
 /// [`Font::read_pixel_size`] and [`Font::read_point_size`] are what a
 /// script reads, each size in both units.
@@ -265,8 +266,48 @@ pub struct Font {
     pub variable_axes: Value,
 }
 
+/// What a host set with [`Font::set_application_font`]: the part of a font
+/// a desktop names, which unlike a whole `Font` may be shared by threads.
+#[derive(Clone)]
+struct ApplicationFont {
+    family: Atom,
+    point_size: f64,
+    pixel_size: i32,
+    weight: i32,
+    italic: bool,
+    style_name: Atom,
+}
+
+static APPLICATION_FONT: std::sync::RwLock<Option<ApplicationFont>> = std::sync::RwLock::new(None);
+/// Whether [`APPLICATION_FONT`] is set: most programs never set it, and
+/// every default font would otherwise take the lock.
+static APPLICATION_FONT_SET: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 impl Default for Font {
     fn default() -> Self {
+        use std::sync::atomic::Ordering;
+        let mut font = Font::fallback();
+        if APPLICATION_FONT_SET.load(Ordering::Acquire)
+            && let Ok(set) = APPLICATION_FONT.read()
+            && let Some(app) = set.as_ref()
+        {
+            font.family = app.family.clone();
+            font.point_size = app.point_size;
+            font.pixel_size = app.pixel_size;
+            font.weight = app.weight;
+            font.italic = app.italic;
+            font.style_name = app.style_name.clone();
+        }
+        font
+    }
+}
+
+impl Font {
+    /// The application font when no desktop names one: Qt's on a generic
+    /// Unix platform, [`Font::DEFAULT_FAMILY`] at
+    /// [`Font::DEFAULT_POINT_SIZE`].
+    pub fn fallback() -> Self {
         Font {
             family: Atom::DEFAULT_FONT_FAMILY,
             point_size: Font::DEFAULT_POINT_SIZE,
@@ -289,6 +330,28 @@ impl Default for Font {
             features: Value::Undefined,
             variable_axes: Value::Undefined,
         }
+    }
+
+    /// Makes the family, sizes, weight, italics and style name of `font`
+    /// those of every default font from now on (`QGuiApplication::setFont`),
+    /// or with `None` [`Font::fallback`]'s again. A host calls it once, with
+    /// the desktop's font, before it builds an engine: what was made
+    /// before keeps the font it had.
+    pub fn set_application_font(font: Option<&Font>) {
+        use std::sync::atomic::Ordering;
+        let app = font.map(|f| ApplicationFont {
+            family: f.family.clone(),
+            point_size: f.point_size,
+            pixel_size: f.pixel_size,
+            weight: f.weight,
+            italic: f.italic,
+            style_name: f.style_name.clone(),
+        });
+        let set = app.is_some();
+        if let Ok(mut held) = APPLICATION_FONT.write() {
+            *held = app;
+        }
+        APPLICATION_FONT_SET.store(set, Ordering::Release);
     }
 }
 
