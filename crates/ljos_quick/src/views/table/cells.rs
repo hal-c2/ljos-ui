@@ -87,6 +87,16 @@ impl ItemTree for ListTree {
         }
     }
 
+    fn can_fetch_more(&self, parent: &[usize]) -> bool {
+        parent.is_empty() && self.0.can_fetch_more()
+    }
+
+    fn fetch_more(&self, engine: &Engine, parent: &[usize]) {
+        if parent.is_empty() {
+            self.0.fetch_more(engine);
+        }
+    }
+
     fn subscribe(&self, listener: ljos_engine::TreeListener) -> u64 {
         self.0
             .subscribe(Rc::new(move |e: &Engine, c: &ModelChange| {
@@ -253,13 +263,14 @@ impl Cells {
         ) {
             for r in 0..tree.row_count(path) {
                 path.push(r);
-                let children = tree.row_count(path);
+                // The model's word, so a folder not read yet has its arrow.
+                let has_children = tree.has_children(path);
                 out.push(Line {
                     path: path.clone(),
                     depth: path.len() - base - 1,
-                    has_children: children > 0,
+                    has_children,
                 });
-                if children > 0 && expanded.contains(path.as_slice()) {
+                if has_children && expanded.contains(path.as_slice()) {
                     go(tree, expanded, path, base, out);
                 }
                 path.pop();
@@ -277,6 +288,16 @@ impl Cells {
             expanded.insert(path.to_vec())
         } else {
             expanded.remove(path)
+        }
+    }
+
+    /// Asks the model for the rows under `path` when it has not read them
+    /// yet; they come as rows inserted, now or later.
+    pub(crate) fn fetch_more(&self, engine: &Engine, path: &[usize]) {
+        if let Some(tree) = self.tree()
+            && tree.can_fetch_more(path)
+        {
+            tree.fetch_more(engine, path);
         }
     }
 

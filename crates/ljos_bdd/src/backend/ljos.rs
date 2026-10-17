@@ -28,6 +28,7 @@ use super::{
 };
 
 mod inspect;
+mod lazy;
 mod platform;
 mod reload;
 mod text;
@@ -200,6 +201,8 @@ pub struct LjosBackend {
     system_fonts: bool,
     /// The style the scenario chose, given before anything was loaded.
     controls_style: Option<ControlsStyle>,
+    /// Tree models in Rust the QML is given, by name, before it is loaded.
+    lazy_trees: Vec<(String, lazy::LazyTree)>,
 }
 
 impl Drop for LjosBackend {
@@ -966,6 +969,14 @@ impl Backend for LjosBackend {
             }
             self.platform.install(&live.engine)?;
             live.engine.set_wall_clock_origin(self.wall_clock);
+            for (name, tree) in self.lazy_trees.drain(..) {
+                let e = &live.engine;
+                let obj = e
+                    .create_by_name("QtQml", "QtObject", None)
+                    .map_err(failed)?;
+                e.set_object_tree(obj, Rc::new(tree)).map_err(failed)?;
+                e.set_context_property(e.root_context(), &name, QmlValue::Object(obj));
+            }
             let images = ljos_quick::ImageStore::of(&live.engine);
             for (url, bytes) in self.resources.drain(..) {
                 ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.clone());
@@ -1199,6 +1210,17 @@ impl Backend for LjosBackend {
         let live = self.live()?;
         ljos_platform::Platform::of(&live.engine).finish(&live.engine);
         live.settle()
+    }
+
+    fn lazy_tree(&mut self, name: &str, delay_ms: u64, rows: &[(String, String)]) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "a tree model is given to the QML before it is loaded",
+            ));
+        }
+        let tree = lazy::LazyTree::new(rows, Duration::from_millis(delay_ms));
+        self.lazy_trees.push((name.to_owned(), tree));
+        Ok(())
     }
 
     fn system_fonts(&mut self) -> Result<()> {

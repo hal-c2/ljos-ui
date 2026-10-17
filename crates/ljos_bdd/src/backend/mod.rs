@@ -353,6 +353,13 @@ pub trait Backend: fmt::Debug {
     fn system_fonts(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's fonts"))
     }
+    /// The application gives the QML a tree model named `name` that reads
+    /// a folder's rows only when a view asks for them, and has them
+    /// `delay_ms` later. `rows` are (folder, name) pairs, the folder ""
+    /// being the top. Given before anything is loaded.
+    fn lazy_tree(&mut self, _name: &str, _delay_ms: u64, _rows: &[(String, String)]) -> Result<()> {
+        Err(BackendError::NotImplemented("tree models written in Rust"))
+    }
     /// The system cannot take away a dialog it shows, from now on.
     fn system_dialogs_stay(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented("the system's dialogs"))

@@ -49,6 +49,29 @@ pub trait ItemTree {
     /// How many rows are under the row at `parent`; `&[]` for the top.
     fn row_count(&self, parent: &[usize]) -> usize;
 
+    /// Whether the row at `path` has rows under it, perhaps before they
+    /// are read: a view shows its expand arrow. A model that reads lazily
+    /// says yes for a folder it has not read
+    /// ([`ItemTree::can_fetch_more`]).
+    fn has_children(&self, path: &[usize]) -> bool {
+        self.row_count(path) > 0
+    }
+
+    /// Whether there are rows under the row at `path` (`&[]` for the
+    /// top) that the model has not read yet.
+    fn can_fetch_more(&self, path: &[usize]) -> bool {
+        let _ = path;
+        false
+    }
+
+    /// A view wants the rows under the row at `path`, which
+    /// [`ItemTree::can_fetch_more`] said are not read yet. The model reads
+    /// them, now or later, and tells its listeners
+    /// ([`TreeChange::RowsInserted`]) when it has them.
+    fn fetch_more(&self, engine: &Engine, path: &[usize]) {
+        let _ = (engine, path);
+    }
+
     /// The columns every row has.
     fn column_count(&self) -> usize {
         1
@@ -148,6 +171,14 @@ impl ItemModel for TopLevel {
 
     fn set_data(&self, engine: &Engine, row: usize, role: &str, value: &Value) -> bool {
         self.0.set_data(engine, &[row], 0, role, value)
+    }
+
+    fn can_fetch_more(&self) -> bool {
+        self.0.can_fetch_more(&[])
+    }
+
+    fn fetch_more(&self, engine: &Engine) {
+        self.0.fetch_more(engine, &[]);
     }
 
     fn model_data(&self, engine: &Engine, row: usize) -> Option<Value> {

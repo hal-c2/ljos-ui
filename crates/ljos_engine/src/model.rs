@@ -103,6 +103,20 @@ pub trait ItemModel {
         false
     }
 
+    /// Whether there are rows past the last that the model has not read
+    /// yet, as a model that reads in pages has.
+    fn can_fetch_more(&self) -> bool {
+        false
+    }
+
+    /// Something wants the rows past the last, which
+    /// [`ItemModel::can_fetch_more`] said are not read yet. The model reads
+    /// them, now or later, and tells its listeners
+    /// ([`ModelChange::RowsInserted`]) when it has them.
+    fn fetch_more(&self, engine: &Engine) {
+        let _ = engine;
+    }
+
     fn row_key(&self, row: usize) -> RowKey {
         row as RowKey
     }

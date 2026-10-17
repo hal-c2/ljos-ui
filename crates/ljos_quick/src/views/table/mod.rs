@@ -816,6 +816,7 @@ impl TreeView {
         if !st.cells.set_expanded(&path, true) {
             return;
         }
+        st.cells.fetch_more(e, &path);
         settle(e, &st);
         let r = e.emit_by_name(me, "expanded", &[Value::Int(row), Value::Int(1)]);
         warn(e, "expanded", r);

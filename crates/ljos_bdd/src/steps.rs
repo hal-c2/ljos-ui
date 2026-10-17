@@ -238,6 +238,25 @@ fn dialogs_stay(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.system_dialogs_stay())
 }
 
+// Before the QML: a model the application writes in Rust. The table has
+// a `folder` and a `name` column; an empty folder is the top.
+#[given(
+    regex = r#"^a tree model "([^"]+)" that reads a folder's rows (\d+) ms after a view asks for them:$"#
+)]
+fn lazy_tree(w: &mut LjosWorld, name: String, delay: u64, step: &Step) -> StepResult {
+    let table = step
+        .table
+        .as_ref()
+        .ok_or_else(|| "the step needs a table of folder and name".to_owned())?;
+    let rows: Vec<(String, String)> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|r| (r[0].clone(), r[1].clone()))
+        .collect();
+    w.each(|b| b.lazy_tree(&name, delay, &rows))
+}
+
 // Before the QML: what the application reads at the start.
 #[given("the system asks the user before it grants a permission")]
 fn permissions_ask(w: &mut LjosWorld) -> StepResult {
