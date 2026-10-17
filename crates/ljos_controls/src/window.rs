@@ -987,14 +987,14 @@ pub struct ApplicationWindow {
     /// What the controls in the window have until they are given one.
     #[qml(notify, reset = inherit::LOCALE_RESET)]
     pub locale: Value,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub background: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub header: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub footer: Option<ObjectId>,
     /// Lies across the top of the window, above the header.
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub menu_bar: Option<ObjectId>,
     #[qml(notify, list, append = window_append)]
     pub content_data: QmlList,

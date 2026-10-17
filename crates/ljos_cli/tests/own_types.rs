@@ -415,7 +415,14 @@ impl<'a, 'c> Module<'a, 'c> {
                 let _ = self.link(&MetaRef::from(*group));
                 continue;
             }
-            let value = self.value(&property.ty);
+            // A property that takes any object says the class a
+            // description has it hold, where it says one.
+            let value = match (&property.ty, &property.holds) {
+                (TypeTag::Object(None), Some(class)) => {
+                    self.value(&TypeTag::Object(Some(class.clone())))
+                }
+                (ty, _) => self.value(ty),
+            };
             let _ = write!(out, "\t\tprop {} {value}", property.name);
             // A list by how it is assigned, whatever it is declared to hold.
             if property.is_list() && !matches!(property.ty, TypeTag::List(_)) {

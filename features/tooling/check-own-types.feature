@@ -198,6 +198,31 @@ Feature: Checking files that use the modules Ljós adds
         ljos: 1 errors
         """
 
+  Rule: A member written through a control's part is looked up on the part's type
+
+    Scenario: Members of a combo box's popup and a button's background have nothing to report
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          ComboBox {
+            model: ["a", "b"]
+            popup.scale: 0.5
+            popup.transformOrigin: Item.TopLeft
+            popup.modal: true
+            indicator.opacity: 0.5
+          }
+          Button { background.implicitWidth: 40; contentItem.opacity: 0.5 }
+          Popup { scale: 0.5; transformOrigin: Item.TopLeft }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
   Rule: A misspelt member of one of Qt's types is reported the same way
 
     @qt-table

@@ -58,7 +58,7 @@ pub struct MenuItem {
     #[qml(notify)]
     pub highlighted: bool,
     /// What shows that the item opens a sub-menu.
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub arrow: Option<ObjectId>,
     /// The menu the item is in.
     #[qml(notify, readonly)]

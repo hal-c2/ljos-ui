@@ -228,7 +228,7 @@ pub struct GroupBox {
     pub frame: Frame,
     #[qml(notify)]
     pub title: Atom,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub label: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub implicit_label_width: f64,
@@ -315,9 +315,9 @@ pub struct Page {
     pub pane: Pane,
     #[qml(notify)]
     pub title: Atom,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub header: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub footer: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub implicit_header_width: f64,

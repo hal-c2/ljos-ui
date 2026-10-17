@@ -993,9 +993,9 @@ pub struct Dialog {
     pub popup: Popup,
     #[qml(notify)]
     pub title: Atom,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub header: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub footer: Option<ObjectId>,
     #[qml(notify, flags = "StandardButton")]
     pub standard_buttons: i32,

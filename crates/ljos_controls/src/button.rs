@@ -165,7 +165,7 @@ pub struct AbstractButton {
     pub auto_repeat_delay: i32,
     #[qml(notify)]
     pub auto_repeat_interval: i32,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub indicator: Option<ObjectId>,
     #[qml(group)]
     pub icon: Icon,

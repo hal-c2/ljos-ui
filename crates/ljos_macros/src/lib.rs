@@ -49,8 +49,11 @@
 //! that object, which the Rust type of the field cannot say; no other object
 //! is taken there, and whoever reads QML before the engine does knows from
 //! it what may be written in the property, so that what is written in one of
-//! `object = "Component"` is a template made later). Field names are
-//! exposed in camelCase unless renamed.
+//! `object = "Component"` is a template made later) and `holds = "Name"` (on
+//! a field that takes any object: the QML type a description of the type
+//! says it holds, where the engine takes other objects too, as a control's
+//! part that a style gives as a `Component` and the control makes). Field
+//! names are exposed in camelCase unless renamed.
 //!
 //! For each property field the derive adds a typed handle,
 //! `pub const FIELD_NAME: Prop<FieldType>`, to the struct's inherent impl.
@@ -263,6 +266,8 @@ struct FieldAttrs {
     reset: Option<Option<syn::Expr>>,
     /// `object = "Name"`: the QML type of the object the field refers to.
     object: Option<String>,
+    /// `holds = "Name"`: the QML type a description says the field holds.
+    holds: Option<String>,
 }
 
 fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
@@ -336,6 +341,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.enumeration = Some(m.value()?.parse::<LitStr>()?.value());
             } else if p.is_ident("object") {
                 f.object = Some(m.value()?.parse::<LitStr>()?.value());
+            } else if p.is_ident("holds") {
+                f.holds = Some(m.value()?.parse::<LitStr>()?.value());
             } else if p.is_ident("reset") {
                 f.reset = Some(if m.input.peek(syn::Token![=]) {
                     Some(m.value()?.parse::<syn::Expr>()?)
@@ -344,7 +351,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset, object",
+                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset, object, holds",
                 ));
             }
             Ok(())
@@ -542,6 +549,9 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         });
         if let Some(append) = &a.append {
             builder.push(quote!(.list_append(#append)));
+        }
+        if let Some(holds) = &a.holds {
+            builder.push(quote!(.holds(#holds)));
         }
         match &a.reset {
             Some(Some(reset)) => builder.push(quote!(.reset(#reset))),

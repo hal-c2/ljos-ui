@@ -87,9 +87,9 @@ pub struct Control {
     pub implicit_content_width: f64,
     #[qml(notify, readonly)]
     pub implicit_content_height: f64,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub background: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub content_item: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub hovered: bool,

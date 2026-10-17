@@ -69,7 +69,7 @@ pub struct SpinButton {
     #[qml(notify)]
     pub pressed: bool,
     /// The item that is the button; the style makes it.
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub indicator: Option<ObjectId>,
     #[qml(notify)]
     pub hovered: bool,

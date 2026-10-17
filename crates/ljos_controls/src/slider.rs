@@ -105,7 +105,7 @@ pub struct Slider {
     pub visual_position: f64,
     #[qml(notify)]
     pub pressed: bool,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub handle: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub implicit_handle_width: f64,
@@ -157,7 +157,7 @@ pub struct RangeSliderNode {
     pub position: f64,
     #[qml(notify, readonly)]
     pub visual_position: f64,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub handle: Option<ObjectId>,
     #[qml(notify)]
     pub pressed: bool,

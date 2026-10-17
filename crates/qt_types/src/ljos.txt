@@ -5081,7 +5081,7 @@ module QtQuick.Templates
 		prop autoRepeat QtQml.bool named
 		prop autoRepeatDelay QtQml.int named
 		prop autoRepeatInterval QtQml.int named
-		prop indicator QtQml.QtObject named pointer
+		prop indicator QtQuick.Item named pointer
 		prop icon QtQuick.Templates.ButtonIcon pointer readonly
 		prop action QtQml.QtObject named pointer
 		prop pressX QtQml.real named readonly
@@ -5182,10 +5182,10 @@ module QtQuick.Templates
 		default contentData
 		prop font QtQuick.font named reset
 		prop locale QtQml.var named reset
-		prop background QtQml.QtObject named pointer
-		prop header QtQml.QtObject named pointer
-		prop footer QtQml.QtObject named pointer
-		prop menuBar QtQml.QtObject named pointer
+		prop background QtQuick.Item named pointer
+		prop header QtQuick.Item named pointer
+		prop footer QtQuick.Item named pointer
+		prop menuBar QtQuick.Item named pointer
 		prop contentData QtQml.var named list
 		prop contentChildren QtQml.var named list
 		signal fontChanged
@@ -5251,8 +5251,8 @@ module QtQuick.Templates
 		prop valueRole QtQml.string named
 		prop currentValue QtQml.var named
 		prop delegate QtQml.Component named pointer
-		prop indicator QtQml.QtObject named pointer
-		prop popup QtQml.QtObject named pointer
+		prop indicator QtQuick.Item named pointer
+		prop popup QtQuick.Templates.Popup named pointer
 		prop flat QtQml.bool named
 		prop down QtQml.bool named
 		prop editable QtQml.bool named
@@ -5349,8 +5349,8 @@ module QtQuick.Templates
 		prop implicitBackgroundHeight QtQml.real named readonly
 		prop implicitContentWidth QtQml.real named readonly
 		prop implicitContentHeight QtQml.real named readonly
-		prop background QtQml.QtObject named pointer
-		prop contentItem QtQml.QtObject named pointer
+		prop background QtQuick.Item named pointer
+		prop contentItem QtQuick.Item named pointer
 		prop hovered QtQml.bool named readonly
 		prop hoverEnabled QtQml.bool named reset
 		prop wheelEnabled QtQml.bool named
@@ -5412,7 +5412,7 @@ module QtQuick.Templates
 		prop snapMode SnapMode
 		prop wrap QtQml.bool named
 		prop pressed QtQml.bool named readonly
-		prop handle QtQml.QtObject named pointer
+		prop handle QtQuick.Item named pointer
 		prop live QtQml.bool named
 		prop inputMode InputMode
 		signal fromChanged
@@ -5437,8 +5437,8 @@ module QtQuick.Templates
 		enum StandardCode Rejected=0 Accepted=1
 		flags StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728
 		prop title QtQml.string named
-		prop header QtQml.QtObject named pointer
-		prop footer QtQml.QtObject named pointer
+		prop header QtQuick.Item named pointer
+		prop footer QtQuick.Item named pointer
 		prop standardButtons StandardButton
 		prop result QtQml.int named
 		prop implicitHeaderWidth QtQml.real named readonly
@@ -5553,7 +5553,7 @@ module QtQuick.Templates
 	type QtQuick.Templates.GroupBox GroupBox
 		prototype QtQuick.Templates.Frame named
 		prop title QtQml.string named
-		prop label QtQml.QtObject named pointer
+		prop label QtQuick.Item named pointer
 		prop implicitLabelWidth QtQml.real named readonly
 		prop implicitLabelHeight QtQml.real named readonly
 		signal titleChanged
@@ -5578,7 +5578,7 @@ module QtQuick.Templates
 		signal highlightedChanged
 	type QtQuick.Templates.Label Label
 		prototype QtQuick.Text named
-		prop background QtQml.QtObject named pointer
+		prop background QtQuick.Item named pointer
 		prop topInset QtQml.real named reset
 		prop leftInset QtQml.real named reset
 		prop rightInset QtQml.real named reset
@@ -5669,7 +5669,7 @@ module QtQuick.Templates
 	type QtQuick.Templates.MenuItem MenuItem
 		prototype QtQuick.Templates.AbstractButton named
 		prop highlighted QtQml.bool named
-		prop arrow QtQml.QtObject named pointer
+		prop arrow QtQuick.Item named pointer
 		prop menu QtQml.QtObject named pointer readonly
 		prop subMenu QtQml.QtObject named pointer readonly
 		prop textPadding QtQml.real named
@@ -5689,8 +5689,8 @@ module QtQuick.Templates
 	type QtQuick.Templates.Page Page
 		prototype QtQuick.Templates.Pane named
 		prop title QtQml.string named
-		prop header QtQml.QtObject named pointer
-		prop footer QtQml.QtObject named pointer
+		prop header QtQuick.Item named pointer
+		prop footer QtQuick.Item named pointer
 		prop implicitHeaderWidth QtQml.real named readonly
 		prop implicitHeaderHeight QtQml.real named readonly
 		prop implicitFooterWidth QtQml.real named readonly
@@ -5761,8 +5761,8 @@ module QtQuick.Templates
 		prop implicitBackgroundHeight QtQml.real named readonly
 		prop implicitContentWidth QtQml.real named readonly
 		prop implicitContentHeight QtQml.real named readonly
-		prop background QtQml.QtObject named pointer
-		prop contentItem QtQml.QtObject named pointer
+		prop background QtQuick.Item named pointer
+		prop contentItem QtQuick.Item named pointer
 		prop contentData QtQml.var named list
 		prop contentChildren QtQml.var named list
 		prop parent QtQml.QtObject named pointer reset
@@ -5988,7 +5988,7 @@ module QtQuick.Templates
 		prop position QtQml.real named readonly
 		prop visualPosition QtQml.real named readonly
 		prop pressed QtQml.bool named
-		prop handle QtQml.QtObject named pointer
+		prop handle QtQuick.Item named pointer
 		prop implicitHandleWidth QtQml.real named readonly
 		prop implicitHandleHeight QtQml.real named readonly
 		prop touchDragThreshold QtQml.real named reset
@@ -6173,7 +6173,7 @@ module QtQuick.Templates
 		signal editingChanged
 	type QtQuick.Templates.TextArea TextArea
 		prototype QtQuick.TextEdit named
-		prop background QtQml.QtObject named pointer
+		prop background QtQuick.Item named pointer
 		prop topInset QtQml.real named reset
 		prop leftInset QtQml.real named reset
 		prop rightInset QtQml.real named reset
@@ -6205,7 +6205,7 @@ module QtQuick.Templates
 		signal pressAndHold event
 	type QtQuick.Templates.TextField TextField
 		prototype QtQuick.TextInput named
-		prop background QtQml.QtObject named pointer
+		prop background QtQuick.Item named pointer
 		prop topInset QtQml.real named reset
 		prop leftInset QtQml.real named reset
 		prop rightInset QtQml.real named reset
@@ -6391,7 +6391,7 @@ module QtQuick.Templates
 	type QtQuick.Templates.SpinButton SpinButton
 		is uncreatable
 		prop pressed QtQml.bool named
-		prop indicator QtQml.QtObject named pointer
+		prop indicator QtQuick.Item named pointer
 		prop hovered QtQml.bool named
 		prop implicitIndicatorWidth QtQml.real named readonly
 		prop implicitIndicatorHeight QtQml.real named readonly
@@ -6422,7 +6422,7 @@ module QtQuick.Templates
 		prop value QtQml.real named
 		prop position QtQml.real named readonly
 		prop visualPosition QtQml.real named readonly
-		prop handle QtQml.QtObject named pointer
+		prop handle QtQuick.Item named pointer
 		prop pressed QtQml.bool named
 		prop hovered QtQml.bool named
 		prop implicitHandleWidth QtQml.real named readonly

@@ -243,9 +243,9 @@ pub struct Popup {
     pub implicit_content_width: f64,
     #[qml(notify, readonly)]
     pub implicit_content_height: f64,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub background: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub content_item: Option<ObjectId>,
     #[qml(notify, list, append = popup_append)]
     pub content_data: QmlList,

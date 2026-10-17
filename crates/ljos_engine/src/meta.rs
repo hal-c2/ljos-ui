@@ -236,6 +236,10 @@ pub struct PropertyInfo {
     pub list_field: Option<ListField>,
     /// How `undefined` takes the property back, if it can be.
     pub reset: Option<Reset>,
+    /// For an object property that takes any object, the class a
+    /// description of the type says it holds: a control's part holds an
+    /// `Item` once made, though a style gives it as a `Component` first.
+    pub holds: Option<Atom>,
 }
 
 impl PropertyInfo {
@@ -811,6 +815,7 @@ impl MetaBuilder {
             list_append: None,
             list_field: None,
             reset: None,
+            holds: None,
         });
     }
 
@@ -926,6 +931,15 @@ impl MetaBuilder {
     pub fn list_append(mut self, f: ListAppend) -> Self {
         if let Some(p) = self.meta.properties.last_mut() {
             p.list_append = Some(f);
+        }
+        self
+    }
+
+    /// Says what class of object the property just added is described as
+    /// holding ([`PropertyInfo::holds`]).
+    pub fn holds(mut self, class: &str) -> Self {
+        if let Some(p) = self.meta.properties.last_mut() {
+            p.holds = Some(Atom::intern(class));
         }
         self
     }

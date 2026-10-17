@@ -26,7 +26,7 @@ use crate::util::{num, object};
 pub struct Label {
     #[qml(base)]
     pub text: Text,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub background: Option<ObjectId>,
     #[qml(notify, reset)]
     pub top_inset: f64,

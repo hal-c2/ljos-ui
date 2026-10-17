@@ -26,15 +26,18 @@ Feature: Members written through a control's parts
       Then the property "<read>" of "control" is <value>
 
       Examples:
-        | type      | written                                   | read                 | value |
-        | ComboBox  | model: ["a"]; popup.width: 77             | popup.width          | 77    |
-        | ComboBox  | model: ["a"]; popup.topMargin: 3          | popup.topMargin      | 3     |
-        | ComboBox  | model: ["a"]; indicator.visible: false    | indicator.visible    | false |
-        | Button    | text: "b"; background.opacity: 0.5        | background.opacity   | 0.5   |
-        | Button    | text: "b"; contentItem.opacity: 0.25      | contentItem.opacity  | 0.25  |
-        | CheckBox  | text: "c"; indicator.opacity: 0.5         | indicator.opacity    | 0.5   |
-        | TextField | background.opacity: 0.5                   | background.opacity   | 0.5   |
-        | Popup     | background.opacity: 0.5                   | background.opacity   | 0.5   |
+        | type      | written                                           | read                  | value |
+        | ComboBox  | model: ["a"]; popup.width: 77                     | popup.width           | 77    |
+        | ComboBox  | model: ["a"]; popup.topMargin: 3                  | popup.topMargin       | 3     |
+        | ComboBox  | model: ["a"]; popup.scale: 0.5                    | popup.scale           | 0.5   |
+        | ComboBox  | model: ["a"]; popup.transformOrigin: Item.TopLeft | popup.transformOrigin | 0     |
+        | ComboBox  | model: ["a"]; popup.modal: true                   | popup.modal           | true  |
+        | ComboBox  | model: ["a"]; indicator.visible: false            | indicator.visible     | false |
+        | Button    | text: "b"; background.opacity: 0.5                | background.opacity    | 0.5   |
+        | Button    | text: "b"; contentItem.opacity: 0.25              | contentItem.opacity   | 0.25  |
+        | CheckBox  | text: "c"; indicator.opacity: 0.5                 | indicator.opacity     | 0.5   |
+        | TextField | background.opacity: 0.5                           | background.opacity    | 0.5   |
+        | Popup     | background.opacity: 0.5                           | background.opacity    | 0.5   |
 
     Scenario: A binding through a part follows what it reads
       Given the QML:

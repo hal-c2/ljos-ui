@@ -92,7 +92,7 @@ pub struct Dial {
     pub wrap: bool,
     #[qml(notify, readonly)]
     pub pressed: bool,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub handle: Option<ObjectId>,
     #[qml(notify)]
     pub live: bool,

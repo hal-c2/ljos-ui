@@ -23,7 +23,7 @@ use crate::text_control::{self, FieldState, Props};
 pub struct TextField {
     #[qml(base)]
     pub input: TextInput,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub background: Option<ObjectId>,
     #[qml(notify, reset)]
     pub top_inset: f64,

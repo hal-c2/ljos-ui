@@ -202,9 +202,9 @@ pub struct ComboBox {
     pub current_value: Value,
     #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Item")]
     pub indicator: Option<ObjectId>,
-    #[qml(notify)]
+    #[qml(notify, holds = "Popup")]
     pub popup: Option<ObjectId>,
     #[qml(notify)]
     pub flat: bool,

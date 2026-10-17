@@ -954,3 +954,40 @@ fn naming_a_type_of_another_module_gives_the_module_nothing() {
     // An import does: Deep's `string` is Base's too.
     assert_eq!(find("Base", "string"), Some("QString"));
 }
+
+#[test]
+fn the_own_table_says_the_class_of_a_part_a_control_holds() {
+    // A member written through a part (`popup.scale`) is looked up on the
+    // class the part's property says it holds: one that says only "an
+    // object" has none of the part's members.
+    let parts = [
+        ("ComboBox", "popup", "QtQuick.Templates.Popup"),
+        ("ComboBox", "indicator", "QtQuick.Item"),
+        ("Control", "background", "QtQuick.Item"),
+        ("Control", "contentItem", "QtQuick.Item"),
+        ("AbstractButton", "indicator", "QtQuick.Item"),
+        ("Popup", "background", "QtQuick.Item"),
+        ("Popup", "contentItem", "QtQuick.Item"),
+        ("Slider", "handle", "QtQuick.Item"),
+        ("Dial", "handle", "QtQuick.Item"),
+        ("Page", "header", "QtQuick.Item"),
+        ("Page", "footer", "QtQuick.Item"),
+        ("Dialog", "header", "QtQuick.Item"),
+        ("Dialog", "footer", "QtQuick.Item"),
+        ("ApplicationWindow", "background", "QtQuick.Item"),
+        ("ApplicationWindow", "header", "QtQuick.Item"),
+        ("ApplicationWindow", "footer", "QtQuick.Item"),
+        ("ApplicationWindow", "menuBar", "QtQuick.Item"),
+        ("GroupBox", "label", "QtQuick.Item"),
+        ("MenuItem", "arrow", "QtQuick.Item"),
+        ("TextField", "background", "QtQuick.Item"),
+        ("TextArea", "background", "QtQuick.Item"),
+        ("Label", "background", "QtQuick.Item"),
+    ];
+    for (name, part, class) in parts {
+        let property = own_property(own_type("QtQuick.Templates", name), part)
+            .unwrap_or_else(|| panic!("no {name}.{part}"));
+        assert!(property.is_pointer, "{name}.{part}");
+        assert_eq!(property.type_name, class, "{name}.{part}");
+    }
+}
