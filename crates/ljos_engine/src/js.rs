@@ -756,7 +756,7 @@ impl Engine {
             Value::Int(i) => JsValue::Number(f64::from(*i)),
             Value::Real(r) => JsValue::Number(*r),
             Value::String(s) | Value::Url(s) => JsValue::String(s.to_string()),
-            Value::Color(c) => JsValue::Color([c.r, c.g, c.b, c.a]),
+            Value::Color(c) => color_to_js(*c),
             Value::Point(_)
             | Value::IntPoint(_)
             | Value::Size(_)
@@ -805,7 +805,7 @@ impl Engine {
                 )
             }
             JsValue::Object(id) => Value::Object(u64_to_obj(id)),
-            JsValue::Color([r, g, b, a]) => Value::Color(Color { r, g, b, a }),
+            v @ (JsValue::Color(_) | JsValue::InvalidColor(_)) => Value::Color(color_from_js(&v)),
             // Whatever it is going to: a `var` keeps the value, and a
             // property of another type refuses it by its name.
             JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
@@ -1004,14 +1004,16 @@ impl Engine {
                 Some(JsValue::Number(n)) => n.clamp(0.0, 65535.0) as u16,
                 _ => 0,
             };
-            Ok(JsValue::Color([ch(0), ch(1), ch(2), ch(3)]))
+            let channels = [ch(0), ch(1), ch(2), ch(3)];
+            Ok(match args.get(4) {
+                Some(JsValue::Bool(false)) => JsValue::InvalidColor(channels),
+                _ => JsValue::Color(channels),
+            })
         });
         // A colour by its name or `#rrggbb`; `null` for what is not one.
         let color_of: HostFn = Rc::new(|_scope, args| {
             Ok(match args.first() {
-                Some(JsValue::String(s)) => {
-                    Color::parse(s).map_or(JsValue::Null, |c| JsValue::Color([c.r, c.g, c.b, c.a]))
-                }
+                Some(JsValue::String(s)) => Color::parse(s).map_or(JsValue::Null, color_to_js),
                 _ => JsValue::Null,
             })
         });
@@ -1430,3 +1432,22 @@ const PRELUDE: &str = r##"
   Object.defineProperty(g, "Qt", { value: Qt, writable: true, configurable: true });
 })();
 "##;
+
+/// A colour as it crosses into JS.
+pub(crate) fn color_to_js(c: Color) -> JsValue {
+    let channels = [c.r, c.g, c.b, c.a];
+    if c.is_valid() {
+        JsValue::Color(channels)
+    } else {
+        JsValue::InvalidColor(channels)
+    }
+}
+
+/// A colour from JS; [`Color::TRANSPARENT`] for what is not one.
+pub(crate) fn color_from_js(v: &JsValue) -> Color {
+    match *v {
+        JsValue::Color([r, g, b, a]) => Color::rgba16(r, g, b, a),
+        JsValue::InvalidColor([r, g, b, a]) => Color::rgba16(r, g, b, a).invalidated(),
+        _ => Color::TRANSPARENT,
+    }
+}

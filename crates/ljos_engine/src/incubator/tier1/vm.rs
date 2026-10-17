@@ -676,7 +676,7 @@ fn color_field(c: Color, name: &str) -> Option<Value> {
         "g" => part(c.g),
         "b" => part(c.b),
         "a" => part(c.a),
-        "valid" => Some(Value::Bool(true)),
+        "valid" => Some(Value::Bool(c.is_valid())),
         _ => None,
     }
 }

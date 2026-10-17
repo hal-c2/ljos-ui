@@ -39,23 +39,64 @@ use crate::value_types::{IntPoint, Quaternion, Vector2d, Vector3d, Vector4d, fon
 /// red at half alpha); premultiplication happens at paint time. Sixteen
 /// bits per channel matches QColor's precision, so values set from floats
 /// read back the way Qt reads them, and four `u16`s fit `Value`'s payload.
+///
+/// A colour may also be invalid: one that was never given ([`Color::INVALID`],
+/// what a declared `property color` starts as, and what `""` makes). It
+/// still has channels, as in Qt (black, opaque, unless an alpha was set on
+/// it), so it reads and prints as those, but `valid` is false, it equals no
+/// valid colour, and it paints nothing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Color {
     pub r: u16,
     pub g: u16,
     pub b: u16,
     pub a: u16,
+    invalid: bool,
 }
 
 impl Color {
-    pub const TRANSPARENT: Color = Color {
-        r: 0,
-        g: 0,
-        b: 0,
-        a: 0,
+    pub const TRANSPARENT: Color = Color::rgba16(0, 0, 0, 0);
+    /// The colour that was not given.
+    pub const INVALID: Color = Color {
+        invalid: true,
+        ..Color::rgba16(0, 0, 0, 65535)
     };
     pub const BLACK: Color = Color::from_rgba8(0, 0, 0, 255);
     pub const WHITE: Color = Color::from_rgba8(255, 255, 255, 255);
+
+    /// From 16-bit channels.
+    pub const fn rgba16(r: u16, g: u16, b: u16, a: u16) -> Self {
+        Color {
+            r,
+            g,
+            b,
+            a,
+            invalid: false,
+        }
+    }
+
+    /// False for a colour that was not given ([`Color::INVALID`]).
+    pub const fn is_valid(self) -> bool {
+        !self.invalid
+    }
+
+    /// The same channels, invalid: what Qt makes of an invalid colour
+    /// given a new alpha.
+    pub const fn invalidated(self) -> Self {
+        Color {
+            invalid: true,
+            ..self
+        }
+    }
+
+    /// The colour to paint: an invalid one paints nothing.
+    pub const fn painted(self) -> Self {
+        if self.invalid {
+            Color::TRANSPARENT
+        } else {
+            self
+        }
+    }
 
     /// From 8-bit channels (`#rrggbb`). Each byte is replicated into 16 bits
     /// so 255 maps to 65535.
@@ -63,12 +104,7 @@ impl Color {
         const fn w(c: u8) -> u16 {
             (c as u16) * 257
         }
-        Color {
-            r: w(r),
-            g: w(g),
-            b: w(b),
-            a: w(a),
-        }
+        Color::rgba16(w(r), w(g), w(b), w(a))
     }
 
     /// From float channels in `0.0..=1.0` (`Qt.rgba`); out-of-range values
@@ -81,12 +117,7 @@ impl Color {
             let c = if c.is_nan() { 0.0 } else { c.clamp(0.0, 1.0) };
             (c as f32 * 65535.0).round() as u16
         }
-        Color {
-            r: w(r),
-            g: w(g),
-            b: w(b),
-            a: w(a),
-        }
+        Color::rgba16(w(r), w(g), w(b), w(a))
     }
 
     /// The 8-bit channels, rounded.
@@ -153,7 +184,11 @@ impl fmt::Display for Color {
 
 impl fmt::Debug for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Color({self})")
+        if self.invalid {
+            write!(f, "Color(invalid {self})")
+        } else {
+            write!(f, "Color({self})")
+        }
     }
 }
 

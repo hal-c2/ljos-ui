@@ -8,7 +8,7 @@ use support::engine;
 
 fn color(v: Value) -> [u16; 4] {
     match v {
-        Value::Color(Color { r, g, b, a }) => [r, g, b, a],
+        Value::Color(Color { r, g, b, a, .. }) => [r, g, b, a],
         other => panic!("not a colour: {other:?}"),
     }
 }
@@ -160,12 +160,7 @@ Item {
     assert_eq!(color(h.get(root, "single")), [60758, 20585, 45875, 8091]);
     assert_eq!(
         Color::from_rgba_f(0.9271, 0.3141, 0.7, 0.123456),
-        Color {
-            r: 60758,
-            g: 20585,
-            b: 45875,
-            a: 8091
-        }
+        Color::rgba16(60758, 20585, 45875, 8091)
     );
     assert!(h.warnings().is_empty(), "{:?}", h.warnings());
 }

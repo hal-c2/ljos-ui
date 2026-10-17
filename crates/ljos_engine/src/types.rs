@@ -150,8 +150,8 @@ impl TypeTag {
             TypeTag::Int => Value::Int(0),
             TypeTag::Real => Value::Real(0.0),
             TypeTag::String => Value::String(Atom::EMPTY),
-            // QML's default colour is invalid; it reads as transparent black.
-            TypeTag::Color => Value::Color(Color::TRANSPARENT),
+            // QML's default colour is invalid; it reads as opaque black.
+            TypeTag::Color => Value::Color(Color::INVALID),
             TypeTag::Point => Value::Point(Arc::default()),
             TypeTag::Size => Value::Size(Arc::default()),
             TypeTag::Rect => Value::Rect(Arc::default()),
@@ -215,6 +215,8 @@ impl TypeTag {
             },
             TypeTag::Color => match v {
                 Value::Color(_) => v.clone(),
+                // `""` unsets a colour, as in Qt.
+                Value::String(s) if s.is_empty() => Value::Color(Color::INVALID),
                 Value::String(s) => match Color::parse(s) {
                     Some(c) => Value::Color(c),
                     None => return fail(),

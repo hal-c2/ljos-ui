@@ -583,9 +583,16 @@ impl<'js> Scope<'js> {
                 }
                 o.into_value()
             }
-            JsValue::Color([r, g, b, a]) => {
+            JsValue::Color([r, g, b, a]) | JsValue::InvalidColor([r, g, b, a]) => {
                 let (make, _) = self.color_face()?;
-                make.call((i32::from(*r), i32::from(*g), i32::from(*b), i32::from(*a)))?
+                let valid = matches!(v, JsValue::Color(_));
+                make.call((
+                    i32::from(*r),
+                    i32::from(*g),
+                    i32::from(*b),
+                    i32::from(*a),
+                    valid,
+                ))?
             }
             JsValue::Typed(kind, fields) => {
                 let make = self
@@ -658,8 +665,8 @@ impl<'js> Scope<'js> {
         Ok((make, proto))
     }
 
-    /// The channels of `o` when it is a colour object.
-    fn read_color(&self, o: &Object<'js>) -> rquickjs::Result<Option<[u16; 4]>> {
+    /// `o` when it is a colour object.
+    fn read_color(&self, o: &Object<'js>) -> rquickjs::Result<Option<JsValue>> {
         let proto = self.state.color.borrow().as_ref().map(|f| f.proto.clone());
         let Some(proto) = proto else {
             return Ok(None);
@@ -676,7 +683,12 @@ impl<'js> Scope<'js> {
             };
             *slot = (v * 65535.0).round().clamp(0.0, 65535.0) as u16;
         }
-        Ok(Some(out))
+        let valid = o.get::<_, Value<'js>>("valid")?.as_bool() != Some(false);
+        Ok(Some(if valid {
+            JsValue::Color(out)
+        } else {
+            JsValue::InvalidColor(out)
+        }))
     }
 
     /// A JS value for Rust. An array is copied, entry by entry.
@@ -733,7 +745,7 @@ impl<'js> Scope<'js> {
                 match Class::<HostWrapper>::from_object(o) {
                     Some(c) => JsValue::Object(c.borrow().id),
                     None => match self.read_color(o)? {
-                        Some(c) => JsValue::Color(c),
+                        Some(c) => c,
                         None => match self.read_typed(o, depth)? {
                             Some(typed) => typed,
                             None => JsValue::Handle(self.keep(v.clone())),

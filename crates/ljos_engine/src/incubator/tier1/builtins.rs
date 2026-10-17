@@ -437,12 +437,7 @@ fn ch(v: f64) -> f64 {
 /// The host's colour maker: sixteen bits of each channel.
 fn color(r: f64, g: f64, b: f64, a: f64) -> Value {
     let c = |n: f64| n.clamp(0.0, 65535.0) as u16;
-    Value::Color(Color {
-        r: c(r),
-        g: c(g),
-        b: c(b),
-        a: c(a),
-    })
+    Value::Color(Color::rgba16(c(r), c(g), c(b), c(a)))
 }
 
 fn hue(p: f64, q: f64, mut t: f64) -> f64 {
@@ -632,12 +627,7 @@ mod tests {
         );
         assert_eq!(
             call(&e, Builtin::QtRgba, &[n(1.0), n(0.0), n(0.0)]),
-            Some(Value::Color(Color {
-                r: 65535,
-                g: 0,
-                b: 0,
-                a: 65535
-            }))
+            Some(Value::Color(Color::rgba16(65535, 0, 0, 65535)))
         );
         assert_eq!(call(&e, Builtin::QtPoint, &[n(1.0)]), None);
         assert_eq!(call(&e, Builtin::QtPoint, &[n(1.0), n(2.0), n(3.0)]), None);

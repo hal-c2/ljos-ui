@@ -27,6 +27,9 @@ pub enum JsValue {
     /// premultiplied. JS sees one frozen object per distinct colour, so two
     /// equal colours are `===` there as well.
     Color([u16; 4]),
+    /// An invalid colour (one never given) with these channels: `valid`
+    /// is false, and it is a different object from any valid colour.
+    InvalidColor([u16; 4]),
     /// A value of a kind the embedder defined
     /// ([`crate::JsHost::define_value_kind`]): what its fields hold, in the
     /// kind's order. What JS sees of it is the kind's business; a kind that

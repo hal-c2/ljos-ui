@@ -10,8 +10,10 @@
 //! The objects are frozen. One object stands for every use of that colour,
 //! so a write to a channel has nowhere to go.
 
-/// Evaluates to `{ make, proto }`: `make(r, g, b, a)` takes 16-bit channels
-/// and returns the colour object; `proto` is the prototype that marks one.
+/// Evaluates to `{ make, proto }`: `make(r, g, b, a, valid)` takes 16-bit
+/// channels and returns the colour object; `proto` is the prototype that
+/// marks one. `valid` is false for a colour never given; Qt gives one no
+/// hue, saturation, value or lightness (all 0).
 ///
 /// The members are the ones Qt documents for the `color` value type, in the
 /// precision Qt gives them: single-precision floats, a hue in hundredths of
@@ -49,8 +51,9 @@ pub(crate) const FACE: &str = r##"
   };
   const q16 = (v) => Math.round(v * U) / U;
 
-  function make(r, g, b, a) {
-    const key = String.fromCharCode(r, g, b, a);
+  function make(r, g, b, a, valid) {
+    const invalid = valid === false;
+    const key = String.fromCharCode(r, g, b, a) + (invalid ? "!" : "");
     const ref = live.get(key);
     if (ref !== undefined) {
       const known = ref.deref();
@@ -61,7 +64,9 @@ pub(crate) const FACE: &str = r##"
     const delta = max - min;
     const sum = max + min;
     let h = -1, sv = 0, sl = 0;
-    if (delta !== 0) {
+    if (invalid) {
+      h = 0;
+    } else if (delta !== 0) {
       h = f(hue(r, g, b, max, delta));
       sv = f(q16(delta / max));
       sl = f(q16(delta / (sum <= U ? sum : 2 * U - sum)));
@@ -73,11 +78,11 @@ pub(crate) const FACE: &str = r##"
     c.a = f(a / U);
     c.hsvHue = h;
     c.hsvSaturation = sv;
-    c.hsvValue = f(max / U);
+    c.hsvValue = invalid ? 0 : f(max / U);
     c.hslHue = h;
     c.hslSaturation = sl;
-    c.hslLightness = f(Math.round(sum / 2) / U);
-    c.valid = true;
+    c.hslLightness = invalid ? 0 : f(Math.round(sum / 2) / U);
+    c.valid = !invalid;
     Object.freeze(c);
     live.set(key, new WeakRef(c));
     if (live.size >= sweepAt) {

@@ -23,7 +23,7 @@ use crate::ids::{ObjectId, PropIndex};
 use crate::js::u64_to_obj;
 use crate::meta::PropertyAccess;
 use crate::types::TypeTag;
-use crate::value::{Color, JsHandle, Value};
+use crate::value::{JsHandle, Value};
 use crate::value_faces;
 
 /// What a property is to an array on its way in.
@@ -128,7 +128,9 @@ impl Engine {
                 Value::list(items.into_iter().map(|i| self.unscripted(i)).collect())
             }
             JsValue::Object(id) => Value::Object(u64_to_obj(id)),
-            JsValue::Color([r, g, b, a]) => Value::Color(Color { r, g, b, a }),
+            v @ (JsValue::Color(_) | JsValue::InvalidColor(_)) => {
+                Value::Color(crate::js::color_from_js(&v))
+            }
             JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
             JsValue::Handle(r) => self.plain(&Value::Js(JsHandle(r))),
             // `to_js` makes none.

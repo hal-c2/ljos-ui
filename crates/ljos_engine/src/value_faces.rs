@@ -599,8 +599,9 @@ pub(crate) const COLORS: &str = r##"
       default: return make(V, p, q, a);
     }
   };
+  // An invalid colour stays invalid through these, as in qml6.
   const lighter = (c, by) => {
-    if (!(by > 0)) return c;
+    if (!(by > 0) || !c.valid) return c;
     if (by < 100) return darker(c, Math.trunc(10000 / by));
     let [h, s, v] = hsv(c);
     v = Math.trunc(v * by / 100);
@@ -612,7 +613,7 @@ pub(crate) const COLORS: &str = r##"
     return fromHsv(h, s, v, c);
   };
   const darker = (c, by) => {
-    if (!(by > 0)) return c;
+    if (!(by > 0) || !c.valid) return c;
     if (by < 100) return lighter(c, Math.trunc(10000 / by));
     const [h, s, v] = hsv(c);
     return fromHsv(h, s, Math.trunc(v * 100 / by), c);
@@ -630,14 +631,20 @@ pub(crate) const COLORS: &str = r##"
     const t = colorOf(tint);
     if (b === null || t === null) return null;
     const a = t.a;
-    if (a === 1) return t;
+    if (a === 1 || !t.valid) return t;
     if (a === 0) return b;
     const rest = 1 - a;
     return rgba(t.r * a + b.r * rest, t.g * a + b.g * rest, t.b * a + b.b * rest, a + b.a * rest);
   };
   Qt.alpha = function (color, alpha) {
     const c = colorOf(color);
-    return c === null ? null : rgba(c.r, c.g, c.b, Number(alpha));
+    if (c === null) return null;
+    if (c.valid) return rgba(c.r, c.g, c.b, Number(alpha));
+    // Qt sets the alpha of an invalid colour and leaves it invalid.
+    const n = Number(alpha);
+    const a = Number.isNaN(n) ? 0 : Math.min(1, Math.max(0, n));
+    const ch = (v) => Math.round(v * U);
+    return make(ch(c.r), ch(c.g), ch(c.b), Math.round(Math.fround(a) * U), false);
   };
   // Qt reads the argument as a string, whatever it is: a colour reads as
   // its own name, `undefined` and `null` as "" (seen in qml6).
