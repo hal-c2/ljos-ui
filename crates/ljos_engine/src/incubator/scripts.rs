@@ -146,10 +146,7 @@ impl Engine {
         options.filename = Some(url.to_owned());
         let made: Result<ljos_js::rquickjs::Value, _> = s
             .ctx()
-            .eval_with_options::<ljos_js::rquickjs::Function, _>(
-                script.source.as_bytes(),
-                options,
-            )
+            .eval_with_options::<ljos_js::rquickjs::Function, _>(script.source.as_bytes(), options)
             .and_then(|f| f.call((url, imports)));
         match made {
             Ok(object) => Some(s.keep(object)),
