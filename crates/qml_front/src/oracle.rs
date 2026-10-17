@@ -139,6 +139,19 @@ pub trait TypeOracle {
     fn unknown_type_note(&self, _name: &str) -> Option<&'static str> {
         None
     }
+
+    /// Whether the property `name` of the type holds one object, not a
+    /// value: what is written for it is an object or `null`, never a
+    /// number or a string. An oracle that cannot tell says it does not.
+    fn holds_object(&self, _ty: Self::Type, _name: &str) -> bool {
+        false
+    }
+
+    /// The class Qt's messages name the type by (`QQuickItem` for `Item`),
+    /// where the oracle knows it.
+    fn class_name(&self, _ty: Self::Type) -> Option<&str> {
+        None
+    }
 }
 
 /// The message for `name`, which is written as a type and is none of
@@ -410,6 +423,17 @@ impl TypeOracle for QtTypeOracle {
         // the file lacks an import, and Qt's table would say no more.
         (!qt_types::has_qt_table() && !qt_types::is_type_name(name))
             .then_some(qt_types::WITHOUT_QT_TABLE)
+    }
+
+    fn holds_object(&self, ty: QtType, name: &str) -> bool {
+        ty.0.property(name)
+            .is_some_and(|property| property.is_pointer && !property.is_list)
+    }
+
+    fn class_name(&self, ty: QtType) -> Option<&str> {
+        // Ljós's own table names a class by its module and QML name, and a
+        // type that is a QML file is named by a counter Qt makes up.
+        (!ty.0.is_own && ty.0.qml_file.is_none()).then_some(ty.0.class)
     }
 }
 

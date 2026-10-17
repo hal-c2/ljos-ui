@@ -868,4 +868,21 @@ impl TypeOracle for EngineOracle {
     fn unknown_type_note(&self, name: &str) -> Option<&'static str> {
         QtTypeOracle.unknown_type_note(name)
     }
+
+    fn holds_object(&self, ty: EngineType, name: &str) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.holds_object(ty, name),
+            EngineType::Native(i) => self
+                .native(i)
+                .property(name)
+                .is_some_and(|p| matches!(p.ty, TypeTag::Object(_))),
+        }
+    }
+
+    fn class_name(&self, ty: EngineType) -> Option<&str> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.class_name(ty),
+            EngineType::Native(_) => None,
+        }
+    }
 }

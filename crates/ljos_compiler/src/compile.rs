@@ -28,7 +28,7 @@ use qml_syntax::{
 use crate::{
     Compiled, Diagnostic, Project, Severity,
     js::{self, ArgValue, Form},
-    oracle::is_color,
+    oracle::{Held, Written, is_color},
 };
 
 /// Compiles the file `key` of the project.
@@ -313,7 +313,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             {
                 self.declared.insert(
                     (index, declaration.name.name.to_string()),
-                    type_name.name.to_string(),
+                    declared_name(&type_name.name.to_string(), type_name.is_list),
                 );
             }
         }
@@ -777,6 +777,18 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     },
                     None => None,
                 };
+                if key.is_none()
+                    && let Some(written) = Written::of(expression)
+                    && let Some(said) = self
+                        .held_kind(owner, &slot, &name)
+                        .and_then(|held| held.refuses(&written))
+                {
+                    // qml6 does not load the file; a binding that gives
+                    // the same is left to the run.
+                    let span = self.span(expression.span());
+                    self.diagnostics.push(Diagnostic::error(said, span));
+                    return;
+                }
                 let literal = match key {
                     Some(key) => Some(key),
                     None => self.literal(expression, color),
@@ -1058,6 +1070,49 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         }
     }
 
+    /// What the property a member names holds, where a value written for
+    /// it is checked when the file is read.
+    fn held_kind(&self, owner: usize, slot: &Slot, name: &str) -> Option<Held> {
+        // What a PropertyChanges is given is checked when its state is
+        // entered.
+        if matches!(slot, Slot::Own) && self.tree.target(owner).is_some() {
+            return None;
+        }
+        let oracle = self.types.oracle;
+        let (ty, type_name) = self.member_type(owner, slot, name)?;
+        let Some(ty) = ty else {
+            // Declared in a file: `list<T>`, a value type, or an object
+            // type, which starts with a capital.
+            if type_name.starts_with("list<") {
+                return Some(Held::List);
+            }
+            if let Some(held) = Held::of_value(&type_name) {
+                return Some(held);
+            }
+            let parts: Vec<&str> = type_name.split('.').collect();
+            if !parts.last()?.starts_with(char::is_uppercase) {
+                return None;
+            }
+            // A type of a file Qt names by a counter it makes up: it is
+            // named as it is written.
+            let class = match self.types.find(&parts)?.kind {
+                Kind::Builtin(ty) => oracle.class_name(ty).unwrap_or(oracle.name(ty)),
+                Kind::Component(_) => &type_name,
+            };
+            return Some(Held::Object(class.to_string()));
+        };
+        let property = oracle.property(ty, name)?;
+        if property.is_list {
+            return Some(Held::List);
+        }
+        if oracle.holds_object(ty, name) {
+            let value = property.value?;
+            let class = oracle.class_name(value).unwrap_or(oracle.name(value));
+            return Some(Held::Object(class.to_string()));
+        }
+        Held::of_value(&type_name)
+    }
+
     /// The enum a member holds a key of, where the type table says it holds
     /// one: the type that has the enum, and the enum's name.
     fn held_enum(&self, owner: usize, slot: &Slot, name: &str) -> Option<(O::Type, String)> {
@@ -1153,7 +1208,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 Kind::Component(key) => {
                     let shape = self.project.front.shape(&key)?;
                     if let Some(declaration) = shape.properties.get(name) {
-                        return Some((None, declaration.type_name.clone()));
+                        let written = &declaration.type_name;
+                        return Some((None, declared_name(written, declaration.is_list)));
                     }
                     let types = Types::new(&self.project.front, &self.project.oracle, &key.file);
                     let parts: Vec<&str> = shape.root.iter().map(String::as_str).collect();
@@ -2606,5 +2662,15 @@ fn import_source(source: &Source) -> ImportSource {
     match source {
         Source::Module(uri) => ImportSource::Module(uri.clone()),
         Source::Path(path) => ImportSource::Path(path.clone()),
+    }
+}
+
+/// A declared property's type as the compiler names it: `list<T>` for a
+/// list, so that it is not taken for what it holds a list of.
+fn declared_name(type_name: &str, is_list: bool) -> String {
+    if is_list {
+        format!("list<{type_name}>")
+    } else {
+        type_name.to_string()
     }
 }
