@@ -9,6 +9,8 @@
 //! of its own through the platform's fetcher (a fetch may wait on a slow
 //! server for as long as the fetcher allows, which a pool thread must
 //! not), and decoded on that thread; its result comes back the same way.
+//! Rust code asks for a picture by URL through [`ImageStore::load`] and
+//! is answered the same way.
 //!
 //! The store never keeps a picture alive that is over budget and that no
 //! display list shows: an item does not own its pixels, it asks for them
@@ -85,18 +87,26 @@ pub(crate) enum Waiter {
     Sharpen { item: ObjectId },
     /// A `Canvas` that called `loadImage`: it says `imageLoaded`.
     Canvas { item: ObjectId },
+    /// Rust code that called [`ImageStore::load`]: its reply is kept
+    /// under this number.
+    Reply { id: u64 },
 }
 
 impl Waiter {
-    fn item(&self) -> ObjectId {
+    /// The item waiting; none for Rust code, which waits until it hears.
+    fn item(&self) -> Option<ObjectId> {
         match self {
             Waiter::Load { item, .. }
             | Waiter::Reshow { item }
             | Waiter::Sharpen { item }
-            | Waiter::Canvas { item } => *item,
+            | Waiter::Canvas { item } => Some(*item),
+            Waiter::Reply { .. } => None,
         }
     }
 }
+
+/// What [`ImageStore::load`] calls with the picture, or why there is none.
+pub type ImageReply = Box<dyn FnOnce(&Engine, Result<ImageHandle, LoadError>)>;
 
 type Slot = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
 
@@ -286,6 +296,9 @@ struct State {
     /// A graph node holding the largest of `scales`, read by the paint of
     /// an item that shows a drawing, so that it follows a change.
     scale_node: Option<NodeId>,
+    /// The replies [`ImageStore::load`] waits to make, by number.
+    replies: HashMap<u64, ImageReply>,
+    next_reply: u64,
 }
 
 impl State {
@@ -294,7 +307,7 @@ impl State {
     fn next_wanted(&mut self, alive: impl Fn(ObjectId) -> bool) -> Option<ImageKey> {
         while let Some(key) = self.queue.pop_front() {
             let waiters = self.jobs.entry(key.clone()).or_default();
-            waiters.retain(|w| alive(w.item()));
+            waiters.retain(|w| w.item().is_none_or(&alive));
             if !waiters.is_empty() {
                 return Some(key);
             }
@@ -344,6 +357,8 @@ impl Default for ImageStore {
                 scales: HashMap::new(),
                 sides: HashMap::new(),
                 scale_node: None,
+                replies: HashMap::new(),
+                next_reply: 0,
             }),
             inbox,
             tx,
@@ -742,6 +757,39 @@ impl ImageStore {
         Ok(loaded)
     }
 
+    /// The picture at `url`, an absolute URL (`file:`, `qrc:`, `data:`,
+    /// `http(s):` or a resource the host registered), for Rust code: an
+    /// item that paints itself, say. `reply` is called with it once it is
+    /// read and decoded, on the threads `Image` uses and through the same
+    /// cache: a picture an `Image` shows is not decoded again, and the
+    /// picture is kept while the reply's handle is held. The reply always
+    /// comes later, never inside this call, and from the UI thread: in a
+    /// [`ImageStore::deliver`] the host makes when the decode is done, or
+    /// from a due-now timer when the picture was cached.
+    pub fn load(
+        &self,
+        engine: &Engine,
+        url: &str,
+        reply: impl FnOnce(&Engine, Result<ImageHandle, LoadError>) + 'static,
+    ) {
+        let key = ImageKey {
+            url: url.to_owned(),
+            request: Request::default(),
+        };
+        if let Some(image) = self.cached(&key) {
+            engine.call_at(engine.now(), move |e| reply(e, Ok(image)));
+            return;
+        }
+        let id = {
+            let mut s = self.state.borrow_mut();
+            s.next_reply += 1;
+            let id = s.next_reply;
+            s.replies.insert(id, Box::new(reply));
+            id
+        };
+        self.request(engine, key, Waiter::Reply { id });
+    }
+
     /// Decodes `key` on the compute pool; `waiter` hears of the result in
     /// a later [`ImageStore::deliver`]. Several waiters for one key share
     /// one decode.
@@ -775,7 +823,7 @@ impl ImageStore {
     /// taken off when its turn comes.
     pub(crate) fn forget(&self, item: ObjectId) {
         for waiters in self.state.borrow_mut().jobs.values_mut() {
-            waiters.retain(|w| w.item() != item);
+            waiters.retain(|w| w.item() != Some(item));
         }
     }
 
@@ -912,7 +960,10 @@ impl ImageStore {
             }
             let caches = waiters.iter().any(|w| match w {
                 Waiter::Load { cache, .. } => *cache,
-                Waiter::Reshow { .. } | Waiter::Sharpen { .. } | Waiter::Canvas { .. } => true,
+                Waiter::Reshow { .. }
+                | Waiter::Sharpen { .. }
+                | Waiter::Canvas { .. }
+                | Waiter::Reply { .. } => true,
             });
             // Kept even when every waiter has gone: the work is done, and
             // the picture is the first to go if room is needed. The frames
@@ -924,6 +975,14 @@ impl ImageStore {
                 self.keep(&key, &Picture::of(loaded));
             }
             for waiter in waiters {
+                if let Waiter::Reply { id } = waiter {
+                    let reply = self.state.borrow_mut().replies.remove(&id);
+                    if let Some(reply) = reply {
+                        let image = result.as_ref().map(|l| l.image.clone());
+                        reply(engine, image.map_err(Clone::clone));
+                    }
+                    continue;
+                }
                 super::delivered(engine, waiter, &key, &result);
             }
         }

@@ -28,7 +28,7 @@ pub use animated::AnimatedImage;
 pub use border::{BorderImage, BorderImageBorder};
 pub use decode::{LoadError, Request, requested_size};
 use store::Picture;
-pub use store::{ImageKey, ImageStore};
+pub use store::{ImageKey, ImageReply, ImageStore};
 pub use tint::{ImageTint, register_image_tint};
 
 use ljos_engine::{
@@ -725,6 +725,8 @@ pub(crate) fn delivered(
             }
         }
         Waiter::Canvas { item } => crate::canvas::image_arrived(e, item, key, result),
+        // Answered by the store itself.
+        Waiter::Reply { .. } => {}
     }
 }
 

@@ -83,8 +83,8 @@ pub use handlers::{
 };
 pub use image::{
     AnimatedImage, BorderImage, BorderImageBorder, Image, ImageBase, ImageKey, ImagePaint,
-    ImageStore, LoadError, Request as ImageRequest, fill_mode, image_status, requested_size,
-    tile_mode,
+    ImageReply, ImageStore, LoadError, Request as ImageRequest, fill_mode, image_status,
+    requested_size, tile_mode,
 };
 pub use image::{ImageTint, register_image_tint};
 pub use incubation::{BASE_REFRESH_HZ, MIN_INCUBATION_BUDGET, incubation_budget};

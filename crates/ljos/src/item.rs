@@ -20,7 +20,10 @@
 //! A picture the item draws is an [`ImageHandle`] made from its pixels
 //! ([`ImageHandle::from_straight`]) and drawn with
 //! [`DisplayListBuilder::image`]; [`place_image`] fits it to the item as an
-//! `Image`'s `fillMode` would ([`ImageFit`], [`ImageAlign`]).
+//! `Image`'s `fillMode` would ([`ImageFit`], [`ImageAlign`]). A picture
+//! at a URL comes from [`load_image`], read and decoded off the UI thread
+//! and kept in the cache `Image` uses; the item keeps the handle it gets
+//! and asks to be painted again (by setting a property its `read` reads).
 //!
 //! A `TextEdit` that colours its text takes a [`Highlighter`] instead:
 //! [`set_highlighter`].
@@ -66,6 +69,7 @@
 use ljos_engine::{Engine, MetaRef, ObjectId, Prop, QmlType, QmlValue};
 
 pub use ljos_engine::Font;
+pub use ljos_quick::LoadError as ImageLoadError;
 pub use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 pub use ljos_quick::keys::{KeyItem, key};
 pub use ljos_quick::text_input::{HighlightSpan, Highlighter, set_highlighter, set_highlights};
@@ -99,6 +103,21 @@ pub fn prop<T: QmlValue + Default>(engine: &Engine, obj: ObjectId, p: Prop<T>) -
 /// from it, with what `read` returns. A later registration wins.
 pub fn register_paint_item<T: QmlType>(engine: &Engine, read: ReadPaint) {
     ljos_quick::register_paint_item(engine, MetaRef::Static(T::static_meta()), read);
+}
+
+/// Has the picture at `url` read and decoded, and calls `reply` with it
+/// on the UI thread when it is ready, never inside this call. `url` is
+/// absolute: a file's ([`crate::prelude::file_url`]), `qrc:`, `data:`,
+/// `http(s):` or a resource the host registered. The picture goes
+/// through the cache and the decode threads `Image` uses, so one an
+/// `Image` shows is not decoded again; it stays cached while the handle
+/// is held.
+pub fn load_image(
+    engine: &Engine,
+    url: &str,
+    reply: impl FnOnce(&Engine, Result<ImageHandle, ImageLoadError>) + 'static,
+) {
+    ljos_quick::ImageStore::of(engine).load(engine, url, reply);
 }
 
 /// Makes key delivery ask items of type `T`, and of the types derived
