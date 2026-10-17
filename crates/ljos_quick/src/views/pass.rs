@@ -457,6 +457,18 @@ struct Fill<'a> {
     sections: Option<Sections>,
     /// How long a row that was never measured is taken to be.
     guess: f64,
+    /// A row's length is still to come from what is in it (a text not
+    /// laid out yet) and nothing is measured to guess the others by: rows
+    /// laid after it now would each be taken as 1 long, and a new view
+    /// would make far more than it shows. The pass asks for one more row,
+    /// later, and stops; the pass that row's making runs fills on with
+    /// the length the polish gave.
+    waiting: bool,
+    /// A row was asked for while waiting.
+    asked: bool,
+    /// The row waited for is 0 long still after polishes: the rows are,
+    /// and the view fills as for any rows of no length.
+    no_wait: bool,
     /// The delegates there are, with the logical span of each.
     items: Vec<(usize, ObjectId, f64, f64)>,
     /// Section headings, with where each starts and how long it is.
@@ -530,6 +542,19 @@ impl Fill<'_> {
         Some((item, rd(e, item, size_prop(self.g.main))))
     }
 
+    fn wait_for(&mut self, key: RowKey) {
+        let now = crate::scene::polishes();
+        match self.st.waited.get() {
+            // Two: the first may have run before the row joined the scene.
+            Some((k, then)) if k == key && then + 2 <= now => self.no_wait = true,
+            Some((k, _)) if k == key => self.waiting = true,
+            _ => {
+                self.st.waited.set(Some((key, now)));
+                self.waiting = true;
+            }
+        }
+    }
+
     fn lay_row(&mut self, row: usize, at: At) -> Slot {
         let (e, g) = (self.e, self.g);
         let key = self.d.key_at(row);
@@ -544,13 +569,17 @@ impl Fill<'_> {
             At::End(end) => (end - block, end),
         };
         let shown = top < self.zone.1 && end > self.zone.0;
-        let urgency = if shown || Some(row) == self.current {
+        let urgency = if !self.waiting && (shown || Some(row) == self.current) {
             Urgency::Now
         } else {
             Urgency::Later
         };
         let mut item = None;
-        let (size, measured) = match self.d.request(e, row, urgency) {
+        let got = self.d.request(e, row, urgency);
+        if self.waiting && got.is_none_or(|(_, made)| made != Made::Existing) {
+            self.asked = true;
+        }
+        let (size, measured) = match got {
             Some((o, made)) => {
                 if made == Made::Reused {
                     revive(e, self.view, self.st, o);
@@ -563,6 +592,13 @@ impl Fill<'_> {
                     if size > 0.0 || !size_follows_implicit(e, o, g.main == X) {
                         (size, true)
                     } else {
+                        if let Some(k) = key
+                            && self.guess <= 0.0
+                            && !self.no_wait
+                            && !self.waiting
+                        {
+                            self.wait_for(k);
+                        }
                         (hint, false)
                     }
                 } else {
@@ -579,6 +615,7 @@ impl Fill<'_> {
             // made are taken to be, so that a view that is new does not
             // ask for every row it has.
             self.guess = size;
+            self.waiting &= size <= 0.0;
         }
         let pos = match at {
             At::Top(t) => t + lead,
@@ -861,6 +898,9 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         current,
         sections: Sections::read(e, view, st),
         guess: st.avg.get(),
+        waiting: false,
+        asked: false,
+        no_wait: false,
         items: Vec::new(),
         heads: Vec::new(),
         used_heads: FxHashSet::default(),
@@ -875,7 +915,11 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         // Qt fills while the next row starts inside the window, its far
         // edge included (observed on qml6).
         while let Some(last) = slots.back().copied() {
-            if last.line + 1 >= lines || last.end() + g.spacing > window.1 || budget == 0 {
+            if last.line + 1 >= lines
+                || last.end() + g.spacing > window.1
+                || budget == 0
+                || fill.waiting && fill.asked
+            {
                 break;
             }
             let s = fill.lay(last.line + 1, At::Top(last.end() + g.spacing));
@@ -892,7 +936,11 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         }
         empty = 0;
         while let Some(first) = slots.front().copied() {
-            if first.line == 0 || first.top() <= window.0 || budget == 0 {
+            if first.line == 0
+                || first.top() <= window.0
+                || budget == 0
+                || fill.waiting && fill.asked
+            {
                 break;
             }
             let s = fill.lay(first.line - 1, At::End(first.top() - g.spacing));

@@ -236,6 +236,9 @@ pub(crate) struct ViewState {
     /// the view comes back to is where it was.
     pub places: RefCell<FxHashMap<RowKey, f64>>,
     pub avg: Cell<f64>,
+    /// The row a pass stopped at to wait for its length, and the polish
+    /// count then (see `Fill::wait`).
+    pub waited: Cell<Option<(RowKey, u64)>>,
     pub heading: Cell<f64>,
     pub slots: RefCell<Vec<Slot>>,
     /// The delegates of the last pass with the logical span of each.
@@ -310,6 +313,7 @@ impl Default for ViewState {
             sizes: RefCell::default(),
             places: RefCell::default(),
             avg: Cell::new(0.0),
+            waited: Cell::new(None),
             heading: Cell::new(0.0),
             slots: RefCell::default(),
             placed: RefCell::default(),

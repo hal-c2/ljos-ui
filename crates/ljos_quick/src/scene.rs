@@ -18,6 +18,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+thread_local! {
+    static POLISHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times a scene of this thread polished: what was made before
+/// a later count has had its length from what is in it.
+pub(crate) fn polishes() -> u64 {
+    POLISHES.get()
+}
+
 use ljos_engine::{
     Engine, EngineError, LogLevel, NodeId as GraphNode, ObjectId, OverrideContent, OverrideId,
     Point, PropIndex, Provenance, RestoreMode, Value,
@@ -836,6 +846,7 @@ impl QuickScene {
     }
 
     fn polish(&mut self, engine: &Engine) {
+        POLISHES.set(POLISHES.get() + 1);
         for _ in 0..MAX_POLISH_PASSES {
             let mut set: Vec<(usize, ObjectId)> = {
                 let mut s = self.shared.borrow_mut();

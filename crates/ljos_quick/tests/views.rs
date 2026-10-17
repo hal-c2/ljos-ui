@@ -521,3 +521,73 @@ fn a_view_that_is_idle_asks_for_no_frame() {
     assert_eq!(out.next_wake, None);
     assert!(!out.changed);
 }
+
+/// A new view whose rows get their length from text laid out at polish
+/// time: before the first row is measured, every row it could fit at 1
+/// each was made and dropped again.
+#[test]
+fn a_new_view_of_text_rows_makes_only_what_it_shows() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+  id: root
+  width: 200; height: 300
+  property int created: 0
+  property int destroyed: 0
+  readonly property int live: created - destroyed
+  property bool grown: false
+  ListView {
+    anchors.fill: parent
+    model: 1000
+    delegate: Column {
+      required property int index
+      width: 200
+      Text { text: "Row " + parent.index; font.pixelSize: 20 }
+      Rectangle { width: 10; height: root.grown ? 60 : 0 }
+      Component.onCompleted: root.created++
+      Component.onDestruction: root.destroyed++
+    }
+  }
+}"#,
+    );
+    let mut s = scene(&e, root, 200.0, 300.0);
+    settle(&mut s, &e, 0);
+    // Qt: 27 (rows of 23 and the cache). 66 before.
+    let created = num(&e, root, "created");
+    assert!((20.0..=34.0).contains(&created), "created {created}");
+    assert_eq!(num(&e, root, "live"), created);
+    set(&e, root, "grown", Value::Bool(true));
+    settle(&mut s, &e, 1000);
+    // Qt: 8.
+    let live = num(&e, root, "live");
+    assert!((5.0..=12.0).contains(&live), "live {live}");
+}
+
+/// Rows that stay 0 long after their polish: the view does not wait on
+/// them for good.
+#[test]
+fn a_view_of_rows_of_no_length_still_fills() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"import QtQuick
+Item {
+  id: root
+  width: 200; height: 300
+  property int created: 0
+  ListView {
+    anchors.fill: parent
+    model: 1000
+    delegate: Column {
+      width: 200
+      Component.onCompleted: root.created++
+    }
+  }
+}"#,
+    );
+    let mut s = scene(&e, root, 200.0, 300.0);
+    settle(&mut s, &e, 0);
+    assert!(num(&e, root, "created") > 30.0);
+}
