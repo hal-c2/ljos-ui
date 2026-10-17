@@ -131,7 +131,22 @@ Rejected:
 | Let it crash | Restart a boundary from its `ComponentDef`. Keep the last good tree when a reload fails. |
 | Two code versions, `code_change` | Reload generations, where the old generation stays live until the new one applies. `Migrate` plays the role of `code_change`. |
 | Per-process heaps | Separate runtimes with memory limits for plugins and WorkerScript. The main runtime collects garbage in the Idle lane. |
-| `observer`/`top` | A dev overlay showing time per `ProcId` and lane ("which component ate the frame") |
+| `observer`/`top` | A dev overlay showing time per `ProcId` and lane ("which component ate the frame"), and `ljos observe`, a window over the inspector tools (below) |
+
+**The observer.** Erlang's observer shows a node's processes, their mailboxes, a live table viewer and load charts. `ljos observe [target]` is the same for a running Ljós application. It is itself a QML + Quick Controls application, and it reaches its target only through the inspector's MCP tools (section 19.4), so an agent can see everything the window shows. The mapping:
+
+| Observer | Ljós | Where it comes from |
+|---|---|---|
+| Process | An OS thread: the UI (Engine) thread, the compute pool (`ljos-compute`), tokio workers, the inspector's server (`ljos-mcp`), and the platform's readers (media, images, fonts, settings, screen reader, network, dialogs) | `/proc/self/task`: the kernel already keeps a thread's name, its state (running is *busy*, sleeping is *idle*, uninterruptible is *blocked*), its CPU time and how often it woke (voluntary context switches). Nothing is counted for it. Other systems list no threads yet. |
+| Process on the UI thread | A running `Timer`, an animation under way, and the `ProcId` owners the frame scheduler charges time to (application, boundaries, inspector) | The engine's timer table, the animation driver and `FrameStats` |
+| Reductions | CPU time per thread; time per owner and lane | as above |
+| Mailbox | Every bounded `UiInbox` named with `observe_as`: `application` (the app's own messages), `platform` (answers from platform threads), `images` (decodes), `inspector` (tool calls, counted by tool) and `reload` (the file watcher) | `ljos_runtime::observe` |
+| Message queue length | Depth and capacity, the front message's age, messages sent, refused as busy, replaced by a coalesced send and drained, senders alive and senders waiting for room, and the queued messages by kind | The counters move only while an inspector is served, at one relaxed load per send. A peek names kinds, never payloads. |
+| Table viewer | The object tree (the outline of `app_snapshot`) with each object's properties, their provenance and an editor through `app_set_property`; a picture of the selection from `app_screenshot` | |
+| Load charts | Batch 2: frame time, lane time and CPU over time, from `app_metrics` and `app_processes` | |
+| Trace | Batch 2: the log (`app_logs`) | |
+
+WorkerScript has no runtime yet (section 3.2 plans one pinned thread per isolated runtime); when it does, its thread and its inbox are listed the same way.
 
 ---
 
@@ -1327,6 +1342,8 @@ Static resources carry long `ttlMs` values.
 | `app_resize` / `app_set_appearance` | Size, DPI and orientation; light or dark, contrast, reduced motion, font scale (`SystemPrefs`) | input |
 | `app_reload` | Force recompile and reload; returns a patch summary or errors | mutate |
 | `app_logs` / `app_metrics` | Logs and JS errors with QML file and line; `FrameReport` summaries, lane times, top `ProcId`s, budgets (section 8.5) | inspect |
+| `app_processes` | What does work (section 3.4, the observer): threads with state, CPU time and wakeups, running Timers and animations, scheduler owners; `kind` keeps one kind | inspect |
+| `app_mailboxes` | The named `UiInbox`es: depth, capacity, oldest age, sent, refused, replaced, drained, senders, kinds; `peek` names the front kinds (at most 20), never contents. Read on the server's thread, so a stuck UI thread still shows its inbox | inspect |
 | `app_eval` | JS in the engine context under a `JsHost` deadline; result wrapped as `{value}`, at most 64 KB | eval |
 | `app_batch` | A list of steps in one call, stopping at the first error | per step |
 
@@ -1380,6 +1397,8 @@ Actions never quietly fall back to coordinates.
   - `app_resize` changes the scene's size, not the platform window's. `app_advance` needs the virtual clock.
   - Only the primary window is inspected; `app_status` says so and gives the number of windows.
 - **As built: drawing the window.** The desktop shell tells the inspector what the scene cannot see. `app_status` gets `painter` (gl or wgpu, the backend, the adapter and driver, the present mode, and whether a pass redraws only what changed) and `startup`: when the application was built, the device was ready, the first frame was presented and the first key, button, touch or wheel arrived, timed from when the shell started. `app_metrics` gets `paint`, for the primary window: passes presented (whole or in part) and found unchanged, the cost of building the picture and of uploading, drawing and presenting it, the pictures uploaded and their bytes, and the time from when the repaint a pass answered was due to its present. Uploading, drawing and presenting are timed apart where the painter allows: GL times all three (as time on the UI thread; the device works on after a call returns, and what it still had to do is waited for in the present); egui-wgpu uploads, draws and presents in one call and times only the waits inside it (for the surface's next texture, the submit and the present), so wgpu gives `present` as those waits and `draw` as the rest, uploads included, and no `upload`. Telling them apart on wgpu would take the shell's own surface handling around egui-wgpu's renderer (`update_texture`, `update_buffers`, `render`), or timestamp queries for the device's own time. `recent` spreads the last 240 frames (the engine's frame, the pass that painted it, and both) as p50, p95 and the longest, and `slow` logs the last 32 frames that went over budget (a frame of the primary window's display, or past the engine's deadline), each with its lanes, its painting and its cause: the lane, the engine's frame outside its lanes or the painting step that took the most, with the owner charged the most. Without an inspector nothing is measured, and nothing is kept while no frame runs.
+
+- **As built: processes, mailboxes and `ljos observe`.** `app_processes` is answered on the UI thread, which owns the timers and animations; the thread list comes from `/proc/self/task`, so it costs nothing until asked and is empty on other systems. `app_mailboxes` is answered on the server's thread from `ljos_runtime::observe`, without waking the UI thread. The counters move while an `Inspector` exists (it holds an `ObserveGuard`); with no inspector a send pays one relaxed load more. `ljos observe [target]` finds a token file (`target/ljos/mcp-*.json` below a directory, or the file itself) and opens a window with Processes, Mailboxes and Objects pages. It asks only when a page is opened, an object picked, a property edited or Refresh pressed: it holds no timer, so neither it nor its target does work while nobody touches it. Its client is a native object of the `ljos` binary that calls the tools over HTTP on a thread of its own and answers on the Engine thread. The Objects page lists `app_snapshot`'s outline, so an item without an accessible role (a plain `Image` or `Rectangle`) is reached only through an exposed one above it; a full item tree is for later. A Unix socket target is refused for now.
 
 ### 19.6 Budgets
 
