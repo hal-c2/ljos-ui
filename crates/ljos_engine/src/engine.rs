@@ -2059,6 +2059,11 @@ impl Engine {
         self.effect_scoped(self.inner.graph.root(), f)
     }
 
+    /// Stops an effect made by [`Engine::effect`]: it runs no more.
+    pub fn stop_effect(&self, effect: NodeId) {
+        let _ = self.inner.graph.dispose(effect);
+    }
+
     /// [`Engine::effect`] that dies with `obj`. Like `obj`'s bindings it
     /// stops once `obj`'s destruction has been told.
     pub fn effect_in(

@@ -168,8 +168,13 @@ impl Engine {
 
     /// Sets the application's locale (`is_IS`, `de-AT`).
     pub fn set_locale(&self, name: &str) {
+        self.set_locale_info(LocaleInfo::new(name));
+    }
+
+    /// Sets the application's locale, whose categories may differ.
+    pub fn set_locale_info(&self, locale: LocaleInfo) {
         let state = self.i18n();
-        let changed = state.i18n.borrow_mut().set_locale(name);
+        let changed = state.i18n.borrow_mut().set_locale_info(locale);
         if changed {
             self.i18n_bump(&state.locale);
             // `%Ln` in a translated text is written by the locale.
@@ -177,13 +182,44 @@ impl Engine {
         }
     }
 
+    /// The application's locale (`Qt.locale()`). Tracked: a binding or an
+    /// effect that reads it runs again when it changes.
+    pub fn locale(&self) -> LocaleInfo {
+        self.locale_info(None)
+    }
+
+    /// Calls `f` with the application's locale whenever it changes (not
+    /// now), until the returned node is disposed.
+    pub fn on_locale_changed(
+        &self,
+        f: impl Fn(&Engine, &LocaleInfo) + 'static,
+    ) -> Result<NodeId, EngineError> {
+        let mut first = true;
+        self.effect(move |e| {
+            let locale = e.locale();
+            if std::mem::take(&mut first) {
+                return;
+            }
+            e.untrack(|| f(e, &locale));
+        })
+    }
+
     /// Takes the locale and the UI language from the environment, as an
     /// application does when it starts. The engine itself starts in `en`
     /// and `en_US` whatever the machine, so that tests do not depend on it.
     pub fn use_system_locale(&self) {
-        if let Some(name) = ljos_i18n::locale::system_locale_name() {
-            self.set_locale(&name);
-            self.set_ui_language(&name);
+        self.use_system_locale_from(&ljos_i18n::SystemLocale::from_env());
+    }
+
+    /// Takes the locale and the UI language from what an environment
+    /// names for each category ([`ljos_i18n::SystemLocale`]): the locale
+    /// is named by its messages, writes numbers, dates and times by its
+    /// own categories, and the UI language is the messages locale's. A
+    /// UI language of the `C` locale leaves the UI language as it was.
+    pub fn use_system_locale_from(&self, system: &ljos_i18n::SystemLocale) {
+        self.set_locale_info(system.locale_info());
+        if let Some(language) = system.ui_language() {
+            self.set_ui_language(&language);
         }
     }
 
@@ -298,7 +334,7 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 13] = [
+        let functions: [(&str, HostFn); 14] = [
             (
                 "__ljos_tr",
                 host(|e, a| {
@@ -478,6 +514,28 @@ impl Engine {
                 }),
             ),
             (
+                "__ljos_formatDataSize",
+                // (locale, bytes, precision, format)
+                host(|e, a| {
+                    let info = e.locale_info(locale_arg(a.first()));
+                    let bytes = number(a.get(1));
+                    let bytes = if bytes.is_finite() { bytes as i64 } else { 0 };
+                    let precision = number(a.get(2));
+                    let precision = if precision.is_finite() {
+                        precision as i32
+                    } else {
+                        2
+                    };
+                    let format = number(a.get(3));
+                    let format = if format.is_finite() { format as i32 } else { 0 };
+                    Ok(JsValue::String(info.format_data_size(
+                        bytes,
+                        precision,
+                        ljos_i18n::DataSizeFormat::from_qt(format),
+                    )))
+                }),
+            ),
+            (
                 "__ljos_formatNumber",
                 // (locale, value, format, precision)
                 host(|e, a| {
@@ -515,7 +573,7 @@ const PRELUDE: &str = r##"
   const tr = g.__ljos_tr, trId = g.__ljos_trId, fill = g.__ljos_arg, plainNumber = g.__ljos_argNumber;
   const uiLanguage = g.__ljos_uiLanguage, setUiLanguage = g.__ljos_setUiLanguage;
   const rightToLeft = g.__ljos_rightToLeft, hostLocale = g.__ljos_locale;
-  const localeName = g.__ljos_localeName;
+  const localeName = g.__ljos_localeName, formatDataSize = g.__ljos_formatDataSize;
   const hostLog = g.__ljos_log;
   const define = (o, k, value) => Object.defineProperty(o, k, { value, writable: true, configurable: true });
 
@@ -599,6 +657,8 @@ const PRELUDE: &str = r##"
     define(o, "dateFormat", (f) => localeFormat(name, DATE, width(f)));
     define(o, "timeFormat", (f) => localeFormat(name, TIME, width(f)));
     define(o, "dateTimeFormat", (f) => localeFormat(name, BOTH, width(f)));
+    define(o, "formattedDataSize", (bytes, precision, format) => formatDataSize(name, Number(bytes),
+      precision === undefined ? 2 : Number(precision), format === undefined ? 0 : Number(format)));
     define(o, LOCALE, name);
     return Object.freeze(o);
   });

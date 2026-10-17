@@ -627,6 +627,7 @@ module QtQml
 		enum DayOfWeek Sunday=0 Monday=1 Tuesday=2 Wednesday=3 Thursday=4 Friday=5 Saturday=6
 		enum MeasurementSystem MetricSystem=0 ImperialUSSystem=1 ImperialUKSystem=2 ImperialSystem=1
 		enum CurrencySymbolFormat CurrencyIsoCode=0 CurrencySymbol=1 CurrencyDisplayName=2
+		enum DataSizeFormat DataSizeIecFormat=0 DataSizeBase1000=1 DataSizeSIQuantifiers=2 DataSizeTraditionalFormat=2 DataSizeSIFormat=3
 		enum NumberOption DefaultNumberOptions=0 OmitGroupSeparator=1 RejectGroupSeparator=2 OmitLeadingZeroInExponent=4 RejectLeadingZeroInExponent=8 IncludeTrailingZeroesAfterDot=16 RejectTrailingZeroesAfterDot=32
 	type QtQml.QtObject QtObject
 		prop objectName QtQml.string named

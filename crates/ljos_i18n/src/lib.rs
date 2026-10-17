@@ -21,5 +21,5 @@ pub mod ts;
 pub use catalog::{Catalog, Entry, Messages, Translation};
 pub use i18n::I18n;
 pub use ljl::{Ljl, LjlError};
-pub use locale::LocaleInfo;
+pub use locale::{DataSizeFormat, LocaleInfo, SystemLocale};
 pub use plural::PluralForms;

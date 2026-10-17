@@ -52,6 +52,26 @@ pub struct Fields {
 }
 
 impl Fields {
+    /// The local fields of an instant, `ms` milliseconds after the UNIX
+    /// epoch, in a zone `offset` seconds east of UTC.
+    #[must_use]
+    pub fn from_unix_ms(ms: i64, offset: i32) -> Self {
+        let local = ms.saturating_add(i64::from(offset) * 1000);
+        let days = local.div_euclid(86_400_000);
+        let in_day = local.rem_euclid(86_400_000);
+        let (year, month, day) = crate::calendar::civil_from_days(days);
+        Self {
+            year,
+            month,
+            day,
+            hour: (in_day / 3_600_000) as u32,
+            minute: (in_day / 60_000 % 60) as u32,
+            second: (in_day / 1000 % 60) as u32,
+            millisecond: (in_day % 1000) as u32,
+            offset,
+        }
+    }
+
     /// The day of the week, as `Qt::DayOfWeek` numbers it: 1 is Monday.
     #[must_use]
     pub fn weekday(&self) -> u8 {

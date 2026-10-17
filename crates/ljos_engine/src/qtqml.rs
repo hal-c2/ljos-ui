@@ -91,6 +91,16 @@ fn locale_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
             ],
         ),
         (
+            "DataSizeFormat",
+            vec![
+                ("DataSizeIecFormat", 0),
+                ("DataSizeBase1000", 1),
+                ("DataSizeSIQuantifiers", 2),
+                ("DataSizeTraditionalFormat", 2),
+                ("DataSizeSIFormat", 3),
+            ],
+        ),
+        (
             "NumberOption",
             vec![
                 ("DefaultNumberOptions", 0),

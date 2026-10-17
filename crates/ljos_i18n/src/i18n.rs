@@ -166,8 +166,14 @@ impl I18n {
 
     /// Sets the default locale; `false` when it already was that one.
     pub fn set_locale(&mut self, name: &str) -> bool {
-        let locale = LocaleInfo::new(name);
-        if locale.name() == self.locale.name() {
+        self.set_locale_info(LocaleInfo::new(name))
+    }
+
+    /// Sets the default locale, whose categories may differ (a system's
+    /// can); `false` when it already was one that names, writes and
+    /// compares the same.
+    pub fn set_locale_info(&mut self, locale: LocaleInfo) -> bool {
+        if locale.same_as(&self.locale) {
             return false;
         }
         self.locale = locale;
