@@ -1289,6 +1289,21 @@ impl Backend for LjosBackend {
         Ok(())
     }
 
+    fn add_sensor(&mut self, kind: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("say what sensors the system has before the QML"));
+        }
+        self.platform.add_sensor(kind)
+    }
+
+    fn sensor_reads(&mut self, kind: &str, values: &[f64]) -> Result<()> {
+        let timestamp = self.live()?.clock.now().as_micros();
+        self.platform.sensor_reads(kind, timestamp, values)?;
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).finish(&live.engine);
+        live.settle()
+    }
+
     fn opened_urls(&mut self) -> Result<Vec<String>> {
         Ok(self.platform.opened_urls())
     }

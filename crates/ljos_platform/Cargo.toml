@@ -1,6 +1,6 @@
 [package]
 name = "ljos_platform"
-description = "Ljós platform services behind traits (clipboard, dialogs, settings, standard paths, remote resources, drops from other applications, opening URLs), their fakes, and the QML modules QtCore and QtQuick.Dialogs"
+description = "Ljós platform services behind traits (clipboard, dialogs, settings, standard paths, remote resources, drops from other applications, opening URLs, sensors), their fakes, and the QML modules QtCore, QtQuick.Dialogs and QtSensors"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

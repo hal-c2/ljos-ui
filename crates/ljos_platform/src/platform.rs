@@ -24,6 +24,7 @@ use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
 use crate::open_url::{OpenUrlService, RecordedUrls};
 use crate::paths::PathEnv;
 use crate::permissions::{PermissionService, UngatedPermissions};
+use crate::sensors::{NoSensors, SensorService};
 
 /// The log category of platform services.
 pub const CATEGORY: &str = "ljos.platform";
@@ -84,11 +85,19 @@ impl Signal {
 /// and kept with [`Reply::send`]. One dropped unkept still counts as
 /// answered, so [`Platform::finish`] never waits for it.
 pub struct Reply {
+    post: Post,
+    kept: bool,
+}
+
+/// The way into the inbox, from any thread. Unlike a [`Reply`] it
+/// promises nothing, so [`Platform::finish`] does not wait for it: a
+/// stream (a sensor's readings) has no last answer to wait for.
+#[derive(Clone)]
+pub(crate) struct Post {
     tx: UiHandle<Job>,
     signal: Arc<Signal>,
-    /// Where [`Platform::expect`] ran: the one thread that drains the inbox.
+    /// Where it was made: the one thread that drains the inbox.
     engine: ThreadId,
-    kept: bool,
 }
 
 impl std::fmt::Debug for Reply {
@@ -101,13 +110,15 @@ impl Reply {
     /// Hands `job` to the Engine thread, which runs it at its next frame.
     pub fn send(mut self, job: impl FnOnce(&Engine) + Send + 'static) {
         self.kept = true;
-        self.post(Box::new(move |e: &Engine| {
+        self.post.post(Box::new(move |e: &Engine| {
             Platform::of(e).answered();
             job(e);
         }));
     }
+}
 
-    fn post(&self, job: Job) {
+impl Post {
+    pub(crate) fn post(&self, job: Job) {
         // Off the Engine thread waiting costs the UI nothing, and the frame
         // that drains wakes it. An error is only ever a gone engine, and
         // with it whoever wanted the answer.
@@ -153,7 +164,8 @@ impl Reply {
 impl Drop for Reply {
     fn drop(&mut self) {
         if !self.kept {
-            self.post(Box::new(|e: &Engine| Platform::of(e).answered()));
+            self.post
+                .post(Box::new(|e: &Engine| Platform::of(e).answered()));
         }
     }
 }
@@ -175,6 +187,7 @@ pub struct Platform {
     fetcher: RefCell<Arc<dyn Fetcher>>,
     open_url: RefCell<Rc<dyn OpenUrlService>>,
     badge: RefCell<Rc<dyn BadgeService>>,
+    sensors: RefCell<Rc<dyn SensorService>>,
     badge_number: Cell<u32>,
     env: RefCell<Rc<PathEnv>>,
     plugin_name: RefCell<Atom>,
@@ -220,6 +233,7 @@ impl Default for Platform {
             fetcher: RefCell::new(Arc::new(NoNetwork)),
             open_url: RefCell::new(Rc::new(RecordedUrls::default())),
             badge: RefCell::new(Rc::new(RecordedBadge::default())),
+            sensors: RefCell::new(Rc::new(NoSensors)),
             badge_number: Cell::new(0),
             env: RefCell::new(Rc::new(PathEnv::from_process())),
             // What a run without a window system is called (Qt.platform).
@@ -245,10 +259,16 @@ impl Platform {
     pub fn expect(&self) -> Reply {
         self.pending.set(self.pending.get() + 1);
         Reply {
+            post: self.poster(),
+            kept: false,
+        }
+    }
+
+    pub(crate) fn poster(&self) -> Post {
+        Post {
             tx: self.tx.clone(),
             signal: Arc::clone(&self.signal),
             engine: std::thread::current().id(),
-            kept: false,
         }
     }
 
@@ -444,6 +464,18 @@ impl Platform {
         if count != 0 {
             service.show(count);
         }
+    }
+
+    /// What reads the device's sensors. Until a host installs one it is
+    /// [`NoSensors`]: a desktop without any, where no sensor starts.
+    pub fn sensors(&self) -> Rc<dyn SensorService> {
+        Rc::clone(&self.sensors.borrow())
+    }
+
+    /// Sensors made before it was installed keep the backend they found;
+    /// one started afterwards asks this one.
+    pub fn set_sensors(&self, service: Rc<dyn SensorService>) {
+        *self.sensors.borrow_mut() = service;
     }
 
     /// Where the user's directories are.

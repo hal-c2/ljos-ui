@@ -278,7 +278,21 @@ fn permissions_ask(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.permissions_ask())
 }
 
+#[given(regex = r"^the system has an? ([a-z ]+)$")]
+fn system_has_sensor(w: &mut LjosWorld, kind: String) -> StepResult {
+    w.each(|b| b.add_sensor(&kind))
+}
+
 // ----------------------------------------------------------------- When
+
+#[when(regex = r"^the ([a-z ]+) reads (-?[0-9.]+(?:, -?[0-9.]+)*)$")]
+fn sensor_reads(w: &mut LjosWorld, kind: String, values: String) -> StepResult {
+    let values: Vec<f64> = values
+        .split(", ")
+        .map(|v| v.parse().map_err(|e| format!("{v:?}: {e}")))
+        .collect::<Result<_, _>>()?;
+    w.each(|b| b.sensor_reads(&kind, &values))
+}
 
 #[when(regex = r#"^the user chooses "([^"]+)" in the system dialog$"#)]
 fn user_chooses(w: &mut LjosWorld, path: String) -> StepResult {

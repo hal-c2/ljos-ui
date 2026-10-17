@@ -145,6 +145,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the application uses the fonts installed on the system` | text is set in the machine's fonts, as a desktop application's is, and not only in the font Ljós carries; give it before the QML. Which faces those are is the machine's own, so a scenario compares one family with another rather than with numbers |
 | `Given the system cannot take its dialogs away` | a dialog the system shows stays up when the application closes it, until the user ends it (`@ljos-only`) |
 | `Given the system asks the user before it grants a permission` | a permission starts undetermined and `request()` asks the user, as a phone does; give it before the QML (`@ljos-only`: desktop Linux grants everything) |
+| `Given the system has an accelerometer` | the device has that sensor, which reads what the scenario says; give it before the QML. Also `a gyroscope`, `a magnetometer`, `a compass`, `a pressure sensor`, `an ambient light sensor`, `an orientation sensor`. Without it the device has no sensors, as a desktop (`@ljos-only`) |
 | `Given a tree model "files" that reads a folder's rows 100 ms after a view asks for them:` + table | the application gives the QML a tree model in Rust under that name; the table's `folder` and `name` columns list each folder's rows (an empty folder is the top). A folder has its expand arrow before it is read, and its rows come that long after a view asks; give it before the QML (`@ljos-only`: the Qt backend cannot be given a C++ model) |
 | `Given a list model "pages" of 50 rows that reads 20 at a time, 100 ms after a view asks for more` | the application gives the QML a list model in Rust under that name, with no rows read at the start; its rows are `row 0`, `row 1` and so on in the `display` role. Each time a view asks for more it reads the next page that long later, and asking again while a page is on the way reads nothing; give it before the QML (`@ljos-only`) |
 
@@ -193,6 +194,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When the user dismisses the system dialog` | the user closes the dialog the system shows without choosing (`@ljos-only`) |
 | `When "text" is copied in another application` | another application puts the text on the clipboard while this one runs; it is not told, and finds out when it asks |
 | `When the user grants the "name" permission` / `denies` | the user answers the system's question for a permission: `"camera"`, `"microphone"`, `"location"`, `"calendar"`, `"contacts"`, `"bluetooth"` (`@ljos-only`) |
+| `When the accelerometer reads 1, 2, 9.8` | the device's sensor measures those values, in the order its reading names them (`x, y, z`; a compass's `azimuth, calibrationLevel`), timestamped with the scenario's clock; every started sensor of that kind is given it at the next frame (`@ljos-only`) |
 
 ### Then
 

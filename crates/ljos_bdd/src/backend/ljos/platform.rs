@@ -8,7 +8,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_engine::Engine;
-use ljos_platform::{FakeDialogs, FakePermissions, HttpFetcher, PathEnv, Platform, RecordedUrls};
+use ljos_platform::{
+    FakeDialogs, FakePermissions, FakeSensors, HttpFetcher, Measurement, PathEnv, Platform,
+    RecordedUrls, SensorKind,
+};
 
 use super::{BackendError, Result, failed};
 use crate::backend::SystemDialogAnswer;
@@ -27,6 +30,9 @@ pub(super) struct Rig {
     permissions: Option<FakePermissions>,
     /// What the application asked the system to open; nothing is opened.
     opened: RecordedUrls,
+    /// The device's sensors, which read what the scenario says; none
+    /// unless it says so, as on a desktop.
+    sensors: FakeSensors,
 }
 
 impl Rig {
@@ -57,6 +63,7 @@ impl Rig {
         platform.set_env(PathEnv::sandbox(HOME, self.root()?));
         platform.set_dialogs(Rc::new(self.dialogs.clone()));
         platform.set_open_url(Rc::new(self.opened.clone()));
+        platform.set_sensors(Rc::new(self.sensors.clone()));
         // A real network, as Qt has: a scenario reaches its own web server
         // on the loopback interface, and nothing else it names answers.
         platform.set_fetcher(Arc::new(HttpFetcher::new()));
@@ -64,6 +71,19 @@ impl Rig {
             platform.set_permissions(Rc::new(asking.clone()));
         }
         platform.set_held(true);
+        Ok(())
+    }
+
+    pub(super) fn add_sensor(&self, name: &str) -> Result<()> {
+        self.sensors.add(sensor_named(name)?);
+        Ok(())
+    }
+
+    pub(super) fn sensor_reads(&self, name: &str, timestamp: u64, values: &[f64]) -> Result<()> {
+        let kind = sensor_named(name)?;
+        // A sensor that is not running is given nothing, as a device's
+        // driver gives nothing to who does not listen.
+        self.sensors.feed(kind, Measurement::new(timestamp, values));
         Ok(())
     }
 
@@ -145,6 +165,13 @@ impl Rig {
 /// Everything the settings writer was given is on disk.
 pub(super) fn settle_writes(_engine: &Engine) {
     ljos_platform::flush_writes();
+}
+
+fn sensor_named(name: &str) -> Result<SensorKind> {
+    SensorKind::named(name).ok_or_else(|| {
+        let known: Vec<_> = SensorKind::ALL.iter().map(|k| k.describe()).collect();
+        failed(format!("no sensor is called {name:?}; there are {known:?}"))
+    })
 }
 
 fn read_if_there(path: &Path) -> Result<Option<String>> {

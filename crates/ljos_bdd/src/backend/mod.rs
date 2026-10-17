@@ -390,6 +390,21 @@ pub trait Backend: fmt::Debug {
             "a system that asks for permissions",
         ))
     }
+    /// The device has a sensor (`"accelerometer"`, as
+    /// `ljos_platform::SensorKind::describe` names it). Said before
+    /// anything is loaded.
+    fn add_sensor(&mut self, _kind: &str) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a sensor a scenario reads for",
+        ))
+    }
+    /// The device's sensor measures `values`, timestamped with the
+    /// scenario's clock.
+    fn sensor_reads(&mut self, _kind: &str, _values: &[f64]) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a sensor a scenario reads for",
+        ))
+    }
     /// The URLs the application asked the system to open, in order.
     fn opened_urls(&mut self) -> Result<Vec<String>> {
         Err(BackendError::NotImplemented("the system's opener of URLs"))

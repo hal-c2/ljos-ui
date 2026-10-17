@@ -6401,6 +6401,131 @@ module QtQuick.Window
 	import QtQuick
 	Window QtQuick.Window
 
+module QtSensors
+	Accelerometer QtSensors.Accelerometer
+	AccelerometerReading QtSensors.AccelerometerReading
+	AmbientLightReading QtSensors.AmbientLightReading
+	AmbientLightSensor QtSensors.AmbientLightSensor
+	Compass QtSensors.Compass
+	CompassReading QtSensors.CompassReading
+	Gyroscope QtSensors.Gyroscope
+	GyroscopeReading QtSensors.GyroscopeReading
+	Magnetometer QtSensors.Magnetometer
+	MagnetometerReading QtSensors.MagnetometerReading
+	OrientationReading QtSensors.OrientationReading
+	OrientationSensor QtSensors.OrientationSensor
+	PressureReading QtSensors.PressureReading
+	PressureSensor QtSensors.PressureSensor
+	Sensor QtSensors.Sensor
+	SensorReading QtSensors.SensorReading
+	type QtSensors.Accelerometer Accelerometer
+		prototype QtSensors.Sensor named
+		enum AccelerationMode Combined=0 Gravity=1 User=2
+		prop accelerationMode AccelerationMode
+		signal accelerationModeChanged
+	type QtSensors.AccelerometerReading AccelerometerReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop z QtQml.real named readonly
+		signal xChanged
+		signal yChanged
+		signal zChanged
+	type QtSensors.AmbientLightReading AmbientLightReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		enum LightLevel Undefined=0 Dark=1 Twilight=2 Light=3 Bright=4 Sunny=5
+		prop lightLevel LightLevel readonly
+		signal lightLevelChanged
+	type QtSensors.AmbientLightSensor AmbientLightSensor
+		prototype QtSensors.Sensor named
+	type QtSensors.Compass Compass
+		prototype QtSensors.Sensor named
+	type QtSensors.CompassReading CompassReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		prop azimuth QtQml.real named readonly
+		prop calibrationLevel QtQml.real named readonly
+		signal azimuthChanged
+		signal calibrationLevelChanged
+	type QtSensors.Gyroscope Gyroscope
+		prototype QtSensors.Sensor named
+	type QtSensors.GyroscopeReading GyroscopeReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop z QtQml.real named readonly
+		signal xChanged
+		signal yChanged
+		signal zChanged
+	type QtSensors.Magnetometer Magnetometer
+		prototype QtSensors.Sensor named
+		prop returnGeomagnetic QtQml.bool named
+		signal returnGeomagneticChanged
+	type QtSensors.MagnetometerReading MagnetometerReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		prop x QtQml.real named readonly
+		prop y QtQml.real named readonly
+		prop z QtQml.real named readonly
+		prop calibrationLevel QtQml.real named readonly
+		signal xChanged
+		signal yChanged
+		signal zChanged
+		signal calibrationLevelChanged
+	type QtSensors.OrientationReading OrientationReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		enum Orientation Undefined=0 TopUp=1 TopDown=2 LeftUp=3 RightUp=4 FaceUp=5 FaceDown=6
+		prop orientation Orientation readonly
+		signal orientationChanged
+	type QtSensors.OrientationSensor OrientationSensor
+		prototype QtSensors.Sensor named
+	type QtSensors.PressureReading PressureReading
+		prototype QtSensors.SensorReading named
+		is uncreatable
+		prop pressure QtQml.real named readonly
+		prop temperature QtQml.real named readonly
+		signal pressureChanged
+		signal temperatureChanged
+	type QtSensors.PressureSensor PressureSensor
+		prototype QtSensors.Sensor named
+	type QtSensors.Sensor Sensor
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop active QtQml.bool named
+		prop alwaysOn QtQml.bool named
+		prop busy QtQml.bool named readonly
+		prop connectedToBackend QtQml.bool named readonly
+		prop dataRate QtQml.int named
+		prop description QtQml.string named readonly
+		prop error QtQml.int named readonly
+		prop identifier QtQml.string named
+		prop reading QtSensors.SensorReading named pointer readonly
+		prop skipDuplicates QtQml.bool named
+		prop type QtQml.string named readonly
+		signal activeChanged
+		signal alwaysOnChanged
+		signal busyChanged
+		signal connectedToBackendChanged
+		signal dataRateChanged
+		signal descriptionChanged
+		signal errorChanged
+		signal identifierChanged
+		signal readingChanged
+		signal skipDuplicatesChanged
+		signal typeChanged
+		signal sensorError error
+		method start
+		method stop
+	type QtSensors.SensorReading SensorReading
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop timestamp QtQml.real named readonly
+		signal timestampChanged
+
 module QtTest
 	GrabbedImage QtTest.GrabbedImage
 	SignalSpy QtTest.SignalSpy

@@ -96,9 +96,10 @@ pub mod prelude {
     pub use ljos_platform::{
         BadgeService, ClipboardError, ClipboardImage, ClipboardMode, ClipboardService,
         DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, ExternalDrag,
-        FetchError, Fetcher, Method, NameFilter, OpenUrlService, PathEnv, Permission,
-        PermissionAnswer, PermissionService, PermissionStatus, Platform, RecordedBadge,
-        RecordedUrls, Request, Response, encoded_url, external_drag, file_url, is_remote, url_path,
+        FakeSensors, FetchError, Fetcher, Measurement, Method, NameFilter, NoSensors,
+        OpenUrlService, PathEnv, Permission, PermissionAnswer, PermissionService, PermissionStatus,
+        Platform, RecordedBadge, RecordedUrls, Request, Response, SensorKind, SensorRequest,
+        SensorService, SensorSink, encoded_url, external_drag, file_url, is_remote, url_path,
     };
     pub use ljos_quick::{ColorScheme, Item};
     pub use ljos_runtime::{Time, TimerId};

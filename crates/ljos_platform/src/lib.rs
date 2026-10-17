@@ -15,6 +15,8 @@
 //!   `Qt.openUrlExternally`);
 //! - the application's badge, a count on its icon ([`BadgeService`],
 //!   `QGuiApplication::setBadgeNumber`);
+//! - `QtSensors`: the device's accelerometer and other motion and
+//!   environment sensors, read through a [`SensorService`];
 //! - `Qt.platform`.
 //!
 //! Answers from other threads come back through one bounded inbox that the
@@ -41,6 +43,7 @@ mod open_url;
 mod paths;
 mod permissions;
 mod platform;
+mod sensors;
 mod settings;
 
 use std::cell::Cell;
@@ -71,13 +74,19 @@ pub use permissions::{
     PermissionStatus, UngatedPermissions,
 };
 pub use platform::{CATEGORY, Job, Platform, Reply};
+pub use sensors::{
+    Accelerometer, AccelerometerReading, AmbientLightReading, AmbientLightSensor, Compass,
+    CompassReading, FakeSensors, Gyroscope, GyroscopeReading, Magnetometer, MagnetometerReading,
+    Measurement, NoSensors, OrientationReading, OrientationSensor, PressureReading, PressureSensor,
+    Sensor, SensorKind, SensorReading, SensorRequest, SensorService, SensorSink,
+};
 pub use settings::{Settings, flush_writes};
 
 /// Set once the modules are in an engine.
 #[derive(Default)]
 struct Registered(Cell<bool>);
 
-/// Registers `QtQuick.Dialogs`, `QtCore`, `Qt.platform` and
+/// Registers `QtQuick.Dialogs`, `QtCore`, `QtSensors`, `Qt.platform` and
 /// `Qt.openUrlExternally`. Calling it
 /// again does nothing. The drawn dialogs are QtQuick.Controls, so a host
 /// registers those too.
@@ -95,6 +104,8 @@ pub fn register(engine: &Engine) {
         CameraPermission, MicrophonePermission, LocationPermission, CalendarPermission,
         ContactsPermission, BluetoothPermission,
     ]));
+
+    sensors::register(engine);
 
     let (library, undecoded) = DialogLibrary::embedded();
     let empty = library.is_empty();
