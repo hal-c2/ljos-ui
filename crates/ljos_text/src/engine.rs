@@ -1,7 +1,7 @@
 //! The engine: fonts, shaping, line breaking, and the two caches.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
-use parley::fontique::GenericFamily;
+use parley::fontique::{Blob, CharmapIndex, FontWidth, GenericFamily};
 use parley::{
     Alignment, AlignmentOptions, BaseDirection, BreakReason, FontContext, FontData, FontFamily,
     FontFamilyName, FontStyle, FontWeight, InlineBox, InlineBoxKind, LayoutContext, OverflowWrap,
@@ -68,6 +68,9 @@ pub struct CacheStats {
     /// Glyphs whose advance or ink was read from a font, by every engine on
     /// this thread: each is read once and then kept.
     pub glyphs_measured: u64,
+    /// Texts shaped with only the family every character was found in, in
+    /// place of the whole family stack.
+    pub shapes_pinned: u64,
 }
 
 /// How a text may break, which Parley decides while shaping. Texts of
@@ -263,6 +266,24 @@ struct Families {
     /// What the platform puts in place of each named family asked for so
     /// far, when it is another family (system fonts only).
     substitutes: RefCell<HashMap<Box<str>, Option<Arc<str>>>>,
+    /// The first font the stack of a family and style yields, by family
+    /// list; `None` when there is none to pin. Cleared when fonts change.
+    first_fonts: RefCell<FxHashMap<Box<str>, Vec<FirstFontEntry>>>,
+    /// Texts shaped with a pinned family (`CacheStats::shapes_pinned`).
+    pinned: Cell<u64>,
+    /// Off only to compare against the whole stack in tests.
+    pin: bool,
+}
+
+/// A style's weight bits and italic, and the first font of its stack.
+type FirstFontEntry = (u32, bool, Option<FirstFont>);
+
+/// The font a query over a family stack tries first, and its family.
+#[derive(Clone)]
+struct FirstFont {
+    family: Arc<str>,
+    blob: Blob<u8>,
+    charmap: CharmapIndex,
 }
 
 impl Families {
@@ -300,6 +321,127 @@ impl Families {
         }
         names.push(FontFamilyName::Generic(GenericFamily::SansSerif));
         names
+    }
+
+    /// The one family a plain text can be shaped with in place of its
+    /// whole stack. Parley takes a cluster's font from the first font of
+    /// the stack that covers it completely, so when the first font it would
+    /// try covers every character, that font's family alone picks the same
+    /// fonts, without the query expanding each generic family into every
+    /// font the platform lists on every layout.
+    fn pinned(
+        &self,
+        fcx: &mut FontContext,
+        text: &str,
+        family: &str,
+        weight: FontWeight,
+        italic: bool,
+    ) -> Option<Arc<str>> {
+        // Below U+2000 no character starts an emoji presentation (that
+        // needs U+FE0F, U+20E3 or a pictograph above it, © and ® aside),
+        // which parley shapes against an extended stack.
+        if !self.pin
+            || text.is_empty()
+            || !text
+                .chars()
+                .all(|c| u32::from(c) < 0x2000 && c != '\u{a9}' && c != '\u{ae}')
+        {
+            return None;
+        }
+        let first = {
+            let mut fonts = self.first_fonts.borrow_mut();
+            if !fonts.contains_key(family) {
+                fonts.insert(family.into(), Vec::new());
+            }
+            let entries = fonts.get_mut(family)?;
+            let bits = weight.value().to_bits();
+            match entries.iter().find(|(w, i, _)| *w == bits && *i == italic) {
+                Some((_, _, first)) => first.clone(),
+                None => {
+                    let first = self.first_font(fcx, family, weight, italic);
+                    entries.push((bits, italic, first.clone()));
+                    first
+                }
+            }
+        }?;
+        let charmap = first.charmap.charmap(first.blob.as_ref())?;
+        text.chars()
+            .all(|c| charmap.map(c).is_some_and(|g| g != 0))
+            .then(|| {
+                self.pinned.set(self.pinned.get() + 1);
+                first.family
+            })
+    }
+
+    /// The font Fontique's query yields first for `family`'s stack: for each
+    /// family in turn, every font of its best match, then its default font,
+    /// skipping those that do not load or have no character map.
+    fn first_font(
+        &self,
+        fcx: &mut FontContext,
+        family: &str,
+        weight: FontWeight,
+        italic: bool,
+    ) -> Option<FirstFont> {
+        let style = if italic {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        };
+        let mut ids = Vec::new();
+        for name in self.stack_of(family) {
+            match name {
+                FontFamilyName::Named(name) => {
+                    ids.extend(fcx.collection.family_by_name(&name).map(|f| f.id()));
+                }
+                FontFamilyName::Generic(generic) => {
+                    ids.extend(fcx.collection.generic_families(generic));
+                }
+            }
+        }
+        for id in ids {
+            let Some(info) = fcx.collection.family(id) else {
+                continue;
+            };
+            let fonts = info.fonts();
+            let best = info
+                .match_index(FontWidth::NORMAL, style, weight, true)
+                .and_then(|i| fonts.get(i))
+                .map(|f| (f.width(), f.style(), f.weight()));
+            let mut order: Vec<usize> = (0..fonts.len())
+                .filter(|&i| {
+                    let f = &fonts[i];
+                    best == Some((f.width(), f.style(), f.weight()))
+                })
+                .collect();
+            if !order.contains(&info.default_font_index()) {
+                order.push(info.default_font_index());
+            }
+            for index in order {
+                let Some(font) = fonts.get(index) else {
+                    continue;
+                };
+                let Some(blob) = font.load(Some(&mut fcx.source_cache)) else {
+                    continue;
+                };
+                let charmap = font.charmap_index();
+                if charmap.charmap(blob.as_ref()).is_none() {
+                    continue;
+                }
+                // The family has to come back as itself by name, or naming
+                // it would pick another.
+                let name = info.name();
+                if fcx.collection.family_by_name(name).map(|f| f.id()) != Some(id) {
+                    return None;
+                }
+                return Some(FirstFont {
+                    family: Arc::from(name),
+                    blob,
+                    charmap,
+                });
+            }
+        }
+        None
     }
 
     /// The family the platform's rules name for `name`, as Qt asks the
@@ -392,6 +534,14 @@ fn usable_size(size: f32) -> f32 {
     }
 }
 
+fn finite_weight(weight: f32) -> f32 {
+    if weight.is_finite() {
+        weight.clamp(1.0, 1000.0)
+    } else {
+        1.0
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "internal; a struct would only rename them"
@@ -406,7 +556,14 @@ fn shape(
     class: BreakClass,
     base: BaseDirection,
 ) -> Shape {
-    let names = families.stack(style);
+    let weight = FontWeight::new(finite_weight(style.weight));
+    let pinned = (ranged.spans.is_empty() && ranged.objects.is_empty())
+        .then(|| families.pinned(fcx, text, &style.family, weight, style.italic))
+        .flatten();
+    let names = match &pinned {
+        Some(family) => vec![FontFamilyName::Named(Cow::Borrowed(&**family))],
+        None => families.stack(style),
+    };
     // Resolved before the builder borrows the contexts.
     let span_names: Vec<Option<Vec<FontFamilyName<'_>>>> = ranged
         .spans
@@ -422,9 +579,7 @@ fn shape(
         &names,
     ))));
     b.push_default(StyleProperty::FontSize(size));
-    b.push_default(StyleProperty::FontWeight(FontWeight::new(
-        finite(style.weight).clamp(1.0, 1000.0),
-    )));
+    b.push_default(StyleProperty::FontWeight(weight));
     b.push_default(StyleProperty::FontStyle(if style.italic {
         FontStyle::Italic
     } else {
@@ -466,7 +621,7 @@ fn shape(
             range.clone(),
         );
         b.push(
-            StyleProperty::FontWeight(FontWeight::new(finite(span.weight).clamp(1.0, 1000.0))),
+            StyleProperty::FontWeight(FontWeight::new(finite_weight(span.weight))),
             range.clone(),
         );
         b.push(
@@ -1001,6 +1156,9 @@ impl TextEngine {
                 system,
                 default_family: None,
                 substitutes: RefCell::default(),
+                first_fonts: RefCell::default(),
+                pinned: Cell::new(0),
+                pin: true,
             },
             shapes: FrameCache::new(MAX_SHAPES),
             layouts: FrameCache::new(MAX_LAYOUTS),
@@ -1071,6 +1229,7 @@ impl TextEngine {
 
     fn fonts_changed(&mut self) {
         self.generation += 1;
+        self.families.first_fonts.borrow_mut().clear();
         self.clear_caches();
     }
 
@@ -1107,6 +1266,7 @@ impl TextEngine {
             layouts: self.layouts.len(),
             shapes: self.shapes.len(),
             glyphs_measured: measure::measured(),
+            shapes_pinned: self.families.pinned.get(),
             ..self.stats
         }
     }
@@ -1760,5 +1920,86 @@ fn reported_width(width: f32, limit: Option<f64>) -> f64 {
     match limit {
         Some(limit) if reported > limit && f64::from(width) <= limit + 1e-4 => limit,
         _ => reported,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Glyphs = Vec<(u64, u32, Vec<(u32, u32, u32)>, Vec<i16>, bool, u32)>;
+
+    fn glyphs(e: &mut TextEngine, text: &str, style: &TextStyle) -> Glyphs {
+        let l = e.layout(text, style, &LayoutParams::default());
+        l.lines
+            .iter()
+            .flat_map(|line| &line.runs)
+            .map(|r| {
+                let g = &r.glyphs;
+                // Each engine loads its own copy of a font, so the bytes say
+                // which one it is.
+                let mut h = FxHasher::default();
+                g.font.data.as_ref().hash(&mut h);
+                (
+                    h.finish(),
+                    g.font.index,
+                    g.glyphs
+                        .iter()
+                        .map(|p| (p.id, p.x.to_bits(), p.y.to_bits()))
+                        .collect(),
+                    g.normalized_coords.clone(),
+                    g.embolden,
+                    g.skew.to_bits(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pinned_family_shapes_as_the_whole_stack() {
+        let texts = [
+            "Row 12",
+            "Hello, world!",
+            "Grüße Ωμέγα Кириллица",
+            "שלום עולם",
+            "مرحبا بالعالم",
+            "a\u{301}e\u{301}",
+            "1\u{fe0f}\u{20e3} keycap",
+            "☃ snow",
+            "漢字 and Latin",
+            "© 2026",
+        ];
+        let families = [
+            "",
+            "Liberation Sans",
+            "monospace",
+            "serif",
+            "Not A Font, sans-serif",
+        ];
+        for system in [false, true] {
+            let mut pinned = TextEngine::build(system);
+            let mut whole = TextEngine::build(system);
+            whole.families.pin = false;
+            for family in families {
+                for (weight, italic) in [(400.0, false), (700.0, true)] {
+                    let style = TextStyle {
+                        family: family.into(),
+                        weight,
+                        italic,
+                        ..TextStyle::default()
+                    };
+                    for text in texts {
+                        assert_eq!(
+                            glyphs(&mut pinned, text, &style),
+                            glyphs(&mut whole, text, &style),
+                            "{text:?} in {family:?} {weight} {italic}, system fonts {system}"
+                        );
+                    }
+                }
+            }
+            assert_eq!(whole.stats().shapes_pinned, 0);
+            // Latin text in an installed family is the common case it serves.
+            assert!(pinned.stats().shapes_pinned >= 20, "{:?}", pinned.stats());
+        }
     }
 }
