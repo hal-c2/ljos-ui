@@ -155,6 +155,112 @@ Feature: What survives a reload
       Then the property "chosenName" of "root" is "none"
       And the property "heldName" of "root" is "none"
 
+  Rule: Objects a script made under an object that goes on are made again under it
+
+    Background:
+      Given the file "Tile.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          property int kind: 0
+          property int taps: 0
+          width: 10
+        }
+        """
+      And the file "board.js":
+        """
+        .pragma library
+        var tiles = []
+        var tile = null
+        function fill(parent) {
+          if (!tile)
+            tile = Qt.createComponent("Tile.qml")
+          for (let i = 0; i < 3; i++)
+            tiles.push(tile.createObject(parent, { kind: i }))
+        }
+        function tap(i) { tiles[i].taps += 1 }
+        function kinds() { return tiles.map(t => t.kind + ":" + t.taps).join(",") }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import "board.js" as Board
+        Item {
+          objectName: "root"
+          property string seen
+          function fill() { Board.fill(area) }
+          function tap(i) { Board.tap(i) }
+          function look() {
+            let widths = []
+            for (let i = 0; i < area.children.length; i++)
+              widths.push(area.children[i].width)
+            seen = Board.kinds() + "|" + widths.join(",")
+          }
+          Item { id: area; objectName: "area" }
+        }
+        """
+
+    Scenario: They keep their order and what they held, and a script that holds them reaches them
+      When the method "fill" of "root" is called
+      And the method "tap" of "root" is called with 1
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import "board.js" as Board
+        Item {
+          objectName: "root"
+          width: 5
+          property string seen
+          function fill() { Board.fill(area) }
+          function tap(i) { Board.tap(i) }
+          function look() {
+            let widths = []
+            for (let i = 0; i < area.children.length; i++)
+              widths.push(area.children[i].width)
+            seen = Board.kinds() + "|" + widths.join(",")
+          }
+          Item { id: area; objectName: "area" }
+        }
+        """
+      And a reload happens
+      And the method "tap" of "root" is called with 2
+      And the method "look" of "root" is called
+      Then the property "seen" of "root" is "0:0,1:1,2:1|10,10,10"
+      And the log has no warnings
+
+    Scenario: They are made from their file as it is now
+      When the method "fill" of "root" is called
+      And the method "tap" of "root" is called with 1
+      And the file "Tile.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle {
+          property int kind: 0
+          property int taps: 0
+          width: 20
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "seen" of "root" is "0:0,1:1,2:0|20,20,20"
+      And the log has no warnings
+
+    Scenario: The component a script holds makes objects from the file as it is now
+      When the method "fill" of "root" is called
+      And the file "Tile.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle {
+          property int kind: 0
+          property int taps: 0
+          width: 30
+        }
+        """
+      And a reload happens
+      And the method "fill" of "root" is called
+      And the method "look" of "root" is called
+      Then the property "seen" of "root" is "0:0,1:0,2:0,0:0,1:0,2:0|30,30,30,30,30,30"
+
   Rule: The rows of a ListModel survive
 
     Background:

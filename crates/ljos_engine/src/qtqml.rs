@@ -181,7 +181,7 @@ impl Component {
         let props = cx.engine.js_object_entries(&props);
         match cx
             .engine
-            .create_from_template_for_script(&template, parent, props, Initial::Created)
+            .create_for_script(cx.this, template, parent, props, Initial::Created)
         {
             Ok(o) => {
                 cx.engine.component_made(cx.this, None);
@@ -1173,8 +1173,14 @@ impl Engine {
         &self,
         component: ObjectId,
     ) -> Result<Rc<Template>, EngineError> {
-        self.with::<Component, _>(component, |c| c.template.clone())?
-            .ok_or_else(|| EngineError::Load("the component is not ready".into()))
+        let template = self
+            .with::<Component, _>(component, |c| c.template.clone())?
+            .ok_or_else(|| EngineError::Load("the component is not ready".into()))?;
+        let fresh = self.fresh_template(&template);
+        if !Rc::ptr_eq(&fresh, &template) {
+            self.with_mut::<Component, _>(component, |c| c.template = Some(fresh.clone()))?;
+        }
+        Ok(fresh)
     }
 
     /// The entries of a JS object (`createObject`'s properties); none for

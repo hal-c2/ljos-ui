@@ -47,7 +47,7 @@ use std::sync::Arc;
 use ljos_ir::{CompiledFile, KeySeg, ObjIdx, ObjRef, ObjectKey, ReloadOp, ReloadPatch};
 use ljos_js::Bytecode;
 
-use super::{Creation, Instance};
+use super::{Creation, Initial, Instance, Template};
 use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
@@ -197,6 +197,19 @@ struct Info {
     tree: u64,
 }
 
+/// An object a script made (`createObject`) under an object of the tree,
+/// which nothing in the new tree makes: a reload makes it again under the
+/// object that goes on for its parent.
+struct Scripted {
+    /// In the order they were made, which is the order they are made
+    /// again: one may be the parent of the next.
+    serial: u64,
+    component: ObjectId,
+    template: Rc<Template>,
+    parent: ObjectId,
+    props: Vec<(String, Value)>,
+}
+
 /// How a root was made, to make it again.
 #[derive(Clone)]
 struct Origin {
@@ -333,6 +346,11 @@ pub(crate) struct ReloadState {
     /// What scripts assigned, by the object that holds the value.
     assigned: RefCell<HashMap<ObjectId, Vec<PropIndex>>>,
     origins: RefCell<HashMap<ObjectId, Origin>>,
+    scripted: RefCell<HashMap<ObjectId, Scripted>>,
+    /// The creation that starts next is a script's: its root is given a
+    /// path of its own beside the ones made before it from the same
+    /// component under the same parent.
+    scripting: Cell<bool>,
     /// The path of the root made next: the one it replaces.
     forced: RefCell<Option<Rc<str>>>,
     /// The row a view is making a delegate for, where the delegate has
@@ -652,6 +670,7 @@ impl Engine {
             return Err(ReloadError::Failed(fault));
         }
 
+        self.reload_remake_scripted();
         for (old_root, new) in &made {
             self.singleton_scope_moved(*old_root, *new);
             swap(self, *old_root, *new);
@@ -689,6 +708,128 @@ impl Engine {
             kept: p.map_or(0, |p| p.kept.len()),
             fresh: p.map_or(0, |p| p.fresh),
             remounted: p.map_or(0, |p| p.remounted.len()),
+        })
+    }
+
+    /// `createObject` and `incubateObject` of `component`: a reload makes
+    /// what it makes under an object of the tree again.
+    pub(crate) fn create_for_script(
+        &self,
+        component: ObjectId,
+        template: Rc<Template>,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        how: Initial,
+    ) -> Result<ObjectId, EngineError> {
+        let st = &self.inner.reload;
+        let Some(parent) = parent.filter(|_| st.tracking.get()) else {
+            return self.create_from_template_for_script(&template, parent, props, how);
+        };
+        st.scripting.set(true);
+        let made =
+            self.create_from_template_for_script(&template, Some(parent), props.clone(), how);
+        st.scripting.set(false);
+        if let Ok(obj) = made
+            && self.is_alive(obj)
+        {
+            st.serial.set(st.serial.get() + 1);
+            st.scripted.borrow_mut().insert(
+                obj,
+                Scripted {
+                    serial: st.serial.get(),
+                    component,
+                    template,
+                    parent,
+                    props,
+                },
+            );
+        }
+        made
+    }
+
+    /// The objects scripts made under objects of the old tree, made again
+    /// under the ones that go on for their parents, at the same paths, so
+    /// that they take what the old ones held and a script that holds an
+    /// old one reaches the new. One whose parent is not of the tree stays
+    /// as it is; one whose parent is gone goes with it.
+    fn reload_remake_scripted(&self) {
+        let st = &self.inner.reload;
+        let mut all: Vec<(ObjectId, Scripted)> = st.scripted.borrow_mut().drain().collect();
+        all.sort_by_key(|(_, s)| s.serial);
+        let tree = st.tree.get();
+        for (old, s) in all {
+            let path = st
+                .info
+                .borrow()
+                .get(&old)
+                .filter(|i| i.tree != tree)
+                .map(|i| i.path.clone());
+            let counterpart = |o: ObjectId| {
+                st.pending
+                    .borrow()
+                    .as_ref()
+                    .and_then(|p| p.counterpart.get(&o).copied())
+            };
+            let (Some(path), Some(parent)) = (path, counterpart(s.parent)) else {
+                if self.is_alive(old) {
+                    st.scripted.borrow_mut().insert(old, s);
+                }
+                continue;
+            };
+            // A component declared in a file is the one that goes on for
+            // it; one made from a file's address is made from the file as
+            // it is now.
+            let (component, template) = match counterpart(s.component) {
+                Some(c) => match self.component_template(c) {
+                    Ok(t) => (c, t),
+                    Err(_) => continue,
+                },
+                None if s.template.outer.is_none() => {
+                    (s.component, self.fresh_template(&s.template))
+                }
+                None => continue,
+            };
+            let props: Vec<(String, Value)> = s
+                .props
+                .iter()
+                .filter_map(|(k, v)| self.reload_translate(v.clone()).map(|v| (k.clone(), v)))
+                .collect();
+            *st.forced.borrow_mut() = Some(path);
+            let made =
+                self.create_for_script(component, template, Some(parent), props, Initial::Created);
+            st.forced.borrow_mut().take();
+            if let Err(e) = made {
+                self.warn(format!("{e}"));
+            }
+        }
+    }
+
+    /// `template` made from its file as the files are now: a reload
+    /// replaced the file a `Component` was made from by address.
+    pub(crate) fn fresh_template(&self, template: &Rc<Template>) -> Rc<Template> {
+        if template.outer.is_some()
+            || template.context.is_some()
+            || !self.inner.reload.tracking.get()
+        {
+            return template.clone();
+        }
+        let Ok(now) = self.load_file(&template.file.key) else {
+            return template.clone();
+        };
+        if Rc::ptr_eq(&now, &template.file) {
+            return template.clone();
+        }
+        let def = template.file.ir.component(template.comp);
+        let inline =
+            matches!(def.kind, ljos_ir::ComponentKind::Inline).then_some(def.name.as_str());
+        let Some(comp) = now.find_component(inline) else {
+            return template.clone();
+        };
+        Rc::new(Template {
+            file: now,
+            comp,
+            outer: None,
+            context: None,
         })
     }
 
@@ -1054,6 +1195,13 @@ impl Engine {
             assigned.remove(id);
             origins.remove(id);
         }
+        drop((info, by_path, assigned, origins));
+        let mut scripted = st.scripted.borrow_mut();
+        if !scripted.is_empty() {
+            for id in dead {
+                scripted.remove(id);
+            }
+        }
     }
 
     /// Destroys the root of a creation that failed. While a reload makes
@@ -1102,6 +1250,7 @@ impl Engine {
             return;
         }
         let noted = st.rows.borrow_mut().remove(&root);
+        let scripted = st.scripting.replace(false);
         let Some(top) = cr.top.clone() else {
             return;
         };
@@ -1109,7 +1258,7 @@ impl Engine {
         let above = self
             .owner(root)
             .and_then(|p| st.info.borrow().get(&p).map(|i| i.path.clone()));
-        let root_path: String = match (forced, above) {
+        let mut root_path: String = match (forced, above) {
             (Some(p), _) => p.to_string(),
             (None, Some(above)) => {
                 let def = top.file.ir.component(top.comp);
@@ -1125,22 +1274,31 @@ impl Engine {
             }
         };
         let tree = st.tree.get();
-        // Two objects made from one component under one owner (two
-        // `createObject` calls) cannot be told apart: the later ones are
-        // not carried. One on its way out (a row made again) gives its
-        // place up.
-        let taken = {
+        // Two objects made from one component under one owner by a view
+        // cannot be told apart: the later ones are not carried. A script's
+        // are told apart by the order they were made in. One on its way
+        // out (a row made again) gives its place up.
+        let taken = |path: &str| {
             let by_path = st.by_path.borrow();
             let info = st.info.borrow();
-            by_path.get(root_path.as_str()).is_some_and(|other| {
+            by_path.get(path).is_some_and(|other| {
                 *other != root
                     && info.get(other).is_some_and(|i| i.tree == tree)
                     && self.is_alive(*other)
                     && !self.doomed(*other)
             })
         };
-        if taken {
-            return;
+        if taken(&root_path) {
+            if !scripted {
+                return;
+            }
+            let base = std::mem::take(&mut root_path);
+            for n in 2.. {
+                root_path = format!("{base}*{n}");
+                if !taken(&root_path) {
+                    break;
+                }
+            }
         }
         let mut walk = Walk::default();
         walk.instance(&top, &root_path, true);

@@ -916,6 +916,7 @@ notify watcher (120 ms debounce, BLAKE3 fingerprint of qml/js/qmldir/theme)
 - `contentX/Y`, which are clamped;
 - `currentIndex`;
 - the `StackView` stack (the pages pushed are made again from their sources);
+- objects a script made with `createObject` or `incubateObject` under an object that goes on: made again in the order they were made, from their file as it is now, under the object that goes on for their parent; a `Component` made by address makes later objects from the new file too;
 - an open `Popup`;
 - the `Loader` source;
 - `Timer.running`;

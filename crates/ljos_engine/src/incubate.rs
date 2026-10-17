@@ -144,7 +144,7 @@ impl Engine {
         let how = Initial::Incubated(at);
         if synchronous {
             let made = self.component_template(component).and_then(|template| {
-                self.create_from_template_for_script(&template, parent, props, how)
+                self.create_for_script(component, template, parent, props, how)
             });
             self.incubated(inc, &made);
             return Ok(inc);
