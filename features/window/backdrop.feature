@@ -8,11 +8,13 @@
 # answers is in docs/ARCHITECTURE.md (section 7.3, the backdrop).
 
 @ljos-only
-Feature: A window asks for a blurred backdrop
+Feature: A window asks for a backdrop
   A window's backdrop is what the window system draws behind it, seen
   through the parts of the window its colour leaves see-through. A window
-  asks for a blurred one with `backdrop: Window.BlurBackdrop`; where the
-  window system has none, nothing changes. `backdrop` reads what the window asked for. The
+  asks for a blurred one with `backdrop: Window.BlurBackdrop`, and for the
+  system's glass with `Window.GlassBackdrop`, which is the blurred one
+  where the system has no glass. Where the window system has neither,
+  nothing changes. `backdrop` reads what the window asked for. The
   backdrop is light or dark with the colour scheme in effect: the
   application's own when it set one, else the system's.
 
@@ -105,3 +107,36 @@ Feature: A window asks for a blurred backdrop
     Then the window system is asked for a light blurred backdrop behind "w"
     When the method "system" of "w" is called
     Then the window system is asked for a dark blurred backdrop behind "w"
+
+  Scenario: A window asks for the system's glass
+    Given the QML:
+      """qml
+      import QtQuick
+      Window {
+        objectName: "w"
+        width: 100; height: 100
+        color: "transparent"
+        backdrop: Window.GlassBackdrop
+        property bool glass: backdrop === 2
+      }
+      """
+    Then the property "glass" of "w" is true
+    And the window system is asked for a glass backdrop behind "w"
+
+  Scenario: A window goes from glass to a blur and back
+    Given the system setting "color scheme" is dark
+    And the QML:
+      """qml
+      import QtQuick
+      Window {
+        objectName: "w"
+        width: 100; height: 100
+        color: "transparent"
+      }
+      """
+    When the property "backdrop" of "w" is set to 2
+    Then the window system is asked for a dark glass backdrop behind "w"
+    When the property "backdrop" of "w" is set to 1
+    Then the window system is asked for a dark blurred backdrop behind "w"
+    When the property "backdrop" of "w" is set to 0
+    Then the window system is asked for no backdrop behind "w"

@@ -2941,7 +2941,7 @@ module QtQuick
 		prototype QtQuick.Rectangle named
 		attached QtQuick.WindowAttached
 		enum Visibility Hidden=0 AutomaticVisibility=1 Windowed=2 Minimized=3 Maximized=4 FullScreen=5
-		enum Backdrop NoBackdrop=0 BlurBackdrop=1
+		enum Backdrop NoBackdrop=0 BlurBackdrop=1 GlassBackdrop=2
 		prop title QtQml.string named
 		prop visible QtQml.bool named
 		prop x QtQml.int named

@@ -631,7 +631,7 @@ mod platform {
 
         /// KDE's blur: its Wayland protocol through winit, its window
         /// property on X11, which winit does not set. Elsewhere nothing
-        /// answers either. Neither has a dark and a light blur.
+        /// answers either. Neither has glass or a dark and a light blur.
         pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop, _: Appearance) {
             use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
             let on = backdrop != Backdrop::None;
@@ -726,7 +726,7 @@ mod platform {
         }
 
         /// Windows' system backdrop: the acrylic of transient windows is
-        /// its blur, and `Auto` its default. The acrylic is
+        /// its blur and its glass, and `Auto` its default. The acrylic is
         /// dark in a window in dark mode, which winit's theme sets. Elsewhere
         /// winit's blur, which the others ignore.
         #[cfg(not(target_os = "macos"))]
@@ -762,8 +762,9 @@ mod platform {
     };
 }
 
-/// The system's material as a view under winit's: an `NSVisualEffectView`
-/// for the blur. The view goes in the window's frame view below the content
+/// The system's materials as views under winit's: an `NSVisualEffectView`
+/// for the blur, an `NSGlassEffectView` for glass where the system has one
+/// (macOS 26). The view goes in the window's frame view below the content
 /// view, not into the content view, whose layer holds the painter's metal
 /// layer: a subview's layer there could be put over it. In the frame view
 /// it is sized with the window by AppKit, in and out of full screen.
@@ -771,9 +772,10 @@ mod platform {
 mod appkit_backdrop {
     use objc2::MainThreadMarker;
     use objc2::rc::Retained;
+    use objc2::runtime::AnyClass;
     use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-        NSAutoresizingMaskOptions, NSUserInterfaceItemIdentification, NSView,
+        NSAutoresizingMaskOptions, NSGlassEffectView, NSUserInterfaceItemIdentification, NSView,
         NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectView,
         NSWindowOrderingMode,
     };
@@ -806,10 +808,16 @@ mod appkit_backdrop {
         if backdrop == Backdrop::None {
             return;
         }
-        let blur = NSVisualEffectView::new(mtm);
-        blur.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
-        blur.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        let view: Retained<NSView> = Retained::into_super(blur);
+        // Looked up first: an absent class would panic when sent `new`.
+        let glass = backdrop == Backdrop::Glass && AnyClass::get(c"NSGlassEffectView").is_some();
+        let view: Retained<NSView> = if glass {
+            Retained::into_super(NSGlassEffectView::new(mtm))
+        } else {
+            let blur = NSVisualEffectView::new(mtm);
+            blur.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+            blur.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+            Retained::into_super(blur)
+        };
         view.setIdentifier(Some(ours));
         view.setFrame(content.frame());
         view.setAutoresizingMask(

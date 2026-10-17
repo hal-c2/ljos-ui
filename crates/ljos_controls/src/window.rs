@@ -51,7 +51,8 @@ use crate::util::{check, flag, is_a, is_unset, num, object, set_computed};
 const DEPTH: usize = 256;
 
 /// `Window.Windowed`: what `visibility` holds (numbers read off qml6
-/// 6.11.2), and `Window.BlurBackdrop`: what `backdrop` holds, Ljós's own.
+/// 6.11.2), and `Window.BlurBackdrop`, `Window.GlassBackdrop`: what `backdrop`
+/// holds, Ljós's own.
 fn window_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![
         (
@@ -65,7 +66,10 @@ fn window_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
                 ("FullScreen", 5),
             ],
         ),
-        ("Backdrop", vec![("NoBackdrop", 0), ("BlurBackdrop", 1)]),
+        (
+            "Backdrop",
+            vec![("NoBackdrop", 0), ("BlurBackdrop", 1), ("GlassBackdrop", 2)],
+        ),
     ]
 }
 

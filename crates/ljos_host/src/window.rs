@@ -46,6 +46,9 @@ pub enum Backdrop {
     None,
     /// What is behind the window, blurred.
     Blur,
+    /// The window system's own glass (macOS 26's); the blur where it has
+    /// none.
+    Glass,
 }
 
 /// Light or dark: which of its materials the window system puts behind a

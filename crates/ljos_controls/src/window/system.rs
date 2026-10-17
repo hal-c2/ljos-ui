@@ -56,6 +56,8 @@ pub enum WindowBackdrop {
     None,
     /// What is behind the window, blurred.
     Blur,
+    /// The window system's own glass; a blur where it has none.
+    Glass,
 }
 
 impl WindowBackdrop {
@@ -63,6 +65,7 @@ impl WindowBackdrop {
     pub(super) fn from_qt(v: i32) -> WindowBackdrop {
         match v {
             1 => WindowBackdrop::Blur,
+            2 => WindowBackdrop::Glass,
             _ => WindowBackdrop::None,
         }
     }

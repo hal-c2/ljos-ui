@@ -1024,7 +1024,7 @@ fn a11y_described(w: &mut LjosWorld, role: String, name: String, text: String) -
 }
 
 #[then(
-    regex = r#"^the window system is asked for (no|a (?:(light|dark) )?(blurred)) backdrop behind "([^"]+)"$"#
+    regex = r#"^the window system is asked for (no|a (?:(light|dark) )?(blurred|glass)) backdrop behind "([^"]+)"$"#
 )]
 fn window_backdrop(
     w: &mut LjosWorld,

@@ -1438,6 +1438,7 @@ impl Backend for LjosBackend {
         let kind = match spec.backdrop {
             B::None => return Ok(None),
             B::Blur => "blurred",
+            B::Glass => "glass",
         };
         let look = match spec.color_scheme {
             ljos_quick::ColorScheme::Light => "light",

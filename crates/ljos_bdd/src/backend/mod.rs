@@ -152,7 +152,7 @@ pub struct ApplicationFault {
 /// A backdrop a window asks the window system for, in a scenario's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BackdropAsked {
-    /// `"blurred"`.
+    /// `"blurred"` or `"glass"`.
     pub kind: &'static str,
     /// `"light"`, `"dark"`, or `"the system's"` when the window leaves it
     /// to the window system.

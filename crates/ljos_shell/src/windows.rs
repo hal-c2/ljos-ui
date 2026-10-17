@@ -100,6 +100,7 @@ fn backdrop(spec: &WindowSpec) -> Backdrop {
     match spec.backdrop {
         WindowBackdrop::None => Backdrop::None,
         WindowBackdrop::Blur => Backdrop::Blur,
+        WindowBackdrop::Glass => Backdrop::Glass,
     }
 }
 
@@ -385,6 +386,23 @@ mod tests {
             vec![WindowChange::Backdrop(Backdrop::None, Appearance::Light)]
         );
         assert!(!needs_new_window(&blurred, &plain, desktop()));
+    }
+
+    #[test]
+    fn glass_is_asked_for_as_glass_and_switched_like_a_blur() {
+        let mut glass = spec();
+        glass.color = [0, 0, 0, 0];
+        glass.backdrop = WindowBackdrop::Glass;
+        glass.color_scheme = ColorScheme::Dark;
+        assert_eq!(attributes(&glass, desktop()).backdrop, Backdrop::Glass);
+
+        let mut blurred = glass.clone();
+        blurred.backdrop = WindowBackdrop::Blur;
+        assert_eq!(
+            changes(&glass, &blurred, desktop()),
+            vec![WindowChange::Backdrop(Backdrop::Blur, Appearance::Dark)]
+        );
+        assert!(!needs_new_window(&glass, &blurred, desktop()));
     }
 
     #[test]

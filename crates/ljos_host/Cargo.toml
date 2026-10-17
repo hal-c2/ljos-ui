@@ -27,6 +27,7 @@ x11rb = { workspace = true, optional = true }
 objc2 = { workspace = true, optional = true }
 objc2-app-kit = { workspace = true, optional = true, features = [
     "NSAppearance",
+    "NSGlassEffectView",
     "NSGraphics",
     "NSUserInterfaceItemIdentification",
     "NSView",
