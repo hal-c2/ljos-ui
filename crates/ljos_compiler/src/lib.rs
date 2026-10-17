@@ -55,25 +55,115 @@ pub enum Severity {
     Warning,
 }
 
+/// The kind of a [`Diagnostic`], by which a program tells kinds apart
+/// without reading the message, which may change. The front end's kinds
+/// keep the front end's names ([`qml_front::Code`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Code {
+    /// The parser rejected part of the file.
+    Syntax,
+    /// An import names a module nothing knows.
+    UnknownModule,
+    /// A type is not provided by anything the file imports.
+    UnknownType,
+    /// A binding names a property the type does not have.
+    UnknownProperty,
+    /// A handler is of a signal the type does not have.
+    UnknownSignal,
+    /// Two objects of one component share an `id`.
+    DuplicateId,
+    /// A `property alias` points at an id the component does not have.
+    UnknownAliasTarget,
+    /// A free name in a script that nothing in reach has.
+    UnresolvedName,
+    /// Anything else the front end found.
+    Semantic,
+    /// The file asked for is not one of the project's.
+    NotInProject,
+    /// An object of a type nothing may make (a singleton's).
+    NotCreatable,
+    /// `id.member`, where what the id names has no such member.
+    UnknownMember,
+    /// A value written for a property it cannot hold: a number for a
+    /// string, a name that is no colour, a key of no enumeration.
+    InvalidAssignment,
+    /// A script in the file does not parse as JavaScript.
+    ScriptSyntax,
+    /// A script the file imports cannot be used.
+    ScriptUnavailable,
+    /// Objects a reload can tell apart only by their order.
+    ReloadIdentity,
+}
+
+impl Code {
+    /// The stable, hyphenated name: `invalid-assignment`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Code::Syntax => "syntax",
+            Code::UnknownModule => "unknown-module",
+            Code::UnknownType => "unknown-type",
+            Code::UnknownProperty => "unknown-property",
+            Code::UnknownSignal => "unknown-signal",
+            Code::DuplicateId => "duplicate-id",
+            Code::UnknownAliasTarget => "unknown-alias-target",
+            Code::UnresolvedName => "unresolved-name",
+            Code::Semantic => "semantic",
+            Code::NotInProject => "not-in-project",
+            Code::NotCreatable => "not-creatable",
+            Code::UnknownMember => "unknown-member",
+            Code::InvalidAssignment => "invalid-assignment",
+            Code::ScriptSyntax => "script-syntax",
+            Code::ScriptUnavailable => "script-unavailable",
+            Code::ReloadIdentity => "reload-identity",
+        }
+    }
+}
+
+impl From<qml_front::Code> for Code {
+    fn from(code: qml_front::Code) -> Self {
+        match code {
+            qml_front::Code::Syntax => Code::Syntax,
+            qml_front::Code::UnknownModule => Code::UnknownModule,
+            qml_front::Code::UnknownType => Code::UnknownType,
+            qml_front::Code::UnknownProperty => Code::UnknownProperty,
+            qml_front::Code::UnknownSignal => Code::UnknownSignal,
+            qml_front::Code::DuplicateId => Code::DuplicateId,
+            qml_front::Code::UnknownAliasTarget => Code::UnknownAliasTarget,
+            qml_front::Code::UnresolvedName => Code::UnresolvedName,
+            // A kind the front end has that this does not name yet.
+            _ => Code::Semantic,
+        }
+    }
+}
+
+impl fmt::Display for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
+    pub code: Code,
     pub message: String,
     pub span: SourceSpan,
 }
 
 impl Diagnostic {
-    pub fn error(message: impl Into<String>, span: SourceSpan) -> Self {
+    pub fn error(code: Code, message: impl Into<String>, span: SourceSpan) -> Self {
         Self {
             severity: Severity::Error,
+            code,
             message: message.into(),
             span,
         }
     }
 
-    pub fn warning(message: impl Into<String>, span: SourceSpan) -> Self {
+    pub fn warning(code: Code, message: impl Into<String>, span: SourceSpan) -> Self {
         Self {
             severity: Severity::Warning,
+            code,
             message: message.into(),
             span,
         }

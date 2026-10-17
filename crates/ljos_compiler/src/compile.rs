@@ -26,7 +26,7 @@ use qml_syntax::{
 };
 
 use crate::{
-    Compiled, Diagnostic, Project, Severity,
+    Code, Compiled, Diagnostic, Project, Severity,
     js::{self, ArgValue, Form},
     oracle::{Held, Written, is_color},
 };
@@ -42,6 +42,7 @@ pub fn compile_file<O: TypeOracle>(
 ) -> Result<Compiled, Vec<Diagnostic>> {
     let Some(source) = project.source(key) else {
         return Err(vec![Diagnostic::error(
+            Code::NotInProject,
             format!("`{key}` is not a file of the project"),
             SourceSpan::default(),
         )]);
@@ -52,11 +53,12 @@ pub fn compile_file<O: TypeOracle>(
     let mut diagnostics: Vec<Diagnostic> = parsed
         .diagnostics
         .iter()
-        .map(|d| Diagnostic::error(d.message.clone(), lines.span(source, d.span)))
+        .map(|d| Diagnostic::error(Code::Syntax, d.message.clone(), lines.span(source, d.span)))
         .collect();
     if parsed.panicked {
         if diagnostics.is_empty() {
             diagnostics.push(Diagnostic::error(
+                Code::Syntax,
                 "the file could not be parsed",
                 SourceSpan::default(),
             ));
@@ -69,7 +71,7 @@ pub fn compile_file<O: TypeOracle>(
     diagnostics.extend(
         errors
             .into_iter()
-            .map(|e| Diagnostic::error(e.message, lines.span(source, e.span))),
+            .map(|e| Diagnostic::error(e.code.into(), e.message, lines.span(source, e.span))),
     );
     let mut compiler = Compiler::new(project, key, source, lines, types, &tree);
     compiler.diagnostics = diagnostics;
@@ -290,6 +292,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             && self.types.is_singleton(kind)
         {
             self.diagnostics.push(Diagnostic::error(
+                Code::NotCreatable,
                 format!(
                     "Composite Singleton Type {} is not creatable.",
                     type_name(&ty)
@@ -448,12 +451,16 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 {
                     return;
                 }
-                format!(
+                let message = format!(
                     "`{name}` handles the signal `{signal}`, which `{}` does not have",
                     object.name
-                )
+                );
+                (Code::UnknownSignal, message)
             }
-            None => format!("`{name}` is not a property of `{}`", object.name),
+            None => (
+                Code::UnknownProperty,
+                format!("`{name}` is not a property of `{}`", object.name),
+            ),
         };
         self.report_missing(severity, message, span);
     }
@@ -470,13 +477,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         }
     }
 
-    fn report_missing(&mut self, severity: Severity, message: String, span: Span) {
+    fn report_missing(&mut self, severity: Severity, (code, message): (Code, String), span: Span) {
         let span = self.span(span);
         self.diagnostics.push(match severity {
-            Severity::Error => Diagnostic::error(message, span),
+            Severity::Error => Diagnostic::error(code, message, span),
             // Only Ljós's own description says so, and Qt may have it.
             Severity::Warning => {
-                Diagnostic::warning(format!("{message} in Ljós's table of types"), span)
+                Diagnostic::warning(code, format!("{message} in Ljós's table of types"), span)
             }
         });
     }
@@ -546,8 +553,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     let written = path.join(".");
                     let of = path[..at].join(".");
                     let message = match signal {
-                        Some(signal) => format!("`{written}`: `{of}` has no signal `{signal}`"),
-                        None => format!("`{written}`: `{of}` has no property `{name}`"),
+                        Some(signal) => (
+                            Code::UnknownSignal,
+                            format!("`{written}`: `{of}` has no signal `{signal}`"),
+                        ),
+                        None => (
+                            Code::UnknownProperty,
+                            format!("`{written}`: `{of}` has no property `{name}`"),
+                        ),
                     };
                     self.report_missing(severity, message, span);
                     return;
@@ -597,6 +610,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         }
         let span = Span::new(offset, offset + name.len() as u32);
         self.diagnostics.push(Diagnostic::error(
+            Code::UnknownMember,
             format!("`{name}.{member}`: `{name}` has no member `{member}`"),
             self.span(span),
         ));
@@ -680,6 +694,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 let n = if qualified { 2 } else { 1 };
                 if self.types.find(&path[..n]).is_none() {
                     self.diagnostics.push(Diagnostic::error(
+                        Code::UnknownType,
                         qml_front::unknown_type(self.types.oracle, &path[..n].join(".")),
                         self.lines.span(self.source, span),
                     ));
@@ -769,6 +784,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                         Err(()) => {
                             let span = self.span(expression.span());
                             self.diagnostics.push(Diagnostic::error(
+                                Code::InvalidAssignment,
                                 "Invalid property assignment: unknown enumeration",
                                 span,
                             ));
@@ -786,7 +802,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     // qml6 does not load the file; a binding that gives
                     // the same is left to the run.
                     let span = self.span(expression.span());
-                    self.diagnostics.push(Diagnostic::error(said, span));
+                    self.diagnostics
+                        .push(Diagnostic::error(Code::InvalidAssignment, said, span));
                     return;
                 }
                 let literal = match key {
@@ -800,6 +817,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     // makes an invalid colour instead.
                     let span = self.span(expression.span());
                     self.diagnostics.push(Diagnostic::error(
+                        Code::InvalidAssignment,
                         "Invalid property assignment: color expected",
                         span,
                     ));
@@ -1529,6 +1547,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             ),
             Err(message) => {
                 self.diagnostics.push(Diagnostic::error(
+                    Code::ScriptSyntax,
                     format!("the script does not parse as JavaScript: {message}"),
                     source_span,
                 ));
@@ -1922,6 +1941,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     .lines
                     .span(self.source, Span::new(offset, offset + name.len() as u32));
                 self.diagnostics.push(Diagnostic::warning(
+                    Code::UnresolvedName,
                     format!(
                         "`{name}` is not a name in sight: it is looked up when the program runs"
                     ),
@@ -2252,6 +2272,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             let script = crate::script::lower(path, &key, text);
             if let Some(trouble) = self.unavailable(&script, &mut vec![key.clone()]) {
                 self.diagnostics.push(Diagnostic::error(
+                    Code::ScriptUnavailable,
                     format!("the script \"{path}\" is unavailable: {trouble}"),
                     self.span(import.span),
                 ));

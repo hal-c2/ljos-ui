@@ -8,8 +8,9 @@
 //! It is an error when the compiler's was one. Where the front end held
 //! back (a type some C++ registers, or a file importing a module it does not
 //! know, which may provide any name), the compiler's findings are held back
-//! too: it cannot know either. What only the compiler says has the code
-//! `compiler`.
+//! too: it cannot know either. What only the compiler says has the
+//! compiler's code for its kind (`ljos_compiler::Code`), as `ljos check`
+//! shows it.
 
 use std::{
     collections::HashMap,
@@ -20,9 +21,6 @@ use ljos_compiler::{Project, compile_file};
 use qml_front::{Code, QtTypeOracle};
 
 use crate::{Diagnostic, LINTS, Severity};
-
-/// The code of what only the compiler says.
-pub(super) const CODE: &str = "compiler";
 
 /// `found` (the front end's findings for `files`, in their order) with the
 /// compiler's added in, each file's sorted by place. `held` are the places
@@ -118,7 +116,7 @@ fn compile(root: &Path, files: &[PathBuf]) -> Vec<Vec<Diagnostic>> {
                     } else {
                         Severity::Warning
                     },
-                    code: CODE.to_owned(),
+                    code: d.code.as_str().to_owned(),
                     message: d.message,
                 })
                 .collect()

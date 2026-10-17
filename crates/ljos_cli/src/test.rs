@@ -284,7 +284,12 @@ fn compiled(result: Result<Compiled, Vec<Diagnostic>>) -> Result<CompiledFile, D
             Some(error) => Err(error),
         },
         Err(diagnostics) => Err(first_error(&diagnostics).unwrap_or_else(|| {
-            Diagnostic::error("does not compile", ljos_ir::SourceSpan::default())
+            // Only a file the parser gave up on fails without saying why.
+            Diagnostic::error(
+                ljos_compiler::Code::Syntax,
+                "does not compile",
+                ljos_ir::SourceSpan::default(),
+            )
         })),
     }
 }

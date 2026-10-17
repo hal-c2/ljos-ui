@@ -615,19 +615,28 @@ async fn tools_and_type_resource_are_served_by_the_real_front_end() {
 // --- with the compiler ---------------------------------------------------
 
 /// `qml_check` reports what `ljos check` does: what only compiling finds,
-/// such as a value a property cannot hold, comes with the front end's.
+/// such as a value a property cannot hold, comes with the front end's, with
+/// the compiler's code for its kind.
 #[test]
-fn what_only_the_compiler_finds_is_reported_with_its_place() {
+fn what_only_the_compiler_finds_is_reported_with_its_place_and_code() {
     let dir = project(&[(
         "Main.qml",
-        "import QtQuick\nItem {\n    Text { horizontalAlignment: \"left\" }\n}\n",
+        "import QtQuick\nItem {\n    Text { horizontalAlignment: \"left\" }\n    height: \"tall\"\n}\n",
     )]);
     let diagnostics = run(dir.path(), &["Main.qml"], false);
-    assert_eq!(brief(&diagnostics), ["3:33 compiler"], "{diagnostics:?}");
+    assert_eq!(
+        brief(&diagnostics),
+        ["3:33 invalid-assignment", "4:13 invalid-assignment"],
+        "{diagnostics:?}"
+    );
     assert_eq!(diagnostics[0].severity, Severity::Error);
     assert_eq!(
         diagnostics[0].message,
         "Invalid property assignment: unknown enumeration"
+    );
+    assert_eq!(
+        diagnostics[1].message,
+        "Invalid property assignment: number expected"
     );
 }
 

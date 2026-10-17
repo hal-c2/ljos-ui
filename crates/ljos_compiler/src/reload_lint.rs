@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use ljos_ir::{CompiledFile, KeySeg, ObjIdx, ObjectDef, TypeRef};
 
-use crate::Diagnostic;
+use crate::{Code, Diagnostic};
 
 /// Types of the runtime whose objects hold what a user or the program gave
 /// them: text, a position, a choice, rows, a running clock.
@@ -63,6 +63,7 @@ pub fn lint<'a>(
                 continue;
             }
             out.push(Diagnostic::warning(
+                Code::ReloadIdentity,
                 format!(
                     "{} {ty} objects here have neither an id nor an objectName: a reload tells \
                      them apart by their order only. Give each an id to keep its state",

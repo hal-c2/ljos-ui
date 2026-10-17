@@ -137,8 +137,25 @@ Feature: Checking QML with the authoring tools
       And the answer's "/diagnostics/0/line" is 3
       And the answer's "/diagnostics/0/column" is 26
       And the answer's "/diagnostics/0/severity" is "error"
-      And the answer's "/diagnostics/0/code" is "compiler"
+      And the answer's "/diagnostics/0/code" is "invalid-assignment"
       And the answer's "/diagnostics/0/message" is "Invalid property assignment: unknown enumeration"
+
+    Scenario: A value of the wrong kind has the same code as a key of no enumeration
+      Given the file "Tall.qml":
+        """qml
+        import QtQuick
+        Item {
+            height: "tall"
+        }
+        """
+      When the agent calls the tool "qml_check" with:
+        """json
+        {"paths": ["Tall.qml"]}
+        """
+      Then the answer's "/diagnostics" has 1 entries
+      And the answer's "/diagnostics/0/column" is 13
+      And the answer's "/diagnostics/0/code" is "invalid-assignment"
+      And the answer's "/diagnostics/0/message" is "Invalid property assignment: number expected"
 
     Scenario: What the compiler and the front end both find is reported once
       Given the file "Twice.qml":

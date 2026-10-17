@@ -159,7 +159,8 @@ impl Checked {
                 } else {
                     self.warnings += 1;
                 }
-                self.diagnostics.push(format!("{name}.qml:{diagnostic}"));
+                self.diagnostics
+                    .push(format!("{name}.qml:{diagnostic} [{}]", diagnostic.code));
                 compiled_lines += 1;
             }
         }

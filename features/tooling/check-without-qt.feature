@@ -179,7 +179,7 @@ Feature: Checking files on a machine that has no Qt
       When the files are checked
       Then the check reports:
         """
-        Main.qml:3:11: error: `Button` is not a type of anything the file imports
+        Main.qml:3:11: error: `Button` is not a type of anything the file imports [unknown-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
@@ -198,7 +198,7 @@ Feature: Checking files on a machine that has no Qt
       When the files are checked
       Then the check reports:
         """
-        Main.qml:3:11: error: `Sparkle` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it)
+        Main.qml:3:11: error: `Sparkle` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it) [unknown-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
@@ -216,7 +216,7 @@ Feature: Checking files on a machine that has no Qt
       When the files are checked
       Then the check reports:
         """
-        Main.qml:4:11: error: `Map` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it)
+        Main.qml:4:11: error: `Map` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it) [unknown-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """

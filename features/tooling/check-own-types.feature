@@ -105,7 +105,7 @@ Feature: Checking files that use the modules Ljós adds
       When the files are checked
       Then the check reports:
         """
-        tst_case.qml:5:33: warning: `compre` is not a name in sight: it is looked up when the program runs
+        tst_case.qml:5:33: warning: `compre` is not a name in sight: it is looked up when the program runs [unresolved-name]
         1 files, 0 errors, 1 warnings
         """
 
@@ -120,7 +120,7 @@ Feature: Checking files that use the modules Ljós adds
       When the files are checked
       Then the check reports:
         """
-        tst_case.qml:2:9: error: `TestCase` is not a type of anything the file imports
+        tst_case.qml:2:9: error: `TestCase` is not a type of anything the file imports [unknown-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
@@ -193,7 +193,7 @@ Feature: Checking files that use the modules Ljós adds
       When the files are checked
       Then the check reports:
         """
-        Main.qml:2:9: error: `ErrorBoundary` is not a type of anything the file imports
+        Main.qml:2:9: error: `ErrorBoundary` is not a type of anything the file imports [unknown-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
