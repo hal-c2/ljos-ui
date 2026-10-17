@@ -1165,6 +1165,10 @@ impl<M: Send + 'static> Desktop<M> {
         if let Some(raw) = raw
             && surface.state.on_window_event(&surface.window, raw).repaint
         {
+            // The hold paces the passes egui asks for, until the scene's
+            // next wish, which may be a long way off (a press waits for
+            // its press-and-hold). What the platform said is heard now.
+            slot.held = None;
             self.repaints.request(slot.key, Instant::now());
         }
         match *event {
