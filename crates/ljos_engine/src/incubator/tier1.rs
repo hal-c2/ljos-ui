@@ -578,10 +578,19 @@ pub(super) fn has_js(v: &Value) -> bool {
     }
 }
 
+/// Whether there is a record in `v`, itself or in a list or record.
+fn holds_map(v: &Value) -> bool {
+    match v {
+        Value::Map(_) => true,
+        Value::List(items) => items.iter().any(holds_map),
+        _ => false,
+    }
+}
+
 /// Whether the two tiers gave the same value: the same to the bit, but
 /// that every NaN is one NaN. Stricter than `===` (`-0` is not `+0`, a
 /// number is not the string it prints as) and deep where `===` is by
-/// reference, since each tier builds its own arrays.
+/// reference, since each tier builds its own arrays and records.
 pub(super) fn same(a: &Value, b: &Value) -> bool {
     fn d(a: f64, b: f64) -> bool {
         a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
@@ -634,6 +643,12 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
         }
         (Value::List(x), Value::List(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(x, y)| same(x, y))
+        }
+        // By their fields, whatever order each tier made them in.
+        (Value::Map(x), Value::Map(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.iter().any(|(l, w)| k == l && same(v, w)))
         }
         _ => false,
     }
@@ -767,8 +782,15 @@ impl Engine {
         let outer = st.spy.replace(Some(Vec::new()));
         st.spying.set(true);
         let js = self.eval_expr_as(inst, expr, hint, args, false, kept);
-        // Tier 1 builds a list where the script builds an array.
-        let js_plain = js.as_ref().map(|v| self.plain(v));
+        // Tier 1 builds a list where the script builds an array, and holds
+        // a record where the script holds the object made of it.
+        let js_plain = js.as_ref().map(|v| {
+            if holds_map(&done.value) {
+                self.deep_copy(v)
+            } else {
+                self.plain(v)
+            }
+        });
         // Tier 0 may have answered before the key was taken off.
         st.skip.borrow_mut().truncate(depth);
         let seen = st.spy.replace(outer).unwrap_or_default();
@@ -902,6 +924,30 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn records_are_the_same_by_their_fields_alone() {
+        let record = |fields: Vec<(&str, Value)>| {
+            Value::map(fields.into_iter().map(|(k, v)| (Atom::intern(k), v)))
+        };
+        let kind = || ("kind", Value::string("home"));
+        let at = || ("at", Value::Real(2.0));
+        assert!(same(
+            &record(vec![kind(), at()]),
+            &record(vec![at(), kind()])
+        ));
+        assert!(!same(
+            &record(vec![kind()]),
+            &record(vec![("kind", Value::string("away"))])
+        ));
+        assert!(!same(&record(vec![kind()]), &record(vec![kind(), at()])));
+        assert!(!same(&record(vec![kind(), at()]), &record(vec![kind()])));
+        assert!(!same(
+            &record(vec![at()]),
+            &record(vec![("at", Value::Real(-0.0))])
+        ));
+        assert!(!same(&record(vec![kind()]), &Value::Null));
+    }
 
     #[test]
     fn a_register_value_is_what_javascript_gives_back() {
