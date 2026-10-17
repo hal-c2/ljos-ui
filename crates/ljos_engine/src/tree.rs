@@ -225,6 +225,11 @@ impl Engine {
     /// The model index, as scripts see one, of the item at `place` in
     /// `model`: its row and column under each of its ancestors, the top
     /// level first. In a tree each ancestor is in column 0.
+    ///
+    /// Two indexes of one place of one model are the same value, while
+    /// either is held, as `model.index(row, column)` in a script gives:
+    /// they are equal here and `===` there, and a property written the
+    /// index it holds does not notify.
     pub fn model_index(&self, model: Option<ObjectId>, place: &[(i32, i32)]) -> Value {
         crate::item_selection::make_index(self, model, place)
     }

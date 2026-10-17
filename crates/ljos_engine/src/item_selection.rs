@@ -1111,11 +1111,34 @@ const MAKERS: &str = r#"(function () {
     toString() { return "QModelIndex()" } };
   invalid.parent = invalid;
   Object.freeze(invalid);
+  // One index per place of a model while any is held, as Qt compares
+  // indexes by value: two of the same place are `===`, and a property
+  // written the index it holds has not changed.
+  const byModel = new WeakMap(), unowned = new Map();
+  const sweepAt = new WeakMap([[unowned, 64]]);
+  function liveOf(model) {
+    if (model === null || typeof model !== "object") return unowned;
+    let live = byModel.get(model);
+    if (live === undefined) {
+      byModel.set(model, live = new Map());
+      sweepAt.set(live, 64);
+    }
+    return live;
+  }
   function index(model, place) {
-    let at = invalid;
+    const live = liveOf(model);
+    let at = invalid, key = "";
     for (const [row, column] of place) {
+      key += row + "," + column + ";";
+      const known = live.get(key)?.deref();
+      if (known !== undefined) { at = known; continue; }
       at = Object.freeze({ row: row, column: column, parent: at, valid: true, model: model,
         internalId: 0, toString() { return "QModelIndex(" + this.row + "," + this.column + ")" } });
+      live.set(key, new WeakRef(at));
+    }
+    if (live.size >= sweepAt.get(live)) {
+      for (const [k, w] of live) if (w.deref() === undefined) live.delete(k);
+      sweepAt.set(live, Math.max(64, live.size * 2));
     }
     return at;
   }
