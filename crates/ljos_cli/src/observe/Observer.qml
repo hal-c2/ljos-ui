@@ -22,6 +22,23 @@ ApplicationWindow {
     // The system's scheme, light or dark, as the rest of the desktop.
     readonly property bool dark: Qt.styleHints.colorScheme === Qt.ColorScheme.Dark
 
+    // The controls inherit the window's palette: a field, a box to tick
+    // and a button are drawn in the theme's colours, not the style's.
+    palette.window: theme.bg
+    palette.windowText: theme.text
+    palette.base: theme.card
+    palette.alternateBase: theme.cardAlt
+    palette.text: theme.text
+    palette.placeholderText: theme.subtle
+    palette.button: window.dark ? "#2a2f38" : "#e2e5ea"
+    palette.buttonText: theme.text
+    palette.highlight: theme.accent
+    palette.highlightedText: window.dark ? "#15171c" : "#ffffff"
+    palette.mid: theme.rule
+    palette.dark: theme.subtle
+    palette.light: theme.cardAlt
+    palette.midlight: theme.rule
+
     QtObject {
         id: theme
         readonly property color bg: window.dark ? "#15171c" : "#f4f5f7"
