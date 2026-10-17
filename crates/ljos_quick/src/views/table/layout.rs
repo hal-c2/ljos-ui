@@ -14,8 +14,8 @@
 use std::collections::HashSet;
 
 use ljos_engine::{
-    Engine, ItemSelectionModel, Made, ObjectId, OverrideContent, PropIndex, RestoreMode, Urgency,
-    Value, WriteKind,
+    Engine, ItemSelectionModel, Made, ObjectId, OverrideContent, PropIndex, PropertyFlags,
+    RestoreMode, Urgency, Value, WriteKind,
 };
 
 use super::{TableState, TableView, state_of};
@@ -65,7 +65,7 @@ pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &TableState) {
         let _ = e.read(view, p);
     }
     // Which cell is current is told to the view, and with which are
-    // selected, to the delegates of a tree.
+    // selected, to the delegates.
     if let Some(sm) = e.read(view, TableView::SELECTION_MODEL.index).as_object() {
         let _ = e.read(sm, ItemSelectionModel::CURRENT_INDEX.index);
         let _ = e.read(sm, ItemSelectionModel::SELECTED_INDEXES.index);
@@ -358,7 +358,9 @@ fn among(e: &Engine, st: &TableState, place: &[(i32, i32)], indexes: &Value) -> 
         .any(|i| e.model_index_place(i, st.model.get()).as_deref() == Some(place))
 }
 
-/// Tells the delegate of a tree's cell where its row is in the tree.
+/// Tells the delegate of a cell whether it is current, selected and
+/// edited, and a tree's delegate where its row is in the tree. A table's
+/// delegate is told only what it declares `required`, as on qml6.
 /// `first`: the delegate was just made, and its bindings did not run
 /// yet; a required property is given here or not at all.
 pub(crate) fn decorate(
@@ -369,9 +371,10 @@ pub(crate) fn decorate(
     obj: ObjectId,
     first: bool,
 ) {
-    if !st.tree.get() || !e.is_alive(obj) {
+    if !e.is_alive(obj) {
         return;
     }
+    let tree = st.tree.get();
     let cols = st.cells.columns().max(1);
     let Some(line) = st.cells.line(index / cols) else {
         return;
@@ -387,20 +390,36 @@ pub(crate) fn decorate(
         }
         None => (false, false),
     };
-    let values = [
+    let editing = st
+        .editing
+        .get()
+        .is_some_and(|ed| ed.cell == (index / cols, index % cols));
+    let in_tree = [
         ("treeView", Value::Object(view)),
         ("isTreeNode", Value::Bool(index.is_multiple_of(cols))),
         ("expanded", Value::Bool(st.cells.is_expanded(&line.path))),
         ("hasChildren", Value::Bool(line.has_children)),
         ("depth", Value::Int(line.depth as i32)),
+    ];
+    let in_any = [
         ("current", Value::Bool(current)),
         ("selected", Value::Bool(selected)),
-        ("editing", Value::Bool(false)),
+        ("editing", Value::Bool(editing)),
     ];
-    for (name, v) in values {
+    let meta = (!tree).then(|| e.meta_of(obj)).flatten();
+    let tree_part = if tree { &in_tree[..] } else { &[] };
+    for (name, v) in tree_part.iter().chain(&in_any).cloned() {
         let Ok(p) = e.property_index(obj, name) else {
             continue;
         };
+        if let Some(meta) = &meta
+            && !meta
+                .properties
+                .get(p.0 as usize)
+                .is_some_and(|d| d.flags.contains(PropertyFlags::REQUIRED))
+        {
+            continue;
+        }
         let r = if first {
             e.write_internal(obj, p, v, WriteKind::Imperative)
         } else {
@@ -419,11 +438,7 @@ pub(crate) fn tapped(e: &Engine, view: ObjectId, obj: ObjectId, double: bool) {
         return;
     };
     let cols = st.cells.columns().max(1);
-    if double {
-        super::nav::double_tapped(e, view, i / cols);
-    } else {
-        super::nav::tapped(e, view, &st, (i / cols, i % cols));
-    }
+    super::nav::tapped_cell(e, view, &st, (i / cols, i % cols), double);
 }
 
 /// The cell at a point of the content, as last laid out.

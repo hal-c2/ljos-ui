@@ -2543,6 +2543,8 @@ module QtQuick
 		method positionViewAtRow
 		method positionViewAtCell
 		method positionViewAtIndex
+		method edit
+		method closeEditor
 	type QtQuick.TapHandler TapHandler
 		prototype QtQml.QtObject named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3

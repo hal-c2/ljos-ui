@@ -12,15 +12,16 @@
 //! current one (only the first with `SingleSelection`); a move without
 //! Shift, or a tap, takes the selection away. Backtab never selects:
 //! Shift is how it is typed. A tap makes its cell
-//! current; a double tap expands or collapses a tree's row.
+//! current; a double tap expands or collapses a tree's row. Keys and taps
+//! open editors as the view's `editTriggers` say ([`edit`]).
 
 use ljos_engine::{Engine, ItemSelectionModel, ObjectId, Value};
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use super::{
-    TableState, TableView, edit_trigger, index_of_cell, layout, selection_behavior, selection_mode,
-    state_of,
+    TableState, TableView, edit, edit_trigger, index_of_cell, layout, selection_behavior,
+    selection_mode, state_of,
 };
 use crate::flickable::{Flickable, drag};
 use crate::input::{KeyEvent, Modifiers, MouseButtons, PointerEvent};
@@ -77,12 +78,17 @@ fn selection_model(e: &Engine, view: ObjectId) -> Option<ObjectId> {
 }
 
 fn press(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
-    if !flag(e, view, TableView::KEY_NAVIGATION_ENABLED.index) {
-        return false;
-    }
     let (Some(st), Some(_)) = (state_of(e, view), selection_model(e, view)) else {
         return false;
     };
+    if let Some(current) = e.untrack(|| layout::current_cell(e, view, &st))
+        && edit::key_opens(e, view, &st, current, ev)
+    {
+        return true;
+    }
+    if !flag(e, view, TableView::KEY_NAVIGATION_ENABLED.index) {
+        return false;
+    }
     let rows = st.cells.line_count();
     if rows == 0 {
         return false;
@@ -105,12 +111,7 @@ fn press(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
         ) => (first_in_sight(e, view, &st), 0),
         (key::HOME, Some((r, _))) => (r, 0),
         (key::END, Some((r, _))) => (r, last_column),
-        (key::TAB, Some((r, c))) if c < last_column => (r, c + 1),
-        (key::TAB, Some((r, _))) if r < last => (r + 1, 0),
-        (key::TAB, Some(_)) => (0, 0),
-        (key::BACKTAB, Some((r, c))) if c > 0 => (r, c - 1),
-        (key::BACKTAB, Some((r, _))) if r > 0 => (r - 1, last_column),
-        (key::BACKTAB, Some(_)) => (last, last_column),
+        (key::TAB | key::BACKTAB, Some(cell)) => next_cell(&st, cell, ev.key == key::TAB),
         (key::UP, Some((r, c))) => (r.saturating_sub(1), c),
         (key::DOWN, Some((r, c))) => ((r + 1).min(last), c),
         (key::PAGE_UP, Some((r, c))) => (r.saturating_sub(page), c),
@@ -178,6 +179,38 @@ fn move_to(
     let index = index_of_cell(e, st, to.0, to.1);
     let r = e.invoke_by_name(sm, "setCurrentIndex", &[index, Value::Int(0)]);
     super::warn(e, "setCurrentIndex", r.map(drop));
+}
+
+/// The cell after `cell` (`forward`) or before it, from the end of a row
+/// to the next and from the last cell to the first.
+pub(crate) fn next_cell(st: &TableState, (r, c): (usize, usize), forward: bool) -> (usize, usize) {
+    let last = st.cells.line_count().saturating_sub(1);
+    let last_column = st.cells.columns().saturating_sub(1);
+    match forward {
+        true if c < last_column => (r, c + 1),
+        true if r < last => (r + 1, 0),
+        true => (0, 0),
+        false if c > 0 => (r, c - 1),
+        false if r > 0 => (r - 1, last_column),
+        false => (last, last_column),
+    }
+}
+
+/// Makes `cell` current, keeping the selection.
+pub(crate) fn make_current(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, usize)) {
+    let Some(sm) = selection_model(e, view) else {
+        return;
+    };
+    let index = index_of_cell(e, st, cell.0, cell.1);
+    let r = e.invoke_by_name(sm, "setCurrentIndex", &[index, Value::Int(0)]);
+    super::warn(e, "setCurrentIndex", r.map(drop));
+}
+
+/// Takes the selection away.
+pub(crate) fn forget(e: &Engine, view: ObjectId, st: &TableState) {
+    if let Some(sm) = selection_model(e, view) {
+        forget_selection(e, st, sm);
+    }
 }
 
 fn forget_selection(e: &Engine, st: &TableState, sm: ObjectId) {
@@ -295,7 +328,13 @@ fn pointer_release(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Poi
     if now != content || (at - pressed).hypot() > DRAG_THRESHOLD {
         return;
     }
-    let Some(cell) = layout::cell_at(&st, at.x + now.0, at.y + now.1) else {
+    let (x, y) = (at.x + now.0, at.y + now.1);
+    if edit::on_editor(e, &st, x, y) {
+        return;
+    }
+    // A tap anywhere else commits the open editor, a tap on no cell too.
+    edit::close(e, view, &st, true);
+    let Some(cell) = layout::cell_at(&st, x, y) else {
         return;
     };
     tap(e, view, &st, cell, ev.time);
@@ -308,16 +347,40 @@ fn tap(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, usize), time: 
         .last_tap
         .take()
         .is_some_and(|(t, c)| c == cell && time.saturating_since(t) <= DOUBLE_CLICK_INTERVAL);
+    if !double {
+        st.last_tap.set(Some((time, cell)));
+    }
+    tapped_cell(e, view, st, cell, double);
+}
+
+/// A tap, or the second of a double tap, on `cell`, and the editor it
+/// opens as the edit triggers say.
+pub(crate) fn tapped_cell(
+    e: &Engine,
+    view: ObjectId,
+    st: &TableState,
+    cell: (usize, usize),
+    double: bool,
+) {
+    edit::close(e, view, st, true);
+    // Whether it was selected is asked before the tap takes the
+    // selection away.
+    let was_selected = !double
+        && selection_model(e, view).is_some_and(|sm| {
+            let index = index_of_cell(e, st, cell.0, cell.1);
+            e.invoke_by_name(sm, "isSelected", &[index])
+                .is_ok_and(|v| v.to_boolean())
+        });
     if double {
         double_tapped(e, view, cell.0);
     } else {
-        st.last_tap.set(Some((time, cell)));
         tapped(e, view, st, cell);
     }
+    edit::tap_opens(e, view, st, cell, double, was_selected);
 }
 
 /// A tap makes its cell current and takes the selection away.
-pub(crate) fn tapped(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, usize)) {
+fn tapped(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, usize)) {
     if !flag(e, view, TableView::POINTER_NAVIGATION_ENABLED.index) {
         return;
     }
@@ -332,7 +395,7 @@ pub(crate) fn tapped(e: &Engine, view: ObjectId, st: &TableState, cell: (usize, 
 
 /// A double tap expands a tree's row, or collapses it, unless a double
 /// tap edits.
-pub(crate) fn double_tapped(e: &Engine, view: ObjectId, row: usize) {
+fn double_tapped(e: &Engine, view: ObjectId, row: usize) {
     let Some(st) = state_of(e, view) else {
         return;
     };

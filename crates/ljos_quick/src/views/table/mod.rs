@@ -11,6 +11,7 @@
 //! in the tree (`depth`, `expanded`, `hasChildren`, `isTreeNode`).
 
 mod cells;
+mod edit;
 mod layout;
 mod nav;
 
@@ -118,6 +119,8 @@ pub(crate) struct TableState {
     pub press: Cell<Option<(ljos_render::kurbo::Point, (f64, f64))>>,
     /// The last tap, which a tap on its cell soon after makes double.
     pub last_tap: Cell<Option<(ljos_runtime::Time, (usize, usize))>>,
+    /// The cell an editor is open on.
+    pub editing: Cell<Option<edit::Editing>>,
 }
 
 impl std::fmt::Debug for TableState {
@@ -139,8 +142,7 @@ impl TableState {
 /// column (a list, a number, a `ListModel`) shows as one column.
 ///
 /// Kept and read back, with no effect yet: `syncView`, `syncDirection`,
-/// `animate`, `alternatingRows`, the edit settings, `resizableColumns`
-/// and `resizableRows`.
+/// `animate`, `alternatingRows`, `resizableColumns` and `resizableRows`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -256,7 +258,7 @@ impl Default for TableView {
 pub struct TableViewAttached {
     #[qml(notify, readonly)]
     pub view: Option<ObjectId>,
-    /// The delegate that edits the cell: kept, as no cell is edited yet.
+    /// What edits the cell: `edit()` makes one over its delegate.
     #[qml(notify, object = "Component")]
     pub edit_delegate: Option<ObjectId>,
 }
@@ -271,8 +273,8 @@ impl TableViewAttached {
     #[qml(signal, name = "reused")]
     fn reused();
 
-    /// An edit of the cell is to be kept; never sent, as no cell is
-    /// edited yet.
+    /// Sent to the editor of a cell when what it edited is to be kept,
+    /// before it closes.
     #[qml(signal, name = "commit")]
     fn commit();
 }
@@ -412,6 +414,7 @@ impl ViewHost for Host {
         }
         if let Some(st) = state_of(e, self.0) {
             st.hidden.borrow_mut().remove(&object);
+            edit::forget(e, &st, object);
         }
     }
 
@@ -458,6 +461,8 @@ fn start(cx: &Cx, is_tree: bool) -> Result<(), EngineError> {
             let object = e.plain(&model).as_object();
             let list =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));
+            // An editor does not outlive its model, nor commit to the new.
+            edit::close(e, me, &source, false);
             source.model.set(object);
             // No model: no rows, and no columns in a tree; a table has
             // one column still (observed on qml6).
@@ -748,6 +753,21 @@ impl TableView {
     fn position_view_at_index(cx: &Cx, index: Value, _mode: Value) {
         let row = Self::row_at_index(cx, index);
         layout::show_row(cx.engine, cx.this, row);
+    }
+
+    /// `edit(index)`: opens an editor on the cell of a model index,
+    /// whatever `editTriggers` say, committing the one open.
+    #[qml(invokable, name = "edit")]
+    fn edit(cx: &Cx, index: Value) {
+        edit::edit_index(cx.engine, cx.this, &index);
+    }
+
+    /// `closeEditor()`: closes the open editor without a commit.
+    #[qml(invokable, name = "closeEditor")]
+    fn close_editor(cx: &Cx) {
+        if let Some(st) = state_of(cx.engine, cx.this) {
+            edit::close(cx.engine, cx.this, &st, false);
+        }
     }
 
     /// The layout changed.
