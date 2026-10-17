@@ -346,7 +346,7 @@ fn ir_key(file: &CompiledFile, (ci, oi): (usize, usize)) -> Option<String> {
 }
 
 /// `at fn (module:line:col)` or `at module:line:col`: the module and line.
-fn frame_place(frame: &str) -> Option<(&str, u32)> {
+pub(crate) fn frame_place(frame: &str) -> Option<(&str, u32)> {
     let frame = frame.trim().strip_prefix("at ")?;
     let inner = match (frame.rfind('('), frame.ends_with(')')) {
         (Some(open), true) => &frame[open + 1..frame.len() - 1],

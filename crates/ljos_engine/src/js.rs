@@ -30,6 +30,26 @@ use crate::types::TypeTag;
 use crate::value::{Color, Font, JsHandle, Value};
 use crate::value_faces;
 
+/// `fileName` and `lineNumber` of an error, as Qt's engine gives them: the
+/// file and line it was made at, read from its stack when asked. Not an
+/// error's own, so `Object.keys` leaves them out; what a script assigns
+/// is its own.
+const ERROR_PLACE: &str = r#"(() => {
+  const place = globalThis.__ljos_errorPlace;
+  const at = (name, index) => Object.defineProperty(Error.prototype, name, {
+    get() {
+      const p = this instanceof Error ? place(String(this.stack)) : null;
+      return p ? p[index] : undefined;
+    },
+    set(value) {
+      Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
+    },
+    configurable: true,
+  });
+  at("fileName", 0);
+  at("lineNumber", 1);
+})();"#;
+
 /// Property id of the synthetic `parent` (the visual parent) on types that
 /// do not declare one.
 const PARENT_ID: u32 = u32::MAX - 1;
@@ -1231,7 +1251,32 @@ impl Engine {
                 Engine::from_inner(inner).instance_of(value, *index as usize),
             ))
         });
+        // The file and line of the first frame of a stack that is a place
+        // in a file, as `[url, line]`: where an error was made.
+        let table = js.lines.clone();
+        let error_place: HostFn = Rc::new(move |_scope, args| {
+            let Some(JsValue::String(stack)) = args.first() else {
+                return Ok(JsValue::Null);
+            };
+            let lines = table.borrow();
+            let place = stack.lines().find_map(|frame| {
+                let (module, line) = crate::introspect::frame_place(frame.trim())?;
+                lines.map(module, line)
+            });
+            Ok(match place {
+                Some((url, line)) => {
+                    JsValue::Array(vec![JsValue::String(url), JsValue::Number(f64::from(line))])
+                }
+                None => JsValue::Null,
+            })
+        });
         let err = |e: JsFault| EngineError::Js(e.to_string());
+        js.host
+            .set_global_function("__ljos_errorPlace", error_place)
+            .map_err(err)?;
+        js.host
+            .eval_script("error-place", ERROR_PLACE)
+            .map_err(err)?;
         js.host
             .set_global_function("__ljos_type", type_of)
             .map_err(err)?;
