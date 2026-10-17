@@ -161,6 +161,34 @@ fn a_tree_view_reads_a_folder_when_it_is_expanded() {
 }
 
 #[test]
+fn expanding_every_row_reads_the_folders_not_read_yet() {
+    let engine = ljos::engine();
+    let clock = Arc::new(VirtualClock::new());
+    engine.set_clock(Rc::new(Arc::clone(&clock)));
+    engine.register_module(ljos::module!("Example" 1.0 => [Files]));
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Main.qml"), MAIN).unwrap();
+    let source = ljos::dev::compile_dir_with(dir.path(), &engine).unwrap();
+    let root = ljos::create_root(&engine, source, "Main").unwrap();
+    let files = engine.read_by_name(root, "files").as_object().unwrap();
+    let view = engine.read_by_name(root, "view").as_object().unwrap();
+    let listing = Listing::new();
+    engine
+        .set_object_tree(files, Rc::new(Lazy(listing.clone())))
+        .unwrap();
+    engine.invoke_by_name(root, "show", &[]).unwrap();
+
+    engine
+        .invoke_by_name(view, "expandRecursively", &[])
+        .unwrap();
+    assert_eq!(listing.fetches.get(), 1);
+    clock.set(clock.now() + Duration::from_millis(100));
+    engine.advance_timers(clock.now());
+    let v = engine.invoke_by_name(view, "names", &[]).unwrap();
+    assert_eq!(v.to_js_string().to_string(), "docs0> a.txt1 b.txt1 bin0");
+}
+
+#[test]
 fn a_lazy_tree_says_which_folders_it_has_not_read() {
     let engine = ljos::engine();
     let listing = Listing::new();

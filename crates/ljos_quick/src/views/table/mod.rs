@@ -874,6 +874,7 @@ impl TreeView {
             match st.cells.line(row as usize) {
                 Some(l) => {
                     st.cells.set_expanded(&l.path, true);
+                    st.cells.fetch_more(e, &l.path);
                     l.path
                 }
                 None => return,
@@ -885,20 +886,30 @@ impl TreeView {
         } else {
             (depth as usize).saturating_sub(usize::from(row >= 0))
         };
-        fn go(tree: &dyn ljos_engine::ItemTree, cells: &Cells, path: &mut Vec<usize>, left: usize) {
+        // A row whose rows are not read yet is expanded and asked for
+        // them; they come later, and the levels under them stay as the
+        // model gives them.
+        fn go(
+            e: &Engine,
+            tree: &dyn ljos_engine::ItemTree,
+            cells: &Cells,
+            path: &mut Vec<usize>,
+            left: usize,
+        ) {
             if left == 0 {
                 return;
             }
             for r in 0..tree.row_count(path) {
                 path.push(r);
-                if tree.row_count(path) > 0 {
+                if tree.has_children(path) {
                     cells.set_expanded(path, true);
-                    go(tree, cells, path, left - 1);
+                    cells.fetch_more(e, path);
+                    go(e, tree, cells, path, left - 1);
                 }
                 path.pop();
             }
         }
-        go(&*tree, &st.cells, &mut start.clone(), levels);
+        go(e, &*tree, &st.cells, &mut start.clone(), levels);
         settle(e, &st);
         let r = e.emit_by_name(me, "expanded", &[Value::Int(row), Value::Int(depth)]);
         warn(e, "expanded", r);
@@ -952,6 +963,7 @@ impl TreeView {
         let above = &path[..path.len() - 1];
         for n in root.len() + 1..=above.len() {
             st.cells.set_expanded(&above[..n], true);
+            st.cells.fetch_more(e, &above[..n]);
         }
         let top = st
             .cells
