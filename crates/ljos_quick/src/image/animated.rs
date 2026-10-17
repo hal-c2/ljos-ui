@@ -31,10 +31,6 @@ pub struct AnimatedImage {
     pub playing: bool,
     #[qml(notify)]
     pub paused: bool,
-    #[qml(notify)]
-    pub current_frame: i32,
-    #[qml(notify, readonly)]
-    pub frame_count: i32,
     /// How fast the frames go, as a share of their own pace.
     #[qml(notify)]
     pub speed: f64,
@@ -48,8 +44,6 @@ impl Default for AnimatedImage {
             image: Image::default(),
             playing: true,
             paused: false,
-            current_frame: 0,
-            frame_count: 0,
             speed: 1.0,
             timer: Cell::new(None),
         }
@@ -78,7 +72,7 @@ impl AnimatedImage {
         })?;
         e.watch(me, AnimatedImage::PAUSED.index, move |e, _| schedule(e, me))?;
         e.watch(me, AnimatedImage::SPEED.index, move |e, _| schedule(e, me))?;
-        e.watch(me, AnimatedImage::CURRENT_FRAME.index, move |e, v| {
+        e.watch(me, Image::CURRENT_FRAME.index, move |e, v| {
             let n = count(e, me);
             let wanted = v.to_number();
             if n == 0 || !wanted.is_finite() || wanted < 0.0 {
@@ -105,7 +99,7 @@ pub(super) fn loaded(e: &Engine, me: ObjectId) {
     set(
         e,
         me,
-        AnimatedImage::FRAME_COUNT.index,
+        Image::FRAME_COUNT.index,
         Value::Int(i32::try_from(n).unwrap_or(i32::MAX)),
     );
     show(e, me, 0);
@@ -128,8 +122,8 @@ fn show(e: &Engine, me: ObjectId, n: usize) {
     with_run(e, me, |r| r.frame = n);
     bump(e, me);
     let value = Value::Int(i32::try_from(n).unwrap_or(i32::MAX));
-    let changed = e.untrack(|| e.read(me, AnimatedImage::CURRENT_FRAME.index)) != value;
-    set(e, me, AnimatedImage::CURRENT_FRAME.index, value);
+    let changed = e.untrack(|| e.read(me, Image::CURRENT_FRAME.index)) != value;
+    set(e, me, Image::CURRENT_FRAME.index, value);
     // Qt says so for the first frame of every picture, too.
     if changed || n == 0 {
         let _ = e.emit_by_name(me, "frameChanged", &[]);

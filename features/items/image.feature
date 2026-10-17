@@ -43,6 +43,8 @@ Feature: Image
       | paintedHeight       | 0     |
       | sourceSize.width    | 0     |
       | sourceSize.height   | 0     |
+      | frameCount          | 0     |
+      | currentFrame        | 0     |
 
   Scenario: A picture in a local file is ready at once
     Then the property "status" of "picture" is 1
@@ -54,6 +56,14 @@ Feature: Image
     And the property "implicitHeight" of "picture" is 20
     And the property "width" of "picture" is 40
     And the property "height" of "picture" is 20
+
+  Scenario: A picture is one frame
+    Then the property "frameCount" of "picture" is 1
+    And the property "currentFrame" of "picture" is 0
+
+  Scenario: A frame the picture does not have is not taken
+    When the property "currentFrame" of "picture" is set to 3
+    Then the property "currentFrame" of "picture" is 0
 
   Scenario: The source size reads the picture's size while none is asked for
     Then the property "sourceSize.width" of "picture" is 40
@@ -75,6 +85,8 @@ Feature: Image
     When the property "source" of "picture" is set to ""
     Then the property "status" of "picture" is 0
     And the property "progress" of "picture" is 0
+    # Qt counts frames only when a picture loads or fails.
+    And the property "frameCount" of "picture" is 1
     And the property "implicitWidth" of "picture" is 0
     And the property "implicitHeight" of "picture" is 0
 
@@ -95,6 +107,7 @@ Feature: Image
     Then the property "status" of "picture" is 3
     And the property "progress" of "picture" is 0
     And the property "implicitWidth" of "picture" is 0
+    And the property "frameCount" of "picture" is 1
     And the log has a warning matching "Scenario.qml:5:9: QML Image: Cannot open: file:///.*missing\.png$"
 
   Scenario: A file that is not an image is an error and a warning

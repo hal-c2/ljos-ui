@@ -1051,13 +1051,9 @@ module QtQuick
 		prototype QtQuick.Image named
 		prop playing QtQml.bool named
 		prop paused QtQml.bool named
-		prop currentFrame QtQml.int named
-		prop frameCount QtQml.int named readonly
 		prop speed QtQml.real named
 		signal playingChanged
 		signal pausedChanged
-		signal currentFrameChanged
-		signal frameCountChanged
 		signal speedChanged
 		signal frameChanged
 	type QtQuick.Animation Animation
@@ -1574,6 +1570,8 @@ module QtQuick
 		prop paintedWidth QtQml.real named readonly
 		prop paintedHeight QtQml.real named readonly
 		prop sourceClipRect QtQml.rect named reset
+		prop currentFrame QtQml.int named
+		prop frameCount QtQml.int named readonly
 		signal fillModeChanged
 		signal horizontalAlignmentChanged
 		signal verticalAlignmentChanged
@@ -1582,6 +1580,8 @@ module QtQuick
 		signal paintedWidthChanged
 		signal paintedHeightChanged
 		signal sourceClipRectChanged
+		signal currentFrameChanged
+		signal frameCountChanged
 	type QtQuick.IntValidator IntValidator
 		prototype QtQml.QtObject named
 		prop bottom QtQml.int named

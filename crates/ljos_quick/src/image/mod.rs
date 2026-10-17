@@ -295,6 +295,14 @@ pub struct Image {
     /// The part of the (scaled) picture to keep; empty for all of it.
     #[qml(notify, reset)]
     pub source_clip_rect: Rect,
+    /// Of a still picture, always the first: there is no other.
+    #[qml(notify)]
+    pub current_frame: i32,
+    /// 1 for a still picture, there or failed; 0 until one of those, and
+    /// left as it was by an empty source, as in Qt. An `AnimatedImage`
+    /// counts its frames.
+    #[qml(notify, readonly)]
+    pub frame_count: i32,
 }
 
 impl Default for Image {
@@ -309,6 +317,8 @@ impl Default for Image {
             painted_width: 0.0,
             painted_height: 0.0,
             source_clip_rect: Rect::default(),
+            current_frame: 0,
+            frame_count: 0,
         }
     }
 }
@@ -327,6 +337,14 @@ impl Image {
         e.watch(me, Image::SOURCE_CLIP_RECT.index, move |e, _| {
             reload(e, me);
         })?;
+        if !is_a::<AnimatedImage>(e, me) {
+            // Qt keeps a still picture on its one frame, whatever is asked.
+            e.watch(me, Image::CURRENT_FRAME.index, move |e, v| {
+                if v.to_number() != 0.0 {
+                    set(e, me, Image::CURRENT_FRAME.index, Value::Int(0));
+                }
+            })?;
+        }
         e.effect_in(me, move |e| update_painted(e, me))?;
         Ok(())
     }
@@ -348,6 +366,14 @@ fn set(e: &Engine, me: ObjectId, p: PropIndex, v: Value) {
         && let Err(err) = write_computed(e, me, p, v)
     {
         e.log(LogLevel::Warning, CATEGORY, format!("{err}"));
+    }
+}
+
+/// `frameCount` of an `Image` that is no `AnimatedImage`, after its
+/// `status`, in Qt's order. Qt leaves it alone when the source is cleared.
+fn count_still_frames(e: &Engine, me: ObjectId, status: i32) {
+    if status != image_status::NULL && is_a::<Image>(e, me) && !is_a::<AnimatedImage>(e, me) {
+        set(e, me, Image::FRAME_COUNT.index, Value::Int(1));
     }
 }
 
@@ -590,6 +616,7 @@ fn finish(
             ImageBase::STATUS.index,
             Value::Int(image_status::READY),
         );
+        count_still_frames(e, me, image_status::READY);
         if !asked {
             report_size(e, me, w, h);
         }
@@ -618,6 +645,7 @@ fn unload(e: &Engine, me: ObjectId, status: i32) {
         set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(0.0));
         set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(0.0));
         set(e, me, ImageBase::STATUS.index, Value::Int(status));
+        count_still_frames(e, me, status);
         if !asked {
             report_size(e, me, 0.0, 0.0);
         }
