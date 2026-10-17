@@ -86,6 +86,11 @@ impl<U: From<Wake> + Send + 'static> PlatformHost for WinitHost<U> {
 
     fn run<A: HostApp<Self>>(self, app: A) -> Result<(), HostError> {
         let proxy = self.event_loop.create_proxy();
+        #[cfg(target_os = "macos")]
+        {
+            let waker = self.event_loop.create_proxy();
+            appkit_reopen::install(Box::new(move || drop(waker.send_event(U::from(Wake)))));
+        }
         // Until the application asks for a time, the loop sleeps.
         self.event_loop.set_control_flow(ControlFlow::Wait);
         let mut runner = Runner {
@@ -444,6 +449,15 @@ where
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "macos")]
+        while let Some(has_visible_windows) = appkit_reopen::take() {
+            self.deliver(
+                event_loop,
+                Event::Reopen {
+                    has_visible_windows,
+                },
+            );
+        }
         // Here and not at each focus event: when the keyboard goes from
         // one window of the application to another, the first loses it
         // before the second has it, and the application was never left.
@@ -760,6 +774,97 @@ mod platform {
     pub(crate) use imp::{
         HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, set_backdrop, with_app_id, with_kind,
     };
+}
+
+/// AppKit asks the application's delegate what to do when the user opens
+/// the application again (a click on its icon in the Dock); winit's
+/// delegate does not answer, so the question is answered here. The answer
+/// is yes, AppKit's own way, which with no window shown does nothing: the
+/// application hears of it and shows one if it wants.
+#[cfg(target_os = "macos")]
+mod appkit_reopen {
+    use std::cell::RefCell;
+    use std::ffi::CString;
+
+    use objc2::encode::Encode;
+    use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, Sel};
+    use objc2::{MainThreadMarker, sel};
+    use objc2_app_kit::NSApplication;
+
+    thread_local! {
+        static WAKE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+        static REOPENED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// The delegate's answer to
+    /// `applicationShouldHandleReopen:hasVisibleWindows:`.
+    unsafe extern "C-unwind" fn should_handle_reopen(
+        _this: *mut AnyObject,
+        _cmd: Sel,
+        _sender: *mut AnyObject,
+        has_visible_windows: Bool,
+    ) -> Bool {
+        REOPENED.with_borrow_mut(|r| r.push(has_visible_windows.as_bool()));
+        WAKE.with_borrow(|w| {
+            if let Some(wake) = w {
+                wake();
+            }
+        });
+        Bool::YES
+    }
+
+    /// Answers for winit's delegate from now on; `wake` brings the loop
+    /// round to deliver what was heard.
+    pub(crate) fn install(wake: Box<dyn Fn()>) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        WAKE.with_borrow_mut(|w| *w = Some(wake));
+        let app = NSApplication::sharedApplication(mtm);
+        let Some(delegate) = app.delegate() else {
+            return;
+        };
+        let sel = sel!(applicationShouldHandleReopen:hasVisibleWindows:);
+        let object: &AnyObject = delegate.as_ref();
+        let class: &AnyClass = object.class();
+        if class.responds_to(sel) {
+            return;
+        }
+        let Ok(types) = CString::new(format!(
+            "{}{}{}{}{}",
+            Bool::ENCODING,
+            <*mut AnyObject>::ENCODING,
+            Sel::ENCODING,
+            <*mut AnyObject>::ENCODING,
+            Bool::ENCODING,
+        )) else {
+            return;
+        };
+        // SAFETY: the function has the selector's signature, as `types`
+        // says; the class is winit's, made at run time, and gets one
+        // method it did not have.
+        let added = unsafe {
+            let imp: Imp = std::mem::transmute::<
+                unsafe extern "C-unwind" fn(*mut AnyObject, Sel, *mut AnyObject, Bool) -> Bool,
+                Imp,
+            >(should_handle_reopen);
+            objc2::ffi::class_addMethod(
+                std::ptr::from_ref(class).cast_mut(),
+                sel,
+                imp,
+                types.as_ptr(),
+            )
+        };
+        if added.as_bool() {
+            // AppKit looks at what a delegate answers when it is set.
+            app.setDelegate(Some(&delegate));
+        }
+    }
+
+    /// What was heard since the last call, oldest first.
+    pub(crate) fn take() -> Option<bool> {
+        REOPENED.with_borrow_mut(|r| (!r.is_empty()).then(|| r.remove(0)))
+    }
 }
 
 /// The system's materials as views under winit's: an `NSVisualEffectView`

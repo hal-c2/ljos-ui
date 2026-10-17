@@ -31,6 +31,12 @@ pub enum Event<'a, R, U> {
     MemoryPressure,
     /// The application was asked to open this.
     OpenUrl(String),
+    /// The user opened the application again while it runs: on macOS a
+    /// click on its icon in the Dock. With no window shown it is the time
+    /// to show one; the system does nothing more itself.
+    Reopen {
+        has_visible_windows: bool,
+    },
     /// The process may be killed after this: write what must survive.
     SaveState,
     /// The time given to `HostControl::wake_at` has come.
