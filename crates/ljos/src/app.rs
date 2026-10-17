@@ -148,6 +148,20 @@ impl<M> App<M> {
         self
     }
 
+    /// Whether closing the last window ends the application, as
+    /// `QGuiApplication::setQuitOnLastWindowClosed` says; true unless this
+    /// says otherwise. Without it the application runs on with no window,
+    /// at rest, until `Qt.quit()`, and hears when its user opens it again
+    /// (`Qt.application.reopened`). The application can change it as it
+    /// runs (`Qt.application.quitOnLastWindowClosed`).
+    #[must_use]
+    pub fn quit_on_last_window_closed(mut self, quits: bool) -> Self {
+        self.modules.push(Box::new(move |engine: &Engine| {
+            ljos_controls::set_quit_on_last_window_closed(engine, quits);
+        }));
+        self
+    }
+
     /// The application's locale (`de_DE`, `is`), over the system's: what
     /// `Qt.locale()` and [`Locale::of`](crate::locale::Locale::of)
     /// describe, which numbers, dates and times are written by. The UI

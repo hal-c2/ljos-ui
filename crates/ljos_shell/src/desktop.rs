@@ -1537,7 +1537,9 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     /// The application ends when it says so (`Qt.quit()`), and when its
-    /// last window was closed. A window that is only hidden ends nothing.
+    /// last window was closed unless it keeps running without one
+    /// (`Qt.application.quitOnLastWindowClosed`). A window that is only
+    /// hidden ends nothing.
     fn should_exit(&mut self, engine: &Engine, sys: &WindowSystem) -> bool {
         if engine.quit_requested() {
             return true;
@@ -1552,7 +1554,18 @@ impl<M: Send + 'static> Desktop<M> {
             .windows(engine)
             .iter()
             .any(|w| sys.spec(engine, *w).is_some_and(|s| s.visible));
-        !root_shown && !any_shown
+        !root_shown && !any_shown && ljos_controls::quit_on_last_window_closed(engine)
+    }
+
+    /// The user opened the application again. A root that is an item
+    /// and was closed has no window the application could show: it is
+    /// shown again.
+    fn reopened(&mut self, has_visible_windows: bool) {
+        if self.root_closed && !has_visible_windows {
+            self.root_closed = false;
+            self.dirty.set(true);
+        }
+        ljos_controls::application_reopened(self.app.engine(), has_visible_windows);
     }
 
     /// Asks the platform to let the windows draw whose time has come, and
@@ -1725,6 +1738,9 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
                 self.repaint_asked(slot, when, pass, at_once);
             }
             Event::User(ShellEvent::AccessKit(event)) => self.accesskit_event(event),
+            Event::Reopen {
+                has_visible_windows,
+            } => self.reopened(has_visible_windows),
             Event::AboutToWait => self.settle(host),
             Event::Exiting => self.shut_down(),
             Event::MemoryPressure => self.trim(),
