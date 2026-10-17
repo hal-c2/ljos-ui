@@ -53,6 +53,9 @@ pub enum DevMsg {
     Failed(Vec<CompileFault>),
     /// The files are what the application runs again: nothing is wrong.
     Cleared,
+    /// These pictures were saved: the images that show them load them
+    /// again. Comes before the news of the files saved with them.
+    Pictures(Vec<PathBuf>),
     /// The answer to [`Watcher::flush`], after whatever that brought: the
     /// files were read and nothing else is coming for it. It has a key of
     /// its own in the inbox, so that it never replaces the news it follows.
@@ -67,6 +70,7 @@ impl DevMsg {
             DevMsg::Failed(_) => "failed",
             DevMsg::Cleared => "cleared",
             DevMsg::Idle => "idle",
+            DevMsg::Pictures(_) => "pictures",
         }
     }
 }
@@ -396,6 +400,10 @@ impl<O: TypeOracle + Clone> Run<O> {
     /// now, an empty one too.
     fn build_files(&mut self, asked: bool) -> bool {
         let started = Instant::now();
+        let pictures = lock(&self.reloader).take_pictures();
+        if !pictures.is_empty() && !(self.sink)(DevMsg::Pictures(pictures)) {
+            return false;
+        }
         if lock(&self.reloader).rescan_pending() {
             // Before the directory is read: what is written into a new
             // directory after the read is then seen as an event.

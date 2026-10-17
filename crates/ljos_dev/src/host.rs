@@ -54,6 +54,8 @@ pub const STATE_PROPERTIES: &[(&str, &str)] = &[
 /// any object is made: what was made earlier is unknown to a reload.
 pub fn prepare(engine: &Engine) {
     engine.set_reload_tracking(true);
+    // So that a saved picture is shown again by the images that show it.
+    ljos_quick::ImageStore::of(engine).set_watching(true);
     for (ty, property) in STATE_PROPERTIES {
         engine.register_reload_state(ty, property);
     }
@@ -189,6 +191,10 @@ pub enum Report {
     },
     /// The files are what runs again; the error is gone.
     Cleared,
+    /// Pictures were saved, and this many images show them again.
+    Pictures {
+        shown: usize,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -207,6 +213,9 @@ const INBOX: usize = 4;
 const DEV_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6576);
 /// The answer to a flush is not news of the files: it does not replace it.
 const IDLE_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6577);
+/// Saved pictures are not news of the files either. The paths wait in
+/// [`DevSession::pictures`]; the message only says that some do.
+const PICTURES_KEY: CoalesceKey = CoalesceKey(0x006c_6a6f_7364_6578);
 
 /// An application under the watcher: its files compiled, its root made,
 /// and every save applied as it comes.
@@ -230,6 +239,9 @@ pub struct DevSession {
     flushed: bool,
     /// What `Qt.createQmlObject` compiles against.
     texts: Rc<ProjectTexts>,
+    /// Pictures saved and not yet shown again. A message that one waits
+    /// may replace another in the inbox; the paths must not.
+    pictures: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl DevSession {
@@ -329,11 +341,19 @@ impl DevSession {
         }
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
         inbox.observe_as("reload", Some(DevMsg::kind));
+        let pictures: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+        let saved = pictures.clone();
         let watcher = Watcher::spawn_shared(reloader, crate::debounce::QUIET, move |msg| {
-            let key = if matches!(msg, DevMsg::Idle) {
-                IDLE_KEY
-            } else {
-                DEV_KEY
+            let (key, msg) = match msg {
+                DevMsg::Idle => (IDLE_KEY, msg),
+                DevMsg::Pictures(paths) => {
+                    saved
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .extend(paths);
+                    (PICTURES_KEY, DevMsg::Pictures(Vec::new()))
+                }
+                _ => (DEV_KEY, msg),
             };
             !handle
                 .send_coalesced(key, msg)
@@ -350,6 +370,7 @@ impl DevSession {
             reloads: 0,
             flushed: false,
             texts,
+            pictures,
         })
     }
 
@@ -409,6 +430,20 @@ impl DevSession {
         for message in messages {
             match message {
                 DevMsg::Idle => self.flushed = true,
+                DevMsg::Pictures(_) => {
+                    let mut paths = std::mem::take(
+                        &mut *self
+                            .pictures
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner),
+                    );
+                    paths.sort();
+                    paths.dedup();
+                    let shown = ljos_quick::ImageStore::of(engine).files_changed(engine, &paths);
+                    if shown > 0 {
+                        out.push(Report::Pictures { shown });
+                    }
+                }
                 DevMsg::Cleared => {
                     engine.set_last_reload_error(None);
                     self.more_errors = 0;

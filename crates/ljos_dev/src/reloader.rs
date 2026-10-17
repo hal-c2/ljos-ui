@@ -64,6 +64,8 @@ pub struct Reloader<O> {
     /// A build that waited gave the session saves: the next one compiles
     /// although it may bring nothing new.
     carried: bool,
+    /// Pictures saved since they were last taken, to be shown again.
+    pictures: BTreeSet<PathBuf>,
 }
 
 impl<O: TypeOracle + Clone> Reloader<O> {
@@ -100,6 +102,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             unfinished: BTreeSet::new(),
             parked: BTreeSet::new(),
             carried: false,
+            pictures: BTreeSet::new(),
         }
     }
 
@@ -145,14 +148,18 @@ impl<O: TypeOracle + Clone> Reloader<O> {
 
     /// Something happened to `path`. True when it is something a build
     /// has to look at; false for a path that is nothing to the project
-    /// (an editor's swap file, a picture), and then nobody needs to wait
-    /// for the quiet time.
+    /// (an editor's swap file, build output), and then nobody needs to
+    /// wait for the quiet time. A picture is no build's, but it waits for
+    /// the quiet time too: [`take_pictures`](Self::take_pictures).
     pub fn touch(&mut self, path: &Path, is_dir: bool) -> bool {
         let Some(root) = self.session.root() else {
             return false;
         };
         match classify(root, path, is_dir) {
             Touch::Ignore => return false,
+            Touch::Picture => {
+                self.pictures.insert(path.to_owned());
+            }
             Touch::File => {
                 if let Some(key) = self.session.key_of(path) {
                     self.unfinished.insert(key);
@@ -176,6 +183,12 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             self.unfinished.remove(&key);
         }
         touched
+    }
+
+    /// The pictures saved since the last call: an application shows them
+    /// again, and no build has anything to do with them.
+    pub fn take_pictures(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.pictures).into_iter().collect()
     }
 
     /// The directory may have changed in ways no event told of.
@@ -324,8 +337,10 @@ fn texts<O: TypeOracle + Clone>(session: &ReloadSession<O>) -> impl Iterator<Ite
 /// What a path under a project's root is to a build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Touch {
-    /// Nothing: an editor's swap file, a picture, build output.
+    /// Nothing: an editor's swap file, build output.
     Ignore,
+    /// A picture an image can show: it is shown again, not compiled.
+    Picture,
     /// A QML or JavaScript file, to read again.
     File,
     /// A directory came or went: the files are found again.
@@ -368,6 +383,9 @@ pub fn classify(root: &Path, path: &Path, is_dir: bool) -> Touch {
     }
     if name.ends_with(".qml") || name.ends_with(".js") || name.ends_with(".mjs") {
         return Touch::File;
+    }
+    if ljos_quick::ImageStore::is_picture_file(path) {
+        return Touch::Picture;
     }
     if !name.contains('.') && !skipped_dir(&name) && !path.exists() {
         // A directory that was moved away or removed looks like this; the

@@ -20,7 +20,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
@@ -310,6 +310,12 @@ struct State {
     /// The replies [`ImageStore::load`] waits to make, by number.
     replies: HashMap<u64, ImageReply>,
     next_reply: u64,
+    /// The URL each image item loads, while the application is developed
+    /// and a saved picture is shown again ([`ImageStore::set_watching`]).
+    /// None otherwise: a shipped application notes nothing.
+    shown_by: Option<HashMap<ObjectId, String>>,
+    /// The size `shown_by` had when it was last rid of dead items.
+    shown_pruned: usize,
 }
 
 impl State {
@@ -371,6 +377,8 @@ impl Default for ImageStore {
                 scale_node: None,
                 replies: HashMap::new(),
                 next_reply: 0,
+                shown_by: None,
+                shown_pruned: 0,
             }),
             inbox,
             tx,
@@ -418,6 +426,135 @@ impl ImageStore {
     /// cached.
     pub fn remove_resource(&self, url: &str) {
         self.state.borrow_mut().resources.remove(url);
+    }
+
+    /// Notes from now on which picture each image item loads, so that
+    /// [`ImageStore::files_changed`] and [`ImageStore::resources_changed`]
+    /// find the items that show a saved picture. On while an application
+    /// is developed, before its first item is made.
+    pub fn set_watching(&self, on: bool) {
+        let mut s = self.state.borrow_mut();
+        match (on, s.shown_by.is_some()) {
+            (true, false) => s.shown_by = Some(HashMap::new()),
+            (false, true) => s.shown_by = None,
+            _ => {}
+        }
+    }
+
+    /// Whether `path` is a picture an image can show, by its suffix: a
+    /// file whose save is shown again rather than compiled.
+    #[must_use]
+    pub fn is_picture_file(path: &Path) -> bool {
+        path.extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| decode::SUFFIXES.contains(&x.to_ascii_lowercase().as_str()))
+    }
+
+    /// `item` loads `url` from now on; None: nothing.
+    pub(crate) fn showing(&self, engine: &Engine, item: ObjectId, url: Option<&str>) {
+        let mut s = self.state.borrow_mut();
+        let State {
+            shown_by: Some(shown),
+            shown_pruned,
+            ..
+        } = &mut *s
+        else {
+            return;
+        };
+        match url {
+            Some(url) => {
+                if shown.get(&item).is_none_or(|u| u != url) {
+                    shown.insert(item, url.to_owned());
+                }
+            }
+            None => {
+                shown.remove(&item);
+            }
+        }
+        // The delegates of a list come and go; the dead are let go of
+        // once there are as many again as were kept.
+        if shown.len() > 64 && shown.len() > *shown_pruned * 2 {
+            shown.retain(|id, _| engine.is_alive(*id));
+            *shown_pruned = shown.len();
+        }
+    }
+
+    /// The picture files at `paths` were saved. What the cache has of them
+    /// is dropped, and every image item that shows one of them loads it
+    /// again: the URLs that are the file and the resources registered to
+    /// it. How many items load again; none unless
+    /// [`ImageStore::set_watching`] was on when they loaded.
+    pub fn files_changed(&self, engine: &Engine, paths: &[PathBuf]) -> usize {
+        let wanted: Vec<PathBuf> = paths.iter().map(|p| canonical(p)).collect();
+        let urls: HashSet<String> = self
+            .urls_known()
+            .into_iter()
+            .filter(|url| {
+                let key = ImageKey {
+                    url: url.clone(),
+                    request: Request::default(),
+                };
+                let Ok(Origin::File(file)) = self.locate(&key) else {
+                    return false;
+                };
+                let file = canonical(&file);
+                wanted.iter().any(|path| {
+                    *path == file
+                        // A URL without a suffix finds the file with one.
+                        || (file.extension().is_none() && path.with_extension("") == file)
+                })
+            })
+            .collect();
+        self.refresh(engine, &urls)
+    }
+
+    /// What is registered for `urls` ([`ImageStore::register_resource`])
+    /// was replaced. As [`ImageStore::files_changed`].
+    pub fn resources_changed(&self, engine: &Engine, urls: &[String]) -> usize {
+        self.refresh(engine, &urls.iter().cloned().collect())
+    }
+
+    /// Every URL the cache has a picture of or an item loads.
+    fn urls_known(&self) -> HashSet<String> {
+        let s = self.state.borrow();
+        let mut urls: HashSet<String> = s.cache.keys_by_age().map(|k| k.url.clone()).collect();
+        if let Some(shown) = &s.shown_by {
+            urls.extend(shown.values().cloned());
+        }
+        urls
+    }
+
+    fn refresh(&self, engine: &Engine, urls: &HashSet<String>) -> usize {
+        if urls.is_empty() {
+            return 0;
+        }
+        let (dropped, items) = {
+            let mut s = self.state.borrow_mut();
+            let stale: Vec<ImageKey> = s
+                .cache
+                .keys_by_age()
+                .filter(|k| urls.contains(&k.url))
+                .cloned()
+                .collect();
+            let dropped: Vec<Picture> = stale.iter().filter_map(|k| s.cache.remove(k)).collect();
+            let mut items: Vec<ObjectId> = Vec::new();
+            if let Some(shown) = &mut s.shown_by {
+                shown.retain(|id, _| engine.is_alive(*id));
+                items.extend(
+                    shown
+                        .iter()
+                        .filter(|(_, url)| urls.contains(*url))
+                        .map(|(id, _)| *id),
+                );
+            }
+            s.shown_pruned = s.shown_by.as_ref().map_or(0, HashMap::len);
+            (dropped, items)
+        };
+        drop(dropped);
+        for &item in &items {
+            super::reload(engine, item);
+        }
+        items.len()
     }
 
     /// Installs what a pool thread calls when a result is waiting and the
@@ -1034,6 +1171,12 @@ impl Evictable for ImageStore {
 /// The bytes at `url`, fetched on this (background) thread, or why there
 /// are none in the words Qt logs. Kept as they came: they are decoded
 /// once and dropped, so they need not be shared.
+/// `path` as the file system names it, so that two ways to one file
+/// compare equal; as it is when it cannot be read.
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+
 fn fetch(fetcher: &dyn Fetcher, url: &str) -> Result<Vec<u8>, LoadError> {
     match fetcher.request(&ljos_platform::Request::get(url)) {
         Ok(reply) if reply.ok() => Ok(reply.body),

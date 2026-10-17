@@ -469,6 +469,48 @@ Item {
     );
 }
 
+/// A picture `width` by `height`, saved as `write` saves.
+fn save_picture(dir: &Path, name: &str, width: u32, height: u32) {
+    let png = ljos_render::RgbaImage::filled(width, height, [255, 0, 0, 255])
+        .to_png()
+        .unwrap();
+    let saving = dir.join(format!(".{name}.saving"));
+    fs::write(&saving, png).unwrap();
+    fs::rename(saving, dir.join(name)).unwrap();
+}
+
+const PICTURE: &str = r#"import QtQuick
+Item {
+  objectName: "root"
+  width: 200; height: 200
+  property int taps: 0
+  Image { objectName: "logo"; source: "logo.png" }
+}
+"#;
+
+#[test]
+fn a_saved_picture_is_shown_again_and_nothing_is_reloaded() {
+    let mut app = app(&[("Main.qml", PICTURE)]);
+    // Ready = 1, Error = 3: there is no picture yet.
+    assert_eq!(app.num("logo", "status"), 3.0);
+    let root = app.find("root");
+    app.engine
+        .write_by_name(root, "taps", Value::Int(2))
+        .unwrap();
+
+    save_picture(&app.dir, "logo.png", 40, 20);
+    assert_eq!(app.wait(), [Report::Pictures { shown: 1 }]);
+    assert_eq!(app.num("logo", "status"), 1.0);
+    assert_eq!(app.num("logo", "implicitWidth"), 40.0);
+
+    save_picture(&app.dir, "logo.png", 60, 30);
+    assert_eq!(app.wait(), [Report::Pictures { shown: 1 }]);
+    assert_eq!(app.num("logo", "implicitWidth"), 60.0);
+    assert_eq!(app.num("logo", "implicitHeight"), 30.0);
+    assert_eq!(app.num("root", "taps"), 2.0);
+    assert_eq!(app.session.reloads(), 0);
+}
+
 #[test]
 fn the_watcher_sleeps_while_nothing_changes() {
     let app = app(&[("Main.qml", MAIN), ("target/debug/Out.qml", MAIN)]);

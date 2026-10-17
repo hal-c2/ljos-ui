@@ -471,6 +471,12 @@ pub trait Backend: fmt::Debug {
     fn change_file(&mut self, _name: &str, _source: Option<&str>) -> Result<()> {
         Err(self.no_reload())
     }
+    /// A file that is not QML ([`Backend::resource`]) is saved again
+    /// while the application runs. It is shown when the files have been
+    /// quiet.
+    fn change_resource(&mut self, _name: &str, _bytes: &[u8]) -> Result<()> {
+        Err(self.no_reload())
+    }
     /// A file of the running application is emptied by a save that has
     /// not finished: its text comes with a later `change_file`.
     fn empty_file(&mut self, _name: &str) -> Result<()> {

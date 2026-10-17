@@ -652,6 +652,26 @@ fn file_emptied(w: &mut LjosWorld, name: String) -> StepResult {
     w.empty_file(&name)
 }
 
+// A picture beside the QML saved again while the application runs.
+#[when(
+    regex = r#"^the image file "([^"]+)" is saved as an? (\d+) by (\d+) image filled with "(#[0-9a-fA-F]+)"$"#
+)]
+fn image_file_saved(
+    w: &mut LjosWorld,
+    name: String,
+    width: u32,
+    height: u32,
+    colour: String,
+) -> StepResult {
+    let bytes = fixture::image_file(&name, width, height, &colour)?;
+    w.each(|b| b.change_resource(&name, &bytes))
+}
+
+#[when(regex = r#"^the image file "([^"]+)" is saved as a file that is not an image$"#)]
+fn image_file_saved_broken(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.change_resource(&name, &fixture::not_an_image()))
+}
+
 #[when("a reload happens")]
 fn reload_happens(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.reload())

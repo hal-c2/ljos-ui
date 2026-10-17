@@ -1590,6 +1590,14 @@ impl Backend for LjosBackend {
         self.live()?.empty_file(name)
     }
 
+    fn change_resource(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
+        let url = format!("file:///{name}");
+        let live = self.live()?;
+        ljos_platform::Platform::of(&live.engine).register_resource(&url, bytes.to_vec());
+        ljos_quick::ImageStore::of(&live.engine).register_resource(url.clone(), bytes.to_vec());
+        live.change_resource(url)
+    }
+
     fn reload(&mut self) -> Result<()> {
         self.live()?.reload_flush()?;
         self.note_reload();

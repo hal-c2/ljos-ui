@@ -494,6 +494,7 @@ fn reload(e: &Engine, me: ObjectId) {
         )
     });
     if source.is_empty() {
+        store.showing(e, me, None);
         unload(e, me, image_status::NULL);
         return;
     }
@@ -501,6 +502,7 @@ fn reload(e: &Engine, me: ObjectId) {
         url: e.resolve_url(me, &source),
         request: request_of(e, me),
     };
+    store.showing(e, me, Some(&key.url));
     // The cache keeps single pictures; the frames are the item's own.
     let cache = cache && !key.request.animated;
     // A picture another item has loaded is there at once, also for an

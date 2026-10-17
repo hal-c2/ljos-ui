@@ -360,11 +360,14 @@ fn paths_that_are_nothing_to_a_build_are_told_apart() {
     assert_eq!(c("gone", true), Touch::Rescan);
     // A directory that was moved away, as a rename tells it.
     assert_eq!(c("gone", false), Touch::Rescan);
+    // Shown again, not compiled.
+    assert_eq!(c("picture.png", false), Touch::Picture);
+    assert_eq!(c("ui/icons/Logo.SVG", false), Touch::Picture);
+    assert_eq!(c("target/debug/picture.png", false), Touch::Ignore);
     // Editors' and builds' own.
     assert_eq!(c(".Main.qml.swp", false), Touch::Ignore);
     assert_eq!(c(".#Main.qml", false), Touch::Ignore);
     assert_eq!(c("Main.qml~", false), Touch::Ignore);
-    assert_eq!(c("picture.png", false), Touch::Ignore);
     assert_eq!(c("target", true), Touch::Ignore);
     assert_eq!(c("target/debug/Main.qml", false), Touch::Ignore);
     assert_eq!(c(".git/index", false), Touch::Ignore);

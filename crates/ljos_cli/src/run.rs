@@ -270,6 +270,8 @@ pub fn describe(report: &Report) -> String {
             format!("reload failed: {fault} (and {more} more)")
         }
         Report::Cleared => "the files are what runs again".to_owned(),
+        Report::Pictures { shown: 1 } => "1 image shows the saved picture".to_owned(),
+        Report::Pictures { shown } => format!("{shown} images show the saved pictures"),
     }
 }
 
@@ -346,12 +348,16 @@ impl Run {
         if self.watch {
             let main = dir.join(format!("{key}.qml"));
             let project = self.project.is_some().then(|| dir.clone());
+            let resources = dir.clone();
             ljos_shell::run::<()>(config, move |setup| {
                 // The application's databases where Qt keeps them.
                 ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
                 tools.start(setup)?;
                 ljos_controls::set_application_arguments(setup.engine(), arguments);
+                // As the program is built with them; a save of one is
+                // shown again like a save of any picture.
+                crate::render::stage_resources(setup.engine(), &resources);
                 setup.on_reload(|report| {
                     crate::stderr::line(&format!("ljos: {}", describe(report)))
                 });
@@ -727,5 +733,9 @@ mod tests {
             "reloaded in 12.3 ms (compile 9.1 ms, apply 3.2 ms): 41 kept, 2 new, 0 made again"
         );
         assert_eq!(describe(&Report::Cleared), "the files are what runs again");
+        assert_eq!(
+            describe(&Report::Pictures { shown: 2 }),
+            "2 images show the saved pictures"
+        );
     }
 }

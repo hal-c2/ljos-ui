@@ -21,6 +21,8 @@ pub(super) struct Rig {
     started: bool,
     /// Patches applied.
     count: u64,
+    /// The URLs of pictures saved and not shown again yet.
+    pictures: Vec<String>,
 }
 
 impl Rig {
@@ -33,6 +35,7 @@ impl Rig {
             quiet: Debounce::new(),
             started: false,
             count: 0,
+            pictures: Vec::new(),
         });
     }
 }
@@ -90,6 +93,16 @@ impl Live {
         Ok(())
     }
 
+    /// A picture at `url` is saved again; what it holds is registered
+    /// already. Images show it once the files have been quiet.
+    pub(super) fn change_resource(&mut self, url: String) -> Result<()> {
+        let now = self.clock.now();
+        let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
+        rig.pictures.push(url);
+        rig.quiet.touch(now);
+        Ok(())
+    }
+
     /// An editor that saves in place has emptied a file and not yet
     /// written it.
     pub(super) fn empty_file(&mut self, name: &str) -> Result<()> {
@@ -137,6 +150,12 @@ impl Live {
         // What the last reload made late has been matched by now: every
         // step settles the scene.
         self.engine.finish_reload();
+        let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
+        // As a watcher sends them: before the files saved with them.
+        let pictures = std::mem::take(&mut rig.pictures);
+        if !pictures.is_empty() {
+            ljos_quick::ImageStore::of(&self.engine).resources_changed(&self.engine, &pictures);
+        }
         let rig = self.reloads.as_mut().ok_or_else(not_watching)?;
         if !rig.started {
             // Nothing runs yet; the next load compiles what was saved.

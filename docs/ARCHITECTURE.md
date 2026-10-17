@@ -940,6 +940,7 @@ subsecond (Rust hot-patching) is an optional extra for desktop development. It d
 - **Message path.** There is no single `UiMsg` enum; `ljos_dev` owns a bounded `UiInbox<DevMsg>` of capacity 4 whose state messages coalesce. The devtools WebSocket comes with the first device target (M3).
 - **Incremental compile.** `ReloadSession` recompiles the changed files and the files that mention their types by name, which over-approximates the dependency set. salsa is not used yet.
 - **Watched files.** `.qml`, `.js`, `.mjs`, `qmldir` and `CMakeLists.txt`. A changed script recompiles the QML files that name it. Theme files are not watched yet.
+- **Saved pictures.** A picture file under the project (by its suffix) is no build's: after the same quiet time the image cache drops it and every `Image`, `BorderImage` and `AnimatedImage` that loads it, by its file URL or by a resource address registered to it, loads it again. Nothing is reloaded, so all state stays. The image store knows which item loads which URL only while it is told to watch (`ImageStore::set_watching`, on in `ljos_dev::prepare`); a shipped application notes nothing. `ljos run --watch` registers the project's resource pictures as `ljos run` does.
 - **Where it links.** `ljos_shell` takes `ljos_dev` behind its `dev` feature, and `ljos run --watch` is the CLI entry. `ljos_shell/tests/no_parser.rs` checks that the shell without `dev` links no parser.
 
 ### 12.2 Production bundles
