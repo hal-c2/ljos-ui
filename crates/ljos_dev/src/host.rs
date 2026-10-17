@@ -48,6 +48,8 @@ pub const STATE_PROPERTIES: &[(&str, &str)] = &[
     ("Flickable", "contentY"),
     // The row, tab or page the user chose.
     ("", "currentIndex"),
+    // A popup, dialog or menu the user opened.
+    ("Popup", "visible"),
 ];
 
 /// Turns reload tracking on and names the state a reload carries. Before

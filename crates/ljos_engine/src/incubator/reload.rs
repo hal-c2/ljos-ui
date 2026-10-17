@@ -305,6 +305,9 @@ struct SavedLoader {
 #[derive(Default)]
 pub(crate) struct ReloadState {
     pub(crate) tracking: Cell<bool>,
+    /// Whether the engine's own reload state is registered: other crates
+    /// register migrators of their own before tracking is turned on.
+    builtins: Cell<bool>,
     /// Whether any handler is muted at all: one read for the usual case.
     muting: Cell<bool>,
     muted_all: Cell<bool>,
@@ -464,7 +467,7 @@ impl Engine {
     pub fn set_reload_tracking(&self, on: bool) {
         let st = &self.inner.reload;
         st.tracking.set(on);
-        if on && st.migrators.borrow().is_empty() {
+        if on && !st.builtins.replace(true) {
             self.register_reload_state("Timer", "running");
             self.register_migrate::<crate::listmodel::ListModel>();
         }
@@ -1115,10 +1118,12 @@ impl Engine {
     }
 
     /// A carried value with its objects of the old tree swapped for the
-    /// ones that go on for them (see [`translate`]). An object made later
-    /// than the one the value goes to (a delegate) is not known yet, and
-    /// counts as gone.
-    fn reload_translate(&self, v: Value) -> Option<Value> {
+    /// ones that go on for them (see [`translate`]); `None` when it is an
+    /// object that is gone. An object made later than the one the value
+    /// goes to (a delegate) is not known yet, and counts as gone. For a
+    /// [`Migrate`] whose state holds objects; valid until
+    /// [`Engine::finish_reload`].
+    pub fn reload_translate(&self, v: Value) -> Option<Value> {
         let st = &self.inner.reload;
         let tree = st.tree.get();
         let pending = st.pending.borrow();

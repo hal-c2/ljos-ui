@@ -268,6 +268,137 @@ Feature: What survives a reload
       And a reload happens
       Then the property "width" of "loader/second" is 20
 
+  Rule: A StackView keeps the pages the application pushed
+
+    Background:
+      Given the file "Page.qml":
+        """qml
+        import QtQuick
+        Rectangle { property string tag: "page"; width: 10 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 200
+          Component {
+            id: page
+            Rectangle { property string tag: "made"; property Item flow }
+          }
+          StackView {
+            id: stack
+            objectName: "stack"
+            anchors.fill: parent
+            initialItem: Rectangle { objectName: "first"; property string tag: "first" }
+          }
+          function open() { stack.push(page, { tag: "pushed", flow: root }) }
+          function openFile() { stack.push("Page.qml") }
+        }
+        """
+
+    Scenario: A page pushed with properties is still on top, holding the new objects
+      When the method "open" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 200
+          property int edited: 1
+          Component {
+            id: page
+            Rectangle { property string tag: "made"; property Item flow }
+          }
+          StackView {
+            id: stack
+            objectName: "stack"
+            anchors.fill: parent
+            initialItem: Rectangle { objectName: "first"; property string tag: "first" }
+          }
+          function open() { stack.push(page, { tag: "pushed", flow: root }) }
+          function openFile() { stack.push("Page.qml") }
+        }
+        """
+      And a reload happens
+      Then the property "depth" of "stack" is 2
+      And the property "currentItem.tag" of "stack" is "pushed"
+      And the property "currentItem.flow.edited" of "stack" is 1
+      And the log has no warnings
+
+    Scenario: Popping after the reload shows the first page again
+      When the method "open" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root
+          objectName: "root"
+          width: 300; height: 200
+          property int edited: 1
+          Component {
+            id: page
+            Rectangle { property string tag: "made"; property Item flow }
+          }
+          StackView {
+            id: stack
+            objectName: "stack"
+            anchors.fill: parent
+            initialItem: Rectangle { objectName: "first"; property string tag: "first" }
+          }
+          function open() { stack.push(page, { tag: "pushed", flow: root }) }
+          function openFile() { stack.push("Page.qml") }
+        }
+        """
+      And a reload happens
+      And the method "pop" of "stack" is called
+      Then the property "depth" of "stack" is 1
+      And the property "currentItem.tag" of "stack" is "first"
+
+    Scenario: A page pushed from a file shows the new version of that file
+      When the method "openFile" of "root" is called
+      And the file "Page.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { property string tag: "page"; width: 20 }
+        """
+      And a reload happens
+      Then the property "depth" of "stack" is 2
+      And the property "currentItem.tag" of "stack" is "page"
+
+  Rule: An open popup stays open
+
+    Scenario: A popup the application opened is open after its file changes
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          width: 300; height: 200
+          Popup { id: p; objectName: "p"; width: 100; height: 50 }
+        }
+        """
+      When the method "open" of "p" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          width: 300; height: 200
+          Popup { id: p; objectName: "p"; width: 120; height: 50 }
+        }
+        """
+      And a reload happens
+      Then the property "opened" of "p" is true
+      And the property "width" of "p" is 120
+
   Rule: A running Timer keeps running
 
     Background:

@@ -21,8 +21,8 @@ use std::fmt;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Component, Cx, Engine, EngineError, MetaRef, NodeId, ObjectId, OverrideContent, OverrideId,
-    PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
+    Component, Cx, Engine, EngineError, MetaRef, Migrate, NodeId, ObjectId, OverrideContent,
+    OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
 };
 use ljos_quick::{Item, Transition, follows_implicit_size, is_item, set_parent_item};
 
@@ -135,6 +135,13 @@ pub(crate) struct StackState {
     /// removed after `busy` goes false (qml6).
     after: RefCell<Vec<Finish>>,
     ops: Cell<u64>,
+    /// How many pages `initialItem` made, and how many of them are still
+    /// at the bottom of the stack: what a reload makes again by itself.
+    first: Cell<usize>,
+    kept: Cell<usize>,
+    done: Cell<bool>,
+    /// What a reload carried, until the view completes.
+    restore: RefCell<Option<CarriedPages>>,
 }
 
 impl fmt::Debug for StackState {
@@ -484,14 +491,17 @@ impl StackView {
         })?;
         let initial = e.untrack(|| e.read(me, StackView::INITIAL_ITEM.index));
         let r = request(e, me, &[initial]);
-        if r.pages.is_empty() {
-            return update(e, me);
-        }
         let Some(st) = state_of(e, me) else {
             return Ok(());
         };
+        st.first.set(r.pages.len());
+        st.kept.set(r.pages.len());
         st.entries.borrow_mut().extend(r.pages);
-        let top = depth_of(e, me) - 1;
+        restored(&st);
+        st.done.set(true);
+        let Some(top) = depth_of(e, me).checked_sub(1) else {
+            return update(e, me);
+        };
         let item = load(e, me, top)?;
         update(e, me)?;
         // The first page is only told that it is active (qml6).
@@ -500,6 +510,110 @@ impl StackView {
         }
         Ok(())
     }
+}
+
+/// The pages a running application pushed, carried across a dev reload:
+/// the view made from the new file shows them again, from their sources
+/// (a page's own state starts afresh).
+#[derive(Debug)]
+pub struct CarriedPages {
+    kept: usize,
+    pages: Vec<Entry>,
+}
+
+impl Migrate for StackView {
+    const VERSION: u32 = 1;
+    type State = CarriedPages;
+
+    fn snapshot(engine: &Engine, obj: ObjectId) -> Option<CarriedPages> {
+        // Not for an error boundary's restart in a shipped app: the pages
+        // pushed may be what failed.
+        if !engine.reload_tracking() {
+            return None;
+        }
+        let st = state_of(engine, obj)?;
+        let entries = st.entries.borrow();
+        let kept = st.kept.get().min(entries.len());
+        if kept == entries.len() && kept == st.first.get() {
+            return None;
+        }
+        let pages = entries[kept..]
+            .iter()
+            .map(|en| Entry::new(en.source.clone(), en.props.clone()))
+            .collect();
+        Some(CarriedPages { kept, pages })
+    }
+
+    fn migrate(
+        engine: &Engine,
+        obj: ObjectId,
+        _from: u32,
+        state: CarriedPages,
+    ) -> Result<(), String> {
+        let st = state_of(engine, obj).ok_or("not a StackView")?;
+        // Translated now: the old tree's objects have counterparts only
+        // until the reload is finished.
+        let object = |o: ObjectId| match engine.reload_translate(Value::Object(o)) {
+            Some(Value::Object(o)) => Some(o),
+            _ => None,
+        };
+        let pages = state
+            .pages
+            .into_iter()
+            .filter_map(|en| {
+                let source = match en.source {
+                    Source::Given(o) => Source::Given(object(o)?),
+                    Source::Component(o) => Source::Component(object(o)?),
+                    url @ Source::Url(_) => url,
+                };
+                let props = en
+                    .props
+                    .into_iter()
+                    .filter_map(|(name, v)| Some((name, engine.reload_translate(v)?)))
+                    .collect();
+                Some(Entry::new(source, props))
+            })
+            .collect();
+        let carried = CarriedPages {
+            kept: state.kept,
+            pages,
+        };
+        if !st.done.get() {
+            *st.restore.borrow_mut() = Some(carried);
+            return Ok(());
+        }
+        // Made and completed already (an error boundary's restart).
+        let CarriedPages { kept, pages } = carried;
+        let immediate = Some(op::IMMEDIATE);
+        let r = pop_to(engine, obj, kept.max(1), immediate).and_then(|_| {
+            if kept == 0 {
+                clear(engine, obj)?;
+            }
+            push(
+                engine,
+                obj,
+                Request {
+                    pages,
+                    operation: immediate,
+                },
+            )
+            .map(|_| ())
+        });
+        r.map_err(|err| err.to_string())
+    }
+}
+
+/// Puts the carried pages over the ones `initialItem` made, before the top
+/// one is loaded.
+fn restored(st: &StackState) {
+    let Some(CarriedPages { kept, pages }) = st.restore.borrow_mut().take() else {
+        return;
+    };
+    let mut entries = st.entries.borrow_mut();
+    let kept = kept.min(entries.len());
+    entries.truncate(kept);
+    st.kept.set(kept);
+    entries.extend(pages);
 }
 
 fn number(v: &Value) -> Option<i32> {
@@ -1051,6 +1165,7 @@ fn pop_to(
         .flatten();
     interrupt(e, me, &taken, &both(pair));
     let mut gone: Vec<Entry> = st.entries.borrow_mut().drain(keep..).collect();
+    st.kept.set(st.kept.get().min(keep));
     // The top page first: the others were covered and are only removed.
     let top = gone.pop();
     let old = top.as_ref().and_then(|en| en.item);
@@ -1121,6 +1236,7 @@ fn replace(e: &Engine, me: ObjectId, keep: usize, r: Request) -> Result<Value, E
     interrupt(e, me, &[old], &both(pair));
     let keep = keep.min(depth_of(e, me));
     let mut gone: Vec<Entry> = st.entries.borrow_mut().drain(keep..).collect();
+    st.kept.set(st.kept.get().min(keep));
     let top = gone.pop();
     let old = top.as_ref().and_then(|en| en.item);
     st.entries.borrow_mut().extend(r.pages);
@@ -1184,6 +1300,7 @@ fn clear(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
         .collect();
     interrupt(e, me, &[], &all);
     let all: Vec<Entry> = st.entries.borrow_mut().drain(..).collect();
+    st.kept.set(0);
     update(e, me)?;
     removed(e, all);
     idle(e, me);

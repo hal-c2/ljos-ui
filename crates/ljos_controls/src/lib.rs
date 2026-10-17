@@ -171,6 +171,8 @@ pub fn register(engine: &Engine) {
     tooltip::register(engine);
     combobox::register(engine);
     menu_bar::register(engine);
+    // Only asked while a reload is tracked (`ljos run --watch`).
+    engine.register_migrate::<StackView>();
     parts::register(
         engine,
         &[

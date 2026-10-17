@@ -910,11 +910,12 @@ notify watcher (120 ms debounce, BLAKE3 fingerprint of qml/js/qmldir/theme)
 - A lint asks for `id`s on stateful siblings of the same type, so that `Typed{nth}` matching is not confused when they are reordered.
 
 **What survives a reload**
-- assigned property values (according to the provenance bit);
+- assigned property values (according to the provenance bit), an object among them being the object at its place in the new tree;
 - `ListModel` contents;
 - `contentX/Y`, which are clamped;
 - `currentIndex`;
-- the `StackView` stack;
+- the `StackView` stack (the pages pushed are made again from their sources);
+- an open `Popup`;
 - the `Loader` source;
 - `Timer.running`;
 - text and selection;
