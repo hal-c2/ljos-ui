@@ -10,6 +10,7 @@ Feature: TableView shows a model in rows and columns
   of one column (a list, a number or a ListModel) shows as one column,
   its delegates reading modelData and index as a ListView's do. The
   view follows the model's changes, and a delegate may write a role.
+  The view is a focus scope.
 
   Background:
     Given the file "Table.qml":
@@ -184,3 +185,20 @@ Feature: TableView shows a model in rows and columns
       | what            | size               | out            |
       | width or height |                    | 50 50 50 150 2 |
       | width           | implicitHeight: 10 | 50 10 50 30 2  |
+
+  Scenario: A TableView is a focus scope
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"; width: 300; height: 300; property string out: ""
+        TableView { id: tv; width: 100; height: 100; model: 2
+          delegate: Item { implicitWidth: 50; implicitHeight: 20; Item { width: 5; height: 5 } } }
+        TextInput { id: other; y: 250; width: 50; height: 20 }
+        function go() { var c = tv.itemAtCell(0, 1).children[0]; c.forceActiveFocus(); var s = [tv.activeFocus, tv.focus]
+          other.forceActiveFocus(); s.push(tv.activeFocus, c.focus); tv.forceActiveFocus(); s.push(c.activeFocus); out = s.join(" ") }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "go" of "root" is called
+    Then the property "out" of "root" is "true true false true true"

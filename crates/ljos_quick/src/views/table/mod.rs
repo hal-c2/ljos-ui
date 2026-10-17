@@ -1003,6 +1003,9 @@ pub(crate) fn register(engine: &Engine) {
         engine.register_type("QtQuick", Version::new(2, 15), MetaRef::Static(meta));
     }
     let meta = MetaRef::Static(TableView::static_meta());
+    // A focus scope, as on qml6: an editor or a delegate's item keeps
+    // its focus when the view gets it back.
+    crate::focus::register_focus_scope(engine, meta.clone());
     crate::keys::register_key_item(engine, meta.clone(), nav::key_hooks());
     crate::pointer_item::register_pointer_item(engine, meta, nav::pointer_hooks());
     engine.on_attached_created(|e, item, att| {
