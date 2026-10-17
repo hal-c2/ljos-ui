@@ -11,7 +11,7 @@
 //! component source (a hot reload) drops the application's files, and the
 //! registered types have to stay the ones the library's files describe.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 
 use ljos_ir::ImportSource;

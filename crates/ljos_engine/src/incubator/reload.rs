@@ -292,7 +292,7 @@ impl ComponentSource for PatchedSource {
     }
 }
 
-type MetaCache = HashMap<(u32, u32), MetaRef>;
+type MetaCache = rustc_hash::FxHashMap<(u32, u32), MetaRef>;
 
 /// What [`Engine::reload`] puts back when the new files do not work.
 struct SavedLoader {

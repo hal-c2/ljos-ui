@@ -423,7 +423,7 @@ pub(crate) struct LoadedFile {
     /// Function ids by `FnIndex`, once the module is loaded.
     fns: RefCell<Option<Rc<Vec<Option<FnId>>>>>,
     /// Types of declaring objects, by (component, object).
-    pub(crate) metas: RefCell<HashMap<(u32, u32), MetaRef>>,
+    pub(crate) metas: RefCell<rustc_hash::FxHashMap<(u32, u32), MetaRef>>,
     /// Tier-0 form of each function, by `FnIndex`.
     pub(crate) tier0: Vec<Option<Tier0>>,
     /// The tier-1 programs of the file's expressions.
@@ -453,7 +453,7 @@ impl LoadedFile {
             ir,
             bytecode,
             fns: RefCell::new(None),
-            metas: RefCell::new(HashMap::new()),
+            metas: RefCell::default(),
             tier0,
             tier1,
             epoch: Cell::new(0),

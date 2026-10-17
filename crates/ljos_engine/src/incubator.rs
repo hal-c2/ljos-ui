@@ -147,7 +147,7 @@ struct Creation {
     units: Vec<Unit>,
     /// In allocation order.
     all: Vec<ObjectId>,
-    nodes: HashMap<ObjectId, CompletionNode>,
+    nodes: rustc_hash::FxHashMap<ObjectId, CompletionNode>,
     /// The instance the creation was asked for.
     top: Option<Rc<Instance>>,
     /// Eager mode: the bindings installed so far, not yet run.

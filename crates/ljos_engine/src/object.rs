@@ -121,7 +121,7 @@ pub struct ObjectHeader {
     /// Reactive node per property, allocated on first observation or bind.
     pub(crate) nodes: Option<Box<[Option<NodeId>]>>,
     /// Properties written while they had no node, for provenance.
-    pub(crate) assigned: Vec<u64>,
+    pub(crate) assigned: SmallVec<[u64; 2]>,
     /// Tracked reads of properties that have no node.
     pub(crate) field_reads: Option<Box<FieldReads>>,
 }
@@ -291,21 +291,24 @@ fn with_implied_base(native: Box<dyn QmlObject>) -> Box<dyn QmlObject> {
 impl ObjectHeader {
     pub(crate) fn new(meta: MetaRef, native: Box<dyn QmlObject>, context: ContextId) -> Self {
         let native = with_implied_base(native);
-        let dynamic = meta
-            .properties
-            .iter()
-            .filter_map(|p| match p.access {
-                crate::meta::PropertyAccess::Dynamic { slot } => Some((slot, p.ty.default_value())),
-                _ => None,
-            })
-            .fold(
-                vec![Value::Undefined; meta.dynamic_slots as usize],
-                |mut v, (slot, d)| {
-                    v[slot as usize] = d;
-                    v
-                },
-            )
-            .into_boxed_slice();
+        // Declared properties come after the native ones they build on:
+        // from the end, the walk stops once every slot has its default,
+        // and a type with none declared walks nothing.
+        let slots = meta.dynamic_slots as usize;
+        let mut dynamic = vec![Value::Undefined; slots].into_boxed_slice();
+        let mut filled = vec![false; slots];
+        let mut left = slots;
+        for p in meta.properties.iter().rev() {
+            if left == 0 {
+                break;
+            }
+            if let crate::meta::PropertyAccess::Dynamic { slot } = p.access
+                && !std::mem::replace(&mut filled[slot as usize], true)
+            {
+                dynamic[slot as usize] = p.ty.default_value();
+                left -= 1;
+            }
+        }
         ObjectHeader {
             meta,
             native,
@@ -320,7 +323,7 @@ impl ObjectHeader {
             flags: ObjectFlags::empty(),
             scope: None,
             nodes: None,
-            assigned: Vec::new(),
+            assigned: SmallVec::new(),
             field_reads: None,
         }
     }

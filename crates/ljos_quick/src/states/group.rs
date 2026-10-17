@@ -20,7 +20,6 @@
 //! unless a `Behavior` takes it there.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
@@ -43,7 +42,7 @@ use crate::item::{AnchorProps, Item, init_item, is_a, is_item, is_unset, scene_t
 /// The groups by the object each belongs to.
 #[derive(Default)]
 struct Groups {
-    by_owner: RefCell<HashMap<ObjectId, Rc<Group>>>,
+    by_owner: RefCell<rustc_hash::FxHashMap<ObjectId, Rc<Group>>>,
     /// Owners whose states wait for [`start`]: a host of content, whose
     /// declared children have no parent until it is complete.
     deferred: RefCell<Vec<ObjectId>>,
