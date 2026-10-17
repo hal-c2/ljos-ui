@@ -20,6 +20,7 @@ SANDBOX = os.path.join(ROOT, "scripts", "cua-sandbox.sh")
 XDG = os.path.join(os.environ.get("LJOS_CUA_HOME") or os.path.join(TARGET, "cua"), "xdg")
 ROLES = r"button|checkbox|switch|radio|radiobutton|tab|menuitem|link|combobox|spinbox|slider"
 CONTROL = re.compile(r'\b(?:' + ROLES + r')\s+("([^"]*)"\s+)?\[(e\d+)\]')
+STARTUP = 120
 MAX_CLICKS = 40
 GRID = 5
 
@@ -129,7 +130,7 @@ def why_it_ended(d, p):
            if (l.startswith("ljos: ") and "inspector (" not in l) or "panicked at" in l]
     if not own:
         own = [l for l in text.splitlines() if re.search(r"\berror\b", l, re.I)][-3:]
-    ended = "it is still running" if status is None else f"it ended with exit status {status}"
+    ended = f"it is still running, with no inspector after {STARTUP} s" if status is None else f"it ended with exit status {status}"
     return [l.replace(CORPUS, "") for l in own[:5]] + [ended]
 
 
@@ -151,8 +152,10 @@ def drive(out, eid):
             if not l.startswith("=="):
                 said.append(re.sub(r"^\d+ ", "", l).replace(CORPUS, ""))
 
+    # gallery:drive built Ljós before the first example (GALLERY_BUILT), so this is Ljós's own
+    # start, which takes a second or two even with every core busy.
     path = None
-    for _ in range(240):
+    for _ in range(STARTUP * 2):
         time.sleep(0.5)
         new = set(glob.glob(TARGET + "/ljos/mcp-*.json")) - before
         if new:

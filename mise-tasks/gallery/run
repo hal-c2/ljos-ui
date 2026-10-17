@@ -61,6 +61,11 @@ fi
 # beside it, watched or not.
 project=(--project "$root/corpus/qtdoc/$dir")
 
-cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+# gallery:drive builds once before its examples (GALLERY_BUILT=1): a build here, after a source
+# changed or behind another cargo's lock on the target, would take the time the driver gives
+# the example to start, and its examples would not all run the same build.
+if [ -z "${GALLERY_BUILT:-}" ]; then
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+fi
 exec "$target/debug/ljos" run "$root/corpus/qtdoc/$dir/$entry" \
   "${project[@]}" --size "$size" --example "$id" "$@"
