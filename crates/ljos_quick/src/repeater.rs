@@ -204,6 +204,7 @@ impl Repeater {
             let delegate = e.get(me, Repeater::DELEGATE).ok().flatten();
             // Tracked: the items live in the parent.
             let _ = e.visual_parent(me);
+            e.track_model(&model);
             e.untrack(|| {
                 let model = e.model_from_value(&model, Some(me));
                 delegates.set_source(e, Some(model), delegate);

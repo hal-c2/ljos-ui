@@ -112,6 +112,31 @@ pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
     None
 }
 
+/// Calls `f` when the object `prop` names becomes a model after `obj`
+/// took it: completion runs last-made-first, so a model declared before
+/// `obj` makes itself one only after `obj` completed. A new `prop` value
+/// is left to `prop`'s own watch.
+pub(crate) fn on_model_made(
+    engine: &Engine,
+    obj: ObjectId,
+    prop: PropIndex,
+    f: impl Fn(&Engine) + 'static,
+) -> Result<(), EngineError> {
+    let mut seen: Option<(Value, u64)> = None;
+    engine.effect_in(obj, move |e| {
+        let model = e.read(obj, prop);
+        let generation = e.track_model(&model);
+        let made = seen
+            .as_ref()
+            .is_some_and(|(v, g)| v.change_equals(&model) && *g != generation);
+        seen = Some((model, generation));
+        if made {
+            e.untrack(|| f(e));
+        }
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod mnemonic_tests {
     use super::*;

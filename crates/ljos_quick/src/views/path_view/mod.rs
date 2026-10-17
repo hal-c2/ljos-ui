@@ -475,6 +475,7 @@ fn start(cx: &Cx) -> Result<(), EngineError> {
     e.effect_in(me, move |e| {
         let model = e.get(me, PathView::MODEL).unwrap_or_default();
         let delegate = e.get(me, PathView::DELEGATE).ok().flatten();
+        e.track_model(&model);
         e.untrack(|| {
             let model =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));

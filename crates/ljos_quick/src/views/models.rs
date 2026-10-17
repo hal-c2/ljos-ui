@@ -530,7 +530,7 @@ impl DelegateModel {
         let _ = e.set_internal(me, DelegateModel::COUNT, rows.row_count() as i32);
         // What the rows were last read from: a new delegate alone is no
         // new model.
-        let mut shown: Option<Value> = None;
+        let mut shown: Option<(Value, u64)> = None;
         let mut shown_filter = String::new();
         e.effect_in(me, move |e| {
             let model = e.get(me, DelegateModel::MODEL).unwrap_or_default();
@@ -557,8 +557,11 @@ impl DelegateModel {
             if e.with(me, |m: &DelegateModel| m.driven).unwrap_or(true) {
                 return;
             }
-            let same = shown.as_ref().is_some_and(|s| s.change_equals(&model));
-            shown = Some(model.clone());
+            let generation = e.track_model(&model);
+            let same = shown
+                .as_ref()
+                .is_some_and(|(s, g)| s.change_equals(&model) && *g == generation);
+            shown = Some((model.clone(), generation));
             if shown_filter != filter {
                 shown_filter.clone_from(&filter);
                 let _ = e.emit_by_name(me, "filterGroupChanged", &[]);

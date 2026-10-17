@@ -47,7 +47,9 @@ use crate::control::{Control, focus_policy, hover, is_left, takes_input};
 use crate::parts::{PartKind, declared_by_style, manage_part};
 use crate::popup::{self, Popup, close_policy};
 use crate::rows;
-use crate::util::{bind_default, check, flag, is_a, is_unset, num, object, set_computed, warn};
+use crate::util::{
+    bind_default, check, flag, is_a, is_unset, num, object, on_model_made, set_computed, warn,
+};
 
 /// `Qt.MatchFlag`, as `find` reads it.
 mod match_flag {
@@ -1380,6 +1382,9 @@ fn init_combo(engine: &Engine, combo: ObjectId) -> Result<(), EngineError> {
     let restart = is_unset(engine, combo, ComboBox::CURRENT_INDEX.index);
     adopt_model(engine, combo, restart);
     engine.watch(combo, ComboBox::MODEL.index, move |e, _| {
+        adopt_model(e, combo, true);
+    })?;
+    on_model_made(engine, combo, ComboBox::MODEL.index, move |e| {
         adopt_model(e, combo, true);
     })?;
     for p in [

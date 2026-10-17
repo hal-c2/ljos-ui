@@ -968,6 +968,7 @@ impl SortFilterProxyModel {
             // A read for the tracking only: the values are read where
             // they are kept, in `config`.
             let _ = (&filters, &sorters);
+            e.track_model(&model);
             e.untrack(|| {
                 shown.set_source(e, &model);
                 let (filters, sorters) = e

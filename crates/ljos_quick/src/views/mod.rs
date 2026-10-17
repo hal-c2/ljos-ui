@@ -599,6 +599,7 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     e.effect_in(me, move |e| {
         let model = e.get(me, ItemView::MODEL).unwrap_or_default();
         let delegate = e.get(me, ItemView::DELEGATE).ok().flatten();
+        e.track_model(&model);
         e.untrack(|| {
             let model =
                 models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));

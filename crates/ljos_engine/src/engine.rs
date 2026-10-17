@@ -2130,9 +2130,19 @@ impl Engine {
             hooks.reverse();
             hooks
         };
+        // A view reads an object with hooks still to run as no rows
+        // (`model_from_value`), unless it is a model already.
+        let before = self.model_generation(obj);
+        let pending = !hooks.is_empty() && before.is_some() && self.object_model(obj).is_none();
         let cx = Cx::new(self, obj);
         for f in hooks {
             self.guarded_result(obj, || f(&cx))?;
+        }
+        // A view that named this object before it was complete takes it
+        // now, as a plain object unless its hooks made it a model (which
+        // told the view already).
+        if pending && self.model_generation(obj) == before {
+            self.model_changed(obj)?;
         }
         Ok(())
     }

@@ -41,7 +41,7 @@ use ljos_render::kurbo;
 
 use crate::control::{Control, focus_policy, takes_input};
 use crate::rows;
-use crate::util::{bind_default, check, is_a, num, object, set_computed};
+use crate::util::{bind_default, check, is_a, num, object, on_model_made, set_computed};
 
 /// `Tumbler.PositionMode`: the same numbers as a list view's.
 mod position_mode {
@@ -251,6 +251,7 @@ impl Tumbler {
         }
         adopt_model(e, me);
         e.watch(me, Tumbler::MODEL.index, move |e, _| adopt_model(e, me))?;
+        on_model_made(e, me, Tumbler::MODEL.index, move |e| adopt_model(e, me))?;
         e.watch(me, Tumbler::CURRENT_INDEX.index, move |e, _| {
             index_set(e, me)
         })?;

@@ -24,7 +24,7 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::meta::{MetaBuilder, MetaRef, PropertyAccess, PropertyFlags};
-use crate::object::{QmlType, WriteHook};
+use crate::object::{ObjectFlags, QmlType, WriteHook};
 use crate::types::TypeTag;
 use crate::value::Value;
 use crate::{QmlObject, WriteKind};
@@ -907,6 +907,10 @@ impl Engine {
             }
             Value::Object(o) => match self.object_model(*o) {
                 Some(m) => m,
+                // Nothing yet: what the object is to a view is known once
+                // it is complete, and a view that tracked it
+                // ([`Engine::track_model`]) resolves it again then.
+                None if self.completes_later(*o) => Rc::new(CountModel(0)),
                 None if self.is_alive(*o) => Rc::new(ObjectsModel(vec![*o])),
                 None => Rc::new(CountModel(0)),
             },
@@ -927,7 +931,96 @@ impl Engine {
             .get_mut(obj)
             .ok_or_else(|| EngineError::dead(obj))?;
         h.ext_mut().model = model;
+        drop(store);
+        self.model_changed(obj)?;
         Ok(())
+    }
+
+    /// The number of times readers of [`Engine::track_model`] for `obj`
+    /// were told, read untracked.
+    pub(crate) fn model_generation(&self, obj: ObjectId) -> Option<Value> {
+        let node = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(obj)
+                .and_then(|h| h.ext.as_ref()?.model_node)
+        }?;
+        let g = &self.inner.graph;
+        g.untrack(|| g.try_get(node))
+    }
+
+    /// Re-runs the readers of [`Engine::track_model`] for `obj`.
+    pub(crate) fn model_changed(&self, obj: ObjectId) -> Result<(), EngineError> {
+        let node = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(obj)
+                .and_then(|h| h.ext.as_ref()?.model_node)
+        };
+        if let Some(n) = node {
+            let g = &self.inner.graph;
+            let next = match g.untrack(|| g.try_get(n)) {
+                Some(Value::Int(i)) => i.wrapping_add(1),
+                _ => 1,
+            };
+            g.write(n, Value::Int(next), WriteKind::Initial)?;
+        }
+        Ok(())
+    }
+
+    /// Whether `obj` has native completion hooks still to run, in which
+    /// it may make itself a model.
+    fn completes_later(&self, obj: ObjectId) -> bool {
+        let store = self.inner.store.borrow();
+        store.objects.get(obj).is_some_and(|h| {
+            !h.flags.contains(ObjectFlags::COMPLETED)
+                && h.meta.chain().any(|m| m.on_complete.is_some())
+        })
+    }
+
+    /// Makes the running binding or effect depend on what `model` is as
+    /// a model: when it names an object that later becomes one
+    /// ([`Engine::set_object_model`]), the reader runs again. A view
+    /// calls it with its `model` value before it resolves the value
+    /// (untracked) with [`Engine::model_from_value`], so the result does
+    /// not depend on whether the view or the model completed first.
+    ///
+    /// The result counts the times the object's model was set (0 when
+    /// `model` is no object or nothing tracks), for a reader that skips
+    /// work when its `model` value is unchanged.
+    pub fn track_model(&self, model: &Value) -> u64 {
+        let Value::Object(obj) = model else { return 0 };
+        if self.inner.tracking.get() == 0 {
+            return 0;
+        }
+        let existing = {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(*obj) else {
+                return 0;
+            };
+            h.ext.as_ref().and_then(|x| x.model_node)
+        };
+        let n = match existing {
+            Some(n) => n,
+            None => {
+                let Ok(scope) = self.ensure_scope(*obj) else {
+                    return 0;
+                };
+                let Ok(n) = self.inner.graph.property(scope, Value::Int(0)) else {
+                    return 0;
+                };
+                if let Some(h) = self.inner.store.borrow_mut().objects.get_mut(*obj) {
+                    h.ext_mut().model_node = Some(n);
+                }
+                n
+            }
+        };
+        match self.inner.graph.try_get(n) {
+            Some(Value::Int(i)) => i as u64,
+            _ => 0,
+        }
     }
 
     /// Makes `obj` the model `model`: `model: obj` in a view, a

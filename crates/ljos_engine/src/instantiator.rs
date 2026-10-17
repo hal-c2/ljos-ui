@@ -119,6 +119,7 @@ impl Instantiator {
             let delegate = e.get(me, Instantiator::DELEGATE).ok().flatten();
             let active = e.get(me, Instantiator::ACTIVE).unwrap_or(false);
             let asynchronous = e.get(me, Instantiator::ASYNCHRONOUS).unwrap_or(false);
+            e.track_model(&model);
             e.untrack(|| {
                 delegates.set_asynchronous(asynchronous);
                 let model = active.then(|| e.model_from_value(&model, Some(me)));
