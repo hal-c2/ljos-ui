@@ -310,10 +310,10 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn has_enum_key(&self, ty: QtType, scope: Option<&str>, key: &str) -> bool {
-        ty.0.enum_value(key).is_some_and(|value| {
-            let enumeration = value.enumeration;
-            scope.is_none_or(|scope| scope == enumeration.name || Some(scope) == enumeration.alias)
-        })
+        match scope {
+            Some(scope) => ty.0.scoped_enum_value(scope, key).is_some(),
+            None => ty.0.enum_value(key).is_some(),
+        }
     }
 
     fn has_enum(&self, ty: QtType, name: &str) -> bool {
@@ -372,11 +372,11 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn enum_value(&self, ty: QtType, scope: Option<&str>, key: &str) -> Option<i64> {
-        let value = ty.0.enum_value(key)?;
-        let enumeration = value.enumeration;
-        scope
-            .is_none_or(|scope| scope == enumeration.name || Some(scope) == enumeration.alias)
-            .then_some(value.number)?
+        match scope {
+            Some(scope) => ty.0.scoped_enum_value(scope, key),
+            None => ty.0.enum_value(key),
+        }
+        .and_then(|value| value.number)
     }
 
     fn module(&self, ty: QtType) -> Option<String> {

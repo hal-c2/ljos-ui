@@ -377,6 +377,25 @@ impl Type {
         })
     }
 
+    /// The key `Type.scope.key` names: the key of the enum called `scope`
+    /// (or the flags made of it), where several enums of the type have a
+    /// key of that name (`NetworkInformation.TransportMedium.Unknown`).
+    pub fn scoped_enum_value(&'static self, scope: &str, key: &str) -> Option<EnumValue> {
+        self.find(true, &|ty| {
+            ty.enums
+                .iter()
+                .filter(|e| e.name == scope || e.alias == Some(scope))
+                .find_map(|enumeration| {
+                    let (key, number) = enumeration.keys.iter().find(|(known, _)| *known == key)?;
+                    Some(EnumValue {
+                        enumeration,
+                        key,
+                        number: *number,
+                    })
+                })
+        })
+    }
+
     /// Whether a property declared with the enum `name` of the type holds
     /// several of its keys at once: `Alignment`, not `AlignmentFlag` or
     /// `Orientation`. None when the type has no enum of that name.
