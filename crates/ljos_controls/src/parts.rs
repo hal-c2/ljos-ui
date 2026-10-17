@@ -106,7 +106,12 @@ fn adopt(
                 layer(Item::Z.index, Box::new(|_| Value::Real(-1.0)))?;
             }
             if unset(Item::X.index) && follows_implicit_size(engine, part, true) {
-                layer(Item::X.index, Box::new(move |e| Value::Real(inset(e, 0))))?;
+                layer(
+                    Item::X.index,
+                    Box::new(move |e| {
+                        Value::Real(inset(e, 0) + crate::swipe_delegate::offset(e, c))
+                    }),
+                )?;
                 layer(
                     Item::WIDTH.index,
                     Box::new(move |e| {
@@ -308,6 +313,8 @@ pub(crate) fn register(engine: &Engine, metas: &[&'static ljos_engine::MetaObjec
         engine.register_made_when_reached(meta, |e, control, name| {
             if PART_PROPERTIES.contains(&name) {
                 e.untrack(|| make_part(e, control, name));
+            } else if name == "swipe" {
+                e.untrack(|| crate::swipe_delegate::make_swipe(e, control));
             }
         });
     }

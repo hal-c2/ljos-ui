@@ -339,7 +339,9 @@ fn content_rect(engine: &Engine, obj: ObjectId) -> [f64; 4] {
     if let Some(row) = crate::dialog::button_box_rect(engine, obj) {
         return row;
     }
-    let x = num(engine, obj, Control::LEFT_PADDING.index);
+    // A swiped row's content moves with it.
+    let x =
+        num(engine, obj, Control::LEFT_PADDING.index) + crate::swipe_delegate::offset(engine, obj);
     let mut y = num(engine, obj, Control::TOP_PADDING.index);
     let w = num(engine, obj, Control::AVAILABLE_WIDTH.index);
     let mut h = num(engine, obj, Control::AVAILABLE_HEIGHT.index);

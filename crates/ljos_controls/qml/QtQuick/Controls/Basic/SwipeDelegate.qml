@@ -1,0 +1,47 @@
+// The Basic style of Ljós, written from the Qt Quick Controls documentation
+// and from the sizes and colours a running Qt reports (CLEAN_ROOM.md).
+import QtQuick
+import QtQuick.Controls.impl
+import QtQuick.Templates as T
+
+T.SwipeDelegate {
+    id: control
+
+    implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
+                            implicitContentWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
+                             implicitContentHeight + topPadding + bottomPadding,
+                             implicitIndicatorHeight + topPadding + bottomPadding)
+
+    padding: 12
+    spacing: 12
+
+    icon.width: 24
+    icon.height: 24
+
+    swipe.transition: Transition { SmoothedAnimation { velocity: 3; easing.type: Easing.InOutCubic } }
+
+    contentItem: Component {
+        IconLabel {
+            spacing: control.spacing
+            mirrored: control.mirrored
+            display: control.display
+            alignment: control.display === IconLabel.IconOnly
+                       || control.display === IconLabel.TextUnderIcon ? Qt.AlignCenter
+                                                                      : Qt.AlignLeft
+            text: control.text
+            font: control.font
+            color: control.highlighted ? control.palette.highlightedText : control.palette.text
+        }
+    }
+
+    // Unlike an item delegate's, the row is always drawn: it covers what
+    // the swipe shows under it.
+    background: Component {
+        Rectangle {
+            implicitWidth: 100
+            implicitHeight: 40
+            color: control.down ? control.palette.midlight : control.palette.light
+        }
+    }
+}

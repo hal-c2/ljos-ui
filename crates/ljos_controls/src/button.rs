@@ -587,6 +587,7 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) ->
     };
     st.held.set(true);
     st.press_at.set((at.x, at.y));
+    crate::swipe_delegate::pressed(engine, obj, at.x, ev.time);
     click_focus(engine, obj);
     let quick = st
         .last_click
@@ -651,6 +652,13 @@ fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurbo::Point) {
     if !st.held.get() {
         return;
     }
+    // A swiped row stays pressed wherever the pointer goes, and is no
+    // longer held for a long press.
+    if crate::swipe_delegate::moved(engine, obj, at) {
+        stop_timer(engine, &st);
+        set_pressed(engine, obj, true);
+        return;
+    }
     if let Some(p) = switch_position(engine, obj)
         && drag_switch(engine, obj, &st, p, at)
     {
@@ -660,7 +668,7 @@ fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurbo::Point) {
     set_pressed(engine, obj, contains_point(engine, obj, at));
 }
 
-fn release(engine: &Engine, obj: ObjectId, ev: &PointerEvent, _at: kurbo::Point) {
+fn release(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     let Some(st) = state_of(engine, obj) else {
         return;
     };
@@ -670,6 +678,9 @@ fn release(engine: &Engine, obj: ObjectId, ev: &PointerEvent, _at: kurbo::Point)
     stop_timer(engine, &st);
     let was_pressed = engine.untrack(|| flag(engine, obj, AbstractButton::PRESSED.index));
     set_pressed(engine, obj, false);
+    if crate::swipe_delegate::released(engine, obj, at, ev.time) {
+        return;
+    }
     if let Some(layer) = st.drag.take() {
         drop_switch(engine, obj, layer);
         return;
@@ -695,6 +706,7 @@ fn cancel(engine: &Engine, obj: ObjectId) {
         return;
     }
     stop_timer(engine, &st);
+    crate::swipe_delegate::canceled(engine, obj);
     if let Some(layer) = st.drag.take()
         && let Some(p) = switch_position(engine, obj)
     {
