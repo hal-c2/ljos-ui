@@ -629,7 +629,10 @@ variant field by field adds `value` (or `..`); the same holds for
   `--mcp` alone means `inspect`). This runs QML on its own; an
   application with native types runs its own binary through
   `ljos::App` (section 6), whose `run_with` keeps the same shell
-  setup `ljos run` builds on.
+  setup `ljos run` builds on. Built with `ljos`'s `mcp` feature, such
+  a binary serves the inspector when `LJOS_MCP=inspect,input` is set
+  (the token file goes below `LJOS_MCP_DIR`, else the working
+  directory), with no code; `App::inspector` asks for it in code.
 - `ljos test [PATHS]...` runs the `TestCase`s of `tst_*.qml` files on a
   virtual clock, printing results as Qt's QML test runner does; the
   exit status is the number of failed tests. `--filter <NAME>` runs

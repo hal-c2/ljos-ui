@@ -1251,7 +1251,7 @@ Both use the same addressing as tests and screen readers: role and accessible na
 
 | | Authoring server | Live inspector |
 |---|---|---|
-| Started by | `ljos mcp --project <dir>` | `ljos run --mcp[=caps]`, or `ljos_dev::mcp::attach(&engine, cfg)` |
+| Started by | `ljos mcp --project <dir>` | `ljos run --mcp[=caps]`; `LJOS_MCP=caps` or `App::inspector` in a program built with `ljos`'s `mcp` feature; or `ljos_dev::mcp::attach(&engine, cfg)` |
 | Transport | stdio | Streamable HTTP on `127.0.0.1:0`, or a Unix socket using stdio framing |
 | Needs a running app | No | Yes, a dev build |
 | Default rights | Read-only analysis | `inspect` only |

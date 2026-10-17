@@ -70,6 +70,8 @@ pub struct App<M = ()> {
     qml_errors: crate::dev::OnError,
     #[cfg(feature = "dev-qml")]
     qml_diagnostics: Option<DiagnosticsHandler>,
+    #[cfg(feature = "mcp")]
+    inspector: Option<crate::mcp::CapSet>,
     modules: Vec<Module>,
     source: Option<MapSource>,
     root: Option<String>,
@@ -80,16 +82,18 @@ pub struct App<M = ()> {
 
 impl<M> std::fmt::Debug for App<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("App")
-            .field("title", &self.title)
+        let mut d = f.debug_struct("App");
+        d.field("title", &self.title)
             .field("size", &self.size)
             .field("modules", &self.modules.len())
             .field("source", &self.source.is_some())
             .field("root", &self.root)
             .field("context", &self.context.len())
             .field("on_window", &self.on_window.len())
-            .field("on_message", &self.on_message.is_some())
-            .finish_non_exhaustive()
+            .field("on_message", &self.on_message.is_some());
+        #[cfg(feature = "mcp")]
+        d.field("inspector", &self.inspector.is_some());
+        d.finish_non_exhaustive()
     }
 }
 
@@ -108,6 +112,8 @@ impl App<()> {
             qml_errors: crate::dev::OnError::Record,
             #[cfg(feature = "dev-qml")]
             qml_diagnostics: None,
+            #[cfg(feature = "mcp")]
+            inspector: None,
             modules: Vec::new(),
             source: None,
             root: None,
@@ -149,6 +155,16 @@ impl<M> App<M> {
     #[must_use]
     pub fn shell_config(mut self, config: crate::ShellConfig) -> Self {
         self.shell_config = Some(config);
+        self
+    }
+
+    /// Serves the MCP inspector (the `mcp` feature) to clients holding
+    /// `caps`, under the rules of `ljos run --mcp`: `inspect` among them,
+    /// and not `fs` or `run`. `LJOS_MCP`, when set, wins (`ljos::mcp`).
+    #[cfg(feature = "mcp")]
+    #[must_use]
+    pub fn inspector(mut self, caps: crate::mcp::CapSet) -> Self {
+        self.inspector = Some(caps);
         self
     }
 
@@ -366,6 +382,8 @@ impl<M> App<M> {
             qml_errors,
             #[cfg(feature = "dev-qml")]
             qml_diagnostics,
+            #[cfg(feature = "mcp")]
+            inspector,
             modules,
             source,
             root,
@@ -382,6 +400,8 @@ impl<M> App<M> {
             qml_errors,
             #[cfg(feature = "dev-qml")]
             qml_diagnostics,
+            #[cfg(feature = "mcp")]
+            inspector,
             modules,
             source,
             root,
@@ -468,11 +488,24 @@ impl<M> App<M> {
             context,
             on_window,
             mut on_message,
+            #[cfg(feature = "mcp")]
+            inspector,
             ..
         } = self;
+        #[cfg(feature = "mcp")]
+        let inspector = inspector_to_serve(inspector)?;
+        #[cfg(not(feature = "mcp"))]
+        if let Some(note) = unbuilt_inspector(std::env::var_os("LJOS_MCP").as_deref()) {
+            eprintln!("{note}");
+        }
         let config = shell_config
             .unwrap_or_else(|| crate::ShellConfig::new(title).with_size(size[0], size[1]));
         crate::run(config, move |s| {
+            // Before the root is made: what it logs and does is seen.
+            #[cfg(feature = "mcp")]
+            if let Some(inspector) = &inspector {
+                inspector.serve(s)?;
+            }
             // The shell's Engine already holds the standard modules;
             // `prepare` must not register them a second time, so it
             // is the same function `build_engine` uses on its own.
@@ -483,6 +516,44 @@ impl<M> App<M> {
             setup(s)
         })
     }
+}
+
+/// What [`App::run_with`] serves: the environment's choice, or else the
+/// builder's.
+#[cfg(feature = "mcp")]
+fn inspector_to_serve(
+    caps: Option<crate::mcp::CapSet>,
+) -> Result<Option<crate::mcp::Inspector>, crate::ShellError> {
+    use crate::mcp::{CAPS_VAR, DIR_VAR, Inspector};
+    let refused = |e: crate::mcp::InspectorError| crate::ShellError::Setup(e.to_string().into());
+    if let Some(inspector) = Inspector::from_env()
+        .map_err(|e| crate::ShellError::Setup(format!("{CAPS_VAR}: {e}").into()))?
+    {
+        return Ok(Some(inspector));
+    }
+    let Some(caps) = caps else {
+        return Ok(None);
+    };
+    let inspector = Inspector::new(caps).map_err(refused)?;
+    Ok(Some(
+        match std::env::var_os(DIR_VAR).filter(|d| !d.is_empty()) {
+            Some(dir) => inspector.below(dir),
+            None => inspector,
+        },
+    ))
+}
+
+/// Said when `LJOS_MCP` asks a program built without the `mcp` feature
+/// for an inspector, rather than nothing happening.
+#[cfg(all(feature = "shell", not(feature = "mcp")))]
+fn unbuilt_inspector(caps: Option<&std::ffi::OsStr>) -> Option<String> {
+    caps.filter(|c| !c.is_empty()).map(|c| {
+        format!(
+            "ljos: LJOS_MCP={} asks for the inspector, but this program was built without \
+             the `mcp` feature of `ljos`: nothing is served",
+            c.to_string_lossy()
+        )
+    })
 }
 
 /// Registers the application's modules, hands over its components
@@ -522,4 +593,20 @@ pub fn create_root(
 ) -> Result<ObjectId, EngineError> {
     engine.set_component_source(source);
     engine.create_from_url(root, None, Vec::new())
+}
+
+#[cfg(all(test, feature = "shell", not(feature = "mcp")))]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::unbuilt_inspector;
+
+    #[test]
+    fn a_program_without_the_inspector_says_so_when_asked_for_it() {
+        let note = unbuilt_inspector(Some(OsStr::new("inspect,input"))).expect("said");
+        assert!(note.contains("`mcp` feature"), "{note}");
+        assert!(note.contains("LJOS_MCP=inspect,input"), "{note}");
+        assert_eq!(unbuilt_inspector(None), None);
+        assert_eq!(unbuilt_inspector(Some(OsStr::new(""))), None);
+    }
 }

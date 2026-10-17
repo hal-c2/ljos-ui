@@ -67,7 +67,9 @@ pub use args::{INSTRUCTIONS, MAX_LOG_LINES, MAX_NODES, MAX_SCREENSHOT_SIDE, SERV
 pub use ljos_mcp_core::glue::http::{
     HttpConfig, HttpError, HttpServer, LAN_WARNING, Listen, bind_policy,
 };
-pub use ljos_mcp_core::{Cap, CapSet, SOCKET_PATH_MAX, SocketPathError, check_socket_path};
+pub use ljos_mcp_core::{
+    Cap, CapSet, ParseCapError, SOCKET_PATH_MAX, SocketPathError, check_socket_path,
+};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};

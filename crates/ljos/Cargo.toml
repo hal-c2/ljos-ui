@@ -21,6 +21,9 @@ ljos_media = { path = "../ljos_media", optional = true }
 # Only with `shell`: the desktop loop an application runs in. Without it
 # the facade is the runtime alone (headless hosts, tests, other shells).
 ljos_shell = { path = "../ljos_shell", optional = true, default-features = false }
+# Only with `mcp`: the inspector's capabilities (`ljos::mcp::Cap`).
+ljos_dev = { path = "../ljos_dev", optional = true }
+thiserror = { workspace = true, optional = true }
 # Unconditional: the compute pool behind `task::spawn`, and with `shell`
 # the UiHandle type the shell's setup hands out, named here so an
 # application needs no second Ljós dependency to hold one. Default
@@ -80,6 +83,12 @@ build = ["dep:ljos_compiler", "dep:qml_front"]
 # Headless pictures (`ljos::render`): an application's UI drawn to a PNG
 # on a virtual clock, for screenshot tests and documentation.
 render = []
+# Development only: the MCP inspector an agent connects to
+# (ARCHITECTURE.md §19.4), served by `App::run` when `App::inspector`
+# or the `LJOS_MCP` environment variable asks for it (`ljos::mcp`).
+# Links the QML compiler, an MCP SDK and an HTTP server; a shipped
+# application leaves it off.
+mcp = ["shell", "ljos_shell/mcp", "dep:ljos_dev", "ljos_dev/mcp", "dep:thiserror"]
 # For an application's tests (`[dev-dependencies]`): `ljos::testing`, a
 # window without a platform on a virtual clock that a test hands input
 # to, and the host's and the system's part a test plays.

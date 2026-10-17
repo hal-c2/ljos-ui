@@ -123,6 +123,8 @@ pub mod dev;
 #[cfg(any(feature = "render", feature = "testing"))]
 mod drive;
 pub mod item;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 /// Video a program makes or receives itself, shown by a `VideoOutput`,
 /// a `Video` or a `VideoSink` (the `media` feature): a
 /// [`media::VideoFrameInput`] takes frames from any thread and keeps the
