@@ -50,6 +50,31 @@ pub(crate) fn incubation_ends(e: &Engine) {
     }
 }
 
+/// The views that laid their rows out while the scene was laying its
+/// items out, and so did not take the lengths of delegates still being
+/// laid out (see `Fill::lay_row`).
+#[derive(Default)]
+struct Polishing(RefCell<Vec<ObjectId>>);
+
+pub(crate) fn polished_later(e: &Engine, view: ObjectId) {
+    let due = e.extension::<Polishing>();
+    let mut due = due.0.borrow_mut();
+    if !due.contains(&view) {
+        due.push(view);
+    }
+}
+
+/// The scene has laid its items out: the views that waited for that lay
+/// their rows out with the lengths the delegates have now.
+pub(crate) fn polish_ends(e: &Engine) {
+    let due = std::mem::take(&mut *e.extension::<Polishing>().0.borrow_mut());
+    for view in due {
+        if e.is_alive(view) {
+            pass::refresh(e, view);
+        }
+    }
+}
+
 /// What the engine's delegates call on a view.
 pub(crate) struct Host(pub ObjectId);
 

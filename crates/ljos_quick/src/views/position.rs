@@ -6,18 +6,54 @@
 //! and the estimate only shows in `contentY` and the length of the
 //! content, as it does in Qt.
 
-use ljos_engine::{Engine, ObjectId};
+use ljos_engine::{Engine, ObjectId, Value};
 
-use super::state::{position_mode, position_target, snap_target};
-use super::{GridView, ListView, pass, state_of};
+use super::state::{Geo, position_mode, position_target, snap_target};
+use super::{GridView, ListView, pass, put, state_of};
 use crate::flickable::{self, Y};
 use crate::item::Item;
 
-/// How often `positionViewAtEnd` looks again: the end of a list whose
-/// rows were never measured moves as they are.
-const END_ROUNDS: usize = 3;
-
 pub(crate) fn at_index(e: &Engine, view: ObjectId, index: i32, mode: i32) {
+    go(e, view, index, mode, None);
+}
+
+/// `positionViewAtEnd` and `positionViewAtBeginning`: past the last row
+/// and before the first, so that a footer or a header shows.
+pub(crate) fn at_end(e: &Engine, view: ObjectId, end: bool) {
+    let Some(st) = state_of(e, view) else {
+        return;
+    };
+    let rows = st.delegates().map_or(0, |d| d.count());
+    if rows > 0 {
+        let (row, mode) = if end {
+            (rows - 1, position_mode::END)
+        } else {
+            (0, position_mode::BEGINNING)
+        };
+        go(e, view, row as i32, mode, Some(end));
+        return;
+    }
+    e.untrack(|| {
+        let g = pass::read_geo(e, view, &st);
+        let b = flickable::bounds(e, view, g.main);
+        st.positioned.set(true);
+        flickable::scroll_to(e, view, g.main, edge_of(&g, (b.min, b.max), end));
+    });
+    pass::refresh(e, view);
+}
+
+/// The end of the content, or its beginning: rows that run against the
+/// coordinate begin at its far end.
+fn edge_of(g: &Geo, (min, max): (f64, f64), end: bool) -> f64 {
+    if end != g.reversed { max } else { min }
+}
+
+/// Brings row `index` where `mode` says, or with `edge` the end or the
+/// beginning of the content. Where that is is worked out first: the rows
+/// are laid out there, and the view is given its place and the length of
+/// the content those rows make in one go, so that it moves once and makes
+/// delegates only for the rows it shows and the one it measured.
+fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
     let Some(st) = state_of(e, view) else {
         return;
     };
@@ -31,6 +67,7 @@ pub(crate) fn at_index(e: &Engine, view: ObjectId, index: i32, mode: i32) {
         let g = pass::read_geo(e, view, &st);
         let dir = flickable::dir(g.main);
         let line = g.line_of(row);
+        let v0 = g.viewport(pass::rd(e, view, dir.position));
         let known = |measured: bool| {
             let slots = st.slots.borrow();
             let found = slots.iter().find(|s| s.line == line)?;
@@ -42,62 +79,47 @@ pub(crate) fn at_index(e: &Engine, view: ObjectId, index: i32, mode: i32) {
             known(true)
         };
         let span = span.or_else(|| {
-            let guess = st.place_of(line, g.spacing);
+            // The first row starts the content, wherever the view was;
+            // another is where rows of the average length put it.
+            let guess = if line == 0 {
+                0.0
+            } else {
+                st.place_of(line, g.spacing)
+            };
             st.anchor.set((line, guess));
-            pass::pass(e, view, &st, Some(guess));
+            let around = position_target(mode, guess, st.avg.get(), v0, g.view_main);
+            pass::pass(e, view, &st, Some(around.unwrap_or(guess)));
             known(false)
         });
         let Some((pos, size)) = span else {
             return;
         };
-        let v0 = g.viewport(pass::rd(e, view, dir.position));
-        let Some(to) = position_target(mode, pos, size, v0, g.view_main) else {
+        let to = position_target(mode, pos, size, v0, g.view_main);
+        let Some(to) = to.or(edge.map(|_| v0)) else {
             return;
         };
         st.positioned.set(true);
         // Where it was told to go is where it stays.
         st.follow.set(false);
-        let b = flickable::bounds(e, view, g.main);
-        let inside = g.content_position(to).clamp(b.min.min(b.max), b.max);
-        flickable::scroll_to(e, view, g.main, inside);
-    });
-    // Whatever was laid out to measure the row, what is shown now has
-    // its delegates when this returns.
-    pass::refresh(e, view);
-}
-
-/// `positionViewAtEnd` and `positionViewAtBeginning`: past the last row
-/// and before the first, so that a footer or a header shows.
-pub(crate) fn at_end(e: &Engine, view: ObjectId, end: bool) {
-    let Some(st) = state_of(e, view) else {
-        return;
-    };
-    let rows = st.delegates().map_or(0, |d| d.count());
-    if rows > 0 {
-        if end {
-            at_index(e, view, rows as i32 - 1, position_mode::END);
-        } else {
-            at_index(e, view, 0, position_mode::BEGINNING);
-        }
-    }
-    for _ in 0..END_ROUNDS {
-        let moved = e.untrack(|| {
-            let g = pass::read_geo(e, view, &st);
-            let b = flickable::bounds(e, view, g.main);
-            // Rows that run against the coordinate begin at its far end.
-            let bound = if end != g.reversed { b.max } else { b.min };
-            if b.position == bound {
-                return false;
+        st.laid.set(None);
+        pass::pass(e, view, &st, Some(to));
+        let laid = st.laid.take();
+        e.batch(|| {
+            if let Some((origin, length)) = laid {
+                put(e, view, dir.origin, Value::Real(origin));
+                put(e, view, dir.content, Value::Real(length));
             }
-            st.positioned.set(true);
-            flickable::scroll_to(e, view, g.main, bound);
-            true
+            let b = flickable::bounds(e, view, g.main);
+            let at = match edge {
+                Some(end) => edge_of(&g, (b.min, b.max), end),
+                None => g.content_position(to).clamp(b.min.min(b.max), b.max),
+            };
+            st.bounds.set((b.min, b.max, 0.0));
+            flickable::scroll_to(e, view, g.main, at);
         });
-        if !moved {
-            break;
-        }
-        pass::refresh(e, view);
-    }
+    });
+    // What is shown now has its delegates when this returns.
+    pass::refresh(e, view);
 }
 
 /// The row at a point of the content, if one is shown there.

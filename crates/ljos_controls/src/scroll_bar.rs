@@ -739,12 +739,21 @@ fn follow(
             return;
         };
         let s = share(e, f, horizontal);
+        // In an order that never takes the handle past the end: a bar
+        // brought back from there would move the content to a place it
+        // is not at. A handle that grows moves first, one that shrinks
+        // after.
         e.untrack(|| {
-            put(e, bar, kind.size, Value::Real(s.size));
             let now = num(e, bar, kind.position);
             // What the bar itself put the content at comes back as the
             // same position give or take the arithmetic.
-            if (now - s.position).abs() > 1e-12 {
+            let moved = (now - s.position).abs() > 1e-12;
+            let grows = s.size > num(e, bar, kind.size);
+            if moved && grows {
+                put(e, bar, kind.position, Value::Real(s.position));
+            }
+            put(e, bar, kind.size, Value::Real(s.size));
+            if moved && !grows {
                 put(e, bar, kind.position, Value::Real(s.position));
             }
         });

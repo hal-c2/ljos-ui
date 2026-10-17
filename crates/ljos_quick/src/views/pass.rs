@@ -587,10 +587,26 @@ impl Fill<'_> {
                 if is_item(e, o) {
                     item = Some(o);
                     let size = rd(e, o, size_prop(g.main));
+                    let follows = size_follows_implicit(e, o, g.main == X);
                     // A row whose length is still to come from what is in
-                    // it (a text not shaped yet) is not 0 long.
-                    if size > 0.0 || !size_follows_implicit(e, o, g.main == X) {
+                    // it (a text not shaped yet) is not 0 long. Nor is it
+                    // as long as a positioner made it on completion,
+                    // before the text in it had a length, or as long as
+                    // the items in it laid out so far while the scene lays
+                    // them out: it is measured once a polish has run since
+                    // it was made and none is running, and the view lays
+                    // its rows out again then.
+                    let polishing = follows && crate::scene::polishing();
+                    if !follows || (!polishing && size > 0.0 && self.st.settled(o, made)) {
                         (size, true)
+                    } else if size > 0.0 {
+                        super::changes::polished_later(e, self.view);
+                        if self.guess <= 0.0 {
+                            // The first row stands for the rest until then.
+                            self.guess = size;
+                        }
+                        let other = if polishing { size } else { self.guess };
+                        (known.unwrap_or(other), false)
                     } else {
                         if let Some(k) = key
                             && self.guess <= 0.0
@@ -753,8 +769,9 @@ fn place_outside(slots: &VecDeque<Slot>, line: usize, per: f64, spacing: f64) ->
 }
 
 /// One layout pass. With `over` the rows are laid out as if the view
-/// started there, and the view is not moved: for the methods that have to
-/// measure a row before they can go to it.
+/// started there, and neither the view nor its content is changed: for
+/// the methods that have to measure a row before they can go to it. What
+/// the content would be is left in [`ViewState::laid`].
 pub(crate) fn pass(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     if st.in_pass.replace(true) {
         st.dirty.set(true);
@@ -1168,8 +1185,14 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         }
         let (lo, hi) = (start0 - head, end + foot);
         let origin = if g.reversed { -hi } else { lo };
-        put(e, view, dir.origin, Value::Real(origin));
-        put(e, view, dir.content, Value::Real(hi - lo));
+        if over.is_some() {
+            // Content that got shorter here would bring the view inside
+            // it, and lay rows out at every place it passes on the way.
+            st.laid.set(Some((origin, hi - lo)));
+        } else {
+            put(e, view, dir.origin, Value::Real(origin));
+            put(e, view, dir.content, Value::Real(hi - lo));
+        }
     });
 
     // Where the view is.

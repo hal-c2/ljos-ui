@@ -142,7 +142,10 @@ fn retry_makes_the_content_again_and_takes_the_fallback_away() {
         0.0,
         "a fallback is no restart"
     );
-    assert_eq!(num(&e, boundary, "width"), 0.0, "the text has no size here");
+    assert!(
+        num(&e, boundary, "width") > 0.0,
+        "the fallback is laid out in the frame that made it"
+    );
     e.invoke_by_name(boundary, "retry", &[]).unwrap();
     let second = find(&e, root, "content");
     assert_ne!(second, first);

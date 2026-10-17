@@ -20,6 +20,13 @@ use std::time::Duration;
 
 thread_local! {
     static POLISHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static POLISHING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a scene of this thread is laying its items out: an item's
+/// length may still change as the items in it are laid out.
+pub(crate) fn polishing() -> bool {
+    POLISHING.get()
 }
 
 /// How many times a scene of this thread polished: what was made before
@@ -926,6 +933,12 @@ impl QuickScene {
     fn polish(&mut self, engine: &Engine) {
         POLISHES.set(POLISHES.get() + 1);
         for _ in 0..MAX_POLISH_PASSES {
+            // Items made since the last sync (a view's delegates) join the
+            // tree first, so that they are laid out in this polish and not
+            // a frame later.
+            if !self.shared.borrow().structure.is_empty() {
+                self.reconcile(engine);
+            }
             let mut set: Vec<(usize, ObjectId)> = {
                 let mut s = self.shared.borrow_mut();
                 s.polish
@@ -935,8 +948,16 @@ impl QuickScene {
                     .collect()
             };
             if set.is_empty() {
-                return;
+                // The views that waited for the items in their delegates
+                // lay their rows out now; what they make is polished next.
+                POLISHING.set(false);
+                crate::views::polish_ends(engine);
+                if self.shared.borrow().polish.is_empty() {
+                    return;
+                }
+                continue;
             }
+            POLISHING.set(true);
             // Deepest first, so a positioner sees its children's final size.
             // Items of one depth go in creation order: the set's own order
             // changes from run to run, and two layouts that share an item
@@ -975,6 +996,8 @@ impl QuickScene {
                 }
             }
         }
+        POLISHING.set(false);
+        crate::views::polish_ends(engine);
         let left = std::mem::take(&mut self.shared.borrow_mut().polish);
         if !left.is_empty() {
             engine.log(

@@ -4,7 +4,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ljos_engine::{NodeId, ObjectId, OverrideId, PropIndex, RowKey, ViewDelegates};
+use ljos_engine::{Made, NodeId, ObjectId, OverrideId, PropIndex, RowKey, ViewDelegates};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// One line of what a view laid out: a row of a list, or the cells of a
@@ -239,6 +239,9 @@ pub(crate) struct ViewState {
     /// The row a pass stopped at to wait for its length, and the polish
     /// count then (see `Fill::wait`).
     pub waited: Cell<Option<(RowKey, u64)>>,
+    /// The delegates made or reused since the last polish, with the
+    /// polish count then (see [`ViewState::settled`]).
+    pub fresh: RefCell<FxHashMap<ObjectId, u64>>,
     pub heading: Cell<f64>,
     pub slots: RefCell<Vec<Slot>>,
     /// The delegates of the last pass with the logical span of each.
@@ -272,6 +275,10 @@ pub(crate) struct ViewState {
     /// The bounds the content last had: a pass that changes them brings
     /// the content inside.
     pub bounds: Cell<(f64, f64, f64)>,
+    /// Where the content starts and how long it is by the last pass that
+    /// laid rows out at a place the view is not at: whoever moves the
+    /// view there writes them with its place.
+    pub laid: Cell<Option<(f64, f64)>>,
     /// Rows that arrived since the last pass.
     pub added: RefCell<FxHashSet<RowKey>>,
     /// The first rows of a model are still to be shown.
@@ -314,6 +321,7 @@ impl Default for ViewState {
             places: RefCell::default(),
             avg: Cell::new(0.0),
             waited: Cell::new(None),
+            fresh: RefCell::default(),
             heading: Cell::new(0.0),
             slots: RefCell::default(),
             placed: RefCell::default(),
@@ -334,6 +342,7 @@ impl Default for ViewState {
             positioned: Cell::new(false),
             last_main: Cell::new(None),
             bounds: Cell::new((0.0, 0.0, 0.0)),
+            laid: Cell::new(None),
             added: RefCell::default(),
             populate: Cell::new(false),
             leaving: RefCell::default(),
@@ -360,6 +369,21 @@ impl std::fmt::Debug for ViewState {
 }
 
 impl ViewState {
+    /// Whether delegate `o`, which a request gave as `made`, has had its
+    /// length from what is in it since it was made or took another row:
+    /// two polishes ran, as the first may have run before it joined the
+    /// scene (see `Fill::wait_for`).
+    pub fn settled(&self, o: ObjectId, made: Made) -> bool {
+        let now = crate::scene::polishes();
+        let mut fresh = self.fresh.borrow_mut();
+        if made != Made::Existing {
+            fresh.retain(|_, then| *then >= now);
+            fresh.insert(o, now);
+            return false;
+        }
+        fresh.get(&o).is_none_or(|then| *then < now)
+    }
+
     pub fn delegates(&self) -> Option<ViewDelegates> {
         self.delegates.borrow().clone()
     }
