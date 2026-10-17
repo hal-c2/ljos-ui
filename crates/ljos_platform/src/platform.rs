@@ -240,6 +240,8 @@ impl Default for Platform {
         let signal = Arc::new(Signal::default());
         let hook = Arc::clone(&signal);
         let (inbox, tx) = UiInbox::channel_with_wake(INBOX, Arc::new(move || hook.wake()));
+        // An answer is a closure: there is no kind to tell apart.
+        inbox.observe_as("platform", None);
         Platform {
             inbox,
             tx,

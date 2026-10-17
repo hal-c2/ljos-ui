@@ -303,6 +303,8 @@ impl<M: Send + 'static> ShellApp<M> {
             config.inbox_capacity,
             Arc::new(move || wake_ctx.request_repaint()),
         );
+        // The application's own messages: their kinds are its business.
+        inbox.observe_as("application", None);
         let mut s = Setup {
             engine: &engine,
             handle,

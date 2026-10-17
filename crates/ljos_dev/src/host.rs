@@ -328,6 +328,7 @@ impl DevSession {
             }
         }
         let (inbox, handle) = UiInbox::channel_with_wake(INBOX, wake);
+        inbox.observe_as("reload", Some(DevMsg::kind));
         let watcher = Watcher::spawn_shared(reloader, crate::debounce::QUIET, move |msg| {
             let key = if matches!(msg, DevMsg::Idle) {
                 IDLE_KEY

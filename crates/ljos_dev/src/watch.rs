@@ -59,6 +59,18 @@ pub enum DevMsg {
     Idle,
 }
 
+impl DevMsg {
+    /// The variant's name, for an observer's view of a mailbox.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            DevMsg::Reload { .. } => "reload",
+            DevMsg::Failed(_) => "failed",
+            DevMsg::Cleared => "cleared",
+            DevMsg::Idle => "idle",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum WatchError {
     #[error("cannot watch {}: {source}", path.display())]

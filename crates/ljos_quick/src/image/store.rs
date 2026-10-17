@@ -124,6 +124,16 @@ struct Done {
     result: Result<decode::Loaded, LoadError>,
 }
 
+impl Done {
+    fn kind(&self) -> &'static str {
+        if self.result.is_ok() {
+            "decoded"
+        } else {
+            "failed"
+        }
+    }
+}
+
 /// Decodes under way may take this share of the cache's budget at once:
 /// pictures at full size are about to be made smaller, so they need not
 /// all be decoded side by side.
@@ -344,6 +354,7 @@ impl Default for ImageStore {
         let hook = Arc::clone(&signal);
         let (inbox, tx) =
             UiInbox::channel_with_wake(MAX_IN_FLIGHT * 2, Arc::new(move || hook.wake()));
+        inbox.observe_as("images", Some(Done::kind));
         Self {
             state: RefCell::new(State {
                 resources: HashMap::new(),

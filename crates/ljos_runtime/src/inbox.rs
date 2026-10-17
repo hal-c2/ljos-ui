@@ -40,13 +40,14 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 use std::task::{Context, Poll, Waker};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
+use crate::observe::{self, MailboxProbe, MailboxSample};
 use crate::time::Clock;
 
 /// Called from a sender's thread when the inbox goes from empty to non-empty.
@@ -105,6 +106,9 @@ impl<M> fmt::Debug for SendError<M> {
 struct Slot<M> {
     key: Option<CoalesceKey>,
     msg: M,
+    /// When it was queued, kept only while observed: an observer asks how
+    /// long the front message has waited.
+    at: Option<Instant>,
 }
 
 /// FIFO with O(1) in-place replacement by key. Slots are only ever pushed at
@@ -127,7 +131,8 @@ impl<M> Queue<M> {
             self.keyed
                 .insert(k, self.front_seq + self.slots.len() as u64);
         }
-        self.slots.push_back(Slot { key, msg });
+        let at = observe::is_enabled().then(Instant::now);
+        self.slots.push_back(Slot { key, msg, at });
     }
 
     fn pop_front(&mut self) -> Option<M> {
@@ -149,6 +154,32 @@ struct Shared<M> {
     /// Mirrors `Queue::closed` for lock-free `is_closed`.
     closed: AtomicBool,
     wake: OnceLock<WakeHook>,
+    /// Set by [`UiInbox::observe_as`].
+    watch: OnceLock<Watch<M>>,
+    counts: Counts,
+}
+
+/// What an observer knows a mailbox by.
+struct Watch<M> {
+    name: &'static str,
+    kind_of: Option<fn(&M) -> &'static str>,
+}
+
+/// Moved only while observed (see [`crate::observe`]).
+#[derive(Default)]
+struct Counts {
+    sent: AtomicU64,
+    refused: AtomicU64,
+    replaced: AtomicU64,
+    drained: AtomicU64,
+}
+
+impl Counts {
+    fn bump(counter: &AtomicU64) {
+        if observe::is_enabled() {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 impl<M> Shared<M> {
@@ -279,10 +310,25 @@ impl<M> UiHandle<M> {
     /// The part of a push done outside the lock: wake the UI, drop what
     /// was replaced or rejected.
     fn pushed(&self, pushed: Result<Pushed<M>, SendError<M>>) -> Result<(), SendError<M>> {
-        match pushed? {
-            Pushed::Queued { was_empty: true } => self.shared.fire_wake(),
-            Pushed::Queued { was_empty: false } => {}
-            Pushed::Replaced(old) => drop(old),
+        let counts = &self.shared.counts;
+        match pushed {
+            Ok(Pushed::Queued { was_empty }) => {
+                Counts::bump(&counts.sent);
+                if was_empty {
+                    self.shared.fire_wake();
+                }
+            }
+            Ok(Pushed::Replaced(old)) => {
+                Counts::bump(&counts.sent);
+                Counts::bump(&counts.replaced);
+                drop(old);
+            }
+            Err(e) => {
+                if e.is_full() {
+                    Counts::bump(&counts.refused);
+                }
+                return Err(e);
+            }
         }
         Ok(())
     }
@@ -441,6 +487,8 @@ impl<M> UiInbox<M> {
             capacity: capacity.max(1),
             closed: AtomicBool::new(false),
             wake: OnceLock::new(),
+            watch: OnceLock::new(),
+            counts: Counts::default(),
         });
         (
             UiInbox {
@@ -511,6 +559,7 @@ impl<M> UiInbox<M> {
             let next = self.shared.pop();
             match next {
                 Some(m) => {
+                    Counts::bump(&self.shared.counts.drained);
                     handle(m);
                     drained += 1;
                 }
@@ -530,6 +579,65 @@ impl<M> UiInbox<M> {
             remaining,
             elapsed: clock.now() - start,
         }
+    }
+}
+
+impl<M: Send + 'static> UiInbox<M> {
+    /// Names this inbox for an observer (`app_mailboxes`), once; a second
+    /// name is ignored. `kind_of` names a message's kind for the counts
+    /// by kind and the peek; it must not look further into the payload
+    /// than its variant, because what it returns is shown. Costs nothing
+    /// until an observer attaches.
+    pub fn observe_as(&self, name: &'static str, kind_of: Option<fn(&M) -> &'static str>) {
+        if self.shared.watch.set(Watch { name, kind_of }).is_ok() {
+            let weak: Weak<Shared<M>> = Arc::downgrade(&self.shared);
+            observe::register(weak);
+        }
+    }
+}
+
+impl<M: Send> MailboxProbe for Shared<M> {
+    fn sample(self: Arc<Self>, peek: usize) -> Option<MailboxSample> {
+        let watch = self.watch.get()?;
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let mut kinds: Vec<(&'static str, usize)> = Vec::new();
+        let mut front = Vec::new();
+        let (depth, oldest, waiting) = {
+            let q = self.lock();
+            if let Some(kind_of) = watch.kind_of {
+                for (i, slot) in q.slots.iter().enumerate() {
+                    let kind = kind_of(&slot.msg);
+                    match kinds.iter_mut().find(|(k, _)| *k == kind) {
+                        Some((_, n)) => *n += 1,
+                        None => kinds.push((kind, 1)),
+                    }
+                    if i < peek {
+                        front.push(kind);
+                    }
+                }
+            }
+            let oldest = q.slots.front().and_then(|s| s.at).map(|at| at.elapsed());
+            (q.slots.len(), oldest, q.blocked + q.wakers.len())
+        };
+        kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        let c = &self.counts;
+        Some(MailboxSample {
+            name: watch.name,
+            capacity: self.capacity,
+            depth,
+            oldest,
+            sent: c.sent.load(Ordering::Relaxed),
+            refused: c.refused.load(Ordering::Relaxed),
+            replaced: c.replaced.load(Ordering::Relaxed),
+            drained: c.drained.load(Ordering::Relaxed),
+            // Besides the handles, the inbox and this sample hold one.
+            senders: Arc::strong_count(&self).saturating_sub(2),
+            waiting,
+            kinds,
+            peek: front,
+        })
     }
 }
 
@@ -956,5 +1064,35 @@ mod tests {
         tokio::task::yield_now().await;
         drop(inbox);
         assert!(waiting.await.unwrap().unwrap_err().is_disconnected());
+    }
+
+    fn sample_of(name: &str) -> Option<MailboxSample> {
+        observe::mailboxes(4).into_iter().find(|m| m.name == name)
+    }
+
+    #[test]
+    fn an_observed_inbox_counts_and_names_kinds_but_not_payloads() {
+        fn kind(m: &u32) -> &'static str {
+            if m.is_multiple_of(2) { "even" } else { "odd" }
+        }
+        let (inbox, tx) = UiInbox::<u32>::channel(3);
+        inbox.observe_as("test.observed", Some(kind));
+        let guard = observe::enable();
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        tx.send_coalesced(CoalesceKey(9), 4).unwrap();
+        tx.send_coalesced(CoalesceKey(9), 6).unwrap();
+        assert!(tx.send(8).unwrap_err().is_full());
+        let s = sample_of("test.observed").unwrap();
+        assert_eq!((s.capacity, s.depth, s.senders), (3, 3, 1));
+        assert_eq!((s.sent, s.refused, s.replaced, s.drained), (4, 1, 1, 0));
+        assert_eq!(s.kinds, vec![("even", 2), ("odd", 1)]);
+        assert_eq!(s.peek, vec!["odd", "even", "even"]);
+        assert!(s.oldest.is_some());
+        drain_all(&inbox);
+        assert_eq!(sample_of("test.observed").unwrap().drained, 3);
+        drop(guard);
+        drop(inbox);
+        assert!(sample_of("test.observed").is_none());
     }
 }
