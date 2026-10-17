@@ -66,7 +66,13 @@ struct ModuleLines {
     lines: Vec<(u32, u32)>,
     /// The file its source is in. A file loaded again after a reload lets
     /// the earlier one go: its lines stay, its source does not.
-    file: Option<Arc<CompiledFile>>,
+    file: Option<Source>,
+}
+
+enum Source {
+    Qml(Arc<CompiledFile>),
+    /// A script file's text as it runs, which keeps the file's lines.
+    Script(Rc<str>),
 }
 
 impl LineTable {
@@ -123,7 +129,27 @@ impl LineTable {
             ModuleLines {
                 url: url.to_owned(),
                 lines,
-                file: Some(file.clone()),
+                file: Some(Source::Qml(file.clone())),
+            },
+        );
+    }
+
+    /// A script file, run under its own address: its lines are the file's.
+    pub(crate) fn add_script(&mut self, url: &str, source: &str) {
+        if self
+            .modules
+            .get(url)
+            .and_then(|m| m.file.as_ref())
+            .is_some_and(|f| matches!(f, Source::Script(s) if **s == *source))
+        {
+            return;
+        }
+        self.modules.insert(
+            url.to_owned(),
+            ModuleLines {
+                url: url.to_owned(),
+                lines: vec![(1, 1)],
+                file: Some(Source::Script(source.into())),
             },
         );
     }
@@ -137,9 +163,12 @@ impl LineTable {
 
     /// Line `js_line` (1-based) of a module's source.
     pub(crate) fn line(&self, module: &str, js_line: u32) -> Option<String> {
-        let file = self.modules.get(module)?.file.as_ref()?;
+        let source = match self.modules.get(module)?.file.as_ref()? {
+            Source::Qml(file) => &*file.js.source,
+            Source::Script(text) => text,
+        };
         let i = usize::try_from(js_line.checked_sub(1)?).ok()?;
-        file.js.source.lines().nth(i).map(str::to_owned)
+        source.lines().nth(i).map(str::to_owned)
     }
 }
 

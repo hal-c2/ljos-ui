@@ -137,10 +137,19 @@ impl Engine {
         }
         chain.pop();
         // The source is a function of the script's own address and of
-        // what it imports.
+        // what it imports. Run under that address, what it throws is told
+        // at the file's own line.
+        if let Ok(js) = self.js() {
+            js.lines.borrow_mut().add_script(url, &script.source);
+        }
+        let mut options = ljos_js::rquickjs::context::EvalOptions::default();
+        options.filename = Some(url.to_owned());
         let made: Result<ljos_js::rquickjs::Value, _> = s
             .ctx()
-            .eval::<ljos_js::rquickjs::Function, _>(script.source.as_bytes())
+            .eval_with_options::<ljos_js::rquickjs::Function, _>(
+                script.source.as_bytes(),
+                options,
+            )
             .and_then(|f| f.call((url, imports)));
         match made {
             Ok(object) => Some(s.keep(object)),
