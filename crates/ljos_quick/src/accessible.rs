@@ -1332,15 +1332,18 @@ impl QuickScene {
     /// builds the tree.
     pub fn set_accessibility_active(&mut self, engine: &Engine, active: bool) {
         self.a11y.set_active(engine, active);
-        // Whoever makes the scene keep the tree is the screen reader as far
-        // as the application can tell (`Qt.styleHints.accessibility`).
-        crate::system_prefs::report_system_prefs(
-            engine,
-            ljos_a11y::HostPrefs {
-                screen_reader_active: Some(active),
-                ..ljos_a11y::HostPrefs::default()
-            },
-        );
+        // Where the platform does not say whether a screen reader runs,
+        // whoever makes the scene keep the tree stands in for one
+        // (`Qt.styleHints.accessibility`).
+        if !crate::system_prefs::screen_reader_told(engine) {
+            crate::system_prefs::report_system_prefs(
+                engine,
+                ljos_a11y::HostPrefs {
+                    screen_reader_active: Some(active),
+                    ..ljos_a11y::HostPrefs::default()
+                },
+            );
+        }
     }
 
     pub fn accessibility_active(&self) -> bool {

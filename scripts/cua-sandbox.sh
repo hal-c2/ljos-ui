@@ -17,6 +17,10 @@
 # LJOS_CUA_GPU=<render node> (/dev/dri/renderD128) it renders on that GPU and hands its
 # clients buffers there, which measures an app on the hardware it ships on; give that sandbox
 # its own LJOS_CUA_HOME.
+#
+# cua-driver tells the bus a screen reader runs, which no bus signal tells apart from one. Apps
+# get LJOS_SCREEN_READER=off unless it is set, so they do what they do for a user without one
+# (ARCHITECTURE.md section 14); their accessibility tree is exposed all the same.
 set -euo pipefail
 
 die() {
@@ -93,7 +97,8 @@ load_sandbox() {
     XDG_CONFIG_HOME="$home/xdg/config" XDG_DATA_HOME="$home/xdg/data" XDG_STATE_HOME="$home/xdg/state"
     MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-$user_config/mise}" MISE_DATA_DIR="${MISE_DATA_DIR:-$user_data/mise}"
     MISE_STATE_DIR="${MISE_STATE_DIR:-$user_state/mise}"
-    CUA_DRIVER_RS_HOME="$home/cua" CUA_DRIVER_RS_TELEMETRY_ENABLED=0 CUA_DRIVER_RS_UPDATE_CHECK=0)
+    CUA_DRIVER_RS_HOME="$home/cua" CUA_DRIVER_RS_TELEMETRY_ENABLED=0 CUA_DRIVER_RS_UPDATE_CHECK=0
+    LJOS_SCREEN_READER="${LJOS_SCREEN_READER:-off}")
 }
 
 start_sway() {
@@ -228,7 +233,8 @@ print_env() {
   [[ -S $wayland && -S $sock ]] || die "the sandbox's sway has no sockets in $run"
   printf '%s\n' "WAYLAND_DISPLAY=$wayland" "SWAYSOCK=$sock" "DISPLAY=$(< "$home/display")" \
     "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run" \
-    "XDG_CONFIG_HOME=$home/xdg/config" "XDG_DATA_HOME=$home/xdg/data" "XDG_STATE_HOME=$home/xdg/state"
+    "XDG_CONFIG_HOME=$home/xdg/config" "XDG_DATA_HOME=$home/xdg/data" "XDG_STATE_HOME=$home/xdg/state" \
+    "LJOS_SCREEN_READER=${LJOS_SCREEN_READER:-off}"
 }
 
 # Adds "key":value to the json object unless it has the key or the tool does not take it.

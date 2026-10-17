@@ -46,6 +46,7 @@ pub(crate) fn install(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) 
     }
     platform.set_fetcher(Arc::new(HttpFetcher::new()));
     crate::settings::install(engine);
+    crate::screen_reader::watch(engine);
     platform.set_plugin_name(plugin_name());
 }
 

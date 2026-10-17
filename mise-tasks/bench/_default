@@ -89,6 +89,7 @@ exec "$target/release/ljos" bench --manifest "$manifest" \
   --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \
   --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \
   --app-env "XDG_STATE_HOME=$(value XDG_STATE_HOME)" \
+  --app-env "LJOS_SCREEN_READER=$(value LJOS_SCREEN_READER)" \
   "${defaults[@]}" \
   --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --release (lto thin)" \
   --note "qt: $(qml6 --version 2>&1 | head -1), QT_QUICK_CONTROLS_STYLE=Basic" \

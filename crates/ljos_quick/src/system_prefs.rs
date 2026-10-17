@@ -134,6 +134,9 @@ struct State {
     asked: Cell<Option<ColorScheme>>,
     /// `startDragDistance`.
     drag_distance: Cell<i32>,
+    /// Whether the platform says if a screen reader runs. Until it does,
+    /// whatever turns the accessibility tree on stands in for one.
+    reader_told: Cell<bool>,
 }
 
 impl Default for State {
@@ -145,6 +148,7 @@ impl Default for State {
             pinned: Cell::new(Pinned::default()),
             asked: Cell::new(None),
             drag_distance: Cell::new(START_DRAG_DISTANCE),
+            reader_told: Cell::new(false),
         }
     }
 }
@@ -428,7 +432,27 @@ pub fn font_scale(engine: &Engine) -> f64 {
     }
 }
 
-/// Whether an assistive technology reads the application. Tracked.
+/// The platform says whether a screen reader runs, now and from now on:
+/// turning the accessibility tree on no longer counts as one. On Linux an
+/// AT-SPI client that is not a screen reader (a test driver, an inspector)
+/// asks for the tree as a screen reader does.
+pub fn set_screen_reader_from_platform(engine: &Engine, active: bool) {
+    state(engine).reader_told.set(true);
+    report_system_prefs(
+        engine,
+        HostPrefs {
+            screen_reader_active: Some(active),
+            ..HostPrefs::default()
+        },
+    );
+}
+
+/// Whether the platform said whether a screen reader runs.
+pub fn screen_reader_told(engine: &Engine) -> bool {
+    state(engine).reader_told.get()
+}
+
+/// Whether a screen reader reads the application. Tracked.
 pub fn screen_reader_active(engine: &Engine) -> bool {
     match objects(engine) {
         Some((_, a11y)) => engine

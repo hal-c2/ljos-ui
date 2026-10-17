@@ -142,8 +142,9 @@ pub use system_palette::{SystemPalette, color_group};
 pub use system_prefs::{
     AccessibilityHints, PRESS_AND_HOLD_INTERVAL, START_DRAG_DISTANCE, StyleHints, color_scheme,
     contrast, font_scale, press_and_hold_interval, reduced_motion, report_system_prefs,
-    screen_reader_active, set_start_drag_distance, set_system_prefs, start_drag_distance,
-    style_hints, system_prefs, update_system_prefs,
+    screen_reader_active, screen_reader_told, set_screen_reader_from_platform,
+    set_start_drag_distance, set_system_prefs, start_drag_distance, style_hints, system_prefs,
+    update_system_prefs,
 };
 pub use text::{
     DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, font_families, set_text_engine,

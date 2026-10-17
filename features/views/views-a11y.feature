@@ -5,7 +5,9 @@
 @a11y @ljos-only
 Feature: What a view tells assistive technology
   A list tells how many rows it has and each row its place among all of them, also the rows
-  that have no delegate. While a screen reader listens the view keeps more rows around.
+  that have no delegate. While a screen reader runs the view keeps more rows around; another
+  assistive technology that reads the tree (a test driver, an inspector) does not count as one
+  where the platform says whether a screen reader runs.
 
   Background:
     Given the QML:
@@ -59,6 +61,14 @@ Feature: What a view tells assistive technology
   Scenario: Without a screen reader only the rows in the view have delegates
     When 100 milliseconds pass
     Then the property "created" of "root" is at most 7
+    And the object "r12" does not exist
+
+  Scenario: An assistive technology that is not a screen reader keeps no more rows
+    Given the system setting "screen reader" is false
+    And an assistive technology is listening
+    When 100 milliseconds pass
+    Then the accessibility tree has a "list" named "Messages"
+    And the property "created" of "root" is at most 7
     And the object "r12" does not exist
 
   Scenario: While a screen reader is active twenty more rows are kept on each side

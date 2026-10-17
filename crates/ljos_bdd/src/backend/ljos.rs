@@ -237,6 +237,11 @@ enum Said {
 
 fn apply(engine: &Engine, said: Said) {
     match said {
+        // The platform's say, which an assistive technology that listens no
+        // longer stands in for.
+        Said::System(super::SystemSetting::ScreenReader(active)) => {
+            ljos_quick::set_screen_reader_from_platform(engine, active)
+        }
         Said::System(setting) => {
             let mut prefs = ljos_quick::system_prefs(engine);
             change_setting(&mut prefs, setting);

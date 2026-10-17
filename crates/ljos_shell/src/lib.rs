@@ -37,6 +37,7 @@ mod gl_shader;
 mod platform;
 mod present;
 mod repaint;
+mod screen_reader;
 mod settings;
 mod surface;
 #[cfg(all(test, target_os = "linux"))]
