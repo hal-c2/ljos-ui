@@ -311,6 +311,9 @@ struct NativeType {
     /// A name written on it that it lacks is an error
     /// ([`TypeOracle::members_checked`]).
     checked: bool,
+    /// The toolkit type it extends, where Qt's table describes that type:
+    /// a group it has from there (`anchors`) is the table's.
+    toolkit: Option<QtType>,
 }
 
 #[derive(Clone, Debug)]
@@ -360,6 +363,7 @@ impl NativeType {
                 })
                 .collect(),
             reached: reaches(meta),
+            toolkit: None,
         }
     }
 
@@ -615,7 +619,12 @@ fn flatten(
                     entry.name
                 )
             })?;
-            NativeType::from_meta(&meta, String::new(), false)
+            let mut base = NativeType::from_meta(&meta, String::new(), false);
+            base.toolkit = entry
+                .base_module
+                .as_deref()
+                .and_then(|uri| QtTypeOracle.module_type(uri, &meta.name));
+            base
         }
     };
     Ok(NativeType::from_entry(entry, module, Some(base)))
@@ -675,7 +684,17 @@ impl TypeOracle for EngineOracle {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.property(ty, name).map(qt_property),
             EngineType::Native(i) => {
-                let info = self.native(i).property(name)?;
+                let native = self.native(i);
+                let info = native.property(name)?;
+                // A group the toolkit type has, as the table has it.
+                if let (TypeTag::Group(n), Some(qt)) = (&info.ty, native.toolkit)
+                    && self
+                        .named(n.as_str())
+                        .is_none_or(|g| !self.members_checked(g))
+                    && let Some(p) = QtTypeOracle.property(qt, name)
+                {
+                    return Some(qt_property(p));
+                }
                 Some(FrontProperty {
                     is_component: matches!(&info.ty, TypeTag::Object(Some(n)) if n.as_str() == "Component"),
                     is_url: info.ty == TypeTag::Url,

@@ -1,7 +1,6 @@
 //! An application's visual type that extends the toolkit's `Item`: the
 //! build checks the members of its own group as it does the type's, and
-//! leaves the toolkit's groups (`anchors`) to the runtime as it does on
-//! `Item` itself.
+//! those of the toolkit's groups (`anchors`) as it does on `Item` itself.
 
 use ljos::prelude::*;
 
@@ -84,10 +83,11 @@ fn a_member_its_own_group_lacks_fails_the_build() {
 }
 
 #[test]
-fn the_toolkits_groups_stay_as_on_item() {
-    // `anchors` has no `margin`; on `Item` the build leaves that to the
-    // runtime, and on a type extending it too.
+fn the_toolkits_groups_are_checked_as_on_item() {
+    // `anchors` has no `margin`; Qt refuses to load either.
     let item = "import QtQuick\nItem { Item { anchors.margin: 10 } }\n";
-    assert!(compile(item).is_ok());
-    assert!(compile(&MAIN.replace("anchors.margins:", "anchors.margin:")).is_ok());
+    let err = compile(item).unwrap_err();
+    assert!(err.contains("margin"), "{err}");
+    let err = compile(&MAIN.replace("anchors.margins:", "anchors.margin:")).unwrap_err();
+    assert!(err.contains("margin"), "{err}");
 }
