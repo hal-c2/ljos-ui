@@ -449,43 +449,32 @@ fn decode(format: StreamFormat, bytes: &Receiver<Vec<u8>>, wake: &Wake) {
     use std::sync::mpsc::RecvTimeoutError;
     use std::time::Duration;
 
-    use filmcraft_codecs::video::{H264Decoder, MjpegDecoder, VideoDecoder};
+    use crate::frame_input::VideoFrame;
+    use crate::stream_decoder::{DecodeError, Decoder};
 
-    use crate::units::{Cut, Splitter};
-
-    let (cut, made): (Cut, filmcraft_codecs::Result<Box<dyn VideoDecoder>>) = match format {
-        StreamFormat::Mjpeg => (Cut::Jpeg, Ok(Box::new(MjpegDecoder))),
-        StreamFormat::H264AnnexB => (Cut::AnnexB, Ok(Box::new(H264Decoder::annexb()))),
-        StreamFormat::H264Avcc { config } => {
-            let size = filmcraft_codecs::video::avcc_length_size(&config);
-            (
-                Cut::Length(size),
-                H264Decoder::new(config).map(|d| Box::new(d) as Box<dyn VideoDecoder>),
-            )
-        }
-        StreamFormat::Container { name } => return container(&name, bytes, wake),
-    };
-    let mut decoder = match made {
+    if let StreamFormat::Container { name } = &format {
+        return container(name, bytes, wake);
+    }
+    let mut decoder = match Decoder::new(&format) {
         Ok(d) => d,
         Err(err) => return wake.end(Some(err.to_string())),
     };
-    let mut splitter = Splitter::new(cut);
-    let mut pts = 0;
-    let give = |frames: Vec<filmcraft_codecs::DecodedFrame>| {
-        frames.into_iter().all(|f| {
-            let rgba = f.frame.to_rgba8();
-            match ImageHandle::from_straight(f.frame.width, f.frame.height, rgba) {
-                Ok(p) => wake.picture(p),
-                Err(_) => true,
-            }
-        })
+    // False when the player let the stream go or it cannot be decoded.
+    let give = |got: Result<Vec<VideoFrame>, DecodeError>| match got {
+        Ok(frames) => frames
+            .into_iter()
+            .filter_map(VideoFrame::into_image)
+            .all(|p| wake.picture(p)),
+        Err(err) => {
+            wake.end(Some(err.to_string()));
+            false
+        }
     };
     // FilmCraft's H.264 decoder works on threads of its own and hands out
     // a finished picture only when it is next called. After a write it is
     // asked again with nothing to decode, at growing intervals, until
     // `SETTLE` has passed, so that the last pictures written are not held
     // until the next write; then the thread sleeps until bytes come.
-    let threaded = cut != Cut::Jpeg;
     let mut settle: Option<(Duration, Duration)> = None;
     // Until the writer ends the stream or the player lets it go.
     loop {
@@ -501,13 +490,8 @@ fn decode(format: StreamFormat, bytes: &Receiver<Vec<u8>>, wake: &Wake) {
             },
         };
         let Some(chunk) = chunk else {
-            match decoder.decode(&[], pts) {
-                Ok(frames) => {
-                    if !give(frames) {
-                        return;
-                    }
-                }
-                Err(err) => return wake.end(Some(err.to_string())),
+            if !give(decoder.poll()) {
+                return;
             }
             settle = settle.and_then(|(wait, spent)| {
                 let spent = spent + wait;
@@ -515,36 +499,17 @@ fn decode(format: StreamFormat, bytes: &Receiver<Vec<u8>>, wake: &Wake) {
             });
             continue;
         };
-        for unit in splitter.push(&chunk) {
-            pts += 1;
-            match decoder.decode(&unit, pts) {
-                Ok(frames) => {
-                    if !give(frames) {
-                        return;
-                    }
-                }
-                Err(err) => return wake.end(Some(err.to_string())),
-            }
-            if threaded {
-                settle = Some((Duration::from_millis(1), Duration::ZERO));
-            }
+        if !give(decoder.push(&chunk)) {
+            return;
+        }
+        if decoder.finishes_later() {
+            settle = Some((Duration::from_millis(1), Duration::ZERO));
         }
         if wake.closed() {
             return;
         }
     }
-    for unit in splitter.finish() {
-        pts += 1;
-        match decoder.decode(&unit, pts) {
-            Ok(frames) => {
-                if !give(frames) {
-                    return;
-                }
-            }
-            Err(err) => return wake.end(Some(err.to_string())),
-        }
-    }
-    if give(decoder.flush()) {
+    if give(decoder.finish()) {
         wake.end(None);
     }
 }

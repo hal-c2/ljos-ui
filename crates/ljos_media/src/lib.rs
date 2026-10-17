@@ -40,7 +40,9 @@
 //!   from any thread, through a [`VideoFrameInput`].
 //! - **Streams**: a player plays bytes a program writes as they come
 //!   ([`MediaStream`]), paced or live, and MJPEG or H.264 from a web
-//!   server as it arrives.
+//!   server as it arrives. A program that wants the pictures itself
+//!   decodes with the same [`Decoder`] on a thread of its own, and
+//!   converts a Y'CbCr frame with [`VideoFrame::into_rgba`].
 //!
 //! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
 //! WindowCapture, AudioInput and subtitles are not built.
@@ -57,6 +59,7 @@ mod player;
 mod sink;
 mod sound;
 mod stream;
+mod stream_decoder;
 mod units;
 mod video;
 mod video_sink;
@@ -72,6 +75,7 @@ pub use meta::MediaMetaData;
 pub use player::MediaPlayer;
 pub use sound::SoundEffect;
 pub use stream::{MediaStream, StreamError, StreamFormat, StreamOptions};
+pub use stream_decoder::{DecodeError, Decoder};
 pub use video::{Video, VideoOutput};
 pub use video_sink::VideoSink;
 

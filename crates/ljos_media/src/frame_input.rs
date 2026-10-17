@@ -116,18 +116,26 @@ impl VideoFrame {
         self.height
     }
 
-    /// The frame as the image the scene paints.
-    fn into_image(self) -> Option<ImageHandle> {
-        let rgba = match self.pixels {
-            Pixels::Rgba(p) => p,
+    /// The frame as straight-alpha RGBA, 4 bytes a pixel, row after row:
+    /// Y'CbCr converted as the decoder converts a played file's frames,
+    /// on the calling thread. None only in a build with no decoder,
+    /// which makes no Y'CbCr frame.
+    pub fn into_rgba(self) -> Option<Vec<u8>> {
+        match self.pixels {
+            Pixels::Rgba(p) => Some(p),
             #[cfg(feature = "decode")]
             Pixels::Yuv420 { planes, colour } => {
-                yuv_to_rgba(self.width, self.height, planes, colour)
+                Some(yuv_to_rgba(self.width, self.height, planes, colour))
             }
             #[cfg(not(feature = "decode"))]
-            Pixels::Yuv420 { .. } => return None,
-        };
-        ImageHandle::from_straight(self.width, self.height, rgba).ok()
+            Pixels::Yuv420 { .. } => None,
+        }
+    }
+
+    /// The frame as the image the scene paints.
+    pub(crate) fn into_image(self) -> Option<ImageHandle> {
+        let (width, height) = (self.width, self.height);
+        ImageHandle::from_straight(width, height, self.into_rgba()?).ok()
     }
 }
 
