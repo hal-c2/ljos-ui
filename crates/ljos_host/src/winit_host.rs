@@ -237,7 +237,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             window.set_minimized(true);
         }
         if a.backdrop != Backdrop::None {
-            platform::set_backdrop(&window, a.backdrop);
+            platform::set_backdrop(&window, a.backdrop, a.appearance);
         }
         let id = WindowId(self.state.next_id);
         self.state.next_id += 1;
@@ -286,7 +286,7 @@ impl<U: 'static> HostControl for WinitControl<'_, U> {
             WindowChange::Decorations(on) => w.set_decorations(on),
             WindowChange::Resizable(on) => w.set_resizable(on),
             WindowChange::Level(l) => w.set_window_level(level(l)),
-            WindowChange::Backdrop(b) => platform::set_backdrop(w, b),
+            WindowChange::Backdrop(b, look) => platform::set_backdrop(w, b, look),
             WindowChange::Activate => w.focus_window(),
             WindowChange::Alert => w.request_user_attention(Some(UserAttentionType::Informational)),
             // A platform that cannot says so here; the application was
@@ -578,9 +578,13 @@ fn translate(raw: &Raw, window: &Window, pointer: Option<[f64; 2]>) -> WindowEve
 /// What differs between window systems.
 mod platform {
     use winit::event_loop::{ActiveEventLoop, EventLoop};
-    use winit::window::{Window, WindowAttributes};
+    #[cfg(not(target_os = "macos"))]
+    use winit::window::Window;
+    use winit::window::WindowAttributes;
 
-    use crate::window::{Backdrop, WindowKind};
+    use crate::window::WindowKind;
+    #[cfg(not(target_os = "macos"))]
+    use crate::window::{Appearance, Backdrop};
 
     #[cfg(all(
         unix,
@@ -627,10 +631,10 @@ mod platform {
 
         /// KDE's blur: its Wayland protocol through winit, its window
         /// property on X11, which winit does not set. Elsewhere nothing
-        /// answers either.
-        pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop) {
+        /// answers either. Neither has a dark and a light blur.
+        pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop, _: Appearance) {
             use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            let on = backdrop == Backdrop::Blur;
+            let on = backdrop != Backdrop::None;
             let x11 = match window.window_handle().map(|h| h.as_raw()) {
                 Ok(RawWindowHandle::Xlib(h)) => u32::try_from(h.window).ok(),
                 Ok(RawWindowHandle::Xcb(h)) => Some(h.window.get()),
@@ -722,25 +726,108 @@ mod platform {
         }
 
         /// Windows' system backdrop: the acrylic of transient windows is
-        /// its blur, and `Auto` its default. Elsewhere winit's blur, which
-        /// macOS has and the others ignore.
-        pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop) {
+        /// its blur, and `Auto` its default. The acrylic is
+        /// dark in a window in dark mode, which winit's theme sets. Elsewhere
+        /// winit's blur, which the others ignore.
+        #[cfg(not(target_os = "macos"))]
+        pub(crate) fn set_backdrop(window: &Window, backdrop: Backdrop, appearance: Appearance) {
+            let on = backdrop != Backdrop::None;
             #[cfg(target_os = "windows")]
             {
                 use winit::platform::windows::{BackdropType, WindowExtWindows};
-                window.set_system_backdrop(match backdrop {
-                    Backdrop::Blur => BackdropType::TransientWindow,
-                    Backdrop::None => BackdropType::Auto,
+                window.set_theme(match appearance {
+                    Appearance::Light if on => Some(winit::window::Theme::Light),
+                    Appearance::Dark if on => Some(winit::window::Theme::Dark),
+                    _ => None,
+                });
+                window.set_system_backdrop(if on {
+                    BackdropType::TransientWindow
+                } else {
+                    BackdropType::Auto
                 });
             }
             #[cfg(not(target_os = "windows"))]
-            window.set_blur(backdrop == Backdrop::Blur);
+            {
+                let _ = appearance;
+                window.set_blur(on);
+            }
         }
+
+        #[cfg(target_os = "macos")]
+        pub(crate) use crate::winit_host::appkit_backdrop::set as set_backdrop;
     }
 
     pub(crate) use imp::{
         HAS_WINDOW_KINDS, is_wayland, loop_is_wayland, set_backdrop, with_app_id, with_kind,
     };
+}
+
+/// The system's material as a view under winit's: an `NSVisualEffectView`
+/// for the blur. The view goes in the window's frame view below the content
+/// view, not into the content view, whose layer holds the painter's metal
+/// layer: a subview's layer there could be put over it. In the frame view
+/// it is sized with the window by AppKit, in and out of full screen.
+#[cfg(target_os = "macos")]
+mod appkit_backdrop {
+    use objc2::MainThreadMarker;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+        NSAutoresizingMaskOptions, NSUserInterfaceItemIdentification, NSView,
+        NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectView,
+        NSWindowOrderingMode,
+    };
+    use objc2_foundation::ns_string;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::window::Window;
+
+    use crate::{Appearance, Backdrop};
+
+    pub(crate) fn set(window: &Window, backdrop: Backdrop, appearance: Appearance) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Ok(RawWindowHandle::AppKit(handle)) = window.window_handle().map(|h| h.as_raw()) else {
+            return;
+        };
+        // SAFETY: the handle is winit's content view, which lives as long
+        // as `window`, and this is the main thread.
+        let content: &NSView = unsafe { handle.ns_view.cast().as_ref() };
+        // SAFETY: used only while `content`, which it holds, is.
+        let Some(frame) = (unsafe { content.superview() }) else {
+            return;
+        };
+        let ours = ns_string!("ljos.backdrop");
+        for view in frame.subviews().iter() {
+            if view.identifier().is_some_and(|id| id.isEqualToString(ours)) {
+                view.removeFromSuperview();
+            }
+        }
+        if backdrop == Backdrop::None {
+            return;
+        }
+        let blur = NSVisualEffectView::new(mtm);
+        blur.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+        blur.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        let view: Retained<NSView> = Retained::into_super(blur);
+        view.setIdentifier(Some(ours));
+        view.setFrame(content.frame());
+        view.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        // `None` inherits the window's, which follows the system's.
+        // SAFETY: the names are AppKit's constants.
+        let named = unsafe {
+            match appearance {
+                Appearance::System => None,
+                Appearance::Light => NSAppearance::appearanceNamed(NSAppearanceNameAqua),
+                Appearance::Dark => NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua),
+            }
+        };
+        view.setAppearance(named.as_deref());
+        frame.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Below, Some(content));
+    }
 }
 
 fn resize_direction(edge: crate::ResizeEdge) -> ResizeDirection {

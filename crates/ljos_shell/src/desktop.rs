@@ -526,6 +526,7 @@ impl<M: Send + 'static> Desktop<M> {
             opacity: 1.0,
             transient_parent: None,
             backdrop: ljos_controls::WindowBackdrop::None,
+            color_scheme: ljos_a11y::ColorScheme::Unknown,
         }
     }
 

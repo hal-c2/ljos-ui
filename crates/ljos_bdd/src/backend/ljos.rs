@@ -1428,13 +1428,23 @@ impl Backend for LjosBackend {
         self.said(Said::App(setting))
     }
 
-    fn window_backdrop_blurred(&mut self, object: &str) -> Result<bool> {
+    fn window_backdrop(&mut self, object: &str) -> Result<Option<super::BackdropAsked>> {
         let live = self.live()?;
         let win = live.find(object)?;
         let spec = ljos_controls::WindowSystem::of(&live.engine)
             .spec(&live.engine, win)
             .ok_or_else(|| failed(format!("\"{object}\" is no window")))?;
-        Ok(spec.backdrop == ljos_controls::WindowBackdrop::Blur)
+        use ljos_controls::WindowBackdrop as B;
+        let kind = match spec.backdrop {
+            B::None => return Ok(None),
+            B::Blur => "blurred",
+        };
+        let look = match spec.color_scheme {
+            ljos_quick::ColorScheme::Light => "light",
+            ljos_quick::ColorScheme::Dark => "dark",
+            ljos_quick::ColorScheme::Unknown => "the system's",
+        };
+        Ok(Some(super::BackdropAsked { kind, look }))
     }
 
     fn desktop_setting(

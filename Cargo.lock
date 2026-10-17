@@ -3722,6 +3722,9 @@ dependencies = [
 name = "ljos_host"
 version = "0.0.0"
 dependencies = [
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "thiserror 2.0.21",
  "winit",
  "x11rb",

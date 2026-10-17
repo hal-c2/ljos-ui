@@ -4,11 +4,13 @@
 //! Nothing here touches a window: the functions say what to ask of the
 //! host, so that they can be tested without a display.
 
+use ljos_a11y::ColorScheme;
 use ljos_controls::{
     FRAMELESS, KIND_MASK, STAYS_ON_BOTTOM, STAYS_ON_TOP, WindowBackdrop, WindowShow, WindowSpec,
 };
 use ljos_host::{
-    Backdrop, Capabilities, WindowAttributes, WindowChange, WindowKind, WindowLevel, WindowState,
+    Appearance, Backdrop, Capabilities, WindowAttributes, WindowChange, WindowKind, WindowLevel,
+    WindowState,
 };
 
 /// `Qt.WindowDoesNotAcceptFocus`.
@@ -101,6 +103,16 @@ fn backdrop(spec: &WindowSpec) -> Backdrop {
     }
 }
 
+/// The scheme in effect, said rather than left to the system: the
+/// application's own may differ from the system's.
+fn appearance(spec: &WindowSpec) -> Appearance {
+    match spec.color_scheme {
+        ColorScheme::Light => Appearance::Light,
+        ColorScheme::Dark => Appearance::Dark,
+        ColorScheme::Unknown => Appearance::System,
+    }
+}
+
 pub(crate) fn transparent(spec: &WindowSpec) -> bool {
     spec.color[3] < 255
 }
@@ -133,6 +145,7 @@ pub(crate) fn attributes(spec: &WindowSpec, caps: Capabilities) -> WindowAttribu
         kind,
         transparent: transparent(spec),
         backdrop: backdrop(spec),
+        appearance: appearance(spec),
         active: spec.flags & NO_FOCUS == 0 && kind != WindowKind::ToolTip,
         // The application's, not the window's: the shell says it.
         app_id: None,
@@ -170,8 +183,11 @@ pub(crate) fn changes(old: &WindowSpec, new: &WindowSpec, caps: Capabilities) ->
     if level(old.flags) != level(new.flags) {
         out.push(WindowChange::Level(level(new.flags)));
     }
-    if old.backdrop != new.backdrop {
-        out.push(WindowChange::Backdrop(backdrop(new)));
+    // A scheme changed under no backdrop is told with the next one.
+    if old.backdrop != new.backdrop
+        || (new.backdrop != WindowBackdrop::None && appearance(old) != appearance(new))
+    {
+        out.push(WindowChange::Backdrop(backdrop(new), appearance(new)));
     }
     if old.show != new.show {
         out.push(WindowChange::State(state(new.show)));
@@ -221,6 +237,7 @@ mod tests {
             opacity: 1.0,
             transient_parent: None,
             backdrop: WindowBackdrop::None,
+            color_scheme: ColorScheme::Light,
         }
     }
 
@@ -365,9 +382,41 @@ mod tests {
         plain.backdrop = WindowBackdrop::None;
         assert_eq!(
             changes(&blurred, &plain, desktop()),
-            vec![WindowChange::Backdrop(Backdrop::None)]
+            vec![WindowChange::Backdrop(Backdrop::None, Appearance::Light)]
         );
         assert!(!needs_new_window(&blurred, &plain, desktop()));
+    }
+
+    #[test]
+    fn a_backdrop_is_told_the_scheme_it_is_shown_in() {
+        let mut blurred = spec();
+        blurred.color = [0, 0, 0, 0];
+        blurred.backdrop = WindowBackdrop::Blur;
+        blurred.color_scheme = ColorScheme::Dark;
+        let attrs = attributes(&blurred, desktop());
+        assert_eq!(
+            (attrs.backdrop, attrs.appearance),
+            (Backdrop::Blur, Appearance::Dark)
+        );
+
+        let mut light = blurred.clone();
+        light.color_scheme = ColorScheme::Light;
+        assert_eq!(
+            changes(&blurred, &light, desktop()),
+            vec![WindowChange::Backdrop(Backdrop::Blur, Appearance::Light)]
+        );
+        let mut unsaid = blurred.clone();
+        unsaid.color_scheme = ColorScheme::Unknown;
+        assert_eq!(
+            changes(&blurred, &unsaid, desktop()),
+            vec![WindowChange::Backdrop(Backdrop::Blur, Appearance::System)]
+        );
+
+        // Without a backdrop the scheme waits for one.
+        let (mut a, mut b) = (spec(), spec());
+        a.color_scheme = ColorScheme::Dark;
+        b.color_scheme = ColorScheme::Light;
+        assert_eq!(changes(&a, &b, desktop()), vec![]);
     }
 
     #[test]

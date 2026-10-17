@@ -48,6 +48,17 @@ pub enum Backdrop {
     Blur,
 }
 
+/// Light or dark: which of its materials the window system puts behind a
+/// window ([`Backdrop`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    /// The system's, following it as it changes.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Everything about a window that is decided when it is opened. Sizes and
 /// positions are in logical pixels.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +82,7 @@ pub struct WindowAttributes {
     /// The window's background may show what is behind it.
     pub transparent: bool,
     pub backdrop: Backdrop,
+    pub appearance: Appearance,
     /// Takes the keyboard when it is shown.
     pub active: bool,
     /// The application the window belongs to, as the desktop names it
@@ -96,6 +108,7 @@ impl Default for WindowAttributes {
             kind: WindowKind::Normal,
             transparent: false,
             backdrop: Backdrop::None,
+            appearance: Appearance::System,
             active: true,
             app_id: None,
         }
@@ -115,7 +128,9 @@ pub enum WindowChange {
     Decorations(bool),
     Resizable(bool),
     Level(WindowLevel),
-    Backdrop(Backdrop),
+    /// The backdrop and its appearance, told together: a platform picks
+    /// its material from both.
+    Backdrop(Backdrop, Appearance),
     /// Take the keyboard.
     Activate,
     /// Ask for the user's attention without taking the keyboard.

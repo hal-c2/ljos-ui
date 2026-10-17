@@ -149,6 +149,16 @@ pub struct ApplicationFault {
     pub message: String,
 }
 
+/// A backdrop a window asks the window system for, in a scenario's words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BackdropAsked {
+    /// `"blurred"`.
+    pub kind: &'static str,
+    /// `"light"`, `"dark"`, or `"the system's"` when the window leaves it
+    /// to the window system.
+    pub look: &'static str,
+}
+
 /// What a pointer does in one step of a press, drag and release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerStep {
@@ -279,9 +289,9 @@ pub trait Backend: fmt::Debug {
     fn wheel(&mut self, _at: (f64, f64), _by: WheelBy) -> Result<()> {
         Err(BackendError::NotImplemented("the wheel"))
     }
-    /// Whether the window system is asked to blur what is behind the
-    /// window at `object`.
-    fn window_backdrop_blurred(&mut self, _object: &str) -> Result<bool> {
+    /// What the window system is asked to draw behind the window at
+    /// `object`; `None` for nothing.
+    fn window_backdrop(&mut self, _object: &str) -> Result<Option<BackdropAsked>> {
         Err(BackendError::NotImplemented("window backdrops"))
     }
     /// An assistive technology asks the node with this role and name to

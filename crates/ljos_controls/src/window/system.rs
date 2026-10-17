@@ -11,7 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_engine::{Engine, ObjectId, Value, WriteKind};
-use ljos_quick::{Item, Rectangle};
+use ljos_quick::{ColorScheme, Item, Rectangle};
 
 use super::app::{self, Application, ApplicationState, ScreenSpec};
 use super::{Window, state_of};
@@ -147,6 +147,8 @@ pub struct WindowSpec {
     pub opacity: f64,
     pub transient_parent: Option<ObjectId>,
     pub backdrop: WindowBackdrop,
+    /// The colour scheme in effect, which a backdrop's material follows.
+    pub color_scheme: ColorScheme,
 }
 
 /// `Qt.FramelessWindowHint`.
@@ -278,6 +280,7 @@ impl WindowSystem {
                     .as_object()
                     .filter(|p| engine.is_alive(*p)),
                 backdrop: WindowBackdrop::from_qt(int(Window::BACKDROP.index)),
+                color_scheme: ljos_quick::color_scheme(engine),
             })
         }
     }

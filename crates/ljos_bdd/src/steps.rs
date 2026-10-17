@@ -1023,15 +1023,29 @@ fn a11y_described(w: &mut LjosWorld, role: String, name: String, text: String) -
     })
 }
 
-#[then(regex = r#"^the window system is asked for (a blurred|no) backdrop behind "([^"]+)"$"#)]
-fn window_backdrop(w: &mut LjosWorld, which: String, object: String) -> StepResult {
-    let wanted = which == "a blurred";
+#[then(
+    regex = r#"^the window system is asked for (no|a (?:(light|dark) )?(blurred)) backdrop behind "([^"]+)"$"#
+)]
+fn window_backdrop(
+    w: &mut LjosWorld,
+    which: String,
+    look: String,
+    kind: String,
+    object: String,
+) -> StepResult {
     w.each(|b| {
-        if b.window_backdrop_blurred(&object)? == wanted {
+        let asked = b.window_backdrop(&object)?;
+        // A scenario that names no look leaves it open.
+        let same = match &asked {
+            None => which == "no",
+            Some(a) => a.kind == kind && (look.is_empty() || a.look == look),
+        };
+        if same {
             Ok(())
         } else {
+            let seen = asked.map_or("no".to_owned(), |a| format!("a {} {}", a.look, a.kind));
             Err(BackendError::Failed(format!(
-                "the window system is not asked for {which} backdrop behind \"{object}\""
+                "the window system is asked for {seen} backdrop behind \"{object}\", not {which}"
             )))
         }
     })
