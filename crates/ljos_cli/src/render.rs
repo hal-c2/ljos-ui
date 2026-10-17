@@ -226,18 +226,23 @@ impl Render {
 /// (`qrc:/qt/qml/<Module>/icons/a.svg`, as `qt_add_qml_module` lays out a
 /// module's `RESOURCES`) loadable by the address the program names them by.
 pub(crate) fn stage_resources(engine: &Engine, dir: &Path) {
+    if let Ok(files) = ljos_compiler::resources(dir) {
+        stage(engine, &files);
+    }
+}
+
+/// Stages the pictures of `files` (address, path), each read when it is
+/// first shown.
+pub(crate) fn stage(engine: &Engine, files: &[(String, std::path::PathBuf)]) {
     const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"];
-    let Ok(files) = ljos_compiler::resources(dir) else {
-        return;
-    };
     let images = ljos_quick::ImageStore::of(engine);
     for (address, path) in files {
         let picture = path
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| PICTURES.iter().any(|p| e.eq_ignore_ascii_case(p)));
-        if picture && let Ok(bytes) = std::fs::read(&path) {
-            images.register_resource(address, bytes);
+        if picture {
+            images.register_resource_file(address.clone(), path.clone());
         }
     }
 }

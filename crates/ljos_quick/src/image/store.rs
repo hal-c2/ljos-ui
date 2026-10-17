@@ -20,6 +20,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
@@ -273,7 +274,7 @@ impl Signal {
 }
 
 struct State {
-    resources: HashMap<String, Arc<[u8]>>,
+    resources: HashMap<String, Origin>,
     cache: ByteLru<ImageKey, Picture>,
     /// Decodes asked for and not delivered yet, with who waits for each.
     jobs: HashMap<ImageKey, Vec<Waiter>>,
@@ -381,11 +382,23 @@ impl ImageStore {
         self.state
             .borrow_mut()
             .resources
-            .insert(url.into(), bytes.into());
+            .insert(url.into(), Origin::Bytes(bytes.into()));
     }
 
-    /// Whether `url` is registered: what it loads is in memory already, so
-    /// reading it reaches for nothing.
+    /// Makes the file at `path` what `url` loads, read when a picture of
+    /// it is first asked for: a program's resources staged from where the
+    /// build would take them, of which a run shows few or none. A
+    /// registered URL wins over a file of that name.
+    pub fn register_resource_file(&self, url: impl Into<String>, path: impl Into<PathBuf>) {
+        self.state
+            .borrow_mut()
+            .resources
+            .insert(url.into(), Origin::File(path.into()));
+    }
+
+    /// Whether `url` is registered: what it loads is in memory already, or
+    /// a file the program was built with, so reading it reaches for
+    /// nothing a document could name.
     pub fn has_resource(&self, url: &str) -> bool {
         self.state.borrow().resources.contains_key(url)
     }
@@ -842,7 +855,10 @@ impl ImageStore {
                     .flatten()
             })
         };
-        decode::locate(&key.url, registered)
+        match registered {
+            Some(origin) => Ok(origin),
+            None => decode::locate(&key.url, None),
+        }
     }
 
     /// Puts `image` in the cache and makes room for it. What a display

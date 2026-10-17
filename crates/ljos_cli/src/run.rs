@@ -385,8 +385,8 @@ impl Run {
                 tools.start(setup)?;
                 let engine = setup.engine();
                 ljos_controls::set_application_arguments(engine, arguments);
+                crate::render::stage(engine, &source.resources());
                 engine.set_component_source(source);
-                crate::render::stage_resources(engine, &dir);
                 Ok(engine
                     .create_from_url(
                         &key,

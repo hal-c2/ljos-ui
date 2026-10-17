@@ -242,6 +242,37 @@ Item {{
 }
 
 #[test]
+fn a_resource_staged_as_a_file_is_read_when_it_is_shown() {
+    let dir = std::env::temp_dir().join(format!("ljos-resource-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("knob.png");
+    let e = engine();
+    let store = ImageStore::of(&e);
+    store.register_resource_file("qrc:/app/knob.png", &path);
+    store.register_resource_file("qrc:/app/gone.png", dir.join("gone.png"));
+    assert!(store.has_resource("qrc:/app/knob.png"));
+    // Not there when it was staged: nothing was read then.
+    std::fs::write(&path, png(8, 6, GREEN)).unwrap();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    Image { objectName: "knob"; source: "qrc:/app/knob.png" }
+    Image { objectName: "gone"; source: "qrc:/app/gone.png" }
+}
+"#,
+    );
+    assert_eq!(implicit(&e, find(&e, root, "knob")), (8.0, 6.0));
+    assert_eq!(status(&e, find(&e, root, "gone")), image_status::ERROR);
+    assert_eq!(
+        warnings(&e),
+        ["file:///Main.qml:5:5: QML Image: Cannot open: qrc:/app/gone.png"]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn png_and_jpeg_are_told_apart_by_their_bytes() {
     let e = engine();
     let store = ImageStore::of(&e);

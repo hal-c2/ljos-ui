@@ -61,6 +61,8 @@ struct Tree {
     read: HashSet<String>,
     /// The modules told to the front end, by their place in `modules`.
     told: HashSet<usize>,
+    /// What [`resources`] finds, from the same reading.
+    resources: Vec<(String, PathBuf)>,
 }
 
 impl<O: TypeOracle> Project<O> {
@@ -260,7 +262,7 @@ impl<O: TypeOracle> Project<O> {
             let Some(dir_key) = key(root, dir) else {
                 continue;
             };
-            for module in &modules_in(dir, names) {
+            for module in &described(dir, names).0 {
                 self.add_module(&dir_key, module);
             }
         }
@@ -280,6 +282,7 @@ impl<O: TypeOracle> Project<O> {
         })?;
         let mut project = Self::new(oracle);
         let mut modules = Vec::new();
+        let mut resources = Vec::new();
         for (dir, names) in &dirs {
             let Some(dir_key) = key(root, dir) else {
                 continue;
@@ -290,11 +293,9 @@ impl<O: TypeOracle> Project<O> {
                     project.add_script(&key, text);
                 }
             }
-            modules.extend(
-                modules_in(dir, names)
-                    .into_iter()
-                    .map(|m| (dir_key.clone(), m)),
-            );
+            let (found, kept) = described(dir, names);
+            resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
+            modules.extend(found.into_iter().map(|m| (dir_key.clone(), m)));
         }
         let module_dirs = modules
             .iter()
@@ -311,6 +312,7 @@ impl<O: TypeOracle> Project<O> {
             module_dirs,
             read: HashSet::new(),
             told: HashSet::new(),
+            resources,
         });
         project.front.set_controls_style(controls_style(
             |name| std::env::var(name).ok(),
@@ -389,6 +391,13 @@ impl<O: TypeOracle> Project<O> {
         }
         self.tree = Some(tree);
         read
+    }
+
+    /// The files the builds of an [`open`](Self::open)ed project keep
+    /// inside the program, as [`resources`] finds them under its root;
+    /// none for another project.
+    pub fn resources(&self) -> &[(String, PathBuf)] {
+        self.tree.as_ref().map_or(&[], |tree| &tree.resources)
     }
 
     /// Whether the directory `dir` (a key) of an [`open`](Self::open)ed
@@ -472,29 +481,17 @@ impl<O: TypeOracle> Project<O> {
 pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
     for (dir, names) in scan(root)? {
-        if !names.iter().any(|name| name == "CMakeLists.txt") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt")) else {
-            continue;
-        };
-        let at = |path: &str| dir.join(path.strip_prefix("./").unwrap_or(path));
-        for module in discover::cmake(&text) {
-            for file in &module.resources {
-                out.push((module.address(file), at(file)));
-            }
-        }
-        for kept in discover::kept(&text) {
-            out.push((kept.address, at(&kept.path)));
-        }
+        out.extend(described(&dir, &names).1);
     }
     out.retain(|(_, path)| path.is_file());
     Ok(out)
 }
 
-/// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe.
-fn modules_in(dir: &Path, names: &[String]) -> Vec<Module> {
+/// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe, and
+/// the files its `CMakeLists.txt` keeps inside the program.
+fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf)>) {
     let mut modules: Vec<Module> = Vec::new();
+    let mut resources = Vec::new();
     if names.iter().any(|name| name == "qmldir")
         && let Ok(text) = std::fs::read_to_string(dir.join("qmldir"))
     {
@@ -503,9 +500,19 @@ fn modules_in(dir: &Path, names: &[String]) -> Vec<Module> {
     if names.iter().any(|name| name == "CMakeLists.txt")
         && let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt"))
     {
-        modules.extend(discover::cmake(&text));
+        let at = |path: &str| dir.join(path.strip_prefix("./").unwrap_or(path));
+        let built = discover::cmake(&text);
+        for module in &built {
+            for file in &module.resources {
+                resources.push((module.address(file), at(file)));
+            }
+        }
+        for kept in discover::kept(&text) {
+            resources.push((kept.address, at(&kept.path)));
+        }
+        modules.extend(built);
     }
-    modules
+    (modules, resources)
 }
 
 fn is_script(name: &str) -> bool {

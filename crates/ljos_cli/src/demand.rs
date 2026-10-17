@@ -91,6 +91,14 @@ impl<O: TypeOracle> OnDemand<O> {
     }
 }
 
+impl<O: TypeOracle> OnDemand<O> {
+    /// The files the project's builds keep inside the program
+    /// ([`Project::resources`]).
+    pub(crate) fn resources(&self) -> Vec<(String, std::path::PathBuf)> {
+        self.project.borrow().resources().to_vec()
+    }
+}
+
 #[cfg(test)]
 impl<O: TypeOracle> OnDemand<O> {
     /// The files read so far.
