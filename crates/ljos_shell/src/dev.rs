@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use ljos_dev::{DevSession, Host, Overlay, Report};
 use ljos_egui::QmlView;
-use ljos_engine::{Engine, LogLevel, ObjectId};
+use ljos_engine::{Engine, LogLevel, ObjectId, Value};
 use ljos_quick::Item;
 use ljos_runtime::WakeHook;
 
@@ -85,8 +85,28 @@ impl<M> Setup<'_, M> {
         main: &Path,
         project: Option<&Path>,
     ) -> Result<ObjectId, SetupError> {
+        self.watch_with_properties(main, project, Vec::new())
+    }
+
+    /// As [`watch_in`](Self::watch_in), the root given `properties` as it
+    /// is made, and again each time a reload makes it.
+    ///
+    /// # Errors
+    /// As [`watch_in`](Self::watch_in).
+    pub fn watch_with_properties(
+        &mut self,
+        main: &Path,
+        project: Option<&Path>,
+        properties: Vec<(String, Value)>,
+    ) -> Result<ObjectId, SetupError> {
         let engine = self.engine;
-        let session = DevSession::open_in(engine, main, project, Arc::clone(&self.dev.wake))?;
+        let session = DevSession::open_with_properties(
+            engine,
+            main,
+            project,
+            properties,
+            Arc::clone(&self.dev.wake),
+        )?;
         let (root, placeholder) = match session.root() {
             Some(root) => (root, None),
             None => {

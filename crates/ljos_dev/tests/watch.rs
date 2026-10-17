@@ -46,6 +46,11 @@ struct App {
 }
 
 fn app(files: &[(&str, &str)]) -> App {
+    app_with(files, Vec::new())
+}
+
+/// As [`app`], with the root given `properties` when it is made.
+fn app_with(files: &[(&str, &str)], properties: Vec<(String, Value)>) -> App {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().canonicalize().unwrap();
     for (name, text) in files {
@@ -54,9 +59,11 @@ fn app(files: &[(&str, &str)]) -> App {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     let (tx, woke) = mpsc::channel();
-    let session = DevSession::open(
+    let session = DevSession::open_with_properties(
         &engine,
         &dir.join("Main.qml"),
+        None,
+        properties,
         Arc::new(move || {
             let _ = tx.send(());
         }),
@@ -489,4 +496,38 @@ Rectangle {
         reloaded(&app.wait());
         assert_eq!(app.engine.object_count(), objects);
     }
+}
+
+#[test]
+fn the_properties_the_root_was_given_are_given_again_at_each_reload() {
+    const GIVEN: &str = r#"import QtQuick
+Item {
+  objectName: "root"
+  required property url source
+  property real side: 10
+  Rectangle { objectName: "box"; width: side; height: 10 }
+}
+"#;
+    let given = || vec![("source".to_owned(), Value::from("file:///clip.ogv"))];
+    let mut app = app_with(&[("Main.qml", GIVEN)], given());
+    assert_eq!(app.engine.last_reload_error(), None);
+    let source = |app: &App| {
+        app.engine
+            .read_by_name(app.find("root"), "source")
+            .to_js_string()
+            .to_string()
+    };
+    assert_eq!(source(&app), "file:///clip.ogv");
+
+    app.save("Main.qml", &GIVEN.replace("side: 10", "side: 30"));
+    reloaded(&app.wait());
+    assert_eq!(app.num("box", "width"), 30.0);
+    assert_eq!(source(&app), "file:///clip.ogv");
+
+    // A root the first save that compiles makes is given them too.
+    let mut app = app_with(&[("Main.qml", "import QtQuick\nItem {")], given());
+    assert_eq!(app.session.root(), None);
+    app.save("Main.qml", GIVEN);
+    reloaded(&app.wait());
+    assert_eq!(source(&app), "file:///clip.ogv");
 }

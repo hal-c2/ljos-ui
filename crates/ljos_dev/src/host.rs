@@ -9,7 +9,7 @@ use std::{
 };
 
 use ljos_compiler::{CompileFault, ReloadSession};
-use ljos_engine::{Engine, MapSource, ObjectId, ReloadError, ReloadFault, ReloadOutcome};
+use ljos_engine::{Engine, MapSource, ObjectId, ReloadError, ReloadFault, ReloadOutcome, Value};
 use ljos_ir::{ReloadOp, ReloadPatch};
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_runtime::{Clock, CoalesceKey, DrainBudget, UiInbox, WakeHook};
@@ -187,6 +187,8 @@ pub struct DevSession {
     watcher: Watcher,
     inbox: UiInbox<DevMsg>,
     entry: String,
+    /// What the root is given when this session makes it.
+    properties: Vec<(String, Value)>,
     root: Option<ObjectId>,
     /// A frame has to pass before the last reload counts as settled.
     settling: bool,
@@ -222,6 +224,19 @@ impl DevSession {
         project: Option<&Path>,
         wake: WakeHook,
     ) -> Result<Self, DevError> {
+        Self::open_with_properties(engine, main, project, Vec::new(), wake)
+    }
+
+    /// As [`open_in`](Self::open_in), the root given `properties` as it is
+    /// made (a `required property` the program sets). A reload makes it
+    /// again with the same ones.
+    pub fn open_with_properties(
+        engine: &Engine,
+        main: &Path,
+        project: Option<&Path>,
+        properties: Vec<(String, Value)>,
+        wake: WakeHook,
+    ) -> Result<Self, DevError> {
         // The watcher is told absolute paths; with the same root they
         // are the project's.
         let main = std::fs::canonicalize(main).map_err(|_| DevError::NotQml(main.to_owned()))?;
@@ -251,7 +266,7 @@ impl DevSession {
         let mut more_errors = 0;
         reloader.start();
         engine.set_component_source(component_source(reloader.session(), Some(&base)));
-        match engine.create_from_url(&entry, None, Vec::new()) {
+        match engine.create_from_url(&entry, None, properties.clone()) {
             Ok(made) => root = Some(made),
             Err(e) => {
                 let fault = engine.reload_fault(&e);
@@ -280,6 +295,7 @@ impl DevSession {
             watcher,
             inbox,
             entry,
+            properties,
             root,
             settling: false,
             more_errors,
@@ -412,7 +428,7 @@ impl DevSession {
         if self.root.is_none() {
             // The project compiles for the first time, or its root could
             // not be made from the files before.
-            match engine.create_from_url(&self.entry, None, Vec::new()) {
+            match engine.create_from_url(&self.entry, None, self.properties.clone()) {
                 Ok(made) => {
                     host.show(engine, None, made);
                     self.root = Some(made);

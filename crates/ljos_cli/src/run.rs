@@ -348,7 +348,11 @@ impl Run {
                 setup.on_reload(|report| {
                     crate::stderr::line(&format!("ljos: {}", describe(report)))
                 });
-                let root = setup.watch_in(&main, project.as_deref())?;
+                let root = setup.watch_with_properties(
+                    &main,
+                    project.as_deref(),
+                    crate::render::example_properties(example.as_deref()),
+                )?;
                 // A project that does not compile opens all the same: the
                 // window says why, and so does the terminal.
                 if let Some(fault) = setup.engine().last_reload_error() {
