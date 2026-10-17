@@ -10,7 +10,7 @@
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
-use crate::present::{Change, Frame};
+use crate::present::{Change, Frame, Steps};
 use egui::ViewportId;
 use egui_wgpu::{
     RendererOptions, SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew,
@@ -213,7 +213,8 @@ impl Painter {
     }
 
     /// Draws `primitives` (all of `frame`) into `window`, with the
-    /// pictures `pending` hands over, and shows them.
+    /// pictures `pending` hands over, and shows them; says how long the
+    /// steps took where the painter can tell them apart.
     pub(crate) fn paint(
         &mut self,
         pixels_per_point: f32,
@@ -222,13 +223,18 @@ impl Painter {
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Arc<Window>,
-    ) {
+    ) -> Steps {
         match self {
             Painter::Wgpu(painter) => {
                 if !wgpu_presents(frame) {
-                    return;
+                    return Steps::default();
                 }
-                painter.paint_and_update_textures(
+                let started = std::time::Instant::now();
+                // egui-wgpu uploads, draws and presents in one call, and
+                // times only the waits inside it: for the surface's next
+                // texture, the submit and the present. Uploads are not
+                // told apart from drawing.
+                let waited = painter.paint_and_update_textures(
                     ViewportId::ROOT,
                     pixels_per_point,
                     clear.to_normalized_gamma_f32(),
@@ -237,10 +243,17 @@ impl Painter {
                     Vec::new(),
                     window,
                 );
+                let all = started.elapsed();
+                let waited = std::time::Duration::from_secs_f32(waited.max(0.0)).min(all);
+                Steps {
+                    upload: None,
+                    draw: Some(all - waited),
+                    present: Some(waited),
+                }
             }
             #[cfg(gl_painter)]
             Painter::Gl(painter) => {
-                painter.paint(pixels_per_point, clear, frame, primitives, pending, window);
+                painter.paint(pixels_per_point, clear, frame, primitives, pending, window)
             }
         }
     }

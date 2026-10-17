@@ -484,8 +484,9 @@ impl Meter {
         self.built = Some(Instant::now());
     }
 
-    /// The pass ended; `asked` is when the repaint it answered was due.
-    fn report(self, asked: Option<Instant>) -> ljos_dev::mcp::PaintReport {
+    /// The pass ended; `asked` is when the repaint it answered was due,
+    /// `steps` what the painter timed of it.
+    fn report(self, asked: Option<Instant>, steps: present::Steps) -> ljos_dev::mcp::PaintReport {
         let end = Instant::now();
         let built = self.built.unwrap_or(self.started);
         ljos_dev::mcp::PaintReport {
@@ -495,6 +496,9 @@ impl Meter {
             uploads: self.uploads,
             upload_bytes: self.upload_bytes,
             since_asked: asked.map(|at| end.saturating_duration_since(at)),
+            upload: steps.upload,
+            draw: steps.draw,
+            present: steps.present,
         }
     }
 }
@@ -1199,7 +1203,7 @@ impl<M: Send + 'static> Desktop<M> {
             slot.not_drawn(now, wake);
             #[cfg(feature = "mcp")]
             if let Some(meter) = meter {
-                app.record_paint(&meter.report(None));
+                app.record_paint(&meter.report(None, present::Steps::default()));
             }
             return;
         }
@@ -1214,7 +1218,7 @@ impl<M: Send + 'static> Desktop<M> {
         if let Some(meter) = meter.as_mut() {
             meter.built();
         }
-        painter.paint(
+        let steps = painter.paint(
             pixels_per_point,
             clear,
             &frame,
@@ -1222,9 +1226,11 @@ impl<M: Send + 'static> Desktop<M> {
             &mut slot.pending,
             &surface.window,
         );
+        #[cfg(not(feature = "mcp"))]
+        let _ = steps;
         #[cfg(feature = "mcp")]
         if let Some(meter) = meter {
-            app.record_paint(&meter.report(asked));
+            app.record_paint(&meter.report(asked, steps));
             if !self.drawn_once {
                 app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
             }
@@ -1450,6 +1456,10 @@ impl<M: Send + 'static> Desktop<M> {
                 slot.refresh = Some(hz);
                 // Animations step, and a frame may spend on creating
                 // items, as often as the display shows one.
+                #[cfg(feature = "mcp")]
+                if slot.is_root() {
+                    app.set_frame_budget(slot.frame_interval());
+                }
                 let view = match slot.view.as_mut() {
                     Some(view) => view,
                     None => app.view_mut(),

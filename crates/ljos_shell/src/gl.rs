@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use egui::epaint::{
     ClippedShape, CornerRadius, PaintCallback, PaintCallbackInfo, RectShape, Shape,
@@ -31,7 +32,7 @@ use glutin::context::{ContextApi, ContextAttributesBuilder, PossiblyCurrentGlCon
 use glutin::display::GlDisplay;
 use glutin::surface::{GlSurface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 
-use crate::present::{Change, Frame};
+use crate::present::{Change, Frame, Steps};
 
 /// How many frames back the areas drawn are remembered: a buffer older
 /// than that is drawn whole.
@@ -351,7 +352,10 @@ impl GlPainter {
         }
     }
 
-    /// Draws `primitives` (all of `frame`) into the window and shows it.
+    /// Draws `primitives` (all of `frame`) into the window and shows it,
+    /// timing the uploads, the drawing and the present apart. GL works
+    /// on after a call returns; what the device still had to do is
+    /// waited for in the present.
     pub(crate) fn paint(
         &mut self,
         pixels_per_point: f32,
@@ -360,19 +364,31 @@ impl GlPainter {
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Window,
-    ) {
+    ) -> Steps {
         let Some(gw) = self.window.as_ref() else {
-            return;
+            return Steps::default();
         };
         if !self.gl.make_current(Some((gw.id, &gw.surface))) {
-            return;
+            return Steps::default();
         }
+        let started = Instant::now();
+        // As egui_glow's own paint does: the pictures first, and those
+        // freed only once the frame that may still use them is drawn.
+        for (id, deltas) in pending.set.drain() {
+            for delta in deltas {
+                self.painter.set_texture(id, &delta);
+            }
+        }
+        let uploaded = Instant::now();
+        let upload = Some(uploaded - started);
         let part = match frame {
             Frame::Nothing => {
                 // Only the pictures: nothing is shown.
-                self.painter
-                    .paint_and_update_textures(gw.px, pixels_per_point, &[], pending);
-                return;
+                free_pending(&mut self.painter, pending);
+                return Steps {
+                    upload,
+                    ..Steps::default()
+                };
             }
             Frame::Part(areas) => Some(
                 areas
@@ -401,20 +417,16 @@ impl GlPainter {
                         clip_rect: egui::Rect::EVERYTHING,
                         primitive: egui::epaint::Primitive::Mesh(mesh),
                     };
-                    let free = std::mem::take(&mut pending.free);
-                    self.painter.paint_and_update_textures(
-                        gw.px,
-                        pixels_per_point,
-                        &[backdrop],
-                        pending,
-                    );
-                    pending.free = free;
+                    self.painter
+                        .paint_primitives(gw.px, pixels_per_point, &[backdrop]);
                 }
             }
             None => self.painter.clear(gw.px, gamma),
         }
         self.painter
-            .paint_and_update_textures(gw.px, pixels_per_point, primitives, pending);
+            .paint_primitives(gw.px, pixels_per_point, primitives);
+        free_pending(&mut self.painter, pending);
+        let drawn = Instant::now();
         window.pre_present_notify();
         // A lost frame is drawn again with the next change; there is
         // nobody to tell. The compositor is told what changed, so it can
@@ -427,6 +439,11 @@ impl GlPainter {
             }
             None => gw.surface.swap_buffers(&self.gl.context),
         };
+        Steps {
+            upload,
+            draw: Some(drawn - uploaded),
+            present: Some(drawn.elapsed()),
+        }
     }
 
     /// Gives back what `pending` frees, while the window is not open.
@@ -441,6 +458,13 @@ impl GlPainter {
         for id in std::mem::take(&mut pending.free) {
             self.painter.free_texture(id);
         }
+    }
+}
+
+/// Gives back the pictures `pending` frees, on the current context.
+fn free_pending(painter: &mut egui_glow::Painter, pending: &mut egui::TexturesDelta) {
+    for id in std::mem::take(&mut pending.free) {
+        painter.free_texture(id);
     }
 }
 

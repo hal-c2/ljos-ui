@@ -1035,6 +1035,7 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
         uploads: 2,
         upload_bytes: 4096,
         since_asked: Some(ms(14)),
+        ..PaintReport::default()
     });
     inspector.record_paint(&PaintReport {
         drawn: Drawn::Part,
@@ -1043,6 +1044,7 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
         uploads: 0,
         upload_bytes: 0,
         since_asked: Some(ms(5)),
+        ..PaintReport::default()
     });
     inspector.record_paint(&PaintReport {
         drawn: Drawn::Unchanged,
@@ -1051,6 +1053,7 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
         uploads: 0,
         upload_bytes: 0,
         since_asked: None,
+        ..PaintReport::default()
     });
     let reply = app.call("app_metrics", json!({}));
     let p = &reply.structured["paint"];
@@ -1072,6 +1075,132 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
         "{}",
         reply.text
     );
+}
+
+/// A frame of the engine that spent `ms` in one lane, with `owner`
+/// charged for it.
+fn frame_in(lane: ljos_runtime::Lane, ms: u64, owner: Option<ljos_runtime::ProcId>) -> FrameReport {
+    let mut frame = FrameReport {
+        elapsed: Duration::from_millis(ms),
+        ..FrameReport::default()
+    };
+    frame.per_lane[lane.index()] = Duration::from_millis(ms);
+    if let Some(owner) = owner {
+        frame.top_owners.push((owner, Duration::from_millis(ms)));
+    }
+    frame
+}
+
+#[test]
+fn metrics_give_the_spread_of_the_recent_frames() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    inspector.set_frame_budget(Duration::from_millis(16));
+    for ms in 1..=20 {
+        inspector.record_frame(&frame_in(ljos_runtime::Lane::Visible, ms, None));
+    }
+    let reply = app.call("app_metrics", json!({}));
+    let recent = &reply.structured["recent"];
+    assert_eq!(recent["frames"], 20);
+    assert_eq!(recent["budget_us"], 16000);
+    assert_eq!(recent["total_us"]["p50"], 10000);
+    assert_eq!(recent["total_us"]["p95"], 19000);
+    assert_eq!(recent["total_us"]["max"], 20000);
+    assert_eq!(recent["frame_us"]["p50"], 10000);
+    assert!(
+        reply
+            .text
+            .contains("last 20 frames: p50 10.00 ms, p95 19.00 ms, longest 20.00 ms"),
+        "{}",
+        reply.text
+    );
+    // Every frame past the budget is in the log, the oldest first.
+    let slow = reply.structured["slow"].as_array().unwrap();
+    assert_eq!(slow.len(), 4);
+    assert_eq!(slow[0]["total_us"], 17000);
+    assert_eq!(slow[3]["total_us"], 20000);
+}
+
+#[test]
+fn a_frame_over_budget_is_logged_with_what_took_its_time() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    inspector.set_frame_budget(Duration::from_millis(16));
+    let ms = Duration::from_millis;
+    // A quick scene whose present waited.
+    inspector.record_frame(&frame_in(ljos_runtime::Lane::Input, 3, None));
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        build: ms(1),
+        paint: ms(28),
+        upload: Some(ms(1)),
+        draw: Some(ms(2)),
+        present: Some(ms(25)),
+        ..PaintReport::default()
+    });
+    // A scene that took the frame in its visible lane.
+    inspector.record_frame(&frame_in(
+        ljos_runtime::Lane::Visible,
+        30,
+        Some(ljos_engine::APPLICATION_PROC),
+    ));
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Unchanged,
+        ..PaintReport::default()
+    });
+    // A frame in time.
+    inspector.record_frame(&frame_in(ljos_runtime::Lane::Input, 2, None));
+    let reply = app.call("app_metrics", json!({}));
+    let s = &reply.structured;
+    let slow = s["slow"].as_array().unwrap();
+    assert_eq!(slow.len(), 2, "{s}");
+    assert_eq!(slow[0]["cause"], "present");
+    assert_eq!(slow[0]["total_us"], 32000);
+    assert_eq!(slow[0]["paint"]["present_us"], 25000);
+    assert_eq!(slow[0]["paint"]["upload_us"], 1000);
+    assert_eq!(slow[0]["lanes"]["input"], 3000);
+    assert_eq!(slow[1]["cause"], "visible");
+    assert_eq!(slow[1]["owner"], "application");
+    assert_eq!(slow[1]["lanes"]["visible"], 30000);
+    assert!(slow[1]["frame"].as_u64() > slow[0]["frame"].as_u64(), "{s}");
+    // The painter's steps, where it times them apart.
+    assert_eq!(s["paint"]["present_us"]["max"], 25000);
+    assert_eq!(s["paint"]["upload_us"]["total"], 1000);
+    assert!(
+        reply
+            .text
+            .contains("slow frames (over 16.00 ms), oldest first:"),
+        "{}",
+        reply.text
+    );
+    assert!(
+        reply.text.contains("32.00 ms, mostly present (25.00 ms)"),
+        "{}",
+        reply.text
+    );
+    assert!(
+        reply
+            .text
+            .contains("30.00 ms, mostly the visible lane (30.00 ms), application"),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn a_painter_that_does_not_time_its_steps_apart_says_none() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        paint: Duration::from_millis(4),
+        ..PaintReport::default()
+    });
+    let reply = app.call("app_metrics", json!({}));
+    let p = &reply.structured["paint"];
+    assert_eq!(p["upload_us"], Value::Null);
+    assert_eq!(p["draw_us"], Value::Null);
+    assert_eq!(p["present_us"], Value::Null);
 }
 
 // ---------------------------------------------------------------- resources

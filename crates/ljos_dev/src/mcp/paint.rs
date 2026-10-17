@@ -76,6 +76,16 @@ pub struct PaintReport {
     pub build: Duration,
     /// Uploading pictures, drawing, submitting and presenting.
     pub paint: Duration,
+    /// The steps of `paint`, where the painter times them apart. They are
+    /// the time the call took on this thread: a device works on after a
+    /// call returns, and what it still had to do shows where the painter
+    /// next waits for it, mostly in `present`. GL times all three; wgpu
+    /// draws in one call that uploads too, and times only the waits
+    /// inside it (for the surface, the submit and the present), which are
+    /// `present`, with the rest in `draw` and no `upload`.
+    pub upload: Option<Duration>,
+    pub draw: Option<Duration>,
+    pub present: Option<Duration>,
     /// Pictures handed to the device in the pass, glyph atlas included.
     pub uploads: usize,
     pub upload_bytes: usize,
@@ -190,6 +200,9 @@ pub(crate) struct PaintStats {
     unchanged: u64,
     build: Cost,
     paint: Cost,
+    upload: Option<Cost>,
+    draw: Option<Cost>,
+    present: Option<Cost>,
     uploads: u64,
     upload_bytes: u64,
     asked: Option<Cost>,
@@ -206,6 +219,15 @@ impl PaintStats {
             }
             self.build.add(report.build);
             self.paint.add(report.paint);
+            for (cost, step) in [
+                (&mut self.upload, report.upload),
+                (&mut self.draw, report.draw),
+                (&mut self.present, report.present),
+            ] {
+                if let Some(t) = step {
+                    cost.get_or_insert_with(Cost::default).add(t);
+                }
+            }
             if let Some(since) = report.since_asked {
                 self.asked.get_or_insert_with(Cost::default).add(since);
             }
@@ -222,6 +244,9 @@ impl PaintStats {
             "unchanged": self.unchanged,
             "build_us": self.build.json(),
             "paint_us": self.paint.json(),
+            "upload_us": self.upload.as_ref().map_or(Value::Null, Cost::json),
+            "draw_us": self.draw.as_ref().map_or(Value::Null, Cost::json),
+            "present_us": self.present.as_ref().map_or(Value::Null, Cost::json),
             "uploads": self.uploads,
             "upload_bytes": self.upload_bytes,
             "asked_to_presented_us": self.asked.as_ref().map_or(Value::Null, Cost::json),
@@ -248,6 +273,24 @@ impl PaintStats {
             self.uploads,
             self.upload_bytes,
         );
+        let steps: Vec<String> = [
+            ("uploading", &self.upload),
+            ("drawing", &self.draw),
+            ("presenting", &self.present),
+        ]
+        .into_iter()
+        .filter_map(|(name, cost)| {
+            let cost = cost.as_ref()?;
+            Some(format!(
+                "{name} last {}, longest {}",
+                ms(cost.last),
+                ms(cost.max)
+            ))
+        })
+        .collect();
+        if !steps.is_empty() {
+            let _ = write!(text, "\n{}", steps.join("; "));
+        }
         if let Some(asked) = &self.asked {
             let _ = write!(
                 text,

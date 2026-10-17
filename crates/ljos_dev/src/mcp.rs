@@ -38,6 +38,7 @@
 mod act;
 mod args;
 mod capture;
+mod frames;
 mod logs;
 mod paint;
 mod reload;
@@ -76,6 +77,7 @@ pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 
 use args::{Act, Include as Col, Kind, Resource, SnapshotArgs};
 use capture::{Capture, Lease};
+use frames::FrameLog;
 use logs::LogRing;
 use paint::{PaintStats, Startup};
 use reload::ReloadFeed;
@@ -252,6 +254,7 @@ pub struct Inspector {
     painter: Option<PainterInfo>,
     startup: Startup,
     paint: PaintStats,
+    frames: FrameLog,
     /// Properties assigned by `app_set_property`, so that `app_inspect`
     /// can say they were assigned by devtools and not by the application.
     devtools_assigned: HashSet<(ObjectId, String)>,
@@ -311,6 +314,7 @@ impl Inspector {
             painter: None,
             startup: Startup::default(),
             paint: PaintStats::default(),
+            frames: FrameLog::default(),
             devtools_assigned: HashSet::new(),
         };
         (inspector, surface)
@@ -353,6 +357,13 @@ impl Inspector {
     /// unchanged, for `app_metrics`.
     pub fn record_paint(&mut self, report: &PaintReport) {
         self.paint.record(report);
+        self.frames.record_paint(report);
+    }
+
+    /// Says how long a frame may take before `app_metrics` logs it as
+    /// slow: a frame of the primary window's display. 1/60 s until told.
+    pub fn set_frame_budget(&mut self, budget: Duration) {
+        self.frames.set_budget(budget);
     }
 
     /// Notes a reload that happened since the last call, so that clients
@@ -485,6 +496,7 @@ impl Inspector {
     /// Records a frame the host ran, for `app_metrics`.
     pub fn record_frame(&mut self, report: &FrameReport) {
         self.stats.record(report);
+        self.frames.record_frame(report);
     }
 
     /// The work the inspector did since this was last called, by lane and
@@ -640,6 +652,7 @@ impl Inspector {
                 engine,
                 &self.stats,
                 &self.paint,
+                &self.frames,
                 queued,
                 capacity,
                 false,
@@ -648,6 +661,7 @@ impl Inspector {
                 engine,
                 &self.stats,
                 &self.paint,
+                &self.frames,
                 queued,
                 capacity,
                 true,

@@ -224,6 +224,14 @@ impl<M> ShellApp<M> {
             served.inspector_mut().record_paint(report);
         }
     }
+
+    /// A frame of the primary window's display: what a slow frame is
+    /// slower than.
+    pub(crate) fn set_frame_budget(&mut self, budget: std::time::Duration) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().set_frame_budget(budget);
+        }
+    }
 }
 
 /// The overlay: a sheet in the window's top right corner, in a font of

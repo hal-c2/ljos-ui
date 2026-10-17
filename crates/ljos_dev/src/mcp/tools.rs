@@ -1028,6 +1028,7 @@ pub(crate) fn metrics(
     engine: &Engine,
     stats: &FrameStats,
     paint: &super::paint::PaintStats,
+    frames: &super::frames::FrameLog,
     queued: usize,
     capacity: usize,
     as_json_text: bool,
@@ -1074,6 +1075,9 @@ pub(crate) fn metrics(
         "inbox": { "capacity": capacity, "queued": queued },
     });
     value["paint"] = paint.json();
+    let (recent, slow) = frames.json(engine);
+    value["recent"] = recent;
+    value["slow"] = slow;
     if as_json_text {
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
         return ToolReply::from(value).with_text(text);
@@ -1116,6 +1120,7 @@ pub(crate) fn metrics(
         engine.object_count()
     );
     text.push_str(&paint.text());
+    text.push_str(&frames.text(engine));
     ToolReply::from(value).with_text(text)
 }
 

@@ -132,6 +132,15 @@ pub(crate) enum Change {
     All,
 }
 
+/// How long the steps of a painted pass took on this thread, where the
+/// painter times them apart (the inspector's `app_metrics`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Steps {
+    pub(crate) upload: Option<std::time::Duration>,
+    pub(crate) draw: Option<std::time::Duration>,
+    pub(crate) present: Option<std::time::Duration>,
+}
+
 /// What a painter draws of a picture.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Frame {
