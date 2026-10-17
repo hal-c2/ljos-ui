@@ -128,6 +128,19 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
         Some(resolution)
     }
 
+    /// Whether the object has the member `name`: one its type or the file
+    /// says it has, or one Ljós adds to a type of Qt's table, which that
+    /// table does not list.
+    fn has(&self, object: usize, name: &str) -> bool {
+        let tree = self.tree;
+        tree.member(self.types, object, name).is_some()
+            || tree.objects[object]
+                .kind
+                .as_ref()
+                .and_then(|kind| self.types.base(kind))
+                .is_some_and(|ty| self.types.oracle.adds_member(ty, name))
+    }
+
     /// The default order: each context in turn, by its ids, its scope object
     /// (only the innermost has one), its root and what it is given.
     fn unbound(&self, name: &str, offset: u32) -> Resolution<O::Type> {
@@ -158,7 +171,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
             if let Some(object) = candidates
                 .into_iter()
                 .flatten()
-                .find(|object| tree.member(self.types, *object, name).is_some())
+                .find(|object| self.has(*object, name))
             {
                 let target = Target::Property {
                     object,
@@ -218,7 +231,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
             .into_iter()
             .chain(chain.iter().map(|context| tree.contexts[*context].root));
         for object in objects {
-            if tree.member(self.types, object, name).is_some() {
+            if self.has(object, name) {
                 return Resolution::found(Target::Property {
                     object,
                     name: name.to_string(),

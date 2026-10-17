@@ -307,6 +307,20 @@ Rectangle {
 }
 
 #[test]
+fn a_member_the_runtime_adds_to_a_type_is_a_property_of_the_object() {
+    let source = r#"import QtQuick
+Rectangle {
+    Text {
+        text: sheen + gloss
+    }
+}"#;
+    assert_eq!(
+        lookups(source, &[("sheen", "sheen +"), ("gloss", "gloss")]),
+        ["Rectangle.sheen", "undefined"]
+    );
+}
+
+#[test]
 fn a_delegate_is_given_what_its_model_has() {
     let source = r#"import QtQuick
 Rectangle {

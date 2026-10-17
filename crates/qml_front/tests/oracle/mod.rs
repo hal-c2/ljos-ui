@@ -20,6 +20,8 @@ struct Ty {
     required: Vec<&'static str>,
     /// The runtime does not list all of its members.
     loose: bool,
+    /// Members the runtime adds to a type a table describes without them.
+    added: Vec<&'static str>,
 }
 
 pub struct Runtime {
@@ -79,6 +81,7 @@ impl Runtime {
                     p("border", Some("Border")),
                     p("radius", None),
                 ],
+                added: vec!["sheen"],
                 ..Ty::default()
             },
             Ty {
@@ -306,5 +309,9 @@ impl TypeOracle for Runtime {
 
     fn members_known(&self, ty: usize) -> bool {
         !self.chain(ty).any(|ty| ty.loose)
+    }
+
+    fn adds_member(&self, ty: usize, name: &str) -> bool {
+        self.chain(ty).any(|ty| ty.added.contains(&name))
     }
 }
