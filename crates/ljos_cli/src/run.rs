@@ -173,7 +173,7 @@ impl Tools {
     }
 }
 
-fn parse_size(text: &str) -> Result<(f32, f32), String> {
+pub(crate) fn parse_size(text: &str) -> Result<(f32, f32), String> {
     let wrong = || format!("{text:?} is not a size such as 800x600");
     let (w, h) = text.split_once(['x', 'X']).ok_or_else(wrong)?;
     let side = |s: &str| {
@@ -279,7 +279,7 @@ fn log_to_stderr(engine: &Engine) {
     engine.set_log_handler(print_log);
 }
 
-fn print_log(entry: &LogEntry) {
+pub(crate) fn print_log(entry: &LogEntry) {
     let level = match entry.level {
         LogLevel::Debug => "debug",
         LogLevel::Info => "info",

@@ -15,6 +15,7 @@ mod fmt;
 #[cfg(feature = "dhat-heap")]
 mod heap;
 mod i18n;
+mod observe;
 mod render;
 mod run;
 mod shaders;
@@ -76,6 +77,11 @@ enum Command {
     /// `report.md`. Exits with 2 when an application was not inside the
     /// limit asked for.
     Bench(Box<bench::Bench>),
+    /// Open a window on a running application, as Erlang's observer
+    /// opens one on a node: its processes, its mailboxes and its objects,
+    /// with their properties for editing and a picture of the one picked.
+    /// The application is one started with `ljos run --mcp`.
+    Observe(observe::Observe),
     /// What `ljos bench` starts an application through.
     #[command(hide = true)]
     BenchGate(bench::Gate),
@@ -137,6 +143,7 @@ fn run() -> anyhow::Result<()> {
         Command::I18n { command } => i18n::run(command),
         Command::Check(check) => check.run(),
         Command::Run(run) => run.run(),
+        Command::Observe(observe) => observe.run(),
         // The status says whether a picture was written; why not is in the
         // notes it printed.
         Command::Render(render) => {
