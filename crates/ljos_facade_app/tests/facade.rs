@@ -1,7 +1,8 @@
 //! The module above, used as a host uses it: through the facade alone.
 
+use ljos::item::{DisplayListBuilder, DrawOp, TextEngine, kurbo};
 use ljos::prelude::*;
-use ljos_facade_app::{Counter, Greeter, register};
+use ljos_facade_app::{Counter, Gauge, Greeter, read_gauge, register};
 
 #[test]
 fn a_native_type_works_through_the_facade_alone() {
@@ -42,4 +43,23 @@ fn a_timer_is_built_with_struct_update_syntax() {
     assert_eq!(engine.get(timer, Timer::INTERVAL), Ok(10));
     assert_eq!(engine.get(timer, Timer::REPEAT), Ok(true));
     assert_eq!(engine.get(timer, Timer::RUNNING), Ok(false));
+}
+
+#[test]
+fn a_painted_item_works_through_the_facade_alone() {
+    let engine = ljos::engine();
+    register(&engine);
+    let gauge = engine.create_by_name("Example", "Gauge", None).unwrap();
+    engine.set(gauge, Gauge::VALUE, 0.5).unwrap();
+    let mut out = DisplayListBuilder::new();
+    read_gauge(&engine, gauge).paint(
+        kurbo::Size::new(100.0, 10.0),
+        &mut TextEngine::new(),
+        &mut out,
+    );
+    let list = out.finish();
+    assert!(matches!(
+        list.ops(),
+        [DrawOp::Rect { rect, .. }] if rect.width() == 50.0
+    ));
 }

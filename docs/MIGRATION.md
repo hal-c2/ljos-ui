@@ -254,6 +254,57 @@ visual type extends the toolkit's `Item` (in the prelude) instead:
 `#[qml(base)] item: Item` field. It then takes `anchors`, `width` and
 the rest as an `Item` does.
 
+A visual type that paints itself, as a `QQuickPaintedItem` subclass
+does (a chart, a terminal, a video frame), is written against
+`ljos::item` alone. Its paint hook reads the item's own properties with
+`item::prop`; that read is tracked, so the item repaints when one of
+them changes. It paints into a display list in its own coordinates.
+`item::register_key_item` and `item::register_wheel_item` give it keys
+while it has the active focus (`item::force_active_focus`) and the
+wheel over it. A `TextEdit` that colours its text takes a highlighter
+instead (`item::set_highlighter`). This example is the `ljos::item`
+doctest, so it compiles:
+
+```rust
+use std::rc::Rc;
+
+use ljos::item::{self, DisplayListBuilder, ItemPaint, Rgba, TextEngine, kurbo};
+use ljos::prelude::*;
+
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Example", name = "Gauge", extends = Item)]
+pub struct Gauge {
+    #[qml(base)]
+    pub item: Item,
+    /// How full, 0 to 1.
+    #[qml(notify)]
+    pub value: f64,
+}
+
+/// What a gauge shows: a bar as long as its value.
+#[derive(Debug)]
+struct Bar(f64);
+
+impl ItemPaint for Bar {
+    fn paint(&self, size: kurbo::Size, _: &mut TextEngine, out: &mut DisplayListBuilder) {
+        let filled = kurbo::Rect::new(0.0, 0.0, size.width * self.0, size.height);
+        out.fill_rect(filled, Rgba::BLACK);
+    }
+}
+
+fn read(engine: &Engine, gauge: ObjectId) -> Rc<dyn ItemPaint> {
+    Rc::new(Bar(item::prop(engine, gauge, Gauge::VALUE)))
+}
+
+pub fn register(engine: &Engine) {
+    engine.register_module(ljos::module!("Example" 1.0 => [Gauge]));
+    item::register_paint_item::<Gauge>(engine, read);
+}
+```
+
+`crates/ljos_facade_app`, which depends on `ljos` alone, has the same
+gauge with its key and wheel hooks.
+
 A native singleton is the same kind of struct with `#[qml_singleton]`
 under its derive, registered with
 `engine.register_singleton::<T>("Example", Version::new(1, 0))`; the

@@ -54,6 +54,10 @@
 //! test, the gallery renderer) calls each module's `register` on the
 //! Engine it made. Nothing else about a module needs to be public.
 //!
+//! A visual type that paints itself and takes keys, the wheel and focus
+//! is written against [`item`]: its paint, key and wheel hooks, the
+//! display list it paints into and the text layout it may use.
+//!
 //! Network access is a host service, reached as
 //! `Platform::fetch(url, done)` ([`prelude::Platform`]): the fetch
 //! runs on a thread of its own and `done` runs on the Engine thread.
@@ -102,6 +106,7 @@ pub mod build;
 mod compile;
 #[cfg(feature = "dev-qml")]
 pub mod dev;
+pub mod item;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod task;
