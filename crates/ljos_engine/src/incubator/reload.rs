@@ -341,6 +341,12 @@ pub(crate) struct ReloadState {
     pub(crate) epoch: Cell<u64>,
     tree: Cell<u64>,
     serial: Cell<u64>,
+    /// Where to start looking for a free number for the next root a
+    /// script makes at a path: every one below was taken when last
+    /// looked. Forgotten whenever a place may have come free, so a game
+    /// that makes hundreds of pieces does not count past all of them for
+    /// each one.
+    numbered: RefCell<HashMap<String, u32>>,
     info: RefCell<HashMap<ObjectId, Info>>,
     by_path: RefCell<HashMap<Rc<str>, ObjectId>>,
     /// What scripts assigned, by the object that holds the value.
@@ -682,6 +688,7 @@ impl Engine {
         phases.mark("loader");
         st.epoch.set(st.epoch.get() + 1);
         st.tree.set(st.tree.get() + 1);
+        st.numbered.borrow_mut().clear();
         *st.pending.borrow_mut() = Some(pending);
         // The old tree hears nothing of the new one being made beside it.
         *st.muted.borrow_mut() = old;
@@ -716,6 +723,7 @@ impl Engine {
             st.muted.borrow_mut().clear();
             *st.pending.borrow_mut() = None;
             st.tree.set(st.tree.get() - 1);
+            st.numbered.borrow_mut().clear();
             self.reload_restore_loader(saved);
             // The attempt put its own objects at the old ones' paths.
             let tree = st.tree.get();
@@ -1247,6 +1255,7 @@ impl Engine {
     /// Objects are gone.
     pub(crate) fn reload_forget(&self, dead: &[ObjectId]) {
         let st = &self.inner.reload;
+        st.numbered.borrow_mut().clear();
         let mut info = st.info.borrow_mut();
         if info.is_empty() {
             return;
@@ -1361,12 +1370,23 @@ impl Engine {
                 return;
             }
             let base = std::mem::take(&mut root_path);
-            for n in 2.. {
-                root_path = format!("{base}*{n}");
+            let mut n = st
+                .numbered
+                .borrow()
+                .get(base.as_str())
+                .copied()
+                .unwrap_or(2);
+            root_path.reserve(base.len() + 4);
+            loop {
+                root_path.clear();
+                root_path.push_str(&base);
+                let _ = write!(root_path, "*{n}");
                 if !taken(&root_path) {
                     break;
                 }
+                n += 1;
             }
+            st.numbered.borrow_mut().insert(base, n + 1);
         }
         let mut walk = Walk::default();
         walk.instance(&top, &root_path, true);
@@ -1655,6 +1675,17 @@ impl Phases {
                 .map(|(step, d)| format!("{step} {:.1} ms", d.as_secs_f64() * 1000.0))
                 .collect();
             tracing::debug!("reload steps: {}", steps.join(", "));
+        }
+    }
+}
+
+impl Engine {
+    /// An object is on its way out: the places of a script's roots may come
+    /// free (see `ReloadState::numbered`).
+    pub(crate) fn reload_doomed(&self) {
+        let st = &self.inner.reload;
+        if st.tracking.get() {
+            st.numbered.borrow_mut().clear();
         }
     }
 }

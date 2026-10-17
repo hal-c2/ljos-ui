@@ -584,6 +584,8 @@ impl Engine {
         if !h.flags.contains(ObjectFlags::PENDING_DELETE) {
             h.flags |= ObjectFlags::PENDING_DELETE;
             store.deferred.push(obj);
+            drop(store);
+            self.reload_doomed();
         }
         true
     }
