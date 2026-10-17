@@ -82,6 +82,25 @@ Feature: VideoOutput and Video
       Then the property "contentRect.x" of "output" is within 0.01 of 33.33
       And the property "contentRect.width" of "output" is within 0.01 of 133.33
 
+    @api-QtMultimedia.VideoOutput.orientation
+    Scenario: A quarter turn turns the content, and a turn that is no quarter is not taken
+      When the method "play" of "player" is called
+      And 200 milliseconds pass
+      And the property "orientation" of "output" is set to 90
+      And 100 milliseconds pass
+      Then the property "contentRect.x" of "output" is 12.5
+      And the property "contentRect.width" of "output" is 75
+      And the property "contentRect.height" of "output" is 100
+      And the property "sourceRect.width" of "output" is 64
+      When the property "orientation" of "output" is set to 45
+      And 100 milliseconds pass
+      Then the property "contentRect.x" of "output" is 12.5
+      And the property "contentRect.width" of "output" is 75
+      When the property "orientation" of "output" is set to -180
+      And 100 milliseconds pass
+      Then the property "contentRect.y" of "output" is 12.5
+      And the property "contentRect.width" of "output" is 100
+
     @api-QtMultimedia.VideoOutput.endOfStreamPolicy
     Scenario: At the end the output is cleared
       When the method "play" of "player" is called

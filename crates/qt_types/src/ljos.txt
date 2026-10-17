@@ -243,6 +243,7 @@ module QtMultimedia
 	SoundEffect QtMultimedia.SoundEffect
 	Video QtMultimedia.Video
 	VideoOutput QtMultimedia.VideoOutput
+	VideoSink QtMultimedia.VideoSink
 	type QtMultimedia.AudioDevice AudioDevice
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -424,6 +425,7 @@ module QtMultimedia
 		prop mirrored QtQml.bool named
 		prop sourceRect QtQml.rect named readonly
 		prop contentRect QtQml.rect named readonly
+		prop videoSink QtMultimedia.VideoSink named pointer readonly
 		signal fillModeChanged
 		signal endOfStreamPolicyChanged
 		signal orientationChanged
@@ -432,6 +434,13 @@ module QtMultimedia
 		signal contentRectChanged
 		signal sourceChanged
 		method clearOutput
+	type QtMultimedia.VideoSink VideoSink
+		prototype QtQml.QtObject named
+		prop subtitleText QtQml.string named
+		prop videoSize QtQml.size named readonly
+		signal subtitleTextChanged
+		signal videoSizeChanged
+		signal videoFrameChanged frame
 
 module QtQml
 	import QtQml.Models

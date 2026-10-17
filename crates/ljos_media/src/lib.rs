@@ -35,8 +35,11 @@
 //!   reach the screen through the render tree's image path
 //!   ([`ljos_quick::register_paint_item`]).
 //!
+//! - **Sinks**: every frame goes through a `VideoSink`, a `VideoOutput`'s
+//!   own or one of the program's.
+//!
 //! Camera, CaptureSession, MediaRecorder, ImageCapture, ScreenCapture,
-//! WindowCapture, AudioInput, VideoSink and subtitles are not built.
+//! WindowCapture, AudioInput and subtitles are not built.
 
 // Without a decoder no frame, sample or metadata is ever made, so the
 // paths that carry them are unreachable but kept, to keep one shape.
@@ -49,6 +52,7 @@ mod player;
 mod sink;
 mod sound;
 mod video;
+mod video_sink;
 
 #[cfg(feature = "decode")]
 mod decoder;
@@ -60,6 +64,7 @@ pub use meta::MediaMetaData;
 pub use player::MediaPlayer;
 pub use sound::SoundEffect;
 pub use video::{Video, VideoOutput};
+pub use video_sink::VideoSink;
 
 /// The logging category of every warning this module gives.
 const CATEGORY: &str = "qt.multimedia";
@@ -74,6 +79,7 @@ pub fn register(engine: &Engine) {
         MediaMetaData,
         VideoOutput,
         Video,
+        VideoSink,
         SoundEffect,
     ]));
     video::register_paint(engine);

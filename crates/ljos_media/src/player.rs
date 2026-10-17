@@ -458,6 +458,12 @@ fn loaded(e: &Engine, me: ObjectId, o: Opened) {
     put(e, me, MediaPlayer::SEEKABLE, true);
     put(e, me, MediaPlayer::HAS_AUDIO, o.has_audio);
     put(e, me, MediaPlayer::HAS_VIDEO, o.video.is_some());
+    // The sink knows the picture's size while the source still loads
+    // (qml6).
+    if let Some(v) = o.video {
+        let output = get(e, me, MediaPlayer::VIDEO_OUTPUT);
+        video::sized(e, output, f64::from(v.width), f64::from(v.height));
+    }
     set_status(e, me, status::LOADED);
     if run(e, me, |r| std::mem::take(&mut r.want_play)).unwrap_or(false) {
         play(e, me);

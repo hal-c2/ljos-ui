@@ -8,7 +8,12 @@
 //!
 //! An output that cannot be seen (invisible, transparent, or of no size,
 //! itself or an ancestor) asks for no frames: its player arms no frame
-//! deadline until it can be seen again.
+//! deadline until it can be seen again. qml6 decodes them all the same,
+//! and its `videoSink` hears of each; here the sink hears of none.
+//!
+//! Frames reach an output through its `videoSink` ([`crate::video_sink`]),
+//! and are painted turned by `orientation` (clockwise, in quarter turns),
+//! then mirrored about the vertical axis.
 
 use std::fmt;
 use std::rc::Rc;
@@ -23,6 +28,7 @@ use ljos_render::{DisplayListBuilder, DrawOp, ImageHandle, kurbo};
 
 use crate::devices::AudioOutput;
 use crate::player::{self, MediaPlayer};
+use crate::video_sink;
 
 fn video_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![
@@ -61,7 +67,8 @@ pub struct VideoOutput {
     pub fill_mode: i32,
     #[qml(notify, enumeration = "EndOfStreamPolicy")]
     pub end_of_stream_policy: i32,
-    /// Degrees, a multiple of 90.
+    /// Degrees clockwise, a multiple of 90; another value is not used,
+    /// though it reads back (qml6 keeps the last multiple of 90).
     #[qml(notify)]
     pub orientation: i32,
     #[qml(notify)]
@@ -72,8 +79,16 @@ pub struct VideoOutput {
     /// Where the frame is shown in the item.
     #[qml(notify, readonly)]
     pub content_rect: Rect,
+    #[qml(readonly, object = "VideoSink")]
+    pub video_sink: Option<ObjectId>,
     #[qml(skip)]
     frame: Option<ImageHandle>,
+    /// The frame turned by `turns` quarter turns, for 90 and 270.
+    #[qml(skip)]
+    turned: Option<(u8, ImageHandle)>,
+    /// The last orientation that was a multiple of 90, in quarter turns.
+    #[qml(skip)]
+    turns: u8,
     #[qml(skip)]
     serial: Option<NodeId>,
     #[qml(skip)]
@@ -100,7 +115,10 @@ impl Default for VideoOutput {
             mirrored: false,
             source_rect: Rect::default(),
             content_rect: Rect::default(),
+            video_sink: None,
             frame: None,
+            turned: None,
+            turns: 0,
             serial: None,
             player: None,
         }
@@ -126,6 +144,13 @@ impl VideoOutput {
 }
 
 fn output_completed(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
+    let sink = video_sink::make_for(e, me);
+    e.set_internal(me, VideoOutput::VIDEO_SINK, sink)?;
+    let first = e.get(me, VideoOutput::ORIENTATION)?;
+    keep_turns(e, me, first);
+    e.watch(me, VideoOutput::ORIENTATION.index, move |e, v| {
+        keep_turns(e, me, v.to_number() as i32);
+    })?;
     e.bind_initial(me, VideoOutput::CONTENT_RECT.index, move |e| {
         Value::Rect(Arc::new(content_rect(e, me)))
     })?;
@@ -155,17 +180,34 @@ fn content_rect(e: &Engine, me: ObjectId) -> Rect {
     let h = e.get(me, Item::HEIGHT).unwrap_or(0.0);
     let source = e.get(me, VideoOutput::SOURCE_RECT).unwrap_or_default();
     let fill = e.get(me, VideoOutput::FILL_MODE).unwrap_or(1);
-    let turned = e
-        .get(me, VideoOutput::ORIENTATION)
-        .unwrap_or(0)
-        .rem_euclid(180)
-        == 90;
+    let turned = turns(e, me) % 2 == 1;
     let (sw, sh) = if turned {
         (source.height, source.width)
     } else {
         (source.width, source.height)
     };
     fit(w, h, sw, sh, fill)
+}
+
+/// `degrees` in quarter turns clockwise, when a multiple of 90.
+fn quarter_turns(degrees: i32) -> Option<u8> {
+    (degrees % 90 == 0).then(|| (degrees / 90).rem_euclid(4) as u8)
+}
+
+fn keep_turns(e: &Engine, me: ObjectId, degrees: i32) {
+    if let Some(t) = quarter_turns(degrees) {
+        let _ = e.with_mut::<VideoOutput, _>(me, |v| v.turns = t);
+    }
+}
+
+/// The quarter turns `me` paints with, tracking `orientation`: one that
+/// is no multiple of 90 leaves the last that was.
+fn turns(e: &Engine, me: ObjectId) -> u8 {
+    let degrees = e.get(me, VideoOutput::ORIENTATION).unwrap_or(0);
+    quarter_turns(degrees).unwrap_or_else(|| {
+        e.with::<VideoOutput, _>(me, |v| v.turns)
+            .unwrap_or_default()
+    })
 }
 
 /// Where a frame of `sw` by `sh` goes in an item of `w` by `h`.
@@ -190,9 +232,12 @@ fn fit(w: f64, h: f64, sw: f64, sh: f64, fill: i32) -> Rect {
     }
 }
 
-/// Whether `output` can be seen, not tracked.
+/// Whether `output` can be seen, not tracked. A sink of the program's
+/// always is.
 pub(crate) fn shown(e: &Engine, output: Option<ObjectId>) -> bool {
-    output.is_some_and(|o| e.is_alive(o) && e.untrack(|| shown_tracked(e, o)))
+    output.is_some_and(|o| {
+        e.is_alive(o) && (video_sink::is_sink(e, o) || e.untrack(|| shown_tracked(e, o)))
+    })
 }
 
 fn shown_tracked(e: &Engine, me: ObjectId) -> bool {
@@ -216,16 +261,37 @@ fn shown_tracked(e: &Engine, me: ObjectId) -> bool {
 
 /// Makes `player` the one that shows frames in `output`.
 pub(crate) fn attach(e: &Engine, output: Option<ObjectId>, player: ObjectId) {
-    if let Some(o) = output {
+    if let Some(o) = output.filter(|o| !video_sink::is_sink(e, *o)) {
         let _ = e.with_mut::<VideoOutput, _>(o, |v| v.player = Some(player));
     }
 }
 
-/// Shows `image` in `output`.
-pub(crate) fn show(e: &Engine, output: Option<ObjectId>, image: ImageHandle) {
-    let Some(o) = output.filter(|o| e.is_alive(*o)) else {
+/// Gives `image` to `target`, an output or a sink.
+pub(crate) fn show(e: &Engine, target: Option<ObjectId>, image: ImageHandle) {
+    if let Some(sink) = video_sink::of(e, target) {
+        video_sink::show(e, sink, image);
+    }
+}
+
+/// Says to `target`'s sink the size of the video about to come.
+pub(crate) fn sized(e: &Engine, target: Option<ObjectId>, width: f64, height: f64) {
+    if let Some(sink) = video_sink::of(e, target) {
+        video_sink::sized(e, sink, ljos_engine::Size { width, height });
+    }
+}
+
+/// Takes the video out of `target`, an output or a sink.
+pub(crate) fn clear(e: &Engine, target: Option<ObjectId>) {
+    if let Some(sink) = video_sink::of(e, target) {
+        video_sink::clear(e, sink);
+    }
+}
+
+/// Paints `image` in `o`, as its sink was given it.
+pub(crate) fn paint(e: &Engine, o: ObjectId, image: ImageHandle) {
+    if !e.is_alive(o) {
         return;
-    };
+    }
     let r = image.rect();
     let rect = Rect {
         x: 0.0,
@@ -235,6 +301,7 @@ pub(crate) fn show(e: &Engine, output: Option<ObjectId>, image: ImageHandle) {
     };
     let Ok(serial) = e.with_mut::<VideoOutput, _>(o, |v| {
         v.frame = Some(image);
+        v.turned = None;
         v.serial
     }) else {
         return;
@@ -243,14 +310,15 @@ pub(crate) fn show(e: &Engine, output: Option<ObjectId>, image: ImageHandle) {
     bump(e, serial);
 }
 
-/// Takes the frame out of `output`.
-pub(crate) fn clear(e: &Engine, output: Option<ObjectId>) {
-    let Some(o) = output.filter(|o| e.is_alive(*o)) else {
+/// Takes the frame out of `o`.
+pub(crate) fn unpaint(e: &Engine, o: ObjectId) {
+    if !e.is_alive(o) {
         return;
-    };
-    let Ok((had, serial)) =
-        e.with_mut::<VideoOutput, _>(o, |v| (v.frame.take().is_some(), v.serial))
-    else {
+    }
+    let Ok((had, serial)) = e.with_mut::<VideoOutput, _>(o, |v| {
+        v.turned = None;
+        (v.frame.take().is_some(), v.serial)
+    }) else {
         return;
     };
     let _ = e.set_internal(o, VideoOutput::SOURCE_RECT, Rect::default());
@@ -266,12 +334,14 @@ fn bump(e: &Engine, serial: Option<NodeId>) {
     }
 }
 
-/// Whether `output` lets go of the last frame at the end of the stream.
+/// Whether `output` lets go of the last frame at the end of the stream; a
+/// sink of the program's does.
 pub(crate) fn clears_at_end(e: &Engine, output: Option<ObjectId>) -> bool {
     output.is_none_or(|o| {
-        e.untrack(|| e.get(o, VideoOutput::END_OF_STREAM_POLICY))
-            .unwrap_or(CLEAR_OUTPUT)
-            == CLEAR_OUTPUT
+        video_sink::is_sink(e, o)
+            || e.untrack(|| e.get(o, VideoOutput::END_OF_STREAM_POLICY))
+                .unwrap_or(CLEAR_OUTPUT)
+                == CLEAR_OUTPUT
     })
 }
 
@@ -281,7 +351,8 @@ pub(crate) fn clears_at_end(e: &Engine, output: Option<ObjectId>) -> bool {
 struct FramePaint {
     image: Option<ImageHandle>,
     content: Rect,
-    mirrored: bool,
+    /// Horizontally, then vertically.
+    mirror: [bool; 2],
 }
 
 impl ItemPaint for FramePaint {
@@ -315,7 +386,7 @@ impl ItemPaint for FramePaint {
             src,
             dst,
             tile: None,
-            mirror: [self.mirrored, false],
+            mirror: self.mirror,
             smooth: true,
             opacity: 1.0,
             tint: None,
@@ -330,15 +401,57 @@ fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
     }
     let content = e.get(me, VideoOutput::CONTENT_RECT).unwrap_or_default();
     let mirrored = e.get(me, VideoOutput::MIRRORED).unwrap_or(false);
+    let turns = turns(e, me);
+    // A half turn is both mirrors; a quarter turn moves the pixels, once
+    // per frame and orientation.
+    let half = turns == 2;
     let image = e
-        .with::<VideoOutput, _>(me, |v| v.frame.clone())
+        .with_mut::<VideoOutput, _>(me, |v| {
+            let frame = v.frame.clone()?;
+            if turns.is_multiple_of(2) {
+                return Some(frame);
+            }
+            match &v.turned {
+                Some((t, image)) if *t == turns => Some(image.clone()),
+                _ => {
+                    let image = turn(&frame, turns).unwrap_or(frame);
+                    v.turned = Some((turns, image.clone()));
+                    Some(image)
+                }
+            }
+        })
         .ok()
         .flatten();
     Rc::new(FramePaint {
         image,
         content,
-        mirrored,
+        mirror: [mirrored != half, half],
     })
+}
+
+/// `image` turned clockwise by `turns` quarter turns.
+pub(crate) fn turn(image: &ImageHandle, turns: u8) -> Option<ImageHandle> {
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let src = image.data();
+    let turns = turns % 4;
+    if turns == 0 {
+        return Some(image.clone());
+    }
+    let (tw, th) = if turns % 2 == 1 { (h, w) } else { (w, h) };
+    let mut out = vec![0u8; src.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let (nx, ny) = match turns {
+                1 => (h - 1 - y, x),
+                2 => (w - 1 - x, h - 1 - y),
+                _ => (y, w - 1 - x),
+            };
+            let from = (y * w + x) * 4;
+            let to = (ny * tw + nx) * 4;
+            out[to..to + 4].copy_from_slice(&src[from..from + 4]);
+        }
+    }
+    ImageHandle::from_premultiplied(tw as u32, th as u32, out).ok()
 }
 
 pub(crate) fn register_paint(engine: &Engine) {
@@ -554,5 +667,27 @@ mod tests {
         assert_eq!((r.x, r.y, r.width, r.height), (0.0, 0.0, 100.0, 50.0));
         let r = fit(100.0, 50.0, 0.0, 0.0, 1);
         assert_eq!((r.width, r.height), (100.0, 50.0));
+    }
+
+    #[test]
+    fn only_multiples_of_90_turn() {
+        assert_eq!(quarter_turns(90), Some(1));
+        assert_eq!(quarter_turns(-90), Some(3));
+        assert_eq!(quarter_turns(540), Some(2));
+        assert_eq!(quarter_turns(45), None);
+    }
+
+    #[test]
+    fn a_quarter_turn_is_clockwise() {
+        // 2 by 1: red, then green.
+        let image =
+            ImageHandle::from_premultiplied(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 255]).unwrap();
+        let t = turn(&image, 1).unwrap();
+        assert_eq!((t.width(), t.height()), (1, 2));
+        // Clockwise, the left end goes to the top.
+        assert_eq!(t.pixel(0, 0), [255, 0, 0, 255]);
+        assert_eq!(t.pixel(0, 1), [0, 255, 0, 255]);
+        let t = turn(&image, 3).unwrap();
+        assert_eq!(t.pixel(0, 0), [0, 255, 0, 255]);
     }
 }

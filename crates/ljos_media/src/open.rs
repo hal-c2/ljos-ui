@@ -30,6 +30,8 @@ pub(crate) struct Opened {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VideoInfo {
     pub fps: f64,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Why a source did not open, in `MediaPlayer.Error`'s terms.
@@ -189,6 +191,8 @@ fn from_reader(
     }
     let duration_ms = (info.duration.seconds() * 1000.0).round().max(0.0);
     let video = info.video.as_ref().map(|v| VideoInfo {
+        width: v.width,
+        height: v.height,
         fps: if v.frame_rate.den != 0 && v.frame_rate.num > 0 {
             v.frame_rate.num as f64 / v.frame_rate.den as f64
         } else {
