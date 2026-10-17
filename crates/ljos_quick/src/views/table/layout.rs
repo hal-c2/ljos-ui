@@ -64,11 +64,9 @@ pub(crate) fn read_inputs(e: &Engine, view: ObjectId, st: &TableState) {
     ] {
         let _ = e.read(view, p);
     }
-    // Which cell is current and which are selected is told to the
-    // delegates of a tree.
-    if st.tree.get()
-        && let Some(sm) = e.read(view, TableView::SELECTION_MODEL.index).as_object()
-    {
+    // Which cell is current is told to the view, and with which are
+    // selected, to the delegates of a tree.
+    if let Some(sm) = e.read(view, TableView::SELECTION_MODEL.index).as_object() {
         let _ = e.read(sm, ItemSelectionModel::CURRENT_INDEX.index);
         let _ = e.read(sm, ItemSelectionModel::SELECTED_INDEXES.index);
     }
@@ -270,12 +268,9 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
     );
     *st.column_x.borrow_mut() = column_x;
 
-    if st.tree.get() {
-        let (row, column) =
-            current_cell(e, view, st).map_or((-1, -1), |(r, c)| (r as i32, c as i32));
-        put(e, view, TableView::CURRENT_ROW.index, Value::Int(row));
-        put(e, view, TableView::CURRENT_COLUMN.index, Value::Int(column));
-    }
+    let (row, column) = current_cell(e, view, st).map_or((-1, -1), |(r, c)| (r as i32, c as i32));
+    put(e, view, TableView::CURRENT_ROW.index, Value::Int(row));
+    put(e, view, TableView::CURRENT_COLUMN.index, Value::Int(column));
 }
 
 /// The columns in sight from `sight.0` to `sight.1` across: a column

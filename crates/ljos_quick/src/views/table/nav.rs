@@ -2,12 +2,16 @@
 //! and the pointer, through the view's `selectionModel`, as qml6 does.
 //!
 //! Up and Down move the current row, Page Up and Page Down by the rows in
-//! sight less one; with nothing current they start at the first row. In
+//! sight less one, Home and End to the first and last column (Control
+//! changes nothing), and Tab and Backtab to the next and the previous
+//! cell, from the end of a row to the next and from the last cell to the
+//! first; with nothing current they start at the first row in sight. In
 //! a `TreeView`, Right expands the current row and Left collapses it, and
 //! neither moves; in a table they move the current column. With Shift
 //! the selection is the cells from where the Shift moves began to the
 //! current one (only the first with `SingleSelection`); a move without
-//! Shift, or a tap, takes the selection away. A tap makes its cell
+//! Shift, or a tap, takes the selection away. Backtab never selects:
+//! Shift is how it is typed. A tap makes its cell
 //! current; a double tap expands or collapses a tree's row.
 
 use ljos_engine::{Engine, ItemSelectionModel, ObjectId, Value};
@@ -86,10 +90,27 @@ fn press(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
     let current = e.untrack(|| layout::current_cell(e, view, &st));
     let last = rows - 1;
     let page = rows_in_sight(e, view, &st).saturating_sub(1).max(1);
+    let last_column = st.cells.columns().saturating_sub(1);
     let to = match (ev.key, current) {
-        (key::UP | key::DOWN | key::PAGE_UP | key::PAGE_DOWN, None) => {
-            (first_in_sight(e, view, &st), 0)
-        }
+        (key::END, None) => (first_in_sight(e, view, &st), last_column),
+        (
+            key::UP
+            | key::DOWN
+            | key::PAGE_UP
+            | key::PAGE_DOWN
+            | key::HOME
+            | key::TAB
+            | key::BACKTAB,
+            None,
+        ) => (first_in_sight(e, view, &st), 0),
+        (key::HOME, Some((r, _))) => (r, 0),
+        (key::END, Some((r, _))) => (r, last_column),
+        (key::TAB, Some((r, c))) if c < last_column => (r, c + 1),
+        (key::TAB, Some((r, _))) if r < last => (r + 1, 0),
+        (key::TAB, Some(_)) => (0, 0),
+        (key::BACKTAB, Some((r, c))) if c > 0 => (r, c - 1),
+        (key::BACKTAB, Some((r, _))) if r > 0 => (r - 1, last_column),
+        (key::BACKTAB, Some(_)) => (last, last_column),
         (key::UP, Some((r, c))) => (r.saturating_sub(1), c),
         (key::DOWN, Some((r, c))) => ((r + 1).min(last), c),
         (key::PAGE_UP, Some((r, c))) => (r.saturating_sub(page), c),
@@ -114,7 +135,7 @@ fn press(e: &Engine, view: ObjectId, ev: &KeyEvent) -> bool {
         (key::RIGHT, Some((r, c))) => (r, (c + 1).min(st.cells.columns().saturating_sub(1))),
         _ => return false,
     };
-    let shift = ev.modifiers.contains(Modifiers::SHIFT);
+    let shift = ev.modifiers.contains(Modifiers::SHIFT) && ev.key != key::BACKTAB;
     move_to(e, view, &st, current, to, shift);
     reveal(e, view, &st, to.0);
     true
