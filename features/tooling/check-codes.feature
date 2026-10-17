@@ -18,16 +18,46 @@ Feature: Each thing `ljos check` finds names its kind
         Text { horizontalAlignment: "left" }
         height: "tall"
         property real r: nowhere
-        NoSuchThing { }
       }
       """
     When the files are checked
     Then the check reports:
       """
-      Main.qml:6:9: error: `NoSuchThing` is not a type of anything the file imports [unknown-type]
       Main.qml:3:37: error: Invalid property assignment: unknown enumeration [invalid-assignment]
       Main.qml:4:17: error: Invalid property assignment: number expected [invalid-assignment]
       Main.qml:5:26: warning: `nowhere` is not a name in sight: it is looked up when the program runs [unresolved-name]
-      1 files, 3 errors, 1 warnings
-      ljos: 3 errors
+      1 files, 2 errors, 1 warnings
+      ljos: 2 errors
+      """
+
+  # How a type nobody has is worded depends on whether the build knows Qt's
+  # types; its kind does not.
+  @qt-table
+  Scenario: A type nobody has names its kind
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { NoSuchThing { } }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Main.qml:2:14: error: `NoSuchThing` is not a type of anything the file imports [unknown-type]
+      1 files, 1 errors, 0 warnings
+      ljos: 1 errors
+      """
+
+  @no-qt-table
+  Scenario: A type nobody has names its kind without Qt's table
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item { NoSuchThing { } }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Main.qml:2:14: error: `NoSuchThing` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it) [unknown-type]
+      1 files, 1 errors, 0 warnings
+      ljos: 1 errors
       """
