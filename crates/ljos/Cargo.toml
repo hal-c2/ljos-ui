@@ -45,6 +45,8 @@ qml_front = { path = "../qml_front", optional = true }
 # Tests compile QML strings and, for `dev::compile_dir`, a directory.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+# Whether the build reads QML against Qt's table (`extends_item.rs`).
+qt_types = { path = "../qt_types" }
 tempfile.workspace = true
 # An application that hands QML JSON (`records.rs`).
 serde_json.workspace = true

@@ -84,10 +84,17 @@ fn a_member_its_own_group_lacks_fails_the_build() {
 
 #[test]
 fn the_toolkits_groups_are_checked_as_on_item() {
-    // `anchors` has no `margin`; Qt refuses to load either.
+    // `anchors` has no `margin`; Qt refuses to load either. Only Qt's
+    // table says so: without it the build leaves both to the runtime.
     let item = "import QtQuick\nItem { Item { anchors.margin: 10 } }\n";
+    let panel = MAIN.replace("anchors.margins:", "anchors.margin:");
+    if !qt_types::test_has_qt_table("the_toolkits_groups_are_checked_as_on_item") {
+        assert!(compile(item).is_ok());
+        assert!(compile(&panel).is_ok());
+        return;
+    }
     let err = compile(item).unwrap_err();
     assert!(err.contains("margin"), "{err}");
-    let err = compile(&MAIN.replace("anchors.margins:", "anchors.margin:")).unwrap_err();
+    let err = compile(&panel).unwrap_err();
     assert!(err.contains("margin"), "{err}");
 }
