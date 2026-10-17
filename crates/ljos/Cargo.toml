@@ -70,8 +70,13 @@ ljos = { path = ".", features = ["dev-qml", "build", "render", "testing"] }
 x11rb.workspace = true
 
 [features]
-default = ["shell", "media", "media-audio"]
+default = ["shell", "media", "media-audio", "collation"]
 shell = ["dep:ljos_shell"]
+# `localeCompare` and `ljos::locale::Collator` order text by the locale's
+# alphabet (ICU's collation data, about 1.2 MB of a stripped release
+# binary). Without it they order every locale's text as the `C` locale
+# does, by UTF-16 code units.
+collation = ["ljos_i18n/collation"]
 # QtMultimedia (MediaPlayer, Video, SoundEffect and their kin), in the
 # Engine `engine()` makes and, with `shell`, in the shell's.
 media = ["dep:ljos_media", "ljos_shell?/media"]

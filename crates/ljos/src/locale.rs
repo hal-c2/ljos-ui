@@ -8,7 +8,8 @@
 //! `LC_NUMERIC`, its dates and times from `LC_TIME` and its collation
 //! from `LC_COLLATE`, each with `LC_ALL` before and `LANG` after it.
 //! [`App::locale`](crate::App::locale) or [`set_locale`] chooses another,
-//! and [`on_change`] follows a change.
+//! and [`on_change`] follows a change. A [`Collator`] orders text as
+//! `localeCompare` does, so a model sorts its rows as its QML would.
 //!
 //! ```
 //! use ljos::locale::{DateTime, FormatType, Locale};
@@ -19,7 +20,17 @@
 //! let moon = DateTime::from_unix_ms(-14_159_040_000, 0);
 //! assert_eq!(de.format_date(&moon, FormatType::Short), "21.07.69");
 //! assert_eq!(de.format_pattern(&moon, "d. MMMM yyyy, HH:mm"), "21. Juli 1969, 02:56");
+//!
+//! let mut names = vec!["b", "a", "B", "ä", "z"];
+//! let en = Locale::named("en_US").collator();
+//! names.sort_by(|a, b| en.compare(a, b));
+//! assert_eq!(names, ["a", "ä", "b", "B", "z"]);
 //! ```
+//!
+//! Without the `collation` feature, which carries the alphabets, every
+//! locale orders text as the `C` locale does: by its UTF-16 code units.
+
+use std::cmp::Ordering;
 
 use ljos_engine::{Engine, EngineError};
 use ljos_i18n::LocaleInfo;
@@ -167,11 +178,58 @@ impl Locale {
             .format_date_time(&self.date_time_format(format), date, Part::DateTime)
     }
 
+    /// A collator that orders text by this locale's collation (for
+    /// [`Locale::of`], the system's `LC_COLLATE`).
+    #[must_use]
+    pub fn collator(&self) -> Collator {
+        Collator(ljos_i18n::Collator::new(self.0.collation_locale()))
+    }
+
     /// `date.toLocaleString(locale, pattern)`: a Qt format string
     /// (`dd.MM.yyyy HH:mm`) in this locale's names and digits.
     #[must_use]
     pub fn format_pattern(&self, date: &DateTime, pattern: &str) -> String {
         self.0.format_date_time(pattern, date, Part::DateTime)
+    }
+}
+
+/// Orders text as a locale does, as `QCollator` does: by its alphabet,
+/// then accents, then case (`a ä b B z` in English, `a b B z ä` in
+/// Swedish). Made by [`Locale::collator`] or [`Collator::of`].
+#[derive(Debug)]
+pub struct Collator(ljos_i18n::Collator);
+
+impl Collator {
+    /// The collator `localeCompare` uses in this application: by its
+    /// locale's collation. Tracked, as [`Locale::of`] is.
+    #[must_use]
+    pub fn of(engine: &Engine) -> Self {
+        Locale::of(engine).collator()
+    }
+
+    /// The collator of the locale a name selects (`sv_SE`, `de`).
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Locale::named(name).collator()
+    }
+
+    /// The same collator, telling a capital from its small letter or not
+    /// (`QCollator::setCaseSensitivity`). A collator tells them apart
+    /// unless told otherwise.
+    #[must_use]
+    pub fn case_sensitive(self, case_sensitive: bool) -> Self {
+        Self(self.0.with_case_sensitive(case_sensitive))
+    }
+
+    #[must_use]
+    pub fn is_case_sensitive(&self) -> bool {
+        self.0.is_case_sensitive()
+    }
+
+    /// Where `a` goes against `b` (`QCollator::compare`).
+    #[must_use]
+    pub fn compare(&self, a: &str, b: &str) -> Ordering {
+        self.0.compare(a, b)
     }
 }
 

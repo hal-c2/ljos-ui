@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_i18n::datetime::{Fields, Part};
-use ljos_i18n::{I18n, LocaleInfo, Messages};
+use ljos_i18n::{Collator, I18n, LocaleInfo, Messages};
 use ljos_ir::{Translatable, TranslationKind};
 use ljos_js::{HostError, HostFn, JsFault, JsValue};
 
@@ -35,6 +35,10 @@ pub(crate) struct I18nState {
     i18n: RefCell<I18n>,
     language: Cell<Option<NodeId>>,
     locale: Cell<Option<NodeId>>,
+    /// The collator `localeCompare` used last, and the locale name it was
+    /// asked for (`None`: the application's). A sort asks for the same one
+    /// for every pair.
+    collator: RefCell<Option<(Option<String>, Rc<Collator>)>>,
 }
 
 /// The count of a plural call, as Qt reads a JS number: an int32, and a
@@ -285,6 +289,33 @@ impl Engine {
         }
     }
 
+    /// What `localeCompare` orders by: the application's collation
+    /// (tracked), or that of the locale `name` names.
+    fn collator(&self, name: Option<&str>) -> Rc<Collator> {
+        let state = self.i18n();
+        if name.is_none() {
+            self.i18n_track(&state.locale);
+        }
+        let i18n = state.i18n.borrow();
+        let mut last = state.collator.borrow_mut();
+        if let Some((key, c)) = last.as_ref() {
+            let hit = match (key.as_deref(), name) {
+                (Some(k), Some(n)) => k == n,
+                (None, None) => c.locale() == i18n.locale().collation_locale(),
+                _ => false,
+            };
+            if hit {
+                return Rc::clone(c);
+            }
+        }
+        let c = Rc::new(match name {
+            Some(n) => Collator::new(LocaleInfo::new(n).collation_locale()),
+            None => Collator::new(i18n.locale().collation_locale()),
+        });
+        *last = Some((name.map(str::to_owned), Rc::clone(&c)));
+        c
+    }
+
     fn locale_object(&self, name: Option<&str>) -> JsValue {
         let info = self.locale_info(name);
         let s = |v: String| JsValue::String(v);
@@ -334,7 +365,7 @@ impl Engine {
             })
         };
         // The prelude below has checked the arguments, with Qt's messages.
-        let functions: [(&str, HostFn); 14] = [
+        let functions: [(&str, HostFn); 15] = [
             (
                 "__ljos_tr",
                 host(|e, a| {
@@ -533,6 +564,16 @@ impl Engine {
                         precision,
                         ljos_i18n::DataSizeFormat::from_qt(format),
                     )))
+                }),
+            ),
+            (
+                "__ljos_localeCompare",
+                // (text, other, locale)
+                host(|e, a| {
+                    let order = e
+                        .collator(locale_arg(a.get(2)))
+                        .order(string(a.first()), string(a.get(1)));
+                    Ok(JsValue::Number(f64::from(order)))
                 }),
             ),
             (
@@ -760,6 +801,17 @@ const PRELUDE: &str = r##"
     if (arguments.length === 0 || !isLocale(locale)) return toLocaleNumber.call(this);
     const amount = formatNumber(nameOf(locale), numberValue(this), "f", 2);
     return (typeof symbol === "string" ? symbol : "") + amount;
+  });
+
+  // String.prototype.localeCompare(that, locale): by the application's
+  // collation, or by that of the locale the second argument is or names,
+  // which Qt does not take.
+  const localeCompare = g.__ljos_localeCompare;
+  define(String.prototype, "localeCompare", function (that, locale) {
+    if (this === null || this === undefined)
+      throw new TypeError("String.prototype.localeCompare called on null or undefined");
+    const name = isLocale(locale) ? nameOf(locale) : typeof locale === "string" ? locale : undefined;
+    return localeCompare(String(this), String(that), name);
   });
 
   if (Qt.application === undefined) define(Qt, "application", {});

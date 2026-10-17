@@ -19,6 +19,10 @@ icu_decimal.workspace = true
 # QtQuick.Controls and `Locale.dayName`.
 icu_calendar.workspace = true
 icu_datetime.workspace = true
+# `localeCompare` and the facade's collator: the locale's alphabet, accents
+# and case, as ICU orders them (what QCollator does). Its data adds about
+# 1.2 MB to a stripped release binary, so it is a feature.
+icu_collator = { workspace = true, optional = true }
 writeable.workspace = true
 # Only the `.ts` reader and writer use it; a shipped app that loads `.ljl`
 # builds without the `ts` feature and does not link an XML parser.
@@ -26,8 +30,11 @@ quick-xml = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [features]
-default = ["ts"]
+default = ["ts", "collation"]
 ts = ["dep:quick-xml"]
+# Text ordered by the locale's alphabet. Without it every locale orders
+# text as the `C` locale does, by its UTF-16 code units.
+collation = ["dep:icu_collator"]
 
 [dev-dependencies]
 tempfile.workspace = true

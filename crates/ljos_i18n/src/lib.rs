@@ -10,6 +10,7 @@
 pub mod arg;
 pub mod calendar;
 pub mod catalog;
+pub mod collate;
 pub mod datetime;
 pub mod i18n;
 pub mod ljl;
@@ -19,6 +20,7 @@ pub mod plural;
 pub mod ts;
 
 pub use catalog::{Catalog, Entry, Messages, Translation};
+pub use collate::Collator;
 pub use i18n::I18n;
 pub use ljl::{Ljl, LjlError};
 pub use locale::{DataSizeFormat, LocaleInfo, SystemLocale};

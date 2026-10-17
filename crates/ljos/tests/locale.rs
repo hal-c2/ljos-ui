@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ljos::locale::{DataSizeFormat, DateTime, FormatType, Locale, SystemLocale};
+use ljos::locale::{Collator, DataSizeFormat, DateTime, FormatType, Locale, SystemLocale};
 use ljos::prelude::*;
 
 const MAIN: &str = r#"
@@ -192,4 +192,72 @@ fn an_application_chooses_its_locale_over_the_systems() {
         .build()
         .unwrap();
     assert_eq!(text(&engine, root, "name"), "en_US");
+}
+
+const SORTED: &str = r#"
+import QtQuick
+Item {
+    readonly property var words: ["b", "a", "B", "ä", "z", "ö", "o", "å", "Item1", "item10", "item2"]
+    property string sorted: words.slice().sort((x, y) => x.localeCompare(y)).join(" ")
+}
+"#;
+
+fn sorted(collator: &Collator) -> String {
+    let mut words = [
+        "b", "a", "B", "ä", "z", "ö", "o", "å", "Item1", "item10", "item2",
+    ];
+    words.sort_by(|a, b| collator.compare(a, b));
+    words.join(" ")
+}
+
+#[test]
+fn localecompare_orders_by_the_locale() {
+    let engine = ljos::App::new("repro").build_engine();
+    assert_eq!(
+        engine
+            .eval_js("['b', 'a', 'B', 'ä', 'z'].sort((x, y) => x.localeCompare(y)).join(' ')")
+            .unwrap()
+            .to_js_string()
+            .to_string(),
+        "a ä b B z"
+    );
+}
+
+#[test]
+fn rust_sorts_as_qml_sorts() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("Main.qml"), SORTED).unwrap();
+    let engine = ljos::engine();
+    let source = ljos::dev::compile_dir_with(dir.path(), &engine).unwrap();
+    let root = ljos::create_root(&engine, source, "Main").unwrap();
+    for name in ["en_US", "sv_SE", "de_DE", "C"] {
+        // The binding sorts again when the locale changes.
+        ljos::locale::set_locale(&engine, name);
+        assert_eq!(
+            sorted(&Collator::of(&engine)),
+            text(&engine, root, "sorted"),
+            "{name}"
+        );
+        assert_eq!(
+            sorted(&Collator::named(name)),
+            text(&engine, root, "sorted")
+        );
+    }
+    assert_eq!(
+        sorted(&Collator::named("sv")),
+        "a b B Item1 item10 item2 o z å ä ö"
+    );
+}
+
+#[test]
+fn a_collator_can_ignore_case() {
+    use std::cmp::Ordering;
+    let en = Locale::named("en_US").collator();
+    assert!(en.is_case_sensitive());
+    assert_eq!(en.compare("apple", "Apple"), Ordering::Less);
+    let en = en.case_sensitive(false);
+    assert!(!en.is_case_sensitive());
+    assert_eq!(en.compare("apple", "Apple"), Ordering::Equal);
+    assert_eq!(en.compare("Äpfel", "apfel"), Ordering::Greater);
+    assert_eq!(en.compare("apple", "Banana"), Ordering::Less);
 }
