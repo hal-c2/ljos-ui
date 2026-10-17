@@ -1,6 +1,7 @@
 //! Highlighting from a program's side: the spans it gives an editor come
-//! out as colours on the display list and change nothing else, and a
-//! highlighter is asked once for each text (ARCHITECTURE §7.5). What QML
+//! out as colours on the display list, a span with a font lays the text out
+//! with it, and a highlighter is asked once for each text (ARCHITECTURE
+//! §7.5). What QML
 //! sees of it is in `features/text-input/highlighting.feature`.
 
 mod common;
@@ -155,6 +156,7 @@ fn a_background_is_behind_the_text_and_an_underline_below_it() {
             color: None,
             background: Some(GREEN),
             underline: true,
+            ..HighlightSpan::default()
         }],
     );
     frame(&mut s, &e);
@@ -183,6 +185,109 @@ fn a_background_is_behind_the_text_and_an_underline_below_it() {
         )
         .expect("the background");
     assert!(background < first_glyphs);
+}
+
+/// The faces `item`'s glyphs are set in, and whether a run is struck out.
+/// A face drawn slanted (an italic the fonts do not have) counts as one of
+/// its own.
+fn faces(s: &QuickScene, item: ObjectId) -> (Vec<(u64, bool)>, bool) {
+    let (mut faces, mut struck) = (Vec::new(), false);
+    for op in ops(s, item) {
+        if let DrawOp::Glyphs {
+            run, decorations, ..
+        } = op
+        {
+            let face = (run.font.data.id(), run.skew != 0.0);
+            if !faces.contains(&face) {
+                faces.push(face);
+            }
+            struck |= decorations.strike_through.is_some();
+        }
+    }
+    (faces, struck)
+}
+
+#[test]
+fn a_span_with_a_font_lays_the_text_out_with_it() {
+    let e = engine();
+    let (root, mut s) = ready(&e);
+    let edit = find(&e, root, "edit");
+    let width = num(&e, edit, "contentWidth");
+    assert_eq!(faces(&s, edit).0.len(), 1);
+
+    let bold = HighlightSpan {
+        // "let one", the wider line.
+        range: 0..7,
+        weight: Some(700),
+        ..HighlightSpan::default()
+    };
+    assert!(set_highlights(&e, edit, vec![bold.clone()]));
+    frame(&mut s, &e);
+    assert!(num(&e, edit, "contentWidth") > width, "bold is wider");
+    assert_eq!(faces(&s, edit).0.len(), 2, "a bold face for the span");
+    // The cursor finds the characters where they are now.
+    let end = e
+        .invoke_by_name(edit, "positionToRectangle", &[Value::Int(7)])
+        .unwrap();
+    let Value::Rect(end) = end else {
+        panic!("a rectangle: {end:?}");
+    };
+    assert!(
+        (end.x - num(&e, edit, "contentWidth")).abs() < 1.0,
+        "{end:?}"
+    );
+
+    let italic = HighlightSpan {
+        range: 8..11,
+        italic: true,
+        strikeout: true,
+        family: Some("Sans Serif".into()),
+        ..HighlightSpan::default()
+    };
+    set_highlights(&e, edit, vec![bold, italic]);
+    frame(&mut s, &e);
+    let (set_in, struck) = faces(&s, edit);
+    assert!(struck);
+    assert_eq!(set_in.len(), 3, "and an italic one");
+
+    assert!(set_highlights(&e, edit, Vec::new()));
+    frame(&mut s, &e);
+    assert_eq!(num(&e, edit, "contentWidth"), width);
+    assert_eq!(faces(&s, edit).0.len(), 1);
+    assert!(!faces(&s, edit).1);
+}
+
+#[test]
+fn a_highlighter_can_ask_for_bold() {
+    let e = engine();
+    let (root, mut s) = ready(&e);
+    let edit = find(&e, root, "edit");
+    let width = num(&e, edit, "contentWidth");
+    assert!(set_highlighter(
+        &e,
+        edit,
+        Some(Box::new(|text: &str| {
+            text.match_indices("one")
+                .map(|(at, word)| HighlightSpan {
+                    range: at..at + word.len(),
+                    weight: Some(700),
+                    ..HighlightSpan::default()
+                })
+                .collect()
+        })),
+    ));
+    frame(&mut s, &e);
+    let bold = num(&e, edit, "contentWidth");
+    assert!(bold > width, "{bold} > {width}");
+    // A new text is highlighted and laid out again.
+    e.invoke_by_name(edit, "insert", &[Value::Int(0), Value::from("one ")])
+        .unwrap();
+    frame(&mut s, &e);
+    assert_eq!(highlights(&e, edit).len(), 2);
+    assert!(set_highlighter(&e, edit, None));
+    frame(&mut s, &e);
+    assert!(highlights(&e, edit).is_empty());
+    assert_eq!(faces(&s, edit).0.len(), 1);
 }
 
 #[test]

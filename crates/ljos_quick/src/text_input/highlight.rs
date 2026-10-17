@@ -5,9 +5,12 @@
 //! editor knows where every character is. So the program hands over spans
 //! ([`set_highlights`]), or a function that makes them from the text
 //! ([`set_highlighter`]), and the editor paints its own layout in those
-//! colours. A span changes how text is painted and nothing else: not the
-//! text, not where its lines break, not what can be undone. That is why a
-//! span has colours and an underline and no font.
+//! colours. A span changes how text looks and nothing else: not the text,
+//! not what can be undone. Colours, a background and an underline are
+//! painted over the layout the editor has. A weight, italic, strike-out or
+//! another family change the glyphs, so the editor lays its text out again
+//! with them, as Qt does for a `QTextCharFormat`; spans with colours only
+//! never cost a layout.
 //!
 //! In Qt a `QSyntaxHighlighter` on the `QTextDocument` behind
 //! `TextEdit.textDocument` does this from C++. Here the document is the
@@ -26,7 +29,7 @@ use ljos_engine::{
     Atom, Color, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl,
 };
 use ljos_render::{Decorations, GlyphRun, Rgba};
-use ljos_text::{EditLayout, EditLine, utf16_to_byte};
+use ljos_text::{EditLayout, EditLine, StyleSpan, TextStyle, utf16_to_byte};
 
 use super::base::{SharedState, bump, check, state_of};
 use super::edit::TextEdit;
@@ -44,12 +47,40 @@ pub struct HighlightSpan {
     pub background: Option<Color>,
     /// A line under the text, in its colour.
     pub underline: bool,
+    /// A line through the text, in its colour.
+    pub strikeout: bool,
+    /// The weight of the font, 1 to 1000 as `font.weight` (`Font.Bold` is
+    /// 700); `None`: the editor's.
+    pub weight: Option<u16>,
+    /// The text is set in italics.
+    pub italic: bool,
+    /// Another family; `None`: the editor's.
+    pub family: Option<Arc<str>>,
 }
 
 impl HighlightSpan {
     fn paints(&self) -> bool {
         self.range.start < self.range.end
-            && (self.color.is_some() || self.background.is_some() || self.underline)
+            && (self.color.is_some()
+                || self.background.is_some()
+                || self.underline
+                || self.shapes())
+    }
+
+    /// The span changes the glyphs, so the text is laid out with it.
+    pub(crate) fn shapes(&self) -> bool {
+        self.strikeout || self.italic || self.weight.is_some() || self.family.is_some()
+    }
+
+    /// Everything but the range is the same.
+    fn looks_like(&self, other: &Self) -> bool {
+        self.color == other.color
+            && self.background == other.background
+            && self.underline == other.underline
+            && self.strikeout == other.strikeout
+            && self.weight == other.weight
+            && self.italic == other.italic
+            && self.family == other.family
     }
 }
 
@@ -87,8 +118,9 @@ impl std::fmt::Debug for Highlights {
 }
 
 /// `spans` in the order of the text, with none overlapping: where several
-/// cover a stretch, each of colour, background and underline is that of the
-/// last span that has it.
+/// cover a stretch, each of colour, background, weight and family is that
+/// of the last span that has it, and it is underlined, struck out or in
+/// italics when one of them is.
 fn flatten(spans: &[HighlightSpan]) -> Vec<HighlightSpan> {
     let spans: Vec<&HighlightSpan> = spans.iter().filter(|s| s.paints()).collect();
     if spans.windows(2).all(|w| w[0].range.end <= w[1].range.start) {
@@ -107,44 +139,33 @@ fn flatten(spans: &[HighlightSpan]) -> Vec<HighlightSpan> {
         order.into_iter().peekable()
     };
     let (mut starts, mut ends) = (by(|s| s.range.start), by(|s| s.range.end));
-    // The spans that cover the stretch at hand, by what they have.
-    let (mut colors, mut backgrounds, mut underlines) =
-        (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    // The spans that cover the stretch at hand, in the order they were
+    // given.
+    let mut covering: BTreeSet<usize> = BTreeSet::new();
     let mut out: Vec<HighlightSpan> = Vec::new();
     for w in cuts.windows(2) {
         while let Some(i) = ends.next_if(|i| spans[*i].range.end <= w[0]) {
-            colors.remove(&i);
-            backgrounds.remove(&i);
-            underlines.remove(&i);
+            covering.remove(&i);
         }
         while let Some(i) = starts.next_if(|i| spans[*i].range.start <= w[0]) {
-            let s = spans[i];
-            if s.color.is_some() {
-                colors.insert(i);
-            }
-            if s.background.is_some() {
-                backgrounds.insert(i);
-            }
-            if s.underline {
-                underlines.insert(i);
-            }
+            covering.insert(i);
         }
+        let on = || covering.iter().map(|i| spans[*i]);
         let piece = HighlightSpan {
             range: w[0]..w[1],
-            color: colors.last().and_then(|i| spans[*i].color),
-            background: backgrounds.last().and_then(|i| spans[*i].background),
-            underline: !underlines.is_empty(),
+            color: on().filter_map(|s| s.color).next_back(),
+            background: on().filter_map(|s| s.background).next_back(),
+            underline: on().any(|s| s.underline),
+            strikeout: on().any(|s| s.strikeout),
+            weight: on().filter_map(|s| s.weight).next_back(),
+            italic: on().any(|s| s.italic),
+            family: on().filter_map(|s| s.family.clone()).next_back(),
         };
         if !piece.paints() {
             continue;
         }
         match out.last_mut() {
-            Some(last)
-                if last.range.end == piece.range.start
-                    && last.color == piece.color
-                    && last.background == piece.background
-                    && last.underline == piece.underline =>
-            {
+            Some(last) if last.range.end == piece.range.start && last.looks_like(&piece) => {
                 last.range.end = piece.range.end;
             }
             _ => out.push(piece),
@@ -173,6 +194,27 @@ fn shown(range: &Range<usize>, (at, by): Shift) -> Range<usize> {
         range.end
     };
     start..end
+}
+
+/// What the spans that change the glyphs ask the layout of `base` for, in
+/// what is shown. Empty when no span does: the text is laid out as it is.
+pub(crate) fn style_spans(
+    spans: &[HighlightSpan],
+    base: &TextStyle,
+    shift: Shift,
+) -> Vec<StyleSpan> {
+    spans
+        .iter()
+        .filter(|s| s.shapes())
+        .zip(1..)
+        .map(|(s, tag)| StyleSpan {
+            weight: s.weight.map_or(base.weight, f32::from),
+            italic: base.italic || s.italic,
+            strikeout: base.strikeout || s.strikeout,
+            family: s.family.clone(),
+            ..StyleSpan::of(base, shown(&s.range, shift), tag)
+        })
+        .collect()
 }
 
 /// Glyphs of one colour: a run of the layout, or the part of one that a
@@ -294,7 +336,7 @@ fn line_paint(line: &EditLine, spans: &[HighlightSpan], shift: Shift) -> Option<
 
 /// The spans of an editor as its picture is made: the highlighter is
 /// asked first when the text changed since it last was.
-fn current(st: &SharedState) -> Rc<[HighlightSpan]> {
+pub(crate) fn current(st: &SharedState) -> Rc<[HighlightSpan]> {
     // The highlighter is a program's code. It runs with the state free, so
     // whatever it reaches finds the editor as it is.
     let job = {
@@ -378,11 +420,22 @@ fn editor_of(engine: &Engine, obj: ObjectId) -> Option<(ObjectId, SharedState)> 
     state_of(engine, edit).map(|st| (edit, st))
 }
 
-fn repaint(engine: &Engine, st: &SharedState) {
-    let epoch = st.borrow().paint_epoch;
-    if let Some(n) = epoch {
+/// Paints the editor again, and lays its text out again first when spans
+/// that change the glyphs came or went (`shaped`: whether the spans it had
+/// did).
+fn repaint(engine: &Engine, st: &SharedState, shaped: bool) {
+    let epochs = {
+        let s = st.borrow();
+        let shapes = shaped || s.highlights.raw.iter().any(HighlightSpan::shapes);
+        [s.paint_epoch, s.shape_epoch.filter(|_| shapes)]
+    };
+    for n in epochs.into_iter().flatten() {
         bump(engine, n);
     }
+}
+
+fn shaped(st: &SharedState) -> bool {
+    st.borrow().highlights.raw.iter().any(HighlightSpan::shapes)
 }
 
 /// Gives an editor the spans its text is painted with, in place of those
@@ -395,12 +448,13 @@ pub fn set_highlights(engine: &Engine, item: ObjectId, spans: Vec<HighlightSpan>
     let Some((_, st)) = editor_of(engine, item) else {
         return false;
     };
+    let was = shaped(&st);
     {
         let mut s = st.borrow_mut();
         s.highlights.raw = spans;
         s.highlights.flat = None;
     }
-    repaint(engine, &st);
+    repaint(engine, &st, was);
     true
 }
 
@@ -413,6 +467,8 @@ pub fn set_highlighter(engine: &Engine, item: ObjectId, highlighter: Option<High
     let Some((_, st)) = editor_of(engine, item) else {
         return false;
     };
+    let was = shaped(&st);
+    let highlighter_set = highlighter.is_some();
     {
         let mut s = st.borrow_mut();
         let h = &mut s.highlights;
@@ -422,7 +478,8 @@ pub fn set_highlighter(engine: &Engine, item: ObjectId, highlighter: Option<High
         h.raw.clear();
         h.flat = None;
     }
-    repaint(engine, &st);
+    // What the new highlighter makes is not known until it runs.
+    repaint(engine, &st, was || highlighter_set);
     true
 }
 
@@ -502,11 +559,11 @@ impl TextDocument {
                 range: a..b,
                 color: color_of(&color),
                 background: color_of(&background),
-                underline: false,
+                ..HighlightSpan::default()
             });
             s.highlights.flat = None;
         }
-        repaint(cx.engine, &st);
+        repaint(cx.engine, &st, false);
     }
 
     /// `clearHighlights()`: the text is painted as the editor has it.
@@ -610,7 +667,7 @@ mod tests {
             range,
             color: color.map(c),
             background: background.map(c),
-            underline: false,
+            ..HighlightSpan::default()
         }
     }
 

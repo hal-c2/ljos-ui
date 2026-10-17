@@ -15,7 +15,7 @@ use ljos_engine::{
     qml_impl,
 };
 use ljos_reactive::NodeId;
-use ljos_text::{EditLayout, EditParams, TextModel, TextStyle, reads_right_to_left};
+use ljos_text::{EditLayout, EditParams, StyleSpan, TextModel, TextStyle, reads_right_to_left};
 
 use super::clipboard::Clipboard;
 use super::edit::TextEdit;
@@ -80,6 +80,8 @@ pub(crate) struct State {
     pub layout: Option<Rc<EditLayout>>,
     /// What `layout` was made with.
     pub laid: Option<(TextStyle, EditParams)>,
+    /// The highlight spans `layout` was made with, as the layout has them.
+    pub laid_spans: Vec<StyleSpan>,
     pub geo: Geometry,
     pub cursor_rect: Rect,
     /// How far a one-line text is moved left to keep the cursor in view.
@@ -88,6 +90,9 @@ pub(crate) struct State {
     pub blink_on: bool,
     pub blink_timer: Option<ObjectId>,
     pub layout_epoch: Option<NodeId>,
+    /// Counts the changes of highlight spans that change the glyphs, which
+    /// the layout reads.
+    pub shape_epoch: Option<NodeId>,
     /// Counts what changes the picture without changing a property.
     pub paint_epoch: Option<NodeId>,
     /// Counts changes of a rich text, which `text` may not show yet: what
@@ -618,6 +623,8 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
     if let Some(scope) = engine.object_scope(obj) {
         let n = engine.graph().property(scope, Value::Int(0))?;
         st.borrow_mut().paint_epoch = Some(n);
+        let n = engine.graph().property(scope, Value::Int(0))?;
+        st.borrow_mut().shape_epoch = Some(n);
         if multi {
             let n = engine.graph().property(scope, Value::Int(0))?;
             st.borrow_mut().rich_epoch = Some(n);

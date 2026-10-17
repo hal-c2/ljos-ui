@@ -190,6 +190,11 @@ fn wrap(v: i32) -> WrapMode {
 impl LayoutInputs {
     /// Reads the properties (tracked).
     pub fn read(engine: &Engine, obj: ObjectId, multi: bool) -> LayoutInputs {
+        // Highlight spans that change the glyphs lay the text out again.
+        let epoch = super::base::state_of(engine, obj).and_then(|st| st.borrow().shape_epoch);
+        if let Some(n) = epoch {
+            let _ = engine.graph().get(n);
+        }
         let int = |p: ljos_engine::PropIndex| engine.read(obj, p).to_number() as i32;
         let flag = |p: ljos_engine::PropIndex| engine.read(obj, p).to_boolean();
         // A TextEdit's `textMargin` is space around the text like padding.
@@ -287,8 +292,8 @@ pub(crate) struct Geometry {
 /// what is shown now.
 fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     let params = inputs.params();
-    let mut s = st.borrow_mut();
-    let s = &mut *s;
+    let mut held = st.borrow_mut();
+    let s = &mut *held;
     let echo = inputs.echo(s.editing);
     let mut shown = Shown::build(&s.model, &s.preedit, s.preedit_cursor, echo, s.multi);
     // Positions are counted in the shown string, and every letter stays
@@ -304,14 +309,33 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
     {
         shown.text = text;
     }
-    let fresh = s.layout.is_some()
-        && s.shown.text == shown.text
-        && s.laid.as_ref() == Some(&(inputs.style.clone(), params));
-    if s.shown.text != shown.text {
+    let same_text = s.shown.text == shown.text;
+    if !same_text {
         // Spans a highlighter made are those of the text that was shown.
         s.highlights.stale = true;
     }
     s.shown = shown;
+    // Spans count in the text, so only plain text is laid out with them,
+    // and rich text has fonts of its own.
+    let highlighted = s.rich.is_none() && s.shown.is_plain();
+    let pre = s.shown.preedit_bytes();
+    drop(held);
+    // With the state free: this may ask a program's highlighter.
+    let spans = if highlighted {
+        super::highlight::style_spans(
+            &super::highlight::current(st),
+            &inputs.style,
+            (pre.start, pre.len()),
+        )
+    } else {
+        Vec::new()
+    };
+    let mut held = st.borrow_mut();
+    let s = &mut *held;
+    let fresh = s.layout.is_some()
+        && same_text
+        && s.laid.as_ref() == Some(&(inputs.style.clone(), params))
+        && s.laid_spans == spans;
     if !fresh {
         let layout = match &s.rich {
             Some(r) => {
@@ -335,12 +359,22 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
                     &params,
                 )
             }
+            None if !spans.is_empty() => text_engine().borrow_mut().edit_layout_ranged(
+                &s.shown.text,
+                &inputs.style,
+                &Ranged {
+                    spans: &spans,
+                    ..Ranged::NONE
+                },
+                &params,
+            ),
             None => text_engine()
                 .borrow_mut()
                 .edit_layout(&s.shown.text, &inputs.style, &params),
         };
         s.layout = Some(Rc::new(layout));
         s.laid = Some((inputs.style.clone(), params));
+        s.laid_spans = spans;
     }
     Rc::clone(s.layout.as_ref().expect("set above"))
 }
