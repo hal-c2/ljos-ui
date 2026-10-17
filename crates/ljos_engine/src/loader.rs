@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos_ir::{CompIdx, CompiledFile, ComponentKind, FnIndex, ImportSource};
+use ljos_ir::{BindingKind, CompIdx, CompiledFile, ComponentKind, FnIndex, ImportSource};
 use ljos_js::{Bytecode, FnId, JsValue};
 
 use crate::atom::Atom;
@@ -603,6 +603,35 @@ impl Engine {
         l.files.clear();
         drop(l);
         self.singletons_sources_changed();
+    }
+
+    /// Starts the JS host and loads the script of every file loaded so far
+    /// that has a handler or a method, so that the first click or key
+    /// does not pay for them (about 3 ms on a desktop, started from
+    /// nothing). A host calls it when it has nothing else to do, after
+    /// the first frame; a file of bindings alone starts nothing, and
+    /// what is loaded already is not loaded again.
+    pub fn prepare_scripts(&self) {
+        let files: Vec<Rc<LoadedFile>> = self
+            .inner
+            .loader
+            .borrow()
+            .files
+            .values()
+            .filter(|f| f.fns.borrow().is_none())
+            .cloned()
+            .collect();
+        for file in files {
+            let run = file
+                .ir
+                .exprs
+                .iter()
+                .find(|e| matches!(e.kind, BindingKind::Handler | BindingKind::Function));
+            if let Some(e) = run {
+                // A module that does not load says so where it is used.
+                let _ = file.function(self, e.js_fn);
+            }
+        }
     }
 
     /// `url` as a key of the component source.

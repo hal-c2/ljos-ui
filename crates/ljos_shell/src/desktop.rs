@@ -446,6 +446,11 @@ struct Desktop<M> {
     refused: Vec<ObjectId>,
     warned_hidden_root: bool,
     exiting: bool,
+    /// A window was drawn.
+    drawn_once: bool,
+    /// The scripts the windows may run on input were prepared
+    /// ([`Engine::prepare_scripts`]).
+    scripts_prepared: bool,
 }
 
 impl<M> std::fmt::Debug for Desktop<M> {
@@ -489,6 +494,8 @@ impl<M: Send + 'static> Desktop<M> {
             refused: Vec::new(),
             warned_hidden_root: false,
             exiting: false,
+            drawn_once: false,
+            scripts_prepared: false,
         }
     }
 
@@ -1103,6 +1110,7 @@ impl<M: Send + 'static> Desktop<M> {
             *screens_stale = true;
         }
         slot.drawn();
+        self.drawn_once = true;
     }
 
     fn window_event(
@@ -1460,6 +1468,12 @@ impl<M: Send + 'static> Desktop<M> {
             if !self.unsettled() {
                 break;
             }
+        }
+        // Once, after the first frame is shown: the first click then runs
+        // its handler and not the start of the JS host too.
+        if self.drawn_once && !self.scripts_prepared {
+            self.scripts_prepared = true;
+            engine.prepare_scripts();
         }
         let mut next = self.next_wake();
         if self.unsettled() {
