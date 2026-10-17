@@ -231,6 +231,11 @@ impl JsState {
         self.budget.get().unwrap_or(self.host.config().slice)
     }
 
+    /// Whether a script may hold `obj`.
+    pub(crate) fn seen(&self, obj: ObjectId) -> bool {
+        self.host.has_wrapper(obj_to_u64(obj))
+    }
+
     /// Forgets destroyed objects: their wrappers and JS connections.
     pub(crate) fn forget(&self, objects: &[ObjectId]) {
         for o in objects {
@@ -487,7 +492,7 @@ impl HostObjects for EngineHost {
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError> {
         let engine = self.engine()?;
-        let id = u64_to_obj(obj);
+        let (id, prop) = forwarded_prop(&engine, u64_to_obj(obj), prop);
         if prop == PARENT_ID {
             return Ok(match engine.visual_parent(id) {
                 Some(p) => engine.to_js(&Value::Object(p)),
@@ -524,7 +529,7 @@ impl HostObjects for EngineHost {
         value: JsValue,
     ) -> Result<(), HostError> {
         let engine = self.engine()?;
-        let id = u64_to_obj(obj);
+        let (id, prop) = forwarded_prop(&engine, u64_to_obj(obj), prop);
         let p = PropIndex(prop);
         let ty = {
             let store = engine.inner.store.borrow();
@@ -610,7 +615,7 @@ impl HostObjects for EngineHost {
         args: &[JsValue],
     ) -> Result<JsValue, HostError> {
         let engine = self.engine()?;
-        let id = u64_to_obj(obj);
+        let (id, method) = forwarded_method(&engine, u64_to_obj(obj), method);
         if method == DESTROY_ID {
             engine.destroy_later(
                 id,
@@ -761,6 +766,37 @@ impl HostObjects for EngineHost {
         if let Ok(engine) = self.engine() {
             engine.scripts_let_go(objs);
         }
+    }
+}
+
+/// A script that holds an object a dev reload replaced (a closure an
+/// `onCompleted` handed to a singleton) reaches the object that went on
+/// for it, its members named as the old type named them.
+fn forwarded_prop(engine: &Engine, id: ObjectId, prop: u32) -> (ObjectId, u32) {
+    let Some((new, names)) = engine.reload_forwarded(id) else {
+        return (id, prop);
+    };
+    if prop >= PARENT_ID {
+        return (new, prop);
+    }
+    let name = names.props.get(prop as usize);
+    match name.and_then(|n| engine.property_index(new, n.as_str()).ok()) {
+        Some(p) => (new, p.0),
+        None => (id, prop),
+    }
+}
+
+fn forwarded_method(engine: &Engine, id: ObjectId, method: u32) -> (ObjectId, u32) {
+    let Some((new, names)) = engine.reload_forwarded(id) else {
+        return (id, method);
+    };
+    if method >= PARENT_ID {
+        return (new, method);
+    }
+    let name = names.methods.get(method as usize);
+    match name.and_then(|n| engine.method_index(new, n.as_str()).ok()) {
+        Some(m) => (new, m.0),
+        None => (id, method),
     }
 }
 

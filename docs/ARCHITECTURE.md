@@ -911,6 +911,7 @@ notify watcher (120 ms debounce, BLAKE3 fingerprint of qml/js/qmldir/theme)
 
 **What survives a reload**
 - assigned property values (according to the provenance bit), an object among them being the object at its place in the new tree;
+- an object a script still holds (a closure handed to a singleton): reading it reaches the object at its place in the new tree;
 - `ListModel` contents;
 - `contentX/Y`, which are clamped;
 - `currentIndex`;

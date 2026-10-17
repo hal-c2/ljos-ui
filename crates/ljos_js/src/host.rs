@@ -1434,6 +1434,13 @@ impl JsHost {
         self.state.owned.borrow().get(&obj).is_some_and(|n| *n > 0)
     }
 
+    /// Whether a script may hold `obj`: it has a wrapper, cached or
+    /// script-owned.
+    pub fn has_wrapper(&self, obj: u64) -> bool {
+        self.state.wrappers.borrow().contains_key(&obj)
+            || self.state.owned.borrow().contains_key(&obj)
+    }
+
     pub fn wrapper_count(&self) -> usize {
         self.state.wrappers.borrow().len()
     }

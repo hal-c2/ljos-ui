@@ -399,6 +399,49 @@ Feature: What survives a reload
       Then the property "opened" of "p" is true
       And the property "width" of "p" is 120
 
+  Rule: A binding the application gave an object that outlives the reload follows the new objects
+
+    Background:
+      Given the file "qmldir":
+        """
+        singleton Look Look.qml
+        """
+      And the file "Look.qml":
+        """qml
+        pragma Singleton
+        import QtQuick
+        QtObject { property int size: 0 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          width: 100
+          property int seen: Look.size
+          Component.onCompleted: Look.size = Qt.binding(() => root.width * 2)
+        }
+        """
+
+    Scenario: A singleton's binding to an object of the file reads the object at its place
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          width: 100
+          height: 5
+          property int seen: Look.size
+          Component.onCompleted: Look.size = Qt.binding(() => root.width * 2)
+        }
+        """
+      And a reload happens
+      And the property "width" of "root" is set to 30
+      Then the property "seen" of "root" is 60
+      And the log has no warnings
+
   Rule: A running Timer keeps running
 
     Background:

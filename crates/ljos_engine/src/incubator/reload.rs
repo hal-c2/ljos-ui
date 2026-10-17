@@ -302,12 +302,22 @@ struct SavedLoader {
     overlay: Option<Overlay>,
 }
 
+/// The names of a replaced type's members, by index.
+pub(crate) struct OldMembers {
+    pub(crate) props: Vec<Atom>,
+    pub(crate) methods: Vec<Atom>,
+}
+
 #[derive(Default)]
 pub(crate) struct ReloadState {
     pub(crate) tracking: Cell<bool>,
     /// Whether the engine's own reload state is registered: other crates
     /// register migrators of their own before tracking is turned on.
     builtins: Cell<bool>,
+    /// An object a reload replaced that a script may still hold, to the
+    /// one that went on for it and the old type, which names the members
+    /// a script asks for.
+    forwards: RefCell<HashMap<ObjectId, (ObjectId, Rc<OldMembers>)>>,
     /// Whether any handler is muted at all: one read for the usual case.
     muting: Cell<bool>,
     muted_all: Cell<bool>,
@@ -651,6 +661,9 @@ impl Engine {
             .map(|p| p.counterpart.keys().copied().collect())
             .unwrap_or_default();
         *st.muted.borrow_mut() = going_on;
+        // Before they go: a binding on an object that outlives the tree
+        // runs again as its objects are destroyed.
+        self.reload_note_forwards();
         for (old_root, _) in &made {
             self.destroy_now(*old_root);
         }
@@ -673,6 +686,55 @@ impl Engine {
             fresh: p.map_or(0, |p| p.fresh),
             remounted: p.map_or(0, |p| p.remounted.len()),
         })
+    }
+
+    fn reload_note_forwards(&self) {
+        let st = &self.inner.reload;
+        let pending = st.pending.borrow();
+        let Some(p) = pending.as_ref() else { return };
+        let mut forwards = st.forwards.borrow_mut();
+        for (to, _) in forwards.values_mut() {
+            if let Some(new) = p.counterpart.get(to) {
+                *to = *new;
+            }
+        }
+        forwards.retain(|_, (to, _)| self.is_alive(*to));
+        let Some(js) = self.inner.js.borrow().clone() else {
+            return;
+        };
+        // Names, not the type: a type held here would keep its script
+        // prototype from being released.
+        let mut by_type: HashMap<*const MetaObject, Rc<OldMembers>> = HashMap::new();
+        for (old, new) in &p.counterpart {
+            if !js.seen(*old) {
+                continue;
+            }
+            let Some(meta) = self.meta_of(*old) else {
+                continue;
+            };
+            let members = by_type
+                .entry(&*meta as *const MetaObject)
+                .or_insert_with(|| {
+                    Rc::new(OldMembers {
+                        props: meta.properties.iter().map(|i| i.name.clone()).collect(),
+                        methods: meta.methods.iter().map(|m| m.name.clone()).collect(),
+                    })
+                });
+            forwards.insert(*old, (*new, members.clone()));
+        }
+    }
+
+    /// The object that went on for `old`, which a reload replaced, with
+    /// the names of `old`'s members; `None` for a live object or while reloads are not
+    /// tracked.
+    pub(crate) fn reload_forwarded(&self, old: ObjectId) -> Option<(ObjectId, Rc<OldMembers>)> {
+        let st = &self.inner.reload;
+        if !st.tracking.get() || self.is_alive(old) {
+            return None;
+        }
+        let forwards = st.forwards.borrow();
+        let (new, names) = forwards.get(&old)?;
+        self.is_alive(*new).then(|| (*new, names.clone()))
     }
 
     /// Reads the old tree: what each object would carry, and what the
