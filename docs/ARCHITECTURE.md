@@ -1656,6 +1656,7 @@ All decided by the user on 2026-10-10. Every decision except D9 took the recomme
 | JS | rquickjs 0.14.0 (quickjs-ng 0.16.2, `BC_VERSION` 28), `parallel` off |
 | Text | parley + fontique (section 7.5 rule), skrifa 0.44 / harfrust 0.12 via egui, pulldown-cmark 0.13.4 |
 | Render | vello_cpu (egui's pin), kurbo/peniko (vello's), lyon or vello_cpu for paths at M2 |
+| Shaders | naga 30.0.1 (wgpu's), in `ljos_shader`'s `compile` feature only |
 | Core | slotmap 1.1.1, salsa 0.28.5 (compiler only), postcard |
 | Parser | oxc_parser 0.144.0 fork |
 | Async and network | tokio 1.x, tokio-tungstenite 0.30.0, reqwest 0.13.5, rustls-platform-verifier 0.7.1 |

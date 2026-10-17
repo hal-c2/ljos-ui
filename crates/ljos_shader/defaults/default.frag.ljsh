@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "stage": "Fragment",
+  "es300": "#version 300 es\n\nprecision highp float;\nprecision highp int;\n\nstruct buf {\n    mat4x4 qt_Matrix;\n    float qt_Opacity;\n};\nstruct FragmentOutput {\n    vec4 fragColor;\n};\nvec2 qt_TexCoord0_1 = vec2(0.0);\n\nvec4 fragColor = vec4(0.0);\n\nlayout(std140) uniform buf_block_0Fragment { buf _group_0_binding_0_fs; };\n\nuniform highp sampler2D _group_0_binding_1_fs;\n\nsmooth in vec2 _vs2fs_location0;\nlayout(location = 0) out vec4 _fs2p_location0;\n\nvoid main_1() {\n    vec2 _e8 = qt_TexCoord0_1;\n    vec4 _e9 = texture(_group_0_binding_1_fs, vec2(_e8));\n    float _e10 = _group_0_binding_0_fs.qt_Opacity;\n    fragColor = (_e9 * _e10);\n    return;\n}\n\nvoid main() {\n    vec2 qt_TexCoord0_ = _vs2fs_location0;\n    qt_TexCoord0_1 = qt_TexCoord0_;\n    main_1();\n    vec4 _e15 = fragColor;\n    FragmentOutput _tmp_return = FragmentOutput(_e15);\n    _fs2p_location0 = _tmp_return.fragColor;\n    return;\n}\n\n",
+  "gl330": "#version 330 core\nstruct buf {\n    mat4x4 qt_Matrix;\n    float qt_Opacity;\n};\nstruct FragmentOutput {\n    vec4 fragColor;\n};\nvec2 qt_TexCoord0_1 = vec2(0.0);\n\nvec4 fragColor = vec4(0.0);\n\nlayout(std140) uniform buf_block_0Fragment { buf _group_0_binding_0_fs; };\n\nuniform sampler2D _group_0_binding_1_fs;\n\nsmooth in vec2 _vs2fs_location0;\nlayout(location = 0) out vec4 _fs2p_location0;\n\nvoid main_1() {\n    vec2 _e8 = qt_TexCoord0_1;\n    vec4 _e9 = texture(_group_0_binding_1_fs, vec2(_e8));\n    float _e10 = _group_0_binding_0_fs.qt_Opacity;\n    fragColor = (_e9 * _e10);\n    return;\n}\n\nvoid main() {\n    vec2 qt_TexCoord0_ = _vs2fs_location0;\n    qt_TexCoord0_1 = qt_TexCoord0_;\n    main_1();\n    vec4 _e15 = fragColor;\n    FragmentOutput _tmp_return = FragmentOutput(_e15);\n    _fs2p_location0 = _tmp_return.fragColor;\n    return;\n}\n\n",
+  "block": {
+    "gl_name": "buf_block_0Fragment",
+    "size": 80,
+    "members": [
+      {
+        "name": "qt_Matrix",
+        "offset": 0,
+        "ty": {
+          "Mat": {
+            "columns": 4,
+            "rows": 4
+          }
+        }
+      },
+      {
+        "name": "qt_Opacity",
+        "offset": 64,
+        "ty": "Float"
+      }
+    ]
+  },
+  "samplers": [
+    {
+      "name": "source",
+      "gl_name": "_group_0_binding_1_fs"
+    }
+  ]
+}
