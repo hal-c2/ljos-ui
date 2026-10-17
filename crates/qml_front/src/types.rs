@@ -8,8 +8,11 @@
 
 use crate::{
     oracle::{Property, TypeOracle},
-    project::{Key, Project, Shape, Source, directory, is_script, join},
+    project::{ControlsStyle, Key, Project, Shape, Source, directory, is_script, join},
 };
+
+/// The module whose types are the chosen style's.
+const CONTROLS: &str = "QtQuick.Controls";
 
 /// What a type name stands for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +141,11 @@ impl<'p, O: TypeOracle> Types<'p, O> {
             }
             match &import.source {
                 Source::Module(uri) => {
+                    if uri == CONTROLS
+                        && let Some(found) = self.styled_control(name, qualifier)
+                    {
+                        return Some(found);
+                    }
                     // A module of the project's own: its types are files.
                     if let Some(file) = self.project.module_type(uri, name) {
                         let mut found = file_found(file);
@@ -197,6 +205,39 @@ impl<'p, O: TypeOracle> Types<'p, O> {
             }
         }
         None
+    }
+
+    /// The type `name` of `import QtQuick.Controls` under the style the
+    /// project chose: a custom style's own file, else the type of the
+    /// built-in style (or the custom style's fallback). `None` leaves the
+    /// name to the module as the runtime has it.
+    fn styled_control(&self, name: &str, qualifier: Option<&str>) -> Option<Found<O::Type>> {
+        let style = self.project.controls_style()?;
+        let builtin = if self.project.has_module(&style.name) {
+            // A style's own files that import the controls mean the
+            // fallback's, or a style's Button would be itself.
+            let inside = self.project.modules_of(self.file).contains(&style.name);
+            if !inside && let Some(file) = self.project.module_type(&style.name, name) {
+                let mut found = file_found(file);
+                if qualifier.is_some() {
+                    found.origin = Origin::Namespace;
+                }
+                return Some(found);
+            }
+            style.fallback.as_deref().unwrap_or("Basic")
+        } else {
+            &style.name
+        };
+        let uri = ControlsStyle::builtin_module(builtin);
+        let ty = self.oracle.module_type(&uri, name)?;
+        let origin = match qualifier {
+            Some(_) => Origin::Namespace,
+            None => Origin::Module(uri),
+        };
+        Some(Found {
+            kind: Kind::Builtin(ty),
+            origin,
+        })
     }
 
     /// The file in `directory` that is the type `name`: `Name.qml`, or the

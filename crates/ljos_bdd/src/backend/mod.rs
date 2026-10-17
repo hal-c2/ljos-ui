@@ -286,6 +286,12 @@ pub trait Backend: fmt::Debug {
             "an assistive technology's requests",
         ))
     }
+    /// The program starts with the Qt Quick Controls style `name`, as
+    /// `QT_QUICK_CONTROLS_STYLE` chooses it: a built-in style or a module
+    /// of the scenario's files.
+    fn controls_style(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("choosing a style"))
+    }
     /// The system says what the user prefers: before anything is loaded
     /// it is what the application starts with, after that it is a setting
     /// the user changed.

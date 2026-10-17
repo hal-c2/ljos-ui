@@ -19,6 +19,7 @@ use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
 use ljos_quick::{KeyEvent, Modifiers, MouseButtons, PointerEvent, QuickScene, keys::key};
 use ljos_render::{FrameView, RasterConfig, VelloCpuReference, kurbo};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
+use qml_front::project::ControlsStyle;
 use serde_json::{Map, Number, Value, json};
 
 use super::{
@@ -160,6 +161,9 @@ struct Live {
     log: Rc<RefCell<Vec<LogEntry>>>,
     /// The staged files the component source was last built from.
     compiled_from: BTreeMap<String, String>,
+    /// The style behind `import QtQuick.Controls`, chosen before the first
+    /// load as a program chooses it when it starts.
+    controls_style: Option<ControlsStyle>,
     /// When the scene last said it next needs a frame (a running
     /// animation's next tick). `advance` wakes it then, as a host would.
     wake: Option<Time>,
@@ -194,6 +198,8 @@ pub struct LjosBackend {
     wall_clock: Option<f64>,
     /// The thread's text engine reads the machine's fonts for this scenario.
     system_fonts: bool,
+    /// The style the scenario chose, given before anything was loaded.
+    controls_style: Option<ControlsStyle>,
 }
 
 impl Drop for LjosBackend {
@@ -301,7 +307,7 @@ impl LjosBackend {
         });
         let mut compiled = BTreeMap::new();
         compiled.insert(format!("{DRIVER}.qml"), DRIVER_SOURCE.to_owned());
-        engine.set_component_source(compile(&compiled)?);
+        engine.set_component_source(compile(&compiled, None)?);
         let driver = engine
             .create_from_url(DRIVER, None, Vec::new())
             .map_err(|e| failed(format!("the test driver does not load: {e}")))?;
@@ -326,6 +332,7 @@ impl LjosBackend {
             roots: Vec::new(),
             log,
             compiled_from: compiled,
+            controls_style: None,
             wake: None,
             pointer_down: false,
             reloads: None,
@@ -374,8 +381,9 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
     })
 }
 
-fn compile(files: &BTreeMap<String, String>) -> Result<MapSource> {
+fn compile(files: &BTreeMap<String, String>, style: Option<&ControlsStyle>) -> Result<MapSource> {
     let mut project = Project::new(oracle());
+    project.set_controls_style(style.cloned());
     for (name, source) in files {
         if is_script(name) {
             project.add_script(name, source.as_str());
@@ -434,7 +442,7 @@ impl Live {
         if wanted != self.compiled_from {
             // A scenario that reloads compiles through its reload session.
             if !self.reload_compile(&wanted)? {
-                let source = compile(&wanted)?;
+                let source = compile(&wanted, self.controls_style.as_ref())?;
                 self.engine.set_component_source(source);
             }
             self.engine
@@ -947,7 +955,7 @@ impl Backend for LjosBackend {
 
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         if self.live.is_none() {
-            let live = Self::start()?;
+            let mut live = Self::start()?;
             for catalog in self.catalogs.drain(..) {
                 live.engine.install_catalog(Box::new(catalog));
             }
@@ -964,6 +972,7 @@ impl Backend for LjosBackend {
             for (url, bytes) in self.image_texts.drain(..) {
                 images.register_resource(url, bytes);
             }
+            live.controls_style = self.controls_style.take();
             self.live = Some(live);
             // An inspector connected before anything was loaded reads
             // this application's log from its first message.
@@ -1278,6 +1287,17 @@ impl Backend for LjosBackend {
         // A node may refuse; the scenario says what it expects of that.
         live.scene.accessible_focus(&live.engine, key);
         live.settle()
+    }
+
+    fn controls_style(&mut self, name: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("a style is chosen before anything is loaded"));
+        }
+        self.controls_style = Some(ControlsStyle {
+            name: name.to_owned(),
+            fallback: None,
+        });
+        Ok(())
     }
 
     fn system_setting(&mut self, setting: super::SystemSetting) -> Result<()> {

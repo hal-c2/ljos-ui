@@ -11,7 +11,7 @@ use std::{
 use qml_front::{
     TypeOracle,
     discover::{self, Module},
-    project::{self, join},
+    project::{self, ControlsStyle, join},
 };
 
 use crate::Error;
@@ -183,7 +183,19 @@ impl<O: TypeOracle> Project<O> {
         for root in roots {
             project.load_root(root)?;
         }
+        // A program chooses its style as it starts, as Qt's does; a
+        // scenario or a tool that adds files itself chooses one or none.
+        project.front.set_controls_style(controls_style(
+            |name| std::env::var(name).ok(),
+            |path| std::fs::read_to_string(path).ok(),
+        ));
         Ok(project)
+    }
+
+    /// Chooses the style behind `import QtQuick.Controls` for the files
+    /// compiled from now on.
+    pub fn set_controls_style(&mut self, style: Option<ControlsStyle>) {
+        self.front.set_controls_style(style);
     }
 
     fn load_root(&mut self, root: &Path) -> Result<(), Error> {
@@ -344,4 +356,87 @@ fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
     }
     out.sort();
     Ok(out)
+}
+
+/// The style Qt's run-time selection gives a program started with these
+/// variables: `QT_QUICK_CONTROLS_STYLE`, else `Style` of the `[Controls]`
+/// group of the file `QT_QUICK_CONTROLS_CONF` names; the fallback style
+/// from `QT_QUICK_CONTROLS_FALLBACK_STYLE` or `FallbackStyle` likewise.
+/// A `qtquickcontrols2.conf` beside the files is not read, as `qml` does
+/// not read it.
+fn controls_style(
+    var: impl Fn(&str) -> Option<String>,
+    read: impl Fn(&str) -> Option<String>,
+) -> Option<ControlsStyle> {
+    let conf = var("QT_QUICK_CONTROLS_CONF").and_then(|path| read(&path));
+    let given =
+        |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    let from_conf = |key: &str| given(conf.as_deref().and_then(|text| ini_value(text, key)));
+    let name = given(var("QT_QUICK_CONTROLS_STYLE")).or_else(|| from_conf("Style"))?;
+    let fallback =
+        given(var("QT_QUICK_CONTROLS_FALLBACK_STYLE")).or_else(|| from_conf("FallbackStyle"));
+    Some(ControlsStyle { name, fallback })
+}
+
+/// The value of `key` in the `[Controls]` group of an INI text.
+fn ini_value(text: &str, key: &str) -> Option<String> {
+    let mut in_controls = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(group) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            in_controls = group.trim() == "Controls";
+        } else if in_controls
+            && let Some((k, v)) = line.split_once('=')
+            && k.trim().eq_ignore_ascii_case(key)
+        {
+            return Some(v.trim().trim_matches('"').to_owned());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn style(vars: &[(&str, &str)], conf: &str) -> Option<ControlsStyle> {
+        let var = |name: &str| {
+            vars.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| (*v).to_owned())
+        };
+        controls_style(var, |_| Some(conf.to_owned()))
+    }
+
+    fn named(name: &str, fallback: Option<&str>) -> Option<ControlsStyle> {
+        Some(ControlsStyle {
+            name: name.to_owned(),
+            fallback: fallback.map(str::to_owned),
+        })
+    }
+
+    /// The order Qt documents and qml6 shows: the variable, then the file.
+    #[test]
+    fn the_variable_comes_before_the_configuration_file() {
+        let conf = "[Controls]\nStyle=Kit\nFallbackStyle=Material\n\n[Material]\nTheme=Dark\n";
+        assert_eq!(style(&[], conf), None);
+        let file = ("QT_QUICK_CONTROLS_CONF", "x.conf");
+        assert_eq!(style(&[file], conf), named("Kit", Some("Material")));
+        assert_eq!(
+            style(&[file, ("QT_QUICK_CONTROLS_STYLE", "Basic")], conf),
+            named("Basic", Some("Material"))
+        );
+        assert_eq!(
+            style(
+                &[
+                    ("QT_QUICK_CONTROLS_STYLE", "Kit"),
+                    ("QT_QUICK_CONTROLS_FALLBACK_STYLE", "Fusion")
+                ],
+                ""
+            ),
+            named("Kit", Some("Fusion"))
+        );
+        // Another group's `Style` is not the controls'.
+        assert_eq!(style(&[file], "[Other]\nStyle=Kit\n"), None);
+        assert_eq!(style(&[("QT_QUICK_CONTROLS_STYLE", " ")], ""), None);
+    }
 }

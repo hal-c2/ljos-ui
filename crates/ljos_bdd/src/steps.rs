@@ -390,6 +390,11 @@ fn system_setting(setting: &str, value: &str) -> Result<SystemSetting, String> {
     }
 }
 
+#[given(regex = r#"^the application starts with the controls style "([^"]+)"$"#)]
+fn controls_style(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.controls_style(&name))
+}
+
 #[given(regex = r#"^the system setting "([^"]+)" is (.+)$"#)]
 fn system_setting_is(w: &mut LjosWorld, setting: String, value: String) -> StepResult {
     let setting = system_setting(&setting, &value)?;

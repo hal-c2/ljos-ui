@@ -98,6 +98,8 @@ pub struct QtBackend {
     binders: Vec<String>,
     /// Last replay, valid while `program.len()` matches.
     cache: Option<(usize, Run)>,
+    /// `QT_QUICK_CONTROLS_STYLE` for the run.
+    controls_style: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +126,7 @@ impl QtBackend {
             program: Vec::new(),
             binders: Vec::new(),
             cache: None,
+            controls_style: None,
         }
     }
 
@@ -360,6 +363,10 @@ impl QtBackend {
         let mut command = input
             .as_ref()
             .map_or_else(|| Command::new(&self.qml), |i| i.command(&self.qml));
+        match &self.controls_style {
+            Some(style) => command.env("QT_QUICK_CONTROLS_STYLE", style),
+            None => command.env_remove("QT_QUICK_CONTROLS_STYLE"),
+        };
         let mut child = command
             .arg(driver)
             .env("QT_FORCE_STDERR_LOGGING", "1")
@@ -375,6 +382,9 @@ impl QtBackend {
             // them would give the controls a dark palette on a desktop that
             // prefers one, and a parity scenario has one expectation.
             .env("GSETTINGS_BACKEND", "memory")
+            // The style is the scenario's, never the developer's.
+            .env_remove("QT_QUICK_CONTROLS_CONF")
+            .env_remove("QT_QUICK_CONTROLS_FALLBACK_STYLE")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -544,6 +554,12 @@ fn parse_stderr(stderr: &str) -> Result<Run> {
 impl Backend for QtBackend {
     fn name(&self) -> &'static str {
         "qt"
+    }
+
+    fn controls_style(&mut self, name: &str) -> Result<()> {
+        self.controls_style = Some(name.to_owned());
+        self.cache = None;
+        Ok(())
     }
 
     fn run_tests(

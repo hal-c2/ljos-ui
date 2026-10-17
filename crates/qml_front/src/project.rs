@@ -36,6 +36,28 @@ pub struct Project {
     /// What was wrong with the files that were kept in part. A file that is
     /// not here parsed whole.
     diagnostics: HashMap<String, Vec<Error>>,
+    /// The style `import QtQuick.Controls` brings, when one was chosen.
+    controls_style: Option<ControlsStyle>,
+}
+
+/// The style behind `import QtQuick.Controls`, as Qt chooses one when the
+/// program starts (`QT_QUICK_CONTROLS_STYLE`, `qtquickcontrols2.conf`):
+/// a built-in style (`Material`) or a module of the project's own that is
+/// a custom style, whose types come first and whose missing ones come from
+/// the fallback style.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControlsStyle {
+    pub name: String,
+    /// The built-in style a custom style's missing types come from; Basic
+    /// when none is named, as in Qt 6.
+    pub fallback: Option<String>,
+}
+
+impl ControlsStyle {
+    /// The module of the built-in style `name`.
+    pub fn builtin_module(name: &str) -> String {
+        format!("QtQuick.Controls.{name}")
+    }
 }
 
 /// A file's component or one of its inline components.
@@ -264,6 +286,16 @@ impl Project {
     /// the files next to it.
     pub fn modules_of(&self, file: &str) -> &[String] {
         self.memberships.get(file).map_or(&[], Vec::as_slice)
+    }
+
+    /// Chooses the style behind `import QtQuick.Controls`; `None` keeps the
+    /// runtime's own.
+    pub fn set_controls_style(&mut self, style: Option<ControlsStyle>) {
+        self.controls_style = style;
+    }
+
+    pub fn controls_style(&self) -> Option<&ControlsStyle> {
+        self.controls_style.as_ref()
     }
 
     /// Whether `uri` is a module of the project's own.
