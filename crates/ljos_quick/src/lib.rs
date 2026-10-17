@@ -151,6 +151,7 @@ pub use text_input::{
     RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
 pub use tree::{add_data, child_items, resources, set_parent_item, sync_parent};
+pub use views::table::{CellBlock, CellSelector, cell_block_rect, select_by, set_cell_selector};
 pub use views::{
     DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,
     object_model_changed, object_model_rows,

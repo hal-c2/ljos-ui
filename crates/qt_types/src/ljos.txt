@@ -3652,6 +3652,7 @@ module QtQuick.Controls
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
 	Slider QtQuick/Controls/Basic/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
 	SplitHandle QtQuick.Templates.SplitHandle
@@ -3736,6 +3737,7 @@ module QtQuick.Controls.Basic
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
 	Slider QtQuick/Controls/Basic/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
 	SplitHandle QtQuick.Templates.SplitHandle
@@ -3834,6 +3836,8 @@ module QtQuick.Controls.Basic
 		prototype QtQuick.Templates.ScrollIndicator named
 	type QtQuick/Controls/Basic/ScrollView.qml ScrollView
 		prototype QtQuick.Templates.ScrollView named
+	type QtQuick/Controls/Basic/SelectionRectangle.qml SelectionRectangle
+		prototype QtQuick.Templates.SelectionRectangle named
 	type QtQuick/Controls/Basic/Slider.qml Slider
 		prototype QtQuick.Templates.Slider named
 	type QtQuick/Controls/Basic/SpinBox.qml SpinBox
@@ -3925,6 +3929,7 @@ module QtQuick.Controls.Fusion
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
 	Slider QtQuick/Controls/Fusion/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
 	SplitHandle QtQuick.Templates.SplitHandle
@@ -4018,6 +4023,7 @@ module QtQuick.Controls.Material
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
 	Slider QtQuick/Controls/Material/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
 	SplitHandle QtQuick.Templates.SplitHandle
@@ -4171,6 +4177,7 @@ module QtQuick.Controls.Universal
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollIndicator QtQuick/Controls/Basic/ScrollIndicator.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	SelectionRectangle QtQuick/Controls/Basic/SelectionRectangle.qml
 	Slider QtQuick/Controls/Universal/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
 	SplitHandle QtQuick.Templates.SplitHandle
@@ -4921,6 +4928,7 @@ module QtQuick.Templates
 	ScrollBar QtQuick.Templates.ScrollBar
 	ScrollIndicator QtQuick.Templates.ScrollIndicator
 	ScrollView QtQuick.Templates.ScrollView
+	SelectionRectangle QtQuick.Templates.SelectionRectangle
 	Slider QtQuick.Templates.Slider
 	SpinBox QtQuick.Templates.SpinBox
 	SplitHandle QtQuick.Templates.SplitHandle
@@ -5830,6 +5838,22 @@ module QtQuick.Templates
 		prop effectiveScrollBarHeight QtQml.real named readonly
 		signal effectiveScrollBarWidthChanged
 		signal effectiveScrollBarHeightChanged
+	type QtQuick.Templates.SelectionRectangle SelectionRectangle
+		prototype QtQuick.Templates.Control named
+		attached QtQuick.Templates.SelectionRectangleAttached
+		enum SelectionMode Drag=0 PressAndHold=1 Auto=2
+		prop selectionMode SelectionMode
+		prop target QtQuick.Item named pointer
+		prop topLeftHandle QtQml.Component named pointer
+		prop bottomRightHandle QtQml.Component named pointer
+		prop active QtQml.bool named readonly
+		prop dragging QtQml.bool named readonly
+		signal selectionModeChanged
+		signal targetChanged
+		signal topLeftHandleChanged
+		signal bottomRightHandleChanged
+		signal activeChanged
+		signal draggingChanged
 	type QtQuick.Templates.Slider Slider
 		prototype QtQuick.Templates.Control named
 		enum SnapMode NoSnap=0 SnapAlways=1 SnapOnRelease=2
@@ -6273,6 +6297,12 @@ module QtQuick.Templates
 		prop vertical QtQml.QtObject named pointer
 		signal horizontalChanged
 		signal verticalChanged
+	type QtQuick.Templates.SelectionRectangleAttached SelectionRectangleAttached
+		is uncreatable
+		prop control QtQuick.Templates.SelectionRectangle named pointer readonly
+		prop dragging QtQml.bool named readonly
+		signal controlChanged
+		signal draggingChanged
 	type QtQuick.Templates.SplitHandleAttached SplitHandleAttached
 		is uncreatable
 		prop hovered QtQml.bool named readonly

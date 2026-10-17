@@ -45,6 +45,7 @@ mod popup;
 mod rows;
 mod scroll_bar;
 mod scroll_view;
+mod selection_rectangle;
 mod slider;
 mod spin_box;
 mod split_view;
@@ -91,6 +92,7 @@ pub use palette::Palette;
 pub use popup::{Drawer, Overlay, OverlayAttached, Popup, PopupAnchors};
 pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
 pub use scroll_view::ScrollView;
+pub use selection_rectangle::{SelectionRectangle, SelectionRectangleAttached};
 pub use slider::{RangeSlider, RangeSliderNode, Slider};
 pub use spin_box::{DoubleSpinBox, SpinBox, SpinButton};
 pub use split_view::{SplitHandle, SplitHandleAttached, SplitView, SplitViewAttached};
@@ -205,6 +207,7 @@ pub fn register(engine: &Engine) {
     spin_box::register(engine);
     value_controls::register(engine);
     header_view::register(engine);
+    selection_rectangle::register(engine);
     container::register(engine);
     calendar::register_all(engine);
 

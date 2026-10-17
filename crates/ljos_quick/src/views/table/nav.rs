@@ -20,7 +20,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use super::{
-    TableState, TableView, edit, edit_trigger, index_of_cell, layout, selection_behavior,
+    TableState, TableView, edit, edit_trigger, index_of_cell, layout, select, selection_behavior,
     selection_mode, state_of,
 };
 use crate::flickable::{Flickable, drag};
@@ -49,11 +49,12 @@ pub(crate) fn pointer_hooks() -> PointerItem {
     let flick = drag::hooks();
     PointerItem {
         press: pointer_press,
-        moved: flick.moved,
+        moved: pointer_moved,
         release: pointer_release,
         cancel: |e, view| {
             if let Some(st) = state_of(e, view) {
                 st.press.set(None);
+                select::release(e, view, &st);
             }
             (drag::hooks().cancel)(e, view);
         },
@@ -159,26 +160,41 @@ fn move_to(
     if shift && from.is_some() && behaviour != selection_behavior::SELECTION_DISABLED {
         let anchor = st.anchor.get().or(from).unwrap_or(to);
         st.anchor.set(Some(anchor));
-        let end = if int(e, view, TableView::SELECTION_MODE.index) == selection_mode::SINGLE {
-            anchor
-        } else {
-            to
-        };
-        let command = CLEAR_AND_SELECT
-            | match behaviour {
-                selection_behavior::SELECT_ROWS => ROWS,
-                selection_behavior::SELECT_COLUMNS => COLUMNS,
-                _ => 0,
-            };
-        let ranges = block(e, st, anchor, end);
-        let r = e.invoke_by_name(sm, "select", &[ranges, Value::Int(command)]);
-        super::warn(e, "select", r.map(drop));
+        select_block(e, view, st, anchor, to);
     } else {
         forget_selection(e, st, sm);
     }
     let index = index_of_cell(e, st, to.0, to.1);
     let r = e.invoke_by_name(sm, "setCurrentIndex", &[index, Value::Int(0)]);
     super::warn(e, "setCurrentIndex", r.map(drop));
+}
+
+/// Selects, in place of the selection, the cells from `anchor` to `to`
+/// (only `anchor` with `SingleSelection`), or their rows or columns as
+/// `selectionBehavior` says. Returns the cell the block ends on.
+pub(crate) fn select_block(
+    e: &Engine,
+    view: ObjectId,
+    st: &TableState,
+    anchor: (usize, usize),
+    to: (usize, usize),
+) -> Option<(usize, usize)> {
+    let sm = selection_model(e, view)?;
+    let end = if int(e, view, TableView::SELECTION_MODE.index) == selection_mode::SINGLE {
+        anchor
+    } else {
+        to
+    };
+    let command = CLEAR_AND_SELECT
+        | match int(e, view, TableView::SELECTION_BEHAVIOR.index) {
+            selection_behavior::SELECT_ROWS => ROWS,
+            selection_behavior::SELECT_COLUMNS => COLUMNS,
+            _ => 0,
+        };
+    let ranges = block(e, st, anchor, end);
+    let r = e.invoke_by_name(sm, "select", &[ranges, Value::Int(command)]);
+    super::warn(e, "select", r.map(drop));
+    Some(end)
 }
 
 /// The cell after `cell` (`forward`) or before it, from the end of a row
@@ -298,9 +314,20 @@ fn reveal(e: &Engine, view: ObjectId, st: &TableState, row: usize) {
 }
 
 fn pointer_press(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) -> bool {
-    let takes = (drag::hooks().press)(e, view, ev, at);
     let left = ev.button == Some(MouseButtons::LEFT);
-    if let Some(st) = state_of(e, view)
+    let st = state_of(e, view);
+    if let Some(st) = &st
+        && left
+    {
+        st.press.set(None);
+        if let Some(takes) = select::press(e, view, st, at) {
+            return takes;
+        }
+    }
+    // The content does not follow a press a selector drags with.
+    let takes =
+        st.as_ref().is_some_and(|st| select::holds(st)) || (drag::hooks().press)(e, view, ev, at);
+    if let Some(st) = &st
         && left
     {
         let content = (
@@ -312,11 +339,29 @@ fn pointer_press(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point
     takes || left
 }
 
+fn pointer_moved(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
+    if let Some(st) = state_of(e, view) {
+        select::moved(e, view, &st, at);
+        if select::holds(&st) {
+            return;
+        }
+    }
+    (drag::hooks().moved)(e, view, ev, at);
+}
+
 fn pointer_release(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
-    (drag::hooks().release)(e, view, ev, at);
     let Some(st) = state_of(e, view) else {
+        (drag::hooks().release)(e, view, ev, at);
         return;
     };
+    let selector_held = select::holds(&st);
+    if select::release(e, view, &st) {
+        st.press.set(None);
+        return;
+    }
+    if !selector_held {
+        (drag::hooks().release)(e, view, ev, at);
+    }
     let Some((pressed, content)) = st.press.take() else {
         return;
     };

@@ -14,6 +14,7 @@ mod cells;
 mod edit;
 mod layout;
 mod nav;
+mod select;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -31,6 +32,7 @@ use crate::item::{Item, is_a, is_item, write_computed};
 use crate::tree;
 
 pub(crate) use cells::Cells;
+pub use select::{CellBlock, CellSelector, cell_block_rect, select_by, set_cell_selector};
 
 /// `TableView.EditTrigger`.
 pub mod edit_trigger {
@@ -127,6 +129,8 @@ pub(crate) struct TableState {
     /// The content position this view and its `syncView` last shared,
     /// across and down; tells which of the two moved since.
     pub synced_at: Cell<(f64, f64)>,
+    /// What selects its cells with the pointer, and how far it got.
+    pub select: select::SelectState,
 }
 
 impl std::fmt::Debug for TableState {

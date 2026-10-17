@@ -296,10 +296,8 @@ pub(crate) fn pass(e: &Engine, view: ObjectId, st: &TableState) {
         // A row that ends where the content in sight begins is not in
         // sight (qml6); one of no known height may be.
         let reaches = if guess > 0.0 { y + guess > cy } else { y >= cy };
-        let in_sight = cols > 0
-            && reaches
-            && y <= cy + h.max(0.0)
-            && loaded_rows.len() < MAX_LOADED_ROWS;
+        let in_sight =
+            cols > 0 && reaches && y <= cy + h.max(0.0) && loaded_rows.len() < MAX_LOADED_ROWS;
         if in_sight {
             if shown.is_none() {
                 let found = columns_in_sight(e, st, &d, row, &given, &mut widths, sight, col_gap);
