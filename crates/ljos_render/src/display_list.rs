@@ -638,6 +638,13 @@ pub enum DrawOp {
         /// What it is painted with.
         brush: Brush,
     },
+    /// A `ShaderEffect`'s programs over `rect`. Only a GPU painter draws
+    /// it; the others draw nothing (see [`crate::ShaderOp`]).
+    Shader {
+        /// The item's rectangle, where the grid lies.
+        rect: Rect,
+        op: Arc<crate::shader::ShaderOp>,
+    },
     /// Foreign surface (embedded egui widgets, video, ...). Splits batches.
     Embed {
         /// Surface id.
@@ -696,7 +703,7 @@ impl DrawOp {
                     .fold(run.bounds, |acc, bar| acc.union(bar))
                     + *origin
             }
-            Self::Text { rect, .. } | Self::Embed { rect, .. } => *rect,
+            Self::Text { rect, .. } | Self::Embed { rect, .. } | Self::Shader { rect, .. } => *rect,
             Self::Shape { path, style, .. } => {
                 let r = style.reach();
                 path.bounding_box().inflate(r, r)
@@ -870,6 +877,11 @@ impl DisplayListBuilder {
             smooth: true,
             opacity: 1.0,
         })
+    }
+
+    /// A shader effect over `rect`.
+    pub fn shader(&mut self, rect: Rect, op: Arc<crate::shader::ShaderOp>) -> &mut Self {
+        self.push(DrawOp::Shader { rect, op })
     }
 
     /// Embedded surface placeholder.

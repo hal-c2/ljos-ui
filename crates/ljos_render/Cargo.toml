@@ -16,6 +16,8 @@ b0 = ["dep:egui", "dep:lyon_tessellation"]
 [dependencies]
 # MemoryPressure is defined once, beside Evictable.
 ljos_runtime = { path = "../ljos_runtime" }
+# A ShaderEffect's programs, without naga.
+ljos_shader = { path = "../ljos_shader" }
 bitflags.workspace = true
 png.workspace = true
 # Maps keyed by ids looked up many times a frame: no SipHash.

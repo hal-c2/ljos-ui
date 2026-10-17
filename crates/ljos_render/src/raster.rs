@@ -577,6 +577,12 @@ impl VelloCpuReference {
                     self.draw_blit(ctx, image, &blit, *smooth, opacity, warned);
                 }
             }
+            // Qt's software scene graph draws no ShaderEffect either.
+            DrawOp::Shader { .. } => {
+                if warned.insert("shader") {
+                    tracing::debug!("R: shader effects are not rendered");
+                }
+            }
             DrawOp::Embed { .. } => {
                 if warned.insert("embed") {
                     tracing::debug!("R: Embed surfaces are not rendered");

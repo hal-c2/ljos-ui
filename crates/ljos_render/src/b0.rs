@@ -13,6 +13,9 @@
 //!   gradient *border* uses its first stop colour;
 //! * path fills assume convex polygons (egui's `PathShape` limit);
 //! * `Embed`, `layer.*` and image fills (`Paint::Image`) are not drawn yet;
+//! * a shader effect ([`DrawOp::Shader`]) becomes a paint callback
+//!   ([`ShaderPaint`]) only for a host that runs them
+//!   ([`EguiSink::shaders`]), and is left out otherwise;
 //! * an image needs an egui `Context` (it owns the textures); without one it
 //!   is skipped;
 //! * an image larger than the GPU's texture limit is drawn from a smaller
@@ -43,8 +46,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use egui::epaint::{
-    ClippedShape, CornerRadius, Mesh, PathShape, PathStroke, RectShape, Shadow, Shape, Stroke,
-    StrokeKind, TessellationOptions, Tessellator, TextShape, Vertex,
+    ClippedShape, CornerRadius, Mesh, PaintCallback, PathShape, PathStroke, RectShape, Shadow,
+    Shape, Stroke, StrokeKind, TessellationOptions, Tessellator, TextShape, Vertex,
 };
 use egui::{
     Color32, ColorImage, Context, FontId, Pos2, Rect as ERect, TextureFilter, TextureHandle,
@@ -64,6 +67,7 @@ use crate::glyph::{baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
 use crate::rgba::Rgba;
+use crate::shader::{ShaderOp, Viewport};
 use crate::tree::NodeId;
 
 /// Entries unused for this many frames are dropped by [`RenderBackend::sync`].
@@ -93,6 +97,10 @@ pub struct EguiSink<'a> {
     /// can fill one without blending or sampling (a scissored clear) may
     /// turn it on. Off by default.
     pub solid_rects: bool,
+    /// Hand over shader effects as [`Shape::Callback`]s whose callback is
+    /// a [`ShaderPaint`]. Off by default: only a host whose painter runs
+    /// them may turn it on; without it they are not drawn.
+    pub shaders: bool,
 }
 
 impl<'a> EguiSink<'a> {
@@ -105,6 +113,7 @@ impl<'a> EguiSink<'a> {
             fold_backdrop: false,
             backdrop: None,
             solid_rects: false,
+            shaders: false,
         }
     }
 
@@ -128,6 +137,7 @@ enum LocalSeg {
     Glyphs(GlyphsCmd),
     Image(ImageSeg),
     Shape(ShapeCmd),
+    Shader(Rect, Arc<ShaderOp>),
 }
 
 /// Which texture an image quad samples: the image and how it is sampled.
@@ -261,20 +271,21 @@ fn texture_for(
     uploads: &mut u64,
     frame: u64,
     ctx: &Context,
-    seg: &ImageSeg,
+    key: TextureKey,
+    owner: &WeakImage,
 ) -> Option<TextureId> {
-    if let Some(t) = textures.get_mut(&seg.key) {
+    if let Some(t) = textures.get_mut(&key) {
         t.last_used = frame;
         return Some(t.handle.id());
     }
-    let image = seg.image.upgrade()?;
+    let image = owner.upgrade()?;
     let max_side = ctx.input(|i| i.max_texture_side).max(1);
     let fitted = fit_texture(&image, max_side)?;
     let pixels = ColorImage::from_rgba_premultiplied(
         [fitted.width() as usize, fitted.height() as usize],
         fitted.data(),
     );
-    let filter = if seg.key.smooth {
+    let filter = if key.smooth {
         TextureFilter::Linear
     } else {
         TextureFilter::Nearest
@@ -282,21 +293,21 @@ fn texture_for(
     let options = TextureOptions {
         magnification: filter,
         minification: filter,
-        wrap_mode: if seg.key.repeat {
+        wrap_mode: if key.repeat {
             TextureWrapMode::Repeat
         } else {
             TextureWrapMode::ClampToEdge
         },
         mipmap_mode: None,
     };
-    let handle = ctx.load_texture(format!("ljos-image-{}", seg.key.image), pixels, options);
+    let handle = ctx.load_texture(format!("ljos-image-{}", key.image), pixels, options);
     let id = handle.id();
     *uploads += 1;
     textures.insert(
-        seg.key,
+        key,
         TextureEntry {
             handle,
-            owner: seg.image.clone(),
+            owner: owner.clone(),
             last_used: frame,
         },
     );
@@ -522,6 +533,43 @@ enum WorldSeg {
     Glyphs(GlyphSeg),
     Image(ImageSeg),
     Shape(ShapeSeg),
+    Shader(ShaderSeg),
+}
+
+/// A shader effect placed on the screen. Its callback is made when it is
+/// first drawn and kept while its textures stay, so a host sees the same
+/// `Arc` for as long as nothing changed.
+#[derive(Clone)]
+struct ShaderSeg {
+    rect: Rect,
+    op: Arc<ShaderOp>,
+    to_screen: Affine,
+    opacity: f32,
+    paint: Option<Arc<ShaderPaint>>,
+}
+
+/// What a host's GPU painter draws for a shader effect: the callback of a
+/// [`Shape::Callback`] B0 emits when [`EguiSink::shaders`] is on.
+#[derive(Debug)]
+pub struct ShaderPaint {
+    pub op: Arc<ShaderOp>,
+    /// The item's rectangle in its own coordinates.
+    pub rect: Rect,
+    /// From the item's coordinates to the screen, in points.
+    pub to_screen: Affine,
+    pub opacity: f32,
+    /// Device pixels per point.
+    pub ppp: f32,
+    /// One per [`ShaderOp::textures`]; `None` where there is no picture.
+    pub textures: Vec<Option<TextureId>>,
+}
+
+impl ShaderPaint {
+    /// The uniform buffer for a draw into `viewport` (device pixels).
+    pub fn uniforms(&self, viewport: Viewport) -> Vec<u8> {
+        self.op
+            .uniforms_for(self.to_screen, self.opacity, self.ppp, viewport)
+    }
 }
 
 fn shape_of(seg: &WorldSeg) -> Option<&ShapeSeg> {
@@ -1155,6 +1203,12 @@ impl EpaintBackend {
                         decorations: *decorations,
                     }));
                 }
+                DrawOp::Shader { rect, op } => {
+                    if !cur.is_empty() {
+                        segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
+                    }
+                    segs.push(LocalSeg::Shader(*rect, Arc::clone(op)));
+                }
                 DrawOp::Embed { .. } => warn("Embed surfaces are not drawn by the shape encoder"),
             }
         }
@@ -1234,6 +1288,13 @@ impl EpaintBackend {
                 LocalSeg::Shape(cmd) => {
                     WorldSeg::Shape(ShapeSeg::new(cmd.clone(), to_screen, opacity))
                 }
+                LocalSeg::Shader(rect, op) => WorldSeg::Shader(ShaderSeg {
+                    rect: *rect,
+                    op: Arc::clone(op),
+                    to_screen,
+                    opacity,
+                    paint: None,
+                }),
             })
             .collect()
     }
@@ -1502,7 +1563,8 @@ impl RenderBackend for EpaintBackend {
                             &mut self.texture_uploads,
                             self.frame,
                             ctx,
-                            seg,
+                            seg.key,
+                            &seg.image,
                         ) else {
                             continue;
                         };
@@ -1532,6 +1594,50 @@ impl RenderBackend for EpaintBackend {
                                 shape: Shape::Mesh(mesh),
                             });
                         }
+                    }
+                    WorldSeg::Shader(seg) => {
+                        let Some(ctx) = sink.ctx.filter(|_| sink.shaders) else {
+                            continue;
+                        };
+                        let textures: Vec<Option<TextureId>> = seg
+                            .op
+                            .textures
+                            .iter()
+                            .map(|t| {
+                                let image = t.image.as_ref()?;
+                                let key = TextureKey {
+                                    image: image.id(),
+                                    smooth: t.smooth,
+                                    repeat: false,
+                                };
+                                texture_for(
+                                    &mut self.textures,
+                                    &mut self.texture_uploads,
+                                    self.frame,
+                                    ctx,
+                                    key,
+                                    &image.downgrade(),
+                                )
+                            })
+                            .collect();
+                        if seg.paint.as_ref().is_none_or(|p| p.textures != textures) {
+                            seg.paint = Some(Arc::new(ShaderPaint {
+                                op: Arc::clone(&seg.op),
+                                rect: seg.rect,
+                                to_screen: seg.to_screen,
+                                opacity: seg.opacity,
+                                ppp: self.ppp,
+                                textures,
+                            }));
+                        }
+                        let Some(paint) = &seg.paint else { continue };
+                        sink.shapes.push(ClippedShape {
+                            clip_rect: clip,
+                            shape: Shape::Callback(PaintCallback {
+                                rect: erect(seg.to_screen.transform_rect_bbox(seg.rect)),
+                                callback: Arc::clone(paint) as _,
+                            }),
+                        });
                     }
                     WorldSeg::Glyphs(g) => {
                         if sink.ctx.is_none() {

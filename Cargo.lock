@@ -3942,6 +3942,7 @@ dependencies = [
  "bitflags 2.13.2",
  "egui",
  "ljos_runtime",
+ "ljos_shader",
  "lyon_tessellation",
  "png",
  "rustc-hash 2.1.3",

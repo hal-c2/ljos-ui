@@ -15,6 +15,7 @@ mod glyph;
 mod image;
 mod raster;
 mod rgba;
+mod shader;
 mod shape;
 mod tree;
 
@@ -41,8 +42,11 @@ pub use image::{
     ImageAlign, ImageBlit, ImageError, ImageFit, ImageHandle, ImagePlacement, WeakImage,
     image_blit, nine_patch_blits, painted_size, place_image,
 };
+/// The programs a [`ShaderOp`] runs.
+pub use ljos_shader;
 pub use raster::{RasterConfig, TextMode, VelloCpuReference};
 pub use rgba::Rgba;
+pub use shader::{Cull, ShaderOp, ShaderTexture, Viewport};
 pub use tree::{ClipSpec, Dirty, LayerSpec, NodeId, RenderNode, RenderTree, TreeError};
 
 /// Geometry types. Re-exported from vello_cpu so the whole workspace sees one
