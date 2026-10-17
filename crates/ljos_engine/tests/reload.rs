@@ -619,6 +619,102 @@ fn a_delegate_goes_on_by_its_row() {
     );
 }
 
+// A delegate with required properties has no `index` in sight: its row
+// is the view's to say.
+const REQUIRED_ROWS: &str = r#"import QtQuick
+import QtQml.Models
+Item {
+  id: root
+  objectName: "root"
+  function mark(i, n) { inst.objectAt(i).taps = n }
+  function taps() {
+    var s = ""
+    for (var i = 0; i < inst.count; i++) s += inst.objectAt(i).name + inst.objectAt(i).taps + ":" + inst.objectAt(i).size + " "
+    return s
+  }
+  ListModel {
+    id: rows
+    ListElement { name: "a" }
+    ListElement { name: "b" }
+    ListElement { name: "c" }
+  }
+  Instantiator {
+    id: inst
+    model: rows
+    QtObject {
+      required property string name
+      property int taps: 0
+      property int size: 10
+      property QtObject part: QtObject { }
+    }
+  }
+}
+"#;
+
+#[test]
+fn a_delegate_with_required_properties_goes_on_by_its_row() {
+    let mut r = rig(&[("Main", REQUIRED_ROWS)]);
+    for (row, n) in [(0, 1), (1, 4), (2, 9)] {
+        r.h.engine
+            .invoke_by_name(r.root, "mark", &[Value::Int(row), Value::Int(n)])
+            .unwrap();
+    }
+    let done = r
+        .edit("Main", &REQUIRED_ROWS.replace("size: 10", "size: 20"))
+        .unwrap();
+    assert_eq!(
+        r.call("root", "taps").to_js_string().as_str(),
+        "a1:20 b4:20 c9:20 "
+    );
+    assert_eq!(done.fresh, 0);
+}
+
+// The rows are made again as the file completes and as it is reloaded,
+// while the first ones are still on their way out (as a view does whose
+// parent changes).
+const REMADE_ROWS: &str = r#"import QtQuick
+import QtQml.Models
+Item {
+  id: root
+  objectName: "root"
+  property int rows: 2
+  Component.onCompleted: rows = 3
+  Component.onReloaded: { rows = 0; rows = 3 }
+  function mark(i, n) { inst.objectAt(i).taps = n }
+  function taps() {
+    var s = ""
+    for (var i = 0; i < inst.count; i++) s += inst.objectAt(i).taps + ":" + inst.objectAt(i).size + " "
+    return s
+  }
+  Instantiator {
+    id: inst
+    model: root.rows
+    QtObject {
+      property int taps: 0
+      property int size: 10
+    }
+  }
+}
+"#;
+
+#[test]
+fn rows_made_again_while_the_first_ones_go_are_carried() {
+    let mut r = rig(&[("Main", REMADE_ROWS)]);
+    for (row, n) in [(0, 1), (1, 4), (2, 9)] {
+        r.h.engine
+            .invoke_by_name(r.root, "mark", &[Value::Int(row), Value::Int(n)])
+            .unwrap();
+    }
+    let done = r
+        .edit("Main", &REMADE_ROWS.replace("size: 10", "size: 20"))
+        .unwrap();
+    assert_eq!(
+        r.call("root", "taps").to_js_string().as_str(),
+        "1:20 4:20 9:20 "
+    );
+    assert_eq!(done.fresh, 0);
+}
+
 #[test]
 fn every_object_made_from_qml_has_a_path_that_outlives_it() {
     let mut r = rig(&[("Main", USES_COUNTER), ("Counter", COUNTER_FILE)]);

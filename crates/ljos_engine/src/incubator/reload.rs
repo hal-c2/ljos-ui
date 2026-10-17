@@ -205,6 +205,7 @@ struct Origin {
     props: Vec<(String, Value)>,
 }
 
+#[derive(Clone)]
 struct Carried {
     name: Atom,
     ty: TypeTag,
@@ -219,7 +220,9 @@ struct Snap {
     values: Vec<Carried>,
     /// (index of the migrator, its state).
     native: Vec<(usize, Box<dyn Any>)>,
-    taken: bool,
+    /// The new object that goes on for the old one. One on its way out (a
+    /// row a view made again) leaves the place to the next one made.
+    taker: Option<ObjectId>,
 }
 
 /// A reload from the moment the old tree is read until the host says the
@@ -319,6 +322,9 @@ pub(crate) struct ReloadState {
     origins: RefCell<HashMap<ObjectId, Origin>>,
     /// The path of the root made next: the one it replaces.
     forced: RefCell<Option<Rc<str>>>,
+    /// The row a view is making a delegate for, where the delegate has
+    /// no `index` in sight (it takes its roles as required properties).
+    rows: RefCell<HashMap<ObjectId, i64>>,
     pending: RefCell<Option<Pending>>,
     last_error: RefCell<Option<ReloadFault>>,
     /// (type name or empty for any, property name).
@@ -678,6 +684,11 @@ impl Engine {
         let state_props = st.state_props.borrow().clone();
         let migrators = st.migrators.borrow().clone();
         for (obj, path, print) in objects {
+            // One on its way out whose place another took (a row made
+            // again) has nothing to carry.
+            if st.by_path.borrow().get(&path).is_some_and(|o| *o != obj) {
+                continue;
+            }
             let Some(meta) = self.meta_of(obj) else {
                 continue;
             };
@@ -723,7 +734,7 @@ impl Engine {
                     print,
                     values,
                     native,
-                    taken: false,
+                    taker: None,
                 },
             );
         }
@@ -950,6 +961,15 @@ impl Engine {
         }
     }
 
+    /// Says that `root` is the delegate of `row`, before its paths are
+    /// given.
+    pub(crate) fn reload_note_row(&self, root: ObjectId, row: usize) {
+        let st = &self.inner.reload;
+        if st.tracking.get() {
+            st.rows.borrow_mut().insert(root, row as i64);
+        }
+    }
+
     /// The row a delegate is made for.
     fn reload_row(&self, root: ObjectId, ctx: ContextId) -> Option<i64> {
         let v = self.untrack(|| {
@@ -973,6 +993,7 @@ impl Engine {
         if !st.tracking.get() {
             return;
         }
+        let noted = st.rows.borrow_mut().remove(&root);
         let Some(top) = cr.top.clone() else {
             return;
         };
@@ -985,7 +1006,7 @@ impl Engine {
             (None, Some(above)) => {
                 let def = top.file.ir.component(top.comp);
                 let mut s = format!("{above}~{}|{}", top.file.key, def.id);
-                if let Some(row) = self.reload_row(root, top.context) {
+                if let Some(row) = noted.or_else(|| self.reload_row(root, top.context)) {
                     let _ = write!(s, "[{row}]");
                 }
                 s
@@ -998,7 +1019,8 @@ impl Engine {
         let tree = st.tree.get();
         // Two objects made from one component under one owner (two
         // `createObject` calls) cannot be told apart: the later ones are
-        // not carried.
+        // not carried. One on its way out (a row made again) gives its
+        // place up.
         let taken = {
             let by_path = st.by_path.borrow();
             let info = st.info.borrow();
@@ -1006,6 +1028,7 @@ impl Engine {
                 *other != root
                     && info.get(other).is_some_and(|i| i.tree == tree)
                     && self.is_alive(*other)
+                    && !self.doomed(*other)
             })
         };
         if taken {
@@ -1026,16 +1049,19 @@ impl Engine {
             if let Some(p) = pending.as_mut() {
                 let below = owner.is_some_and(|o| p.remounted.contains(&o));
                 let reset = walk.reset.contains(id);
+                let free = |s: &Snap| s.taker.is_none_or(|t| self.doomed(t));
                 match p.snaps.get_mut(&path) {
                     _ if below => {
                         p.remounted.insert(*id);
                     }
-                    Some(s) if !reset && !s.taken && s.print == print => {
-                        s.taken = true;
+                    Some(s) if !reset && free(s) && s.print == print => {
+                        if let Some(gone) = s.taker.replace(*id) {
+                            p.kept.remove(&gone);
+                        }
                         p.counterpart.insert(s.old, *id);
                         p.kept.insert(*id, path.clone());
                     }
-                    Some(s) if !s.taken => {
+                    Some(s) if free(s) => {
                         p.remounted.insert(*id);
                     }
                     None if reset => {
@@ -1070,11 +1096,9 @@ impl Engine {
             for o in &cr.all {
                 let Some(path) = p.kept.get(o) else { continue };
                 if let Some(s) = p.snaps.get_mut(path) {
-                    work.push((
-                        *o,
-                        std::mem::take(&mut s.values),
-                        std::mem::take(&mut s.native),
-                    ));
+                    // Cloned: an object made again for the same place
+                    // takes them too.
+                    work.push((*o, s.values.clone(), std::mem::take(&mut s.native)));
                 }
             }
             if work.is_empty() {

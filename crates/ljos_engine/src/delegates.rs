@@ -658,6 +658,7 @@ fn give_row(
     ctx: ContextId,
     roles_in_context: bool,
 ) -> Option<RowObject> {
+    engine.reload_note_row(root, index);
     let shape = row_shape(RowKind::Delegate, &model.role_names());
     // Owned by the delegate: it lives exactly as long.
     let data = engine.make_row(model, &shape, index, Some(root)).ok()?;

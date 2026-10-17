@@ -227,7 +227,7 @@ impl Engine {
     }
 
     /// Whether `obj` or something that owns it is on its way out.
-    fn doomed(&self, obj: ObjectId) -> bool {
+    pub(crate) fn doomed(&self, obj: ObjectId) -> bool {
         let store = self.inner.store.borrow();
         let mut cur = Some(obj);
         for _ in 0..MAX_DEPTH {

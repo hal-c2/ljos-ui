@@ -234,6 +234,69 @@ Feature: Which object is the same object after a reload
       Then the object "cell1" does not exist
       And the object "cell0" exists
 
+  Rule: A delegate knows its row however it is given its data and wherever its Repeater is
+
+    Scenario: A delegate that takes its roles as required properties keeps its state
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Repeater {
+            model: ListModel { ListElement { name: "a" } ListElement { name: "b" } }
+            Rectangle { required property string name; objectName: "cell" + name; property int taps: 0; width: 10 }
+          }
+        }
+        """
+      When the property "taps" of "cellb" is set to 4
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Repeater {
+            model: ListModel { ListElement { name: "a" } ListElement { name: "b" } }
+            Rectangle { required property string name; objectName: "cell" + name; property int taps: 0; width: 20 }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "taps" of "cellb" is 4
+      And the property "width" of "cellb" is 20
+      And the property "taps" of "cella" is 0
+
+    Scenario: The rows of a Repeater in a container keep their state
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        TabBar {
+          objectName: "root"
+          Repeater {
+            model: 3
+            TabButton { objectName: "tab" + index; property int taps: 0; text: "one" }
+          }
+        }
+        """
+      When the property "taps" of "tab1" is set to 4
+      And the property "taps" of "tab2" is set to 9
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        TabBar {
+          objectName: "root"
+          Repeater {
+            model: 3
+            TabButton { objectName: "tab" + index; property int taps: 0; text: "two" }
+          }
+        }
+        """
+      And a reload happens
+      Then the property "taps" of "tab1" is 4
+      And the property "taps" of "tab2" is 9
+      And the property "text" of "tab1" is "two"
+
   Rule: An object of another type is a new object, and so is everything below it
 
     Background:
