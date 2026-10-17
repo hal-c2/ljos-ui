@@ -827,7 +827,7 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
         })
         .filter(|k| k.w > 0.0 && k.h > 0.0)
         .collect();
-    if let Some(conflict) = anchor_conflict(engine, which, &kids) {
+    if let Some(conflict) = anchor_conflict(engine, obj, which, &kids) {
         // Qt does nothing at all then, size included.
         engine.log(LogLevel::Warning, crate::anchors::CATEGORY, conflict);
         return Ok(());
@@ -908,8 +908,14 @@ fn run(engine: &Engine, obj: ObjectId, which: Which) -> Result<(), EngineError> 
 }
 
 /// A child that is anchored along an axis the positioner places it on
-/// makes the positioner give up: the warning Qt gives for it, or `None`.
-fn anchor_conflict(engine: &Engine, which: Which, kids: &[Kid]) -> Option<String> {
+/// makes the positioner give up: the warning Qt gives for it, at the
+/// positioner's declaration, or `None`.
+fn anchor_conflict(
+    engine: &Engine,
+    positioner: ObjectId,
+    which: Which,
+    kids: &[Kid],
+) -> Option<String> {
     let a = crate::item::AnchorProps::get();
     let set =
         |c: ObjectId, p: PropIndex| !matches!(engine.read(c, p), Value::Undefined | Value::Null);
@@ -939,8 +945,9 @@ fn anchor_conflict(engine: &Engine, which: Which, kids: &[Kid]) -> Option<String
             || (along.is_empty() && horizontal.iter().chain(&vertical).any(|p| set(k.id, *p)))
     });
     any.then(|| {
+        let at = engine.declared_at(positioner).unwrap_or_default();
         format!(
-            "QML {name}: Cannot specify {what} for items inside {name}. {name} will not function."
+            "{at}QML {name}: Cannot specify {what} for items inside {name}. {name} will not function."
         )
     })
 }
