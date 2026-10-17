@@ -127,6 +127,7 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `Given the translation file "X.ts":` + doc string | make the translations of a Qt Linguist file (doc string labelled `xml`) available for the language its `language` attribute names; give it before the QML |
 | `Given an assistive technology is listening` | the accessibility tree is read from here on, so later steps see it follow each change |
 | `Given the system setting "color scheme" is "dark"` | what the system says before the application starts: `"color scheme"` (`"light"`, `"dark"`), `"contrast"` (`"normal"`, `"high"`), `"reduced motion"` and `"screen reader"` (`true`, `false`), `"font scale"` (a number; `1` is the size the application was written for) (`@ljos-only`: the oracle cannot be given a system) |
+| `Given the desktop setting "org.freedesktop.appearance" "contrast" is uint32 1` | what the desktop's settings portal has when the application starts; the values of `When the desktop setting` (`@ljos-only`) |
 | `Given a W by H image file "X.png" filled with "#rrggbb"` | make a one-colour image (`.png` or `.jpg`) available beside the QML files |
 | `Given a file "X.png" that is not an image` | make a file with that name and no image inside available |
 | `Given the web server serves a W by H image file "X.png" filled with "#rrggbb"` | the scenario's own web server (loopback) answers `$SERVER/X.png` with such an image; the QML writes `$SERVER` for its `http://127.0.0.1:<port>`, and a name nobody served is 404 Not Found |
@@ -156,6 +157,8 @@ Objects are named by `objectName`; `a/b` finds `b` below `a`. Properties may be 
 | `When "X.qml" is loaded` | create an instance of `X.qml`; objects become findable by `objectName` |
 | `When the UI language is set to "…"` | what assigning `Qt.uiLanguage` does (`"is_IS"`, `"de"`, `""`) |
 | `When the system setting "font scale" changes to 1.5` | the user changes a setting of the system while the application runs; the settings and values of `Given the system setting` (`@ljos-only`) |
+| `When the application sets the system setting "reduced motion" to true` | the application (or a test) sets a setting itself, with the settings and values of `Given the system setting`; it stays over what the system or the desktop says until it is set to the system's value again (`@ljos-only`) |
+| `When the desktop setting "org.gnome.desktop.interface" "enable-animations" changes to false` | the desktop's settings portal says a key changed (`SettingChanged`); a value is `true`/`false`, `uint32 1`, a double (`1.25`), an int32 (`48`) or a `"string"`. A key the shell does not read changes nothing (`@ljos-only`) |
 | `When the property "p" of "o" is set to V` | assign from JavaScript (breaks a binding) |
 | `When the property "p" of "o" is bound to "expr"` | assign `Qt.binding(() => expr)`; `expr` names `o`'s properties unqualified |
 | `When the method "m" of "o" is called` | call with no arguments; calling a signal emits it |

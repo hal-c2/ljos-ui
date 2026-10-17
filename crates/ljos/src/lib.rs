@@ -120,6 +120,21 @@ pub mod types;
 
 pub use app::{App, create_root};
 
+/// What the system prefers: colour scheme, contrast, less motion, text
+/// size and whether a screen reader listens (`Qt.styleHints` and its
+/// `accessibility`). The shell reads the platform's settings at start and
+/// on each change and reports them ([`report_system_prefs`]); what an
+/// application sets itself ([`set_system_prefs`], [`update_system_prefs`])
+/// stays over those reports until it is set to the platform's value again.
+/// [`DesktopSettings`] turns a Linux desktop's settings-portal keys into a
+/// report, for a host of the application's own.
+pub mod system {
+    pub use ljos_quick::{
+        ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs,
+        report_system_prefs, set_system_prefs, system_prefs, update_system_prefs,
+    };
+}
+
 /// Key events as a host delivers them, and the application-wide key
 /// filters that see each before a window's shortcuts and focused item.
 pub mod keys {

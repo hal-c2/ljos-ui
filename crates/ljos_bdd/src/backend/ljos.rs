@@ -190,7 +190,9 @@ pub struct LjosBackend {
     /// Whether the scenario changes files while it runs.
     watching: bool,
     /// What the system prefers, said before anything was loaded.
-    settings: Vec<super::SystemSetting>,
+    settings: Vec<Said>,
+    /// What the desktop's settings portal said.
+    desktop: ljos_a11y::DesktopSettings,
     /// The inspector of a scenario that an agent looks at.
     inspector: Option<inspect::Rig>,
     /// The scenario's file system and the system's dialogs.
@@ -225,10 +227,45 @@ impl std::fmt::Debug for LjosBackend {
     }
 }
 
-/// The system says what the user prefers.
-fn apply_setting(engine: &Engine, setting: super::SystemSetting) {
+/// Who said what the user prefers.
+#[derive(Clone, Debug)]
+enum Said {
+    System(super::SystemSetting),
+    App(super::SystemSetting),
+    Desktop(ljos_a11y::HostPrefs),
+}
+
+fn apply(engine: &Engine, said: Said) {
+    match said {
+        Said::System(setting) => {
+            let mut prefs = ljos_quick::system_prefs(engine);
+            change_setting(&mut prefs, setting);
+            report_all(engine, prefs);
+        }
+        Said::App(setting) => {
+            ljos_quick::update_system_prefs(engine, |p| change_setting(p, setting))
+        }
+        Said::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
+    }
+}
+
+/// The system, which says every setting.
+fn report_all(engine: &Engine, p: ljos_a11y::SystemPrefs) {
+    ljos_quick::report_system_prefs(
+        engine,
+        ljos_a11y::HostPrefs {
+            color_scheme: Some(p.color_scheme),
+            contrast: Some(p.contrast),
+            reduced_motion: Some(p.reduced_motion),
+            font_scale: Some(p.font_scale),
+            screen_reader_active: Some(p.screen_reader_active),
+        },
+    );
+}
+
+fn change_setting(p: &mut ljos_a11y::SystemPrefs, setting: super::SystemSetting) {
     use super::SystemSetting as S;
-    ljos_quick::update_system_prefs(engine, |p| match setting {
+    match setting {
         S::DarkScheme(dark) => {
             p.color_scheme = if dark {
                 ljos_a11y::ColorScheme::Dark
@@ -246,7 +283,7 @@ fn apply_setting(engine: &Engine, setting: super::SystemSetting) {
         S::ReducedMotion(reduced) => p.reduced_motion = reduced,
         S::FontScale(scale) => p.font_scale = scale,
         S::ScreenReader(active) => p.screen_reader_active = active,
-    });
+    }
 }
 
 fn failed(e: impl std::fmt::Display) -> BackendError {
@@ -284,6 +321,20 @@ impl LjosBackend {
 
     fn live(&mut self) -> Result<&mut Live> {
         self.live.as_mut().ok_or_else(not_loaded)
+    }
+
+    /// A setting said now, or at the start when nothing is loaded yet.
+    fn said(&mut self, said: Said) -> Result<()> {
+        match self.live.as_mut() {
+            Some(live) => {
+                apply(&live.engine, said);
+                live.settle()
+            }
+            None => {
+                self.settings.push(said);
+                Ok(())
+            }
+        }
     }
 
     fn start() -> Result<Live> {
@@ -966,8 +1017,8 @@ impl Backend for LjosBackend {
             for catalog in self.catalogs.drain(..) {
                 live.engine.install_catalog(Box::new(catalog));
             }
-            for setting in self.settings.drain(..) {
-                apply_setting(&live.engine, setting);
+            for said in self.settings.drain(..) {
+                apply(&live.engine, said);
             }
             self.platform.install(&live.engine)?;
             live.engine.set_wall_clock_origin(self.wall_clock);
@@ -1362,16 +1413,25 @@ impl Backend for LjosBackend {
     }
 
     fn system_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
-        match self.live.as_mut() {
-            Some(live) => {
-                apply_setting(&live.engine, setting);
-                live.settle()
-            }
-            None => {
-                self.settings.push(setting);
-                Ok(())
-            }
+        self.said(Said::System(setting))
+    }
+
+    fn app_setting(&mut self, setting: super::SystemSetting) -> Result<()> {
+        self.said(Said::App(setting))
+    }
+
+    fn desktop_setting(
+        &mut self,
+        namespace: &str,
+        key: &str,
+        value: ljos_a11y::SettingValue,
+    ) -> Result<()> {
+        // A key the shell does not read is not reported, as on the bus.
+        if !self.desktop.set(namespace, key, &value) {
+            return Ok(());
         }
+        let report = self.desktop.prefs();
+        self.said(Said::Desktop(report))
     }
 
     fn a11y_act(&mut self, role: &str, name: &str, action: super::A11yAction) -> Result<()> {

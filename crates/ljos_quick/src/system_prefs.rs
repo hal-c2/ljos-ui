@@ -1,9 +1,11 @@
 //! What the system prefers, as values a binding can follow: `Qt.styleHints`
 //! and `Qt.styleHints.accessibility` (ARCHITECTURE §14, `SystemPrefs`).
 //!
-//! A host hands over a [`SystemPrefs`] when it starts and again when the
-//! platform says a setting changed ([`set_system_prefs`],
-//! [`update_system_prefs`]). Each value is a property of one of two objects
+//! A host reports what its platform says when it starts and again when the
+//! platform says a setting changed ([`report_system_prefs`]). An
+//! application or a test sets a value itself ([`set_system_prefs`],
+//! [`update_system_prefs`]), and what it set stays over the host's reports
+//! until it sets the host's value again. Each value is a property of one of two objects
 //! the engine keeps, so QML reads it like any other property and Rust reads
 //! it with the tracked getters here. Nothing polls: a value changes when a
 //! host says so, and what read it runs again.
@@ -18,7 +20,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use ljos_a11y::{ColorScheme, Contrast, SystemPrefs};
+use ljos_a11y::{ColorScheme, Contrast, HostPrefs, SystemPrefs};
 use ljos_engine::{Engine, Interception, ObjectId, QmlObject, Value};
 use ljos_reactive::WriteKind;
 
@@ -120,8 +122,14 @@ pub struct AccessibilityHints {
 struct State {
     /// The two objects, made on first use.
     objects: Cell<Option<(ObjectId, ObjectId)>>,
-    /// What the host said last.
+    /// What is in effect: the host's settings, and over them those an
+    /// application or a test set.
     system: Cell<SystemPrefs>,
+    /// What the host said last (`report_system_prefs`).
+    host: Cell<SystemPrefs>,
+    /// The settings an application or a test set to other than the
+    /// host's, which the host's reports leave alone.
+    pinned: Cell<Pinned>,
     /// The scheme the application asked for, while it asks for one.
     asked: Cell<Option<ColorScheme>>,
     /// `startDragDistance`.
@@ -133,6 +141,8 @@ impl Default for State {
         State {
             objects: Cell::new(None),
             system: Cell::new(SystemPrefs::default()),
+            host: Cell::new(SystemPrefs::default()),
+            pinned: Cell::new(Pinned::default()),
             asked: Cell::new(None),
             drag_distance: Cell::new(START_DRAG_DISTANCE),
         }
@@ -281,19 +291,76 @@ fn show(engine: &Engine, s: &State, p: SystemPrefs) {
     });
 }
 
-/// Tells the application what the system prefers. A host calls this when
-/// it starts and whenever the platform reports a change; a test calls it
-/// to be the system. Telling the same again costs nothing.
-pub fn set_system_prefs(engine: &Engine, prefs: SystemPrefs) {
-    let s = state(engine);
-    let prefs = SystemPrefs {
+/// Which settings an application or a test holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Pinned {
+    color_scheme: bool,
+    contrast: bool,
+    reduced_motion: bool,
+    font_scale: bool,
+    screen_reader_active: bool,
+}
+
+impl Pinned {
+    /// The settings in which `set` differs from `host`.
+    fn between(set: SystemPrefs, host: SystemPrefs) -> Self {
+        Pinned {
+            color_scheme: set.color_scheme != host.color_scheme,
+            contrast: set.contrast != host.contrast,
+            reduced_motion: set.reduced_motion != host.reduced_motion,
+            font_scale: set.font_scale != host.font_scale,
+            screen_reader_active: set.screen_reader_active != host.screen_reader_active,
+        }
+    }
+
+    /// `host`, with `held` where a setting is held.
+    fn over(self, held: SystemPrefs, host: SystemPrefs) -> SystemPrefs {
+        let pick = |pinned: bool| if pinned { held } else { host };
+        SystemPrefs {
+            color_scheme: pick(self.color_scheme).color_scheme,
+            contrast: pick(self.contrast).contrast,
+            reduced_motion: pick(self.reduced_motion).reduced_motion,
+            font_scale: pick(self.font_scale).font_scale,
+            screen_reader_active: pick(self.screen_reader_active).screen_reader_active,
+        }
+    }
+}
+
+fn sane(prefs: SystemPrefs) -> SystemPrefs {
+    SystemPrefs {
         font_scale: SystemPrefs::sane_font_scale(prefs.font_scale),
         ..prefs
-    };
+    }
+}
+
+/// Sets what the system prefers, as an application or a test does to be
+/// the system: a setting made other than the host's stays over what the
+/// host reports later, until it is set to the host's value again. Telling
+/// the same again costs nothing.
+pub fn set_system_prefs(engine: &Engine, prefs: SystemPrefs) {
+    let s = state(engine);
+    let prefs = sane(prefs);
+    s.pinned.set(Pinned::between(prefs, s.host.get()));
+    apply(engine, &s, prefs);
+}
+
+/// What the platform prefers, as a host heard it: at start and whenever
+/// the platform reports a change. A setting the report does not name, or
+/// one an application or a test holds (`set_system_prefs`), stays as it
+/// is.
+pub fn report_system_prefs(engine: &Engine, report: HostPrefs) {
+    let s = state(engine);
+    let host = sane(report.over(s.host.get()));
+    s.host.set(host);
+    let prefs = s.pinned.get().over(s.system.get(), host);
+    apply(engine, &s, prefs);
+}
+
+fn apply(engine: &Engine, s: &State, prefs: SystemPrefs) {
     if s.system.replace(prefs) == prefs {
         return;
     }
-    show(engine, &s, prefs);
+    show(engine, s, prefs);
     // A frame: animations under way end (or go on) with the new setting,
     // and text is laid out at the new size.
     engine.request_wake();
@@ -306,7 +373,8 @@ pub fn update_system_prefs(engine: &Engine, change: impl FnOnce(&mut SystemPrefs
     set_system_prefs(engine, prefs);
 }
 
-/// What the host said last. Not tracked: for a host that compares, and for
+/// What is in effect: the host's settings and those set over them. Not
+/// tracked: for a host that compares, and for
 /// what looks once (an audit).
 pub fn system_prefs(engine: &Engine) -> SystemPrefs {
     state(engine).system.get()

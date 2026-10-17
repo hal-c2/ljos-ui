@@ -1334,7 +1334,13 @@ impl QuickScene {
         self.a11y.set_active(engine, active);
         // Whoever makes the scene keep the tree is the screen reader as far
         // as the application can tell (`Qt.styleHints.accessibility`).
-        crate::system_prefs::update_system_prefs(engine, |p| p.screen_reader_active = active);
+        crate::system_prefs::report_system_prefs(
+            engine,
+            ljos_a11y::HostPrefs {
+                screen_reader_active: Some(active),
+                ..ljos_a11y::HostPrefs::default()
+            },
+        );
     }
 
     pub fn accessibility_active(&self) -> bool {

@@ -490,11 +490,11 @@ fn the_scheme_of_the_system_is_the_application_s() {
     assert_eq!(ljos_quick::color_scheme(&s.engine), before);
     pass_with(Some(egui::Theme::Dark));
     assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Dark);
-    // A host that knows better is not told otherwise every pass.
+    // A scheme set over the system's stays while the system's changes.
     ljos_quick::update_system_prefs(&s.engine, |p| p.color_scheme = ColorScheme::Light);
     pass_with(Some(egui::Theme::Dark));
     assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Light);
     pass_with(Some(egui::Theme::Light));
     pass_with(Some(egui::Theme::Dark));
-    assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Dark);
+    assert_eq!(ljos_quick::color_scheme(&s.engine), ColorScheme::Light);
 }

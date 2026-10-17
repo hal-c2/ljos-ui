@@ -298,6 +298,23 @@ pub trait Backend: fmt::Debug {
     fn system_setting(&mut self, _setting: SystemSetting) -> Result<()> {
         Err(BackendError::NotImplemented("system settings"))
     }
+    /// The application sets a setting of the system itself, over what the
+    /// system says.
+    fn app_setting(&mut self, _setting: SystemSetting) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "an application's own settings",
+        ))
+    }
+    /// The desktop's settings portal says a key's value: before anything
+    /// is loaded, what the desktop had at start.
+    fn desktop_setting(
+        &mut self,
+        _namespace: &str,
+        _key: &str,
+        _value: ljos_a11y::SettingValue,
+    ) -> Result<()> {
+        Err(BackendError::NotImplemented("a desktop's settings"))
+    }
     /// An assistive technology asks the node with this role and name to
     /// select or change its text. A node that refuses is not an error.
     fn a11y_text(&mut self, _role: &str, _name: &str, _action: A11yTextAction) -> Result<()> {

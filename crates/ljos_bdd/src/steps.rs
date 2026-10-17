@@ -455,6 +455,58 @@ fn system_setting_changes(w: &mut LjosWorld, setting: String, value: String) -> 
     w.each(|b| b.system_setting(setting))
 }
 
+#[when(regex = r#"^the application sets the system setting "([^"]+)" to (.+)$"#)]
+fn app_setting(w: &mut LjosWorld, setting: String, value: String) -> StepResult {
+    let setting = system_setting(&setting, &value)?;
+    w.each(|b| b.app_setting(setting))
+}
+
+#[given(regex = r#"^the desktop setting "([^"]+)" "([^"]+)" is (.+)$"#)]
+fn desktop_setting_is(
+    w: &mut LjosWorld,
+    namespace: String,
+    key: String,
+    value: String,
+) -> StepResult {
+    let value = setting_value(&value)?;
+    w.each(|b| b.desktop_setting(&namespace, &key, value.clone()))
+}
+
+#[when(regex = r#"^the desktop setting "([^"]+)" "([^"]+)" changes to (.+)$"#)]
+fn desktop_setting_changes(
+    w: &mut LjosWorld,
+    namespace: String,
+    key: String,
+    value: String,
+) -> StepResult {
+    let value = setting_value(&value)?;
+    w.each(|b| b.desktop_setting(&namespace, &key, value.clone()))
+}
+
+/// A value as the portal sends it: `true`, `uint32 1`, `1.25` (a double),
+/// `48` (an int32), `"reduce"`.
+fn setting_value(value: &str) -> Result<ljos_a11y::SettingValue, String> {
+    use ljos_a11y::SettingValue as V;
+    let bad = || format!("{value} is not a setting's value");
+    let value = value.trim();
+    Ok(match value {
+        "true" => V::Bool(true),
+        "false" => V::Bool(false),
+        _ if value.starts_with('"') => V::Text(
+            value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .ok_or_else(bad)?
+                .to_owned(),
+        ),
+        _ => match value.strip_prefix("uint32 ") {
+            Some(n) => V::Uint(n.parse().map_err(|_| bad())?),
+            None if value.contains('.') => V::Double(value.parse().map_err(|_| bad())?),
+            None => V::Int(value.parse().map_err(|_| bad())?),
+        },
+    })
+}
+
 #[when(regex = r#"^an assistive technology asks the "([^"]+)" named "([^"]*)" to (.+)$"#)]
 fn a11y_asks(w: &mut LjosWorld, role: String, name: String, what: String) -> StepResult {
     let action = a11y_action(&what)?;

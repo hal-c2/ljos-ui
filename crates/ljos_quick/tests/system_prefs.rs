@@ -8,8 +8,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use common::*;
-use ljos_a11y::{ColorScheme, Contrast, SystemPrefs};
-use ljos_quick::{set_system_prefs, system_prefs, update_system_prefs};
+use ljos_a11y::{ColorScheme, Contrast, HostPrefs, SystemPrefs};
+use ljos_quick::{report_system_prefs, set_system_prefs, system_prefs, update_system_prefs};
 use ljos_runtime::Time;
 
 const HINTS: &str = r#"
@@ -153,4 +153,35 @@ fn without_it_the_same_animation_takes_its_time() {
     s.frame(&e, Time::from_millis(16));
     let x = num(&e, find(&e, root, "box"), "x");
     assert!(x < 300.0, "{x}");
+}
+
+#[test]
+fn what_a_test_sets_stays_over_the_hosts_reports_until_it_is_the_hosts_again() {
+    let e = engine();
+    let root = load(&e, HINTS);
+    let calm = |reduced| HostPrefs {
+        reduced_motion: Some(reduced),
+        ..HostPrefs::default()
+    };
+    report_system_prefs(&e, calm(true));
+    assert_eq!(num(&e, root, "motion"), 1.0);
+
+    update_system_prefs(&e, |p| p.reduced_motion = false);
+    report_system_prefs(&e, calm(false));
+    report_system_prefs(&e, calm(true));
+    assert_eq!(num(&e, root, "motion"), 0.0, "the test's setting stays");
+    // What the report does not hold still follows the host.
+    report_system_prefs(
+        &e,
+        HostPrefs {
+            contrast: Some(Contrast::High),
+            ..HostPrefs::default()
+        },
+    );
+    assert_eq!(num(&e, root, "contrast"), 1.0);
+
+    // Set to what the host says, it is the host's again.
+    update_system_prefs(&e, |p| p.reduced_motion = true);
+    report_system_prefs(&e, calm(false));
+    assert_eq!(num(&e, root, "motion"), 0.0);
 }

@@ -9,19 +9,19 @@ use std::collections::HashMap;
 
 use egui::accesskit::{self, Role};
 use egui::{Id, Pos2, Rect, Ui, UiBuilder};
-use ljos_a11y::{ColorScheme, NodeKey, TextValue, Tree};
+use ljos_a11y::{ColorScheme, HostPrefs, NodeKey, TextValue, Tree};
 use ljos_engine::Engine;
 use ljos_quick::{AccessibleAction, AccessibleTextAction};
 
 /// Hands the application what egui knows of the system's preferences:
 /// the colour scheme, when the platform reports one. (That an assistive
 /// technology listens is told where the tree is switched on.) Contrast,
-/// reduced motion and the text size egui does not hear of; a host that
-/// does calls `ljos_quick::set_system_prefs`.
+/// reduced motion and the text size egui does not hear of; the shell reads
+/// them from the platform and reports them itself.
 ///
-/// It tells the engine only when egui's answer changed, so a host or a
-/// test that set a scheme itself keeps it, and a pass in which nothing
-/// changed costs one comparison.
+/// It reports only when egui's answer changed, so a pass in which nothing
+/// changed costs one comparison. A scheme an application or a test set
+/// stays over it (`ljos_quick::report_system_prefs`).
 #[derive(Debug, Default)]
 pub(crate) struct SystemFeed {
     told: Option<egui::Theme>,
@@ -40,7 +40,13 @@ impl SystemFeed {
             // The platform stopped saying: what was last said stays.
             None => return,
         };
-        ljos_quick::update_system_prefs(engine, |p| p.color_scheme = scheme);
+        ljos_quick::report_system_prefs(
+            engine,
+            HostPrefs {
+                color_scheme: Some(scheme),
+                ..HostPrefs::default()
+            },
+        );
     }
 }
 

@@ -106,6 +106,34 @@ impl SystemPrefs {
     }
 }
 
+/// What a host heard from its platform: each setting the platform has,
+/// and `None` for one it does not say. A host hands it over at start and
+/// on each change (`ljos_quick::report_system_prefs`); a setting it does
+/// not name keeps what it was.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HostPrefs {
+    pub color_scheme: Option<ColorScheme>,
+    pub contrast: Option<Contrast>,
+    pub reduced_motion: Option<bool>,
+    pub font_scale: Option<f64>,
+    pub screen_reader_active: Option<bool>,
+}
+
+impl HostPrefs {
+    /// `prefs` with what this says in place of what it had.
+    pub fn over(self, prefs: SystemPrefs) -> SystemPrefs {
+        SystemPrefs {
+            color_scheme: self.color_scheme.unwrap_or(prefs.color_scheme),
+            contrast: self.contrast.unwrap_or(prefs.contrast),
+            reduced_motion: self.reduced_motion.unwrap_or(prefs.reduced_motion),
+            font_scale: self.font_scale.unwrap_or(prefs.font_scale),
+            screen_reader_active: self
+                .screen_reader_active
+                .unwrap_or(prefs.screen_reader_active),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +164,21 @@ mod tests {
             assert_eq!(Contrast::from_qt(n), c);
         }
         assert_eq!(Contrast::from_qt(-3), Contrast::NoPreference);
+    }
+
+    #[test]
+    fn what_a_host_does_not_say_stays() {
+        let before = SystemPrefs {
+            contrast: Contrast::High,
+            ..SystemPrefs::default()
+        };
+        let after = HostPrefs {
+            reduced_motion: Some(true),
+            ..HostPrefs::default()
+        }
+        .over(before);
+        assert_eq!(after.contrast, Contrast::High);
+        assert!(after.reduced_motion);
     }
 
     #[test]
