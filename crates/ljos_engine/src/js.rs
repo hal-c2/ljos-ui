@@ -25,7 +25,7 @@ use crate::engine::{Engine, Inner};
 use crate::error::EngineError;
 use crate::ids::{ConnectionId, MethodIndex, ObjectId, PropIndex, SignalIndex};
 use crate::log::LogLevel;
-use crate::meta::{MetaRef, PropertyFlags};
+use crate::meta::{Declared, MetaRef, PropertyFlags};
 use crate::types::TypeTag;
 use crate::value::{Color, Font, JsHandle, Value};
 use crate::value_faces;
@@ -150,6 +150,8 @@ pub(crate) struct JsState {
     /// Prototype per type description; the `MetaRef` keeps the pointer the
     /// key is made from alive.
     types: RefCell<HashMap<usize, (MetaRef, HostTypeId)>>,
+    /// The number each type QML declares prints with, by description.
+    numbers: RefCell<HashMap<usize, usize>>,
     conns: RefCell<Vec<JsConn>>,
     pub(crate) lines: Rc<RefCell<LineTable>>,
     /// The budget of one dispatch when the host asked for another than the
@@ -179,15 +181,61 @@ impl JsState {
         self.lists.forget(objects);
     }
 
+    /// The class an object of `meta` prints as, named as Qt's engine names
+    /// it: the C++ class of a type the toolkit gives, `File_QMLTYPE_n` for
+    /// a file's type, the name of an inline component, and
+    /// `Base_QML_n` for an object that declares members of its own.
+    fn printed(&self, meta: &MetaRef) -> String {
+        match (meta.declared, &meta.base) {
+            (Some(Declared::Inline), _) => meta.name.to_string(),
+            (Some(Declared::File), _) => format!("{}_QMLTYPE_{}", meta.name, self.number(meta)),
+            (Some(Declared::Object), Some(base)) => {
+                format!("{}_QML_{}", self.printed(base), self.number(meta))
+            }
+            _ => qt_class(meta),
+        }
+    }
+
+    /// A number of the type's own, for the names Qt's engine numbers.
+    fn number(&self, meta: &MetaRef) -> usize {
+        let key = std::ptr::from_ref::<crate::meta::MetaObject>(meta) as usize;
+        let mut numbers = self.numbers.borrow_mut();
+        let next = numbers.len();
+        *numbers.entry(key).or_insert(next)
+    }
+
     fn type_id(&self, engine: &Engine, meta: &MetaRef) -> Result<HostTypeId, JsFault> {
         let key = std::ptr::from_ref::<crate::meta::MetaObject>(meta) as usize;
         if let Some((_, id)) = self.types.borrow().get(&key) {
             return Ok(*id);
         }
-        let def = type_def(engine, meta);
+        let mut def = type_def(engine, meta);
+        def.name = self.printed(meta);
         let id = self.host.register_type(&def)?;
         self.types.borrow_mut().insert(key, (meta.clone(), id));
         Ok(id)
+    }
+}
+
+/// The C++ class Qt's engine gives a type of its toolkit, by the rule its
+/// classes follow, `QQuick` or `QQml` before the QML name, and the few
+/// that do not. A type of no Qt module is its own name.
+fn qt_class(meta: &crate::meta::MetaObject) -> String {
+    let name = meta.name.as_str();
+    let module = meta.module.as_ref().map_or("", |m| m.as_str());
+    match name {
+        "QtObject" => return "QObject".into(),
+        "Window" if module.starts_with("QtQuick") => return "QQuickWindowQmlImpl".into(),
+        "Binding" if module == "QtQml" => return "QQmlBind".into(),
+        "WorkerScript" => return "QQuickWorkerScript".into(),
+        _ => {}
+    }
+    if module.starts_with("QtQuick") {
+        format!("QQuick{name}")
+    } else if module.starts_with("QtQml") {
+        format!("QQml{name}")
+    } else {
+        name.to_owned()
     }
 }
 
@@ -676,6 +724,7 @@ impl Engine {
         let state = Rc::new(JsState {
             host,
             types: RefCell::new(HashMap::new()),
+            numbers: RefCell::new(HashMap::new()),
             conns: RefCell::new(Vec::new()),
             lines,
             budget: Cell::new(None),
@@ -1317,12 +1366,21 @@ const PRELUDE: &str = r##"
   "use strict";
   const g = globalThis;
   const hostLog = g.__ljos_log;
-  const show = (a) => {
+  // An array prints in brackets, as Qt's console prints one; one that
+  // holds itself says so where it does.
+  const show = (a, seen) => {
     if (typeof a === "string") return a;
-    if (Array.isArray(a)) return a.map(show).join(",");
+    if (Array.isArray(a)) {
+      seen = seen || [];
+      if (seen.includes(a)) return "[Circular]";
+      seen.push(a);
+      const inner = a.map((v) => show(v, seen)).join(",");
+      seen.pop();
+      return "[" + inner + "]";
+    }
     try { return String(a); } catch (e) { return "[object]"; }
   };
-  const text = (args) => Array.prototype.map.call(args, show).join(" ");
+  const text = (args) => Array.prototype.map.call(args, (a) => show(a)).join(" ");
   const console = {
     log() { hostLog(0, text(arguments)); },
     debug() { hostLog(0, text(arguments)); },

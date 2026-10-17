@@ -1274,10 +1274,27 @@ impl JsHost {
                 install_signal(&proto, weak.clone(), sig)?;
             }
             let name = def.name.clone();
+            // As Qt prints an object: its class, its address, and its
+            // objectName when it has one.
             let to_string = Function::new(
                 scope.ctx.clone(),
-                move |This(this): This<Class<'_, HostWrapper>>| -> String {
-                    format!("{name}({:#x})", this.borrow().id)
+                move |ctx: Ctx<'_>, This(this): This<Class<'_, HostWrapper>>| -> String {
+                    let id = this.borrow().id;
+                    let named = match this.get::<_, Value>("objectName") {
+                        Ok(v) => v
+                            .as_string()
+                            .and_then(|s| s.to_string().ok())
+                            .filter(|s| !s.is_empty()),
+                        // A destroyed object has no name to read.
+                        Err(_) => {
+                            let _ = ctx.catch();
+                            None
+                        }
+                    };
+                    match named {
+                        Some(n) => format!("{name}({id:#x}, \"{n}\")"),
+                        None => format!("{name}({id:#x})"),
+                    }
                 },
             )?
             .with_name("toString")?;

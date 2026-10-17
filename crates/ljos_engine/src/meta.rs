@@ -300,6 +300,17 @@ struct Lookup {
     absent: Vec<(PropIndex, ResetValue)>,
 }
 
+/// What in QML declares a type: an object prints by it (`String(item)`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Declared {
+    /// The root of a file: the type the file is.
+    File,
+    /// The root of an inline component.
+    Inline,
+    /// An object that declares members of its own.
+    Object,
+}
+
 /// The description of one QML type. See the module docs.
 pub struct MetaObject {
     pub name: Atom,
@@ -309,6 +320,8 @@ pub struct MetaObject {
     pub base: Option<MetaRef>,
     /// The Rust struct behind the type, for native types.
     pub native: Option<TypeId>,
+    /// What declared the type, for a type declared in QML.
+    pub declared: Option<Declared>,
     /// All properties, inherited first.
     pub properties: Vec<PropertyInfo>,
     pub signals: Vec<SignalInfo>,
@@ -695,6 +708,7 @@ impl MetaBuilder {
                 module: None,
                 base: None,
                 native: None,
+                declared: None,
                 properties: Vec::new(),
                 signals: Vec::new(),
                 methods: Vec::new(),
@@ -715,6 +729,12 @@ impl MetaBuilder {
     /// The Rust struct behind the type.
     pub fn native<T: QmlObject>(mut self) -> Self {
         self.meta.native = Some(TypeId::of::<T>());
+        self
+    }
+
+    /// What in QML declares the type.
+    pub fn declared(mut self, by: Declared) -> Self {
+        self.meta.declared = Some(by);
         self
     }
 

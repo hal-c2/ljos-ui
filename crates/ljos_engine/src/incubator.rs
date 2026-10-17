@@ -37,7 +37,7 @@ use crate::error::EngineError;
 use crate::foreign::{ForeignMember, ForeignValue};
 use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::loader::LoadedFile;
-use crate::meta::{MetaBuilder, MetaRef, PropertyFlags};
+use crate::meta::{Declared, MetaBuilder, MetaRef, PropertyFlags};
 use crate::object::{BindingLoc, Location, QmlType};
 use crate::qtqml::{Component, Connections};
 use crate::types::{TypeTag, Url};
@@ -1026,8 +1026,13 @@ impl Engine {
             } else {
                 base.name.to_string()
             };
+            let declared = match def.kind {
+                ComponentKind::File if roots => Declared::File,
+                ComponentKind::Inline if roots => Declared::Inline,
+                _ => Declared::Object,
+            };
             let own_enums: Vec<&str> = od.enums.iter().map(|e| e.name.as_str()).collect();
-            let mut b = MetaBuilder::new(&name).base(base);
+            let mut b = MetaBuilder::new(&name).base(base).declared(declared);
             for e in &od.enums {
                 let keys: Vec<(&str, i64)> = e.keys.iter().map(|(k, v)| (k.as_str(), *v)).collect();
                 b = b.enumeration(&e.name, &keys);
