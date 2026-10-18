@@ -23,6 +23,37 @@ pub fn image_file(name: &str, width: u32, height: u32, colour: &str) -> Result<V
     }
 }
 
+/// A PNG of noise, the same each time: its bytes are about as many as its
+/// pixels, as a photograph's are, where a picture of one colour is a few
+/// hundred bytes whatever its size.
+///
+/// # Errors
+/// The size has no pixels.
+pub fn noisy_png(width: u32, height: u32) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err("an image has at least one pixel".to_owned());
+    }
+    let count = width as usize * height as usize * 3;
+    let mut state = 0x2545_f491_u32;
+    let data: Vec<u8> = (0..count)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 24) as u8
+        })
+        .collect();
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(Cursor::new(&mut out), width, height);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_compression(png::Compression::Fastest);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(&data).map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
 /// An animated GIF whose frames are each of one colour (`#rrggbb`), shown
 /// for `delay_ms` (rounded to the hundredth of a second GIF counts in)
 /// and repeated for ever. One colour makes a still GIF.

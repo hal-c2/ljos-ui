@@ -161,3 +161,39 @@ Feature: Pictures from the network
     When 1 second passes
     Then the property "same" of "root" is true
     And the property "grew" of "root" is true
+
+  # Qt fetches again a picture that arrived after every item that asked
+  # for it had gone, small (300 by 200) or large. Ljós does for a picture
+  # whose bytes outweigh the pixels it would keep of it, and keeps a
+  # smaller one as its bytes, so the next item decodes it and fetches
+  # nothing: only the large case is the same on both.
+  Scenario: A large picture that arrives after its item has gone is fetched again
+    Given the web server serves a 2000 by 1500 noisy image file "noise.png"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        width: 400; height: 300
+        property int made: 0
+        property int again: -1
+        Loader {
+          id: loader; objectName: "loader"
+          sourceComponent: Image {
+            objectName: "picture"
+            width: 100; height: 100
+            fillMode: Image.PreserveAspectFit
+            source: "$SERVER/noise.png"
+            Component.onCompleted: if (++root.made === 2) root.again = status
+          }
+        }
+      }
+      """
+    When the property "active" of "loader" is set to false
+    And 2 seconds pass
+    And the property "active" of "loader" is set to true
+    And 2 seconds pass
+    Then the property "again" of "root" is 2
+    And the property "status" of "picture" is 1
+    And the property "sourceSize.width" of "picture" is 2000
+

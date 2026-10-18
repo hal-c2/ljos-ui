@@ -1255,11 +1255,24 @@ impl ImageStore {
             } else if let Ok(loaded) = result
                 && !shown
                 && only_loads
-            {
                 // Arrived for items gone since, as a list's rows made and
                 // let go: kept as what it is made again from, which costs
                 // less, and a row made later decodes that, not the network.
-                loaded.image.let_go();
+                && !loaded.image.let_go()
+                && loaded
+                    .image
+                    .made_again_by()
+                    .is_none_or(|again| again.holds >= loaded.image.byte_len())
+                && !loaded_by
+                    .iter()
+                    .any(|&i| super::loads_from(engine, i, &key.url))
+            {
+                // Unless that is more than the pixels, as for a photograph
+                // whose file is larger than what is kept of it: it is not
+                // kept at all, and a row made later fetches it again, as
+                // Qt does (observed on qml6).
+                drop(loaded);
+                self.release(&key);
             }
         }
         count

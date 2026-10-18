@@ -163,6 +163,20 @@ fn a_served_image_file(
     Ok(())
 }
 
+// A picture whose bytes are about as many as its pixels, as a
+// photograph's are, at `$SERVER/X.png`.
+#[given(regex = r#"^the web server serves an? (\d+) by (\d+) noisy image file "([^"]+)"$"#)]
+fn a_served_noisy_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+) -> StepResult {
+    let bytes = fixture::noisy_png(width, height)?;
+    w.web()?.serve(&name, bytes);
+    Ok(())
+}
+
 #[given(regex = r#"^the web server serves a file "([^"]+)" that is not an image$"#)]
 fn served_not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
     w.web()?.serve(&name, fixture::not_an_image());

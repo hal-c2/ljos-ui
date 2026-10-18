@@ -1116,6 +1116,12 @@ pub fn kept_pixels(e: &Engine, item: ObjectId) -> Option<(u32, u32)> {
     Some((image.width(), image.height()))
 }
 
+/// Whether `me` shows a picture of `url`, at whatever size it keeps it.
+pub(crate) fn loads_from(e: &Engine, me: ObjectId, url: &str) -> bool {
+    e.is_alive(me)
+        && with_run(e, me, |r| r.key.as_ref().is_some_and(|k| k.url == url)) == Some(true)
+}
+
 /// Whether `me` shows the picture kept under `key`.
 pub(crate) fn shows(e: &Engine, me: ObjectId, key: &ImageKey) -> bool {
     with_run(e, me, |r| r.key.as_ref() == Some(key)) == Some(true)

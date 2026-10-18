@@ -2009,6 +2009,70 @@ Item {
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
+/// A PNG of noise, whose bytes are about as many as its pixels, as a
+/// photograph's are.
+fn noisy_png(width: u32, height: u32) -> Vec<u8> {
+    let mut state = 0x2545_f491_u32;
+    let data: Vec<u8> = (0..width * height * 3)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 24) as u8
+        })
+        .collect();
+    let mut bytes = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut bytes, width, height);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&data).unwrap();
+    }
+    bytes
+}
+
+#[test]
+fn a_network_picture_larger_than_its_pixels_that_arrives_for_a_row_gone_is_not_kept() {
+    let (e, store) = pictures();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let bytes = noisy_png(1024, 1024);
+    // More than the 448 by 448 kept of it.
+    assert!(bytes.len() > 448 * 448 * 4);
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(Counting {
+        bytes,
+        asked: asked.clone(),
+    }));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image { objectName: "row"; width: 100; height: 100 }
+    Image { objectName: "later"; width: 100; height: 100 }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let url = Value::from("http://example.invalid/noise.png");
+    let row = find(&e, root, "row");
+    set(&e, row, "source", url.clone());
+    e.destroy(row);
+    frame(&mut s, &e);
+    store.finish(&e);
+    // Neither its pixels nor its bytes.
+    assert_eq!(store.bytes(), 0);
+    // A row made later fetches it again, as on Qt.
+    let later = find(&e, root, "later");
+    set(&e, later, "source", url);
+    frame(&mut s, &e);
+    store.finish(&e);
+    frame(&mut s, &e);
+    assert_eq!(status(&e, later), image_status::READY);
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
 /// Lets the pixels of what `item` paints go, as an upload does, and says
 /// whether they went and whether reading them gives them back as they were.
 fn let_go_and_read_back(s: &QuickScene, item: ObjectId) -> (bool, bool) {
