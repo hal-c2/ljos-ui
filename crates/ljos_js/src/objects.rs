@@ -263,6 +263,8 @@ pub(crate) struct HostWrapper {
     /// Where its collection is told. The cache keeps an Engine-owned
     /// wrapper alive, so it is collected only once the cache dropped it.
     pub(crate) release_queue: Option<Rc<RefCell<Vec<u64>>>>,
+    /// Its type's names, which it answers for (host/answer.rs).
+    pub(crate) listing: Option<Rc<crate::host::Listing>>,
 }
 
 impl Drop for HostWrapper {
@@ -281,16 +283,22 @@ impl Drop for HostWrapper {
 /// Rust class one QuickJS class id and tells them apart by a table, two
 /// lookups per access; here `JS_GetOpaque` with the id is the whole check.
 ///
+/// `exotic` answers for the wrappers' properties; QuickJS keeps the
+/// pointer and never writes through it.
+///
 /// # Safety
 /// `rt` is a live runtime.
-pub(crate) unsafe fn register_wrapper_class(rt: *mut qjs::JSRuntime) -> Option<qjs::JSClassID> {
+pub(crate) unsafe fn register_wrapper_class(
+    rt: *mut qjs::JSRuntime,
+    exotic: &'static qjs::JSClassExoticMethods,
+) -> Option<qjs::JSClassID> {
     let mut id: qjs::JSClassID = 0;
     let def = qjs::JSClassDef {
         class_name: c"LjosHostObject".as_ptr(),
         finalizer: Some(finalize_wrapper),
         gc_mark: None,
         call: None,
-        exotic: std::ptr::null_mut(),
+        exotic: std::ptr::from_ref(exotic).cast_mut(),
     };
     // SAFETY: as the caller's; QuickJS copies the definition.
     unsafe {

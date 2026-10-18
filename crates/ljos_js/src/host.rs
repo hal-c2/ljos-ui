@@ -17,6 +17,7 @@ use rquickjs::{
 use rustc_hash::FxHashMap;
 use slotmap::{SlotMap, new_key_type};
 
+mod answer;
 mod direct;
 mod live_list;
 pub use direct::{DirectCall, DirectParam};
@@ -815,9 +816,17 @@ impl<'js> Scope<'js> {
             ));
         };
         let proto = proto.restore(&self.ctx)?;
+        let listing = self
+            .state
+            .listings
+            .borrow()
+            .get(ty.0 as usize)
+            .cloned()
+            .flatten();
         let w = HostWrapper {
             id: obj,
             release_queue,
+            listing,
         };
         let raw = self.ctx.as_raw().as_ptr();
         // SAFETY: the context is entered and the class is its runtime's.
@@ -1198,9 +1207,10 @@ impl JsHost {
         let ctx = Context::full(&rt)?;
         let raw = ctx.with(|c| c.as_raw());
         // SAFETY: the runtime is alive.
-        let wrapper_class =
-            unsafe { register_wrapper_class(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
-                .ok_or(rquickjs::Error::Allocation)?;
+        let wrapper_class = unsafe {
+            register_wrapper_class(rquickjs::qjs::JS_GetRuntime(raw.as_ptr()), &answer::EXOTIC)
+        }
+        .ok_or(rquickjs::Error::Allocation)?;
         // SAFETY: as above.
         let list_class = unsafe { live_list::register(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
             .ok_or(rquickjs::Error::Allocation)?;
@@ -1560,17 +1570,29 @@ impl JsHost {
                     .find(|e| e.is_some_and(|e| of(e) == name))?
                     .take()
             }
+            // The base's slots are for the entries copied from it: the
+            // same atoms, kept by this prototype too.
+            let own = |p: &PropDef, listing: &mut Listing| -> rquickjs::Result<()> {
+                let atom = install_prop(&proto, p)?;
+                let slot = Slot {
+                    prop: p.id,
+                    writable: p.writable,
+                };
+                listing.slots.insert(atom, slot);
+                Ok(())
+            };
             if let Some((from, names)) = &base {
+                listing.slots = names.slots.clone();
                 for name in &names.props {
                     match take(&mut own_props, name, |p| p.name.as_str()) {
-                        Some(p) => install_prop(&proto, p)?,
+                        Some(p) => own(p, &mut listing)?,
                         None => copy_entry(ctx, from, &proto, name)?,
                     }
                     listing.props.push(name.clone());
                 }
             }
             for p in own_props.into_iter().flatten() {
-                install_prop(&proto, p)?;
+                own(p, &mut listing)?;
                 listing.props.push(p.name.clone());
             }
             if let Some((from, names)) = &base {
@@ -1592,6 +1614,19 @@ impl JsHost {
             for m in own_methods.into_iter().flatten() {
                 install_method(&proto, weak.clone(), m.id, &m.name)?;
                 listing.members.push(m.name.clone());
+            }
+            // A signal or method of a property's name replaced it on the
+            // prototype, as a QML method named `state` hides Item's: the
+            // wrapper must not answer for it.
+            let raw = ctx.as_raw().as_ptr();
+            for name in &listing.members {
+                // SAFETY: a live context; the atom is freed after the look.
+                unsafe {
+                    let atom =
+                        rquickjs::qjs::JS_NewAtomLen(raw, name.as_ptr().cast(), name.len() as _);
+                    listing.slots.remove(&atom);
+                    rquickjs::qjs::JS_FreeAtom(raw, atom);
+                }
             }
             if !def.plain && !def.name.is_empty() {
                 install_to_string(ctx, &proto, def.name.clone())?;
@@ -1689,6 +1724,14 @@ impl JsHost {
 
     pub fn wrapper_count(&self) -> usize {
         self.state.wrappers.borrow().len()
+    }
+
+    /// How many times a script on this thread has called a property's
+    /// accessor function rather than had its wrapper answer
+    /// (host/answer.rs): a read through the prototype itself, or through
+    /// an object made over a wrapper.
+    pub fn accessor_calls() -> u64 {
+        ACCESSOR_CALLS.get()
     }
 
     /// Delivers finaliser notifications for JS-owned wrappers. Already called
@@ -1852,7 +1895,9 @@ fn register_module<'js>(
 
 /// Accessors are built from closures, not `Function` values: rquickjs only
 /// implements `AsProperty` for `IntoJsFunc` types.
-fn install_prop(proto: &Object<'_>, p: &PropDef) -> rquickjs::Result<()> {
+/// Gives `proto` the accessors of `p`, and the atom of its name, which
+/// the prototype keeps.
+fn install_prop(proto: &Object<'_>, p: &PropDef) -> rquickjs::Result<rquickjs::qjs::JSAtom> {
     use rquickjs::qjs;
     let ctx = proto.ctx().as_raw().as_ptr();
     // The id rides in the function's data, not its `magic`: QuickJS keeps
@@ -1876,8 +1921,12 @@ fn install_prop(proto: &Object<'_>, p: &PropDef) -> rquickjs::Result<()> {
         if r < 0 {
             return Err(rquickjs::Error::Exception);
         }
+        Ok(atom)
     }
-    Ok(())
+}
+
+thread_local! {
+    static ACCESSOR_CALLS: Cell<u64> = const { Cell::new(0) };
 }
 
 /// A property read: QuickJS calls it with the property's id as its data.
@@ -1892,11 +1941,27 @@ unsafe extern "C" fn raw_get(
     _magic: std::ffi::c_int,
     data: *mut rquickjs::qjs::JSValue,
 ) -> rquickjs::qjs::JSValue {
+    ACCESSOR_CALLS.set(ACCESSOR_CALLS.get() + 1);
     // SAFETY: QuickJS calls it on a live context with the data it was made
     // with.
+    unsafe { prop_get(ctx, this, None, prop_id(data)) }
+}
+
+/// Reads the property `prop` of the wrapper `this` ([`raw_get`], and
+/// host/answer.rs), whose id is `known` when the caller has it.
+///
+/// # Safety
+/// A live context; `known` is the id of `this`.
+#[inline]
+unsafe fn prop_get(
+    ctx: *mut rquickjs::qjs::JSContext,
+    this: rquickjs::qjs::JSValue,
+    known: Option<u64>,
+    prop: u32,
+) -> rquickjs::qjs::JSValue {
+    // SAFETY: as the caller's.
     unsafe {
-        let prop = prop_id(data);
-        match raw_plain(ctx, this, |host, id| host.get_plain(id, prop)) {
+        match raw_plain(ctx, this, known, |_, host, id| host.get_plain(id, prop)) {
             Some(PlainValue::Number(n)) => return raw_number(n),
             Some(PlainValue::Bool(b)) => return raw_bool(b),
             _ => {}
@@ -1917,23 +1982,46 @@ unsafe extern "C" fn raw_set(
     data: *mut rquickjs::qjs::JSValue,
 ) -> rquickjs::qjs::JSValue {
     use rquickjs::qjs;
+    ACCESSOR_CALLS.set(ACCESSOR_CALLS.get() + 1);
     // SAFETY: QuickJS calls it on a live context with `argc` arguments and
     // the data it was made with.
     unsafe {
         let value = if argc > 0 { *argv } else { qjs::JS_UNDEFINED };
-        let prop = prop_id(data);
+        prop_set(ctx, this, None, prop_id(data), value)
+    }
+}
+
+/// Writes `value`, borrowed, to the property `prop` of the wrapper `this`
+/// ([`raw_set`], and host/answer.rs): undefined, or an exception. `known`
+/// is as [`prop_get`]'s.
+///
+/// # Safety
+/// A live context; `known` is the id of `this`.
+#[inline]
+unsafe fn prop_set(
+    ctx: *mut rquickjs::qjs::JSContext,
+    this: rquickjs::qjs::JSValue,
+    known: Option<u64>,
+    prop: u32,
+    value: rquickjs::qjs::JSValue,
+) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // SAFETY: as the caller's.
+    unsafe {
         let plain = match raw_in(value) {
             Some(JsValue::Number(n)) => Some(PlainValue::Number(n)),
             Some(JsValue::Bool(b)) => Some(PlainValue::Bool(b)),
             _ => None,
         };
-        let done = plain.and_then(|v| raw_plain(ctx, this, |host, id| host.set_plain(id, prop, v)));
+        // What the write set off may have been stopped: the scope says so.
+        let done = plain.and_then(|v| {
+            raw_plain(ctx, this, known, |state, host, id| {
+                Some(host.set_plain(id, prop, v)?.map(|()| state.stopped.get()))
+            })
+        });
         match done {
-            // What the write set off may have been stopped: the scope says so.
-            Some(Ok(())) => {
-                if !raw_state(ctx).is_some_and(|st| st.stopped.get()) {
-                    return qjs::JS_UNDEFINED;
-                }
+            Some(Ok(false)) => return qjs::JS_UNDEFINED,
+            Some(Ok(true)) => {
                 return raw_accessor(ctx, this, |scope, _, _| {
                     scope.back(Ok(()))?;
                     Ok(qjs::JS_UNDEFINED)
@@ -1965,21 +2053,26 @@ unsafe extern "C" fn raw_set(
     }
 }
 
-/// Runs `f` for the wrapper `this` is and its host, without the scope
-/// [`raw_accessor`] makes: `None` when there is none, or when `f`
-/// panicked, which the long way then meets again and reports.
+/// Runs `f` for the wrapper `this` is, whose id is `known` when the
+/// caller has it, and its host, without the scope [`raw_accessor`] makes:
+/// `None` when there is none, or when `f` panicked, which the long way
+/// then meets again and reports.
 unsafe fn raw_plain<T>(
     raw: *mut rquickjs::qjs::JSContext,
     this: rquickjs::qjs::JSValue,
-    f: impl FnOnce(&dyn HostObjects, u64) -> Option<T>,
+    known: Option<u64>,
+    f: impl FnOnce(&HostState, &dyn HostObjects, u64) -> Option<T>,
 ) -> Option<T> {
     catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: QuickJS calls with a live context.
         let state = unsafe { raw_state(raw) }?;
-        // SAFETY: the class is the runtime's.
-        let id = unsafe { wrapper_id(state.wrapper_class, this) }?;
+        let id = match known {
+            Some(id) => id,
+            // SAFETY: the class is the runtime's.
+            None => unsafe { wrapper_id(state.wrapper_class, this) }?,
+        };
         let host = state.host.borrow();
-        f(&**host.as_ref()?, id)
+        f(&state, &**host.as_ref()?, id)
     }))
     .ok()
     .flatten()
@@ -2956,9 +3049,19 @@ fn panic_message(p: &(dyn Any + Send)) -> String {
 /// The names a type's prototype was given: its properties, then its
 /// signals and methods, each a base's first.
 #[derive(Default)]
-struct Listing {
+pub(crate) struct Listing {
     props: Vec<String>,
     members: Vec<String>,
+    /// The property each name a wrapper answers itself is, by its atom,
+    /// which the prototype's entry keeps (host/answer.rs).
+    pub(crate) slots: FxHashMap<rquickjs::qjs::JSAtom, Slot>,
+}
+
+/// A property of a type, as its wrappers answer for it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Slot {
+    prop: u32,
+    writable: bool,
 }
 
 /// Gives `to` the entry `name` of `from` as it is: the same accessor

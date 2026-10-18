@@ -477,6 +477,61 @@ fn accessor_write_calls_set() {
 }
 
 #[test]
+fn the_wrapper_answers_its_properties_with_no_accessor_call() {
+    let (host, store) = host_with_store();
+    store.insert(1, 3.0, 4.0);
+    let m = host
+        .load_module(
+            "own.js",
+            "export function f(o) { o.width = o.height + 1; return o.width; }\n\
+             export function g(o) { var d = Object.getOwnPropertyDescriptor(\
+             Object.getPrototypeOf(o), 'width'); var c = Object.create(o); \
+             o.mark = 7; return [d.get.call(o), o.mark, c.mark, 'width' in c]; }",
+        )
+        .unwrap();
+    let before = JsHost::accessor_calls();
+    assert_eq!(
+        host.call(m.function("f").unwrap(), &[JsValue::Object(1)])
+            .unwrap(),
+        JsValue::Number(5.0)
+    );
+    assert_eq!(JsHost::accessor_calls(), before);
+    // What asks the prototype still finds the accessors, and a name of no
+    // property is the wrapper's own, seen through an object made over it.
+    assert_eq!(
+        host.call(m.function("g").unwrap(), &[JsValue::Object(1)])
+            .unwrap(),
+        JsValue::Array(vec![
+            JsValue::Number(5.0),
+            JsValue::Number(7.0),
+            JsValue::Number(7.0),
+            JsValue::Bool(true)
+        ])
+    );
+    assert_eq!(JsHost::accessor_calls(), before + 1);
+}
+
+#[test]
+fn a_method_of_a_property_name_hides_the_property() {
+    let host = JsHost::new(ljos_js::JsConfig::default()).unwrap();
+    let store = std::rc::Rc::new(Store::default());
+    host.set_host_objects(store.clone());
+    let mut def = type_def();
+    def.methods[0].name = "width".into();
+    let ty = host.register_type(&def).unwrap();
+    *store.ty.borrow_mut() = Some(ty);
+    store.insert(1, 3.0, 4.0);
+    let m = host
+        .load_module("hide.js", "export function f(o) { return typeof o.width; }")
+        .unwrap();
+    assert_eq!(
+        host.call(m.function("f").unwrap(), &[JsValue::Object(1)])
+            .unwrap(),
+        JsValue::String("function".into())
+    );
+}
+
+#[test]
 fn read_only_property_rejects_writes_in_strict_code() {
     let (host, store) = host_with_store();
     store.insert(1, 1.0, 1.0);
