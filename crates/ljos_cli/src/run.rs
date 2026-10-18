@@ -5,8 +5,10 @@
 //! MCP clients on this machine (§19.4, §19.7), with the capabilities it is
 //! given by name, and `--top` shows where the time of each frame went.
 
+use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -248,6 +250,15 @@ fn compile(
     OnDemand::open(dir, key, oracle, say)
 }
 
+/// What the compile thread made; its panic goes on here.
+fn compiled(
+    thread: std::thread::JoinHandle<anyhow::Result<OnDemand<EngineOracle>>>,
+) -> anyhow::Result<OnDemand<EngineOracle>> {
+    thread
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 /// One line for the developer's terminal about what the watcher brought.
 pub fn describe(report: &Report) -> String {
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
@@ -389,13 +400,35 @@ impl Run {
                 Ok(root)
             })?;
         } else {
-            let source = compile(
-                &dir,
-                &key,
-                example.as_deref(),
-                Box::new(crate::stderr::line),
-            )?;
-            ljos_shell::run::<()>(config, move |setup| {
+            // The project compiles while the window system and the drivers
+            // start. It still stops the run before a window opens: windows
+            // open after `setup`, which waits for it.
+            let compiling = {
+                let (dir, key, example) = (dir.clone(), key.clone(), example.clone());
+                std::thread::Builder::new()
+                    .name("ljos-compile".into())
+                    .spawn(move || {
+                        compile(
+                            &dir,
+                            &key,
+                            example.as_deref(),
+                            Box::new(crate::stderr::line),
+                        )
+                    })
+                    .context("a thread to compile on")?
+            };
+            let compiling = Rc::new(RefCell::new(Some(compiling)));
+            let failed = Rc::new(RefCell::new(None));
+            let (waiting, failing) = (Rc::clone(&compiling), Rc::clone(&failed));
+            let ran = ljos_shell::run::<()>(config, move |setup| {
+                let source = match waiting.borrow_mut().take().map(compiled) {
+                    Some(Ok(source)) => source,
+                    Some(Err(error)) => {
+                        *failing.borrow_mut() = Some(error);
+                        return Err("the project did not compile".into());
+                    }
+                    None => unreachable!("setup runs once"),
+                };
                 // The application's databases where Qt keeps them.
                 ljos_localstorage::register(setup.engine());
                 crate::render::register_example(setup.engine(), example.as_deref());
@@ -411,7 +444,16 @@ impl Run {
                         crate::render::example_properties(example.as_deref()),
                     )
                     .map_err(|e| e.to_string())?)
-            })?;
+            });
+            // Its error first, as when it stopped the run before the window
+            // system was asked for anything.
+            if let Some(error) = failed.borrow_mut().take() {
+                return Err(error);
+            }
+            if let Some(Err(error)) = compiling.borrow_mut().take().map(compiled) {
+                return Err(error);
+            }
+            ran?;
         }
         Ok(())
     }
@@ -630,18 +672,18 @@ mod tests {
                 ),
             ],
         );
-        let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+        let said = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let to = said.clone();
         let source = compile(
             dir.path(),
             "Main",
             None,
-            Box::new(move |line| to.borrow_mut().push(line.to_owned())),
+            Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
         )
         .unwrap();
         // Nothing but the entry is compiled before an object is made, and
         // only what it imports is read.
-        assert!(said.borrow().is_empty(), "{said:?}");
+        assert!(said.lock().unwrap().is_empty(), "{said:?}");
         let read = ["Broken", "Main", "Sibling", "parts/Panel", "widgets/Gauge"];
         assert_eq!(source.read(), read);
         let engine = Engine::new();
@@ -662,7 +704,7 @@ mod tests {
         let page = engine.read_by_name(root, "page").as_object().unwrap();
         let name = engine.read_by_name(page, "objectName");
         assert_eq!(name.to_js_string().to_string(), "page");
-        let said = said.borrow();
+        let said = said.lock().unwrap();
         let told = |file: &str| said.iter().any(|line| line.starts_with(file));
         assert!(told("Sibling.qml: 3:"), "{said:?}");
         assert!(told("pages/Page.qml: 4:"), "{said:?}");

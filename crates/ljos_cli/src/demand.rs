@@ -19,7 +19,7 @@ use ljos_ir::CompiledFile;
 use qml_front::TypeOracle;
 
 /// What a file the program reached has to say: one line per warning.
-pub(crate) type Say = Box<dyn Fn(&str)>;
+pub(crate) type Say = Box<dyn Fn(&str) + Send>;
 
 /// A [`ComponentSource`] over a project's files that compiles each when the
 /// engine first asks for it, and tells `say` its warnings then.
