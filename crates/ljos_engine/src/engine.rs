@@ -2271,6 +2271,35 @@ impl Engine {
         })
     }
 
+    /// [`Engine::effect_in`] that, once `f` has run, is told of a change of
+    /// what it read instead of running again ([`Graph::effect_told`]): for
+    /// an owner that reads the values itself when it next has use for them.
+    ///
+    /// [`Graph::effect_told`]: ljos_reactive::Graph::effect_told
+    pub fn effect_told_in(
+        &self,
+        obj: ObjectId,
+        mut f: impl FnMut(&Engine) + 'static,
+        told: impl Fn() + 'static,
+    ) -> Result<NodeId, EngineError> {
+        let scope = self.ensure_scope(obj)?;
+        let weak = Rc::downgrade(&self.inner);
+        let g = &self.inner.graph;
+        Ok(g.effect_told(
+            scope,
+            move |_g| {
+                if let Some(inner) = weak.upgrade() {
+                    let engine = Engine::from_inner(inner);
+                    let _t = Tracking::enter(&engine.inner.tracking);
+                    if !engine.destruction_told(obj) {
+                        f(&engine);
+                    }
+                }
+            },
+            told,
+        )?)
+    }
+
     /// Whether `obj` is gone or `Component.onDestruction` has been told for
     /// it: what it runs would see a half torn-down object.
     fn destruction_told(&self, obj: ObjectId) -> bool {

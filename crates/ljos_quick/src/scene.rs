@@ -251,6 +251,9 @@ enum Paint {
 struct Shared {
     geom: FxHashMap<ObjectId, Geom>,
     place: FxHashMap<ObjectId, Place>,
+    /// Items whose place may have changed, read at the frame: the place
+    /// effect is told rather than run (see [`QuickScene::adopt`]).
+    placed: FxHashSet<ObjectId>,
     /// The map of a `transform` list, from [`list_effect`].
     list: FxHashMap<ObjectId, crate::transform::Projective>,
     content: FxHashMap<ObjectId, Paint>,
@@ -269,6 +272,7 @@ impl Shared {
     fn pending(&self) -> bool {
         !(self.geom.is_empty()
             && self.place.is_empty()
+            && self.placed.is_empty()
             && self.list.is_empty()
             && self.content.is_empty()
             && self.structure.is_empty()
@@ -375,6 +379,8 @@ pub struct QuickScene {
     log: QuickLog,
     entries: FxHashMap<ObjectId, Entry>,
     by_node: SecondaryMap<NodeId, ObjectId>,
+    /// `Shared::placed` of the last frame, kept for its capacity.
+    placed: FxHashSet<ObjectId>,
     paint: FxHashMap<ObjectId, Paint>,
     /// Each `MultiEffect` as read, before it is given the picture of a
     /// source with children, and a fingerprint of the picture it was given
@@ -475,6 +481,7 @@ impl QuickScene {
             log: QuickLog::default(),
             entries: FxHashMap::default(),
             by_node: SecondaryMap::new(),
+            placed: FxHashSet::default(),
             paint: FxHashMap::default(),
             effect_base: HashMap::new(),
             source_base: HashMap::new(),
@@ -1122,7 +1129,18 @@ impl QuickScene {
         // here, not on each of the runs that follow an animated value.
         let shown = crate::animation::shown::shown(engine);
         let (place, shared) = (Rc::clone(&shown), Rc::clone(&self.shared));
-        effects.push(engine.effect_in(obj, move |e| place_effect(e, obj, &place, &shared))?);
+        // Told, not run, on a change: an item that moves every frame then
+        // costs the graph no run, and its place is read once, at the frame.
+        let told = Rc::clone(&self.shared);
+        effects.push(engine.effect_told_in(
+            obj,
+            move |e| place_effect(e, obj, &place, &shared),
+            move || {
+                mark(&told, |s| {
+                    s.placed.insert(obj);
+                })
+            },
+        )?);
         let shared = Rc::clone(&self.shared);
         effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shown, &shared))?);
         if kind.polishes() {
@@ -1203,6 +1221,7 @@ impl QuickScene {
         let mut s = self.shared.borrow_mut();
         s.geom.remove(&obj);
         s.place.remove(&obj);
+        s.placed.remove(&obj);
         s.list.remove(&obj);
         s.content.remove(&obj);
         s.structure.remove(&obj);
@@ -1288,7 +1307,28 @@ impl QuickScene {
     }
 
     /// Step 8b.
+    /// Reads the place of each item the place effect was told about.
+    /// Unborrowed: a binding a read brings up to date may set off effects
+    /// that mark the scene.
+    fn read_places(&mut self, engine: &Engine) {
+        std::mem::swap(&mut self.placed, &mut self.shared.borrow_mut().placed);
+        if self.placed.is_empty() {
+            return;
+        }
+        let shown = crate::animation::shown::shown(engine);
+        for obj in self.placed.drain() {
+            if self.entries.contains_key(&obj) && engine.is_alive(obj) {
+                let place = (
+                    shown_num(engine, &shown, obj, Item::X.index),
+                    shown_num(engine, &shown, obj, Item::Y.index),
+                );
+                self.shared.borrow_mut().place.insert(obj, place);
+            }
+        }
+    }
+
     fn apply_geometry(&mut self, engine: &Engine) {
+        self.read_places(engine);
         // Each item's tree node is set on its own, so neither list needs
         // an order; what only moved is told apart while the maps stand.
         let (geoms, moved) = {

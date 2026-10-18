@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::fmt;
+use std::rc::Rc;
 
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -74,6 +75,12 @@ enum Kind<V> {
     Property(Prop<V>),
     /// The closure is `None` only while it runs.
     Effect(Option<EffectFn<V>>),
+    /// [`Graph::effect_told`]: `run` as an effect's closure, `told` for
+    /// a change once it has run.
+    Told {
+        run: Option<EffectFn<V>>,
+        told: Rc<dyn Fn()>,
+    },
 }
 
 enum Compute<V> {
@@ -95,6 +102,8 @@ struct Node<V> {
     queued_level: u32,
     /// Parked on a frozen scope until thaw.
     deferred: bool,
+    /// A [`Kind::Told`] waiting in `Inner::told`.
+    told_due: bool,
     /// On the current check-walk stack; meeting it again is a cycle.
     walking: bool,
     /// Read itself in the run that is in progress.
@@ -142,7 +151,7 @@ struct Node<V> {
 impl<V> Node<V> {
     fn is_eager(&self, all: bool) -> bool {
         match &self.kind {
-            Kind::Effect(_) => true,
+            Kind::Effect(_) | Kind::Told { .. } => true,
             Kind::Property(p) => self.eager || (all && p.is_bound()),
         }
     }
@@ -220,6 +229,9 @@ struct Inner<V> {
     flush_depth: u32,
     /// Scopes to freeze once the work under way is done (`set_frozen`).
     freeze_later: Vec<ScopeId>,
+    /// [`Kind::Told`] nodes a change reached, to be told when it has
+    /// spread.
+    told: Vec<NodeId>,
     flush_epoch: u64,
     tick: u64,
     seq: u64,
@@ -412,6 +424,7 @@ impl<V: Clone + 'static> Graph<V> {
                 batch_depth: 0,
                 flush_depth: 0,
                 freeze_later: Vec::new(),
+                told: Vec::new(),
                 flush_epoch: 0,
                 tick: 0,
                 seq: 0,
@@ -791,6 +804,46 @@ impl<V: Clone + 'static> Graph<V> {
             back: at,
         });
         node.height = h + 1;
+        Ok(n)
+    }
+
+    /// An effect that is told of a change instead of running again. `run`
+    /// runs as [`Graph::effect`]'s closure does, and what it read stays the
+    /// node's sources; a change of one of them later calls `told`,
+    /// untracked and with the graph free, when the change has spread and
+    /// before the effects it set off run. A mark that only may change a
+    /// value (through a binding) tells too.
+    ///
+    /// For an owner that reads the values itself when it has use for them,
+    /// a scene at its next frame, and does not need a run per change. It
+    /// has to read them after each `told`: a binding it does not read is
+    /// not brought up to date, and its further changes stop there.
+    ///
+    /// `run` runs again, tracked, where an effect would and telling cannot
+    /// do: in a scope that was frozen when the change came, once it thaws;
+    /// when a source is disposed; and when it is marked while running.
+    pub fn effect_told(
+        &self,
+        scope: ScopeId,
+        run: impl FnMut(&Graph<V>) + 'static,
+        told: impl Fn() + 'static,
+    ) -> Result<NodeId, ReactiveError> {
+        let n = {
+            let mut i = self.inner.borrow_mut();
+            let n = i.insert_node(
+                scope,
+                Kind::Told {
+                    run: Some(Box::new(run)),
+                    told: Rc::new(told),
+                },
+                None,
+                NodeState::Dirty,
+            )?;
+            let Inner { nodes, queues, .. } = &mut *i;
+            enqueue(queues, n, &mut nodes[n]);
+            n
+        };
+        self.flush_if_idle();
         Ok(n)
     }
 
@@ -1352,7 +1405,7 @@ impl<V: Clone + 'static> Graph<V> {
             let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
             let reruns = match &node.kind {
                 Kind::Property(p) => p.is_bound(),
-                Kind::Effect(_) => true,
+                Kind::Effect(_) | Kind::Told { .. } => true,
             };
             if !reruns {
                 return Ok(());
@@ -1500,7 +1553,7 @@ impl<V: Clone + 'static> Graph<V> {
             Kind::Property(p) if p.animated && p.host => Some(Provenance::Host),
             Kind::Property(p) if p.animated => Some(Provenance::Animated),
             Kind::Property(p) => Some(p.top().provenance),
-            Kind::Effect(_) => None,
+            Kind::Effect(_) | Kind::Told { .. } => None,
         }
     }
 
@@ -1522,7 +1575,7 @@ impl<V: Clone + 'static> Graph<V> {
     pub fn base_provenance(&self, n: NodeId) -> Option<Provenance> {
         match &self.inner.borrow().nodes.get(n)?.kind {
             Kind::Property(p) => Some(p.base.provenance),
-            Kind::Effect(_) => None,
+            Kind::Effect(_) | Kind::Told { .. } => None,
         }
     }
 
@@ -1543,7 +1596,7 @@ impl<V: Clone + 'static> Graph<V> {
     pub fn kind(&self, n: NodeId) -> Option<NodeKind> {
         Some(match self.inner.borrow().nodes.get(n)?.kind {
             Kind::Property(_) => NodeKind::Property,
-            Kind::Effect(_) => NodeKind::Effect,
+            Kind::Effect(_) | Kind::Told { .. } => NodeKind::Effect,
         })
     }
 
@@ -1751,7 +1804,9 @@ impl<V: Clone + 'static> Graph<V> {
     fn flush(&self) {
         {
             let mut i = self.inner.borrow_mut();
-            if i.batch_depth > 0 || i.queues.last().is_none_or(Queue::is_empty) {
+            if i.batch_depth > 0
+                || (i.queues.last().is_none_or(Queue::is_empty) && i.told.is_empty())
+            {
                 return;
             }
             if i.flush_depth == 0 {
@@ -1762,6 +1817,7 @@ impl<V: Clone + 'static> Graph<V> {
         }
         let _guard = FlushGuard(self);
         loop {
+            self.tell();
             // A statement, so the borrow ends before user code runs.
             let next = self.inner.borrow_mut().next_to_run();
             let Some(n) = next else {
@@ -1777,6 +1833,29 @@ impl<V: Clone + 'static> Graph<V> {
             self.update(n);
         }
         self.dispatch_diagnostics();
+    }
+
+    /// Tells the [`Kind::Told`] nodes a change reached, before the
+    /// effects run: what they are told to read is what those see.
+    fn tell(&self) {
+        loop {
+            let told = {
+                let mut g = self.inner.borrow_mut();
+                let i = &mut *g;
+                let Some(n) = i.told.pop() else {
+                    return;
+                };
+                let Some(node) = i.nodes.get_mut(n) else {
+                    continue;
+                };
+                node.told_due = false;
+                match &node.kind {
+                    Kind::Told { told, .. } => Rc::clone(told),
+                    _ => continue,
+                }
+            };
+            told();
+        }
     }
 
     /// Brings `n` up to date: Check walks its sources (iteratively, so long
@@ -1885,7 +1964,7 @@ impl<V: Clone + 'static> Graph<V> {
                     Content::Binding(f) => f.take().map(Compute::Binding),
                     Content::Value(_) => None,
                 },
-                Kind::Effect(f) => f.take().map(Compute::Effect),
+                Kind::Effect(f) | Kind::Told { run: f, .. } => f.take().map(Compute::Effect),
             };
             let Some(compute) = compute else {
                 // A plain value has nothing to run.
@@ -2048,7 +2127,10 @@ impl<V: Clone + 'static> Graph<V> {
                             *slot = Some(f);
                         }
                     }
-                    (Kind::Effect(slot), Some(Compute::Effect(f))) => *slot = Some(f),
+                    (
+                        Kind::Effect(slot) | Kind::Told { run: slot, .. },
+                        Some(Compute::Effect(f)),
+                    ) => *slot = Some(f),
                     (_, other) => leftover = other,
                 }
                 if ok {
@@ -2089,7 +2171,7 @@ impl<V: Clone + 'static> Graph<V> {
                     let node = &mut i.nodes[n];
                     node.pending = false;
                     node.self_read = false;
-                    if matches!(node.kind, Kind::Effect(_)) {
+                    if matches!(node.kind, Kind::Effect(_) | Kind::Told { .. }) {
                         node.state = NodeState::Clean;
                     } else {
                         node.state = NodeState::Dirty;
@@ -2240,6 +2322,7 @@ impl<V: Clone + 'static> Inner<V> {
             queued: false,
             queued_level: 0,
             deferred: false,
+            told_due: false,
             walking: false,
             self_read: false,
             cyclic: false,
@@ -2533,6 +2616,22 @@ impl<V: Clone + 'static> Inner<V> {
                         .is_some_and(|f| f.stamp == from_stamp);
                 if read {
                     node.pending = true;
+                }
+                continue;
+            }
+            if let Kind::Told { .. } = node.kind
+                && node.state == NodeState::Clean
+                && node.done_stamp != 0
+                && from_stamp != ALWAYS_STALE
+                && !self.scopes.get(node.scope).is_some_and(|s| s.frozen)
+            {
+                // Its sources stay what they are, so it is only told. A
+                // source that went, or a scope that thaws, runs it again.
+                // A binding's result comes after the mark that made it
+                // dirty, which told it already: the owner reading it is
+                // what brought the result.
+                if self.wave_origin.is_none() && !std::mem::replace(&mut node.told_due, true) {
+                    self.told.push(m);
                 }
                 continue;
             }
