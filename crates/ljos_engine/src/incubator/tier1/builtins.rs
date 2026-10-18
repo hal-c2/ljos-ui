@@ -456,7 +456,8 @@ fn shade(args: &[Value], usual: f64, by: fn(Color, f64) -> Color) -> Option<Valu
         Some(Value::Real(n)) => *n,
         Some(_) => return None,
     };
-    let percent = (factor * 100.0).trunc();
+    // The nearest whole hundredths: 1.15 is 115 though it falls short.
+    let percent = (factor * 100.0).round();
     // What an infinite factor makes of a channel is the script's.
     if percent.is_infinite() {
         return None;

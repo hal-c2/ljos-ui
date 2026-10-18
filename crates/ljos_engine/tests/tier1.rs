@@ -772,7 +772,10 @@ fn lighter_and_darker_agree_with_the_script() {
     for (n, r) in channels.iter().enumerate() {
         for g in &channels {
             let b = channels[(n * 7 + g.len()) % channels.len()];
-            for (f, by) in ["1.1", "1.5", "2", "3.7", "0.6"].iter().enumerate() {
+            for (f, by) in ["1.05", "1.1", "1.15", "1.5", "2", "3.7", "0.6", "0.57"]
+                .iter()
+                .enumerate()
+            {
                 let which = if (n + f) % 2 == 0 {
                     "lighter"
                 } else {

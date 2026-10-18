@@ -46,6 +46,18 @@ Feature: Making one colour from another
         | Qt.darker("white", 1.5)       | #aaaaaa   |
         | Qt.darker("#336699", 0.5)     | #88c4ff   |
 
+      Examples: a factor counts in whole hundredths, the nearest
+        | expression                    | colour    |
+        | Qt.lighter("#efefef", 1.05)   | #fbfbfb   |
+        | Qt.darker("#efefef", 1.05)    | #e4e4e4   |
+        | Qt.darker("#efefef", 1.15)    | #d0d0d0   |
+        | Qt.darker("#efefef", 1.13)    | #d4d4d4   |
+        | Qt.darker("#efefef", 2.3)     | #686868   |
+        | Qt.lighter("#336699", 1.16)   | #3b76b1   |
+        | Qt.lighter("#336699", 0.57)   | #1d3a57   |
+        | Qt.lighter("#336699", 0.29)   | #0f1e2c   |
+        | Qt.lighter("#336699", 1.005)  | #336699   |
+
       Examples: tint lays a translucent colour over another
         | expression                           | colour    |
         | Qt.tint("lightsteelblue", "#10FF0000") | #b5b8d0 |

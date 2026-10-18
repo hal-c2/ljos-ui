@@ -111,7 +111,10 @@ Item {
     let root = h.engine.create_from_url("Main", None, vec![]).unwrap();
     assert!(matches!(h.get(root, "held"), Value::Bool(true)));
     let log = h.log();
-    assert!(!log.iter().any(|l| l.contains("Unable to assign")), "{log:?}");
+    assert!(
+        !log.iter().any(|l| l.contains("Unable to assign")),
+        "{log:?}"
+    );
 }
 
 #[test]

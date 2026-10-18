@@ -613,7 +613,8 @@ pub(crate) const COLORS: &str = r##"
   const colorOf = (v) => (isColor(v) ? v : typeof v === "string" ? named(v) : null);
   const percent = (factor, usual) => {
     const f = factor === undefined ? usual : Number(factor);
-    return Math.trunc(f * 100);
+    // The nearest whole hundredths: 1.15 is 115 though it falls short.
+    return Math.round(f * 100);
   };
   const hsv = (c) => [
     c.hsvHue < 0 ? 0 : Math.round(c.hsvHue * 36000),
