@@ -798,6 +798,52 @@ impl Fill<'_> {
     }
 }
 
+/// The rows the last pass laid out that adjoin `slots`, before its first
+/// and after its last, as long as each was measured at some time. A row
+/// laid out at its known length while its delegate is still to be made
+/// counts as that length, not as the average, in the pass that laid it.
+fn beside(st: &ViewState, d: &ViewDelegates, slots: &[Slot]) -> (Vec<Slot>, Vec<Slot>) {
+    let (Some(first), Some(last)) = (slots.first(), slots.last()) else {
+        return (Vec::new(), Vec::new());
+    };
+    let last_pass = st.slots.borrow();
+    let sizes = st.sizes.borrow();
+    let known = |s: &Slot| known_size(&sizes, d, s);
+    let mut before = Vec::new();
+    let mut want = first.line;
+    for s in last_pass.iter().rev().filter(|s| s.line < first.line) {
+        match known(s) {
+            Some(k) if want == s.line + 1 => {
+                before.push(k);
+                want = s.line;
+            }
+            _ => break,
+        }
+    }
+    let mut after = Vec::new();
+    let mut want = last.line + 1;
+    for s in last_pass.iter().filter(|s| s.line > last.line) {
+        match known(s) {
+            Some(k) if s.line == want => {
+                after.push(k);
+                want += 1;
+            }
+            _ => break,
+        }
+    }
+    (before, after)
+}
+
+/// `s` at the length its row was last measured at, if it ever was.
+fn known_size(sizes: &FxHashMap<RowKey, f64>, d: &ViewDelegates, s: &Slot) -> Option<Slot> {
+    let size = *sizes.get(&d.key_at(s.line)?)?;
+    Some(Slot {
+        size,
+        measured: true,
+        ..*s
+    })
+}
+
 /// Where the row of `line` starts when it is outside what was laid out.
 fn place_outside(slots: &VecDeque<Slot>, line: usize, per: f64, spacing: f64) -> f64 {
     let (Some(first), Some(last)) = (slots.front(), slots.back()) else {
@@ -1050,19 +1096,46 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
     // measured to find its way says how long they are: without it the
     // rows before the first one laid out would take no room, and a view
     // made at a place (one a reload carried) would start there.
+    // Rows the last pass laid out just beyond these count as long as they
+    // were measured, not as the average: two passes a row apart (a method
+    // that lays out where the view goes, then the view where it ended up)
+    // then give the same length, and a list sent to its end again keeps it.
+    let (before, after) = if g.grid {
+        (Vec::new(), Vec::new())
+    } else {
+        beside(st, &d, slots.make_contiguous())
+    };
     let guessed = (fill.guess > 0.0).then_some(fill.guess);
-    let avg = average(slots.make_contiguous())
-        .or(guessed)
-        .unwrap_or(avg_before);
+    let avg = {
+        let sizes = st.sizes.borrow();
+        let all: Vec<Slot> = before
+            .iter()
+            .copied()
+            .chain(
+                slots
+                    .iter()
+                    .map(|s| known_size(&sizes, &d, s).unwrap_or(*s)),
+            )
+            .chain(after.iter().copied())
+            .collect();
+        average(&all)
+    }
+    .or(guessed)
+    .unwrap_or(avg_before);
     let per = avg + g.spacing;
+    let block = |s: &Slot| s.lead + s.size + g.spacing;
     let (start0, end) = match (slots.front(), slots.back()) {
         (Some(first), Some(last)) if g.grid => {
             let _ = (first, last);
             (0.0, lines as f64 * g.cell_main)
         }
         (Some(first), Some(last)) => (
-            first.top() - first.line as f64 * per,
-            last.end() + (lines - 1 - last.line) as f64 * per,
+            first.top()
+                - before.iter().map(block).sum::<f64>()
+                - (first.line - before.len()) as f64 * per,
+            last.end()
+                + after.iter().map(block).sum::<f64>()
+                + (lines - 1 - last.line - after.len()) as f64 * per,
         ),
         _ => (0.0, 0.0),
     };
