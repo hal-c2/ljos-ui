@@ -25,7 +25,7 @@ use crate::engine::{Engine, Inner};
 use crate::error::EngineError;
 use crate::ids::{ConnectionId, MethodIndex, ObjectId, PropIndex, SignalIndex};
 use crate::log::LogLevel;
-use crate::meta::{Declared, MetaRef, PropertyFlags};
+use crate::meta::{Declared, MetaRef, PropertyAccess, PropertyFlags};
 use crate::types::TypeTag;
 use crate::value::{Color, Font, JsHandle, Value};
 use crate::value_faces;
@@ -681,13 +681,31 @@ impl HostObjects for EngineHost {
             });
         }
         let p = PropIndex(prop);
-        if let Some((owner, name)) = engine.group_at(id, p) {
+        // Most properties are neither an alias, a group nor a `list<T>`
+        // declared in QML: one look at the property says so.
+        let plain = {
+            let store = engine.inner.store.borrow();
+            store
+                .objects
+                .get(id)
+                .and_then(|h| h.meta.property(p))
+                .is_some_and(|info| {
+                    !info.is_alias()
+                        && !info.flags.contains(PropertyFlags::GROUP)
+                        && !matches!(
+                            (&info.ty, &info.access),
+                            (TypeTag::List(Some(_)), PropertyAccess::Dynamic { .. })
+                        )
+                })
+        };
+        if !plain && let Some((owner, name)) = engine.group_at(id, p) {
             return group_proxy(scope, &engine, owner, &name).map_err(HostError::from);
         }
         let read = engine.try_read(id, p);
         // A `list<T>` declared in QML is read as the property's own list
         // (list_faces.rs). The read above is what a binding follows.
-        if read.is_ok()
+        if !plain
+            && read.is_ok()
             && let Some((owner, list)) = engine.script_list(id, p)
             && let Some(js) = engine.inner.js.borrow().clone()
         {
