@@ -503,8 +503,10 @@ ApplicationWindow {
                             kept.push(point[key])
                             next[key] = kept
                         }
-                        series = next
+                        // The version first: a chart reads it to
+                        // number the values it is given.
                         version += 1
+                        series = next
                         // The count comes after the change that made
                         // the objects, and an application at rest tells
                         // of no other.
@@ -620,32 +622,85 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     anchors.topMargin: 34
                                     anchors.margins: 12
-                                    // Each line its own property: a sample
-                                    // then makes one array of points per line
-                                    // and nothing in between.
-                                    readonly property real top: scaleOf(chart.values, chart.seconds)
-                                    readonly property var line: points(chart.values, top, width, height)
-                                    readonly property var second: points(chart.seconds, top, width, height)
-                                    // The line taken down to the bottom,
-                                    // filled under it. Empty for less than
-                                    // two points, which enclose nothing.
-                                    readonly property var area: line.length < 2 ? []
-                                        : line.concat([Qt.point(width, height), Qt.point(line[0].x, height)])
+                                    // A point stays where it was drawn and
+                                    // the lines move left under the plot, so
+                                    // a sample makes one point per line, not
+                                    // all of them again: making them all was
+                                    // most of what a sample cost. They are
+                                    // made again when the scale or the size
+                                    // changes, and the scale moves in steps
+                                    // so that it seldom does.
+                                    property real top: 1
+                                    property var line: []
+                                    property var second: []
+                                    readonly property real step: width / 119
+                                    // Where the newest point is drawn in the
+                                    // lines' own frame.
+                                    readonly property real head: (overview.version - 1) * step
 
-                                    function scaleOf(a, b) {
-                                        var top = 0
-                                        for (var i = 0; i < a.length; ++i)
-                                            top = Math.max(top, a[i])
-                                        for (var k = 0; k < b.length; ++k)
-                                            top = Math.max(top, b[k])
-                                        return top <= 0 ? 1 : top * 1.15
+                                    onWidthChanged: refresh(true)
+                                    onHeightChanged: refresh(true)
+                                    Component.onCompleted: refresh(true)
+                                    Connections {
+                                        target: chart
+                                        function onValuesChanged() { plot.refresh(false) }
+                                        function onSecondsChanged() { plot.refresh(false) }
                                     }
-                                    function points(vs, top, w, h) {
-                                        var step = w / 119
-                                        var x0 = w - (vs.length - 1) * step
-                                        var out = []
-                                        for (var n = 0; n < vs.length; ++n)
-                                            out.push(Qt.point(x0 + n * step, h - vs[n] / top * h))
+
+                                    function refresh(whole) {
+                                        // Nothing to number points by before
+                                        // the plot has a width.
+                                        if (!(step > 0)) {
+                                            line = []
+                                            second = []
+                                            return
+                                        }
+                                        var t = scaleOf(chart.values, chart.seconds)
+                                        if (t !== top) {
+                                            top = t
+                                            whole = true
+                                        }
+                                        var l = follow(whole ? [] : line, chart.values)
+                                        if (l !== line)
+                                            line = l
+                                        var s = follow(whole ? [] : second, chart.seconds)
+                                        if (s !== second)
+                                            second = s
+                                    }
+                                    // One of 1, 1.5, 2, 3, 4, 5, 6 or 8
+                                    // times a power of ten, above the
+                                    // highest value.
+                                    function scaleOf(a, b) {
+                                        var most = 0
+                                        for (var i = 0; i < a.length; ++i)
+                                            most = Math.max(most, a[i])
+                                        for (var k = 0; k < b.length; ++k)
+                                            most = Math.max(most, b[k])
+                                        if (!(most > 0))
+                                            return 1
+                                        var p = Math.pow(10, Math.floor(Math.log10(most * 1.1)))
+                                        var f = most * 1.1 / p
+                                        var nice = [1, 1.5, 2, 3, 4, 5, 6, 8, 10]
+                                        var n = 0
+                                        while (nice[n] < f)
+                                            n += 1
+                                        return nice[n] * p
+                                    }
+                                    // `had` with the points that fell off
+                                    // the left taken away and those for new
+                                    // values added; the overview's version
+                                    // numbers the newest value.
+                                    function follow(had, vs) {
+                                        var first = overview.version - vs.length
+                                        var from = had.length > 0 ? Math.round(had[0].x / step) : first
+                                        var to = from + had.length
+                                        if (from > first || to < first)
+                                            return follow([], vs)
+                                        if (from === first && to === overview.version)
+                                            return had
+                                        var out = had.slice(first - from)
+                                        for (var n = Math.max(to, first); n < overview.version; ++n)
+                                            out.push(Qt.point(n * step, height - vs[n - first] / top * height))
                                         return out
                                     }
 
@@ -653,11 +708,22 @@ ApplicationWindow {
                                     Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
                                     Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
                                     Shape {
-                                        anchors.fill: parent
+                                        x: plot.width - plot.head
+                                        width: Math.max(0, plot.head)
+                                        height: plot.height
+                                        // The line taken down to the bottom
+                                        // and filled under. The same points,
+                                        // not a copy with two more: a copy
+                                        // cost as much again to make and to
+                                        // hand over. Less than two points
+                                        // enclose nothing.
                                         ShapePath {
                                             strokeWidth: -1
-                                            fillColor: Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
-                                            PathPolyline { path: plot.area }
+                                            fillColor: plot.line.length < 2 ? "transparent"
+                                                : Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
+                                            PathPolyline { path: plot.line }
+                                            PathLine { x: plot.head; y: plot.height }
+                                            PathLine { x: plot.line.length > 0 ? plot.line[0].x : 0; y: plot.height }
                                         }
                                         ShapePath {
                                             strokeColor: theme.accent
