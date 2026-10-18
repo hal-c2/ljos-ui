@@ -644,6 +644,19 @@ impl Seen {
     }
 
     /// # Errors
+    /// The property is not listed, or its value is not text like `re`.
+    pub fn property_matches(&self, name: &str, re: &str) -> Result<(), String> {
+        let row = self.property(name)?;
+        match row["value"].as_str() {
+            Some(text) if pattern(re)?.is_match(text) => Ok(()),
+            _ => Err(format!(
+                "the value of the property {name:?} is {}, not like {re:?}: {row}",
+                row["value"]
+            )),
+        }
+    }
+
+    /// # Errors
     /// The property is not listed, or is listed as assigned by `by`.
     pub fn property_not_assigned_by(&self, name: &str, by: &str) -> Result<(), String> {
         let row = self.property(name)?;

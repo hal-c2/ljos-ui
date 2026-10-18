@@ -72,7 +72,10 @@ pub(crate) fn shown(engine: &Engine, v: &QmlValue) -> Shown {
             }
         }
         other => {
-            let text = engine.to_js_string(other).to_string();
+            // A script's own object prints as a script would print it.
+            let text = engine
+                .js_text(other)
+                .unwrap_or_else(|| engine.to_js_string(other).to_string());
             Shown {
                 text: if text == "[object Object]" {
                     "a script object".to_owned()

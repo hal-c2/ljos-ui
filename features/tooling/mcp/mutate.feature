@@ -26,6 +26,8 @@ Feature: An agent that may change the application
         property bool on: false
         property var list: []
         property var chosen: ""
+        property var when: new Date(2026, 0, 2, 3, 4, 5)
+        property var bag: ({ size: 2 })
         property int twice: count * 2
         readonly property int fixed: 7
         signal pinged(string who)
@@ -202,6 +204,22 @@ Feature: An agent that may change the application
         {"target": "#root", "all": true}
         """
       Then the inspected property "children" has the value "2 objects"
+
+    # A script prints a date as the time it holds, and the inspector
+    # shows what a script prints.
+    Scenario: A date is told as the time it holds
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#root"}
+        """
+      Then the inspected property "when" has a value that matches "^Fri Jan 02 2026 03:04:05 GMT"
+
+    Scenario: A script object that prints nothing of itself is told as one
+      When the agent calls the tool "app_inspect" with:
+        """json
+        {"target": "#root"}
+        """
+      Then the inspected property "bag" has the value "a script object"
 
   Rule: A method is called and a signal is sent as the application would
 

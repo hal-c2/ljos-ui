@@ -1222,6 +1222,16 @@ impl Engine {
         (!matches!(out, Value::Undefined)).then_some(out)
     }
 
+    /// `String(v)` for a JS object, as a script prints it: a Date's time,
+    /// an array's items. `None` for any other value.
+    pub fn js_text(&self, v: &Value) -> Option<String> {
+        let Value::Js(h) = v else {
+            return None;
+        };
+        let r = JsValue::Handle(h.0.clone());
+        self.try_run_js("text", |s| Ok(s.display(&r))).ok()
+    }
+
     /// Whether `v` is a JS function, as `QJSValue::isCallable` tells: what
     /// [`Engine::call_js`] can call. A plain object, a number or a QML
     /// object is not.

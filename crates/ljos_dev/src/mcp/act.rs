@@ -263,7 +263,12 @@ pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
                 .map(|i| to_json(engine, i, depth + 1))
                 .collect(),
         ),
-        other => json!(clip(&engine.to_js_string(other), 200)),
+        other => {
+            let text = engine
+                .js_text(other)
+                .unwrap_or_else(|| engine.to_js_string(other).to_string());
+            json!(clip(&text, 200))
+        }
     }
 }
 
