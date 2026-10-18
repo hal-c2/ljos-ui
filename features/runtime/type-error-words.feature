@@ -39,6 +39,9 @@ Feature: A TypeError says what the script tried to do
         function callsSpaced() { kid . spawn ( 1 ) }
         function writes() { unset.x = 1 }
         function writesNull() { nothing.x = 1 }
+        function callsThroughLocal() { var k = kid; k.spawn() }
+        function callsLocalValue() { var f = obj.a; f() }
+        function callsThroughLocalPath() { const o = root.obj; o.a() }
       }
       """
 
@@ -92,3 +95,16 @@ Feature: A TypeError says what the script tried to do
         | callsOwn     | 20   | width    | Scenario_QMLTYPE_[0-9]+.0x[0-9a-f]+, .root..     |
         | callsDeep    | 21   | b        | 1                                               |
         | callsSpaced  | 22   | spawn    | QQuickItem.0x[0-9a-f]+, .kid..                   |
+
+    Scenario Outline: <function> names the property and the object a local holds
+      When the property "run" of "root" is set to "<function>"
+      Then the log has a warning matching "Scenario.qml:<line>: TypeError: Property '<property>' of object <object> is not a function"
+
+      Examples:
+        | function              | line | property | object                          |
+        | callsThroughLocal     | 25   | spawn    | QQuickItem.0x[0-9a-f]+, .kid..   |
+        | callsThroughLocalPath | 27   | a        | .object Object.                 |
+
+    Scenario: A local called that is not a function says what it holds
+      When the property "run" of "root" is set to "callsLocalValue"
+      Then the log has a warning matching "Scenario.qml:26: TypeError: 1 is not a function"

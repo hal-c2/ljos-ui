@@ -339,37 +339,61 @@ impl<'js> Scope<'js> {
         }
         let text = self.state.text.borrow().clone()?;
         let (path, prop) = called_member(&text(module, line)?, col)?;
-        if path.is_empty() {
-            let at = takes.iter().position(|p| *p == prop)?;
-            if rebound_before(&|l| text(module, l), export, line, col, &prop)? {
+        let lines = |l| text(module, l);
+        // What a name of the function's own holds: one of `params`, one of
+        // `takes` it has not given another value, or a local it declared
+        // as a path of those and has not given another value since.
+        let value_of = |path: &[String]| -> Option<Value<'js>> {
+            let (root, rest) = path.split_first()?;
+            let mut v = if let Some(at) = params.iter().position(|p| *p == root.as_str()) {
+                self.to_value(args.get(at)?).ok()?
+            } else {
+                let at = takes.iter().position(|p| *p == root.as_str())?;
+                if rebound_before(&lines, export, line, col, root)? {
+                    return None;
+                }
+                // A parameter the caller left out holds undefined.
+                match args.get(params.len() + at) {
+                    Some(a) => self.to_value(a).ok()?,
+                    None => Value::new_undefined(self.ctx.clone()),
+                }
+            };
+            for m in rest {
+                v = v.as_object()?.get(m.as_str()).ok()?;
+            }
+            Some(v)
+        };
+        let through_local = |name: &str| -> Option<Value<'js>> {
+            let chain = local_alias(&lines, export, line, col, name)?;
+            // A local of a local is not followed.
+            if !params.contains(&chain[0].as_str()) && !takes.contains(&chain[0].as_str()) {
                 return None;
             }
-            // A parameter the caller left out holds undefined.
-            let shown = match args.get(params.len() + at) {
-                Some(a) => {
-                    self.to_value(a)
-                        .ok()?
-                        .get::<rquickjs::convert::Coerced<String>>()
-                        .ok()?
-                        .0
-                }
-                None => "undefined".to_owned(),
-            };
+            value_of(&chain)
+        };
+        let shown = |v: Value<'js>| {
+            v.get::<rquickjs::convert::Coerced<String>>()
+                .ok()
+                .map(|c| c.0)
+        };
+        if path.is_empty() {
+            let v = value_of(std::slice::from_ref(&prop)).or_else(|| through_local(&prop))?;
             return e
                 .as_object()
-                .set("message", format!("{shown} is not a function"))
+                .set("message", format!("{} is not a function", shown(v)?))
                 .ok();
         }
-        let at = params.iter().position(|p| *p == path[0])?;
-        let mut v = self.to_value(args.get(at)?).ok()?;
+        let mut v = value_of(&path[..1]).or_else(|| through_local(&path[0]))?;
         for m in &path[1..] {
             v = v.as_object()?.get(m.as_str()).ok()?;
         }
-        let shown = v.get::<rquickjs::convert::Coerced<String>>().ok()?.0;
         e.as_object()
             .set(
                 "message",
-                format!("Property '{prop}' of object {shown} is not a function"),
+                format!(
+                    "Property '{prop}' of object {} is not a function",
+                    shown(v)?
+                ),
             )
             .ok()
     }
@@ -2199,6 +2223,108 @@ fn rebound_before(
     }
 }
 
+/// The path `local` was declared to hold, `["root", "a"]` of `var local =
+/// root.a`, when the function `export` declares it so once before column
+/// `col` of `line` and gives it no other value up to there. Over-cautious
+/// like [`rebound_before`]: a declaration it cannot read is none.
+fn local_alias(
+    text: &dyn Fn(u32) -> Option<String>,
+    export: &str,
+    line: u32,
+    col: u32,
+    local: &str,
+) -> Option<Vec<String>> {
+    let head = format!("function {export}(");
+    // The function's text from its parameter list's end up to the call.
+    let mut body: Vec<char> = Vec::new();
+    let mut at = line;
+    loop {
+        let mut l: Vec<char> = text(at)?.chars().collect();
+        if at == line {
+            l.truncate(col.saturating_sub(1) as usize);
+        }
+        if let Some(i) = find_chars(&l, &head) {
+            let open = i + head.chars().count();
+            let from = l[open..]
+                .iter()
+                .position(|c| *c == ')')
+                .map_or(l.len(), |p| open + p + 1);
+            l.drain(..from);
+            l.push('\n');
+            l.append(&mut body);
+            body = l;
+            break;
+        }
+        l.push('\n');
+        l.append(&mut body);
+        body = l;
+        at = at.checked_sub(1).filter(|a| *a > 0 && line - a < 10_000)?;
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let skip_ws = |mut i: usize| {
+        while body.get(i).is_some_and(|c| c.is_whitespace()) {
+            i += 1;
+        }
+        i
+    };
+    let word_at = |i: usize| {
+        let mut end = i;
+        while body.get(end).copied().is_some_and(ident) {
+            end += 1;
+        }
+        (end > i && !body[i].is_ascii_digit())
+            .then(|| (body[i..end].iter().collect::<String>(), end))
+    };
+    let n: Vec<char> = local.chars().collect();
+    // `var|let|const local = `, the first declaration of the name.
+    let declared = (0..body.len().checked_sub(n.len())? + 1).find_map(|i| {
+        if body[i..i + n.len()] != n[..]
+            || (i > 0 && (ident(body[i - 1]) || body[i - 1] == '.'))
+            || body.get(i + n.len()).copied().is_some_and(ident)
+        {
+            return None;
+        }
+        let mut b = i;
+        while b > 0 && body[b - 1].is_whitespace() {
+            b -= 1;
+        }
+        let mut w = b;
+        while w > 0 && ident(body[w - 1]) {
+            w -= 1;
+        }
+        let keyword: String = body[w..b].iter().collect();
+        matches!(keyword.as_str(), "var" | "let" | "const").then_some((w, i + n.len()))
+    })?;
+    let (decl, mut i) = declared;
+    i = skip_ws(i);
+    if body.get(i) != Some(&'=') || body.get(i + 1) == Some(&'=') {
+        return None;
+    }
+    let mut chain = Vec::new();
+    i = skip_ws(i + 1);
+    loop {
+        let (name, end) = word_at(i)?;
+        chain.push(name);
+        let next = skip_ws(end);
+        if body.get(next) == Some(&'.') {
+            i = skip_ws(next + 1);
+            continue;
+        }
+        // The path is the whole value: nothing is called, read or added on.
+        if !matches!(body.get(next), None | Some(';' | ',' | '}'))
+            && !body[end..next].contains(&'\n')
+        {
+            return None;
+        }
+        i = end;
+        break;
+    }
+    if rebinds(&body[..decl], local) || rebinds(&body[i..], local) {
+        return None;
+    }
+    Some(chain)
+}
+
 /// Where `needle` starts in `s`, in characters.
 fn find_chars(s: &[char], needle: &str) -> Option<usize> {
     let n: Vec<char> = needle.chars().collect();
@@ -2399,7 +2525,7 @@ fn panic_message(p: &(dyn Any + Send)) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{called_member, calls};
+    use super::{called_member, calls, local_alias};
 
     #[test]
     fn a_call_is_told_from_a_read() {
@@ -2441,5 +2567,32 @@ mod tests {
         assert_eq!(at("{ f().a.b() }", "b"), None);
         assert_eq!(at("{ x[0].a.b() }", "b"), None);
         assert_eq!(at("{ a.b.c }", "c"), None);
+    }
+
+    #[test]
+    fn a_local_is_seen_through_to_the_path_it_was_given() {
+        let at = |src: &str, local: &str| {
+            let lines: Vec<&str> = src.lines().collect();
+            let line = lines.len() as u32;
+            let col = lines[lines.len() - 1].find("CALL").unwrap() as u32 + 1;
+            let text = |n: u32| lines.get(n as usize - 1).map(|l| (*l).to_owned());
+            local_alias(&text, "f", line, col, local).map(|p| p.join("."))
+        };
+        assert_eq!(
+            at("function f(a) { var k = a.kid; CALL", "k"),
+            Some("a.kid".into())
+        );
+        assert_eq!(
+            at("function f() {\n  const o = root . obj\n  CALL", "o"),
+            Some("root.obj".into())
+        );
+        assert_eq!(
+            at("function f() { let k = kid, j = 1; CALL", "k"),
+            Some("kid".into())
+        );
+        assert_eq!(at("function f() { var k = g(); CALL", "k"), None);
+        assert_eq!(at("function f() { var k == kid; CALL", "k"), None);
+        assert_eq!(at("function f() { var k = kid; k = other; CALL", "k"), None);
+        assert_eq!(at("function f() { var kk = kid; CALL", "k"), None);
     }
 }
