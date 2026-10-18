@@ -246,6 +246,39 @@ impl<M> ShellApp<M> {
         }
     }
 
+    /// Says that the primary window is the platform's, so that
+    /// `app_resize` asks the platform for its size.
+    pub(crate) fn set_resizes_window(&mut self) {
+        if let Some(served) = self.tools.inspector.as_mut() {
+            served.inspector_mut().set_resizes_window();
+        }
+    }
+
+    /// The size an agent asked the primary window to have.
+    pub(crate) fn take_resize_request(&mut self) -> Option<[f64; 2]> {
+        self.tools
+            .inspector
+            .as_mut()
+            .and_then(|served| served.inspector_mut().take_resize_request())
+    }
+
+    /// Whether an agent waits for the primary window to have a size.
+    pub(crate) fn waits_for_resize(&self) -> bool {
+        self.tools
+            .inspector
+            .as_ref()
+            .is_some_and(|served| served.inspector().waits_for_resize())
+    }
+
+    /// Answers the agent that waits for a size, if the scene has it or
+    /// the platform has `settled` on another.
+    pub(crate) fn finish_resize(&mut self, settled: bool) {
+        let Self { view, tools, .. } = self;
+        if let Some(served) = tools.inspector.as_mut() {
+            served.inspector_mut().finish_resize(view.scene(), settled);
+        }
+    }
+
     /// A frame of the primary window's display: what a slow frame is
     /// slower than.
     pub(crate) fn set_frame_budget(&mut self, budget: std::time::Duration) {

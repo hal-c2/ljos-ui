@@ -865,7 +865,7 @@
     "read_only": false
   },
   {
-    "description": "Give the window another size in logical pixels, and optionally another `scale`. The application sees it as a resize of the window; the operating-system window is not moved. Answers with what changed.",
+    "description": "Give the window another size in logical pixels, and optionally another `scale`. The application sees it as a resize of the window. A desktop window is resized by its platform and answered once it has the size, or with the size the platform gave instead.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {

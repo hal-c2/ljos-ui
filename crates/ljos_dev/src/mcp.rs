@@ -235,6 +235,13 @@ struct Parked {
     seq: u64,
 }
 
+/// An `app_resize` waiting for the platform to give the window its size.
+struct ParkedResize {
+    reply: oneshot::Sender<Answer>,
+    deadline: Instant,
+    size: [f64; 2],
+}
+
 /// The inspector's side on the UI thread. The host makes one, hands the
 /// [`InspectorSurface`] to a server ([`serve`]) or an in-process client,
 /// and calls [`pump`](Self::pump) when woken.
@@ -262,6 +269,10 @@ pub struct Inspector {
     seen: Option<(u64, Option<String>)>,
     parked: Option<Parked>,
     reload_wanted: bool,
+    /// The host gives the primary window the size `app_resize` asks for.
+    resizes_window: bool,
+    resize_wanted: Option<[f64; 2]>,
+    parked_resize: Option<ParkedResize>,
     /// How many windows the application has, as the host last said.
     windows: usize,
     /// What paints the primary window, as the host said.
@@ -337,6 +348,9 @@ impl Inspector {
             seen: None,
             parked: None,
             reload_wanted: false,
+            resizes_window: false,
+            resize_wanted: None,
+            parked_resize: None,
             windows: 1,
             painter: None,
             startup: Startup::default(),
@@ -360,6 +374,14 @@ impl Inspector {
     /// it `app_reload` is `unavailable`.
     pub fn set_watched(&mut self, watched: bool) {
         self.feed.set_watched(watched);
+    }
+
+    /// Says that the host has a platform window and gives it the size
+    /// `app_resize` asks for ([`take_resize_request`](Self::take_resize_request)),
+    /// laying the scene out at the size the platform then gives. Without
+    /// it the tool sizes the scene alone, as for a host with no window.
+    pub fn set_resizes_window(&mut self) {
+        self.resizes_window = true;
     }
 
     /// Says how many windows the application has. The inspector sees the
@@ -523,6 +545,71 @@ impl Inspector {
         let _ = parked
             .reply
             .send(Ok(ToolReply::from(value).with_text(text)));
+    }
+
+    /// The size an agent asked the primary window to have, that the host
+    /// has not asked of the platform yet.
+    pub fn take_resize_request(&mut self) -> Option<[f64; 2]> {
+        self.resize_wanted.take()
+    }
+
+    /// Whether an `app_resize` waits for the window to have its size.
+    pub fn waits_for_resize(&self) -> bool {
+        self.parked_resize.is_some()
+    }
+
+    /// Answers the `app_resize` that waits, once the scene has the size
+    /// asked for, or with the size it has when `settled`: the platform
+    /// gave another size, or said nothing in the time it is given.
+    pub fn finish_resize(&mut self, scene: &QuickScene, settled: bool) {
+        let Some(parked) = &self.parked_resize else {
+            return;
+        };
+        let viewport = scene.viewport();
+        let has = [viewport.width(), viewport.height()];
+        let there = has
+            .iter()
+            .zip(parked.size)
+            .all(|(has, asked)| (has - asked).abs() < 0.5);
+        if !there && !settled && Instant::now() < parked.deadline {
+            return;
+        }
+        let Some(parked) = self.parked_resize.take() else {
+            return;
+        };
+        let _ = parked
+            .reply
+            .send(Ok(resized(parked.size, has, scene.scale_factor())));
+    }
+
+    /// Asks the host for the window's new size and answers once it has it.
+    fn start_resize(
+        &mut self,
+        scene: &mut QuickScene,
+        a: &args::ResizeArgs,
+        reply: oneshot::Sender<Answer>,
+        deadline: Instant,
+    ) {
+        if let Some(scale) = a.scale {
+            scene.set_scale_factor(scale as f32);
+        }
+        let size = [f64::from(a.width), f64::from(a.height)];
+        // A later size is what the window ends up with: the one asked
+        // before is answered now, with what it has.
+        if let Some(before) = self.parked_resize.take() {
+            let viewport = scene.viewport();
+            let has = [viewport.width(), viewport.height()];
+            let _ = before
+                .reply
+                .send(Ok(resized(before.size, has, scene.scale_factor())));
+        }
+        self.parked_resize = Some(ParkedResize {
+            reply,
+            deadline,
+            size,
+        });
+        self.resize_wanted = Some(size);
+        (self.wake)();
     }
 
     fn start_reload(&mut self, reply: oneshot::Sender<Answer>, deadline: Instant) {
@@ -690,6 +777,12 @@ impl Inspector {
         if let Kind::Act(act) = &kind {
             if matches!(act, Act::Reload) {
                 self.start_reload(reply, deadline);
+                return;
+            }
+            if let Act::Resize(a) = act
+                && self.resizes_window
+            {
+                self.start_resize(scene, a, reply, deadline);
                 return;
             }
             let Some(before) = capture.clone() else {
@@ -1032,6 +1125,31 @@ fn needs_scene(kind: &Kind) -> bool {
         Kind::Act(act) => !matches!(act, Act::Reload),
         Kind::Status(_) | Kind::Find(_) | Kind::Inspect(_) | Kind::Screenshot(_) => true,
     }
+}
+
+/// The answer to an `app_resize` the platform was asked for: the size the
+/// window has, which the platform may have made another than `asked`.
+fn resized(asked: [f64; 2], has: [f64; 2], scale: f32) -> ToolReply {
+    let [width, height] = has.map(f64::round);
+    let text = if has
+        .iter()
+        .zip(asked)
+        .all(|(has, asked)| (has - asked).abs() < 0.5)
+    {
+        format!("resized the window to {width}x{height}")
+    } else {
+        format!(
+            "asked for {}x{}; the platform gave the window {width}x{height}",
+            asked[0], asked[1]
+        )
+    };
+    ToolReply::from(json!({
+        "width": tools::num(width),
+        "height": tools::num(height),
+        "scale": tools::num(f64::from(scale)),
+        "asked": { "width": asked[0], "height": asked[1] },
+    }))
+    .with_text(text)
 }
 
 /// Where a served inspector writes its token file unless told otherwise:

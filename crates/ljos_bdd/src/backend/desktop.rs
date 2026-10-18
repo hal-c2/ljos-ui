@@ -21,6 +21,7 @@ use ljos_bench::sway::Sway;
 use ljos_bench::wayland::Pointer;
 use serde_json::{Value, json};
 
+use super::inspector::{Answer, Ask, Refusal, Seen};
 use super::{A11yNode, Backend, BackendError, LogEntry, PointerStep, QmlFile, Result};
 
 /// Names the file with the sandbox's sockets; set when one runs.
@@ -141,6 +142,15 @@ impl Running {
     }
 
     fn ask(&mut self, tool: &str, arguments: Value) -> Result<Value> {
+        let answer = self.call(tool, arguments)?;
+        match answer.refusal {
+            Some(r) => Err(BackendError::Failed(format!("{tool}: {}", r.message))),
+            None => Ok(answer.structured),
+        }
+    }
+
+    /// A tool's answer as an agent sees it, a refusal among them.
+    fn call(&mut self, tool: &str, arguments: Value) -> Result<Answer> {
         self.next_id += 1;
         let id = self.next_id;
         let message = json!({
@@ -169,13 +179,27 @@ impl Running {
                 )));
             }
             let result = &answer["result"];
+            let text = result["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
             if result["isError"] == true {
-                return Err(BackendError::Failed(format!(
-                    "{tool}: {}",
-                    result["content"][0]["text"].as_str().unwrap_or_default()
-                )));
+                let error = &result["structuredContent"]["error"];
+                return Ok(Answer {
+                    refusal: Some(Refusal {
+                        code: error["code"].as_str().unwrap_or_default().to_owned(),
+                        message: error["message"].as_str().unwrap_or(&text).to_owned(),
+                        details: error["details"].clone(),
+                    }),
+                    text,
+                    ..Answer::default()
+                });
             }
-            return Ok(result["structuredContent"].clone());
+            return Ok(Answer {
+                structured: result["structuredContent"].clone(),
+                text,
+                ..Answer::default()
+            });
         }
     }
 
@@ -212,6 +236,8 @@ pub struct DesktopBackend {
     /// The work of the application and of its observer when counting
     /// began, and what each reading itself does.
     work_from: Vec<(&'static str, Counted)>,
+    /// What the agent was last answered.
+    seen: Seen,
 }
 
 /// Work read when counting began, and the work one reading does.
@@ -255,6 +281,7 @@ impl DesktopBackend {
     }
 
     fn start(&mut self, entry: &str) -> Result<()> {
+        self.seen = Seen::default();
         self.observer = None;
         self.running = None;
         let sandbox = match &self.sandbox {
@@ -564,6 +591,22 @@ impl Backend for DesktopBackend {
             })
             .collect();
         Ok(())
+    }
+
+    fn inspector(&mut self, ask: &Ask) -> Result<()> {
+        let Ask::Call { tool, args } = ask else {
+            return Err(BackendError::Unsupported {
+                backend: "desktop",
+                what: "an agent here only calls tools",
+            });
+        };
+        let answer = self.running()?.call(tool, args.clone())?;
+        self.seen.answer = Some(answer);
+        Ok(())
+    }
+
+    fn inspector_seen(&mut self) -> Result<Seen> {
+        Ok(self.seen.clone())
     }
 
     fn work_counted(&mut self) -> Result<Vec<String>> {

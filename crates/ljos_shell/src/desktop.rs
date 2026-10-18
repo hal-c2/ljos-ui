@@ -50,6 +50,11 @@ const ROUNDS: usize = 4;
 /// After that the window is told the size it has: a tiling window manager
 /// answers nothing when it refuses.
 const SIZE_CHECK: Duration = Duration::from_millis(250);
+/// How long an agent that asked for a window size (`app_resize`) waits
+/// for the platform to give it, before it is answered with the size there
+/// is. Longer than [`SIZE_CHECK`]: XWayland takes more than that.
+#[cfg(feature = "mcp")]
+const RESIZE_WAIT: Duration = Duration::from_secs(1);
 
 /// How long the platform has to let a window draw before the window is
 /// taken to be out of sight. Wayland lets a window draw when it is shown
@@ -651,6 +656,10 @@ struct Desktop<M> {
     /// When the shell started: the inspector times the start-up from here.
     #[cfg(feature = "mcp")]
     began: Instant,
+    /// When an agent that asked for a size of the primary window is
+    /// answered with the size there is.
+    #[cfg(feature = "mcp")]
+    resize_due: Option<Instant>,
     /// The scripts the windows may run on input were prepared
     /// ([`Engine::prepare_scripts`]).
     scripts_prepared: bool,
@@ -718,6 +727,12 @@ impl<M: Send + 'static> Desktop<M> {
         failure: Rc<RefCell<Option<ShellError>>>,
         starting: Starting,
     ) -> Self {
+        #[cfg(feature = "mcp")]
+        let app = {
+            let mut app = app;
+            app.set_resizes_window();
+            app
+        };
         Self {
             app,
             config,
@@ -745,6 +760,8 @@ impl<M: Send + 'static> Desktop<M> {
             // `run` says when the shell started.
             #[cfg(feature = "mcp")]
             began: Instant::now(),
+            #[cfg(feature = "mcp")]
+            resize_due: None,
             scripts_prepared: false,
             heap_trim: None,
             collect: AfterRest::default(),
@@ -1247,6 +1264,16 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         self.run_pass(host, i, paint);
+        #[cfg(feature = "mcp")]
+        if self.slots[i].is_root() && self.app.waits_for_resize() {
+            // The pass that took the request has not asked the platform
+            // yet: that is done once it ends (`serve_resize`).
+            let settled = self.resize_due.is_some_and(|t| t <= Instant::now());
+            self.app.finish_resize(settled);
+            if !self.app.waits_for_resize() {
+                self.resize_due = None;
+            }
+        }
         let slot = &mut self.slots[i];
         let view = match slot.view.as_mut() {
             Some(view) => view,
@@ -1760,6 +1787,28 @@ impl<M: Send + 'static> Desktop<M> {
     }
 
     /// What the windows asked for that is no property.
+    /// Asks the platform for the size an agent wants the primary window
+    /// to have (`app_resize`), as for a `Window` whose size the
+    /// application wrote; the pass at the size given answers the agent.
+    #[cfg(feature = "mcp")]
+    fn serve_resize(&mut self, host: &mut Control<'_>, engine: &Engine, sys: &WindowSystem) {
+        let Some(size) = self.app.take_resize_request() else {
+            return;
+        };
+        let Some(slot) = self.slots.iter_mut().find(|s| s.is_root()) else {
+            return self.app.finish_resize(true);
+        };
+        let Some(id) = slot.surface.as_ref().map(|s| s.id) else {
+            return self.app.finish_resize(true);
+        };
+        let zoom = f64::from(slot.ctx.zoom_factor());
+        host.change_window(id, WindowChange::Size(scaled(size, zoom)));
+        note_size(slot, engine, sys, false);
+        let now = Instant::now();
+        self.resize_due = Some(now + RESIZE_WAIT);
+        self.repaints.request(slot.key, now);
+    }
+
     fn serve_requests(&mut self, host: &mut Control<'_>, sys: &WindowSystem) {
         for (win, request) in sys.take_requests() {
             let Some(slot) = self.slots.iter_mut().find(|s| s.window == Some(win)) else {
@@ -1883,6 +1932,10 @@ impl<M: Send + 'static> Desktop<M> {
                 next = earlier(next, t);
             }
         }
+        #[cfg(feature = "mcp")]
+        {
+            next = earlier(next, self.resize_due);
+        }
         next
     }
 
@@ -1909,12 +1962,21 @@ impl<M: Send + 'static> Desktop<M> {
                 self.read_screens(host, &engine, &sys);
             }
             self.serve_requests(host, &sys);
+            #[cfg(feature = "mcp")]
+            self.serve_resize(host, &engine, &sys);
             let now = Instant::now();
             for slot in &mut self.slots {
                 if slot.size_check.is_some_and(|t| t <= now) {
                     slot.size_check = None;
                     note_size(slot, &engine, &sys, true);
                 }
+            }
+            // The pass at the size there is answers the agent that waits.
+            #[cfg(feature = "mcp")]
+            if self.resize_due.is_some_and(|t| t <= now)
+                && let Some(slot) = self.slots.iter().find(|s| s.is_root())
+            {
+                self.repaints.request(slot.key, now);
             }
             sys.set_application_state(&engine, self.application_state());
             if self.should_exit(&engine, &sys) {

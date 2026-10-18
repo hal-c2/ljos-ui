@@ -109,8 +109,8 @@ with what changed.";
 
 pub const RESIZE: &str = "\
 Give the window another size in logical pixels, and optionally another `scale`. The application \
-sees it as a resize of the window; the operating-system window is not moved. Answers with what \
-changed.";
+sees it as a resize of the window. A desktop window is resized by its platform and answered once \
+it has the size, or with the size the platform gave instead.";
 
 pub const APPEARANCE: &str = "\
 Change what the system prefers: `color_scheme` (light or dark), `reduced_motion`, `font_scale` \
