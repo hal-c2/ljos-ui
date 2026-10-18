@@ -79,8 +79,10 @@ ApplicationWindow {
             processes.show(s)
         else if (route === "mailboxes" && ok)
             mailboxes.show(s.mailboxes)
-        else if (route === "objects")
-            objects.showTree(ok, s, r)
+        else if (route.indexOf("objects:") === 0)
+            objects.showTree(ok, s, r, parseInt(route.substring(8)), false)
+        else if (route.indexOf("objects+:") === 0)
+            objects.showTree(ok, s, r, parseInt(route.substring(9)), true)
         else if (route === "inspect")
             objects.showProperties(ok, s, r)
         else if (route === "picture")
@@ -109,6 +111,8 @@ ApplicationWindow {
             if (!ok && route !== "watch" && route !== "edited"
                     && String(result).indexOf("rate_limited") >= 0) {
                 status.text = "The application is asked too often; showing the last answer"
+                if (route && route.indexOf("objects") === 0)
+                    objects.turnedAway(parseInt(route.substring(route.indexOf(":") + 1)))
                 return
             }
             if (route !== "watch")
@@ -370,20 +374,20 @@ ApplicationWindow {
                     function sample() {
                         parts = {}
                         window.ask("app_metrics", {}, "sample-metrics")
-                        window.ask("app_processes", { kind: "thread" }, "sample-threads")
                     }
 
                     function part(name, s) {
                         var next = parts
                         next[name] = s
                         parts = next
-                        // The mailboxes are counted after the other two
-                        // are answered, so that the depth is not this
-                        // window's own questions waiting.
-                        if (name !== "mailboxes" && parts.metrics && parts.threads)
-                            window.ask("app_processes", { kind: "mailbox" }, "sample-mailboxes")
-                        if (parts.metrics && parts.threads && parts.mailboxes)
-                            add(parts.metrics, parts.threads, parts.mailboxes)
+                        // The threads are asked once the metrics are
+                        // answered. Their mailboxes are counted after the
+                        // UI thread answered, so that the depth is not
+                        // this window's own questions waiting.
+                        if (name === "metrics")
+                            window.ask("app_processes", {}, "sample-threads")
+                        else if (parts.metrics)
+                            add(parts.metrics, s, s)
                     }
 
                     function add(m, t, b) {
@@ -391,11 +395,17 @@ ApplicationWindow {
                             processes.process = t.process
                         var now = Date.now()
                         var wakeups = 0
-                        for (var i = 0; i < t.processes.length; ++i)
+                        var threadCount = 0
+                        for (var i = 0; i < t.processes.length; ++i) {
+                            if (t.processes[i].kind !== "thread")
+                                continue
                             wakeups += t.processes[i].wakeups || 0
+                            threadCount += 1
+                        }
                         var depth = 0
-                        for (var j = 0; j < b.mailboxes.length; ++j)
-                            depth += b.mailboxes[j].depth
+                        var boxes = b.mailboxes || []
+                        for (var j = 0; j < boxes.length; ++j)
+                            depth += boxes[j].depth
                         var p = m.paint || {}
                         var here = {
                             t: now,
@@ -423,7 +433,7 @@ ApplicationWindow {
                             frames: m.frames.count,
                             overruns: m.frames.overruns,
                             objects: m.objects,
-                            threads: t.process ? t.process.threads : t.processes.length,
+                            threads: t.process ? t.process.threads : threadCount,
                             rss: t.process ? t.process.rss_bytes : null,
                             drawn: here.drawn,
                             skipped: here.skipped,
@@ -433,6 +443,11 @@ ApplicationWindow {
                         all.push(point)
                         points = all
                         version += 1
+                        // The count comes after the change that made
+                        // the objects, and an application at rest tells
+                        // of no other.
+                        if (window.page === 3)
+                            objects.follow(false)
                     }
 
                     RowLayout {
@@ -926,6 +941,34 @@ ApplicationWindow {
                     property var tree: []
                     property string filter: ""
                     property bool truncated: false
+                    // The tree comes in parts, each as much as one
+                    // answer holds; a part of a tree asked before the
+                    // last load is let go, and a part turned away is
+                    // asked again in a while.
+                    property int treeAsked: 0
+                    property bool treeComing: false
+                    property string partCursor: ""
+                    // The application's object count when the tree was
+                    // asked: objects made or let go at run time ask for
+                    // it again, at most once a second.
+                    property int treeObjects: -1
+                    property real treeAskedAt: 0
+                    readonly property int mostObjects: 3000
+                    // An application with more objects than the tree
+                    // holds is shown to a depth, and a row whose
+                    // children were left out is opened by hand, as far
+                    // down again: the rows shown are the ones looked
+                    // for, not the first thousands in order.
+                    readonly property int step: 2
+                    property int treeDepth: 0
+                    // The rows opened, in the order they were, opened
+                    // again after a reload; the one being opened, how
+                    // deep it is and where its next part goes.
+                    property var opened: []
+                    property var toOpen: []
+                    property string opening: ""
+                    property int openDepth: 0
+                    property int spliceAt: 0
                     property string picked: ""
                     property string pickedName: ""
                     property bool pickedItem: true
@@ -948,22 +991,204 @@ ApplicationWindow {
                     // after them.
                     property bool shotAsked: false
 
-                    // The tree is asked again when a reload made new
-                    // objects; a drawn pass changes values, not objects.
                     function load(tree) {
-                        if (tree || objects.tree.length === 0)
-                            window.ask("app_objects", { max: 3000 }, "objects")
+                        follow(tree)
                         if (picked !== "")
                             inspect(true)
                     }
 
-                    function showTree(ok, s, r) {
-                        if (!ok) {
-                            status.text = r
+                    // The tree is asked again when a reload or the
+                    // application made or let go of objects, at most
+                    // once a second and not while one comes: a count
+                    // changed sooner is looked at again in a while.
+                    function follow(tree) {
+                        var count = overview.latest.objects
+                        var counted = count !== undefined && count !== treeObjects
+                        if (counted && !tree && (treeComing
+                                || objects.tree.length > 0 && Date.now() - treeAskedAt < 1000)) {
+                            if (!partAgain.running)
+                                partAgain.start()
                             return
                         }
-                        tree = s.objects
-                        truncated = s.truncated
+                        if (tree || (objects.tree.length === 0 && !treeComing) || counted) {
+                            treeAsked += 1
+                            treeObjects = count === undefined ? -1 : count
+                            treeAskedAt = Date.now()
+                            treeDepth = count !== undefined && count > mostObjects ? step : 0
+                            partCursor = ""
+                            opening = ""
+                            toOpen = []
+                            askPart()
+                        } else if (!treeComing) {
+                            goOn()
+                        }
+                    }
+
+                    Timer {
+                        id: partAgain
+                        interval: 1100
+                        onTriggered: objects.follow(false)
+                    }
+
+                    // The rest of the part being asked, or the next row
+                    // to open.
+                    function goOn() {
+                        if (partCursor !== "" || opening !== "")
+                            askPart()
+                        else
+                            openNext()
+                    }
+
+                    function askPart() {
+                        treeComing = true
+                        var room = mostObjects - tree.length
+                        if (partCursor !== "")
+                            window.ask("app_objects", { cursor: partCursor, max: room },
+                                       "objects+:" + treeAsked)
+                        else if (opening !== "")
+                            // The row itself comes first, and is not
+                            // counted against the room.
+                            window.ask("app_objects", { root: opening, depth: step, max: room + 1 },
+                                       "objects+:" + treeAsked)
+                        else if (treeDepth > 0)
+                            window.ask("app_objects", { max: mostObjects, depth: treeDepth },
+                                       "objects:" + treeAsked)
+                        else
+                            window.ask("app_objects", { max: mostObjects }, "objects:" + treeAsked)
+                    }
+
+                    function turnedAway(asked) {
+                        if (asked !== treeAsked)
+                            return
+                        treeComing = false
+                        // A first part turned away is asked again too.
+                        if (partCursor === "" && opening === "")
+                            treeObjects = -1
+                        // An application at rest asks nothing of the
+                        // observer, so the part is asked again in a
+                        // while, not at the next change.
+                        if (!partAgain.running)
+                            partAgain.start()
+                    }
+
+                    function indexOf(handle) {
+                        for (var i = 0; i < tree.length; ++i)
+                            if (tree[i].handle === handle)
+                                return i
+                        return -1
+                    }
+
+                    function isOpen(row) {
+                        return row.hidden === undefined && opened.indexOf(row.handle) >= 0
+                    }
+
+                    function open(handle) {
+                        if (opened.indexOf(handle) < 0)
+                            opened = opened.concat([handle])
+                        toOpen = toOpen.concat([handle])
+                        if (!treeComing)
+                            goOn()
+                    }
+
+                    // What is below a row is let go of, and so are the
+                    // rows opened in it.
+                    function close(handle) {
+                        var i = indexOf(handle)
+                        if (i < 0 || treeComing)
+                            return
+                        var row = tree[i]
+                        var end = i + 1
+                        while (end < tree.length && tree[end].depth > row.depth)
+                            ++end
+                        var gone = {}
+                        for (var k = i + 1; k < end; ++k)
+                            gone[tree[k].handle] = true
+                        opened = opened.filter(function(h) { return h !== handle && !gone[h] })
+                        row.hidden = row.children
+                        tree = tree.slice(0, i).concat([row], tree.slice(end))
+                        truncated = false
+                    }
+
+                    function openNext() {
+                        while (toOpen.length > 0) {
+                            var handle = toOpen[0]
+                            toOpen = toOpen.slice(1)
+                            var i = indexOf(handle)
+                            // Gone, or below a row no longer open.
+                            if (i < 0) {
+                                opened = opened.filter(function(h) { return h !== handle })
+                                continue
+                            }
+                            if (tree[i].hidden === undefined)
+                                continue
+                            if (tree.length >= mostObjects) {
+                                truncated = true
+                                toOpen = []
+                                return
+                            }
+                            opening = handle
+                            askPart()
+                            return
+                        }
+                    }
+
+                    function showTree(ok, s, r, asked, more) {
+                        if (asked !== treeAsked)
+                            return
+                        treeComing = false
+                        var going = partCursor !== ""
+                        partCursor = ""
+                        if (!ok) {
+                            status.text = r
+                            // A row that cannot be opened is not opened
+                            // again.
+                            if (opening !== "") {
+                                var lost = opening
+                                opened = opened.filter(function(h) { return h !== lost })
+                                opening = ""
+                                goOn()
+                            }
+                            return
+                        }
+                        var rows = s.objects
+                        if (!more) {
+                            tree = rows
+                            truncated = false
+                            toOpen = opened.slice()
+                        } else if (opening === "") {
+                            tree = tree.concat(rows)
+                        } else {
+                            if (!going) {
+                                // The row comes again, now without what
+                                // it left out; what is below it goes
+                                // after it.
+                                var at = indexOf(opening)
+                                if (at < 0) {
+                                    opening = ""
+                                    goOn()
+                                    return
+                                }
+                                openDepth = tree[at].depth
+                                rows[0].depth = openDepth
+                                tree = tree.slice(0, at).concat(tree.slice(at + 1))
+                                spliceAt = at
+                            }
+                            for (var k = 0; k < rows.length; ++k)
+                                if (going || k > 0)
+                                    rows[k].depth += openDepth
+                            tree = tree.slice(0, spliceAt).concat(rows, tree.slice(spliceAt))
+                            spliceAt += rows.length
+                        }
+                        if (s.next_cursor) {
+                            if (tree.length < mostObjects) {
+                                partCursor = s.next_cursor
+                                askPart()
+                                return
+                            }
+                            truncated = true
+                        }
+                        opening = ""
+                        goOn()
                     }
 
                     function shown(row) {
@@ -1111,7 +1336,10 @@ ApplicationWindow {
                             color: theme.subtle
                             font.pixelSize: 11
                             text: objects.rows.length + " of " + objects.tree.length + " objects"
-                                  + (objects.truncated ? " (more than shown)" : "")
+                                  + (objects.treeComing || objects.partCursor !== "" ? ", more coming"
+                                     : objects.truncated ? ", the most shown"
+                                     : objects.treeDepth > 0 ? " (" + objects.treeObjects + " in all; + opens a row)"
+                                     : "")
                         }
                         ListView {
                             id: treeView
@@ -1155,19 +1383,26 @@ ApplicationWindow {
                                         color: theme.accent
                                     }
                                     // Without an id or a name, the handle tells
-                                    // one Timer from the next.
+                                    // one Timer from the next; so it does
+                                    // for the rows of a filter, which all
+                                    // may have the id of their component.
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: !node.modelData.id && !node.modelData.object_name
+                                        visible: objects.filter !== "" || !node.modelData.id && !node.modelData.object_name
                                         text: node.modelData.handle
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }
+                                    // What a row left out opens it; an
+                                    // opened row closes.
                                     Text {
+                                        id: disclosure
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: node.modelData.hidden !== undefined
-                                        text: "+" + node.modelData.hidden
-                                        color: theme.subtle
+                                        visible: text !== ""
+                                        text: node.modelData.hidden !== undefined ? "+" + node.modelData.hidden
+                                            : objects.opened.indexOf(node.modelData.handle) >= 0 ? "−" : ""
+                                        color: discloseHover.containsMouse ? theme.accent : theme.subtle
+                                        font.bold: discloseHover.containsMouse
                                     }
                                 }
                                 MouseArea {
@@ -1176,6 +1411,22 @@ ApplicationWindow {
                                     hoverEnabled: true
                                     onClicked: objects.pick(node.modelData.handle,
                                                             node.modelData.type + (node.modelData.id ? "#" + node.modelData.id : ""))
+                                }
+                                MouseArea {
+                                    id: discloseHover
+                                    visible: disclosure.visible
+                                    x: disclosure.parent.x + disclosure.x - 6
+                                    width: disclosure.width + 12
+                                    height: parent.height
+                                    hoverEnabled: true
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: node.modelData.hidden !== undefined ? "Open" : "Close"
+                                    onClicked: {
+                                        if (node.modelData.hidden !== undefined)
+                                            objects.open(node.modelData.handle)
+                                        else
+                                            objects.close(node.modelData.handle)
+                                    }
                                 }
                             }
                         }
