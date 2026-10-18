@@ -88,13 +88,11 @@ impl LastPicture {
         if areas.is_empty() {
             return Change::None;
         }
-        match scrolled(before, now, pixels_per_point) {
-            // Moving what the window shows costs about as much as drawing
-            // a quarter of it: a scroll is taken only where it spares more.
-            Some(scroll) if covered(&scroll.areas) + scroll.rect.area() / 4.0 < covered(&areas) => {
-                Change::Scroll(scroll)
-            }
-            _ => Change::Area(areas),
+        // Moving what the window shows costs about as much as drawing a
+        // quarter of it: a scroll is taken only where it spares more.
+        match scrolled(before, now, pixels_per_point, covered(&areas)) {
+            Some(scroll) => Change::Scroll(scroll),
+            None => Change::Area(areas),
         }
     }
 
@@ -217,7 +215,10 @@ const AHEAD: usize = 64;
 /// into view and some go out. What does not move with them but lies over
 /// or under them (a scroll bar, a header) is drawn again where it is and
 /// where the move took its pixels.
-fn scrolled(before: &[ClippedShape], now: &[ClippedShape], ppp: f32) -> Option<Scroll> {
+/// A scroll is only found where it leaves less to draw than `drawn`, the
+/// pixels the shapes that changed cover: one that does not is given up on
+/// as soon as that is so, as most are where everything moves differently.
+fn scrolled(before: &[ClippedShape], now: &[ClippedShape], ppp: f32, drawn: f32) -> Option<Scroll> {
     let head = before
         .iter()
         .zip(now)
@@ -239,6 +240,9 @@ fn scrolled(before: &[ClippedShape], now: &[ClippedShape], ppp: f32) -> Option<S
     // tried, and the one that leaves least to draw is taken.
     let mut found: Vec<((Rect, egui::Vec2), usize)> = Vec::new();
     for x in a.iter().take(VOTERS) {
+        if scroll_cost(x.clip_rect) >= drawn {
+            continue;
+        }
         for y in b.iter().take(AHEAD) {
             if x.clip_rect != y.clip_rect {
                 continue;
@@ -256,8 +260,16 @@ fn scrolled(before: &[ClippedShape], now: &[ClippedShape], ppp: f32) -> Option<S
     found
         .iter()
         .take(TRIED)
-        .filter_map(|&((rect, by), _)| moved_in(before, now, (head, tail), rect, by, ppp))
+        .filter_map(|&((rect, by), _)| {
+            let budget = drawn - scroll_cost(rect);
+            moved_in(before, now, (head, tail), rect, by, ppp, budget)
+        })
         .min_by(|p, q| covered(&p.areas).total_cmp(&covered(&q.areas)))
+}
+
+/// What moving the pixels of `rect` costs, as pixels drawn.
+fn scroll_cost(rect: Rect) -> f32 {
+    rect.area() / 4.0
 }
 
 /// How many of the first shapes that changed say what moved.
@@ -268,7 +280,7 @@ const TRIED: usize = 3;
 
 /// What else changes when the content of `rect` moved `by` from `before`
 /// to `now`, which start with `head` shapes and end with `tail` that are
-/// the same.
+/// the same. `None` as well once that covers `budget` pixels or more.
 fn moved_in(
     before: &[ClippedShape],
     now: &[ClippedShape],
@@ -276,7 +288,11 @@ fn moved_in(
     rect: Rect,
     by: egui::Vec2,
     ppp: f32,
+    budget: f32,
 ) -> Option<Scroll> {
+    if budget <= 0.0 {
+        return None;
+    }
     let (a, b) = (
         &before[head..before.len() - tail],
         &now[head..now.len() - tail],
@@ -299,8 +315,10 @@ fn moved_in(
         clipped && moved_by(&x.shape, &y.shape, by)
     };
     let mut areas = Vec::new();
+    let spent = std::cell::Cell::new(0.0f32);
     let mut add = |area: Rect| {
         if area.is_positive() {
+            spent.set(spent.get() + area.area());
             areas.push(area);
         }
     };
@@ -350,6 +368,9 @@ fn moved_in(
     }
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
+        if spent.get() >= budget {
+            return None;
+        }
         if moved(&a[i], &b[j]) {
             (i, j) = (i + 1, j + 1);
             continue;
@@ -381,7 +402,7 @@ fn moved_in(
     }
     a[i..].iter().for_each(|s| went(s, &mut add));
     b[j..].iter().for_each(|s| add(extent(s, ppp)));
-    Some(Scroll { rect, by, areas })
+    (spent.get() < budget).then_some(Scroll { rect, by, areas })
 }
 
 /// How far `b` lies from `a` when it is `a` moved by whole pixels, not
