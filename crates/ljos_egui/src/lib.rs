@@ -33,4 +33,4 @@ pub fn font_definitions() -> egui::FontDefinitions {
     fonts
 }
 
-pub use view::{GraftUpdates, KeyboardPolicy, QmlView, ResizeMode, ViewError, ViewStats};
+pub use view::{GraftUpdates, KeyboardPolicy, QmlView, ResizeMode, ViewError, ViewStats, Waker};

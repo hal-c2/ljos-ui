@@ -122,6 +122,10 @@ pub struct ViewStats {
     pub wheels_accepted: u64,
 }
 
+/// Wakes a host that runs its own loop, after the given delay
+/// ([`QmlView::set_waker`]). Any thread may call it.
+pub type Waker = Arc<dyn Fn(Duration) + Send + Sync>;
+
 /// Bridges the scene's waker (an `Rc` closure on the UI thread) to egui.
 ///
 /// While the view itself is running the pipeline the waker is "held": the
@@ -130,6 +134,7 @@ pub struct ViewStats {
 #[derive(Default)]
 struct WakeGate {
     ctx: RefCell<Option<Context>>,
+    waker: RefCell<Option<Waker>>,
     held: Cell<bool>,
     missed: Cell<bool>,
 }
@@ -138,6 +143,8 @@ impl WakeGate {
     fn wake(&self) {
         if self.held.get() {
             self.missed.set(true);
+        } else if let Some(waker) = &*self.waker.borrow() {
+            waker(Duration::ZERO);
         } else if let Some(ctx) = &*self.ctx.borrow() {
             ctx.request_repaint();
         }
@@ -193,6 +200,9 @@ pub struct QmlView {
     /// The keyboard was the view's when the last pass ended.
     had_keyboard: bool,
     next_wake: Option<Time>,
+    /// The soonest pass the view asked for since [`QmlView::take_asked`],
+    /// with a waker.
+    asked: Option<Duration>,
     /// How long the display shows a frame ([`QmlView::set_refresh_rate`]).
     frame_period: Duration,
     size: Option<Vec2>,
@@ -299,6 +309,7 @@ impl QmlView {
             stats: ViewStats::default(),
             file_drag: None,
             pointer_seen: None,
+            asked: None,
         })
     }
 
@@ -617,11 +628,34 @@ impl QmlView {
     /// scene can change before the first pass.
     pub fn bind_context(&mut self, ctx: &Context) {
         *self.gate.ctx.borrow_mut() = Some(ctx.clone());
+        if self.gate.waker.borrow().is_some() {
+            return;
+        }
         // A decoded picture is waiting: the worker thread wakes egui, and
         // the pass that follows hands the result to the items.
         let ctx = ctx.clone();
         ljos_quick::ImageStore::of(&self.engine)
             .set_waker(move || ctx.request_repaint_after(PICTURES_EVERY));
+    }
+
+    /// Wakes the host with `waker` and not through egui, for a host that
+    /// runs its own loop. egui asks for passes of its own after each one
+    /// with input, and once it has asked it hears no other request until
+    /// the next pass: a host that leaves those passes out could miss a
+    /// wake. With a waker, the passes the view asks for in a pass are not
+    /// told to egui either: the host takes them ([`QmlView::take_asked`])
+    /// after each pass.
+    pub fn set_waker(&mut self, waker: Waker) {
+        let pictures = Arc::clone(&waker);
+        ljos_quick::ImageStore::of(&self.engine).set_waker(move || pictures(PICTURES_EVERY));
+        *self.gate.waker.borrow_mut() = Some(waker);
+    }
+
+    /// How soon the view asked for its next pass in the passes since the
+    /// last call, with a waker ([`QmlView::set_waker`]); `None` when it
+    /// did not.
+    pub fn take_asked(&mut self) -> Option<Duration> {
+        self.asked.take()
     }
 
     /// Runs `f` with the scene's waker held, for work done right before a
@@ -992,6 +1026,11 @@ impl QmlView {
 
     fn request_repaint(&mut self, ctx: &Context, after: Option<Duration>) {
         self.stats.repaint_requests += 1;
+        if self.gate.waker.borrow().is_some() {
+            let after = after.unwrap_or(Duration::ZERO);
+            self.asked = Some(self.asked.map_or(after, |asked| asked.min(after)));
+            return;
+        }
         match after {
             None => ctx.request_repaint(),
             Some(d) => ctx.request_repaint_after(d),

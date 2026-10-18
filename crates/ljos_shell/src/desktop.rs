@@ -89,8 +89,9 @@ pub(crate) enum ShellEvent {
     Repaint {
         slot: u64,
         when: Instant,
-        /// The context's pass count when it asked.
-        pass: u64,
+        /// The context's pass count when it asked; `None` for a waker,
+        /// which is never answered before it is heard.
+        pass: Option<u64>,
         /// Asked for at once, not after a delay.
         at_once: bool,
     },
@@ -125,8 +126,18 @@ type Proxy = Arc<Mutex<EventLoopProxy<ShellEvent>>>;
 
 type Control<'a> = WinitControl<'a, ShellEvent>;
 
+thread_local! {
+    /// The window whose pass runs on this thread, while egui runs it.
+    static IN_PASS: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
 /// A context for one window. Asking it for a repaint posts into the loop,
-/// which is what wakes it.
+/// which is what wakes it. While its own pass runs, what it is asked is
+/// not heard: egui asks for two more passes after each one with input,
+/// and one more after each that asked for one at once, for widgets of its
+/// own that answer a frame late. The scene answers in the pass, and says
+/// what it wants next ([`QmlView::take_asked`]); everything else wakes the
+/// loop with [`waker`].
 fn new_context(key: u64, proxy: &Proxy) -> egui::Context {
     let ctx = egui::Context::default();
     ctx.set_fonts(ljos_egui::font_definitions());
@@ -135,6 +146,9 @@ fn new_context(key: u64, proxy: &Proxy) -> egui::Context {
     ctx.options_mut(|o| o.max_passes = NonZeroUsize::new(2).unwrap_or(NonZeroUsize::MIN));
     let proxy = Arc::clone(proxy);
     ctx.set_request_repaint_callback(move |info| {
+        if IN_PASS.get() == Some(key) {
+            return;
+        }
         // A delay too long to say is "not before something else happens".
         let Some(when) = Instant::now().checked_add(info.delay) else {
             return;
@@ -144,12 +158,33 @@ fn new_context(key: u64, proxy: &Proxy) -> egui::Context {
             drop(proxy.send_event(ShellEvent::Repaint {
                 slot: key,
                 when,
-                pass: info.current_cumulative_pass_nr,
+                pass: Some(info.current_cumulative_pass_nr),
                 at_once: info.delay.is_zero(),
             }));
         }
     });
     ctx
+}
+
+/// Wakes the loop for window `key` from any thread, without egui: once
+/// egui has asked for a pass it hears no other request until the next
+/// one, and the loop leaves out the passes egui asks for itself.
+fn waker(key: u64, proxy: &Proxy) -> ljos_egui::Waker {
+    let proxy = Arc::clone(proxy);
+    Arc::new(move |delay| {
+        let Some(when) = Instant::now().checked_add(delay) else {
+            return;
+        };
+        if let Ok(proxy) = proxy.lock() {
+            // Fails only when the loop has ended.
+            drop(proxy.send_event(ShellEvent::Repaint {
+                slot: key,
+                when,
+                pass: None,
+                at_once: delay.is_zero(),
+            }));
+        }
+    })
 }
 
 /// The AccessKit tree of window `key`'s scene. Never the nil id, which is
@@ -346,9 +381,9 @@ impl Slot {
     /// A pass changed nothing to draw; the scene wants the next in
     /// `wake`. Drawn passes are paced by the display, which this one did
     /// not wait for: the next waits for the scene, whose request egui
-    /// made a frame early. One that comes at once is let through (egui
-    /// runs one more pass after one that asked for another at once),
-    /// and from the second in a row they wait a frame, so that a scene
+    /// made a frame early. One that comes at once is let through (what
+    /// the pass changed is laid out and shown by the next), and from the
+    /// second in a row they wait a frame, so that a scene
     /// whose animations show nothing does not spin. A scene that asks for
     /// a later pass is not held past it: it asks for its next frame a
     /// frame after its last, so it does not spin, and a wheel turned while
@@ -859,13 +894,14 @@ impl<M: Send + 'static> Desktop<M> {
                     .with_clock(Arc::clone(self.app.view().clock()))
                     .with_resize_mode(ResizeMode::Fill)
                     .with_accessibility_graft(tree_id(key));
+                view.set_waker(waker(key, &self.proxy));
                 view.bind_context(&ctx);
                 // The window is cleared to what the view leaves for it.
                 view.set_fold_backdrop(true);
-                // Binding made this context the one a decoded picture
-                // wakes, and that too stays the root's.
-                let root_ctx = self.slots[0].ctx.clone();
-                self.app.view_mut().bind_context(&root_ctx);
+                // The waker is the one a decoded picture wakes, and that
+                // too stays the root's.
+                let root = self.slots[0].key;
+                self.app.view_mut().set_waker(waker(root, &self.proxy));
                 self.slots.push(Slot::new(key, Some(win), ctx, Some(view)));
             }
             Err(e) => {
@@ -1172,6 +1208,15 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
         self.run_pass(host, i, paint);
+        let slot = &mut self.slots[i];
+        let view = match slot.view.as_mut() {
+            Some(view) => view,
+            None => self.app.view_mut(),
+        };
+        if let Some(after) = view.take_asked() {
+            let key = slot.key;
+            self.asked(key, Instant::now() + after, after.is_zero());
+        }
         let engine = self.app.engine();
         ljos_quick::ImageStore::of(engine).frame_drawn(engine);
     }
@@ -1263,6 +1308,7 @@ impl<M: Send + 'static> Desktop<M> {
         };
         raw.time = Some(slot.started.elapsed().as_secs_f64());
 
+        IN_PASS.set(Some(slot.key));
         let output = match slot.view.as_mut() {
             None => slot.ctx.run_ui(raw, |ui| {
                 app.begin_pass();
@@ -1272,6 +1318,7 @@ impl<M: Send + 'static> Desktop<M> {
                 view.show(ui);
             }),
         };
+        IN_PASS.set(None);
         let egui::FullOutput {
             mut platform_output,
             textures_delta,
@@ -1310,7 +1357,7 @@ impl<M: Send + 'static> Desktop<M> {
                 }
             }
             if updates.again {
-                slot.ctx.request_repaint();
+                repaints.request(slot.key, Instant::now());
             }
         }
         surface.state.handle_platform_output_with_event_loop(
@@ -1595,24 +1642,32 @@ impl<M: Send + 'static> Desktop<M> {
         self.repaints.request(slot.key, Instant::now());
     }
 
-    /// A context asked for a pass.
-    fn repaint_asked(&mut self, key: u64, when: Instant, pass: u64, at_once: bool) {
-        let Some(slot) = self.slots.iter_mut().find(|s| s.key == key) else {
+    /// A context or a waker asked for a pass.
+    fn repaint_asked(&mut self, key: u64, when: Instant, pass: Option<u64>, at_once: bool) {
+        let Some(slot) = self.slots.iter().find(|s| s.key == key) else {
             return;
         };
         // A pass that ran since answered it, unless it was asked while
         // that pass ran.
         let now = slot.ctx.cumulative_pass_nr_for(ViewportId::ROOT);
-        if now == pass || now == pass + 1 {
-            if at_once {
-                slot.asked_at_once();
-            }
-            #[cfg(feature = "mcp")]
-            {
-                slot.asked = Some(slot.asked.map_or(when, |asked| asked.min(when)));
-            }
-            self.repaints.request(key, when);
+        if pass.is_none_or(|pass| now == pass || now == pass + 1) {
+            self.asked(key, when, at_once);
         }
+    }
+
+    /// Window `key` is to run a pass at `when`.
+    fn asked(&mut self, key: u64, when: Instant, at_once: bool) {
+        let Some(slot) = self.slots.iter_mut().find(|s| s.key == key) else {
+            return;
+        };
+        if at_once {
+            slot.asked_at_once();
+        }
+        #[cfg(feature = "mcp")]
+        {
+            slot.asked = Some(slot.asked.map_or(when, |asked| asked.min(when)));
+        }
+        self.repaints.request(key, when);
     }
 
     /// The displays, and which of them each window is on.
@@ -1976,6 +2031,7 @@ pub(crate) fn run<M: Send + 'static>(
     let dirty = Rc::new(Cell::new(true));
     let hosting = Hosting {
         tree: tree_id(0),
+        wake: waker(0, &proxy),
         changed: {
             let dirty = Rc::clone(&dirty);
             Box::new(move || dirty.set(true))

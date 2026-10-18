@@ -548,6 +548,7 @@ mod tests {
             let hosting = Hosting {
                 tree: egui::accesskit::TreeId::ROOT,
                 changed: Box::new(|| {}),
+                wake: Arc::new(|_| {}),
             };
             ShellApp::hosted(
                 &ctx,

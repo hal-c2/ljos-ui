@@ -1135,6 +1135,25 @@ fn native_handler_panics(w: &mut LjosWorld, object: String, message: String) -> 
     w.each(|b| b.panic_in(&object, &message))
 }
 
+#[when("the window's passes are counted")]
+fn passes_are_counted(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.count_passes())
+}
+
+#[then(regex = r"^the window ran at most (\d+) pass(?:es)? since they were counted$")]
+fn ran_at_most_passes(w: &mut LjosWorld, most: u64) -> StepResult {
+    w.each(|b| {
+        let ran = b.passes_counted()?;
+        if ran <= most {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the window ran {ran} passes, not at most {most}"
+            )))
+        }
+    })
+}
+
 // Nothing would wake the application: 0 % CPU when idle.
 #[then("the application has nothing scheduled")]
 fn nothing_scheduled(w: &mut LjosWorld) -> StepResult {

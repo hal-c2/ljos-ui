@@ -269,6 +269,10 @@ pub(crate) struct Hosting {
     /// Called when a QML `Window` wants something else of its platform
     /// window than it has.
     pub(crate) changed: Box<dyn Fn()>,
+    /// Wakes the loop for the root's window without going through egui,
+    /// which the loop's own passes do not answer for
+    /// ([`QmlView::set_waker`]).
+    pub(crate) wake: ljos_egui::Waker,
 }
 
 impl<M: Send + 'static> ShellApp<M> {
@@ -309,10 +313,23 @@ impl<M: Send + 'static> ShellApp<M> {
         ljos_media::register(&engine);
         // Before `setup`: a window knows from its first moment whether it
         // is an item of a scene or a window of the platform.
-        let tree = hosting.map(|h| {
-            ljos_controls::WindowSystem::of(&engine).set_host(h.changed);
-            h.tree
-        });
+        let (tree, waker) = match hosting {
+            Some(h) => {
+                ljos_controls::WindowSystem::of(&engine).set_host(h.changed);
+                (Some(h.tree), Some(h.wake))
+            }
+            None => (None, None),
+        };
+        let wake: Arc<dyn Fn() + Send + Sync> = match &waker {
+            Some(waker) => {
+                let waker = Arc::clone(waker);
+                Arc::new(move || waker(std::time::Duration::ZERO))
+            }
+            None => {
+                let ctx = ctx.clone();
+                Arc::new(move || ctx.request_repaint())
+            }
+        };
         if tree.is_some() && config.system_locale {
             engine.use_system_locale();
         }
@@ -327,17 +344,16 @@ impl<M: Send + 'static> ShellApp<M> {
         if tree.is_some() {
             // Before `setup` too: a `Settings` reads its file, and a
             // binding may ask `Qt.platform`, while the root is built.
-            let wake_ctx = ctx.clone();
-            platform::install(&engine, move || wake_ctx.request_repaint());
+            let wake = Arc::clone(&wake);
+            platform::install(&engine, move || wake());
             // Pictures fill in after the window is drawn, as they do in
             // Qt: their fetches and decodes never hold up a frame.
             ljos_quick::ImageStore::of(&engine).set_start_after_frame(true);
         }
-        let wake_ctx = ctx.clone();
-        let (inbox, handle) = UiInbox::channel_with_wake(
-            config.inbox_capacity,
-            Arc::new(move || wake_ctx.request_repaint()),
-        );
+        let (inbox, handle) = UiInbox::channel_with_wake(config.inbox_capacity, {
+            let wake = Arc::clone(&wake);
+            Arc::new(move || wake())
+        });
         // The application's own messages: their kinds are its business.
         inbox.observe_as("application", None);
         let mut s = Setup {
@@ -347,12 +363,12 @@ impl<M: Send + 'static> ShellApp<M> {
             on_message: None,
             timer_hook: None,
             #[cfg(feature = "dev")]
-            dev: dev::DevSetup::new(ctx),
+            dev: dev::DevSetup::new(Arc::clone(&wake)),
             #[cfg(feature = "dev")]
             tools: {
-                let ctx = ctx.clone();
                 let [r, g, b, _] = config.background.to_rgba8();
-                tools::ToolSetup::new(Arc::new(move || ctx.request_repaint()), [r, g, b])
+                let wake = Arc::clone(&wake);
+                tools::ToolSetup::new(Arc::new(move || wake()), [r, g, b])
             },
         };
         let root = setup(&mut s).map_err(ShellError::Setup)?;
@@ -368,6 +384,9 @@ impl<M: Send + 'static> ShellApp<M> {
         let mut view = QmlView::new(Rc::clone(&engine), root)?.with_clock(clock);
         if let Some(tree) = tree {
             view = view.with_accessibility_graft(tree);
+        }
+        if let Some(waker) = waker {
+            view.set_waker(waker);
         }
         view.bind_context(ctx);
         if let Some(h) = timer_hook {

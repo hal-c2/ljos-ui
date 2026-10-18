@@ -31,10 +31,9 @@ pub(crate) struct DevSetup {
 }
 
 impl DevSetup {
-    pub(crate) fn new(ctx: &egui::Context) -> Self {
-        let ctx = ctx.clone();
+    pub(crate) fn new(wake: WakeHook) -> Self {
         Self {
-            wake: Arc::new(move || ctx.request_repaint()),
+            wake,
             dev: None,
             on_report: None,
         }

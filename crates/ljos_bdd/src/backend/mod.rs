@@ -597,6 +597,22 @@ pub trait Backend: fmt::Debug {
             what: "seeing the size a picture is kept at",
         })
     }
+    /// Starts counting the passes the window runs (a run of its scene and
+    /// a paint), less those the counting itself causes. Only a shell runs
+    /// passes; the oracle's event loop cannot be read.
+    fn count_passes(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the passes a window runs",
+        })
+    }
+    /// The passes run since [`Backend::count_passes`].
+    fn passes_counted(&mut self) -> Result<u64> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the passes a window runs",
+        })
+    }
     /// The `Qt.CursorShape` the pointer shows. The oracle runs off-screen,
     /// where there is no pointer to show one.
     fn pointer_cursor(&mut self) -> Result<i64> {

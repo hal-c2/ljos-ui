@@ -160,6 +160,9 @@ pub struct DesktopBackend {
     pointer: Option<Pointer>,
     dir: Option<tempfile::TempDir>,
     running: Option<Running>,
+    /// The passes read when counting began, and how many each reading
+    /// itself runs.
+    passes_from: Option<(u64, u64)>,
 }
 
 impl DesktopBackend {
@@ -274,6 +277,20 @@ impl DesktopBackend {
         running.ask("app_eval", json!({"source": "true"}))?;
         self.running = Some(running);
         Ok(())
+    }
+
+    /// The passes of the application's window so far, painted or not
+    /// (`app_metrics`). The reading is served in a pass of its own, which
+    /// the next reading counts.
+    fn passes(&mut self) -> Result<u64> {
+        let metrics = self.running()?.ask("app_metrics", json!({}))?;
+        let paint = &metrics["paint"];
+        match (paint["presented"].as_u64(), paint["unchanged"].as_u64()) {
+            (Some(presented), Some(unchanged)) => Ok(presented + unchanged),
+            _ => Err(BackendError::Failed(format!(
+                "app_metrics says no passes: {metrics}"
+            ))),
+        }
     }
 
     fn pointer_device(&mut self) -> Result<&mut Pointer> {
@@ -394,6 +411,23 @@ impl Backend for DesktopBackend {
 
     fn touch(&mut self, _: f64, _: f64) -> Result<()> {
         Err(not_yet("touch on the desktop"))
+    }
+
+    fn count_passes(&mut self) -> Result<()> {
+        // Two readings a while apart say what one costs.
+        let first = self.passes()?;
+        std::thread::sleep(INPUT_SETTLES);
+        let second = self.passes()?;
+        self.passes_from = Some((second, second.saturating_sub(first)));
+        Ok(())
+    }
+
+    fn passes_counted(&mut self) -> Result<u64> {
+        let (from, reading) = self
+            .passes_from
+            .ok_or_else(|| BackendError::Failed("the passes were not being counted".into()))?;
+        let now = self.passes()?;
+        Ok(now.saturating_sub(from).saturating_sub(reading))
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {
