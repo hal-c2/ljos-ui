@@ -899,3 +899,21 @@ fn an_effect_hears_of_a_change_its_own_write_ran_after_it_first_read() {
     g.set(gate, 1);
     assert_eq!(seen.get(), 7);
 }
+
+#[test]
+fn only_an_assigned_value_holds_what_a_write_would_write() {
+    let g = Graph::new();
+    let a = g.property(g.root(), 1).unwrap();
+    // Never given a value: a write of it still makes it set.
+    assert!(!g.holds_assigned(a, &1));
+    g.write(a, 2, WriteKind::Imperative).unwrap();
+    assert!(g.holds_assigned(a, &2));
+    assert!(!g.holds_assigned(a, &3));
+    // A binding is replaced by the write, whatever value it gives.
+    let b = g.binding(g.root(), 0, move |g| g.get(a)).unwrap();
+    assert_eq!(g.get(b), 2);
+    assert!(!g.holds_assigned(b, &2));
+    // An animation's step is not the value the property was given.
+    g.write(a, 5, WriteKind::Animation).unwrap();
+    assert!(!g.holds_assigned(a, &5));
+}

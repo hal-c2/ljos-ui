@@ -1749,6 +1749,38 @@ impl<V: Clone + 'static> Graph<V> {
         }
     }
 
+    /// Whether an imperative [`Graph::write`] of `v` would change nothing:
+    /// the property's active layer is a value it was given, no animation
+    /// is over it, and it holds `v`. Then nothing is written and nothing
+    /// flushed; a binding that asks still becomes a root, as one that
+    /// writes does.
+    pub fn holds_assigned(&self, n: NodeId, v: &V) -> bool {
+        let mut g = self.inner.borrow_mut();
+        let i = &mut *g;
+        let eq = i.options.equals;
+        let Some(node) = i.nodes.get(n) else {
+            return false;
+        };
+        let Kind::Property(p) = &node.kind else {
+            return false;
+        };
+        let top = p.top();
+        let same = !p.animated
+            && top.provenance == Provenance::Assigned
+            && matches!(top.content, Content::Value(_))
+            && node.state == NodeState::Clean
+            && node.value.as_ref().is_some_and(|old| eq(old, v));
+        if same
+            && let Some(&running) = i.eval_stack.last()
+            && running != n
+            && let Some(r) = i.nodes.get_mut(running)
+            && matches!(r.kind, Kind::Property(_))
+        {
+            r.eager = true;
+        }
+        same
+    }
+
     /// Whether the active layer is a binding.
     pub fn is_bound(&self, n: NodeId) -> bool {
         matches!(

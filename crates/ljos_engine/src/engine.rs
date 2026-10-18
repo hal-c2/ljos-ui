@@ -1823,6 +1823,9 @@ impl Engine {
             return Ok(false);
         }
         match node {
+            // The value it was given again: a handler that sets what it
+            // set last time changes nothing, and nothing need be flushed.
+            Some(n) if self.inner.graph.holds_assigned(n, &v) => {}
             Some(n) => self.write_node(obj, prop, n, v, WriteKind::Imperative)?,
             None => {
                 // Nobody observes it: the field is the only copy.
