@@ -2491,3 +2491,108 @@ The "before" lag rows are a release run that already counts frames by their pixe
 **What is left.** Driven, samegame changes 57.9 frames a second against Qt's 61.8, with the same
 95th percentile and slowest intervals. Activation on a seat without a keyboard has no runner to
 check it yet (`features/window/activation-without-keyboard.feature` stays `@blocked`).
+
+### Hot reload: edits fuzzed against fresh loads (2026-10-18)
+
+`crates/ljos_shell/examples/edit_fuzz.rs` loads a copy of each corpus app in a `ShellApp`
+without a window and saves 25 random small edits to its files, with seed 7. The edits add,
+remove or move an object, change a binding, a handler or a function, or rename a property.
+After each reload, the running app is compared with the same files loaded afresh: the object
+tree, every property's value, and whether each one is bound. Four lanes ran the 45 apps;
+clocks and photosurface ran again after the last fix. 13 apps don't load (types Ljós doesn't
+have: `MapLoader`, `AssetDownloader`, `RestService`, `PhysicsWorld`, `GraphsTheme`, `Map`,
+`PlaybackSeekControl`, `OSMManager`, `BackEnd`, `View3D`, `MyFocusScopeWidget`, `Surface3D`,
+`WindowContainer`).
+
+- **No reload:** the edit hit a file the app doesn't load, which happens when snippets share
+  a folder.
+- **Kept state:** values the run built up that a reload rightly keeps.
+- **Window sized by the host:** the fresh load gets another window size.
+
+| App | in place | full path | did not compile | no reload | nothing to reload | diverged | kept state | window sized by the host |
+|---|---|---|---|---|---|---|---|---|
+| alarms | 17 | 8 | – | – | – | 5 | – | – |
+| android-splashscreen | 21 | 4 | – | – | – | – | – | – |
+| calqlatr | 16 | 7 | 2 | – | – | 1 | 1 | 1 |
+| clocks | 15 | 9 | 1 | – | – | 1 | 18 | – |
+| coffee | 14 | 5 | 6 | – | – | – | – | – |
+| fx-material-showroom | 1 | – | 24 | – | – | – | – | – |
+| hangman | 1 | 1 | 23 | – | – | – | – | – |
+| maroon | 20 | 3 | 2 | – | – | – | – | – |
+| photosurface | 19 | 5 | 1 | – | – | 12 | 2 | – |
+| rssnews | 19 | 5 | 1 | – | – | – | – | – |
+| samegame | 16 | 2 | 2 | 5 | – | – | – | – |
+| snippet-alias-application | 17 | 5 | 3 | – | – | – | 17 | 8 |
+| snippet-borderimage-defaults | 25 | – | – | – | – | – | 19 | 6 |
+| snippet-components-application | 15 | 7 | 3 | – | – | – | – | – |
+| snippet-flow-diagram | 3 | – | – | 22 | – | – | – | – |
+| snippet-focus-column | 8 | 1 | 16 | – | – | – | 7 | 4 |
+| snippet-focus-scopes | 2 | 1 | – | 22 | – | – | – | – |
+| snippet-methods-app | 25 | – | – | – | – | – | 18 | 7 |
+| snippet-properties-application | 12 | – | 2 | 11 | – | – | – | – |
+| snippet-property-signals | 12 | – | 2 | 11 | – | – | – | – |
+| snippet-rectangle-smooth | 16 | 6 | 3 | – | – | – | 1 | 3 |
+| snippet-signals-basic | 25 | – | – | – | – | – | 12 | 1 |
+| snippet-signals-connectdynamic | 25 | – | – | – | – | – | – | – |
+| snippet-signals-connectslots | 25 | – | – | – | – | – | – | 1 |
+| snippet-signals-no-parameters | 23 | 2 | – | – | – | – | 22 | 3 |
+| snippet-signals-parameters | 23 | 2 | – | – | – | – | 21 | 2 |
+| snippet-text-lines | 3 | – | – | 22 | – | – | – | – |
+| snippet-texteditor | 3 | – | – | 22 | – | – | – | – |
+| snippet-vertical-positioner-transition | 24 | 1 | – | – | – | 9 | – | – |
+| thermostat | 9 | – | 16 | – | – | – | – | – |
+| todolist | 11 | 3 | 4 | 7 | – | – | – | – |
+| toycustomizer | 2 | – | 23 | – | – | – | – | – |
+
+Of the 800 edits, 467 went in place and 77 took the full path. Another 134 didn't compile,
+and 122 hit a file the app doesn't load. Earlier in this batch, 96 took the full path, 35 of
+them for an edit to a member of a group or an attached object (`font.pixelSize`,
+`anchors.margins`, `border.color`, `Layout.preferredWidth`). Those now go in place.
+
+**Why the 77 still take the full path:**
+
+| Edits | Reason | Why it stays |
+|---|---|---|
+| 25 | a property renamed (signature changed) | The type's members change, and with them every object made from it. |
+| 10 | objects came or went where they can't be put (a `ListElement` removed or moved out) | A model's rows are data, not objects in the tree. |
+| 8 | a member is no longer given | It goes back to its default, which only a fresh object knows. |
+| 7 + 1 | grouped or attached members changed | A same-type sibling moved into another's place sets other members; same as above. |
+| 6 | a user of the component sets the edited member | What the user writes outranks the file; this stays until edits can skip such instances. |
+| 5 | a component removed | Its objects are made from a component that is gone. |
+| 4 | a model's elements changed | Same as rows above. |
+| 3 | an edited binding reads an id that is gone | It would throw and keep its old value; a fresh load starts it from its default. |
+| 2 + 2 | members given objects, or declared properties, changed | The object is a different shape. |
+| 1 each | parent can't hold the object, a state holds the edited object, an alias's member not found, a file added | |
+
+**Bugs found and fixed, each with a scenario:**
+
+1. The visual-children order before an anchor, and focus with a Repeater.
+2. An item moved before a sibling that is not an item.
+3. An object added last in a Control.
+4. A template or delegate inside an edited instance.
+5. The slots of an instance whose inner file changed (rssnews).
+6. A descendant shown in another item stayed in that item's lists after it was destroyed
+   (a Dialog left in the overlay, alarms).
+7. A value a script gave an object remade in place was lost at the next full path (samegame).
+8. An animation `start()` set going was stopped by a full path (photosurface).
+9. A binding that now reads a removed id kept its old value (photosurface, and
+   `anchors.centerIn` in clocks).
+
+**State kept on purpose, so these remain as differences (28 edits):**
+
+- **Values scripts wrote, and the bindings that follow from them.** calqlatr's `dimmed` and its
+  button text colours.
+- **Animations and Behaviors part-way through.** clocks' hands, photosurface's intro frame,
+  the positioner's move transition.
+- **Time.** clocks' minute rolls over between the two loads.
+- **Things that only happen once.** photosurface's intro destroys itself and then picks the
+  folder; the fresh load hasn't got there yet.
+- **The overlay.** Once made, it stays even when empty. A fresh load without popups never makes
+  one, while Qt always has an overlay.
+- **Tumbler.** Its PathView `currentIndex` is bound in the live app but written with `=` in the
+  fresh one, with the same value: the view's own write breaks the binding. How views write is
+  not changed here.
+- **The positioner.** In vertical-positioner-transition, the Column whose child has
+  `anchors.fill` stops placing, as Qt's does.
+- **Model rows.** The row objects `get()` made (todolist) are a cache, compared through the
+  model.
