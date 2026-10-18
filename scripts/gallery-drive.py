@@ -137,8 +137,13 @@ def outcome(res, settled):
 
 
 def grid_clicks(app, w, d):
-    wins = [x for x in cua("list_windows", {"pid": app.pid}).get("windows", []) if x["pid"] == app.pid]
-    if not wins:
+    # The compositor may list the window a moment after the app answers its inspector.
+    for _ in range(20):
+        wins = [x for x in cua("list_windows", {"pid": app.pid}).get("windows", []) if x["pid"] == app.pid]
+        if wins:
+            break
+        time.sleep(0.25)
+    else:
         w(f"== grid: no window for pid {app.pid}")
         return
     win = wins[0]
