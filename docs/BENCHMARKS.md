@@ -2990,3 +2990,44 @@ DECISIONs:
 - A write the wrapper refuses throws a TypeError whenever QuickJS says the write may throw.
   Ljós runs scripts strict.
 - One object of the live list's prototype is kept, so QuickJS reuses its shape.
+
+### calqlatr's press, fourth pass: lookups by name and by type (2026-10-18)
+
+The bench copy and run of the section above. The base is its "after" (5614814f). Ir is from
+callgrind on a release build, per press (140 presses). Wall time is per press over 2 800
+presses, 5 runs of Ljós next to 3 of `qml6` 6.11.2. Other work kept the machine loaded, and
+`qml6` itself ranged from 0.098 to 0.125 ms, so the wall rows are only good to about 10 %.
+
+| | qml6 | Ljós base | Ljós after |
+|---|---:|---:|---:|
+| calqlatr, Ir per press | | 1.558 M | 1.481 M |
+| calqlatr, wall per press (fastest run) | 0.098–0.103 ms | 0.130 ms | 0.120–0.124 ms |
+
+Ljós is still above qml6, by about 20 %. The cuts, in order:
+- A tier1 program keeps, per name it reads, what the name was on the last types it met. It looks
+  a member or a script method up by name only when the type changes: 1.558 M → 1.524 M.
+- The field reads of an object find a reader's entries by an index of property and reader, not
+  by looking through all the object's entries: 1.524 M → 1.507 M. A counting test keeps it
+  (`many_readers_of_one_property_each_keep_their_two_entries`).
+- The derive finds a native part in one call (`QmlObject::part`), where the walk asked each
+  level its type and then its base: 1.507 M → 1.491 M.
+- An easing reads `bezierCurve`, a list made anew at each read, only for a `BezierSpline`:
+  1.491 M → 1.486 M.
+- `is_a` asks the object's type without cloning it (`Engine::inherits`): 1.486 M → 1.481 M.
+
+None of these changes what a script sees, so there is no new scenario. The animation, bindings
+and language features pass unchanged.
+
+What is left of a press, about 1.48 M Ir:
+- The ListView's model and view work, about 0.45 M (30 %): `append` about 137 k, the views
+  pass about 178 k, `positionViewAtEnd` about 79 k, `clear` about 58 k.
+- About 11 buttons change `dimmed` a press. Each one re-runs three colour bindings in the tier1
+  VM (5–6 k each) and starts a Behavior's ColorAnimation (about 13 k).
+- `updateDimmed` reads `grid.children` about 95 times. Each read is a new wrapper, as in qml6,
+  where `children === children` is false.
+
+DECISIONs:
+- The ListView's share is left to the lane that owns the view.
+- `children` keeps returning a new wrapper at each read, as qml6 does.
+- An animation looks up its target's property again when it starts. Its `properties` may
+  change between the build and the start.
