@@ -1171,7 +1171,7 @@ impl TextEngine {
         } else {
             fonts::font_context(false)
         };
-        Self {
+        let mut engine = Self {
             fcx,
             lcx: LayoutContext::new(),
             families: Families {
@@ -1190,7 +1190,25 @@ impl TextEngine {
             keep_frames: KEEP_FRAMES,
             generation: 0,
             stats: CacheStats::default(),
+        };
+        if system {
+            engine.warm_fallback();
         }
+        engine
+    }
+
+    /// Looks up, here, the font a character the default family lacks falls
+    /// back to. The first lookup asks fontconfig to sort every installed
+    /// font (5-10 ms with 2 400 of them), and this runs on the thread that
+    /// reads the fonts rather than in the first frame that draws a symbol;
+    /// the font found is kept in the collection. Symbols, arrows and
+    /// punctuation (the Common script) share one lookup. Other scripts are
+    /// looked up when text in them is first laid out.
+    fn warm_fallback(&mut self) {
+        let _ = self.layout("\u{215f}", &TextStyle::default(), &LayoutParams::default());
+        self.clear_caches();
+        self.stats = CacheStats::default();
+        self.families.pinned.set(0);
     }
 
     /// Add a font file (TrueType, OpenType, or a collection). Returns the
