@@ -98,6 +98,12 @@ pub(crate) struct HostState {
     /// What makes a direct method, by the shape of its parameters
     /// (direct.rs).
     direct: RefCell<FxHashMap<String, Persistent<Function<'static>>>>,
+    /// A panic in a raw accessor ([`raw_accessor`]), which cannot unwind
+    /// through QuickJS: kept until the dispatch is back in Rust.
+    panicked: RefCell<Option<Box<dyn Any + Send>>>,
+    /// The functions of [`JsHost::set_global_function`], by the `magic`
+    /// QuickJS calls them with.
+    globals: RefCell<Vec<HostFn>>,
 }
 
 /// One JS value held for Rust.
@@ -1022,6 +1028,13 @@ impl<'js> Scope<'js> {
         if depth > 32 {
             return Err(Exception::throw_type(&self.ctx, "value nested too deeply"));
         }
+        // Told by the tag alone, before `type_of` asks an object what it is.
+        if let Some(n) = v.as_number() {
+            return Ok(JsValue::Number(n));
+        }
+        if let Some(b) = v.as_bool() {
+            return Ok(JsValue::Bool(b));
+        }
         // A proxy of an array says it is an array, and reading it entry by
         // entry would run its traps: it crosses as the object it is.
         if v.is_proxy() {
@@ -1164,6 +1177,14 @@ impl std::fmt::Debug for JsHost {
 
 impl Drop for JsHost {
     fn drop(&mut self) {
+        // SAFETY: the opaque is the `Weak` JsHost::new put there, or null.
+        unsafe {
+            let p = rquickjs::qjs::JS_GetContextOpaque(self.raw.as_ptr());
+            rquickjs::qjs::JS_SetContextOpaque(self.raw.as_ptr(), std::ptr::null_mut());
+            if !p.is_null() {
+                drop(Weak::from_raw(p.cast::<HostState>().cast_const()));
+            }
+        }
         self.state.fns.borrow_mut().clear();
         self.state.types.borrow_mut().clear();
         self.state.listings.borrow_mut().clear();
@@ -1174,6 +1195,7 @@ impl Drop for JsHost {
         self.state.owned_face.borrow_mut().take();
         self.state.kinds.borrow_mut().clear();
         self.state.direct.borrow_mut().clear();
+        self.state.globals.borrow_mut().clear();
     }
 }
 
@@ -1245,7 +1267,17 @@ impl JsHost {
             color: RefCell::default(),
             kinds: RefCell::default(),
             direct: RefCell::default(),
+            panicked: RefCell::default(),
+            globals: RefCell::default(),
         });
+        // SAFETY: the context is alive; the raw accessors read it back as a
+        // `Weak` (raw_state), and `Drop` takes it out before the context goes.
+        unsafe {
+            rquickjs::qjs::JS_SetContextOpaque(
+                raw.as_ptr(),
+                Weak::into_raw(Rc::downgrade(&state)).cast_mut().cast(),
+            );
+        }
         Ok(Self {
             state,
             raw,
@@ -1329,7 +1361,11 @@ impl JsHost {
                     ctx: ctx.clone(),
                     state: self.state.clone(),
                 };
-                match f(&scope) {
+                let r = f(&scope);
+                if let Some(panic) = self.state.panicked.borrow_mut().take() {
+                    std::panic::resume_unwind(panic);
+                }
+                match r {
                     Ok(v) => Ok(v),
                     Err(e) => Err(self.classify(&scope, e, label, start.elapsed())),
                 }
@@ -1468,7 +1504,7 @@ impl JsHost {
     /// cross as [`JsValue`]s; an error becomes a thrown JS `Error`.
     pub fn set_global_function(&self, name: &str, f: HostFn) -> Result<(), JsFault> {
         self.enter("set_global_function", self.cfg.load_slice, |scope| {
-            let func = make_global(&scope.ctx, Rc::downgrade(&scope.state), f.clone(), name)?;
+            let func = make_global(scope, f.clone(), name)?;
             scope.ctx.globals().set(name, func)
         })
     }
@@ -1563,14 +1599,14 @@ impl JsHost {
             if let Some((from, names)) = &base {
                 for name in &names.props {
                     match take(&mut own_props, name, |p| p.name.as_str()) {
-                        Some(p) => install_prop(&proto, weak.clone(), p)?,
+                        Some(p) => install_prop(&proto, p)?,
                         None => copy_entry(ctx, from, &proto, name)?,
                     }
                     listing.props.push(name.clone());
                 }
             }
             for p in own_props.into_iter().flatten() {
-                install_prop(&proto, weak.clone(), p)?;
+                install_prop(&proto, p)?;
                 listing.props.push(p.name.clone());
             }
             if let Some((from, names)) = &base {
@@ -1852,43 +1888,186 @@ fn register_module<'js>(
 
 /// Accessors are built from closures, not `Function` values: rquickjs only
 /// implements `AsProperty` for `IntoJsFunc` types.
-fn install_prop<'js>(
-    proto: &Object<'js>,
-    state: Weak<HostState>,
-    p: &PropDef,
-) -> rquickjs::Result<()> {
-    let prop = p.id;
-    let st = state.clone();
-    let getter = move |ctx: Ctx<'js>,
-                       This(this): This<Class<'js, HostWrapper>>|
-          -> rquickjs::Result<Value<'js>> {
-        let (scope, host) = callback_scope(&ctx, &st)?;
-        let id = this.borrow().id;
-        let out = host.get(&scope, id, prop).map_err(|e| e.into_js(&ctx));
-        scope.back(out).and_then(|out| scope.to_value(&out))
-    };
-    if !p.writable {
-        return proto.prop(
-            p.name.as_str(),
-            Accessor::new_get(getter).configurable().enumerable(),
-        );
+fn install_prop(proto: &Object<'_>, p: &PropDef) -> rquickjs::Result<()> {
+    use rquickjs::qjs;
+    let ctx = proto.ctx().as_raw().as_ptr();
+    // The id rides in the function's data, not its `magic`: QuickJS keeps
+    // `magic` in 16 bits, and ids such as the parent's are far above that.
+    // A number holds no reference, so its raw value outlives the Value.
+    let mut id = Value::new_number(proto.ctx().clone(), f64::from(p.id)).as_raw();
+    // SAFETY: the context is alive and entered; `JS_NewCFunctionData`
+    // copies the data, `JS_DefinePropertyGetSet` takes both functions, and
+    // the atom is freed after it.
+    unsafe {
+        let getter = qjs::JS_NewCFunctionData(ctx, Some(raw_get), 0, 0, 1, &mut id);
+        let setter = if p.writable {
+            qjs::JS_NewCFunctionData(ctx, Some(raw_set), 1, 0, 1, &mut id)
+        } else {
+            qjs::JS_UNDEFINED
+        };
+        let atom = qjs::JS_NewAtomLen(ctx, p.name.as_ptr().cast(), p.name.len() as _);
+        let flags = (qjs::JS_PROP_CONFIGURABLE | qjs::JS_PROP_ENUMERABLE) as std::ffi::c_int;
+        let r = qjs::JS_DefinePropertyGetSet(ctx, proto.as_raw(), atom, getter, setter, flags);
+        qjs::JS_FreeAtom(ctx, atom);
+        if r < 0 {
+            return Err(rquickjs::Error::Exception);
+        }
     }
-    let setter = move |ctx: Ctx<'js>,
-                       This(this): This<Class<'js, HostWrapper>>,
-                       value: Value<'js>|
-          -> rquickjs::Result<()> {
-        let (scope, host) = callback_scope(&ctx, &state)?;
-        let id = this.borrow().id;
-        let v = scope.script_value(&value)?;
-        scope.back(host.set(&scope, id, prop, v).map_err(|e| e.into_js(&ctx)))
+    Ok(())
+}
+
+/// A property read: QuickJS calls it with the property's id as its data.
+/// Plain C functions, not rquickjs closures: a read is the most frequent
+/// thing a script does with an object, and the closure's argument
+/// conversion, class check and panic guard cost more than the read.
+unsafe extern "C" fn raw_get(
+    ctx: *mut rquickjs::qjs::JSContext,
+    this: rquickjs::qjs::JSValue,
+    _argc: std::ffi::c_int,
+    _argv: *mut rquickjs::qjs::JSValue,
+    _magic: std::ffi::c_int,
+    data: *mut rquickjs::qjs::JSValue,
+) -> rquickjs::qjs::JSValue {
+    // SAFETY: QuickJS calls it on a live context with the data it was made
+    // with.
+    unsafe {
+        raw_accessor(ctx, this, |scope, host, id| {
+            let out = host
+                .get(scope, id, prop_id(data))
+                .map_err(|e| e.into_js(&scope.ctx));
+            scope.back(out).and_then(|out| scope.to_value(&out))
+        })
+    }
+}
+
+unsafe extern "C" fn raw_set(
+    ctx: *mut rquickjs::qjs::JSContext,
+    this: rquickjs::qjs::JSValue,
+    argc: std::ffi::c_int,
+    argv: *mut rquickjs::qjs::JSValue,
+    _magic: std::ffi::c_int,
+    data: *mut rquickjs::qjs::JSValue,
+) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // SAFETY: QuickJS calls it on a live context with `argc` arguments and
+    // the data it was made with.
+    unsafe {
+        let value = if argc > 0 { *argv } else { qjs::JS_UNDEFINED };
+        raw_accessor(ctx, this, |scope, host, id| {
+            let value = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, value));
+            let v = scope.script_value(&value)?;
+            scope.back(
+                host.set(scope, id, prop_id(data), v)
+                    .map_err(|e| e.into_js(&scope.ctx)),
+            )?;
+            Ok(Value::new_undefined(scope.ctx.clone()))
+        })
+    }
+}
+
+/// The property id an accessor was made with ([`install_prop`]).
+///
+/// # Safety
+/// `data` is the accessor's own data, one number.
+unsafe fn prop_id(data: *mut rquickjs::qjs::JSValue) -> u32 {
+    use rquickjs::qjs;
+    // Read by its tag, as a Value would hold a reference to the context.
+    unsafe {
+        let v = *data;
+        if qjs::JS_VALUE_GET_NORM_TAG(v) == qjs::JS_TAG_INT {
+            qjs::JS_VALUE_GET_INT(v) as u32
+        } else {
+            qjs::JS_VALUE_GET_FLOAT64(v) as u32
+        }
+    }
+}
+
+/// The host a raw accessor runs for, from the context's opaque (set by
+/// [`JsHost::new`]).
+unsafe fn raw_state(ctx: *mut rquickjs::qjs::JSContext) -> Option<Rc<HostState>> {
+    // SAFETY: the opaque is the `Weak` JsHost::new put there, or null; it
+    // is borrowed, not taken.
+    unsafe {
+        let p = rquickjs::qjs::JS_GetContextOpaque(ctx).cast::<HostState>();
+        if p.is_null() {
+            return None;
+        }
+        std::mem::ManuallyDrop::new(Weak::from_raw(p.cast_const())).upgrade()
+    }
+}
+
+/// Runs `f` for the wrapper `this` is ([`raw_entry`]). `this` is borrowed,
+/// so it is duplicated for the Value that frees it.
+unsafe fn raw_accessor<'js>(
+    raw: *mut rquickjs::qjs::JSContext,
+    this: rquickjs::qjs::JSValue,
+    f: impl FnOnce(&Scope<'js>, &dyn HostObjects, u64) -> rquickjs::Result<Value<'js>>,
+) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // SAFETY: as the caller's.
+    unsafe {
+        raw_entry(raw, |scope| {
+            let this = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(raw, this));
+            // `is_object` reads the tag; `as_object` would ask the object
+            // what kind it is, which costs more than the rest of the check.
+            let Some(id) = this
+                .is_object()
+                .then(|| this.ref_object())
+                .and_then(|o| o.as_class::<HostWrapper>())
+                .map(|c| c.borrow().id)
+            else {
+                return Err(Exception::throw_type(
+                    &scope.ctx,
+                    "not an object of this type",
+                ));
+            };
+            let host = scope.state.host()?;
+            f(scope, &*host, id)
+        })
+    }
+}
+
+/// Runs `f` in the host the context is for, and gives QuickJS what it
+/// returned or threw. A panic cannot unwind through QuickJS: it is kept
+/// for the dispatch to resume, and the script is stopped.
+unsafe fn raw_entry<'js>(
+    raw: *mut rquickjs::qjs::JSContext,
+    f: impl FnOnce(&Scope<'js>) -> rquickjs::Result<Value<'js>>,
+) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // SAFETY: QuickJS calls with a live context.
+    let run = || unsafe {
+        let ctx = Ctx::from_raw(NonNull::new_unchecked(raw));
+        let Some(state) = raw_state(raw) else {
+            return Err(Exception::throw_message(&ctx, "JS host was dropped"));
+        };
+        let scope = Scope { ctx, state };
+        f(&scope).map(|v| qjs::JS_DupValue(raw, v.as_raw()))
     };
-    proto.prop(
-        p.name.as_str(),
-        Accessor::new_get(getter)
-            .set(setter)
-            .configurable()
-            .enumerable(),
-    )
+    match catch_unwind(AssertUnwindSafe(run)) {
+        Ok(Ok(v)) => v,
+        Ok(Err(rquickjs::Error::Exception)) => qjs::JS_EXCEPTION,
+        Ok(Err(e)) => {
+            // SAFETY: as above.
+            let ctx = unsafe { Ctx::from_raw(NonNull::new_unchecked(raw)) };
+            // As rquickjs throws a conversion's error.
+            let _ = Exception::throw_type(&ctx, &e.to_string());
+            qjs::JS_EXCEPTION
+        }
+        Err(panic) => {
+            // SAFETY: as above.
+            let ctx = unsafe { Ctx::from_raw(NonNull::new_unchecked(raw)) };
+            if let Some(state) = unsafe { raw_state(raw) } {
+                state.panicked.borrow_mut().get_or_insert(panic);
+            }
+            if let Ok(e) = Exception::from_message(ctx.clone(), "panicked") {
+                // SAFETY: the error object is alive; the flag only marks it.
+                unsafe { qjs::JS_SetUncatchableError(raw, e.as_value().as_raw()) };
+                let _ = ctx.throw(e.into_value());
+            }
+            qjs::JS_EXCEPTION
+        }
+    }
 }
 
 /// A signal reads as a function bound to its object: calling it emits, and
@@ -1953,32 +2132,70 @@ fn install_signal<'js>(
     )
 }
 
-fn make_global<'js>(
-    ctx: &Ctx<'js>,
-    state: Weak<HostState>,
-    f: HostFn,
-    name: &str,
-) -> rquickjs::Result<Function<'js>> {
-    Function::new(
-        ctx.clone(),
-        move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<Value<'js>> {
-            let Some(state) = state.upgrade() else {
-                return Err(Exception::throw_message(&ctx, "JS host was dropped"));
+fn make_global<'js>(scope: &Scope<'js>, f: HostFn, name: &str) -> rquickjs::Result<Function<'js>> {
+    let magic = {
+        let mut globals = scope.state.globals.borrow_mut();
+        globals.push(f);
+        globals.len() - 1
+    };
+    // QuickJS keeps `magic` in 16 bits.
+    let Ok(magic) = i16::try_from(magic).map(std::ffi::c_int::from) else {
+        return Err(Exception::throw_range(
+            &scope.ctx,
+            "too many global functions",
+        ));
+    };
+    // SAFETY: the context is alive and entered; the new function is owned
+    // by the Value made of it.
+    let func = unsafe {
+        let raw = scope.ctx.as_raw().as_ptr();
+        let v = rquickjs::qjs::JS_NewCFunctionData(
+            raw,
+            Some(raw_global),
+            0,
+            magic,
+            0,
+            std::ptr::null_mut(),
+        );
+        if rquickjs::qjs::JS_IsException(v) {
+            return Err(rquickjs::Error::Exception);
+        }
+        Value::from_raw(scope.ctx.clone(), v)
+    };
+    func.into_function()
+        .ok_or_else(|| Exception::throw_type(&scope.ctx, "not a function"))?
+        .with_name(name)
+}
+
+/// A global host function: plain C, as the property accessors are
+/// ([`raw_get`]).
+unsafe extern "C" fn raw_global(
+    ctx: *mut rquickjs::qjs::JSContext,
+    _this: rquickjs::qjs::JSValue,
+    argc: std::ffi::c_int,
+    argv: *mut rquickjs::qjs::JSValue,
+    magic: std::ffi::c_int,
+    _data: *mut rquickjs::qjs::JSValue,
+) -> rquickjs::qjs::JSValue {
+    use rquickjs::qjs;
+    // SAFETY: QuickJS calls it on a live context with `argc` arguments,
+    // borrowed, so each is duplicated for the Value that frees it.
+    unsafe {
+        raw_entry(ctx, |scope| {
+            let f = scope.state.globals.borrow().get(magic as usize).cloned();
+            let Some(f) = f else {
+                return Err(Exception::throw_message(&scope.ctx, "JS host was dropped"));
             };
-            let scope = Scope {
-                ctx: ctx.clone(),
-                state,
-            };
-            let argv = args
-                .0
-                .iter()
-                .map(|a| scope.from_value(a))
+            let args = (0..argc.max(0) as usize)
+                .map(|i| {
+                    let a = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, *argv.add(i)));
+                    scope.from_value(&a)
+                })
                 .collect::<rquickjs::Result<Vec<_>>>()?;
-            let out = f(&scope, &argv).map_err(|e| e.into_js(&ctx));
+            let out = f(scope, &args).map_err(|e| e.into_js(&scope.ctx));
             scope.back(out).and_then(|out| scope.to_value(&out))
-        },
-    )?
-    .with_name(name)
+        })
+    }
 }
 
 /// A method reads as a function bound to its object, as QML methods are:
