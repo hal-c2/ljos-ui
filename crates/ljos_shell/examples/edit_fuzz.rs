@@ -261,6 +261,12 @@ fn dump(engine: &Engine, root: ObjectId) -> Dump {
         let mut kids = Vec::new();
         for c in below(engine, obj) {
             let ty = type_of(engine, c);
+            // The object a model's `get()` hands out is made when a script
+            // asks, and made again after a reload that did not keep it: the
+            // row's values are compared through the model, not through it.
+            if ty == "ModelRow" {
+                continue;
+            }
             let n = seen.entry(ty.clone()).or_default();
             kids.push((c, format!("{path}/{ty}[{n}]")));
             *n += 1;
