@@ -1036,7 +1036,11 @@ fn carried_rows(engine: &Engine, state: &ListState) -> CarriedRows {
         .collect()
 }
 
-fn restored_rows(engine: &Engine, model: ObjectId, rows: CarriedRows) -> Vec<Vec<(String, Value)>> {
+pub(crate) fn restored_rows(
+    engine: &Engine,
+    model: ObjectId,
+    rows: CarriedRows,
+) -> Vec<Vec<(String, Value)>> {
     rows.into_iter()
         .map(|cells| {
             cells
@@ -1085,4 +1089,179 @@ impl crate::Migrate for ListModel {
         state.insert(engine, 0, rows);
         Ok(())
     }
+}
+
+/// Past this many pairs of old and new rows the rows are not matched: the
+/// file's replace them.
+const MOST_MATCHED: usize = 1 << 22;
+
+/// Takes the `ListModel` `model`, declared with the rows `old`, to the
+/// rows `new` an edit of its `ListElement`s declares, by its own inserts,
+/// removes, moves and sets: a view keeps the delegates of the rows that
+/// stay, as when a script changes the model. Rows a script changed since
+/// are the file's again, as a full reload has them.
+pub(crate) fn reload_rows(engine: &Engine, model: ObjectId, old: CarriedRows, new: CarriedRows) {
+    let Some(state) = ListState::of(engine, model) else {
+        return;
+    };
+    let (old, new) = (stored_rows(old), stored_rows(new));
+    if old == new {
+        return;
+    }
+    let live = carried_rows(engine, &state);
+    let held = live.len() == old.len() && live.iter().zip(&old).all(|(l, o)| holds(engine, l, o));
+    engine.batch(|| {
+        if !held || old.len().saturating_mul(new.len()) > MOST_MATCHED {
+            state.clear(engine);
+            let rows = restored_rows(engine, model, new);
+            state.insert(engine, 0, rows);
+            return;
+        }
+        let to = matched_rows(&old, &new);
+        let kept: Vec<bool> = {
+            let mut k = vec![false; old.len()];
+            for i in to.iter().flatten() {
+                k[*i] = true;
+            }
+            k
+        };
+        // By the old row each live row was, from the last.
+        let mut cur: Vec<Option<usize>> = (0..old.len()).map(Some).collect();
+        for i in (0..old.len()).rev().filter(|&i| !kept[i]) {
+            state.remove(engine, i, 1);
+            cur.remove(i);
+        }
+        for (j, row) in new.iter().enumerate() {
+            let Some(i) = to[j] else {
+                let rows = restored_rows(engine, model, vec![row.clone()]);
+                state.insert(engine, j, rows);
+                cur.insert(j, None);
+                continue;
+            };
+            let Some(at) = cur.iter().position(|c| *c == Some(i)) else {
+                continue;
+            };
+            if at != j {
+                state.move_rows(engine, at, j, 1);
+                let c = cur.remove(at);
+                cur.insert(j, c);
+            }
+            if old[i] == *row {
+                continue;
+            }
+            // What changed, and a role no longer given back to its
+            // default.
+            let changed = row.iter().filter(|c| !old[i].contains(c)).cloned();
+            let entries = restored_rows(engine, model, vec![changed.collect()])
+                .pop()
+                .unwrap_or_default()
+                .into_iter()
+                .chain(
+                    old[i]
+                        .iter()
+                        .filter(|(n, _)| !row.iter().any(|(m, _)| m == n))
+                        .map(|(n, _)| (n.clone(), Value::Undefined)),
+                )
+                .collect();
+            state.set_fields(engine, j, entries, Source::Object);
+        }
+    });
+}
+
+/// `rows` as a model stores them: numbers as JS numbers, no role given
+/// `undefined` or `null`, and the roles of a row in name order.
+fn stored_rows(rows: CarriedRows) -> CarriedRows {
+    rows.into_iter()
+        .map(|cells| {
+            let mut cells: Vec<(String, CarriedCell)> = cells
+                .into_iter()
+                .filter_map(|(name, cell)| {
+                    let cell = match cell {
+                        CarriedCell::Plain(Value::Undefined | Value::Null) => return None,
+                        CarriedCell::Plain(v @ (Value::Int(_) | Value::Enum(_))) => {
+                            CarriedCell::Plain(Value::Real(v.to_number()))
+                        }
+                        CarriedCell::Plain(v) => CarriedCell::Plain(v),
+                        CarriedCell::Nested(rows) => CarriedCell::Nested(stored_rows(rows)),
+                    };
+                    Some((name, cell))
+                })
+                .collect();
+            cells.sort_by(|a, b| a.0.cmp(&b.0));
+            cells
+        })
+        .collect()
+}
+
+/// Whether the live row `live` is the declared `row`: each role it
+/// declares has its value, and any other has its default.
+fn holds(engine: &Engine, live: &[(String, CarriedCell)], row: &[(String, CarriedCell)]) -> bool {
+    let live = stored_rows(vec![live.to_vec()]).pop().unwrap_or_default();
+    row.iter().all(|c| live.contains(c))
+        && live.iter().all(|(name, cell)| {
+            row.iter().any(|(n, _)| n == name)
+                || matches!(cell, CarriedCell::Plain(v)
+                    if RoleKind::of(engine, v).is_some_and(|k| k.default() == *v))
+        })
+}
+
+/// Per new row, the old row it goes on as: the most rows that keep their
+/// order, then one of the same values elsewhere (moved), then one in the
+/// same gap between those that stay (given other values). `None` for one
+/// inserted.
+fn matched_rows(old: &CarriedRows, new: &CarriedRows) -> Vec<Option<usize>> {
+    let (n, m) = (old.len(), new.len());
+    // Longest common run, from the ends.
+    let mut len = vec![0u32; (n + 1) * (m + 1)];
+    let at = |i: usize, j: usize| i * (m + 1) + j;
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            len[at(i, j)] = if old[i] == new[j] {
+                len[at(i + 1, j + 1)] + 1
+            } else {
+                len[at(i + 1, j)].max(len[at(i, j + 1)])
+            };
+        }
+    }
+    let mut to = vec![None; m];
+    let mut used = vec![false; n];
+    let mut anchors = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if old[i] == new[j] {
+            to[j] = Some(i);
+            used[i] = true;
+            anchors.push((i, j));
+            i += 1;
+            j += 1;
+        } else if len[at(i + 1, j)] >= len[at(i, j + 1)] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    for j in 0..m {
+        if to[j].is_none()
+            && let Some(i) = (0..n).find(|&i| !used[i] && old[i] == new[j])
+        {
+            to[j] = Some(i);
+            used[i] = true;
+        }
+    }
+    for (j, t) in to.iter_mut().enumerate() {
+        if t.is_some() {
+            continue;
+        }
+        let lo = anchors
+            .iter()
+            .rev()
+            .find(|a| a.1 < j)
+            .map_or(0, |a| a.0 + 1);
+        let hi = anchors.iter().find(|a| a.1 > j).map_or(n, |a| a.0);
+        if let Some(i) = (lo..hi).find(|&i| !used[i]) {
+            *t = Some(i);
+            used[i] = true;
+        }
+    }
+    to
 }

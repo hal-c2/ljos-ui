@@ -12,8 +12,10 @@
 //! those members: the same imports, pragmas, scripts, components,
 //! objects and declarations, wherever they now are. Then what is in effect
 //! is the edit alone. A member no longer given goes back to what a new
-//! object of its type has. Anything else (a declaration, a signal) is made
-//! again by [`Engine::reload`].
+//! object of its type has. A `ListElement` added, removed, moved or given
+//! other values is the model's own insert, remove, move or set, so a view
+//! keeps the delegates of the rows that stay. Anything else (a
+//! declaration, a signal) is made again by [`Engine::reload`].
 //!
 //! The objects keep the bindings they have. The edited members and
 //! functions are installed from the new file, and so are the `Component`s,
@@ -136,6 +138,9 @@ struct Changed {
     moved: Moves,
     /// Per component, where the old objects are in the new file.
     objects: Vec<Objects>,
+    /// (component, old index, new index): a `ListModel` whose elements
+    /// the edit added, removed, moved or gave other values.
+    models: Vec<(CompIdx, usize, usize)>,
 }
 
 /// Where the objects of a component of the old file are in the new one.
@@ -461,6 +466,23 @@ impl Engine {
                 }
             }
         });
+        // A model whose elements were edited is taken to its new rows.
+        for c in changed.iter().filter(|c| !c.models.is_empty()) {
+            for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
+                let now = renew(inst, &files, &mut memo);
+                for &(_, i, j) in c.models.iter().filter(|m| m.0 == inst.comp) {
+                    let model = now.objects[j];
+                    if !self.is_alive(model) {
+                        continue;
+                    }
+                    let was = &c.old.ir.component(inst.comp).objects[i];
+                    let is = &now.file.ir.component(inst.comp).objects[j];
+                    let old = self.list_element_cells(inst, &was.children);
+                    let new = self.list_element_cells(&now, &is.children);
+                    crate::listmodel::reload_rows(self, model, old, new);
+                }
+            }
+        }
         let assigned = self.in_place_carry(&grown);
         for g in &grown {
             for &o in &g.gone {
@@ -741,7 +763,7 @@ impl Engine {
                     Edited::Handler => {}
                 }
             }
-            let Some((whole, remap, moved, objects)) = same_but_edits(
+            let Some((whole, remap, moved, objects, models)) = same_but_edits(
                 &old.ir,
                 new,
                 &mut edits,
@@ -758,6 +780,7 @@ impl Engine {
                 remap,
                 moved,
                 objects,
+                models,
             });
         }
         Some(out)
@@ -806,6 +829,9 @@ impl Engine {
             let (Some(p), None) = (od.parent, &od.on) else {
                 continue;
             };
+            if is_element(od) {
+                continue;
+            }
             if anchor(comp, m, j).is_none() {
                 continue;
             }
@@ -866,7 +892,7 @@ impl Engine {
         }
         self.batch(|| {
             let ((), held) = self.hold_eager(|| {
-                for &j in &tops {
+                for &j in tops.iter().filter(|&&j| !is_element(&comp.objects[j])) {
                     let before = anchor(comp, m, j).map(|k| new.objects[k]);
                     self.in_place_attach(&new, j, before);
                 }
@@ -1664,6 +1690,7 @@ type Same = (
     Vec<Option<ExprId>>,
     Moves,
     Vec<Objects>,
+    Vec<(CompIdx, usize, usize)>,
 );
 
 /// [`Same`] when `new` is `old` but for the edited members and for
@@ -1689,13 +1716,40 @@ fn same_but_edits(
             return not_here("a component's name, id, kind or signature changed");
         }
         let m = match_objects(old, new, CompIdx(c as u32), moves)?;
-        if !m.same() && !grows_simply(o, n, &m) {
+        if !m.same() && !grows_simply(n, &m) {
             return not_here("objects came or went where they cannot be put");
         }
         objects.push(m);
     }
     // An added object is made from the new file as a whole.
     edits.retain(|e| objects[e.comp.index()].to_old[e.obj].is_some());
+    // The elements of a model are its rows: what they now declare is told
+    // apart from what they did, not set as members.
+    let mut models = Vec::new();
+    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
+        let m = &objects[c];
+        let comp = CompIdx(c as u32);
+        let added = m.added_tops(n).filter(|&j| is_element(&n.objects[j]));
+        let edited = edits
+            .iter()
+            .filter(|e| e.comp == comp && is_element(&n.objects[e.obj]))
+            .map(|e| e.obj);
+        let mut at: Vec<Option<usize>> = added.chain(edited).map(|j| model_of(n, j)).collect();
+        at.extend(
+            m.removed_tops(o)
+                .filter(|&i| is_element(&o.objects[i]))
+                .map(|i| model_of(o, i).and_then(|k| m.to_new[k])),
+        );
+        for j in at {
+            let Some((i, j)) = j.and_then(|j| Some((m.to_old[j]?, j))) else {
+                return not_here("an element is not in a model that stays");
+            };
+            if !models.contains(&(comp, i, j)) {
+                models.push((comp, i, j));
+            }
+        }
+    }
+    edits.retain(|e| !is_element(&new.component(e.comp).objects[e.obj]));
     for e in edits.iter_mut() {
         e.was = objects[e.comp.index()].to_old[e.obj]?;
         // A list of objects in both: what it holds is matched as objects
@@ -1722,6 +1776,9 @@ fn same_but_edits(
         for (i, oo) in o.objects.iter().enumerate() {
             let Some(j) = m.to_new[i] else { continue };
             let no = &n.objects[j];
+            if is_element(no) {
+                continue;
+            }
             let names = edits
                 .iter()
                 .find(|e| e.comp.index() == c && e.obj == j)
@@ -1767,10 +1824,6 @@ fn same_but_edits(
     for e in edits.iter() {
         let o = &old.component(e.comp).objects[e.was];
         let n = &new.component(e.comp).objects[e.obj];
-        let parent = n.parent.map(|p| &new.component(e.comp).objects[p.index()]);
-        if is_model(n) || parent.is_some_and(is_model) {
-            return not_here("a model's elements changed");
-        }
         for name in &e.names {
             let written = |od: &ObjectDef| {
                 held_in(od, name).is_some_and(|(m, leaf)| m.objects.iter().any(|a| a.name == leaf))
@@ -1821,7 +1874,7 @@ fn same_but_edits(
             }
         }
     }
-    Some((whole, remap, moved, objects))
+    Some((whole, remap, moved, objects, models))
 }
 
 /// None, telling why at debug level: the reload does not go in place.
@@ -1855,9 +1908,18 @@ fn differs(a: &ObjectDef, b: &ObjectDef) -> &'static str {
     }
 }
 
-/// A model's elements are its data, read once.
-fn is_model(od: &ObjectDef) -> bool {
-    matches!(&od.ty, TypeRef::Native { name, .. } if name == "ListElement" || name == "ListModel")
+/// A model's element: a row of its data, not an object with members.
+fn is_element(od: &ObjectDef) -> bool {
+    matches!(&od.ty, TypeRef::Native { name, .. } if name == "ListElement")
+}
+
+/// The `ListModel` the element `j` of `comp` is a row of, through the
+/// elements a list in a role is written as.
+fn model_of(comp: &ComponentDef, mut j: usize) -> Option<usize> {
+    while is_element(&comp.objects[j]) {
+        j = comp.objects[j].parent?.index();
+    }
+    matches!(&comp.objects[j].ty, TypeRef::Native { name, .. } if name == "ListModel").then_some(j)
 }
 
 /// Pairs the objects of component `comp` of both files by their keys;
@@ -2041,7 +2103,7 @@ fn anchor(comp: &ComponentDef, m: &Objects, j: usize) -> Option<usize> {
 /// Whether the objects of `n` are those of `o` with objects added after
 /// the children of one that stays and objects removed, in the same order
 /// otherwise: what a reload in place can make and destroy.
-fn grows_simply(o: &ComponentDef, n: &ComponentDef, m: &Objects) -> bool {
+fn grows_simply(n: &ComponentDef, m: &Objects) -> bool {
     // The root is the instance's own object.
     if m.to_new.first() != Some(&Some(0)) {
         return false;
@@ -2054,8 +2116,9 @@ fn grows_simply(o: &ComponentDef, n: &ComponentDef, m: &Objects) -> bool {
         let od = &n.objects[j];
         let Some(p) = od.parent else { return false };
         let parent = &n.objects[p.index()];
-        if is_model(od) || is_model(parent) {
-            return false;
+        // A model's rows are told apart from the files.
+        if is_element(od) {
+            continue;
         }
         // A child of the default property or of a list a member is
         // given, put before the object that stays after it, if one does. A
@@ -2068,12 +2131,6 @@ fn grows_simply(o: &ComponentDef, n: &ComponentDef, m: &Objects) -> bool {
             .iter()
             .any(|v| matches!(v, ObjectValue::Component(_)))
         {
-            return false;
-        }
-    }
-    for i in m.removed_tops(o) {
-        let od = &o.objects[i];
-        if od.parent.is_some_and(|p| is_model(&o.objects[p.index()])) || is_model(od) {
             return false;
         }
     }

@@ -1397,6 +1397,18 @@ impl Engine {
         model: ObjectId,
         values: &[ObjectValue],
     ) -> Vec<Vec<(String, Value)>> {
+        let cells = self.list_element_cells(inst, values);
+        crate::listmodel::restored_rows(self, model, cells)
+    }
+
+    /// The rows the `ListElement`s among `values` declare, a list of
+    /// elements given to a role by its rows: nothing is made.
+    fn list_element_cells(
+        &self,
+        inst: &Rc<Instance>,
+        values: &[ObjectValue],
+    ) -> crate::listmodel::CarriedRows {
+        use crate::listmodel::CarriedCell;
         let comp = inst.file.ir.component(inst.comp);
         let mut rows = Vec::new();
         for v in values {
@@ -1407,21 +1419,19 @@ impl Engine {
             }
             let mut row = Vec::new();
             for a in &ed.members.assignments {
-                row.push((a.name.clone(), self.literal_value(inst, &a.value)));
+                let v = self.literal_value(inst, &a.value);
+                row.push((a.name.clone(), CarriedCell::Plain(v)));
             }
             // `cost: -1` is an expression to the compiler. Qt allows only
             // constants here, so once is enough.
             for b in &ed.members.bindings {
                 if let Some(v) = self.eval_expr(inst, b.expr, &TypeTag::Var, &[]) {
-                    row.push((b.name.clone(), v));
+                    row.push((b.name.clone(), CarriedCell::Plain(v)));
                 }
             }
             for oa in &ed.members.objects {
-                let nested = self.list_element_rows(inst, model, &oa.values);
-                row.push((
-                    oa.name.clone(),
-                    crate::listmodel::nested_model(self, model, nested),
-                ));
+                let nested = self.list_element_cells(inst, &oa.values);
+                row.push((oa.name.clone(), CarriedCell::Nested(nested)));
             }
             // Qt numbers an element's new roles from its last one (measured
             // on Qt 6.11: `{ a; b }` makes `b` role 0), which is the order

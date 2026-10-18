@@ -2741,3 +2741,163 @@ Feature: What a reload changes
       And the property "radius" of "first" is 0
       And the property "color" of "first" is "#ff0000"
       And the property "x" of "box" is at least 40
+
+  Rule: An element added to a model, removed from it or moved in it is the model's own insert, remove or move
+
+    A view keeps the delegates of the rows that stay, as when a script
+    changes the model; an element given other values changes its row.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property string rows: ""; property string shown: ""
+          ListModel { id: fruit
+            ListElement { name: "a"; n: 1 }
+            ListElement { name: "b"; n: 2 }
+            ListElement { name: "c"; n: 3 }
+          }
+          Repeater { id: rep; model: fruit; Item { objectName: "row-" + name; property int taps: 0 } }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function look() {
+            var r = [], s = []
+            for (var i = 0; i < fruit.count; i++) r.push(fruit.get(i).name + fruit.get(i).n)
+            for (var j = 0; j < rep.count; j++) s.push(rep.itemAt(j).objectName)
+            rows = r.join(","); shown = s.join(",")
+          }
+        }
+        """
+      When the property "taps" of "row-b" is set to 4
+      And the property "taps" of "row-c" is set to 7
+      And the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: An element removed takes its row and its delegate, and the others stay
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property string rows: ""; property string shown: ""
+          ListModel { id: fruit
+            ListElement { name: "b"; n: 2 }
+            ListElement { name: "c"; n: 3 }
+          }
+          Repeater { id: rep; model: fruit; Item { objectName: "row-" + name; property int taps: 0 } }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function look() {
+            var r = [], s = []
+            for (var i = 0; i < fruit.count; i++) r.push(fruit.get(i).name + fruit.get(i).n)
+            for (var j = 0; j < rep.count; j++) s.push(rep.itemAt(j).objectName)
+            rows = r.join(","); shown = s.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "rows" of "root" is "b2,c3"
+      And the property "shown" of "root" is "row-b,row-c"
+      And the property "taps" of "row-b" is 4
+      And the object "row-a" does not exist
+      And the property "x" of "box" is at least 40
+
+    Scenario: An element added between two is a row inserted there
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property string rows: ""; property string shown: ""
+          ListModel { id: fruit
+            ListElement { name: "a"; n: 1 }
+            ListElement { name: "z"; n: 9 }
+            ListElement { name: "b"; n: 2 }
+            ListElement { name: "c"; n: 3 }
+          }
+          Repeater { id: rep; model: fruit; Item { objectName: "row-" + name; property int taps: 0 } }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function look() {
+            var r = [], s = []
+            for (var i = 0; i < fruit.count; i++) r.push(fruit.get(i).name + fruit.get(i).n)
+            for (var j = 0; j < rep.count; j++) s.push(rep.itemAt(j).objectName)
+            rows = r.join(","); shown = s.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "rows" of "root" is "a1,z9,b2,c3"
+      And the property "shown" of "root" is "row-a,row-z,row-b,row-c"
+      And the property "taps" of "row-b" is 4
+      And the property "taps" of "row-z" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: Elements moved are rows moved, each with its delegate
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property string rows: ""; property string shown: ""
+          ListModel { id: fruit
+            ListElement { name: "a"; n: 1 }
+            ListElement { name: "c"; n: 3 }
+            ListElement { name: "b"; n: 2 }
+          }
+          Repeater { id: rep; model: fruit; Item { objectName: "row-" + name; property int taps: 0 } }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function look() {
+            var r = [], s = []
+            for (var i = 0; i < fruit.count; i++) r.push(fruit.get(i).name + fruit.get(i).n)
+            for (var j = 0; j < rep.count; j++) s.push(rep.itemAt(j).objectName)
+            rows = r.join(","); shown = s.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "rows" of "root" is "a1,c3,b2"
+      And the property "shown" of "root" is "row-a,row-c,row-b"
+      And the property "taps" of "row-b" is 4
+      And the property "taps" of "row-c" is 7
+      And the property "x" of "box" is at least 40
+
+    Scenario: An element given another value changes its row, which keeps its delegate
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; property string rows: ""; property string shown: ""
+          ListModel { id: fruit
+            ListElement { name: "a"; n: 1 }
+            ListElement { name: "b"; n: 5 }
+            ListElement { name: "c"; n: 3 }
+          }
+          Repeater { id: rep; model: fruit; Item { objectName: "row-" + name; property int taps: 0 } }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function look() {
+            var r = [], s = []
+            for (var i = 0; i < fruit.count; i++) r.push(fruit.get(i).name + fruit.get(i).n)
+            for (var j = 0; j < rep.count; j++) s.push(rep.itemAt(j).objectName)
+            rows = r.join(","); shown = s.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "look" of "root" is called
+      Then the property "rows" of "root" is "a1,b5,c3"
+      And the property "taps" of "row-b" is 4
+      And the property "x" of "box" is at least 40
