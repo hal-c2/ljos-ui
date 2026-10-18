@@ -2485,3 +2485,67 @@ Feature: What a reload changes
         """
       And a reload happens
       Then the property "visible" of "hint" is true
+
+  Rule: An edit to a component a user sets the member of goes in place for the others
+
+    The instances whose user sets the edited member keep the user's
+    value, as a fresh load gives it; the others take the edit where they
+    stand.
+
+    Background:
+      Given the file "Pill.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 10; height: 10
+          function size() { return "small" }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "wide"; width: 30; function size() { return "own" } }
+          Pill { objectName: "plain" }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          property string plainSize: ""
+          property string wideSize: ""
+          function go() { slide.start() }
+          function ask() { plainSize = children[1].size(); wideSize = children[0].size() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A width a user sets stays the user's and the others take the new one
+      When the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 20; height: 10
+          function size() { return "small" }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "plain" is 20
+      And the property "width" of "wide" is 30
+      And the property "x" of "box" is at least 40
+
+    Scenario: A function a user has its own of stays the user's
+      When the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 10; height: 10
+          function size() { return "large" }
+        }
+        """
+      And a reload happens
+      When the method "ask" of "root" is called
+      Then the property "plainSize" of "root" is "large"
+      And the property "wideSize" of "root" is "own"
+      And the property "x" of "box" is at least 40

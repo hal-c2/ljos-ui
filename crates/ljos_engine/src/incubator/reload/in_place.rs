@@ -203,8 +203,8 @@ struct Target<'a> {
     obj: usize,
     was: usize,
     def: &'a ObjectDef,
-    names: &'a [String],
-    functions: &'a [String],
+    names: Vec<String>,
+    functions: Vec<String>,
 }
 
 impl Engine {
@@ -322,15 +322,15 @@ impl Engine {
         for c in &changed {
             for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
                 for e in c.edits.iter().filter(|e| e.comp == inst.comp) {
-                    let t = Target {
+                    let mut t = Target {
                         inst: inst.clone(),
                         obj: e.obj,
                         was: e.was,
                         def: &c.new.component(e.comp).objects[e.obj],
-                        names: &e.names,
-                        functions: &e.functions,
+                        names: e.names.clone(),
+                        functions: e.functions.clone(),
                     };
-                    if let Err(why) = self.in_place_applies(&t, c, &users) {
+                    if let Err(why) = self.in_place_applies(&mut t, c, &users) {
                         return not_here(why);
                     }
                     targets.push(t);
@@ -440,7 +440,7 @@ impl Engine {
                 if !self.is_alive(id) {
                     continue;
                 }
-                for name in t.names {
+                for name in &t.names {
                     self.in_place_set(&inst, id, t.def, name);
                 }
                 for f in t
@@ -1003,10 +1003,12 @@ impl Engine {
     }
 
     /// Whether the edit can be applied to `t` as it stands: nothing that
-    /// outranks the file sets the edited members.
+    /// outranks the file sets the edited members, but a user of the
+    /// component, whose own value or function the instance keeps (and is
+    /// left out of `t`), as a fresh load gives it.
     fn in_place_applies(
         &self,
-        t: &Target,
+        t: &mut Target,
         c: &Changed,
         users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
     ) -> Result<(), &'static str> {
@@ -1022,7 +1024,7 @@ impl Engine {
         let given = self.inner.reload.given.borrow();
         let given = given.get(&id);
         let old = &c.old.ir.component(t.inst.comp).objects[t.was];
-        for name in t.names {
+        for name in &t.names {
             let Some(target) = self.untrack(|| self.in_place_placed(&t.inst, id, t.def, name))
             else {
                 return Err("an edited member is not found");
@@ -1056,17 +1058,32 @@ impl Engine {
         while let Some((user, i)) = users.get(&Rc::as_ptr(&below)) {
             let ud = &user.file.ir.component(user.comp).objects[*i];
             // Its own function of the name is the one the object has.
-            if root && ud.functions.iter().any(|f| t.functions.contains(&f.name)) {
-                return Err("a user of the component has its own function of the name");
+            if root {
+                t.functions
+                    .retain(|f| !ud.functions.iter().any(|d| d.name == *f));
             }
-            for name in t.names {
-                if root && (sets(ud, name) || aliased(&user.file.ir, user.comp, *i, name)) {
-                    return Err("a user of the component sets the edited member");
+            let mut kept = Vec::new();
+            for name in &t.names {
+                if root && aliased(&user.file.ir, user.comp, *i, name) {
+                    return Err("a user of the component has an alias of the edited member");
                 }
-                if first && wholes.iter().any(|a| sets_through(ud, a, name)) {
-                    return Err("a user of the component sets the edited member by an alias");
+                // What the user gives outranks the file. One that gives a
+                // part of the edited member alone has it written on the
+                // file's, which only a fresh object starts from.
+                if root && sets(ud, name) {
+                    if !covers(ud, name) {
+                        return Err("a user of the component sets a part of the edited member");
+                    }
+                    kept.push(name.clone());
+                }
+                if first && let Some(a) = wholes.iter().find(|a| sets_through(ud, a, name)) {
+                    if !covers(ud, &format!("{a}.{name}")) {
+                        return Err("a user of the component sets a part of the edited member");
+                    }
+                    kept.push(name.clone());
                 }
             }
+            t.names.retain(|n| !kept.contains(n));
             first = false;
             root = root && *i == 0;
             if !root {
@@ -1396,6 +1413,12 @@ fn is_or_under(given: &str, name: &str) -> bool {
         || given
             .strip_prefix(name)
             .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// Whether `od` gives its object all of `name`: `name` itself or what
+/// it is a member of.
+fn covers(od: &ObjectDef, name: &str) -> bool {
+    given_names(od).any(|g| is_or_under(name, &g))
 }
 
 /// Whether `od` gives its object `name` in any way: `name` itself, a
