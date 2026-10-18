@@ -13,7 +13,8 @@ Feature: A date writes the name of its time zone
   that keeps daylight saving time has one name in winter and another in summer. The abbreviation
   is the one the system's zone database gives, in the application's locale and in English; a
   locale of another language writes the one its own language has, or the offset from GMT. The
-  long name is in the locale's language. A zone without a name is written as its offset.
+  long name is in the locale's language. A zone without a name is written as its offset, and a zone
+  a POSIX rule makes is named by the C library and by its rule.
 
   @api-QtQml.Qt.formatDateTime
   Scenario Outline: A date in <zone> names its zone
@@ -80,6 +81,40 @@ Feature: A date writes the name of its time zone
       | Asia/Kathmandu    | +0545 | Nepal Time             |
       | America/Sao_Paulo | -03   | Brasilia Standard Time |
       | Etc/GMT+5         | -05   | GMT-05:00              |
+
+  # A POSIX rule (`TZ=ABC-2`) is a zone no database has: the C library names it, and its long name
+  # is the rule, in every locale.
+  @api-QtQml.Date.toLocaleString
+  Scenario Outline: A zone made by the rule <zone> is named by it
+    Given the file "tst_zone.qml":
+      """qml
+      import QtQuick
+      import QtTest
+      TestCase {
+        name: "Zone"
+        function test_name() {
+          const day = new Date(<date>)
+          compare(Qt.formatDateTime(day, "t|tttt"), "<names>")
+          compare(day.toLocaleString(Qt.locale("de_DE"), "t|tttt"), "<names>")
+        }
+      }
+      """
+    When the tests are run in the time zone "<zone>"
+    Then the test report is:
+      """
+      PASS   : Zone::initTestCase()
+      PASS   : Zone::test_name()
+      PASS   : Zone::cleanupTestCase()
+      Totals: 3 passed, 0 failed, 0 skipped
+      """
+
+    Examples:
+      | zone                   | date              | names                         |
+      | <+0330>-3:30           | 2026, 0, 1, 14, 5 | +0330\|<+0330>-3:30           |
+      | ABC-2                  | 2026, 0, 1, 14, 5 | ABC\|ABC-2                    |
+      | :ABC-2                 | 2026, 0, 1, 14, 5 | ABC\|ABC-2                    |
+      | XYZ3ABC,M3.2.0,M11.1.0 | 2026, 0, 1, 14, 5 | XYZ\|XYZ3ABC,M3.2.0,M11.1.0   |
+      | XYZ3ABC,M3.2.0,M11.1.0 | 2026, 6, 1, 14, 5 | ABC\|XYZ3ABC,M3.2.0,M11.1.0   |
 
   @api-QtQml.Date.toLocaleString
   Scenario Outline: A locale names the zone in its own language

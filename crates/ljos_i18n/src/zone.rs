@@ -70,8 +70,9 @@ pub(crate) fn names(
     let info = zone.and_then(|z| cldr_zone(z.id.as_deref()?, offset, unix_ms));
     let en = icu_locale::locale!("en");
     let locale = locale.unwrap_or(&en);
+    // A zone CLDR does not know has the zone database's name alone.
     let abbreviation = zone
-        .filter(|_| platform_abbreviation)
+        .filter(|_| platform_abbreviation || info.is_none())
         .and_then(|z| z.abbreviation.clone())
         .or_else(|| {
             let f = NoCalendarFormatter::try_new(locale.into(), SpecificShort).ok()?;
@@ -82,6 +83,10 @@ pub(crate) fn names(
         .and_then(|info| {
             let f = NoCalendarFormatter::try_new(locale.into(), SpecificLong).ok()?;
             Some(f.format(&info).to_string())
+        })
+        .or_else(|| {
+            let id = zone?.id.as_deref()?;
+            is_posix_rule(id).then(|| id.to_owned())
         })
         .unwrap_or_else(|| offset_name(offset, true));
     ZoneNames {
@@ -101,6 +106,28 @@ fn cldr_zone(id: &str, offset: i32, unix_ms: i64) -> Option<TimeZoneInfo<AtTime>
     Some(zone.with_offset(Some(offset)).with_zone_name_timestamp(
         ZoneNameTimestamp::from_epoch_seconds(unix_ms.div_euclid(1000)),
     ))
+}
+
+/// Whether `TZ` is a POSIX rule (`ABC-2`, `<+0330>-3:30`,
+/// `XYZ3ABC,M3.2.0,M11.1.0`): a name of three letters or more, or one
+/// between angle brackets, and the offset from it. Qt names such a zone by
+/// the rule.
+fn is_posix_rule(tz: &str) -> bool {
+    let rest = match tz.strip_prefix('<') {
+        Some(quoted) => match quoted.split_once('>') {
+            Some((name, rest)) if !name.is_empty() => rest,
+            _ => return false,
+        },
+        None => {
+            let letters = tz.bytes().take_while(u8::is_ascii_alphabetic).count();
+            if letters < 3 {
+                return false;
+            }
+            &tz[letters..]
+        }
+    };
+    let rest = rest.strip_prefix(['+', '-']).unwrap_or(rest);
+    !tz.contains('/') && rest.starts_with(|c: char| c.is_ascii_digit())
 }
 
 /// A zone without a name: `UTC`, `UTC-08:00`, and `Coordinated Universal
@@ -346,12 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn a_zone_without_a_name_is_its_offset() {
+    fn a_zone_without_a_name_is_its_offset_or_its_rule() {
         let rule = zone("<+0330>-3:30", 12_600, "+0330");
         let n = names(Some(&rule), 12_600, WINTER, None, true);
         assert_eq!(
             (n.abbreviation.as_str(), n.long_name.as_str()),
-            ("+0330", "UTC+03:30")
+            ("+0330", "<+0330>-3:30")
         );
         let n = names(None, -8 * 3600, WINTER, None, true);
         assert_eq!(
@@ -363,6 +390,29 @@ mod tests {
             (n.abbreviation.as_str(), n.long_name.as_str()),
             ("UTC", "Coordinated Universal Time")
         );
+    }
+
+    #[test]
+    fn a_posix_rule_is_named_by_the_c_library_and_by_itself() {
+        let de = icu_locale::locale!("de");
+        let rule = zone("XYZ3ABC,M3.2.0,M11.1.0", -3 * 3600, "XYZ");
+        let n = names(Some(&rule), -3 * 3600, WINTER, Some(&de), false);
+        assert_eq!(
+            (n.abbreviation.as_str(), n.long_name.as_str()),
+            ("XYZ", "XYZ3ABC,M3.2.0,M11.1.0")
+        );
+        for rule in [
+            "ABC-2",
+            "<+0330>-3:30",
+            "<-05>5",
+            "ABC0",
+            "XYZ3ABC,M3.2.0,M11.1.0",
+        ] {
+            assert!(super::is_posix_rule(rule), "{rule}");
+        }
+        for name in ["Foo/Bar", "UT1", "<>3", "ABC", "Europe/Berlin", ""] {
+            assert!(!super::is_posix_rule(name), "{name}");
+        }
     }
 
     #[test]
