@@ -747,6 +747,20 @@ fn groups_of(e: &Engine, obj: ObjectId, prop: PropIndex) -> Vec<String> {
     }
 }
 
+/// Whether painter `pa` draws one of `groups`, as [`groups_of`] would
+/// say, without copying its groups: asked of every painter at each step.
+fn draws_any(e: &Engine, pa: ObjectId, groups: &[&str]) -> bool {
+    let named = |v: &Value| match v {
+        Value::String(s) => groups.contains(&s.as_str()),
+        v => groups.contains(&v.to_js_string().as_str()),
+    };
+    match e.untrack(|| e.read(pa, ParticlePainter::GROUPS.index)) {
+        Value::List(l) if !l.is_empty() => l.iter().any(named),
+        Value::String(s) if !s.as_str().is_empty() => groups.contains(&s.as_str()),
+        _ => groups.contains(&""),
+    }
+}
+
 fn members(
     e: &Engine,
     list: &RefCell<Vec<ObjectId>>,
@@ -1277,12 +1291,7 @@ fn mark(e: &Engine, sys: ObjectId) {
     let groups: Vec<&str> = groups.iter().map(|g| &**g).collect();
     let reg = registry(e);
     for pa in painters_of(e, sys).into_iter().filter(|p| e.is_alive(*p)) {
-        let mine = groups_of(e, pa, ParticlePainter::GROUPS.index);
-        let has = if mine.is_empty() {
-            groups.contains(&"")
-        } else {
-            mine.iter().any(|g| groups.contains(&g.as_str()))
-        };
+        let has = draws_any(e, pa, &groups);
         let serial = {
             let mut shown = reg.shown.borrow_mut();
             let Some(s) = shown.get_mut(&pa) else {
