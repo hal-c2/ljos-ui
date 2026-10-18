@@ -448,7 +448,11 @@ pub(crate) fn warn(engine: &Engine, anim: ObjectId, what: std::fmt::Arguments<'_
 
 /// The objects in a list property.
 fn objects(engine: &Engine, obj: ObjectId, name: &str) -> Vec<ObjectId> {
-    match engine.read_by_name(obj, name) {
+    objects_of(engine, engine.read_by_name(obj, name))
+}
+
+fn objects_of(engine: &Engine, list: Value) -> Vec<ObjectId> {
+    match list {
         Value::List(l) => l
             .iter()
             .filter_map(Value::as_object)
@@ -459,7 +463,12 @@ fn objects(engine: &Engine, obj: ObjectId, name: &str) -> Vec<ObjectId> {
 }
 
 fn duration_of(engine: &Engine, anim: ObjectId) -> i64 {
-    let ms = engine.read_by_name(anim, "duration").to_number();
+    let ms = if is_a::<PropertyAnimation>(engine, anim) {
+        engine.read(anim, PropertyAnimation::DURATION.index)
+    } else {
+        engine.read_by_name(anim, "duration")
+    }
+    .to_number();
     if ms.is_finite() && ms > 0.0 {
         (ms * 1000.0) as i64
     } else {
@@ -516,15 +525,25 @@ fn named(engine: &Engine, anim: ObjectId) -> (Vec<ObjectId>, Vec<String>) {
         let target = engine.read(anim, Animator::TARGET.index).as_object();
         return (target.into_iter().collect(), animated(engine, anim));
     }
-    let mut targets = objects(engine, anim, "targets");
-    if let Some(t) = engine.read_by_name(anim, "target").as_object()
+    // Asked of every Behavior's animation at every write it hears: a
+    // PropertyAnimation's own are read by index, with no name to look up.
+    let typed = is_a::<PropertyAnimation>(engine, anim);
+    let get = |p: PropIndex, name: &str| {
+        if typed {
+            engine.read(anim, p)
+        } else {
+            engine.read_by_name(anim, name)
+        }
+    };
+    let mut targets = objects_of(engine, get(PropertyAnimation::TARGETS.index, "targets"));
+    if let Some(t) = get(PropertyAnimation::TARGET.index, "target").as_object()
         && !targets.contains(&t)
     {
         targets.insert(0, t);
     }
     let mut names: Vec<String> = Vec::new();
-    let one = engine.read_by_name(anim, "property").to_js_string();
-    let many = engine.read_by_name(anim, "properties").to_js_string();
+    let one = get(PropertyAnimation::PROPERTY.index, "property").to_js_string();
+    let many = get(PropertyAnimation::PROPERTIES.index, "properties").to_js_string();
     for n in std::iter::once(&*one).chain(many.split(',')) {
         let n = n.trim();
         if !n.is_empty() && !names.iter().any(|x| x == n) {
@@ -733,6 +752,17 @@ impl Timed {
             Value::Undefined => None,
             v => Some(v),
         };
+        // Only a PropertyAnimation has them, and each write reads them.
+        let ends = || {
+            let at = |p: PropIndex| match engine.read(anim, p) {
+                Value::Undefined => None,
+                v => Some(v),
+            };
+            (
+                at(PropertyAnimation::FROM.index),
+                at(PropertyAnimation::TO.index).or_else(|| defaults.and_then(|d| d.to.clone())),
+            )
+        };
         let children = |env: Env<'_>| -> Vec<Timed> {
             objects(engine, anim, "animations")
                 .into_iter()
@@ -766,10 +796,7 @@ impl Timed {
             (Node::Par(list), longest)
         } else if is_a::<SpringAnimation>(engine, anim) {
             let (slots, tos) = aimed(Kind::Number);
-            let (mut from, mut to) = (
-                set("from"),
-                set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
-            );
+            let (mut from, mut to) = ends();
             if reversed {
                 std::mem::swap(&mut from, &mut to);
             }
@@ -783,13 +810,7 @@ impl Timed {
             (Node::Spring(node), longest.unwrap_or(0))
         } else if is_a::<SmoothedAnimation>(engine, anim) {
             let (slots, tos) = aimed(Kind::Number);
-            let node = SmoothNode::build(
-                engine,
-                anim,
-                slots,
-                set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
-                &tos,
-            );
+            let node = SmoothNode::build(engine, anim, slots, ends().1, &tos);
             let longest = node.tracks.iter().flatten().map(Track::micros).max();
             (Node::Smooth(node), longest.unwrap_or(0))
         } else if is_a::<Animator>(engine, anim) {
@@ -835,10 +856,7 @@ impl Timed {
                 Kind::Any
             };
             let (slots, tos) = aimed(kind);
-            let (mut from, mut to) = (
-                set("from"),
-                set("to").or_else(|| defaults.and_then(|d| d.to.clone())),
-            );
+            let (mut from, mut to) = ends();
             if reversed {
                 std::mem::swap(&mut from, &mut to);
             }
@@ -1317,12 +1335,12 @@ impl PropNode {
 
 impl SmoothNode {
     fn params(engine: &Engine, anim: ObjectId) -> Params {
-        let num = |name: &str| engine.read_by_name(anim, name).to_number();
+        let num = |p: PropIndex| engine.read(anim, p).to_number();
         Params {
-            velocity: num("velocity"),
-            duration: num("duration"),
-            max_easing: num("maximumEasingTime"),
-            reversing: Reversing::of(num("reversingMode")),
+            velocity: num(SmoothedAnimation::VELOCITY.index),
+            duration: num(PropertyAnimation::DURATION.index),
+            max_easing: num(SmoothedAnimation::MAXIMUM_EASING_TIME.index),
+            reversing: Reversing::of(num(SmoothedAnimation::REVERSING_MODE.index)),
         }
     }
 
@@ -1430,14 +1448,14 @@ impl SmoothNode {
 
 impl SpringNode {
     fn params(engine: &Engine, anim: ObjectId) -> spring::Params {
-        let num = |name: &str| engine.read_by_name(anim, name).to_number();
+        let num = |p: PropIndex| engine.read(anim, p).to_number();
         spring::Params {
-            spring: num("spring"),
-            damping: num("damping"),
-            mass: num("mass"),
-            velocity: num("velocity"),
-            epsilon: num("epsilon"),
-            modulus: num("modulus"),
+            spring: num(SpringAnimation::SPRING.index),
+            damping: num(SpringAnimation::DAMPING.index),
+            mass: num(SpringAnimation::MASS.index),
+            velocity: num(SpringAnimation::VELOCITY.index),
+            epsilon: num(SpringAnimation::EPSILON.index),
+            modulus: num(SpringAnimation::MODULUS.index),
         }
     }
 

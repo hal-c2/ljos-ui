@@ -33,7 +33,11 @@ pub(crate) type Done = Rc<dyn Fn(&Engine)>;
 #[derive(Default)]
 pub(crate) struct Driver {
     /// In the order they started, which is the order they advance in.
+    /// A removed run stays, cancelled, until [`Driver::compact`]: a
+    /// restart or an end then costs the same however many runs there are.
     runs: RefCell<Vec<Rc<Run>>>,
+    /// Some of `runs` are cancelled.
+    stale: Cell<bool>,
     by_anim: RefCell<HashMap<ObjectId, Rc<Run>>>,
     /// Turns "a frame per tick" and "a wake at this moment" into one time.
     sched: RefCell<FrameScheduler>,
@@ -124,10 +128,17 @@ impl Driver {
         {
             t.release(engine);
         }
-        self.runs.borrow_mut().retain(|r| !Rc::ptr_eq(r, run));
+        self.stale.set(true);
         let mut by_anim = self.by_anim.borrow_mut();
         if by_anim.get(&run.anim).is_some_and(|r| Rc::ptr_eq(r, run)) {
             by_anim.remove(&run.anim);
+        }
+    }
+
+    /// Drops the cancelled runs; each is passed over until then.
+    fn compact(&self) {
+        if self.stale.replace(false) {
+            self.runs.borrow_mut().retain(|r| !r.cancelled.get());
         }
     }
 
@@ -535,6 +546,7 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
     for f in later {
         f(engine);
     }
+    d.compact();
     if d.runs.borrow().is_empty() {
         d.last_frame.set(Some((now, engine.now())));
         return;
@@ -600,6 +612,7 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
         // Asked for after this frame's tick: one more frame, now.
         return Some(now);
     }
+    d.compact();
     if d.runs.borrow().is_empty() && d.boundary.get().is_none() {
         return None;
     }
@@ -655,7 +668,9 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
 
 /// The number of animations under way, paused ones included.
 pub(crate) fn run_count(engine: &Engine) -> usize {
-    driver(engine).runs.borrow().len()
+    let d = driver(engine);
+    d.compact();
+    d.runs.borrow().len()
 }
 
 pub(crate) fn runs(engine: &Engine) -> Vec<(ObjectId, bool)> {

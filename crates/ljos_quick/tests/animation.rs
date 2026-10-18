@@ -725,3 +725,41 @@ fn an_animator_stopped_on_the_way_is_drawn_where_its_property_is() {
     assert_eq!(drawn, x);
     assert!(rig.idle());
 }
+
+const MANY: &str = r#"import QtQuick
+Item {
+  Repeater {
+    model: 40
+    Rectangle {
+      width: 10; height: 10
+      NumberAnimation on y { from: 0; to: 100; duration: 1000; loops: Animation.Infinite }
+    }
+  }
+  Rectangle {
+    objectName: "box"; width: 10; height: 10
+    Behavior on x { NumberAnimation { duration: 100 } }
+  }
+}
+"#;
+
+#[test]
+fn restarts_and_ends_among_many_runs_leave_each_run_once() {
+    // A run that is replaced or ends is dropped from the driver's list
+    // later, not at once: what the list says must not show the difference.
+    let mut rig = Rig::new(MANY);
+    assert_eq!(running_animation_count(&rig.e), 40);
+    for i in 1..=50 {
+        rig.set("box", "x", Value::from(f64::from(i)));
+        assert_eq!(running_animation_count(&rig.e), 41, "after write {i}");
+    }
+    let runs = ljos_quick::running_animations(&rig.e);
+    let anims: std::collections::HashSet<_> = runs.iter().map(|(a, _)| *a).collect();
+    assert_eq!(
+        (runs.len(), anims.len()),
+        (41, 41),
+        "each run once: {runs:?}"
+    );
+    rig.run_until(ms(200));
+    assert_eq!(rig.num("box", "x"), 50.0);
+    assert_eq!(running_animation_count(&rig.e), 40);
+}
