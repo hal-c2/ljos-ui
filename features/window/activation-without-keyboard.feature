@@ -26,9 +26,13 @@ Feature: A window is active on a seat without a keyboard
       }
       """
 
-  # Blocked: the runner gives every window a seat with a keyboard; this
-  # waits for a step that starts it without one. The rule is covered by
-  # ljos_host's unit tests of the winit host until then.
+  # Blocked: no runner provides the desktop surface. The headless runner
+  # skips @desktop scenarios and drives the scene with no platform host,
+  # and the rule lives in the host, so a step there that took the keyboard
+  # away would test the runner, not Ljós. This waits for a runner on a
+  # real compositor whose seat can be started without a keyboard; until
+  # then ljos_host's unit tests of the winit host cover the rule, and the
+  # bench's sandbox (a seat with only a virtual pointer) shows it.
   @blocked @api-QtQuick.Window.active
   Scenario: A press makes the window active and gives the field the focus
     When the user presses the pointer at 50, 30
