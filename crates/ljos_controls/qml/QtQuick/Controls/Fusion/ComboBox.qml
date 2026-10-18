@@ -1,11 +1,15 @@
-// The Fusion style of Ljós (CLEAN_ROOM.md), from the sizes and colours a
-// running Qt reports.
+// The Fusion style of Ljós (CLEAN_ROOM.md), drawn with its parts in
+// QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
 import QtQuick.Controls.Fusion
+import QtQuick.Controls.Fusion.impl
+import QtQuick.Shapes
 import QtQuick.Templates as T
 
 T.ComboBox {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
@@ -14,45 +18,46 @@ T.ComboBox {
                              + topPadding + bottomPadding)
 
     // The arrow has a strip of its own, whichever side it is on.
-    leftPadding: padding + (!control.mirrored || !indicator || !indicator.visible ? 0 : 20)
-    rightPadding: padding + (control.mirrored || !indicator || !indicator.visible ? 0 : 20)
+    leftPadding: padding + (!host.mirrored || !indicator || !indicator.visible ? 0 : 20)
+    rightPadding: padding + (host.mirrored || !indicator || !indicator.visible ? 0 : 20)
 
     // A row of the popup: its text is the row's, and the current row is
     // set in a heavier face (weight 600 on qml6).
     delegate: ItemDelegate {
-        width: control.width
-        text: control.textAt(index)
-        highlighted: control.highlightedIndex === index
-        hoverEnabled: control.hoverEnabled
-        font.weight: control.currentIndex === index ? Font.DemiBold : Font.Normal
+        width: host.width
+        text: host.textAt(index)
+        highlighted: host.highlightedIndex === index
+        hoverEnabled: host.hoverEnabled
+        font.weight: host.currentIndex === index ? Font.DemiBold : Font.Normal
     }
 
-    // Two strokes that meet below: a neutral drawing of our own.
+    // In a strip of its own, as wide as the padding leaves it.
     indicator: Component {
         Item {
+            id: arrow
+            property color color: host.palette.buttonText
             implicitWidth: 10
             implicitHeight: 6
-            x: control.mirrored ? control.padding + 5 : control.width - control.rightPadding
-            y: control.topPadding + (control.availableHeight - height) / 2
+            width: 20
+            x: host.mirrored ? host.padding : host.width - host.rightPadding
+            y: host.topPadding + (host.availableHeight - height) / 2
 
-            Rectangle {
-                x: 0
-                y: 2
-                width: 6
-                height: 1.5
-                rotation: 45
-                color: control.palette.buttonText
-                opacity: control.enabled ? 1 : 0.3
-            }
-
-            Rectangle {
-                x: 4
-                y: 2
-                width: 6
-                height: 1.5
-                rotation: -45
-                color: control.palette.buttonText
-                opacity: control.enabled ? 1 : 0.3
+            // A small filled triangle of our own (CLEAN_ROOM.md), eight wide and
+            // four tall, in the text colour at about 72 % as qml6 shows it.
+            Shape {
+                x: Math.round((arrow.width - 8) / 2)
+                y: Math.round((arrow.height - 4) / 2)
+                width: 8
+                height: 4
+                ShapePath {
+                    strokeWidth: -1
+                    fillColor: Qt.rgba(arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a * 0.72)
+                    startX: 0
+                    startY: 0
+                    PathLine { x: 8; y: 0 }
+                    PathLine { x: 4; y: 4 }
+                    PathLine { x: 0; y: 0 }
+                }
             }
         }
     }
@@ -63,59 +68,75 @@ T.ComboBox {
         TextField {
             id: field
 
-            leftPadding: control.mirrored ? 1 : 4
-            rightPadding: control.mirrored ? 4 : 1
-            topPadding: 4 - control.padding
-            bottomPadding: 4 - control.padding
+            leftPadding: host.mirrored ? 1 : 4
+            rightPadding: host.mirrored ? 4 : 1
+            topPadding: 4 - host.padding
+            bottomPadding: 4 - host.padding
 
-            text: control.editable ? control.editText : control.displayText
+            text: host.editable ? host.editText : host.displayText
 
-            enabled: control.editable
-            autoScroll: control.editable
+            enabled: host.editable
+            autoScroll: host.editable
             // The keys move through the rows while the popup is open.
-            readOnly: control.down
-            inputMethodHints: control.inputMethodHints
-            validator: control.validator
-            selectByMouse: control.selectTextByMouse
+            readOnly: host.down
+            inputMethodHints: host.inputMethodHints
+            validator: host.validator
+            selectByMouse: host.selectTextByMouse
 
-            font: control.font
-            color: control.editable ? control.palette.text : control.palette.buttonText
-            selectionColor: control.palette.highlight
-            selectedTextColor: control.palette.highlightedText
+            font: host.font
+            color: host.editable ? host.palette.text : host.palette.buttonText
+            selectionColor: host.palette.highlight
+            selectedTextColor: host.palette.highlightedText
             verticalAlignment: Text.AlignVCenter
 
             // The combo box speaks for its text.
-            Accessible.ignored: !control.editable
-            Accessible.name: control.Accessible.name
+            Accessible.ignored: !host.editable
+            Accessible.name: host.Accessible.name
 
+            // A sunken field over the button, up to the arrow's strip, with
+            // a faint shadow at the top.
             background: Component {
                 Rectangle {
-                    visible: control.enabled && control.editable && !control.flat
+                    visible: host.enabled && host.editable && !host.flat
                     radius: 2
-                    border.color: field.activeFocus ? control.palette.highlight
-                                                    : Qt.darker(control.palette.button, 1.4)
-                    color: control.palette.base
+                    color: host.palette.base
+                    border.color: field.activeFocus ? Qt.darker(host.palette.highlight, 1.25)
+                                                    : Qt.darker(host.palette.button, 1.4)
+
+                    Rectangle {
+                        x: 1
+                        y: 1
+                        width: parent.width - 3
+                        height: 1
+                        color: Fusion.topShadow
+                    }
                 }
             }
         }
     }
 
+    // The keyboard is shown by a soft ring inside the outline, which
+    // keeps its colour.
     background: Component {
-        Rectangle {
+        ButtonPanel {
             implicitWidth: 120
             implicitHeight: 24
-            visible: !control.flat || control.down
-            radius: 2
-            readonly property color button: control.palette.button
-            color: control.down ? Qt.rgba(button.r * 0.883, button.g * 0.883, button.b * 0.883, button.a)
-                                : Qt.darker(button, 1.03)
-            gradient: Gradient {
-                GradientStop { position: 0; color: control.down ? parent.color : Qt.lighter(control.palette.button, 1.07) }
-                GradientStop { position: 1; color: control.down ? parent.color : Qt.darker(control.palette.button, 1.011) }
+            visible: !host.flat || host.down
+            control: host
+            pressed: host.down
+            outlinesFocus: false
+
+            Rectangle {
+                readonly property color ring: Qt.darker(host.palette.highlight, 1.25)
+                x: 1
+                y: 1
+                width: parent.width - 2
+                height: parent.height - 2
+                radius: 1.7
+                color: "transparent"
+                border.color: Qt.rgba(ring.r, ring.g, ring.b, 40 / 255)
+                visible: host.activeFocus
             }
-            border.color: control.visualFocus ? control.palette.highlight
-                        : control.enabled ? Qt.darker(control.palette.button, 1.4)
-                        : Qt.darker(control.palette.button, 1.22)
         }
     }
 
@@ -124,8 +145,8 @@ T.ComboBox {
     // that scroll.
     popup: Component {
         T.Popup {
-            y: control.height
-            width: control.width
+            y: host.height
+            width: host.width
             implicitHeight: contentItem.implicitHeight
             topMargin: 6
             bottomMargin: 6
@@ -139,8 +160,8 @@ T.ComboBox {
                 ListView {
                     clip: true
                     implicitHeight: contentHeight
-                    model: control.delegateModel
-                    currentIndex: control.highlightedIndex
+                    model: host.delegateModel
+                    currentIndex: host.highlightedIndex
                     highlightMoveDuration: 0
 
                     ScrollIndicator.vertical: ScrollIndicator {}
@@ -149,8 +170,8 @@ T.ComboBox {
 
             background: Component {
                 Rectangle {
-                    color: control.palette.base
-                    border.color: Qt.darker(control.palette.window, 1.4)
+                    color: host.palette.base
+                    border.color: Qt.darker(host.palette.window, 1.4)
                     radius: 2
                 }
             }

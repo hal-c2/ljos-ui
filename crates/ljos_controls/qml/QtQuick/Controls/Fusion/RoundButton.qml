@@ -1,11 +1,14 @@
-// The Fusion style of Ljós (CLEAN_ROOM.md). Draws with Basic-derived
-// components under Fusion's own metrics and palette.
+// The Fusion style of Ljós (CLEAN_ROOM.md), drawn with its parts in
+// QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
 import QtQuick.Controls.impl
+import QtQuick.Controls.Fusion.impl
 import QtQuick.Templates as T
 
 T.RoundButton {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
@@ -20,27 +23,24 @@ T.RoundButton {
 
     contentItem: Component {
         IconLabel {
-            spacing: control.spacing
-            mirrored: control.mirrored
-            display: control.display
-            text: control.text
-            font: control.font
-            color: control.highlighted ? control.palette.highlightedText : control.palette.buttonText
+            spacing: host.spacing
+            mirrored: host.mirrored
+            display: host.display
+            text: host.text
+            font: host.font
+            color: host.palette.buttonText
         }
     }
 
     background: Component {
-        Rectangle {
+        ButtonPanel {
             implicitWidth: 32
             implicitHeight: 32
-            radius: control.radius
-            visible: !control.flat || control.down || control.checked || control.highlighted
-            color: control.down ? control.palette.mid
-                 : control.highlighted ? control.palette.highlight
-                 : control.checked ? control.palette.midlight
-                 : control.palette.button
-            border.color: control.visualFocus ? control.palette.highlight : control.palette.mid
-            border.width: 1
+            control: host
+            radius: host.radius
+            visible: !host.flat || host.down || host.checked || host.highlighted
+            pressed: host.down || host.checked
+            highlighted: host.highlighted
         }
     }
 }

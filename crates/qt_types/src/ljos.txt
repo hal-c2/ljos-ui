@@ -4202,6 +4202,76 @@ module QtQuick.Controls.Fusion
 	type QtQuick/Controls/Fusion/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named
 
+module QtQuick.Controls.Fusion.impl
+	ButtonPanel QtQuick/Controls/Fusion/impl/ButtonPanel.qml
+	CheckIndicator QtQuick/Controls/Fusion/impl/CheckIndicator.qml
+	SliderGroove QtQuick/Controls/Fusion/impl/SliderGroove.qml
+	SliderHandle QtQuick/Controls/Fusion/impl/SliderHandle.qml
+	SwitchIndicator QtQuick/Controls/Fusion/impl/SwitchIndicator.qml
+	TextFieldBackground QtQuick/Controls/Fusion/impl/TextFieldBackground.qml
+	type QtQuick/Controls/Fusion/impl/ButtonPanel.qml ButtonPanel
+		prototype QtQuick.Rectangle named
+		prop control QtQuick.Controls.Basic.Control named pointer
+		prop pressed QtQml.bool named
+		prop highlighted QtQml.bool named
+		prop outlinesFocus QtQml.bool named
+		prop button QtQuick.color named readonly
+		prop highlight QtQuick.color named readonly
+		signal controlChanged
+		signal pressedChanged
+		signal highlightedChanged
+		signal outlinesFocusChanged
+		signal buttonChanged
+		signal highlightChanged
+		method shade
+		method tinted
+	type QtQuick/Controls/Fusion/impl/CheckIndicator.qml CheckIndicator
+		prototype QtQuick.Rectangle named
+		prop control QtQuick.Templates.AbstractButton named pointer
+		prop pressedColor QtQuick.color named readonly
+		prop checkMarkColor QtQuick.color named readonly
+		prop checkState QtQml.int named
+		signal controlChanged
+		signal pressedColorChanged
+		signal checkMarkColorChanged
+		signal checkStateChanged
+		method ink
+	type QtQuick/Controls/Fusion/impl/SliderGroove.qml SliderGroove
+		prototype QtQuick.Rectangle named
+		prop control QtQuick.Controls.Basic.Control named pointer
+		prop offset QtQml.real named
+		prop progress QtQml.real named
+		prop vertical QtQml.bool named
+		prop fillOpacity QtQml.real named
+		prop alwaysHighlighted QtQml.bool named
+		prop window QtQuick.color named readonly
+		prop button QtQuick.color named readonly
+		prop highlight QtQuick.color named readonly
+		prop lit QtQml.bool named readonly
+		signal controlChanged
+		signal offsetChanged
+		signal progressChanged
+		signal verticalChanged
+		signal fillOpacityChanged
+		signal alwaysHighlightedChanged
+		signal windowChanged
+		signal buttonChanged
+		signal highlightChanged
+		signal litChanged
+		method shade
+	type QtQuick/Controls/Fusion/impl/SliderHandle.qml SliderHandle
+		prototype QtQuick.Controls.Fusion.impl.ButtonPanel named
+		prop visualFocus QtQml.bool named
+		signal visualFocusChanged
+	type QtQuick/Controls/Fusion/impl/SwitchIndicator.qml SwitchIndicator
+		prototype QtQuick.Controls.Fusion.impl.SliderGroove named
+	type QtQuick/Controls/Fusion/impl/TextFieldBackground.qml TextFieldBackground
+		prototype QtQuick.Rectangle named
+		prop control QtQuick.Item named pointer
+		prop focusColor QtQuick.color named readonly
+		signal controlChanged
+		signal focusColorChanged
+
 module QtQuick.Controls.Material
 	AbstractButton QtQuick.Templates.AbstractButton
 	Action QtQuick.Templates.Action

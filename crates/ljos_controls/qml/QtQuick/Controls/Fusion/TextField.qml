@@ -1,10 +1,13 @@
-// The Fusion style of Ljós (CLEAN_ROOM.md). Draws with Basic-derived
-// components under Fusion's own metrics and palette.
+// The Fusion style of Ljós (CLEAN_ROOM.md), drawn with its parts in
+// QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
+import QtQuick.Controls.Fusion.impl
 import QtQuick.Templates as T
 
 T.TextField {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: implicitBackgroundWidth + leftInset + rightInset
                    || Math.max(contentWidth, placeholder.implicitWidth) + leftPadding + rightPadding
@@ -14,36 +17,32 @@ T.TextField {
 
     padding: 4
 
-    color: control.palette.text
-    selectionColor: control.palette.highlight
-    selectedTextColor: control.palette.highlightedText
-    placeholderTextColor: control.palette.placeholderText
+    color: host.palette.text
+    selectionColor: host.palette.highlight
+    selectedTextColor: host.palette.highlightedText
+    placeholderTextColor: host.palette.placeholderText
     verticalAlignment: TextInput.AlignVCenter
 
     Text {
         id: placeholder
-        x: control.leftPadding
-        y: control.topPadding
-        width: control.width - (control.leftPadding + control.rightPadding)
-        height: control.height - (control.topPadding + control.bottomPadding)
+        x: host.leftPadding
+        y: host.topPadding
+        width: host.width - (host.leftPadding + host.rightPadding)
+        height: host.height - (host.topPadding + host.bottomPadding)
 
-        text: control.placeholderText
-        font: control.font
-        color: control.placeholderTextColor
-        verticalAlignment: control.verticalAlignment
-        visible: !control.length && !control.preeditText
-                 && (!control.activeFocus || control.horizontalAlignment !== Qt.AlignHCenter)
+        text: host.placeholderText
+        font: host.font
+        color: host.placeholderTextColor
+        verticalAlignment: host.verticalAlignment
+        visible: !host.length && !host.preeditText
+                 && (!host.activeFocus || host.horizontalAlignment !== Qt.AlignHCenter)
         elide: Text.ElideRight
-        renderType: control.renderType
+        renderType: host.renderType
     }
 
     background: Component {
-        Rectangle {
-            implicitWidth: 120
-            implicitHeight: 24
-            radius: 2
-            color: control.palette.base
-            border.color: control.activeFocus ? control.palette.highlight : control.palette.mid
+        TextFieldBackground {
+            control: host
         }
     }
 }

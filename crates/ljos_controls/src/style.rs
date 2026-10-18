@@ -3,9 +3,11 @@
 //! here, plus the native style types `Material`, `Fusion` and `Universal`.
 //! Nothing parses QML at run time.
 //!
-//! Note: `Material`, `Fusion` and `Universal` currently draw with Basic-derived
-//! QML components under their own documented metrics, palettes and attached
-//! style properties rather than full custom design-system shaders.
+//! Fusion draws its buttons, check boxes, switches, sliders and text fields
+//! with parts of its own (`QtQuick.Controls.Fusion.impl`), fitted to what
+//! qml6 shows; the rest of Fusion, and `Material` and `Universal`, draw with
+//! Basic-derived QML components under their own documented metrics,
+//! palettes and attached style properties.
 
 use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, HashMap};

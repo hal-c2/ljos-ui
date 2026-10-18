@@ -26,12 +26,14 @@ T.RadioButton {
             y: control.topPadding + (control.availableHeight - height) / 2
             radius: width / 2
             color: control.down ? Qt.darker(control.palette.light, 1.18) : control.palette.light
-            border.color: control.visualFocus ? control.palette.highlight
+            border.color: control.visualFocus ? Qt.darker(control.palette.highlight, 1.25)
                                               : Qt.darker(control.palette.window, 1.5)
 
             Rectangle {
+                y: 1
                 width: parent.width
                 height: parent.height - 1
+                visible: control.enabled && !control.down
                 radius: width / 2
                 color: "transparent"
                 border.color: Qt.rgba(0, 0, 0, 18 / 255)
@@ -43,8 +45,13 @@ T.RadioButton {
                 x: (parent.width - width) / 2
                 y: (parent.height - height) / 2
                 radius: width / 2
-                color: Qt.rgba(control.palette.text.r, control.palette.text.g, control.palette.text.b, 180 / 255)
-                border.color: Qt.rgba(control.palette.text.r, control.palette.text.g, control.palette.text.b, 200 / 255)
+                // Not enabled, the dot is a grey a little darker than the
+                // text's, as on qml6.
+                readonly property color ink: control.enabled
+                    ? control.palette.text
+                    : Qt.rgba(control.palette.mid.r * 0.86, control.palette.mid.g * 0.86, control.palette.mid.b * 0.86, 1)
+                color: Qt.rgba(ink.r, ink.g, ink.b, 180 / 255)
+                border.color: Qt.rgba(ink.r, ink.g, ink.b, 200 / 255)
                 visible: control.checked
             }
         }

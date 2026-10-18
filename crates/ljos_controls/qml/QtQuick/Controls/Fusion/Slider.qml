@@ -1,10 +1,13 @@
-// The Fusion style of Ljós (CLEAN_ROOM.md). Draws with Basic-derived
-// components under Fusion's own metrics and palette.
+// The Fusion style of Ljós (CLEAN_ROOM.md), drawn with its parts in
+// QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
+import QtQuick.Controls.Fusion.impl
 import QtQuick.Templates as T
 
 T.Slider {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitHandleWidth + leftPadding + rightPadding)
@@ -13,37 +16,30 @@ T.Slider {
 
     padding: 0
 
+    // On whole pixels, as qml6 places it; turned with a vertical slider so
+    // that its shading runs across the groove.
     handle: Component {
-        Rectangle {
-            x: control.leftPadding + (control.horizontal ? control.visualPosition * (control.availableWidth - width) : (control.availableWidth - width) / 2)
-            y: control.topPadding + (control.horizontal ? (control.availableHeight - height) / 2 : control.visualPosition * (control.availableHeight - height))
-            implicitWidth: 13
-            implicitHeight: 13
-            radius: 3
-            color: control.palette.button
-            border.color: control.palette.mid
+        SliderHandle {
+            x: Math.round(host.leftPadding + (host.horizontal ? host.visualPosition * (host.availableWidth - width) : (host.availableWidth - width) / 2))
+            y: Math.round(host.topPadding + (host.horizontal ? (host.availableHeight - height) / 2 : host.visualPosition * (host.availableHeight - height)))
+            rotation: host.horizontal ? 0 : -90
+            control: host
+            visualFocus: host.visualFocus
         }
     }
 
     background: Component {
-        Rectangle {
-            x: control.leftPadding + (control.horizontal ? 0 : (control.availableWidth - width) / 2)
-            y: control.topPadding + (control.horizontal ? (control.availableHeight - height) / 2 : 0)
-            implicitWidth: control.horizontal ? 160 : 5
-            implicitHeight: control.horizontal ? 5 : 160
-            width: control.horizontal ? control.availableWidth : implicitWidth
-            height: control.horizontal ? implicitHeight : control.availableHeight
-            radius: 2
-            color: control.palette.dark
-            scale: control.horizontal && control.mirrored ? -1 : 1
-
-            Rectangle {
-                y: control.horizontal ? 0 : control.visualPosition * parent.height
-                width: control.horizontal ? control.position * parent.width : 5
-                height: control.horizontal ? 5 : (1.0 - control.visualPosition) * parent.height
-                radius: 2
-                color: control.palette.highlight
-            }
+        SliderGroove {
+            x: host.leftPadding + (host.horizontal ? 0 : (host.availableWidth - width) / 2)
+            y: host.topPadding + (host.horizontal ? (host.availableHeight - height) / 2 : 0)
+            implicitWidth: host.horizontal ? 160 : 5
+            implicitHeight: host.horizontal ? 5 : 160
+            width: host.horizontal ? host.availableWidth : implicitWidth
+            height: host.horizontal ? implicitHeight : host.availableHeight
+            control: host
+            vertical: host.vertical
+            progress: host.position
+            scale: host.horizontal && host.mirrored ? -1 : 1
         }
     }
 }

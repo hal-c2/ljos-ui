@@ -1,0 +1,58 @@
+// The sunken groove of Fusion's sliders and switches, a drawing of our own
+// (CLEAN_ROOM.md), filled in the highlight over the share `offset` to
+// `progress` of its length. Its shades are fitted to what qml6 shows for
+// the default palette.
+import QtQuick
+import QtQuick.Templates as T
+
+Rectangle {
+    id: groove
+
+    property T.Control control
+    property real offset: 0
+    property real progress: 0
+    property bool vertical: false
+    property real fillOpacity: 1
+    // Whether the fill keeps the highlight when the control is not enabled.
+    property bool alwaysHighlighted: false
+
+    readonly property color window: control.palette.window
+    readonly property color button: control.palette.button
+    readonly property color highlight: control.palette.highlight
+    readonly property bool lit: control.enabled || alwaysHighlighted
+
+    function shade(c, scale) {
+        return Qt.rgba(c.r * scale, c.g * scale, c.b * scale, c.a)
+    }
+
+    radius: 2
+    border.color: Qt.darker(button, 1.4)
+    gradient: Gradient {
+        orientation: groove.vertical ? Gradient.Horizontal : Gradient.Vertical
+        GradientStop { position: 0; color: groove.shade(groove.window, 0.791) }
+        GradientStop { position: 1; color: groove.shade(groove.window, 0.958) }
+    }
+
+    Rectangle {
+        x: groove.vertical ? 0 : groove.offset * groove.width
+        y: groove.vertical ? (1 - groove.progress) * groove.height : 0
+        width: groove.vertical ? groove.width : (groove.progress - groove.offset) * groove.width
+        height: groove.vertical ? (groove.progress - groove.offset) * groove.height : groove.height
+        radius: 2
+        opacity: groove.fillOpacity
+        visible: opacity > 0 && groove.progress > groove.offset
+        border.width: groove.control.enabled ? 1 : groove.alwaysHighlighted ? 0 : 1
+        border.color: groove.lit ? groove.shade(groove.highlight, 0.728) : groove.shade(groove.button, 0.438)
+        gradient: Gradient {
+            orientation: groove.vertical ? Gradient.Horizontal : Gradient.Vertical
+            GradientStop {
+                position: 0
+                color: groove.lit ? groove.highlight : groove.shade(groove.button, 0.607)
+            }
+            GradientStop {
+                position: 1
+                color: groove.lit ? Qt.lighter(groove.highlight, 1.2) : groove.shade(groove.button, 0.728)
+            }
+        }
+    }
+}

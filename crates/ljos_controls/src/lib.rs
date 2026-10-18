@@ -271,13 +271,17 @@ pub fn register(engine: &Engine) {
         }
     }
     // The parts a style draws with, for controls that customise it.
-    let parts = format!("{BASIC}/impl");
-    for name in styles.get(&parts).cloned().unwrap_or_default() {
-        let uri = "QtQuick.Controls.Basic.impl";
-        if let Err(err) =
-            engine.register_qml_type(uri, Version::new(2, 15), &format!("{parts}/{name}"))
-        {
-            util::warn(engine, format!("{uri}.{name}: {err}"));
+    for (uri, directory) in [
+        ("QtQuick.Controls.Basic.impl", BASIC),
+        ("QtQuick.Controls.Fusion.impl", FUSION),
+    ] {
+        let parts = format!("{directory}/impl");
+        for name in styles.get(&parts).cloned().unwrap_or_default() {
+            if let Err(err) =
+                engine.register_qml_type(uri, Version::new(2, 15), &format!("{parts}/{name}"))
+            {
+                util::warn(engine, format!("{uri}.{name}: {err}"));
+            }
         }
     }
 }

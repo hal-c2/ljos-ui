@@ -1,10 +1,13 @@
 // The Fusion style of Ljós (CLEAN_ROOM.md), from the sizes and colours a
 // running Qt reports.
 import QtQuick
+import QtQuick.Controls.Fusion.impl
 import QtQuick.Templates as T
 
 T.TextArea {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: Math.max(contentWidth + leftPadding + rightPadding,
                             implicitBackgroundWidth + leftInset + rightInset,
@@ -16,38 +19,33 @@ T.TextArea {
     padding: 6
     leftPadding: padding + 4
 
-    color: control.palette.text
-    selectionColor: control.palette.highlight
-    selectedTextColor: control.palette.highlightedText
-    placeholderTextColor: control.palette.placeholderText
+    color: host.palette.text
+    selectionColor: host.palette.highlight
+    selectedTextColor: host.palette.highlightedText
+    placeholderTextColor: host.palette.placeholderText
 
     // The first child: the background comes after it and lies behind.
     Text {
         id: placeholder
-        x: control.leftPadding
-        y: control.topPadding
-        width: control.width - (control.leftPadding + control.rightPadding)
-        height: control.height - (control.topPadding + control.bottomPadding)
+        x: host.leftPadding
+        y: host.topPadding
+        width: host.width - (host.leftPadding + host.rightPadding)
+        height: host.height - (host.topPadding + host.bottomPadding)
 
-        text: control.placeholderText
-        font: control.font
-        color: control.placeholderTextColor
-        verticalAlignment: control.verticalAlignment
-        horizontalAlignment: control.horizontalAlignment
+        text: host.placeholderText
+        font: host.font
+        color: host.placeholderTextColor
+        verticalAlignment: host.verticalAlignment
+        horizontalAlignment: host.horizontalAlignment
         // A centred placeholder would sit under the cursor.
-        visible: !control.length && !control.preeditText
-                 && (!control.activeFocus || control.horizontalAlignment !== Qt.AlignHCenter)
+        visible: !host.length && !host.preeditText
+                 && (!host.activeFocus || host.horizontalAlignment !== Qt.AlignHCenter)
         elide: Text.ElideRight
     }
 
     background: Component {
-        Rectangle {
-            implicitWidth: 120
-            implicitHeight: 24
-            radius: 2
-            color: control.palette.base
-            border.color: control.activeFocus ? control.palette.highlight
-                                              : Qt.darker(control.palette.button, 1.4)
+        TextFieldBackground {
+            control: host
         }
     }
 }

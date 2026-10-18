@@ -1,10 +1,15 @@
-// The Fusion style of Ljós (CLEAN_ROOM.md), from the sizes and colours a
-// running Qt reports.
+// The Fusion style of Ljós (CLEAN_ROOM.md), drawn with its parts in
+// QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
+import QtQuick.Controls.Fusion
+import QtQuick.Controls.Fusion.impl
+import QtQuick.Shapes
 import QtQuick.Templates as T
 
 T.SpinBox {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             contentItem.implicitWidth + leftPadding + rightPadding)
@@ -14,98 +19,141 @@ T.SpinBox {
 
     padding: 4
     // Both steps are in a strip at one side.
-    leftPadding: padding + (control.mirrored ? 16 : 0)
-    rightPadding: padding + (control.mirrored ? 0 : 16)
+    leftPadding: padding + (host.mirrored ? 16 : 0)
+    rightPadding: padding + (host.mirrored ? 0 : 16)
 
     // Above the buttons, so that a press on the number is the number's.
     contentItem: Component {
         TextInput {
             z: 2
-            text: control.displayText
+            text: host.displayText
 
-            font: control.font
-            color: control.palette.text
-            selectionColor: control.palette.highlight
-            selectedTextColor: control.palette.highlightedText
+            font: host.font
+            color: host.palette.text
+            selectionColor: host.palette.highlight
+            selectedTextColor: host.palette.highlightedText
             horizontalAlignment: Qt.AlignHCenter
             verticalAlignment: Qt.AlignVCenter
 
-            readOnly: !control.editable
-            validator: control.validator
-            inputMethodHints: control.inputMethodHints
+            readOnly: !host.editable
+            validator: host.validator
+            inputMethodHints: host.inputMethodHints
 
             // The box speaks for its number: one thing with a value, a name
             // and steps, and not a nameless field inside it.
             Accessible.ignored: true
-
-            // The frame of the box that has the keyboard.
-            Rectangle {
-                width: parent.width
-                height: parent.height
-                visible: control.activeFocus
-                color: "transparent"
-                border.color: control.palette.highlight
-                border.width: 2
-            }
         }
     }
 
+    // A step is pale where it can go no further.
     up.indicator: Component {
         Rectangle {
-            x: control.mirrored ? 1 : control.width - width - 1
+            x: host.mirrored ? 1 : host.width - width - 1
             y: 1
             implicitWidth: 16
             implicitHeight: 10
-            height: control.height / 2 - 1
-            color: control.up.pressed ? Qt.darker(control.palette.button, 1.1) : "transparent"
+            height: host.height / 2 - 1
+            radius: 1.7
+            readonly property color base: host.palette.base
+            color: host.up.pressed ? Qt.rgba(base.r * 0.86, base.g * 0.86, base.b * 0.86, base.a)
+                                   : "transparent"
 
-            // A plus sign: two bars of our own.
-            Rectangle {
-                x: (parent.width - width) / 2
-                y: (parent.height - height) / 2
-                width: 7
-                height: 1
-                color: enabled ? control.palette.buttonText : control.palette.mid
-            }
+            Item {
+                id: upArrow
+                property color color: host.palette.buttonText
+                width: parent.width
+                height: parent.height
+                rotation: 180
+                opacity: parent.enabled ? 1 : 0.5
 
-            Rectangle {
-                x: (parent.width - width) / 2
-                y: (parent.height - height) / 2
-                width: 1
-                height: 7
-                color: enabled ? control.palette.buttonText : control.palette.mid
+                // A small filled triangle of our own (CLEAN_ROOM.md), eight wide and
+                // four tall, in the text colour at about 72 % as qml6 shows it.
+                Shape {
+                    x: Math.round((upArrow.width - 8) / 2)
+                    y: Math.round((upArrow.height - 4) / 2)
+                    width: 8
+                    height: 4
+                    ShapePath {
+                        strokeWidth: -1
+                        fillColor: Qt.rgba(upArrow.color.r, upArrow.color.g, upArrow.color.b, upArrow.color.a * 0.72)
+                        startX: 0
+                        startY: 0
+                        PathLine { x: 8; y: 0 }
+                        PathLine { x: 4; y: 4 }
+                        PathLine { x: 0; y: 0 }
+                    }
+                }
             }
         }
     }
 
     down.indicator: Component {
         Rectangle {
-            x: control.mirrored ? 1 : control.width - width - 1
-            y: control.height / 2
+            x: host.mirrored ? 1 : host.width - width - 1
+            y: host.height / 2
             implicitWidth: 16
             implicitHeight: 10
-            height: control.height / 2 - 1
-            color: control.down.pressed ? Qt.darker(control.palette.button, 1.1) : "transparent"
+            height: host.height / 2 - 1
+            radius: 1.7
+            readonly property color base: host.palette.base
+            color: host.down.pressed ? Qt.rgba(base.r * 0.86, base.g * 0.86, base.b * 0.86, base.a)
+                                     : "transparent"
 
-            // A minus sign.
-            Rectangle {
-                x: (parent.width - width) / 2
-                y: (parent.height - height) / 2
-                width: 7
-                height: 1
-                color: enabled ? control.palette.buttonText : control.palette.mid
+            Item {
+                id: downArrow
+                property color color: host.palette.buttonText
+                width: parent.width
+                height: parent.height
+                opacity: parent.enabled ? 1 : 0.5
+
+                // A small filled triangle of our own (CLEAN_ROOM.md), eight wide and
+                // four tall, in the text colour at about 72 % as qml6 shows it.
+                Shape {
+                    x: Math.round((downArrow.width - 8) / 2)
+                    y: Math.round((downArrow.height - 4) / 2)
+                    width: 8
+                    height: 4
+                    ShapePath {
+                        strokeWidth: -1
+                        fillColor: Qt.rgba(downArrow.color.r, downArrow.color.g, downArrow.color.b, downArrow.color.a * 0.72)
+                        startX: 0
+                        startY: 0
+                        PathLine { x: 8; y: 0 }
+                        PathLine { x: 4; y: 4 }
+                        PathLine { x: 0; y: 0 }
+                    }
+                }
             }
         }
     }
 
+    // A sunken field with a raised strip for the steps, a line at its side.
     background: Component {
-        Rectangle {
-            implicitWidth: 120
-            implicitHeight: 24
-            radius: 2
-            color: control.palette.base
-            border.color: control.activeFocus ? control.palette.highlight
-                                              : Qt.darker(control.palette.button, 1.4)
+        TextFieldBackground {
+            control: host
+
+            Rectangle {
+                x: host.mirrored ? 1 : parent.width - width - 1
+                y: 1
+                width: 17
+                height: parent.height - 2
+                radius: 2
+                gradient: Gradient {
+                    GradientStop { position: 0; color: Qt.lighter(host.palette.button, 1.07) }
+                    GradientStop {
+                        position: 1
+                        color: Qt.rgba(host.palette.button.r * 0.988, host.palette.button.g * 0.988,
+                                       host.palette.button.b * 0.988, host.palette.button.a)
+                    }
+                }
+
+                Rectangle {
+                    x: host.mirrored ? parent.width - 1 : 0
+                    width: 1
+                    height: parent.height
+                    color: Qt.darker(host.palette.button, 1.4)
+                }
+            }
         }
     }
 }

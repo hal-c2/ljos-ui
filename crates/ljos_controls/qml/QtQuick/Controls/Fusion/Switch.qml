@@ -1,10 +1,13 @@
-// The Fusion style of Ljós (CLEAN_ROOM.md). Draws with Basic-derived
-// components under Fusion's own metrics and palette.
+// The Fusion style of Ljós (CLEAN_ROOM.md), drawn with its parts in
+// QtQuick.Controls.Fusion.impl: drawings of our own, fitted to what qml6 shows.
 import QtQuick
+import QtQuick.Controls.Fusion.impl
 import QtQuick.Templates as T
 
 T.Switch {
-    id: control
+    // Not `control`: inside a part's component that names the part's
+    // own property, which Fusion's parts have.
+    id: host
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
@@ -16,25 +19,11 @@ T.Switch {
     spacing: 6
 
     indicator: Component {
-        Rectangle {
-            implicitWidth: 40
-            implicitHeight: 16
-            x: control.text ? (control.mirrored ? control.width - width - control.rightPadding : control.leftPadding)
-                            : control.leftPadding + (control.availableWidth - width) / 2
-            y: control.topPadding + (control.availableHeight - height) / 2
-            radius: 8
-            color: control.checked ? control.palette.highlight : control.palette.button
-            border.width: 1
-            border.color: control.palette.mid
-
-            Rectangle {
-                x: Math.max(0, Math.min(parent.width - width, control.visualPosition * parent.width - (width / 2)))
-                width: 20
-                height: 16
-                radius: 8
-                color: control.palette.button
-                border.color: control.palette.mid
-            }
+        SwitchIndicator {
+            x: host.text ? (host.mirrored ? host.width - width - host.rightPadding : host.leftPadding)
+                         : host.leftPadding + (host.availableWidth - width) / 2
+            y: host.topPadding + (host.availableHeight - height) / 2
+            control: host
         }
     }
 
@@ -44,19 +33,19 @@ T.Switch {
             property alias font: label.font
             property alias color: label.color
 
-            implicitWidth: label.implicitWidth + (control.indicator ? control.indicator.width + control.spacing : 0)
+            implicitWidth: label.implicitWidth + (host.indicator ? host.indicator.width + host.spacing : 0)
             implicitHeight: label.implicitHeight
 
             Text {
                 id: label
-                x: control.indicator && !control.mirrored ? control.indicator.width + control.spacing : 0
-                width: parent.width - (control.indicator ? control.indicator.width + control.spacing : 0)
+                x: host.indicator && !host.mirrored ? host.indicator.width + host.spacing : 0
+                width: parent.width - (host.indicator ? host.indicator.width + host.spacing : 0)
                 height: parent.height
-                text: control.text
-                font: control.font
-                color: control.palette.windowText
+                text: host.text
+                font: host.font
+                color: host.palette.windowText
                 verticalAlignment: Text.AlignVCenter
-                visible: control.text.length > 0
+                visible: host.text.length > 0
             }
         }
     }
