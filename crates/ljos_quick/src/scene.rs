@@ -193,14 +193,17 @@ struct Geom {
     rotation: f64,
     scale: f64,
     origin: i32,
-    /// The item's `transform` list.
-    list: crate::transform::Projective,
+    /// The item's `transform` list has entries. What they make is followed
+    /// by an effect of its own ([`list_effect`]), so an entry that moves
+    /// (a `Rotation`'s angle) does not read all of the above again.
+    listed: bool,
 }
 
-/// The transform of an item at `place` with geometry `g`.
-fn local_transform(place: Place, g: &Geom) -> kurbo::Affine {
+/// The transform of an item at `place` with geometry `g` and the map of
+/// its `transform` list.
+fn local_transform(place: Place, g: &Geom, list: &crate::transform::Projective) -> kurbo::Affine {
     let (x, y) = place;
-    crate::transform::compose(x, y, g.w, g.h, g.rotation, g.scale, g.origin, &g.list)
+    crate::transform::compose(x, y, g.w, g.h, g.rotation, g.scale, g.origin, list)
 }
 
 /// A property as the picture shows it: what an Animator on its way shows,
@@ -225,7 +228,7 @@ impl Geom {
             rotation: shown_num(e, &shown, obj, Item::ROTATION.index),
             scale: shown_num(e, &shown, obj, Item::SCALE.index),
             origin: num(e, obj, Item::TRANSFORM_ORIGIN.index) as i32,
-            list: crate::transform::list_map(e, obj),
+            listed: matches!(e.read(obj, Item::TRANSFORM.index), Value::List(l) if !l.is_empty()),
         }
     }
 }
@@ -249,6 +252,8 @@ enum Paint {
 struct Shared {
     geom: FxHashMap<ObjectId, Geom>,
     place: FxHashMap<ObjectId, Place>,
+    /// The map of a `transform` list, from [`list_effect`].
+    list: FxHashMap<ObjectId, crate::transform::Projective>,
     content: FxHashMap<ObjectId, Paint>,
     structure: FxHashSet<ObjectId>,
     polish: FxHashSet<ObjectId>,
@@ -265,6 +270,7 @@ impl Shared {
     fn pending(&self) -> bool {
         !(self.geom.is_empty()
             && self.place.is_empty()
+            && self.list.is_empty()
             && self.content.is_empty()
             && self.structure.is_empty()
             && self.polish.is_empty()
@@ -325,6 +331,10 @@ struct Entry {
     /// both, and either may change alone.
     geom: Option<Geom>,
     place: Place,
+    /// The map of the item's `transform` list, and the effect that follows
+    /// it: made only for an item whose list has entries.
+    list: crate::transform::Projective,
+    list_effect: Option<GraphNode>,
 }
 
 /// Where an item is in its parent: `x` and `y`.
@@ -796,7 +806,7 @@ impl QuickScene {
         let incubating = self.incubate(engine);
         // 8. Sync.
         self.reconcile(engine);
-        self.apply_geometry();
+        self.apply_geometry(engine);
         self.apply_content();
         self.draw_effect_sources(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
@@ -1069,6 +1079,8 @@ impl QuickScene {
                 size: kurbo::Size::ZERO,
                 geom: None,
                 place: (0.0, 0.0),
+                list: crate::transform::Projective::IDENTITY,
+                list_effect: None,
             },
         );
         self.by_node.insert(node, obj);
@@ -1113,7 +1125,12 @@ impl QuickScene {
         };
         self.items_gen += 1;
         let g = engine.graph();
-        for n in entry.effects.iter().chain(entry.content_effect.iter()) {
+        for n in entry
+            .effects
+            .iter()
+            .chain(entry.content_effect.iter())
+            .chain(entry.list_effect.iter())
+        {
             let _ = g.dispose(*n);
         }
         self.a11y.forget(engine, obj);
@@ -1151,6 +1168,7 @@ impl QuickScene {
         let mut s = self.shared.borrow_mut();
         s.geom.remove(&obj);
         s.place.remove(&obj);
+        s.list.remove(&obj);
         s.content.remove(&obj);
         s.structure.remove(&obj);
         s.polish.remove(&obj);
@@ -1235,13 +1253,22 @@ impl QuickScene {
     }
 
     /// Step 8b.
-    fn apply_geometry(&mut self) {
+    fn apply_geometry(&mut self, engine: &Engine) {
         // Each item's tree node is set on its own, so neither list needs
-        // an order; what only moved is told apart while both maps stand.
+        // an order; what only moved is told apart while the maps stand.
         let (geoms, moved) = {
             let mut s = self.shared.borrow_mut();
             let s = &mut *s;
             let mut moved = Vec::new();
+            // Before the places, so an item that also moved is told once.
+            for (obj, list) in s.list.drain() {
+                if let Some(e) = self.entries.get_mut(&obj) {
+                    e.list = list;
+                    if !s.geom.contains_key(&obj) && !s.place.contains_key(&obj) {
+                        moved.push(obj);
+                    }
+                }
+            }
             for (obj, place) in s.place.drain() {
                 if let Some(e) = self.entries.get_mut(&obj) {
                     e.place = place;
@@ -1253,6 +1280,15 @@ impl QuickScene {
             let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
             (geoms, moved)
         };
+        for (obj, g) in &geoms {
+            if self
+                .entries
+                .get(obj)
+                .is_some_and(|e| e.list_effect.is_some() != g.listed)
+            {
+                self.follow_list(engine, *obj, g.listed);
+            }
+        }
         for (obj, g) in geoms {
             let Some(e) = self.entries.get_mut(&obj) else {
                 continue;
@@ -1260,7 +1296,8 @@ impl QuickScene {
             e.geom = Some(g);
             let node = e.node;
             let size = kurbo::Size::new(g.w.max(0.0), g.h.max(0.0));
-            self.tree.set_local(node, local_transform(e.place, &g));
+            self.tree
+                .set_local(node, local_transform(e.place, &g, &e.list));
             if size != e.size {
                 e.size = size;
                 if e.kind.paints() && e.content_effect.is_some() {
@@ -1281,14 +1318,48 @@ impl QuickScene {
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
             self.tree.set_z(node, g.z as f32);
         }
-        // What only moved: its transform, and nothing else.
+        // What only moved or turned: its transform, and nothing else.
         for obj in moved {
             if let Some(e) = self.entries.get(&obj)
                 && let Some(g) = &e.geom
             {
-                self.tree.set_local(e.node, local_transform(e.place, g));
+                self.tree
+                    .set_local(e.node, local_transform(e.place, g, &e.list));
             }
         }
+    }
+
+    /// Makes or drops the effect that follows `obj`'s `transform` list,
+    /// as the list came to have entries or lost them.
+    fn follow_list(&mut self, engine: &Engine, obj: ObjectId, listed: bool) {
+        let Some(e) = self.entries.get_mut(&obj) else {
+            return;
+        };
+        if let Some(n) = e.list_effect.take() {
+            let _ = engine.graph().dispose(n);
+        }
+        let list = if listed {
+            let shared = Rc::clone(&self.shared);
+            match engine.effect_in(obj, move |e| list_effect(e, obj, &shared)) {
+                Ok(n) => e.list_effect = Some(n),
+                Err(err) => engine.log(
+                    LogLevel::Warning,
+                    SCENE_CATEGORY,
+                    format!("transform effect failed: {err}"),
+                ),
+            }
+            // The effect ran as it was made, unless a batch holds it back:
+            // this frame shows the list either way.
+            self.shared
+                .borrow_mut()
+                .list
+                .remove(&obj)
+                .unwrap_or_else(|| engine.untrack(|| crate::transform::list_map(engine, obj)))
+        } else {
+            self.shared.borrow_mut().list.remove(&obj);
+            crate::transform::Projective::IDENTITY
+        };
+        e.list = list;
     }
 
     /// Step 8c: rebuild the display lists of items whose paint inputs or
@@ -2357,6 +2428,18 @@ fn geometry_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     let g = Geom::read(e, obj);
     mark(shared, |s| {
         s.geom.insert(obj, g);
+    });
+}
+
+/// Follows the entries of a `transform` list. Made only for an item whose
+/// list has some (see [`QuickScene::follow_list`]).
+fn list_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
+    if !e.is_alive(obj) {
+        return;
+    }
+    let list = crate::transform::list_map(e, obj);
+    mark(shared, |s| {
+        s.list.insert(obj, list);
     });
 }
 

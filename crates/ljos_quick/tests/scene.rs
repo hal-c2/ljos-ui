@@ -296,3 +296,53 @@ fn golden_nested_opacity_and_clip() {
     );
     assert_golden("nested_opacity_clip", &img);
 }
+
+const TURNED: &str = r#"import QtQuick
+Item {
+  width: 100; height: 100
+  Rectangle {
+    objectName: "box"; x: 10; y: 20; width: 40; height: 20; color: "red"
+    transform: Rotation { objectName: "turn"; origin.x: 20; origin.y: 10; angle: 0 }
+  }
+  Repeater { model: 20; Rectangle { width: 5; height: 5 } }
+}
+"#;
+
+fn world_of(s: &QuickScene, item: ObjectId) -> [f64; 6] {
+    let node = s.node_of(item).expect("a node");
+    let snap = s.snapshot().expect("a frame");
+    snap.items
+        .iter()
+        .find(|i| i.node == node)
+        .expect("painted")
+        .world
+        .as_coeffs()
+}
+
+#[test]
+fn a_turning_transform_entry_reruns_one_effect_and_shows_what_a_fresh_scene_does() {
+    let e = engine();
+    let root = load(&e, TURNED);
+    let (bx, turn) = (find(&e, root, "box"), find(&e, root, "turn"));
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+
+    let before = e.graph().stats().effect_runs;
+    set(&e, turn, "angle", Value::Real(30.0));
+    // The effect that follows the list, not the one of all the geometry.
+    assert_eq!(e.graph().stats().effect_runs - before, 1);
+    frame(&mut s, &e);
+    let mut fresh = scene(&e, root, 100.0, 100.0);
+    frame(&mut fresh, &e);
+    assert_eq!(world_of(&s, bx), world_of(&fresh, bx));
+    assert_ne!(world_of(&s, bx)[1], 0.0, "turned");
+
+    // An emptied list leaves nothing following its old entry.
+    set(&e, bx, "transform", Value::List(Default::default()));
+    frame(&mut s, &e);
+    let before = e.graph().stats().effect_runs;
+    set(&e, turn, "angle", Value::Real(60.0));
+    assert_eq!(e.graph().stats().effect_runs - before, 0);
+    frame(&mut s, &e);
+    assert_eq!(world_of(&s, bx), [1.0, 0.0, 0.0, 1.0, 10.0, 20.0]);
+}
