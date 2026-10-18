@@ -152,8 +152,8 @@ pub struct ImageBase {
     #[qml(notify)]
     pub cache: bool,
     /// What the author asked for, or the size of the loaded picture when
-    /// nothing was asked.
-    #[qml(notify, reset)]
+    /// nothing was asked. In whole pixels, as Qt's integer size holds it.
+    #[qml(notify, reset, write = Self::whole_pixels)]
     pub source_size: Size,
     #[qml(notify)]
     pub mirror: bool,
@@ -231,6 +231,16 @@ struct Run {
     pages: u32,
 }
 
+impl ImageBase {
+    /// Each side rounded, a half away from zero.
+    fn whole_pixels(&self, size: Size) -> Option<Size> {
+        Some(Size {
+            width: size.width.round(),
+            height: size.height.round(),
+        })
+    }
+}
+
 #[qml_impl]
 impl ImageBase {
     #[qml(on_complete)]
@@ -244,9 +254,10 @@ impl ImageBase {
                 return;
             }
             let asked = asks(size);
+            let set = authored(size) || e.is_bound(me, ImageBase::SOURCE_SIZE.index);
             with_run(e, me, |r| {
                 r.requested = asked;
-                r.authored = authored(size);
+                r.authored = set;
                 r.reported = None;
             });
             reload(e, me);
@@ -257,9 +268,10 @@ impl ImageBase {
             Some(scope) => Some(e.graph().property(scope, Value::Int(0))?),
             None => None,
         };
+        let bound = e.is_bound(me, ImageBase::SOURCE_SIZE.index);
         let (asked, set) = match e.untrack(|| e.read(me, ImageBase::SOURCE_SIZE.index)) {
-            Value::Size(size) => (asks(&size), authored(&size)),
-            _ => (None, false),
+            Value::Size(size) => (asks(&size), bound || authored(&size)),
+            _ => (None, bound),
         };
         with_run(e, me, |r| {
             r.epoch = epoch;

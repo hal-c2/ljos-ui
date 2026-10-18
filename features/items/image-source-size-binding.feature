@@ -3,8 +3,6 @@
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # The coffee demo's cup follows its item this way: the item is 0 wide
 # until its layout has run, and the cup is drawn at the item's later width.
-# The @backlog scenarios wait on the image code: its report of the loaded
-# size is an assignment that drops the binding, and it keeps fractions.
 
 @qt-parity @api-QtQuick.Image.sourceSize
 Feature: A binding on sourceSize outlives a load that asks for nothing
@@ -37,14 +35,20 @@ Feature: A binding on sourceSize outlives a load that asks for nothing
     Then the property "status" of "image" is 1
     And the property "drawn" of "box" is 40
 
-  @backlog
   Scenario: A later width is the size asked for
     When the property "width" of "box" is set to 10
     And 100 milliseconds pass
     Then the property "asked" of "box" is 10
     And the property "drawn" of "box" is 10
 
-  @backlog
+  Scenario: A width that asks for nothing again reads as set
+    When the property "width" of "box" is set to 10
+    And 100 milliseconds pass
+    And the property "width" of "box" is set to 0
+    And 100 milliseconds pass
+    Then the property "asked" of "box" is 0
+    And the property "drawn" of "box" is 40
+
   Scenario Outline: sourceSize holds whole pixels, a half rounded away from zero
     When the property "width" of "box" is set to <width>
     And 100 milliseconds pass
