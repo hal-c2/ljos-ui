@@ -70,6 +70,7 @@ fn hear(connect: Connect, post: &Post, held: &Mutex<Held>) {
         for (key, value) in keys {
             if let Some(value) = setting(&value) {
                 desktop.set(&namespace, &key, &value);
+                font(post, &namespace, &key, &value);
             }
         }
     }
@@ -86,11 +87,25 @@ fn hear(connect: Connect, post: &Post, held: &Mutex<Held>) {
         else {
             continue;
         };
-        if let Some(value) = setting(&value)
-            && desktop.set(&namespace, &key, &value)
-        {
+        let Some(value) = setting(&value) else {
+            continue;
+        };
+        if desktop.set(&namespace, &key, &value) {
             super::report(post, desktop.prefs());
         }
+        font(post, &namespace, &key, &value);
+    }
+}
+
+/// The desktop's interface font, when the key names the one the
+/// application started with, becomes its application font. The same font
+/// again changes nothing.
+fn font(post: &Post, namespace: &str, key: &str, value: &SettingValue) {
+    if let Some(font) = DesktopSettings::font_of(namespace, key, value)
+        .as_ref()
+        .and_then(crate::desktop_font::followed)
+    {
+        post.send(move |e| ljos_controls::set_application_font(e, Some(&font)));
     }
 }
 
@@ -222,6 +237,11 @@ mod tests {
         until(&|| !ljos_quick::system_prefs(&engine).reduced_motion);
         change("text-scaling-factor", Value::from(1.5));
         until(&|| ljos_quick::system_prefs(&engine).font_scale == 1.5);
+        // A GNOME desktop's: the one the application started with.
+        crate::desktop_font::follow_gnome();
+        change("font-name", Value::from("Noto Serif 14"));
+        until(&|| ljos_controls::application_font(&engine).family.as_str() == "Noto Serif");
+        assert_eq!(ljos_controls::application_font(&engine).point_size, 14.0);
         drop(watch);
     }
 }

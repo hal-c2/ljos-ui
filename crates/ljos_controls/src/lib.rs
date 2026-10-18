@@ -28,6 +28,7 @@ mod containers;
 mod control;
 mod delay_button;
 mod delegates;
+pub mod desktop_font;
 mod dial;
 mod dialog;
 mod focus;

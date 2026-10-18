@@ -18,16 +18,43 @@
 //! - Anything else: none, and Qt's generic Unix font stays (Sans Serif,
 //!   9 pt). So does an off-screen run, which has no desktop.
 //!
-//! It is read once, as the application starts, on a thread of its own:
-//! asking the bus may wait, and the drivers start meanwhile. The shell
-//! waits for the answer a short while before the root is built. A font the
-//! desktop changes later is not followed; an application that hears of
-//! one can hand it on with `ljos_controls::set_application_font`.
+//! It is read as the application starts, on a thread of its own: asking
+//! the bus may wait, and the drivers start meanwhile. The shell waits for
+//! the answer a short while before the root is built. On Linux the font
+//! the desktop's portal says after that ([`followed`], heard by the
+//! settings watch, `crate::settings`) becomes the application font of the
+//! running application (`ljos_controls::set_application_font`): a portal
+//! that answered late, and each font the user picks.
 
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use ljos_engine::{Atom, Font};
+use ljos_a11y::DesktopFont;
+use ljos_controls::desktop_font::{from_pango, from_qt_string};
+use ljos_engine::Font;
+
+/// The source [`Reading::start`] chose, which a later change follows: 0
+/// none, 1 GNOME's, 2 KDE's.
+static FOLLOWED: AtomicU8 = AtomicU8::new(0);
+
+/// As if the application had started on a GNOME desktop.
+#[cfg(test)]
+pub(crate) fn follow_gnome() {
+    FOLLOWED.store(1, Ordering::Relaxed);
+}
+
+/// The font the application takes from what the desktop names, when it is
+/// the font of the source the application started with; `None` for any
+/// other and for a name that is no font.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn followed(font: &DesktopFont) -> Option<Font> {
+    match (FOLLOWED.load(Ordering::Relaxed), font) {
+        (1, DesktopFont::Pango(name)) => from_pango(name),
+        (2, DesktopFont::Qt(s)) => from_qt_string(s),
+        _ => None,
+    }
+}
 
 /// How long the root waits for the desktop to answer. A portal that is
 /// started on demand can take longer; the application then starts with
@@ -43,6 +70,11 @@ impl Reading {
         let Some(source) = Source::of_desktop(&Env::real()) else {
             return Self(None);
         };
+        let tag = match source {
+            Source::Gnome => 1,
+            Source::Kde => 2,
+        };
+        FOLLOWED.store(tag, Ordering::Relaxed);
         let (tx, rx) = mpsc::sync_channel(1);
         let spawned = std::thread::Builder::new()
             .name("ljos-desktop-font".into())
@@ -206,158 +238,9 @@ fn ini_value(text: &str, group: &str, key: &str) -> Option<String> {
     None
 }
 
-/// The words of a Pango font name that say a style, not the family.
-const PANGO_STYLE_WORDS: [&str; 44] = [
-    "normal",
-    "roman",
-    "oblique",
-    "italic",
-    "small-caps",
-    "all-small-caps",
-    "petite-caps",
-    "all-petite-caps",
-    "unicase",
-    "title-caps",
-    "ultra-condensed",
-    "extra-condensed",
-    "condensed",
-    "semi-condensed",
-    "semi-expanded",
-    "expanded",
-    "extra-expanded",
-    "ultra-expanded",
-    "thin",
-    "ultra-light",
-    "extra-light",
-    "light",
-    "semi-light",
-    "demi-light",
-    "book",
-    "regular",
-    "medium",
-    "semi-bold",
-    "demi-bold",
-    "bold",
-    "ultra-bold",
-    "extra-bold",
-    "heavy",
-    "black",
-    "ultra-black",
-    "extra-black",
-    "ultra-heavy",
-    "not-rotated",
-    "south",
-    "upside-down",
-    "north",
-    "rotated-left",
-    "east",
-    "rotated-right",
-];
-
-/// A Pango font name (`Family [style words] [size]`) as Qt makes it the
-/// application font: the family at the size's whole points, or 10 pt.
-fn from_pango(name: &str) -> Option<Font> {
-    // Variations (`@wght=500`) and families after the first are not the
-    // family.
-    let name = name.split('@').next()?;
-    let mut words: Vec<&str> = name.split_whitespace().collect();
-    let mut points = 10.0;
-    if let Some(&last) = words.last()
-        && let Ok(size) = last.trim_end_matches("px").parse::<f64>()
-    {
-        words.pop();
-        if !last.ends_with("px") && size >= 1.0 {
-            points = size.trunc();
-        }
-    }
-    while words.len() > 1
-        && words
-            .last()
-            .is_some_and(|w| PANGO_STYLE_WORDS.contains(&w.to_ascii_lowercase().as_str()))
-    {
-        words.pop();
-    }
-    let family = words.join(" ");
-    let family = family.split(',').next()?.trim();
-    (!family.is_empty()).then(|| Font {
-        family: Atom::from(family),
-        point_size: points,
-        pixel_size: -1,
-        ..Font::fallback()
-    })
-}
-
-/// Weights of Qt 5's scale (0 to 99) and what they are on Qt 6's (CSS).
-const QT5_WEIGHTS: [(i32, i32); 9] = [
-    (0, 100),
-    (12, 200),
-    (25, 300),
-    (50, 400),
-    (57, 500),
-    (63, 600),
-    (75, 700),
-    (81, 800),
-    (87, 900),
-];
-
-/// A font as `QFont::toString` writes it (`Family,pt,px,hint,weight,
-/// style,underline,strikeout,…`), Qt 5's ten or eleven fields or Qt 6's
-/// sixteen or more.
-fn from_qt_string(s: &str) -> Option<Font> {
-    let fields: Vec<&str> = s.split(',').map(str::trim).collect();
-    if fields.len() < 10 {
-        return None;
-    }
-    let family = fields[0];
-    let num = |i: usize| fields.get(i).and_then(|f| f.parse::<f64>().ok());
-    let point_size = num(1)?;
-    let pixel_size = num(2)? as i32;
-    let qt6 = fields.len() >= 16;
-    let weight = num(4)? as i32;
-    let weight = if qt6 {
-        weight.clamp(1, 1000)
-    } else {
-        // The nearest weight Qt 5 names.
-        QT5_WEIGHTS
-            .iter()
-            .min_by_key(|(w, _)| (w - weight).abs())
-            .map_or(400, |(_, css)| *css)
-    };
-    let style_name = fields.get(if qt6 { 16 } else { 10 }).copied().unwrap_or("");
-    let (point_size, pixel_size) = if pixel_size > 0 {
-        (-1.0, pixel_size)
-    } else if point_size > 0.0 {
-        (point_size, -1)
-    } else {
-        return None;
-    };
-    (!family.is_empty()).then(|| Font {
-        family: Atom::from(family),
-        point_size,
-        pixel_size,
-        weight,
-        italic: num(5).is_some_and(|v| v != 0.0),
-        style_name: Atom::from(style_name),
-        ..Font::fallback()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn summary(f: Option<Font>) -> Option<(String, f64, i32, i32, bool, String)> {
-        f.map(|f| {
-            (
-                f.family.as_str().to_owned(),
-                f.point_size,
-                f.pixel_size,
-                f.weight,
-                f.italic,
-                f.style_name.as_str().to_owned(),
-            )
-        })
-    }
 
     fn env(desktop: &str, kde: bool) -> Env {
         Env {
@@ -392,54 +275,6 @@ mod tests {
             assert_eq!(Source::of_desktop(&env(d, false)), None, "{d}");
         }
         assert_eq!(Source::of_desktop(&Env::default()), None);
-    }
-
-    #[test]
-    fn a_pango_name_is_its_family_at_whole_points() {
-        let f = |s: &str| summary(from_pango(s)).map(|(f, p, ..)| (f, p));
-        assert_eq!(f("Adwaita Sans 11"), Some(("Adwaita Sans".into(), 11.0)));
-        // Measured on Qt 6.11: the style words go, the size is cut.
-        assert_eq!(
-            f("Noto Serif Bold Italic 13"),
-            Some(("Noto Serif".into(), 13.0))
-        );
-        assert_eq!(f("Noto Sans 10.5"), Some(("Noto Sans".into(), 10.0)));
-        assert_eq!(f("Cantarell"), Some(("Cantarell".into(), 10.0)));
-        assert_eq!(
-            f("DejaVu Sans Condensed Semi-Bold 12"),
-            Some(("DejaVu Sans".into(), 12.0))
-        );
-        assert_eq!(f("Noto Sans, 12"), Some(("Noto Sans".into(), 12.0)));
-        assert_eq!(f(""), None);
-        assert_eq!(summary(from_pango("Bold 12")).map(|s| s.3), Some(400));
-    }
-
-    #[test]
-    fn a_kde_font_is_a_qfont_string() {
-        // What Qt 6.11 made of each, read back.
-        assert_eq!(
-            summary(from_qt_string("Noto Sans,10,-1,5,50,0,0,0,0,0")),
-            Some(("Noto Sans".into(), 10.0, -1, 400, false, String::new()))
-        );
-        assert_eq!(
-            summary(from_qt_string("Noto Sans,10,-1,5,75,1,0,0,0,0")),
-            Some(("Noto Sans".into(), 10.0, -1, 700, true, String::new()))
-        );
-        assert_eq!(
-            summary(from_qt_string("Noto Serif,13,-1,5,400,0,0,0,0,0")),
-            Some(("Noto Serif".into(), 13.0, -1, 900, false, String::new()))
-        );
-        assert_eq!(
-            summary(from_qt_string(
-                "Hack,11,-1,5,700,0,0,0,0,0,0,0,0,0,0,1,Bold"
-            )),
-            Some(("Hack".into(), 11.0, -1, 700, false, "Bold".into()))
-        );
-        assert_eq!(
-            summary(from_qt_string("Noto Sans,10.5,-1,5,50,0,0,0,0,0")).map(|s| s.1),
-            Some(10.5)
-        );
-        assert_eq!(summary(from_qt_string("Noto Sans,10")), None);
     }
 
     #[test]

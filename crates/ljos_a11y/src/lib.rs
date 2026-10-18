@@ -16,7 +16,7 @@ mod text;
 mod tree;
 
 pub use accesskit;
-pub use desktop::{DesktopSettings, SettingValue};
+pub use desktop::{DesktopFont, DesktopSettings, SettingValue};
 pub use prefs::{ColorScheme, Contrast, HostPrefs, SystemPrefs};
 pub use role::{ROLE_ALIASES, ROLES, Role, RoleFlags, RoleInfo, qt_role_keys, role_word};
 pub use text::{TextRun, TextValue};

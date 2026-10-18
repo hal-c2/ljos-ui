@@ -9,7 +9,9 @@
 //!   signal after, heard on a thread of its own that sleeps until the bus
 //!   has a message. The keys are those of [`ljos_a11y::DesktopSettings`],
 //!   the colour scheme among them. Without a portal nothing is said, and
-//!   the application keeps the defaults.
+//!   the application keeps the defaults. The desktop's interface font is
+//!   heard there too, and becomes the application font
+//!   (`crate::desktop_font::followed`).
 //! - macOS: `NSWorkspace`'s `accessibilityDisplayShouldReduceMotion` and
 //!   `accessibilityDisplayShouldIncreaseContrast`, read again on its
 //!   `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`. macOS

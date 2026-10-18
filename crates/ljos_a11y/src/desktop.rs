@@ -27,6 +27,17 @@ impl SettingValue {
     }
 }
 
+/// The desktop's interface font, as the desktop names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesktopFont {
+    /// GNOME's `org.gnome.desktop.interface font-name`: a Pango font name
+    /// (`Adwaita Sans 11`).
+    Pango(String),
+    /// KDE's `org.kde.kdeglobals.General font`: a `QFont::toString`
+    /// string.
+    Qt(String),
+}
+
 /// What the desktop said last, of the keys that carry a preference.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DesktopSettings {
@@ -52,12 +63,25 @@ pub struct DesktopSettings {
 
 impl DesktopSettings {
     /// The namespaces to ask the portal for.
-    pub const NAMESPACES: [&str; 4] = [
+    pub const NAMESPACES: [&str; 5] = [
         "org.freedesktop.appearance",
         "org.gnome.desktop.interface",
         "org.gnome.desktop.a11y.interface",
         "org.kde.kdeglobals.KDE",
+        "org.kde.kdeglobals.General",
     ];
+
+    /// The interface font one key names, if it is a key that names it.
+    pub fn font_of(namespace: &str, key: &str, value: &SettingValue) -> Option<DesktopFont> {
+        let SettingValue::Text(name) = value else {
+            return None;
+        };
+        match (namespace, key) {
+            ("org.gnome.desktop.interface", "font-name") => Some(DesktopFont::Pango(name.clone())),
+            ("org.kde.kdeglobals.General", "font") => Some(DesktopFont::Qt(name.clone())),
+            _ => None,
+        }
+    }
 
     /// Takes what the desktop says of one key. Whether it is a key read
     /// here with a value of its type; any other leaves everything as it
@@ -171,6 +195,43 @@ mod tests {
             &SettingValue::Double(0.0),
         );
         assert_eq!(d.prefs().reduced_motion, Some(true));
+    }
+
+    #[test]
+    fn the_interface_font_is_named_by_its_key() {
+        let text = |s: &str| SettingValue::Text(s.into());
+        assert_eq!(
+            DesktopSettings::font_of(
+                "org.gnome.desktop.interface",
+                "font-name",
+                &text("Cantarell 11")
+            ),
+            Some(DesktopFont::Pango("Cantarell 11".into()))
+        );
+        assert_eq!(
+            DesktopSettings::font_of(
+                "org.kde.kdeglobals.General",
+                "font",
+                &text("Hack,10,-1,5,400,0,0,0,0,0")
+            ),
+            Some(DesktopFont::Qt("Hack,10,-1,5,400,0,0,0,0,0".into()))
+        );
+        assert_eq!(
+            DesktopSettings::font_of(
+                "org.gnome.desktop.interface",
+                "font-name",
+                &SettingValue::Uint(7)
+            ),
+            None
+        );
+        assert_eq!(
+            DesktopSettings::font_of(
+                "org.gnome.desktop.interface",
+                "monospace-font-name",
+                &text("Hack 10")
+            ),
+            None
+        );
     }
 
     #[test]

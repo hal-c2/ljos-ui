@@ -153,3 +153,45 @@ Feature: The desktop's settings reach the application
       Then the property "contrast" of "started" is 1
       And the property "scale" of "started" is 2
       And the property "scheme" of "started" is 2
+
+  Rule: The desktop's interface font is the application font
+    # GNOME's settings name it in Pango's words (`Family [style words] [size]`), KDE's as
+    # `QFont::toString` writes a font. Qt 6.11 makes a Pango name its family at the size's whole
+    # points, without the style words. Which of the two keys an application follows is the one of
+    # the desktop it runs on; a test says either.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        ApplicationWindow {
+          objectName: "window"
+          property font app: Qt.application.font
+          Label { objectName: "label"; text: "x" }
+        }
+        """
+
+    Scenario: A desktop that picks another interface font changes the application font
+      When the desktop setting "org.gnome.desktop.interface" "font-name" changes to "Noto Serif Bold 13"
+      Then the property "app.family" of "window" is "Noto Serif"
+      And the property "app.pointSize" of "window" is 13
+      And the property "font.family" of "label" is "Noto Serif"
+      And the property "font.pointSize" of "label" is 13
+      And the property "font.bold" of "label" is false
+
+    Scenario: A KDE desktop's font is a font string
+      When the desktop setting "org.kde.kdeglobals.General" "font" changes to "Hack,12,-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
+      Then the property "font.family" of "label" is "Hack"
+      And the property "font.pointSize" of "label" is 12
+      And the property "font.weight" of "label" is 700
+
+    Scenario: A font name that names no font changes nothing
+      When the desktop setting "org.gnome.desktop.interface" "font-name" changes to ""
+      And the desktop setting "org.gnome.desktop.interface" "font-name" changes to uint32 7
+      Then the property "font.family" of "label" is "Sans Serif"
+      And the property "font.pointSize" of "label" is 9
+
+    Scenario: The other fonts of the desktop are not the interface font
+      When the desktop setting "org.gnome.desktop.interface" "monospace-font-name" changes to "Hack 14"
+      Then the property "font.family" of "label" is "Sans Serif"

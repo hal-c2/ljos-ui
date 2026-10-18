@@ -240,6 +240,9 @@ enum Said {
     System(super::SystemSetting),
     App(super::SystemSetting),
     Desktop(ljos_a11y::HostPrefs),
+    /// The desktop's interface font, which the shell makes the
+    /// application font.
+    Font(ljos_engine::Font),
     Network(ljos_platform::NetworkStatus),
 }
 
@@ -259,6 +262,7 @@ fn apply(engine: &Engine, said: Said) {
             ljos_quick::update_system_prefs(engine, |p| change_setting(p, setting))
         }
         Said::Desktop(report) => ljos_quick::report_system_prefs(engine, report),
+        Said::Font(font) => ljos_controls::set_application_font(engine, Some(&font)),
         Said::Network(status) => ljos_platform::report_network_status(engine, status),
     }
 }
@@ -1497,6 +1501,20 @@ impl Backend for LjosBackend {
         key: &str,
         value: ljos_a11y::SettingValue,
     ) -> Result<()> {
+        // The shell follows the key of the desktop it runs on; a test may
+        // say either.
+        if let Some(font) = ljos_a11y::DesktopSettings::font_of(namespace, key, &value) {
+            let font = match font {
+                ljos_a11y::DesktopFont::Pango(name) => {
+                    ljos_controls::desktop_font::from_pango(&name)
+                }
+                ljos_a11y::DesktopFont::Qt(s) => ljos_controls::desktop_font::from_qt_string(&s),
+            };
+            return match font {
+                Some(font) => self.said(Said::Font(font)),
+                None => Ok(()),
+            };
+        }
         // A key the shell does not read is not reported, as on the bus.
         if !self.desktop.set(namespace, key, &value) {
             return Ok(());
