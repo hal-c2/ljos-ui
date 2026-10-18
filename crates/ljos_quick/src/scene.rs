@@ -460,6 +460,14 @@ pub struct QuickScene {
     items_gen: u64,
     /// Items the content effects were matched against, for tests.
     content_looked: u64,
+    /// The items last matched as shown: with the same items, a frame
+    /// that scrolls looks only at those that came or went.
+    content_shown: FxHashSet<ObjectId>,
+    /// The items under an effect's source, and the item generation and
+    /// sources they were found at.
+    under_sources: (u64, Vec<ObjectId>, FxHashSet<ObjectId>),
+    /// The items with children, and the item generation they were read at.
+    parents: (u64, FxHashSet<ObjectId>),
     /// The UI thread's text engine, and the font generation the Texts
     /// were last laid out under.
     text: SharedTextEngine,
@@ -548,6 +556,9 @@ impl QuickScene {
             content_synced: (Vec::new(), 0),
             items_gen: 1,
             content_looked: 0,
+            content_shown: FxHashSet::default(),
+            under_sources: (0, Vec::new(), FxHashSet::default()),
+            parents: (0, FxHashSet::default()),
             text_generation: text::text_engine().borrow().generation(),
             text: text::text_engine(),
             timers: None,
@@ -1690,12 +1701,12 @@ impl QuickScene {
             }
             return;
         }
-        let mut parents: FxHashSet<ObjectId> = FxHashSet::default();
-        for e in self.entries.values() {
-            if let Some(p) = e.parent {
-                parents.insert(p);
-            }
+        // Who has children changes only with the items, not every frame.
+        if self.parents.0 != self.items_gen {
+            let parents = self.entries.values().filter_map(|e| e.parent).collect();
+            self.parents = (self.items_gen, parents);
         }
+        let parents = &self.parents.1;
         let mut redrawn = redrawn;
         for (obj, (base, seen)) in &mut self.effect_base {
             let Some(src) = base.source().filter(|s| parents.contains(s)) else {
@@ -1890,14 +1901,28 @@ impl QuickScene {
     /// The items that are drawn as part of a `MultiEffect`'s or a
     /// `ShaderEffectSource`'s source: the source and what is below it,
     /// shown or not.
-    fn effect_drawn(&self) -> FxHashSet<ObjectId> {
-        let sources: FxHashSet<ObjectId> = self
+    fn effect_drawn(&mut self) -> &FxHashSet<ObjectId> {
+        let mut sources: Vec<ObjectId> = self
             .effect_base
             .values()
             .filter_map(|(b, _)| b.source())
             .chain(self.source_base.values().filter_map(|(b, _)| b.source))
             .chain(self.layer_base.keys().copied())
             .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        // A parent changes only with the item generation: the walk up from
+        // every item is done again only when that or the sources change.
+        if self.under_sources.0 == self.items_gen && self.under_sources.1 == sources {
+            return &self.under_sources.2;
+        }
+        let drawn = self.under(&sources);
+        self.under_sources = (self.items_gen, sources, drawn);
+        &self.under_sources.2
+    }
+
+    /// `sources` and the items below them.
+    fn under(&self, sources: &[ObjectId]) -> FxHashSet<ObjectId> {
         if sources.is_empty() {
             return FxHashSet::default();
         }
@@ -1906,7 +1931,7 @@ impl QuickScene {
             .filter(|(obj, _)| {
                 let mut at = Some(**obj);
                 while let Some(o) = at {
-                    if sources.contains(&o) {
+                    if sources.binary_search(&o).is_ok() {
                         return true;
                     }
                     at = self.entries.get(&o).and_then(|e| e.parent);
@@ -1921,30 +1946,44 @@ impl QuickScene {
     /// for items that left it. Returns whether any were installed.
     fn sync_content_effects(&mut self, engine: &Engine, snap: &FrameSnapshot) -> bool {
         let (nodes, generation) = &self.content_synced;
-        if *generation == self.items_gen
+        let same_items = *generation == self.items_gen;
+        if same_items
             && nodes.len() == snap.items.len()
             && nodes.iter().zip(&snap.items).all(|(n, i)| *n == i.node)
         {
             return false;
         }
-        self.content_looked += self.entries.len() as u64;
         let mut visible: FxHashSet<ObjectId> = snap
             .items
             .iter()
             .filter_map(|i| self.by_node.get(i.node).copied())
             .collect();
         // A hidden source is still drawn by its effect.
-        visible.extend(self.effect_drawn());
+        visible.extend(self.effect_drawn().iter().copied());
+        // With the same items, an item neither shown before nor now was
+        // matched already: a scroll looks at the rows that came or went.
+        let looked: Vec<ObjectId> = if same_items {
+            visible
+                .symmetric_difference(&self.content_shown)
+                .copied()
+                .collect()
+        } else {
+            self.entries.keys().copied().collect()
+        };
+        self.content_looked += looked.len() as u64;
         let mut installed = false;
         // A dropped display list changes the tree, so the frame composes
         // again and does not hand out a snapshot that is already stale.
         let mut dropped = false;
         let mut failed = Vec::new();
-        for (obj, e) in &mut self.entries {
+        for obj in looked {
+            let Some(e) = self.entries.get_mut(&obj) else {
+                continue;
+            };
             if !e.kind.paints() {
                 continue;
             }
-            let shown = visible.contains(obj);
+            let shown = visible.contains(&obj);
             // A Shape paints where its paths are, which need not be where
             // the item is: only its display list tells whether it is in the
             // frame, so it has one from the start and keeps it.
@@ -1954,7 +1993,7 @@ impl QuickScene {
             match (shown, e.content_effect) {
                 (true, None) => {
                     let shared = Rc::clone(&self.shared);
-                    let (o, kind) = (*obj, e.kind);
+                    let (o, kind) = (obj, e.kind);
                     match engine.effect_in(o, move |en| content_effect(en, o, kind, &shared)) {
                         Ok(n) => {
                             e.content_effect = Some(n);
@@ -1970,7 +2009,7 @@ impl QuickScene {
                     // display list holds the glyph runs, so it goes too
                     // (ARCHITECTURE §7.5). Coming back paints it again.
                     if e.kind == Kind::Text {
-                        self.paint.remove(obj);
+                        self.paint.remove(&obj);
                         self.tree.set_content(e.node, None);
                         dropped = true;
                     }
@@ -1978,9 +2017,9 @@ impl QuickScene {
                     // its pixels from being dropped under memory pressure
                     // (ARCHITECTURE §8.5).
                     if e.kind == Kind::Image {
-                        self.paint.remove(obj);
+                        self.paint.remove(&obj);
                         self.tree.set_content(e.node, None);
-                        crate::image::hidden(engine, *obj);
+                        crate::image::hidden(engine, obj);
                         dropped = true;
                     }
                 }
@@ -1993,6 +2032,7 @@ impl QuickScene {
         } else {
             (Vec::new(), 0)
         };
+        self.content_shown = visible;
         for err in failed {
             engine.log(
                 LogLevel::Warning,

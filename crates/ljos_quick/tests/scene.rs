@@ -95,6 +95,35 @@ fn a_frame_that_shows_the_same_items_does_not_look_at_them_all() {
     assert_eq!(s.render_tree().content_rebuilds(), rebuilds + 1);
 }
 
+/// Content that moves under the window shows other rows, but the items
+/// stay the same: the frame looks at the rows that came or went, not at
+/// every item.
+#[test]
+fn a_scroll_looks_only_at_the_rows_that_came_or_went() {
+    let e = engine();
+    let root = rect_item(&e, None, (0.0, 0.0, 100.0, 100.0), rgb(200, 0, 0));
+    let content = rect_item(&e, Some(root), (0.0, 0.0, 100.0, 4000.0), rgb(0, 0, 0));
+    for i in 0..200 {
+        rect_item(
+            &e,
+            Some(content),
+            (0.0, f64::from(i) * 20.0, 100.0, 10.0),
+            rgb(0, 0, 200),
+        );
+    }
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let first = s.content_effects_looked_at();
+    for i in 1..=10u32 {
+        let looked = s.content_effects_looked_at();
+        set(&e, content, "y", Value::Real(-20.0 * f64::from(i)));
+        assert!(s.frame(&e, Time::from_millis(16 * u64::from(i))).changed);
+        let now = s.content_effects_looked_at() - looked;
+        assert!(now <= 4, "a scroll by a row looked at {now} items");
+    }
+    assert!(s.content_effects_looked_at() > first, "rows came and went");
+}
+
 #[test]
 fn an_item_that_only_moves_reads_only_where_it_is() {
     let e = engine();
