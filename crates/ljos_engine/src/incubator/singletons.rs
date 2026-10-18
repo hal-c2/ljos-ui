@@ -20,8 +20,8 @@
 //! root again in the scope the old one owned, so the window keeps its
 //! objects.
 
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_ir::TypeRef;
@@ -154,11 +154,11 @@ type Listener = Rc<dyn Fn(&Engine, &ScopedSingleton)>;
 struct Scopes {
     next: ScopeId,
     /// The context of each root in a scope.
-    by_context: HashMap<ContextId, ScopeId>,
+    by_context: FxHashMap<ContextId, ScopeId>,
     /// Each root in a scope, with its context.
-    members: HashMap<ObjectId, (ContextId, ScopeId)>,
+    members: FxHashMap<ObjectId, (ContextId, ScopeId)>,
     /// The scopes that stand.
-    owners: HashMap<ScopeId, Owner>,
+    owners: FxHashMap<ScopeId, Owner>,
 }
 
 struct Owner {
@@ -173,11 +173,11 @@ pub(crate) struct Singletons {
     /// By what stands for the type in a script. Never shortened.
     entries: RefCell<Vec<Entry>>,
     /// The entry of each type, without a scope.
-    index: RefCell<HashMap<TypeRef, usize>>,
+    index: RefCell<FxHashMap<TypeRef, usize>>,
     /// The entry of a type (by its entry without a scope) in a scope.
-    scoped: RefCell<HashMap<(usize, ScopeId), usize>>,
+    scoped: RefCell<FxHashMap<(usize, ScopeId), usize>>,
     /// Native singleton types, by module and name.
-    natives: RefCell<HashMap<(String, String), Native>>,
+    natives: RefCell<FxHashMap<(String, String), Native>>,
     /// Bumped when the files the engine loads from change: the file of a
     /// singleton may have.
     sources: Cell<u64>,

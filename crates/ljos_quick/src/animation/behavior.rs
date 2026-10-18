@@ -10,8 +10,8 @@
 //! (the engine intercepts neither initial values nor a binding's first
 //! value), so nothing animates into its initial state.
 
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{
@@ -77,7 +77,7 @@ pub struct BehaviorTarget {
 /// state has to find the one of a property it gave a value.
 #[derive(Default)]
 struct Attached {
-    by_prop: RefCell<HashMap<(ObjectId, PropIndex), Follower>>,
+    by_prop: RefCell<FxHashMap<(ObjectId, PropIndex), Follower>>,
 }
 
 struct Follower {

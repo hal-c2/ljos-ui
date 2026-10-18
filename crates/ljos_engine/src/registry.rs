@@ -5,7 +5,7 @@
 //! the application lists its modules, so what a static iOS binary contains
 //! is what the source says.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -111,14 +111,14 @@ impl Slot {
 #[derive(Clone, Debug, Default)]
 struct Module {
     versions: Vec<Version>,
-    types: HashMap<Atom, Entry>,
+    types: FxHashMap<Atom, Entry>,
     order: Vec<Atom>,
 }
 
 /// Registered modules and their types.
 #[derive(Debug, Default)]
 pub struct Registry {
-    modules: HashMap<Atom, Module>,
+    modules: FxHashMap<Atom, Module>,
     order: Vec<Atom>,
 }
 
