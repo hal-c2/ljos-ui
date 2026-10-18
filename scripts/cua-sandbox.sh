@@ -301,8 +301,27 @@ call() {
   exec "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" "$tool" "$json"
 }
 
+# What the sandbox's bus started on demand (the document portal, gvfs) leaves its own process
+# group and mounts a FUSE file system in the runtime directory; it outlives the bus and keeps
+# that directory from being removed. Only processes whose runtime directory is this sandbox's.
+stop_activated() {
+  local env pid mount
+  for env in /proc/[0-9]*/environ; do
+    pid=${env#/proc/}
+    pid=${pid%/environ}
+    [[ $pid == "$$" || $pid == "$PPID" ]] && continue
+    [[ -O $env ]] || continue
+    tr '\0' '\n' 2> /dev/null < "$env" | grep -qxF "XDG_RUNTIME_DIR=$run" && kill "$pid" 2> /dev/null
+  done
+  while read -r _ mount _; do
+    [[ $mount == "$run"/* ]] || continue
+    fusermount3 -uz "$mount" 2> /dev/null || fusermount -uz "$mount" 2> /dev/null || true
+  done < /proc/mounts
+}
+
 stop() {
   for part in app cua registry sway; do stop_one "$part"; done
+  [[ -d $run ]] && stop_activated
   rm -f "$home/display" "$home/bus"
   rm -rf "$run"
 }
