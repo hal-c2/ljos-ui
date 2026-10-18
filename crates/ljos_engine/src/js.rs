@@ -223,6 +223,10 @@ pub(crate) struct JsState {
     pub(crate) calling: Cell<Option<crate::incubator::dynamic::Calling>>,
     /// The faces of `list<T>` properties scripts hold (list_faces.rs).
     pub(crate) lists: crate::list_faces::ListFaces,
+    /// Whether the names devtools scripts use are defined: only once a
+    /// tool runs one (devtools.rs), so an application no tool looks at
+    /// does not pay for them.
+    pub(crate) devtools: Cell<bool>,
 }
 
 impl JsState {
@@ -899,6 +903,7 @@ impl Engine {
             budget: Cell::new(None),
             calling: Cell::new(None),
             lists: crate::list_faces::ListFaces::default(),
+            devtools: Cell::new(false),
         });
         *self.inner.js.borrow_mut() = Some(state.clone());
         self.install_globals(&state)?;
@@ -1472,8 +1477,6 @@ impl Engine {
         self.install_list_globals(js)?;
         // The `URL` and `URLSearchParams` globals: see url_global.rs.
         crate::url_global::install(js)?;
-        // What a devtools script names besides its object: see devtools.rs.
-        self.install_devtools_globals(js)?;
         // The enums by name first: a key the older tables also have is
         // written again with the same number.
         let keys: Vec<String> = crate::qt_enums::QT_ENUMS

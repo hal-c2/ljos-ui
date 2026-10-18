@@ -148,10 +148,22 @@ pub struct BindingGraph {
 }
 
 impl Engine {
+    /// The script state with what devtools scripts use defined, which is
+    /// done the first time one runs rather than when the state is made:
+    /// a shipped application that no tool evaluates in never pays for it.
+    fn devtools_js(&self) -> Result<Rc<JsState>, EngineError> {
+        let js = self.js()?;
+        if !js.devtools.get() {
+            self.install_devtools_globals(&js)?;
+            js.devtools.set(true);
+        }
+        Ok(js)
+    }
+
     /// What devtools scripts use to name what a binding written in an
     /// object names: `__ljos_name(object, name, ids)` is `[value]` when the
     /// object's context finds it (an id only, with `ids`), else `null`.
-    pub(crate) fn install_devtools_globals(&self, js: &JsState) -> Result<(), EngineError> {
+    fn install_devtools_globals(&self, js: &JsState) -> Result<(), EngineError> {
         let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
         let w = Rc::downgrade(&self.inner);
         let name: HostFn = Rc::new(move |_scope, args| {
@@ -196,7 +208,7 @@ impl Engine {
         limit: Duration,
         bounds: [u32; 5],
     ) -> Result<EvalJson, EngineError> {
-        let js = self.js()?;
+        let js = self.devtools_js()?;
         let limit = limit.min(MAX_EVAL_TIME);
         let slice = Slice {
             soft: limit,
@@ -258,7 +270,7 @@ impl Engine {
     }
 
     fn compile_expression(&self, source: &str) -> Result<JsRef, EngineError> {
-        let js = self.js()?;
+        let js = self.devtools_js()?;
         let slice = Slice {
             soft: MAX_EVAL_TIME,
             hard: MAX_EVAL_TIME,
@@ -398,5 +410,46 @@ impl Engine {
             bound: g.is_bound(n),
             tier,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn defined(engine: &Engine, name: &str) -> bool {
+        let js = engine.js().unwrap();
+        let slice = Slice {
+            soft: MAX_EVAL_TIME,
+            hard: MAX_EVAL_TIME,
+        };
+        let probe = format!("typeof globalThis.{name} !== 'undefined'");
+        js.host
+            .enter("test", slice, |s| s.ctx().eval::<bool, _>(probe))
+            .unwrap()
+    }
+
+    #[test]
+    fn an_engine_no_tool_evaluated_in_has_no_devtools_names() {
+        let engine = Engine::new();
+        assert!(!defined(&engine, "__ljos_scopeOf"));
+        assert!(!defined(&engine, "__ljos_name"));
+    }
+
+    #[test]
+    fn the_first_devtools_eval_defines_them() {
+        let engine = Engine::new();
+        let out = engine
+            .eval_js_in(None, "1 + 1", MAX_EVAL_TIME, [4, 16, 64, 64, 1024])
+            .unwrap();
+        assert!(out.contains("\"value\":2"), "{out}");
+        assert!(defined(&engine, "__ljos_scopeOf"));
+    }
+
+    #[test]
+    fn an_expression_checked_defines_them() {
+        let engine = Engine::new();
+        engine.check_expression("width * 2").unwrap();
+        assert!(defined(&engine, "__ljos_scopeOf"));
     }
 }
