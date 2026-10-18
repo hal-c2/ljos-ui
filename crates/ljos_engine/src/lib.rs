@@ -75,6 +75,7 @@ mod member_aliases;
 mod meta;
 mod model;
 mod number;
+mod number_slot;
 mod object;
 mod property_map;
 mod qml_types;
@@ -139,6 +140,7 @@ pub use model::{DelegateGone, DelegateMade, DelegateRows, DelegateSource, Object
 pub use model::{ItemModel, ModelChange, ModelListener, ModelListeners, RowKey};
 pub use model::{ModelSignals, QmlListModel, list_model};
 pub use number::{number_to_string, string_to_number, to_int32};
+pub use number_slot::NumberSlot;
 pub use object::{
     ObjectFlags, QmlObject, QmlType, ScriptMethod, downcast_chain, downcast_chain_mut, find_native,
     find_native_mut,

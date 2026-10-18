@@ -220,3 +220,75 @@ Item {
         .unwrap();
     assert_eq!(h.get(root, "n"), Value::Int(3));
 }
+
+/// A slot an animation keeps for a number property writes as the step
+/// above does, and gives the value back when it no longer fits.
+#[test]
+fn a_number_slot_writes_as_an_animation_step_does() {
+    let h = engine();
+    let e = &h.engine;
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    property real r: 0
+    property int n: 0
+    property string s: ""
+    property real twice: r * 2
+    property int seen: 0
+    onNChanged: seen = n
+    property int heard: 0
+    onRChanged: heard++
+    Item { objectName: "child"; width: r + 1; x: twice }
+}"#,
+    );
+    let child = h.find(root, "child");
+    let r = e.property_index(root, "r").unwrap();
+    let n = e.property_index(root, "n").unwrap();
+    let s = e.property_index(root, "s").unwrap();
+    // Not a number, and a number nothing follows: neither has a slot.
+    assert!(e.number_slot(root, s).is_none());
+    assert!(
+        e.number_slot(root, e.property_index(root, "heard").unwrap())
+            .is_none()
+    );
+    // `x` has a node, since a binding gives it its value.
+    let x = Item::X.index;
+    // A property followed without a node is given one by the first write,
+    // as an animation's first step is written the generic way.
+    for p in [r, n] {
+        e.write_internal(root, p, Value::Int(0), WriteKind::Animation)
+            .unwrap();
+    }
+    let (rs, ns, xs) = (
+        e.number_slot(root, r).unwrap(),
+        e.number_slot(root, n).unwrap(),
+        e.number_slot(child, x).unwrap(),
+    );
+
+    // Outside a batch, and with a number of the other kind, nothing is
+    // written.
+    assert_eq!(e.write_number(&rs, Value::Real(1.0)), Err(Value::Real(1.0)));
+    e.graph().batch(|| {
+        assert_eq!(e.write_number(&ns, Value::Real(2.0)), Err(Value::Real(2.0)));
+    });
+    assert_eq!(h.num(root, "r"), 0.0);
+
+    e.graph().batch(|| {
+        e.write_number(&rs, Value::Real(2.5)).unwrap();
+        e.write_number(&ns, Value::Int(4)).unwrap();
+    });
+    assert_eq!(h.num(root, "r"), 2.5);
+    assert_eq!(h.num(root, "twice"), 5.0);
+    assert_eq!(h.num(root, "heard"), 1.0);
+    assert_eq!(h.get(root, "n"), Value::Int(4));
+    assert_eq!(h.num(root, "seen"), 4.0);
+    assert_eq!(h.num(child, "width"), 3.5);
+    assert_eq!(e.with::<Item, _>(child, |i| i.width).unwrap(), 3.5);
+    // The animated value holds over the binding until the binding runs
+    // again, and the native field has it.
+    assert_eq!(h.num(child, "x"), 5.0);
+    e.graph()
+        .batch(|| e.write_number(&xs, Value::Real(7.5)).unwrap());
+    assert_eq!(e.with::<Item, _>(child, |i| i.x).unwrap(), 7.5);
+    assert_eq!(h.num(child, "x"), 7.5);
+}

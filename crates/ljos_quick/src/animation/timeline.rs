@@ -15,7 +15,8 @@
 use std::cell::Cell;
 
 use ljos_engine::{
-    Atom, Color, Engine, LogLevel, ObjectId, Point, PropIndex, Rect, Size, TypeTag, Value,
+    Atom, Color, Engine, LogLevel, NumberSlot, ObjectId, Point, PropIndex, Rect, Size, TypeTag,
+    Value,
 };
 use ljos_reactive::WriteKind;
 
@@ -155,6 +156,8 @@ struct Slot {
     ty: TypeTag,
     /// An item's property shows only while the item does.
     item: bool,
+    /// Where a number goes, once the property has a node to take it.
+    numbers: Cell<Option<NumberSlot>>,
 }
 
 /// Which values an animation type moves between.
@@ -421,6 +424,7 @@ impl Slot {
             prop,
             ty,
             item: is_item(engine, obj),
+            numbers: Cell::new(None),
         }
     }
 
@@ -432,9 +436,22 @@ impl Slot {
     }
 
     fn write(&self, engine: &Engine, v: Value) {
+        let v = match self.numbers.get() {
+            Some(slot) => match engine.write_number(&slot, v) {
+                Ok(()) => return,
+                Err(v) => {
+                    self.numbers.set(None);
+                    v
+                }
+            },
+            None => v,
+        };
         // The target may be gone, or refuse the value; either way the
         // animation goes on.
         let _ = engine.write_internal(self.obj, self.prop, v, WriteKind::Animation);
+        if matches!(self.ty, TypeTag::Real | TypeTag::Int) {
+            self.numbers.set(engine.number_slot(self.obj, self.prop));
+        }
     }
 }
 
