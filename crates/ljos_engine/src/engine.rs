@@ -82,7 +82,7 @@ pub(crate) struct Inner {
     pub(crate) signals: RefCell<Signals>,
     contexts: RefCell<SlotMap<ContextId, Context>>,
     root_context: ContextId,
-    registry: RefCell<Registry>,
+    pub(crate) registry: RefCell<Registry>,
     /// Depth of engine-run bindings and effects on the stack; 0 inside
     /// handlers and `untrack`. A read creates a node only when this is
     /// non-zero, because only then is there a reader to depend on it.
@@ -329,12 +329,14 @@ impl Engine {
     }
 
     pub fn lookup_type(&self, uri: &str, name: &str) -> Option<MetaRef> {
-        self.inner.registry.borrow().lookup(uri, name)
+        let slot = self.inner.registry.borrow().slot(uri, name)?;
+        self.described(slot)
     }
 
     /// `name` in any registered module.
     pub fn lookup_type_any(&self, name: &str) -> Option<MetaRef> {
-        self.inner.registry.borrow().lookup_any(name)
+        let slot = self.inner.registry.borrow().slot_any(name)?;
+        self.described(slot)
     }
 
     pub fn has_module(&self, uri: &str) -> bool {
@@ -347,14 +349,20 @@ impl Engine {
         version: Version,
         name: &str,
     ) -> Option<MetaRef> {
-        self.inner
+        let slot = self
+            .inner
             .registry
             .borrow()
-            .lookup_versioned(uri, version, name)
+            .slot_versioned(uri, version, name)?;
+        self.described(slot)
     }
 
     /// The `ljostypes.json` content for everything registered.
     pub fn type_dump(&self) -> TypeDump {
+        let undescribed = self.inner.registry.borrow().undescribed();
+        for key in undescribed {
+            self.describe_qml_type(&key);
+        }
         let mut dump = self.inner.registry.borrow().dump();
         for module in &mut dump.modules {
             for ty in &mut module.types {

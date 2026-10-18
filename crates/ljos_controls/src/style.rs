@@ -7,7 +7,7 @@
 //! QML components under their own documented metrics, palettes and attached
 //! style properties rather than full custom design-system shaders.
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -48,12 +48,32 @@ pub(crate) fn is_style_url(location: &str) -> bool {
 #[derive(Debug)]
 pub(crate) struct StyleLibrary {
     directory: String,
-    files: HashMap<String, Arc<CompiledFile>>,
+    files: HashMap<String, StyleFile>,
+}
+
+/// A file of the pack, decoded when it is first loaded: a program draws
+/// with a few of the controls of one style, and decoding all of them was
+/// most of what registering the controls cost.
+#[derive(Debug)]
+struct StyleFile {
+    bytes: &'static [u8],
+    decoded: OnceCell<Result<Arc<CompiledFile>, String>>,
+}
+
+impl StyleFile {
+    fn decoded(&self) -> &Result<Arc<CompiledFile>, String> {
+        self.decoded.get_or_init(|| {
+            CompiledFile::from_bytes(self.bytes)
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
+        })
+    }
 }
 
 impl StyleLibrary {
-    /// Reads the pack. A file that does not decode (the IR version moved
-    /// on without a rebuild) is left out and named in the result.
+    /// Reads the pack's table of files. A key that names no style is left
+    /// out and named in the result; a file that does not decode (the IR
+    /// version moved on without a rebuild) is named when it is loaded.
     pub(crate) fn embedded() -> (BTreeMap<String, Self>, Vec<String>) {
         let mut libraries: BTreeMap<String, Self> = BTreeMap::new();
         let mut bad = Vec::new();
@@ -62,18 +82,19 @@ impl StyleLibrary {
                 bad.push(format!("invalid style key {key}"));
                 continue;
             };
-            match CompiledFile::from_bytes(bytes) {
-                Ok(f) => {
-                    let library = libraries
-                        .entry(directory.to_owned())
-                        .or_insert_with(|| Self {
-                            directory: directory.to_owned(),
-                            files: HashMap::new(),
-                        });
-                    library.files.insert(key.to_owned(), Arc::new(f));
-                }
-                Err(e) => bad.push(format!("{key}: {e}")),
-            }
+            let library = libraries
+                .entry(directory.to_owned())
+                .or_insert_with(|| Self {
+                    directory: directory.to_owned(),
+                    files: HashMap::new(),
+                });
+            library.files.insert(
+                key.to_owned(),
+                StyleFile {
+                    bytes,
+                    decoded: OnceCell::new(),
+                },
+            );
         }
         (libraries, bad)
     }
@@ -91,11 +112,28 @@ impl StyleLibrary {
         names.sort();
         names
     }
+
+    /// The files that do not decode, each as `key: why`.
+    #[cfg(test)]
+    fn undecodable(&self) -> Vec<String> {
+        self.files
+            .iter()
+            .filter_map(|(key, f)| f.decoded().as_ref().err().map(|e| format!("{key}: {e}")))
+            .collect()
+    }
 }
 
 impl ComponentSource for StyleLibrary {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>> {
-        self.files.get(key).cloned()
+        self.files.get(key)?.decoded().as_ref().ok().cloned()
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        self.files.contains_key(key)
+    }
+
+    fn failure(&self, key: &str) -> Option<String> {
+        self.files.get(key)?.decoded().as_ref().err().cloned()
     }
 
     fn url(&self, key: &str) -> String {
@@ -1906,7 +1944,8 @@ mod tests {
 
     #[test]
     fn every_style_only_overrides_basic_controls() {
-        let (libraries, bad) = StyleLibrary::embedded();
+        let (libraries, mut bad) = StyleLibrary::embedded();
+        bad.extend(libraries.values().flat_map(StyleLibrary::undecodable));
         assert!(bad.is_empty(), "{bad:?}");
         let basic = libraries[BASIC].type_names();
         assert_eq!(basic.len(), 61);

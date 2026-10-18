@@ -84,9 +84,28 @@ macro_rules! module {
 
 #[derive(Clone, Debug)]
 struct Entry {
-    meta: MetaRef,
+    meta: Slot,
     /// The module version that introduced the type.
     since: Version,
+}
+
+/// What a registered type is known by.
+#[derive(Clone, Debug)]
+pub(crate) enum Slot {
+    Meta(MetaRef),
+    /// A type written in QML whose description is made the first time it
+    /// is looked up, from the library file of this key: a library
+    /// registers many more types than a program uses.
+    Qml(Atom),
+}
+
+impl Slot {
+    fn meta(&self) -> Option<&MetaRef> {
+        match self {
+            Slot::Meta(m) => Some(m),
+            Slot::Qml(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -119,6 +138,22 @@ impl Registry {
 
     /// Registers one type; QML-declared types come through here.
     pub fn register_type(&mut self, uri: &str, version: Version, meta: MetaRef) {
+        let name = meta.name.clone();
+        self.register_slot(uri, version, name, Slot::Meta(meta));
+    }
+
+    /// Registers the type `name`, written in the library file `key`, to be
+    /// described when it is first looked up.
+    pub(crate) fn register_qml(&mut self, uri: &str, version: Version, name: &str, key: &str) {
+        self.register_slot(
+            uri,
+            version,
+            Atom::intern(name),
+            Slot::Qml(Atom::intern(key)),
+        );
+    }
+
+    fn register_slot(&mut self, uri: &str, version: Version, name: Atom, meta: Slot) {
         let uri = Atom::intern(uri);
         let module = self.modules.entry(uri.clone()).or_insert_with(|| {
             self.order.push(uri);
@@ -128,7 +163,6 @@ impl Registry {
             module.versions.push(version);
             module.versions.sort();
         }
-        let name = meta.name.clone();
         match module.types.get_mut(&name) {
             // Hot reload replaces a QML type's description in place.
             Some(e) => e.meta = meta,
@@ -149,23 +183,77 @@ impl Registry {
         self.modules.contains_key(uri)
     }
 
-    /// The type `name` of module `uri`, at any version.
+    /// The type `name` of module `uri`, at any version. A QML type not yet
+    /// described is not found here; the engine's lookups describe it.
     pub fn lookup(&self, uri: &str, name: &str) -> Option<MetaRef> {
-        Some(self.modules.get(uri)?.types.get(name)?.meta.clone())
+        self.slot(uri, name)?.meta().cloned()
     }
 
     /// The type `name` in whichever module has it, first registered first.
     pub fn lookup_any(&self, name: &str) -> Option<MetaRef> {
-        self.order
-            .iter()
-            .find_map(|uri| Some(self.modules.get(uri)?.types.get(name)?.meta.clone()))
+        self.slot_any(name)?.meta().cloned()
     }
 
     /// The type `name` as an `import uri version` sees it: types added in
     /// a later version are hidden.
     pub fn lookup_versioned(&self, uri: &str, version: Version, name: &str) -> Option<MetaRef> {
+        self.slot_versioned(uri, version, name)?.meta().cloned()
+    }
+
+    pub(crate) fn slot(&self, uri: &str, name: &str) -> Option<Slot> {
+        Some(self.modules.get(uri)?.types.get(name)?.meta.clone())
+    }
+
+    pub(crate) fn slot_any(&self, name: &str) -> Option<Slot> {
+        self.order
+            .iter()
+            .find_map(|uri| Some(self.modules.get(uri)?.types.get(name)?.meta.clone()))
+    }
+
+    pub(crate) fn slot_versioned(&self, uri: &str, version: Version, name: &str) -> Option<Slot> {
         let e = self.modules.get(uri)?.types.get(name)?;
         (e.since <= version).then(|| e.meta.clone())
+    }
+
+    /// Every library file whose types are not described yet.
+    pub(crate) fn undescribed(&self) -> Vec<Atom> {
+        let mut keys: Vec<Atom> = Vec::new();
+        for uri in &self.order {
+            for name in &self.modules[uri].order {
+                if let Slot::Qml(key) = &self.modules[uri].types[name].meta
+                    && !keys.contains(key)
+                {
+                    keys.push(key.clone());
+                }
+            }
+        }
+        keys
+    }
+
+    /// Gives every type written in `key` its description, or, with `None`
+    /// (the file did not load), takes those types away.
+    pub(crate) fn describe(&mut self, key: &str, meta: Option<&MetaRef>) {
+        for module in self.modules.values_mut() {
+            let names: Vec<Atom> = module
+                .types
+                .iter()
+                .filter(|(_, e)| matches!(&e.meta, Slot::Qml(k) if k.as_str() == key))
+                .map(|(n, _)| n.clone())
+                .collect();
+            for name in names {
+                match meta {
+                    Some(m) => {
+                        if let Some(e) = module.types.get_mut(&name) {
+                            e.meta = Slot::Meta(m.clone());
+                        }
+                    }
+                    None => {
+                        module.types.remove(&name);
+                        module.order.retain(|n| *n != name);
+                    }
+                }
+            }
+        }
     }
 
     /// Everything registered, in registration order.
@@ -184,7 +272,9 @@ impl Registry {
                         types: m
                             .order
                             .iter()
-                            .map(|n| type_entry(&m.types[n].meta, m.types[n].since))
+                            .filter_map(|n| {
+                                Some(type_entry(m.types[n].meta.meta()?, m.types[n].since))
+                            })
                             .collect(),
                     }
                 })
@@ -195,7 +285,9 @@ impl Registry {
             .iter()
             .flat_map(|uri| {
                 let m = &self.modules[uri];
-                m.order.iter().map(|n| m.types[n].meta.clone())
+                m.order
+                    .iter()
+                    .filter_map(|n| m.types[n].meta.meta().cloned())
             })
             .collect();
         dump.unnamed = reached(&dump, &metas);

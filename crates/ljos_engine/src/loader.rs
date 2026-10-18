@@ -22,6 +22,11 @@ use crate::meta::MetaRef;
 pub trait ComponentSource {
     fn load(&self, key: &str) -> Option<Arc<CompiledFile>>;
 
+    /// Whether the source has the file `key`, without reading it.
+    fn contains(&self, key: &str) -> bool {
+        self.load(key).is_some()
+    }
+
     /// Why `key` has no compiled file although the source knows it: the
     /// file is there but did not compile. Qt names the file's own mistake
     /// when a type it needs does not load, not a missing file. A reason

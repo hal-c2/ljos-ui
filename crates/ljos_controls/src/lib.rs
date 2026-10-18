@@ -264,7 +264,7 @@ pub fn register(engine: &Engine) {
             let from = if own.contains(name) { directory } else { BASIC };
             let key = format!("{from}/{name}");
             match engine.register_qml_type(uri, Version::new(2, 15), &key) {
-                Ok(()) => style_font::remember(engine, uri, name, from),
+                Ok(()) => style_font::remember(engine, &key, from),
                 Err(err) => util::warn(engine, format!("{uri}.{name}: {err}")),
             }
         }

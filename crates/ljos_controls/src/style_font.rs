@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use ljos_engine::{Engine, Font, MetaRef, ObjectId};
+use ljos_engine::{Engine, Font, ObjectId};
 
 /// A style that has a font of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,21 +23,13 @@ pub(crate) enum Look {
     Universal,
 }
 
-/// The types of the built-in style files, by the address of their
-/// description: the style each is a file of, `None` for Basic's.
+/// The built-in style files, by their key: the style each is a file of,
+/// `None` for Basic's.
 #[derive(Default)]
-struct StyleTypes(RefCell<HashMap<usize, Option<Look>>>);
+struct StyleTypes(RefCell<HashMap<String, Option<Look>>>);
 
-fn address(meta: &MetaRef) -> usize {
-    std::ptr::from_ref(&**meta) as usize
-}
-
-/// Notes that `name` of `uri` is the file of a built-in style in
-/// `directory`.
-pub(crate) fn remember(engine: &Engine, uri: &str, name: &str, directory: &str) {
-    let Some(meta) = engine.lookup_type(uri, name) else {
-        return;
-    };
+/// Notes that the file `key` is one of a built-in style in `directory`.
+pub(crate) fn remember(engine: &Engine, key: &str, directory: &str) {
     let look = match directory {
         crate::style::MATERIAL => Some(Look::Material),
         crate::style::UNIVERSAL => Some(Look::Universal),
@@ -47,7 +39,7 @@ pub(crate) fn remember(engine: &Engine, uri: &str, name: &str, directory: &str) 
         .extension::<StyleTypes>()
         .0
         .borrow_mut()
-        .insert(address(&meta), look);
+        .insert(key.to_owned(), look);
 }
 
 /// The controls whose font differs from the style's own, nearest type
@@ -95,7 +87,9 @@ pub(crate) fn scope_of(engine: &Engine, obj: ObjectId) -> Scope {
     let mut cur = engine.meta_of(obj);
     let mut found = None;
     while let Some(meta) = cur {
-        let known = types.get(&address(&meta));
+        let known = engine
+            .library_key_of(&meta)
+            .and_then(|key| types.get(key.as_str()));
         if scope.look.is_none()
             && let Some(Some(look)) = known
         {
