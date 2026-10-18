@@ -3344,3 +3344,101 @@ DECISIONs:
   would leave the property unassigned until the first frame.
 - `empty_row` still runs a removed row's bindings that are out of date. Qt has them evaluated
   already.
+
+### B15: scrolling on the GPU against qml6 (2026-10-19)
+
+Two measures, both off-screen in the cua sandbox on the GPU (`/dev/dri/renderD128`), with Qt as
+`qml6` 6.11.2 and the Basic style:
+
+- **Instructions retired a second.** All threads of the process, counted by the hardware
+  counter over 8 s while an injected wheel turns one notch every 50 ms. Load on the machine
+  does not move it. listview is `bench/listview.qml`, a ListView of 10 000 rows that scrolls
+  itself.
+- **CPU while driven.** `ljos bench --gesture scroll --warm-up --repeat 3 --profile desktop
+  --settle 3 --idle 3 --load 5` over rssnews, listview and thermostat, as in "The first frame
+  of a scroll, scrolling against qml6…" above. This one moves with load: the same binary gave
+  listview 10.2 % against qml6's 6.03 % in that section and 13.0 against 10.8 here.
+
+| Scroll, M instructions/s | Batch start | After (35eb0b56) | qml6 |
+|---|---:|---:|---:|
+| thermostat | 1131 | 130 | 125 |
+| rssnews | 106.9 | 46 | 51.9 |
+| listview | 309 | 270 | 99.9 |
+
+| Scroll, CPU % of one core | Batch start | After 599c9c21 (qml6 same run) | After 35eb0b56 | qml6 (same run) |
+|---|---:|---:|---:|---:|
+| thermostat | 26.2 | 18.9 (6.67) | 2.72 | 4.78 |
+| rssnews | 4.95 | 4.71 (4.54) | 5.33 | 4.97 |
+| listview | 17.7 | 13.0 (10.8) | 10.6 | 7.09 |
+
+rssnews' instruction count is bimodal on one binary (about 96 or 120 M/s before the last cut),
+and its CPU % sits within noise of qml6's.
+
+What each commit took, by the hardware counter, thermostat / rssnews / listview:
+
+| Commit | thermostat | rssnews | listview |
+|---|---:|---:|---:|
+| start | 1131 | 106.9 | 309 |
+| 71bd8ad9, 7cd5dfad, 599c9c21: a run's field reads in one entry; a text's inputs in one read; GPU solid rectangles drawn with the mesh, never cleared | 814 | ~100 | 275 |
+| b1bbd2f0: scrolled content is an a11y space, a scroll moves the space | 244 | 102.7 | 276 |
+| 9035d67c: a shape of another kind is not compared as moved | 222 | 102 | 276 |
+| 43da9d6a: a scroll looks only at the items that came or went | 199 | ~97 | 276 |
+| c9e8f3f1: text that only moved keeps its quads, moved | 187 | 83 | 271 |
+| 35eb0b56: the scripts' heap is measured once a rest is long | 130 | 46 | 270 |
+
+Found along the way:
+
+- **The a11y tree was rebuilt on every scroll.** Every row's bounds changed, so the whole tree
+  went to AT-SPI. Now the content item is a space of its own and a scroll moves only the space.
+- **`Engine::collect_if_idle` ran at every rest between wheel notches.** It calls
+  `JS_ComputeMemoryUsage`, which walks the whole heap. That was 23 % of thermostat's main
+  thread and 32 % of rssnews'. It now runs once, after 100 ms with nothing to do.
+- **Text that only moved was shaped into a new mesh.** Its quads are now translated instead.
+  `glyph_meshes_built` stays at zero for a scroll by whole device pixels.
+- **Every content effect was looked at on every frame of a scroll.** Now only the symmetric
+  difference of the visible set is.
+
+**listview stays at 2.7× qml6's instructions.** Callgrind of 348 frames on the main thread
+(35eb0b56) shows that 4982 delegates were made and dropped, about 8 a frame at 60 fps. Each
+one costs about 480 k instructions, against about 200 k for qml6 by the same rate. The split
+per delegate:
+
+- polish: 170 k, of which text layout is 62 k (parley shaping 37 k, its builder 28 k) and the
+  batch flush 30 k;
+- adoption: 113 k, the first runs of its effects:
+  - text polish: 30 k;
+  - anchors: 26 k and 8 k;
+  - geometry: 19 k;
+  - inherited properties: 5–10 k;
+- the animation tick's share: 71 k;
+- the frame's reconcile: 65 k;
+- the incubator's creation job: 44 k;
+- deferred deletes: 33 k;
+- content effect installs: 21 k;
+- the views' refresh: 17 k;
+- a11y sync: 7 k;
+- encode: 10 k;
+- about 42 graph nodes are made and disposed.
+
+No function is a hotspot. The top self costs per delegate are `try_read` 20 k, `read_access`
+14 k, `FieldReads::add` 14 k (already one entry per run with a last-run fast path; the cost is
+the number of reads), the `ComputeGuard` drop 13 k, `free` 11 k and `malloc` 8 k. As B9 found,
+the cost is spread over creating a delegate. The way to close it is to keep delegates instead of
+remaking them (pooling, `reuseItems`), or to make a delegate's graph cheaper to build. Both are
+larger than this batch.
+
+DECISIONs:
+- On a device, solid rectangles are drawn as part of the mesh and never cleared on their own.
+  Damage stays per rectangle.
+- In a11y, a Flickable's content item is a space. Container ids are hashed into the range
+  above `1 << 61`, so they never collide with object ids.
+- The wheel is injected through the sandbox's virtual pointer at one notch every 50 ms, so the
+  two runtimes get the same input.
+- `moved_by` answers "not moved" when the two shapes are of different kinds. A mesh is never
+  compared, so it is redrawn.
+- Glyph quads are carried only for upright text with no decorations, a whole-pixel device dx
+  and nothing culled at either place. Anything else is laid out again.
+- The scripts' heap is measured after 100 ms of rest: one more wake after activity, and none
+  while idle, so idle stays at 0 %.
+- listview is left with its spread per-delegate cost (above).
+- Clocks' remaining native part was not taken. It is under 1 M/s a cut (see B14).
