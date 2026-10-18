@@ -5,12 +5,12 @@
 //! state does is in [`super::group`].
 
 use ljos_engine::{
-    Atom, Cx, EngineError, ForeignMember, ObjectId, PropIndex, QmlList, QmlObject, QtObject, Reset,
-    Value, qml_impl,
+    Atom, Cx, Engine, EngineError, ForeignMember, ObjectId, PropIndex, QmlList, QmlObject,
+    QtObject, Reset, Value, qml_impl,
 };
 
 use super::group;
-use crate::item::{is_a, is_item};
+use crate::item::{Item, is_a, is_item};
 
 /// `State` (QtQuick): a name and the changes that make the state.
 #[derive(Debug, Default, QmlObject)]
@@ -42,14 +42,56 @@ impl State {
     /// states start from the first of them that is.
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        if let Some(owner) = cx.engine.owner(cx.this)
-            && (is_item(cx.engine, owner) || is_a::<StateGroup>(cx.engine, owner))
+        if let Some(owner) = cx
+            .engine
+            .owner(cx.this)
+            .and_then(|o| holder(cx.engine, o, cx.this))
             && !group::is_deferred(cx.engine, owner)
         {
             group::attach(cx.engine, owner);
         }
         Ok(())
     }
+}
+
+/// The item or state group whose `states` hold `state`. It is the object
+/// that declares the state, unless the state was given through an alias
+/// (`cup.states: State {}`): then it is the aliased object, which the
+/// declaring one owns.
+fn holder(engine: &Engine, declarer: ObjectId, state: ObjectId) -> Option<ObjectId> {
+    let holds = |o: ObjectId| {
+        let prop = if is_a::<StateGroup>(engine, o) {
+            StateGroup::STATES.index
+        } else if is_item(engine, o) {
+            Item::STATES.index
+        } else {
+            return false;
+        };
+        match engine.untrack(|| engine.read(o, prop)) {
+            Value::List(l) => l.iter().any(|v| v.as_object() == Some(state)),
+            _ => false,
+        }
+    };
+    if holds(declarer) {
+        return Some(declarer);
+    }
+    // DECISION: an alias that leads out of the declaring object's own
+    // tree is not followed; the search is bounded so a big tree costs
+    // little.
+    let mut queue = std::collections::VecDeque::from(engine.children(declarer));
+    let mut seen = 0;
+    while let Some(o) = queue.pop_front() {
+        if holds(o) {
+            return Some(o);
+        }
+        seen += 1;
+        if seen >= 256 {
+            break;
+        }
+        queue.extend(engine.children(o));
+    }
+    // A state not in any list yet still starts its declarer's states.
+    (is_item(engine, declarer) || is_a::<StateGroup>(engine, declarer)).then_some(declarer)
 }
 
 /// `StateGroup` (QtQuick): states for what is not an item, or a second
