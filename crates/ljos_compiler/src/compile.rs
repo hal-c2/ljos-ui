@@ -983,8 +983,21 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     },
                     _ => None,
                 };
+                let module = match (oracle.module(*ty), imported) {
+                    // A style lists Basic's files for the controls it has
+                    // none of its own of; the object is still the style's,
+                    // and has its colours.
+                    (Some(own), Some(style))
+                        if own == "QtQuick.Controls.Basic"
+                            && style.starts_with("QtQuick.Controls.")
+                            && !style.ends_with(".impl") =>
+                    {
+                        style
+                    }
+                    (own, imported) => own.or(imported).unwrap_or_default(),
+                };
                 TypeRef::Native {
-                    module: oracle.module(*ty).or(imported).unwrap_or_default(),
+                    module,
                     name: oracle.name(*ty).to_string(),
                 }
             }
