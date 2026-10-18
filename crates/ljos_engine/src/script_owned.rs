@@ -197,6 +197,17 @@ pub struct ScriptMemory {
 }
 
 impl Engine {
+    /// Runs the JS collector if the scripts allocated enough since it last
+    /// ran, for a host about to rest. False inside a script, before any
+    /// ran, and when the heap did not grow.
+    pub fn collect_if_idle(&self) -> bool {
+        if !self.js_started() {
+            return false;
+        }
+        let Ok(js) = self.js() else { return false };
+        js.host.collect_if_idle()
+    }
+
     /// What the script engine holds now, for a tool that watches memory;
     /// None before any script ran and while one runs.
     pub fn script_memory(&self) -> Option<ScriptMemory> {

@@ -170,3 +170,27 @@ fn a_property_given_one_incubator_after_another_holds_the_last_only() {
     assert_eq!(h.engine.object_count(), before + 100 + 1);
     assert_eq!(text(&h, root, "look"), "1|true|true");
 }
+
+#[test]
+fn what_the_scripts_left_behind_is_collected_once_when_the_host_rests() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    // Cycles, which only the collector frees.
+    function litter() {
+        for (var i = 0; i < 4000; i++) {
+            var a = {}; var b = { a: a }; a.b = b; a.pad = new Array(50).fill(i)
+        }
+    }
+}
+"#,
+    );
+    h.engine.invoke_by_name(root, "litter", &[]).unwrap();
+    let before = h.engine.script_memory().unwrap().bytes;
+    assert!(h.engine.collect_if_idle());
+    let after = h.engine.script_memory().unwrap().bytes;
+    assert!(after < before, "{after} !< {before}");
+    // Nothing was made since: resting again does nothing.
+    assert!(!h.engine.collect_if_idle());
+}

@@ -75,6 +75,11 @@ const EGUI_TEXTURE_SIDE: usize = 2048;
 /// picture) reuses it instead.
 const HEAP_TRIM_AFTER: Duration = Duration::from_secs(1);
 
+/// How long the loop must have nothing to do before what the scripts left
+/// behind is collected: longer than a frame, so that an animation is not
+/// held up by it.
+const REST_BEFORE_COLLECTING: Duration = Duration::from_millis(100);
+
 /// What other threads, egui and the accessibility adapter post into the
 /// loop.
 pub(crate) enum ShellEvent {
@@ -1816,6 +1821,7 @@ impl<M: Send + 'static> Desktop<M> {
             engine.prepare_scripts();
         }
         self.trim_heap_when_done(&engine);
+        self.collect_scripts_when_resting(&engine);
         let mut next = self.next_wake();
         if self.unsettled() {
             // Applying what the windows want keeps changing what they
@@ -1848,6 +1854,18 @@ impl<M: Send + 'static> Desktop<M> {
             }
             crate::give_back_freed_heap();
         }
+    }
+
+    /// QuickJS collects by itself only after the heap grew by megabytes,
+    /// and an application that then rests keeps all of it. What a burst
+    /// of work left behind is collected when the loop is about to rest
+    /// instead, and only once it grew: resting again costs nothing.
+    fn collect_scripts_when_resting(&self, engine: &Engine) {
+        let soon = Instant::now() + REST_BEFORE_COLLECTING;
+        if self.unsettled() || self.next_wake().is_some_and(|t| t < soon) {
+            return;
+        }
+        engine.collect_if_idle();
     }
 
     /// The loop ends. What draws goes while the display is still there.
