@@ -554,6 +554,25 @@ impl RenderTree {
             return;
         }
 
+        // A leaf with no clip of its own sits in its parent's: nothing of
+        // `here` to make for it.
+        if n.clip.is_none() && n.children.is_empty() && n.paint_order.is_empty() {
+            n.dirty.remove(Dirty::CLIP | Dirty::ORDER);
+            walk.stats.visited += 1;
+            n.last_visible_frame = walk.frame;
+            let clip = content_clip(walk, parent, world, n.content_clip);
+            walk.items.push(PaintItem {
+                node: id,
+                world,
+                opacity,
+                size: n.size,
+                list: n.content.clone().filter(|_| parent.drawn && n.drawn),
+                clip,
+                hit_testable: n.hit_testable,
+            });
+            return;
+        }
+
         let mut here = Parent {
             world,
             stamp,

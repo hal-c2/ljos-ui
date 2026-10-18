@@ -918,12 +918,18 @@ pub fn near_whole(px: f32) -> bool {
 
 /// `v.ceil()` without the call to libm (see [`near_whole`]).
 fn ceil(v: f32) -> f32 {
-    if v.is_nan() || v.abs() >= 8_388_608.0 {
-        return v.ceil();
+    // As in `near_whole`: `r` is `v` rounded to the nearest, so within a
+    // half of it, and one up from it when below. Four of these for every
+    // rectangle of every frame: going by way of `i32` was twice the work.
+    const ROUND: f32 = 12_582_912.0;
+    // NaN, the infinities and the large go to `ceil` itself.
+    if v.abs() < 4_194_304.0 {
+        let r = (v + ROUND) - ROUND;
+        // The sign stays, so `-0.3` gives `-0`, as `ceil` does.
+        (if r < v { r + 1.0 } else { r }).copysign(v)
+    } else {
+        v.ceil()
     }
-    let t = (v as i32) as f32;
-    // The sign stays, so `-0.3` gives `-0`, as `ceil` does.
-    (if t < v { t + 1.0 } else { t }).copysign(v)
 }
 
 /// What is drawn, in paint order.

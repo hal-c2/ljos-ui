@@ -488,17 +488,48 @@ impl RenderTree {
 
     /// Set the transform to the parent's space (`x`, `y`, rotation, scale ...).
     pub fn set_local(&mut self, id: NodeId, local: Affine) {
-        let changed = self.with_node(id, |n| {
-            if n.local == local {
-                return false;
+        // `with_node`, `touch` and `mark_bounds_of_parent` in one walk up,
+        // each node looked up once: every item that moves comes here,
+        // every frame.
+        let since = self.cache.as_ref().map_or(0, |c| c.epoch);
+        let Some(n) = self.nodes.get_mut(id) else {
+            return;
+        };
+        // Six plain comparisons: `==` on an `Affine` loops over them.
+        let ([a, b, c, d, e, f], [a2, b2, c2, d2, e2, f2]) =
+            (n.local.as_coeffs(), local.as_coeffs());
+        if a == a2 && b == b2 && c == c2 && d == d2 && e == e2 && f == f2 {
+            return;
+        }
+        n.local = local;
+        n.dirty.insert(Dirty::TRANSFORM);
+        self.epoch += 1;
+        let epoch = self.epoch;
+        let mut touching = n.changed <= since;
+        if touching {
+            n.changed = epoch;
+        }
+        // The parent's subtree bounds depend on where this child sits.
+        let mut cur = n.parent;
+        let mut first = true;
+        while let Some(c) = cur {
+            let Some(n) = self.nodes.get_mut(c) else {
+                return;
+            };
+            let bounds_marked = !first && n.dirty.contains(Dirty::BOUNDS);
+            first = false;
+            n.dirty.insert(Dirty::BOUNDS);
+            if touching {
+                if n.changed > since {
+                    touching = false;
+                } else {
+                    n.changed = epoch;
+                }
             }
-            n.local = local;
-            n.dirty.insert(Dirty::TRANSFORM);
-            true
-        });
-        if changed {
-            // The parent's subtree bounds depend on where this child sits.
-            self.mark_bounds_of_parent(id);
+            if bounds_marked && !touching {
+                return;
+            }
+            cur = n.parent;
         }
     }
 
@@ -783,8 +814,10 @@ impl RenderTree {
         {
             b = b.union(content.bounds());
         }
-        for i in 0..self.nodes[id].children.len() {
-            let c = self.nodes[id].children[i];
+        // Taken out while they are walked, and the node looked up once: a
+        // child that moved has its parent's bounds refreshed every frame.
+        let children = std::mem::take(&mut self.nodes[id].children);
+        for &c in &children {
             // Checked here: most children of a node that moved one did not.
             if self.nodes[c].dirty.contains(Dirty::BOUNDS) {
                 self.refresh_bounds(c);
@@ -795,7 +828,8 @@ impl RenderTree {
             }
             b = b.union(crate::compose::bbox_of(cn.local, cn.subtree_bounds));
         }
-        let n = &self.nodes[id];
+        let n = &mut self.nodes[id];
+        n.children = children;
         if let Some(clip) = &n.clip {
             let r = b.intersect(clip.rect);
             // `intersect` of disjoint rects is inverted; make it empty at the origin.
