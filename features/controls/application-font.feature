@@ -5,13 +5,19 @@
 # Qt 6.11.2 (qml6, offscreen): assigning `Qt.application.font` from QML throws
 # "TypeError: Cannot assign to read-only property", so only the host changes it; a
 # test cannot, which is why the change itself is Ljós's alone.
+# A host program built on Qt's public API that calls `QGuiApplication::setFont` while the
+# window shows sees `Qt.application.font`, `Qt.font({...})` and every Text, Label and control
+# made afterwards take the new font, and a Text made before keep its own. Qt 6.11 leaves the
+# controls and windows made before on the old font too; Ljós makes them follow, as a desktop's
+# font change asks.
 
 @ljos-only @api-QtQuick.Application.font
 Feature: The application font changes while the application runs
   The host can make another font the application font at any time, as a desktop does when its
   user picks another one. Every control, label and window that inherits its font then takes the
   new one. An attribute that an object, or one of the objects above it, set itself stays.
-  `Qt.application.font` reads the new font, and QML cannot assign it.
+  `Qt.application.font` reads the new font, and QML cannot assign it. A `Qt.font({...})` and a
+  plain text made after the change start from the new font; a plain text made before keeps its own.
 
   Background:
     Given the QML:
@@ -92,6 +98,60 @@ Feature: The application font changes while the application runs
     When the application font is set to:
       | pixelSize | 20 |
     Then the property "font.pointSize" of "plain" is 9
+
+  Scenario: Qt.font starts from the new application font
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property bool again: false
+        property font made: again ? Qt.font({ bold: true }) : Qt.font({ italic: true })
+      }
+      """
+    When the application font is set to:
+      | family    | Serif |
+      | pixelSize | 20    |
+    And the property "again" of "root" is set to true
+    Then the property "made.family" of "root" is "Serif"
+    And the property "made.pixelSize" of "root" is 20
+    And the property "made.bold" of "root" is true
+
+  Scenario: A plain text made after the change has the new font
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: host
+        objectName: "host"
+        property bool shown: false
+        Loader { active: host.shown; sourceComponent: Text { objectName: "late"; text: "x" } }
+      }
+      """
+    When the application font is set to:
+      | family    | Serif |
+      | pixelSize | 20    |
+    And the property "shown" of "host" is set to true
+    Then the property "font.family" of "late" is "Serif"
+    And the property "font.pixelSize" of "late" is 20
+
+  Scenario: A text made after the font is taken back has the default again
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: host
+        objectName: "host"
+        property bool shown: false
+        Loader { active: host.shown; sourceComponent: Text { objectName: "late"; text: "x" } }
+      }
+      """
+    When the application font is set to:
+      | pixelSize | 20 |
+    And the application font is set back to the default
+    And the property "shown" of "host" is set to true
+    Then the property "font.pointSize" of "late" is 9
+    And the property "font.family" of "late" is "Sans Serif"
 
   Scenario: QML cannot assign the application font
     Given the QML:

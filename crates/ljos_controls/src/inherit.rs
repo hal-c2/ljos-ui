@@ -256,7 +256,7 @@ fn application_font_node(engine: &Engine) -> Option<NodeId> {
     let app = engine.extension::<ApplicationFont>();
     if app.node.get().is_none() {
         let g = engine.graph();
-        let font = Value::Font(Arc::new(Font::default()));
+        let font = Value::Font(Arc::new(Font::process_default()));
         app.node.set(g.property(g.root(), font).ok());
     }
     app.node.get()
@@ -271,25 +271,28 @@ pub fn application_font(engine: &Engine) -> Arc<Font> {
     }
 }
 
-/// Makes `font` the application font of this engine, or the default
-/// ([`Font::default`]) again for `None`, while the application runs: every
-/// control, label and window that inherits its font takes it, keeping what
-/// it or an object above it set, and `Qt.application.font` reads it. Each
-/// of them is resolved once for a change. A plain `Text` keeps the font it
-/// was made with.
+/// Makes `font` the application font of this engine, or the process's
+/// ([`Font::process_default`]) again for `None`, while the application
+/// runs: every control, label and window that inherits its font takes it,
+/// keeping what it or an object above it set, and `Qt.application.font`
+/// reads it. Each of them is resolved once for a change. A `Qt.font({...})`
+/// and a plain `Text` made from now on start from it ([`Engine::set_default_font`]);
+/// a plain `Text` made before keeps the font it was made with.
 ///
 /// [`Font::set_application_font`] is the font of the whole process, read
 /// when an object is made; this one is the engine's and is followed.
 pub fn set_application_font(engine: &Engine, font: Option<&Font>) {
-    let font = font.cloned().unwrap_or_default();
     let Some(node) = application_font_node(engine) else {
         return;
     };
     let g = engine.graph();
+    let process = Font::process_default();
+    let font = font.cloned().unwrap_or_else(|| process.clone());
     if *font_value(&g.get_untracked(node)) == font {
         return;
     }
-    let set = differing(&font, &Font::default());
+    let set = differing(&font, &process);
+    engine.set_default_font((set != 0).then_some(&font));
     let font = Arc::new(font);
     engine.batch(|| {
         engine.extension::<ApplicationFont>().set.set(set);

@@ -258,26 +258,93 @@ static APPLICATION_FONT: std::sync::RwLock<Option<ApplicationFont>> = std::sync:
 static APPLICATION_FONT_SET: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+thread_local! {
+    /// The application font of the engine on this thread
+    /// ([`crate::Engine::set_default_font`]), over the process's: what a
+    /// font made from now on starts from.
+    static ENGINE_FONT: std::cell::RefCell<Option<ApplicationFont>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The engine's hold on [`ENGINE_FONT`]: an engine that set it takes it
+/// back when it goes, so the next engine on the thread starts from the
+/// process's font.
+#[derive(Default)]
+pub(crate) struct EngineFont(std::cell::Cell<bool>);
+
+impl EngineFont {
+    pub(crate) fn set(&self, font: Option<&Font>) {
+        self.0.set(font.is_some());
+        let font = font.map(ApplicationFont::of);
+        ENGINE_FONT.with(|f| *f.borrow_mut() = font);
+    }
+}
+
+impl Drop for EngineFont {
+    fn drop(&mut self) {
+        if self.0.get() {
+            let _ = ENGINE_FONT.try_with(|f| f.borrow_mut().take());
+        }
+    }
+}
+
+impl ApplicationFont {
+    fn of(f: &Font) -> Self {
+        ApplicationFont {
+            family: f.family.clone(),
+            point_size: f.point_size,
+            pixel_size: f.pixel_size,
+            weight: f.weight,
+            italic: f.italic,
+            style_name: f.style_name.clone(),
+        }
+    }
+
+    fn lay_on(&self, font: &mut Font) {
+        font.family = self.family.clone();
+        font.point_size = self.point_size;
+        font.pixel_size = self.pixel_size;
+        font.weight = self.weight;
+        font.italic = self.italic;
+        font.style_name = self.style_name.clone();
+    }
+}
+
 impl Default for Font {
+    /// The font a new one starts from: the application font of the engine
+    /// on this thread, else the process's ([`Font::process_default`]).
     fn default() -> Self {
+        let mut font = Font::fallback();
+        let laid = ENGINE_FONT.with(|f| match f.borrow().as_ref() {
+            Some(app) => {
+                app.lay_on(&mut font);
+                true
+            }
+            None => false,
+        });
+        if laid {
+            return font;
+        }
+        Font::process_default()
+    }
+}
+
+impl Font {
+    /// The process's application font ([`Font::set_application_font`]), or
+    /// [`Font::fallback`] when the host set none: what an engine's starts
+    /// from.
+    pub fn process_default() -> Self {
         use std::sync::atomic::Ordering;
         let mut font = Font::fallback();
         if APPLICATION_FONT_SET.load(Ordering::Acquire)
             && let Ok(set) = APPLICATION_FONT.read()
             && let Some(app) = set.as_ref()
         {
-            font.family = app.family.clone();
-            font.point_size = app.point_size;
-            font.pixel_size = app.pixel_size;
-            font.weight = app.weight;
-            font.italic = app.italic;
-            font.style_name = app.style_name.clone();
+            app.lay_on(&mut font);
         }
         font
     }
-}
 
-impl Font {
     /// The application font when no desktop names one: Qt's on a generic
     /// Unix platform, [`Font::DEFAULT_FAMILY`] at
     /// [`Font::DEFAULT_POINT_SIZE`].
@@ -315,14 +382,7 @@ impl Font {
     /// engine's (`ljos::set_application_font`).
     pub fn set_application_font(font: Option<&Font>) {
         use std::sync::atomic::Ordering;
-        let app = font.map(|f| ApplicationFont {
-            family: f.family.clone(),
-            point_size: f.point_size,
-            pixel_size: f.pixel_size,
-            weight: f.weight,
-            italic: f.italic,
-            style_name: f.style_name.clone(),
-        });
+        let app = font.map(ApplicationFont::of);
         let set = app.is_some();
         if let Ok(mut held) = APPLICATION_FONT.write() {
             *held = app;

@@ -98,6 +98,8 @@ pub(crate) struct Inner {
     /// installed so far. They first run when the creation is whole, in
     /// Qt's order, as a binding does not run in Qt before then either.
     pub(crate) eager_hold: RefCell<Option<Vec<Held>>>,
+    /// The application font this engine set for its thread.
+    pub(crate) default_font: crate::value::EngineFont,
     /// Read by every translated string; bumped by
     /// [`Engine::retranslate`].
     pub(crate) translation: Cell<Option<NodeId>>,
@@ -256,6 +258,7 @@ impl Engine {
             eager_bindings: Cell::new(false),
             eager_hold: RefCell::new(None),
             translation: Cell::new(None),
+            default_font: Default::default(),
             parent_listeners: RefCell::new(Vec::new()),
             attached_listeners: RefCell::new(Vec::new()),
             destruction_handlers: Cell::new(false),

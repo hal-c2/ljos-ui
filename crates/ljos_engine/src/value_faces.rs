@@ -63,7 +63,12 @@ pub(crate) fn define(host: &JsHost) -> Result<(), JsFault> {
         // every value would cross as the wrong type.
         assert_eq!(got, kind, "value kinds are defined in a fixed order");
     }
-    // The font `Qt.font({...})` starts from is the engine's default one.
+    font_base_changed(host)
+}
+
+/// Makes the font `Qt.font({...})` starts from the engine's default one
+/// ([`Font::default`]) as it is now.
+pub(crate) fn font_base_changed(host: &JsHost) -> Result<(), JsFault> {
     let base = to_js(&Value::Font(std::sync::Arc::default())).unwrap_or_default();
     host.enter("value-types", host.config().slice, |scope| {
         let faces: Object = scope.globals().get("__ljos_faces")?;

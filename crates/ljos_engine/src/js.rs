@@ -854,6 +854,21 @@ pub(crate) fn holds_js(v: &Value) -> bool {
 const DATA_DEPTH: usize = 64;
 
 impl Engine {
+    /// Makes `font`'s family, sizes, weight, italics and style name those
+    /// of every font made from now on, on this engine's thread, over the
+    /// process's ([`Font::set_application_font`]); with `None` the
+    /// process's again. A `Qt.font({...})` and a new object start from it;
+    /// what exists keeps its font. Held until the engine goes.
+    pub fn set_default_font(&self, font: Option<&Font>) {
+        self.inner.default_font.set(font);
+        let js = self.inner.js.borrow().clone();
+        if let Some(js) = js
+            && let Err(e) = value_faces::font_base_changed(&js.host)
+        {
+            self.warn(format!("the font Qt.font starts from: {e}"));
+        }
+    }
+
     /// The JS host, started on first use.
     pub(crate) fn js(&self) -> Result<Rc<JsState>, EngineError> {
         if let Some(js) = self.inner.js.borrow().clone() {
