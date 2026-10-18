@@ -201,6 +201,8 @@ struct Grown {
     gone: Vec<ObjectId>,
     /// An id came or went: what the others bind to may have.
     ids: bool,
+    /// The ids the file no longer writes, with the objects they named.
+    unset: Vec<(String, ObjectId)>,
     /// (old, new): a moved object and the one made for it.
     carry: Vec<(ObjectId, ObjectId)>,
 }
@@ -454,6 +456,13 @@ impl Engine {
             return not_here("what is added cannot be made");
         }
         drop(saved);
+        // An id the file no longer writes names what a fresh load finds
+        // for it: an object further out, or nothing.
+        for g in &grown {
+            for (name, obj) in &g.unset {
+                self.unset_context_id(g.old.context, name, *obj);
+            }
+        }
         phases.mark("grow");
         // An object with a property renamed takes the type the new file
         // gives it, laid out as its own: what it holds stays in place.
@@ -1021,6 +1030,10 @@ impl Engine {
             undo(&cr);
             return None;
         }
+        let unset = (0..was.objects.len())
+            .filter(|&i| m.to_new[i].is_none())
+            .filter_map(|i| Some((was.objects[i].id.clone()?, old.objects[i])))
+            .collect();
         let gone: Vec<usize> = m.removed_tops(was).collect();
         let ids = tops.iter().any(|&j| comp.objects[j].id.is_some())
             || (0..was.objects.len()).any(|i| m.to_new[i].is_none() && was.objects[i].id.is_some())
@@ -1038,6 +1051,7 @@ impl Engine {
             cr,
             tops,
             ids,
+            unset,
         })
     }
 

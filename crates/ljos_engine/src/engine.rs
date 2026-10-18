@@ -3012,6 +3012,16 @@ impl Engine {
         }
     }
 
+    /// Takes `name` out of `ctx` while it names `obj`, so that the name is
+    /// found further out, as a context that never had it finds it.
+    pub(crate) fn unset_context_id(&self, ctx: ContextId, name: &str, obj: ObjectId) {
+        if let Some(c) = self.inner.contexts.borrow_mut().get_mut(ctx)
+            && c.ids.get(name) == Some(&obj)
+        {
+            c.ids.remove(name);
+        }
+    }
+
     /// Resolves an id from `ctx` outwards. An id whose object is gone
     /// resolves to `None` (`null` in QML).
     pub fn resolve_id(&self, ctx: ContextId, name: &str) -> Option<ObjectId> {

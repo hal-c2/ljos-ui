@@ -2486,6 +2486,35 @@ Feature: What a reload changes
       And a reload happens
       Then the property "visible" of "hint" is true
 
+    Scenario: An id removed from a component's file names its user's object again
+      Given the file "Panel.qml":
+        """qml
+        import QtQuick
+        Item {
+          property int rows: 1
+          Item { id: settings; property int rows: 7 }
+          Text { objectName: "hint"; text: "" + settings.rows }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          Panel { id: settings; rows: 3 }
+        }
+        """
+      Then the property "text" of "hint" is "7"
+      When the file "Panel.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          property int rows: 1
+          Text { objectName: "hint"; text: "" + settings.rows }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "hint" is "3"
+
   Rule: An edit to a component a user sets the member of goes in place for the others
 
     The instances whose user sets the edited member keep the user's
@@ -2766,6 +2795,29 @@ Feature: What a reload changes
       Then the property "Accessible.name" of "b" is "add"
       When the property "text" of "b" is set to "sum"
       Then the property "Accessible.name" of "b" is "sum"
+
+    Scenario: A side margin no longer given follows the margins again
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Item { objectName: "a"; anchors.margins: 2; anchors.bottomMargin: 6 }
+        }
+        """
+      And a reload happens
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Item { objectName: "a"; anchors.margins: 2 }
+        }
+        """
+      And a reload happens
+      Then the property "anchors.bottomMargin" of "a" is 2
+      When the property "anchors.margins" of "a" is set to 5
+      Then the property "anchors.bottomMargin" of "a" is 5
 
   Rule: An element added to a model, removed from it or moved in it is the model's own insert, remove or move
 
