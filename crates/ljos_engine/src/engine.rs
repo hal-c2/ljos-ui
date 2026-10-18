@@ -606,6 +606,13 @@ impl Engine {
         self.inner.store.borrow().objects.len()
     }
 
+    /// Live nodes of the reactive graph: a property something bound or
+    /// read, a binding, an effect. Most of an engine's own memory goes
+    /// with them, so a tool watching memory reads this.
+    pub fn node_count(&self) -> usize {
+        self.inner.graph.len()
+    }
+
     pub fn meta_of(&self, obj: ObjectId) -> Option<MetaRef> {
         Some(self.inner.store.borrow().objects.get(obj)?.meta.clone())
     }

@@ -271,7 +271,7 @@
     "read_only": true
   },
   {
-    "description": "Frame work since the inspector attached: frames, time over budget, time per scheduler lane, jobs polled and done, and the owners (application, boundaries, the inspector itself) that took the most time. Use it to see which component ate the frame.",
+    "description": "Frame work since the inspector attached: frames, time over budget, time per scheduler lane, jobs, the owners that took the most time, and `memory` (resident, the process's own, scripts, reactive nodes, objects). Use it to see what ate the frame or the memory.",
     "input_schema": {
       "additionalProperties": false,
       "description": "No arguments.",

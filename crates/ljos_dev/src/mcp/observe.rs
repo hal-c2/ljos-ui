@@ -376,19 +376,49 @@ pub(crate) fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) 
     }
 }
 
+/// Bytes of the process: its address space, what is resident, and of
+/// that what is backed by files or shared (libraries, the binary, shared
+/// buffers), which other processes may hold too.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Resident {
+    pub(crate) virt: u64,
+    pub(crate) rss: u64,
+    pub(crate) shared: u64,
+}
+
+impl Resident {
+    /// Resident and the process's own: heap, stacks, anonymous maps.
+    pub(crate) fn own(&self) -> u64 {
+        self.rss.saturating_sub(self.shared)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn now() -> Option<Resident> {
+        // Pages, as `statm` counts them; 4 KiB on every Linux Ljós runs on
+        // but the few with larger pages, which `smaps` would tell. The
+        // kernel keeps these counts, so reading them walks nothing.
+        const PAGE: u64 = 4096;
+        let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let mut pages = statm
+            .split_whitespace()
+            .map(|f| f.parse::<u64>().unwrap_or(0));
+        Some(Resident {
+            virt: pages.next()? * PAGE,
+            rss: pages.next()? * PAGE,
+            shared: pages.next()? * PAGE,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn now() -> Option<Resident> {
+        None
+    }
+}
+
 /// The process as a whole: its threads, its memory, the CPU it used.
 #[cfg(target_os = "linux")]
 fn process_block(threads: usize) -> Value {
-    // Pages, as `statm` counts them; 4 KiB on every Linux Ljós runs on
-    // but the few with larger pages, which `smaps` would tell.
-    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
-    let mut pages = statm
-        .split_whitespace()
-        .map(|f| f.parse::<u64>().unwrap_or(0));
-    let virt = pages.next().unwrap_or(0);
-    let rss = pages.next().unwrap_or(0);
-    let shared = pages.next().unwrap_or(0);
-    const PAGE: u64 = 4096;
+    let Resident { virt, rss, shared } = Resident::now().unwrap_or_default();
     // utime and stime of every thread there was, ended ones too, in
     // clock ticks of 10 ms.
     let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
@@ -403,9 +433,9 @@ fn process_block(threads: usize) -> Value {
     json!({
         "pid": std::process::id(),
         "threads": threads,
-        "rss_bytes": rss * PAGE,
-        "shared_bytes": shared * PAGE,
-        "virtual_bytes": virt * PAGE,
+        "rss_bytes": rss,
+        "shared_bytes": shared,
+        "virtual_bytes": virt,
         "cpu_us": cpu_us,
     })
 }

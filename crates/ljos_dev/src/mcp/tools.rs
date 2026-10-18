@@ -1214,6 +1214,8 @@ pub(crate) fn metrics(
         "objects": engine.object_count(),
         "inbox": { "capacity": capacity, "queued": queued },
     });
+    let memory = Memory::of(engine);
+    value["memory"] = memory.json();
     value["paint"] = paint.json();
     let (recent, slow) = frames.json(engine);
     value["recent"] = recent;
@@ -1259,9 +1261,70 @@ pub(crate) fn metrics(
         ms(stats.drain_time),
         engine.object_count()
     );
+    text.push_str(&memory.text());
     text.push_str(&paint.text());
     text.push_str(&frames.text(engine));
     ToolReply::from(value).with_text(text)
+}
+
+/// Where the memory is: what the process holds, and the parts of it the
+/// engine can count without walking anything.
+struct Memory {
+    process: Option<super::observe::Resident>,
+    script: Option<ljos_engine::ScriptMemory>,
+    nodes: usize,
+    objects: usize,
+}
+
+impl Memory {
+    fn of(engine: &Engine) -> Memory {
+        Memory {
+            process: super::observe::Resident::now(),
+            script: engine.script_memory(),
+            nodes: engine.node_count(),
+            objects: engine.object_count(),
+        }
+    }
+
+    fn json(&self) -> Value {
+        let mut m = json!({ "nodes": self.nodes, "objects": self.objects });
+        if let Some(p) = self.process {
+            m["resident_bytes"] = json!(p.rss);
+            m["own_bytes"] = json!(p.own());
+        }
+        if let Some(s) = self.script {
+            m["script_bytes"] = json!(s.bytes);
+            m["script_objects"] = json!(s.objects);
+        }
+        m
+    }
+
+    fn text(&self) -> String {
+        let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
+        let mut text = String::from("\nmemory:");
+        if let Some(p) = self.process {
+            let _ = write!(
+                text,
+                " {:.1} MiB resident, {:.1} MiB of it the process's own;",
+                mib(p.rss),
+                mib(p.own())
+            );
+        }
+        if let Some(s) = self.script {
+            let _ = write!(
+                text,
+                " scripts {:.1} MiB in {} objects;",
+                mib(s.bytes as u64),
+                s.objects
+            );
+        }
+        let _ = write!(
+            text,
+            " {} reactive nodes, {} objects",
+            self.nodes, self.objects
+        );
+        text
+    }
 }
 
 /// The QML files a binding's text is read from, each read once an answer.

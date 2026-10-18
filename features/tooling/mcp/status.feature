@@ -126,6 +126,13 @@ Feature: Status, log, measurements and pictures from the inspector
       And the answer's "/owners/0/name" is "inspector"
       And the answer's "/objects" is at least 2
 
+    # What the process holds is read where the system tells it (Linux), so
+    # only what the engine counts is checked here.
+    Scenario: The measurements say what the application holds
+      When the agent calls the tool "app_metrics"
+      Then the answer's "/memory/objects" is at least 2
+      And the answer's "/memory/nodes" is at least 1
+
   Rule: A picture is drawn without a screen
 
     Scenario: The window as a picture
