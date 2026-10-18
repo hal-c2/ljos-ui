@@ -208,6 +208,25 @@ Feature: Checking files on a machine that has no Qt
       Given the file "Main.qml":
         """qml
         import QtQuick
+        import QtCharts
+        Item {
+          ChartView { }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Main.qml:4:11: error: `ChartView` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it) [unknown-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+  Rule: A type of a module Ljós does not build stands in, and the check says so
+
+    Scenario: The import of a module whose types stand in is a warning
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
         import QtLocation
         Item {
           Map { }
@@ -216,7 +235,6 @@ Feature: Checking files on a machine that has no Qt
       When the files are checked
       Then the check reports:
         """
-        Main.qml:4:11: error: `Map` is not a type of anything the file imports (this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it) [unknown-type]
-        1 files, 1 errors, 0 warnings
-        ljos: 1 errors
+        Main.qml:2:9: warning: module "QtLocation" is not part of Ljós: its types stand in as empty Items, and what only they have is left out [stand-in]
+        1 files, 0 errors, 1 warnings
         """

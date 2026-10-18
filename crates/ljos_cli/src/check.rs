@@ -144,6 +144,18 @@ impl Checked {
             let diagnostics = match &file.result {
                 Ok(compiled) => {
                     self.coverage.add(&name, &compiled.file);
+                    let source = std::fs::read_to_string(dir.join(format!("{}.qml", file.key)));
+                    for uri in stood_in(&compiled.file.imports) {
+                        let (line, column) = source
+                            .as_deref()
+                            .map_or((1, 1), |source| import_at(source, uri));
+                        self.warnings += 1;
+                        self.diagnostics.push(format!(
+                            "{name}.qml:{line}:{column}: warning: module \"{uri}\" is not part of \
+                             Ljós: its types stand in as empty Items, and what only they have is \
+                             left out [stand-in]"
+                        ));
+                    }
                     &compiled.diagnostics
                 }
                 Err(diagnostics) => diagnostics,
@@ -304,4 +316,37 @@ fn same_member(line: &str, finding: &str) -> bool {
         (Some(a), Some(b), Some(name)) => a == b && line.contains(&format!("`{name}`")),
         _ => false,
     }
+}
+
+/// The modules among `imports` whose types stand in as empty Items. The
+/// check says so where the compiler does not: the run says it once, in its
+/// log, and a file that checks clean would otherwise hide what it loses.
+fn stood_in(imports: &[ljos_ir::Import]) -> impl Iterator<Item = &str> {
+    imports
+        .iter()
+        .filter(|import| import.stands_in)
+        .filter_map(|import| match &import.source {
+            ljos_ir::ImportSource::Module(uri) => Some(uri.as_str()),
+            ljos_ir::ImportSource::Path(_) => None,
+        })
+}
+
+/// The line and column, from 1, of the import of `uri` in `source`. An
+/// import keeps no place of its own in the IR; 1:1 if none is found.
+fn import_at(source: &str, uri: &str) -> (usize, usize) {
+    source
+        .lines()
+        .enumerate()
+        .find_map(|(i, line)| {
+            let text = line.trim_start();
+            let rest = text
+                .strip_prefix("import")?
+                .trim_start()
+                .strip_prefix(uri)?;
+            rest.chars()
+                .next()
+                .is_none_or(|c| c.is_whitespace() || c == ';')
+                .then(|| (i + 1, line.chars().count() - text.chars().count() + 1))
+        })
+        .unwrap_or((1, 1))
 }
