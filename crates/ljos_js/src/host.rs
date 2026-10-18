@@ -63,7 +63,7 @@ pub(crate) struct HostState {
     listings: RefCell<Vec<Option<Rc<Listing>>>>,
     /// Engine-owned wrappers. Kept strongly so identity is stable and so the
     /// Engine decides when a wrapper may die ([`JsHost::drop_wrapper`]).
-    wrappers: RefCell<FxHashMap<u64, Persistent<Object<'static>>>>,
+    wrappers: RefCell<FxHashMap<u64, Kept>>,
     host: RefCell<Option<Rc<dyn HostObjects>>>,
     released: Rc<RefCell<Vec<u64>>>,
     /// The objects scripts own ([`JsHost::give_to_script`]), each with
@@ -758,18 +758,54 @@ impl<'js> Scope<'js> {
         if self.state.owned.borrow().contains_key(&obj) {
             return self.owned_wrapper(obj);
         }
-        let cached = self.state.wrappers.borrow().get(&obj).cloned();
+        let cached = self
+            .state
+            .wrappers
+            .borrow()
+            .get(&obj)
+            .map(|k| k.held.clone());
         if let Some(p) = cached {
             return p.restore(&self.ctx);
         }
         // Its collection is told too: only once the Engine dropped it
         // ([`JsHost::drop_wrapper`]) and no script held it any more.
         let obj_handle = self.instantiate(obj, Some(self.state.released.clone()))?;
-        self.state
-            .wrappers
-            .borrow_mut()
-            .insert(obj, Persistent::save(&self.ctx, obj_handle.clone()));
+        let kept = Kept {
+            raw: obj_handle.as_raw(),
+            held: Persistent::save(&self.ctx, obj_handle.clone()),
+        };
+        self.state.wrappers.borrow_mut().insert(obj, kept);
         Ok(obj_handle)
+    }
+
+    /// What [`to_value`](Self::to_value) makes of `v`, as a raw value that
+    /// holds its own reference. A text or an object that has its wrapper
+    /// is made without a `Value`, which would take the context and give
+    /// it back.
+    fn to_raw(&self, v: &JsValue) -> rquickjs::Result<rquickjs::qjs::JSValue> {
+        use rquickjs::qjs;
+        let ctx = self.ctx.as_raw().as_ptr();
+        match v {
+            JsValue::String(s) => {
+                // SAFETY: a live context, and the bytes of a `str`.
+                unsafe {
+                    let raw = qjs::JS_NewStringLen(ctx, s.as_ptr().cast(), s.len() as _);
+                    if qjs::JS_IsException(raw) {
+                        return Err(rquickjs::Error::Exception);
+                    }
+                    Ok(raw)
+                }
+            }
+            JsValue::Object(id) if !self.state.owned.borrow().contains_key(id) => {
+                let raw = self.state.wrappers.borrow().get(id).map(|k| k.raw);
+                match raw {
+                    // SAFETY: the map holds a reference to it.
+                    Some(raw) => Ok(unsafe { qjs::JS_DupValue(ctx, raw) }),
+                    None => Ok(owned_raw(self.wrapper(*id)?.into_value())),
+                }
+            }
+            _ => Ok(owned_raw(self.to_value(v)?)),
+        }
     }
 
     /// A wrapper owned by JS: it is not cached, and when the collector frees
@@ -2132,7 +2168,7 @@ fn raw_out(scope: &Scope<'_>, v: &JsValue) -> rquickjs::Result<rquickjs::qjs::JS
         JsValue::Null => qjs::JS_NULL,
         JsValue::Bool(b) => raw_bool(b),
         JsValue::Number(n) => raw_number(n),
-        _ => owned_raw(scope.to_value(v)?),
+        _ => scope.to_raw(v)?,
     })
 }
 
@@ -2148,6 +2184,13 @@ fn raw_in(v: rquickjs::qjs::JSValue) -> Option<JsValue> {
             _ => None,
         }
     }
+}
+
+/// An Engine-owned wrapper ([`HostState::wrappers`]), and its raw value,
+/// which the `Persistent` keeps alive.
+struct Kept {
+    held: Persistent<Object<'static>>,
+    raw: rquickjs::qjs::JSValue,
 }
 
 /// `v`'s raw value, with the reference `v` held.
