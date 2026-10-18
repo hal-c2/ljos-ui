@@ -3935,6 +3935,7 @@ dependencies = [
  "rquickjs",
  "rustc-hash 2.1.3",
  "slotmap",
+ "smallvec",
  "thiserror 2.0.21",
  "tracing",
 ]

@@ -4,6 +4,7 @@
 use std::rc::Rc;
 
 use rquickjs::{Array, Function, Value, qjs};
+use smallvec::SmallVec;
 
 use super::Scope;
 use crate::{FnId, JsArg, JsValue};
@@ -65,7 +66,8 @@ unsafe extern "C" fn raw_direct(
         // Called with fewer than it takes, it passes as many as it takes,
         // as a function declared with them would.
         let given = argc.max(takes);
-        let mut args = Vec::with_capacity(n + given);
+        // Most calls pass a few: on the stack, not allocated each time.
+        let mut args: SmallVec<[qjs::JSValue; 8]> = SmallVec::with_capacity(n + given);
         for i in 0..n {
             let (v, name) = (slot(HEAD + 2 * i), slot(HEAD + 2 * i + 1));
             let got = if qjs::JS_IsUndefined(name) {
