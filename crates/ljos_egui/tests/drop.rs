@@ -172,3 +172,97 @@ fn a_file_dropped_outside_every_area_reaches_none() {
     drag_and_drop(&mut h, "/tmp/a.txt", from, to);
     assert!(log.borrow().is_empty(), "{:?}", log.borrow());
 }
+
+// Each OS hands winit a drop with no pointer motion while the drag lasts,
+// and winit 0.30 gives neither HoveredFile nor DroppedFile a position;
+// egui-winit turns the pointer leaving the window before the drag came in
+// into PointerGone. So the pointer has no position when the file is
+// dropped, as here.
+#[test]
+fn a_file_dropped_while_egui_has_no_pointer_position_still_reaches_the_area() {
+    let log = Log::default();
+    let (e, root) = scene(&log);
+    let mut h = harness(&e, root);
+    // The pointer came in from another app's window: egui never saw it move.
+    h.input_mut().hovered_files.push(HoveredFile {
+        path: Some(PathBuf::from("/tmp/a.txt")),
+        ..HoveredFile::default()
+    });
+    h.run_steps(3);
+    h.input_mut().hovered_files.clear();
+    h.input_mut()
+        .dropped_files
+        .push(Arc::new(Dropped(PathBuf::from("/tmp/a.txt"))));
+    h.run();
+    assert!(
+        log.borrow().iter().any(|l| l.starts_with("area dropped")),
+        "{:?}",
+        log.borrow()
+    );
+    // At the view's centre, (112,72), which is in the area.
+    assert_eq!(
+        *log.borrow(),
+        vec!["area entered 12,52", "area dropped 12,52 file:///tmp/a.txt"]
+    );
+}
+
+/// egui-winit's `CursorLeft`: the pointer went to another window, where
+/// the drag starts.
+fn pointer_leaves(h: &mut Harness<'_, State>) {
+    h.input_mut().events.push(egui::Event::PointerGone);
+    h.run();
+}
+
+/// A drag with no position, as winit 0.30 hands one on.
+fn drop_unseen(h: &mut Harness<'_, State>, path: &str) {
+    h.input_mut().hovered_files.push(HoveredFile {
+        path: Some(PathBuf::from(path)),
+        ..HoveredFile::default()
+    });
+    h.run_steps(3);
+    h.input_mut().hovered_files.clear();
+    h.input_mut()
+        .dropped_files
+        .push(Arc::new(Dropped(PathBuf::from(path))));
+    h.run();
+}
+
+#[test]
+fn a_file_dropped_with_no_position_is_where_the_pointer_was_last_seen() {
+    let log = Log::default();
+    let (e, root) = scene(&log);
+    let mut h = harness(&e, root);
+    h.hover_at(at(&h, 150.0, 60.0));
+    h.run();
+    pointer_leaves(&mut h);
+    drop_unseen(&mut h, "/tmp/a.txt");
+    assert_eq!(
+        *log.borrow(),
+        vec!["area entered 50,40", "area dropped 50,40 file:///tmp/a.txt"]
+    );
+    let log = e.take_log();
+    assert!(
+        !log.iter().any(|l| l.message.contains("DropArea")),
+        "{log:?}"
+    );
+}
+
+#[test]
+fn a_file_dropped_with_no_position_on_no_area_is_logged() {
+    let log = Log::default();
+    let (e, root) = scene(&log);
+    let mut h = harness(&e, root);
+    h.hover_at(at(&h, 10.0, 10.0));
+    h.run();
+    pointer_leaves(&mut h);
+    e.take_log();
+    drop_unseen(&mut h, "/tmp/a.txt");
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+    let warnings: Vec<_> = e.take_log().into_iter().map(|l| l.message).collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|m| m.contains("taken by no DropArea") && m.contains("put at 10,10")),
+        "{warnings:?}"
+    );
+}

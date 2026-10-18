@@ -225,11 +225,12 @@ pub struct QmlView {
     system: a11y::SystemFeed,
     text: TextBridge,
     stats: ViewStats,
-    /// Files a file manager drags over the window, told to the scene's
-    /// DropAreas.
     /// Files dragged over the view from outside, and where the scene was
     /// last told they are.
     file_drag: Option<(ljos_quick::PlatformDrag, Option<kurbo::Point>)>,
+    /// Where egui last saw the pointer in the window, kept after it says
+    /// the pointer is gone: where a file drag with no position is put.
+    pointer_seen: Option<Pos2>,
 }
 
 /// [`Engine::prepare_scripts`], once per view.
@@ -297,6 +298,7 @@ impl QmlView {
             text: TextBridge::default(),
             stats: ViewStats::default(),
             file_drag: None,
+            pointer_seen: None,
         })
     }
 
@@ -1241,14 +1243,22 @@ impl QmlView {
     /// Files dragged over the window from another application go to the
     /// scene's DropAreas, as a drag with no source whose key is
     /// `text/uri-list`. egui says only that files hover and that they were
-    /// dropped, not where: the drag is where the pointer was last seen.
+    /// dropped, not where: the drag is where the pointer is.
+    ///
+    /// winit 0.30 gives a file drag no position and moves no pointer while
+    /// it lasts, so a drag that comes in from another window finds egui
+    /// with no pointer at all. Such a drag is where the pointer was last
+    /// seen in the view, else at the view's centre, and is still dropped
+    /// there; dropped on nothing that takes it, it is logged.
     ///
     /// This is the one way a file drop reaches the scene. Every host egui
     /// runs in reports the window system's file events here (egui-winit
     /// for the shell), per window, and only the view knows where its scene
     /// is in the window and which tree it shows.
     fn deliver_files(&mut self, ui: &Ui, rect: Rect) {
-        use ljos_quick::{DragData, PlatformDrag, PlatformDragKind, platform_drag};
+        use ljos_quick::{
+            DragData, PlatformDrag, PlatformDragKind, platform_drag, platform_drag_target,
+        };
         let (hovered, dropped, pos) = ui.input(|i| {
             (
                 i.raw.hovered_files.clone(),
@@ -1256,12 +1266,21 @@ impl QmlView {
                 i.pointer.latest_pos(),
             )
         });
+        if pos.is_some() {
+            self.pointer_seen = pos;
+        }
         if hovered.is_empty() && dropped.is_empty() && self.file_drag.is_none() {
             return;
         }
-        let at = pos
-            .filter(|p| rect.contains(*p))
-            .map(|p| kurbo::Point::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y)));
+        let guessed = pos.is_none();
+        let at = match pos {
+            Some(p) => Some(p).filter(|p| rect.contains(*p)),
+            None => self
+                .pointer_seen
+                .filter(|p| rect.contains(*p))
+                .or_else(|| rect.is_positive().then(|| rect.center())),
+        }
+        .map(|p| kurbo::Point::new(f64::from(p.x - rect.min.x), f64::from(p.y - rect.min.y)));
         let root = self.scene.root();
         let engine = &self.engine;
         let start = |files: Vec<std::path::PathBuf>| {
@@ -1272,10 +1291,34 @@ impl QmlView {
             }
         };
         if !dropped.is_empty() {
-            let drag = match self.file_drag.take() {
-                Some((drag, _)) => drag,
-                None => start(dropped.iter().map(|f| f.path().to_path_buf()).collect()),
+            let (drag, told) = match self.file_drag.take() {
+                Some(d) => d,
+                None => (
+                    start(dropped.iter().map(|f| f.path().to_path_buf()).collect()),
+                    None,
+                ),
             };
+            // A drop where the scene was not told the drag is first comes
+            // there, as `platform_drag` would do itself, so that what will
+            // take it is known before it is let go.
+            if let Some(at) = at.filter(|at| told != Some(*at)) {
+                platform_drag(engine, &drag, &PlatformDragKind::Move(at));
+            }
+            if guessed && (at.is_none() || platform_drag_target(engine).is_none()) {
+                engine.log(
+                    ljos_engine::LogLevel::Warning,
+                    "qt.quick.dnd",
+                    format!(
+                        "{} dropped file(s) taken by no DropArea: the window system \
+                         said not where they were dropped, and they were put at {}",
+                        dropped.len(),
+                        at.map_or_else(
+                            || "no place in the view".to_owned(),
+                            |p| format!("{},{}", p.x, p.y)
+                        ),
+                    ),
+                );
+            }
             let kind = at.map_or(PlatformDragKind::Leave, PlatformDragKind::Drop);
             platform_drag(engine, &drag, &kind);
         } else if !hovered.is_empty() {

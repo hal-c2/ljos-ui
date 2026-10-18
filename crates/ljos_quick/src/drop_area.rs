@@ -673,6 +673,17 @@ pub fn platform_drag(engine: &Engine, drag: &PlatformDrag, kind: &PlatformDragKi
     }
 }
 
+/// The DropArea that took the drag from outside the window when it came
+/// over it, if one did: where a drop now would go.
+pub fn platform_drag_target(engine: &Engine) -> Option<ObjectId> {
+    engine
+        .extension::<Platform>()
+        .tracker
+        .over
+        .get()
+        .filter(|a| engine.is_alive(*a))
+}
+
 /// Registers `DropArea` and `DragEvent` with module `QtQuick`, and
 /// installs the drag-and-drop of the items as the platform's handler of
 /// drags from other applications (`ljos_platform::drop`): a host turns its
