@@ -448,7 +448,7 @@ impl RenderTree {
             walk.stats.pruned += 1;
             return;
         }
-        let span = n.span;
+        let span = &n.span;
         if let Some((old, at)) = walk.old
             && span.epoch == at
             && n.changed <= at
@@ -457,6 +457,7 @@ impl RenderTree {
             && span.outer.is_some() == parent.clip.is_some()
             && span.clip_bbox == parent.clip_bbox
         {
+            let span = *span;
             self.reuse(id, old, span, parent, walk);
             return;
         }
@@ -560,7 +561,11 @@ impl RenderTree {
             n.dirty.remove(Dirty::CLIP | Dirty::ORDER);
             walk.stats.visited += 1;
             n.last_visible_frame = walk.frame;
-            let clip = content_clip(walk, parent, world, n.content_clip);
+            // Nearly every leaf has no clip of its content either.
+            let clip = match n.content_clip {
+                None => parent.clip,
+                spec => content_clip(walk, parent, world, spec),
+            };
             walk.items.push(PaintItem {
                 node: id,
                 world,
