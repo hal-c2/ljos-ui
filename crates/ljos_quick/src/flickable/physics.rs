@@ -217,6 +217,8 @@ pub struct Kinetic {
     pub rebound_out: Duration,
     /// A pointer that rested this long before it let go starts no fling.
     pub release_rest: Duration,
+    /// A release slower than this, in pixels per second, starts no fling.
+    pub min_flick: f64,
     /// How long the content glides to where a wheel turn sends it; `None`
     /// puts it there at once.
     pub wheel_glide: Option<Duration>,
@@ -233,6 +235,7 @@ impl Kinetic {
         rebound_in: Duration::from_millis(100),
         rebound_out: Duration::from_millis(300),
         release_rest: Duration::from_millis(100),
+        min_flick: 75.0,
         wheel_glide: Some(Duration::from_millis(300)),
     };
 }
@@ -458,6 +461,21 @@ impl ScrollPhysics {
         }
     }
 
+    /// The velocity a release at `now` throws with, measured by `tracker`:
+    /// none when the pointer rested first or moved too slowly.
+    pub fn thrown(&self, tracker: &VelocityTracker, now: Time) -> f64 {
+        let Some(k) = self.kinetic() else { return 0.0 };
+        let rested = tracker
+            .last_time()
+            .is_none_or(|t| now.saturating_since(t) >= k.release_rest);
+        let v = tracker.velocity(now);
+        if rested || v.abs() < k.min_flick {
+            0.0
+        } else {
+            v
+        }
+    }
+
     /// How long after the last turn of a wheel without phases the content
     /// counts as moving. A wheel does not say when it stopped.
     pub fn wheel_rest(&self) -> Duration {
@@ -483,66 +501,70 @@ pub fn set_scroll_physics(engine: &Engine, physics: ScrollPhysics) {
     engine.extension::<Chosen>().0.set(physics);
 }
 
-/// How long back a velocity is measured over.
-const WINDOW: Duration = Duration::from_millis(100);
-const SAMPLES: usize = 16;
+/// How much of a move's own speed the pointer's speed takes on; the rest
+/// is the speed it had.
+const GAIN: f64 = 0.7;
+/// How many of the last moves' speeds a release averages.
+const KEPT: usize = 3;
 
-/// The speed of a dragged position: the slope of the least-squares line
-/// through the samples of the last 100 ms (ARCHITECTURE §10.3). One slow
-/// or late event then does not decide how far a fling goes.
-#[derive(Clone, Copy, Debug)]
+/// The speed of a dragged position, as qml6 measures it (checked with
+/// qmltestrunner at fixed event times): each move's speed, the distance
+/// over the time since the last event, is smoothed into the pointer's
+/// speed, `0.7` of the new and `0.3` of the old, starting from rest at the
+/// press. The speed a release throws is the mean of that smoothed speed
+/// after each of the last three moves. One slow or late event then does
+/// not decide how far a fling goes.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct VelocityTracker {
-    samples: [(Time, f64); SAMPLES],
+    /// The time and position of the last event.
+    last: Option<(Time, f64)>,
+    /// The smoothed speed after each of the last moves, newest at `next - 1`.
+    kept: [f64; KEPT],
     len: usize,
     next: usize,
 }
 
-impl Default for VelocityTracker {
-    fn default() -> Self {
-        Self {
-            samples: [(Time::ZERO, 0.0); SAMPLES],
-            len: 0,
-            next: 0,
-        }
-    }
-}
-
 impl VelocityTracker {
     pub fn clear(&mut self) {
-        self.len = 0;
-        self.next = 0;
+        *self = Self::default();
     }
 
+    /// The press (the first sample) or a move. A move at the time of the
+    /// last event is the same event again and counts for nothing.
     pub fn push(&mut self, time: Time, position: f64) {
-        self.samples[self.next] = (time, position);
-        self.next = (self.next + 1) % SAMPLES;
-        self.len = (self.len + 1).min(SAMPLES);
+        let Some((t0, p0)) = self.last else {
+            self.last = Some((time, position));
+            return;
+        };
+        let dt = time.saturating_since(t0).as_secs_f64();
+        if dt <= 0.0 {
+            return;
+        }
+        let speed = (position - p0) / dt;
+        let before = if self.len == 0 {
+            0.0
+        } else {
+            self.kept[(self.next + KEPT - 1) % KEPT]
+        };
+        self.kept[self.next] = GAIN * speed + (1.0 - GAIN) * before;
+        self.next = (self.next + 1) % KEPT;
+        self.len = (self.len + 1).min(KEPT);
+        self.last = Some((time, position));
     }
 
     /// The time of the newest sample.
     pub fn last_time(&self) -> Option<Time> {
-        (self.len > 0).then(|| self.samples[(self.next + SAMPLES - 1) % SAMPLES].0)
+        self.last.map(|(t, _)| t)
     }
 
-    /// Pixels per second at `now`; zero with fewer than two samples in the
-    /// window, or when they all have the same time.
-    pub fn velocity(&self, now: Time) -> f64 {
-        let recent: Vec<(f64, f64)> = self.samples[..self.len]
-            .iter()
-            .filter(|(t, _)| *t <= now && now.saturating_since(*t) <= WINDOW)
-            .map(|(t, p)| (-(now.saturating_since(*t).as_secs_f64()), *p))
-            .collect();
-        if recent.len() < 2 {
+    /// Pixels per second a release at `now` throws with; zero before the
+    /// first move. Whether the pointer rested before it let go, or was too
+    /// slow, is the physics' to say ([`ScrollPhysics::thrown`]).
+    pub fn velocity(&self, _now: Time) -> f64 {
+        if self.len == 0 {
             return 0.0;
         }
-        let n = recent.len() as f64;
-        let mt = recent.iter().map(|s| s.0).sum::<f64>() / n;
-        let mp = recent.iter().map(|s| s.1).sum::<f64>() / n;
-        let var: f64 = recent.iter().map(|s| (s.0 - mt).powi(2)).sum();
-        if var <= f64::EPSILON {
-            return 0.0;
-        }
-        recent.iter().map(|s| (s.0 - mt) * (s.1 - mp)).sum::<f64>() / var
+        self.kept[..self.len].iter().sum::<f64>() / self.len as f64
     }
 }
 
@@ -779,23 +801,44 @@ mod tests {
         assert_eq!(ScrollPhysics::Immediate.settle(&a), Motion::Jump(0.0));
     }
 
-    #[test]
-    fn velocity_is_the_slope_of_the_recent_samples() {
-        let mut v = VelocityTracker::default();
-        for i in 0..6u64 {
-            v.push(Time::from_millis(i * 10), i as f64 * 5.0);
+    fn moves(v: &mut VelocityTracker, from: u64, steps: &[(u64, f64)]) -> f64 {
+        let (mut t, mut p) = (from, 0.0);
+        v.push(Time::from_millis(t), p);
+        for &(dt, dp) in steps {
+            t += dt;
+            p += dp;
+            v.push(Time::from_millis(t), p);
         }
-        let got = v.velocity(Time::from_millis(50));
-        assert!((got - 500.0).abs() < 1e-6, "{got}");
+        v.velocity(Time::from_millis(t))
+    }
+
+    // qmltestrunner, moves of 30 px 17 ms apart, then 5 px ones: qml6
+    // throws with these.
+    #[test]
+    fn velocity_is_smoothed_over_the_moves_as_qml6_does() {
+        let close = |got: f64, want: f64| assert!((got - want).abs() < 0.5, "{got} != {want}");
+        let mut v = VelocityTracker::default();
+        close(moves(&mut v, 0, &[(17, 30.0); 8]), 1764.2);
+        v.clear();
+        close(moves(&mut v, 0, &[(17, 30.0); 3]), 1519.4);
+        v.clear();
+        let mut slow_fast = vec![(17, 5.0); 8];
+        slow_fast.push((17, 30.0));
+        close(moves(&mut v, 0, &slow_fast), 637.2);
+        v.clear();
+        let varied = [(17, 30.0), (17, 30.0), (17, 30.0), (41, 30.0), (41, 30.0)];
+        close(moves(&mut v, 0, &varied), 1188.3);
+        v.clear();
+        close(moves(&mut v, 0, &[(17, 60.0)]), 2470.6);
     }
 
     #[test]
-    fn old_samples_do_not_count() {
+    fn a_tracker_without_moves_throws_nothing() {
         let mut v = VelocityTracker::default();
-        v.push(Time::from_millis(0), 0.0);
-        v.push(Time::from_millis(10), 100.0);
-        assert_eq!(v.velocity(Time::from_millis(500)), 0.0);
-        v.clear();
-        assert_eq!(v.velocity(Time::from_millis(10)), 0.0);
+        assert_eq!(v.velocity(Time::ZERO), 0.0);
+        v.push(Time::from_millis(5), 10.0);
+        v.push(Time::from_millis(5), 50.0);
+        assert_eq!(v.velocity(Time::from_millis(5)), 0.0);
+        assert_eq!(v.last_time(), Some(Time::from_millis(5)));
     }
 }

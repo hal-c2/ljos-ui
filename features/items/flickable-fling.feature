@@ -7,11 +7,11 @@
 # back in 400 milliseconds. The distances below are the same on any
 # machine; what depends on how fast a pointer moved is asked loosely.
 
-@qt-parity
 Feature: Flinging a Flickable
   Content that is flung keeps moving, slows down evenly and comes to rest.
   Flung or dragged past its bounds it gives way, and comes back.
 
+  @qt-parity
   Rule: A flick slows down evenly
 
     Background:
@@ -83,6 +83,7 @@ Feature: Flinging a Flickable
       And 2 seconds pass
       Then the property "contentY" of "f" is within 0.5 of 213.33
 
+  @qt-parity
   Rule: A press catches a flick
 
     Background:
@@ -138,6 +139,7 @@ Feature: Flinging a Flickable
       Then the property "moving" of "f" is true
       And the property "log" of "root" is "movementStarted flickStarted "
 
+  @qt-parity
   Rule: Flung past a bound, the content comes back
 
     Background:
@@ -210,6 +212,7 @@ Feature: Flinging a Flickable
       Then the property "contentY" of "f" is 0
       And the property "verticalOvershoot" of "f" is at most -1
 
+  @qt-parity
   Rule: Dragged past a bound, the content gives way and comes back
 
     Background:
@@ -279,6 +282,7 @@ Feature: Flinging a Flickable
       Then the property "contentY" of "f" is 0
       And the property "flicking" of "f" is false
 
+  @qt-parity
   Rule: A drag that is let go while it moves is flung
 
     Background:
@@ -337,3 +341,134 @@ Feature: Flinging a Flickable
       And 1 second passes
       Then the property "contentY" of "f" is 60
       And the property "log" of "root" is "dragStarted movementStarted dragEnded movementEnded "
+
+  # qmltestrunner, at fixed event times: each move's speed is smoothed into
+  # the pointer's, 0.7 of the new and 0.3 of the old from rest at the
+  # press, and a release throws the mean of the last three. Thrown slower
+  # than 75 pixels a second, or after resting a tenth of a second, the
+  # content stays. The oracle's clock is too loose for the exact numbers.
+  Rule: A flick is as fast as the pointer's last moves
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          width: 400; height: 400
+          property string log: ""
+          property real thrown: 0
+          Flickable {
+            objectName: "f"
+            width: 200; height: 400
+            contentWidth: 200; contentHeight: 20000
+            onDragStarted: root.log += "dragStarted "
+            onFlickStarted: { root.log += "flickStarted "; root.thrown = verticalVelocity }
+            onMovementEnded: root.log += "movementEnded "
+          }
+        }
+        """
+
+    @ljos-only
+    Scenario: Six moves of 30 pixels 17 milliseconds apart throw 1759 pixels a second
+      When the user presses the pointer at 100, 390
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 360
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 330
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 300
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 270
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 240
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 210
+      And the user releases the pointer at 100, 210
+      Then the property "thrown" of "root" is within 1 of 1758.7
+      When 3 seconds pass
+      Then the property "contentY" of "f" is within 1 of 1151
+
+    @ljos-only
+    Scenario: A slow drag that ends in one fast move is thrown slower than that move
+      When the user presses the pointer at 100, 390
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 385
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 380
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 375
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 370
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 365
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 360
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 355
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 350
+      And 17 milliseconds pass
+      And the user moves the pointer to 100, 320
+      And the user releases the pointer at 100, 320
+      Then the property "thrown" of "root" is within 1 of 637.2
+
+    @qt-parity
+    Scenario: A pointer that creeps flings nothing
+      When the user presses the pointer at 100, 390
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 388
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 386
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 384
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 382
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 380
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 378
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 376
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 374
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 372
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 370
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 368
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 366
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 364
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 362
+      And 50 milliseconds pass
+      And the user moves the pointer to 100, 360
+      And the user releases the pointer at 100, 360
+      And 1 second passes
+      Then the property "log" of "root" is "dragStarted movementEnded "
+
+    @qt-parity
+    Scenario: One long move is flung when the pointer lets go
+      When the user presses the pointer at 100, 390
+      And 16 milliseconds pass
+      And the user moves the pointer to 100, 350
+      And 16 milliseconds pass
+      And the user releases the pointer at 100, 350
+      And 3 seconds pass
+      Then the property "log" of "root" is "flickStarted movementEnded "
+      And the property "contentY" of "f" is at least 100
+
+    @qt-parity
+    Scenario: One move shorter than twice the drag threshold is not
+      When the user presses the pointer at 100, 390
+      And 16 milliseconds pass
+      And the user moves the pointer to 100, 378
+      And 16 milliseconds pass
+      And the user releases the pointer at 100, 378
+      And 1 second passes
+      Then the property "log" of "root" is ""
+      And the property "contentY" of "f" is 0

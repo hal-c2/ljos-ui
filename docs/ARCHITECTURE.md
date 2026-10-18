@@ -836,7 +836,7 @@ The snapshot is written on `Stop`. QML opts in through `Ljos.Persist { id; prope
 ### 10.3 Mobile behaviours
 
 - **Gestures.** One gesture arena: tap, double tap, long press, pan and pinch. The platform supplies touch slop and timeouts. QML handlers sit on top.
-- **`ScrollPhysics` as data**, with a `VelocityTracker` that fits a least-squares line over about 100 ms:
+- **`ScrollPhysics` as data**, with a `VelocityTracker` that throws what qml6 throws: each move's speed is smoothed into the ones before it, and a release throws the mean of the last three. A pointer that rested 100 ms before letting go, or a speed under the platform's least flick (75 pixels a second on the desktop), throws nothing. Per platform:
   - Android: spline fling and stretch overscroll;
   - iOS: exponential deceleration and rubber band;
   - desktop: smooth wheel.

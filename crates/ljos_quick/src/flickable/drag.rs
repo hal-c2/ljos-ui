@@ -20,7 +20,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use super::fling::{self, Kind};
-use super::physics::{Motion, VelocityTracker, scroll_physics};
+use super::physics::{Motion, Segment, VelocityTracker, scroll_physics};
 use super::{
     FlickState, Flickable, X, Y, bounds, can_flick, dir, flag, is_flickable, put_flag,
     set_drag_moving, state_of, warn,
@@ -57,15 +57,18 @@ pub(crate) struct DragState {
 #[derive(Default)]
 struct Presses {
     serial: Cell<u64>,
+    /// When the press was.
+    time: Cell<Time>,
     /// Items that do not give a press up to a Flickable.
     keep: RefCell<HashSet<ObjectId>>,
 }
 
 /// The scene says a press began. Flickables forget the last one when they
 /// next look.
-pub(crate) fn pressed(engine: &Engine) {
+pub(crate) fn pressed(engine: &Engine, time: Time) {
     let p = engine.extension::<Presses>();
     p.serial.set(p.serial.get().wrapping_add(1));
+    p.time.set(time);
 }
 
 /// Which press the scene is on: another number for each press. For other
@@ -112,19 +115,33 @@ fn coordinate(p: kurbo::Point, axis: usize) -> f64 {
 
 /// Starts watching the current press if `st` still knows an older one.
 fn watch(engine: &Engine, f: ObjectId, st: &FlickState, press_scene: kurbo::Point) {
-    let serial = engine.extension::<Presses>().serial.get();
+    let presses = engine.extension::<Presses>();
+    let serial = presses.serial.get();
     let d = &st.drag;
     if d.serial.get() == serial {
         return;
     }
     d.serial.set(serial);
-    d.press.set(local(engine, f, press_scene));
+    let press = local(engine, f, press_scene);
+    d.press.set(press);
     d.over.set([false; 2]);
     d.armed.set(false);
     d.taken.set(false);
     d.anchor.set([None; 2]);
-    for v in d.velocity.borrow_mut().iter_mut() {
-        v.clear();
+    let mut trackers = d.velocity.borrow_mut();
+    for axis in [X, Y] {
+        trackers[axis].clear();
+        trackers[axis].push(presses.time.get(), -coordinate(press, axis));
+    }
+}
+
+/// Measures the pointer's speed from the press on, before the content
+/// follows it too, as qml6 does: a fling thrown soon after a drag began
+/// is as fast as the pointer was. The content goes the other way.
+fn sample(st: &FlickState, at: kurbo::Point, time: Time) {
+    let mut trackers = st.drag.velocity.borrow_mut();
+    for axis in [X, Y] {
+        trackers[axis].push(time, -coordinate(at, axis));
     }
 }
 
@@ -201,6 +218,7 @@ fn show_dragging(e: &Engine, f: ObjectId, st: &FlickState) {
 
 /// The pointer moved to `at` while the content follows it.
 fn follow(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point, time: Time) {
+    sample(st, at, time);
     let new = observe(e, f, st, at);
     if new != [false; 2] {
         // A direction that joins late starts from this very move.
@@ -219,19 +237,16 @@ fn follow(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point, time: Time
         // past a bound: it is what a fling is thrown with.
         let wanted = content + pointer - coordinate(at, axis);
         let to = physics.dragged(&state, wanted, &s);
-        let velocity = {
-            let mut tracker = st.drag.velocity.borrow_mut();
-            tracker[axis].push(time, wanted);
-            tracker[axis].velocity(time)
-        };
+        let velocity = st.drag.velocity.borrow()[axis].velocity(time);
         fling::place(e, f, axis, to, velocity);
     }
 }
 
 /// The press ended, or was taken away: the content is let go. It flings,
 /// or comes back inside its bounds, as the physics says.
-fn let_go(e: &Engine, f: ObjectId, st: &FlickState, time: Time) {
+fn let_go(e: &Engine, f: ObjectId, st: &FlickState, time: Time, at: Option<kurbo::Point>) {
     let d = &st.drag;
+    let thrown = |axis| at.is_some_and(|at| throws(e, f, st, axis, at));
     let was_taken = d.taken.replace(false);
     let anchors = d.anchor.replace([None; 2]);
     d.armed.set(false);
@@ -247,20 +262,22 @@ fn let_go(e: &Engine, f: ObjectId, st: &FlickState, time: Time) {
             continue;
         }
         let mut state = fling::virtual_position(e, f, axis);
-        if anchors[axis].is_some() {
-            let tracker = d.velocity.borrow()[axis];
-            // A finger that rested before it let go throws nothing.
-            let rested = tracker
-                .last_time()
-                .is_none_or(|t| time.saturating_since(t) > physics.release_rest());
-            state.velocity = if rested { 0.0 } else { tracker.velocity(time) };
+        if anchors[axis].is_some() || thrown(axis) {
+            state.velocity = physics.thrown(&d.velocity.borrow()[axis], time);
         } else if state.clamp(state.position) == state.position {
             // A press caught content that was moving; only content left
             // past a bound has somewhere to go.
             continue;
         }
         match physics.released(&state, &s) {
-            Motion::Start(seg) => segs[axis] = Some(seg),
+            Motion::Start(seg) => {
+                // `flickStarted` already reads the speed it was thrown with,
+                // also when nothing was dragged before.
+                if let Segment::Decelerate { velocity, .. } = seg {
+                    fling::show_velocity(e, f, axis, velocity);
+                }
+                segs[axis] = Some(seg);
+            }
             _ => fling::show_velocity(e, f, axis, 0.0),
         }
     }
@@ -272,6 +289,18 @@ fn let_go(e: &Engine, f: ObjectId, st: &FlickState, time: Time) {
         show_dragging(e, f, st);
     }
     fling::show(e, f, st);
+}
+
+/// Whether a press the Flickable held, and let go at `at` before the
+/// content followed it, throws the content along `axis`. qml6 flings it
+/// when the pointer ended up twice the drag threshold from the press, even
+/// after one move.
+fn throws(e: &Engine, f: ObjectId, st: &FlickState, axis: usize, at: kurbo::Point) -> bool {
+    let d = &st.drag;
+    let moved = coordinate(at, axis) - coordinate(d.press.get(), axis);
+    d.serial.get() == press_serial(e)
+        && moved.abs() >= 2.0 * crate::system_prefs::start_drag_distance(e)
+        && e.untrack(|| can_flick(e, f, axis))
 }
 
 /// Asked by the scene before it delivers a move of a held press: whether
@@ -324,6 +353,7 @@ pub(crate) fn steal(
         watch(engine, f, &st, press_scene);
         let was_armed = st.drag.armed.get();
         let at = local(engine, f, ev.pos);
+        sample(&st, at, ev.time);
         observe(engine, f, &st, at);
         if was_armed {
             take(engine, f, &st, at);
@@ -349,21 +379,21 @@ fn moved(e: &Engine, f: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
         return;
     }
     if !takes_drags(e, f) {
-        let_go(e, f, &st, ev.time);
+        let_go(e, f, &st, ev.time, None);
         return;
     }
     follow(e, f, &st, at, ev.time);
 }
 
-fn release(e: &Engine, f: ObjectId, ev: &PointerEvent, _at: kurbo::Point) {
+fn release(e: &Engine, f: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     if let Some(st) = state_of(e, f) {
-        let_go(e, f, &st, ev.time);
+        let_go(e, f, &st, ev.time, Some(at));
     }
 }
 
 fn cancel(e: &Engine, f: ObjectId) {
     if let Some(st) = state_of(e, f) {
-        let_go(e, f, &st, e.now());
+        let_go(e, f, &st, e.now(), None);
     }
 }
 

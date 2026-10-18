@@ -1840,7 +1840,7 @@ impl QuickScene {
         self.pointer.passive.clear();
         self.pointer.press_pos = ev.pos;
         self.pointer.double = false;
-        crate::flickable::drag::pressed(engine);
+        crate::flickable::drag::pressed(engine, ev.time);
         crate::handlers::pressed(engine, ev);
         let mut handled = false;
         let hits = self.hits(engine, ev.pos);
