@@ -14,8 +14,8 @@
 
 use std::sync::Arc;
 
-use egui::Rect;
 use egui::epaint::{ClippedPrimitive, ClippedShape, CornerRadius, Mesh, Primitive, Shape};
+use egui::{Rect, TextureId};
 use ljos_render::b0::ShaderPaint;
 
 /// What a window last showed.
@@ -162,6 +162,25 @@ impl Change {
         match self {
             Change::None => Change::None,
             _ => Change::All,
+        }
+    }
+
+    /// This change, and the pictures drawn again in `areas` too.
+    pub(crate) fn with(self, areas: Vec<Rect>) -> Change {
+        if areas.is_empty() {
+            return self;
+        }
+        match self {
+            Change::None => Change::Area(areas),
+            Change::Area(mut a) => {
+                a.extend(areas);
+                Change::Area(a)
+            }
+            Change::Scroll(mut s) => {
+                s.areas.extend(areas);
+                Change::Scroll(s)
+            }
+            Change::All => Change::All,
         }
     }
 
@@ -498,6 +517,80 @@ fn extent(shape: &ClippedShape, pixels_per_point: f32) -> Rect {
         .visual_bounding_rect()
         .expand(1.0 / pixels_per_point)
         .intersect(shape.clip_rect)
+}
+
+/// Where `shapes`, the same as before, show something else: they sample
+/// texels that a frame hands over anew. Each of `changed` is a texture and
+/// the texels it changes, as fractions of its size (`None`: any). An atlas
+/// adds a glyph or a picture where nothing sampled it yet, so the text
+/// and pictures already shown stay as they are: only a texture changed
+/// under them makes them draw again, not one that grew beside them.
+pub(crate) fn resampled(
+    shapes: &[ClippedShape],
+    changed: &[(TextureId, Option<Rect>)],
+    pixels_per_point: f32,
+) -> Vec<Rect> {
+    if changed.is_empty() {
+        return Vec::new();
+    }
+    shapes
+        .iter()
+        .filter(|s| samples(&s.shape, changed))
+        .map(|s| extent(s, pixels_per_point))
+        .filter(|area| area.is_positive())
+        .collect()
+}
+
+/// The texels of a `size` picture that a `part` handed over at `at`
+/// changes, as fractions of it, and half a texel more: filtered, a quad
+/// reads that far past its own.
+pub(crate) fn texels(at: [usize; 2], part: [usize; 2], size: [usize; 2]) -> Rect {
+    let f = |x: usize, by: f32, side: usize| (x as f32 + by) / side as f32;
+    Rect::from_min_max(
+        egui::pos2(f(at[0], -0.5, size[0]), f(at[1], -0.5, size[1])),
+        egui::pos2(
+            f(at[0] + part[0], 0.5, size[0]),
+            f(at[1] + part[1], 0.5, size[1]),
+        ),
+    )
+}
+
+/// Whether `shape` samples any of the texels of `changed`.
+fn samples(shape: &Shape, changed: &[(TextureId, Option<Rect>)]) -> bool {
+    // Not only touching: a glyph filled beside one shown, past the texel
+    // of padding between them, is not read by it.
+    let overlap = |a: Rect, b: Rect| {
+        a.min.x < b.max.x && b.min.x < a.max.x && a.min.y < b.max.y && b.min.y < a.max.y
+    };
+    let reads = |id: TextureId, uv: Rect| {
+        changed
+            .iter()
+            .any(|&(t, texels)| t == id && texels.is_none_or(|texels| overlap(texels, uv)))
+    };
+    match shape {
+        // Triangle by triangle: one mesh draws a run of glyphs from all
+        // over the atlas.
+        Shape::Mesh(mesh) => {
+            changed.iter().any(|&(t, _)| t == mesh.texture_id)
+                && mesh.indices.as_chunks::<3>().0.iter().any(|tri| {
+                    let uv = tri.iter().fold(Rect::NOTHING, |r, &i| {
+                        r.union(Rect::from_pos(mesh.vertices[i as usize].uv))
+                    });
+                    reads(mesh.texture_id, uv)
+                })
+        }
+        Shape::Vec(shapes) => shapes.iter().any(|s| samples(s, changed)),
+        // What a callback samples is not known.
+        Shape::Callback(_) => true,
+        Shape::Rect(rect) => match &rect.brush {
+            Some(brush) => reads(brush.fill_texture_id, brush.uv),
+            None => reads(TextureId::default(), Rect::from_pos(egui::epaint::WHITE_UV)),
+        },
+        // egui's glyphs, anywhere in its atlas.
+        Shape::Text(_) => reads(TextureId::default(), Rect::EVERYTHING),
+        // Tessellated in flat colour, from the white texel of egui's atlas.
+        _ => reads(TextureId::default(), Rect::from_pos(egui::epaint::WHITE_UV)),
+    }
 }
 
 /// Draws `shapes` only inside `areas`, which do not overlap: a shape is
@@ -947,6 +1040,73 @@ mod tests {
             Change::Scroll(scroll) => scroll,
             other => panic!("a scroll, not {other:?}"),
         }
+    }
+
+    /// A run of glyphs of a 512-texel atlas filled at `xs`, 10 texels a
+    /// side, drawn as one mesh of quads side by side from `at`.
+    fn run(atlas: TextureId, xs: &[usize], at: f32) -> ClippedShape {
+        let mut m = Mesh::with_texture(atlas);
+        for (i, &x) in xs.iter().enumerate() {
+            let uv = texels([x, 0], [10, 10], [512, 512]).shrink(0.5 / 512.0);
+            let on = Pos2::new(at + 10.0 * i as f32, 0.0);
+            m.add_rect_with_uv(
+                Rect::from_min_size(on, vec2(10.0, 10.0)),
+                uv,
+                Color32::BLACK,
+            );
+        }
+        mesh(&Arc::new(m))
+    }
+
+    #[test]
+    fn a_glyph_filled_beside_text_shown_draws_none_of_it_again() {
+        let atlas = TextureId::Managed(7);
+        let shown = [
+            run(atlas, &[0, 100], 0.0),
+            run(atlas, &[11], 20.0),
+            rect(40.0),
+        ];
+        // The next glyph past the texel of padding after the second run's,
+        // and so between the first run's two.
+        let beside = [(atlas, Some(texels([22, 0], [10, 10], [512, 512])))];
+        assert_eq!(resampled(&shown, &beside, 1.0), Vec::<Rect>::new());
+        // Written over the second, it is drawn again, and only it.
+        let over = [(atlas, Some(texels([12, 2], [4, 4], [512, 512])))];
+        assert_eq!(resampled(&shown, &over, 1.0), vec![extent(&shown[1], 1.0)]);
+        // A picture handed over whole is drawn again wherever it is shown;
+        // another picture's is not.
+        let whole = [(atlas, None), (TextureId::Managed(8), None)];
+        assert_eq!(resampled(&shown, &whole, 1.0).len(), 2);
+    }
+
+    #[test]
+    fn flat_colour_is_drawn_again_only_when_the_white_texel_is() {
+        let shown = [rect(0.0)];
+        let font = TextureId::default();
+        let glyph = [(font, Some(texels([40, 0], [10, 10], [2048, 64])))];
+        assert!(resampled(&shown, &glyph, 1.0).is_empty());
+        let white = [(font, Some(texels([0, 0], [2, 2], [2048, 64])))];
+        assert_eq!(resampled(&shown, &white, 1.0).len(), 1);
+    }
+
+    #[test]
+    fn what_is_drawn_again_is_added_to_a_scroll_as_to_any_change() {
+        let area = Rect::from_min_size(Pos2::new(5.0, 5.0), vec2(4.0, 4.0));
+        assert_eq!(Change::None.with(vec![area]), Change::Area(vec![area]));
+        assert_eq!(Change::None.with(Vec::new()), Change::None);
+        let scroll = Scroll {
+            rect: Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0)),
+            by: vec2(-3.0, 0.0),
+            areas: vec![],
+        };
+        assert_eq!(
+            Change::Scroll(scroll.clone()).with(vec![area]),
+            Change::Scroll(Scroll {
+                areas: vec![area],
+                ..scroll
+            })
+        );
+        assert_eq!(Change::All.with(vec![area]), Change::All);
     }
 
     #[test]

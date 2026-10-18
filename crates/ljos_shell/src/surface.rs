@@ -221,6 +221,24 @@ impl Painter {
         }
     }
 
+    /// Where `shapes` sample the pictures `pending` hands over again, for
+    /// a painter that draws only where the picture changed.
+    pub(crate) fn resampled(
+        &self,
+        shapes: &[egui::epaint::ClippedShape],
+        pending: &egui::TexturesDelta,
+        pixels_per_point: f32,
+    ) -> Vec<egui::Rect> {
+        match self {
+            Painter::Wgpu(_) => {
+                let _ = (shapes, pending, pixels_per_point);
+                Vec::new()
+            }
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.resampled(shapes, pending, pixels_per_point),
+        }
+    }
+
     /// What of a picture that makes `change` is drawn, with the pictures
     /// `pending` hands over.
     pub(crate) fn frame(
@@ -234,7 +252,7 @@ impl Painter {
         match self {
             Painter::Wgpu(_) => wgpu_frame(change, pending),
             #[cfg(gl_painter)]
-            Painter::Gl(painter) => painter.frame(change, pending, pixels_per_point),
+            Painter::Gl(painter) => painter.frame(change, pixels_per_point),
         }
     }
 

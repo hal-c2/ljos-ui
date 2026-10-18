@@ -1415,7 +1415,7 @@ impl<M: Send + 'static> Desktop<M> {
         #[cfg(feature = "mcp")]
         let changed = follows.then(|| change.boxes());
         let change = if painter.wants_areas() {
-            change
+            change.with(painter.resampled(&shapes, &slot.pending, pixels_per_point))
         } else {
             change.whole()
         };

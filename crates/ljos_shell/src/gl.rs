@@ -10,7 +10,7 @@
 //! in its painter, in that context.
 
 use std::cell::Cell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -220,6 +220,9 @@ pub(crate) struct GlPainter {
     blits: bool,
     /// Whether the copies a scroll makes have been made once.
     warmed: bool,
+    /// The size of each picture handed over, for where a part of one
+    /// handed over again lies in it.
+    sizes: HashMap<egui::TextureId, [usize; 2]>,
 }
 
 struct GlWindow {
@@ -261,6 +264,7 @@ impl GlPainter {
             programs: crate::gl_shader::Programs::default(),
             blits,
             warmed: false,
+            sizes: HashMap::new(),
         })
     }
 
@@ -398,20 +402,40 @@ impl GlPainter {
         self.window.as_ref().is_none_or(|gw| gw.whole_for == 0)
     }
 
+    /// Where `shapes` sample the texels `pending` hands over anew
+    /// ([`crate::present::resampled`]).
+    pub(crate) fn resampled(
+        &self,
+        shapes: &[ClippedShape],
+        pending: &egui::TexturesDelta,
+        pixels_per_point: f32,
+    ) -> Vec<egui::Rect> {
+        let mut changed = Vec::new();
+        for (&id, deltas) in &pending.set {
+            let mut size = self.sizes.get(&id).copied();
+            for d in deltas {
+                let texels = match (d.pos, size) {
+                    (Some(at), Some(size)) => {
+                        Some(crate::present::texels(at, d.image.size(), size))
+                    }
+                    (Some(_), None) => None,
+                    (None, _) => {
+                        size = Some(d.image.size());
+                        None
+                    }
+                };
+                changed.push((id, texels));
+            }
+        }
+        crate::present::resampled(shapes, &changed, pixels_per_point)
+    }
+
     /// What of a picture that makes `change` is drawn. The buffer drawn
     /// into still holds the frame shown `age` frames ago (when EGL can
     /// say), so it is drawn again where this frame and the ones since
-    /// changed it. A picture handed over again under the same name may be
-    /// anywhere.
-    pub(crate) fn frame(
-        &mut self,
-        change: Change,
-        pending: &egui::TexturesDelta,
-        pixels_per_point: f32,
-    ) -> Frame {
-        let replaced = pending.set.iter().any(|(id, deltas)| {
-            self.painter.texture(*id).is_some() || deltas.iter().any(|d| d.pos.is_some())
-        });
+    /// changed it. Where a picture handed over again is sampled is in
+    /// `change` ([`GlPainter::resampled`]).
+    pub(crate) fn frame(&mut self, change: Change, pixels_per_point: f32) -> Frame {
         let Some(gw) = self.window.as_mut() else {
             return Frame::Whole;
         };
@@ -424,7 +448,6 @@ impl GlPainter {
         };
         // What this frame changes, and the clip whose pixels it moves.
         let (now, scroll) = match change {
-            _ if replaced => (None, None),
             Change::None => {
                 // What changes next may be small.
                 gw.whole_for = 0;
@@ -535,6 +558,9 @@ impl GlPainter {
         // freed only once the frame that may still use them is drawn.
         for (id, deltas) in pending.set.drain() {
             for delta in deltas {
+                if delta.pos.is_none() {
+                    self.sizes.insert(id, delta.image.size());
+                }
                 self.painter.set_texture(id, &delta);
             }
         }
@@ -543,7 +569,7 @@ impl GlPainter {
         let part = match frame {
             Frame::Nothing => {
                 // Only the pictures: nothing is shown.
-                free_pending(&mut self.painter, pending);
+                free_pending(&mut self.painter, &mut self.sizes, pending);
                 return Steps {
                     upload,
                     ..Steps::default()
@@ -595,7 +621,7 @@ impl GlPainter {
             pixels_per_point,
             backdrop.iter().chain(primitives),
         );
-        free_pending(&mut self.painter, pending);
+        free_pending(&mut self.painter, &mut self.sizes, pending);
         keep(&self.gl.glow, gw);
         let drawn = Instant::now();
         window.pre_present_notify();
@@ -628,14 +654,20 @@ impl GlPainter {
             return;
         }
         for id in std::mem::take(&mut pending.free) {
+            self.sizes.remove(&id);
             self.painter.free_texture(id);
         }
     }
 }
 
 /// Gives back the pictures `pending` frees, on the current context.
-fn free_pending(painter: &mut egui_glow::Painter, pending: &mut egui::TexturesDelta) {
+fn free_pending(
+    painter: &mut egui_glow::Painter,
+    sizes: &mut HashMap<egui::TextureId, [usize; 2]>,
+    pending: &mut egui::TexturesDelta,
+) {
     for id in std::mem::take(&mut pending.free) {
+        sizes.remove(&id);
         painter.free_texture(id);
     }
 }
