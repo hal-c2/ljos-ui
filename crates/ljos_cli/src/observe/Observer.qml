@@ -90,6 +90,12 @@ ApplicationWindow {
     // functions.
     property var waiting: ({})
 
+    // The name the traces started here are held by: the inspector stops
+    // them once this window no longer watches the application, as when
+    // it is closed.
+    readonly property string holder: "observer " + Date.now().toString(36)
+        + Math.floor(Math.random() * 1e9).toString(36)
+
     function ask(tool, args, route) {
         var serial = client.call(tool, JSON.stringify(args || {}))
         var next = waiting
@@ -180,14 +186,18 @@ ApplicationWindow {
         // When the last answer said nothing changed.
         property string quietSince: ""
 
+        // Paused, it still watches, so that the traces it holds stay, and
+        // shows nothing until followed again.
+        property bool missed: false
+
         function start() {
-            if (waiting || !live)
+            if (waiting)
                 return
             waiting = true
             var args = counts === null ? {}
                 : { since: { paints: counts.paints, logs: counts.logs, reloads: counts.reloads,
                             traces: counts.traces },
-                    wait_ms: 30000, settle_ms: 1000 }
+                    wait_ms: 30000, settle_ms: 1000, holder: window.holder }
             window.ask("app_watch", args, "watch")
         }
 
@@ -201,6 +211,11 @@ ApplicationWindow {
             }
             var first = counts === null
             counts = s.counts
+            if (!live) {
+                missed = missed || first || s.changed.length > 0
+                start()
+                return
+            }
             if (first)
                 window.refresh()
             else if (s.changed.length > 0) {
@@ -211,7 +226,12 @@ ApplicationWindow {
             start()
         }
 
-        onLiveChanged: if (live) start()
+        onLiveChanged: {
+            if (live && missed) {
+                missed = false
+                window.refresh()
+            }
+        }
     }
 
     Timer {
@@ -2074,6 +2094,7 @@ ApplicationWindow {
                         if (handle !== undefined) {
                             a.target = handle
                             a.stop = traces(handle)
+                            a.holder = window.holder
                         } else
                             a.stop = true
                         window.ask("app_trace", a, "trace")
