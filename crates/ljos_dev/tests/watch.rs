@@ -709,7 +709,8 @@ fn a_finished_save_does_not_wait_the_quiet_time() {
         .truncate(true)
         .open(dir.join("Main.qml"))
         .unwrap();
-    file.write_all(MAIN.replace("10;", "14;").as_bytes()).unwrap();
+    file.write_all(MAIN.replace("10;", "14;").as_bytes())
+        .unwrap();
     file.flush().unwrap();
     assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
     let closed = Instant::now();
