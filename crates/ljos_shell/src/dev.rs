@@ -168,7 +168,7 @@ impl Host for ViewHost<'_> {
                 }
             }
         }
-        if let Err(e) = self.view.scene_mut().set_root(engine, new) {
+        if let Err(e) = self.view.scene_mut().replace_root(engine, new) {
             engine.log(
                 LogLevel::Warning,
                 "ljos.reload",

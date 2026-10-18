@@ -249,3 +249,50 @@ Item {
     );
     let _ = Item::X;
 }
+
+#[test]
+fn a_root_replaced_before_it_is_destroyed_gives_back_only_what_outlives_it() {
+    let e = engine();
+    let keeper = load(
+        &e,
+        r#"
+import QtQuick
+Item { Item { objectName: "guest"; visible: true } }
+"#,
+    );
+    let old = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    property int evals: 0
+    function seen() { evals++; return true }
+    Item {
+        objectName: "hidden"
+        visible: false
+        Item { objectName: "kid"; visible: seen() }
+    }
+}
+"#,
+    );
+    let new = load(&e, "import QtQuick\nItem {}\n");
+    let (guest, hidden, kid) = (
+        find(&e, keeper, "guest"),
+        find(&e, old, "hidden"),
+        find(&e, old, "kid"),
+    );
+    set(&e, guest, "parent", Value::Object(hidden));
+    let mut s = scene(&e, old, 10.0, 10.0);
+    frame(&mut s, &e);
+    assert_eq!(get(&e, guest, "visible"), Value::Bool(false));
+    assert_eq!(get(&e, kid, "visible"), Value::Bool(false));
+    let evals = num(&e, old, "evals");
+    s.replace_root(&e, new).unwrap();
+    // What the old root owns goes with it: its bindings do not run again.
+    assert_eq!(num(&e, old, "evals"), evals);
+    e.destroy_now(old);
+    // The guest outlives it, and is visible again on its own.
+    set(&e, guest, "parent", Value::Object(keeper));
+    assert_eq!(get(&e, guest, "visible"), Value::Bool(true));
+    assert_eq!(s.root(), Some(new));
+}

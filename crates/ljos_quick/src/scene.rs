@@ -434,6 +434,10 @@ pub struct QuickScene {
     platform: Option<Rc<ljos_platform::Platform>>,
     /// Whether it hears what Animators show (once per scene).
     watching_shown: bool,
+    /// The root [`QuickScene::replace_root`] lets go of, while it does:
+    /// what it owns is destroyed next and is not given back what the
+    /// scene gave it.
+    going: Option<ObjectId>,
 }
 
 impl Drop for QuickScene {
@@ -502,6 +506,7 @@ impl QuickScene {
             },
             platform: None,
             watching_shown: false,
+            going: None,
         }
     }
 
@@ -547,6 +552,18 @@ impl QuickScene {
             }
         });
         Ok(())
+    }
+
+    /// [`QuickScene::set_root`] for a host that destroys the old root
+    /// right after (a reload): the visibility and enabled state the scene
+    /// handed down to the objects that root owns are not put back, which
+    /// would run their bindings once more. Objects it shows but does not
+    /// own get theirs back as with `set_root`.
+    pub fn replace_root(&mut self, engine: &Engine, root: ObjectId) -> Result<(), EngineError> {
+        self.going = self.root;
+        let r = self.set_root(engine, root);
+        self.going = None;
+        r
     }
 
     pub fn root(&self) -> Option<ObjectId> {
@@ -1150,12 +1167,19 @@ impl QuickScene {
             entry.anchors.borrow_mut().release(engine, obj);
             let mut inh = entry.inherit.borrow_mut();
             let inh = &mut *inh;
+            let restore = RestoreMode::BindingOrValue;
+            let mut going = None;
             for (p, slot) in [
                 (Item::VISIBLE.index, &mut inh.visible),
                 (Item::ENABLED.index, &mut inh.enabled),
             ] {
                 if let Some(id) = slot.take() {
-                    let _ = engine.remove_override(obj, p, id, RestoreMode::BindingOrValue);
+                    let goes = *going.get_or_insert_with(|| {
+                        self.going.is_some_and(|root| owned_by(engine, obj, root))
+                    });
+                    if !goes {
+                        let _ = engine.remove_override(obj, p, id, restore);
+                    }
                 }
             }
         }
@@ -2834,4 +2858,16 @@ fn fingerprint(snap: &FrameSnapshot) -> u64 {
         format!("{c:?}").hash(&mut h);
     }
     h.finish()
+}
+
+/// Whether `root` is `obj` or owns it, however deep.
+fn owned_by(engine: &Engine, obj: ObjectId, root: ObjectId) -> bool {
+    let mut at = Some(obj);
+    while let Some(o) = at {
+        if o == root {
+            return true;
+        }
+        at = engine.owner(o);
+    }
+    false
 }
