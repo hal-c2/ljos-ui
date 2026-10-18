@@ -2889,3 +2889,43 @@ DECISIONs:
   every frame.
 - The AT-SPI tree update seen in the sandbox is the cua driver asking for the tree. It is not
   the app's cost.
+
+### A list's rows on llvmpipe: clears that were callbacks (2026-10-18)
+
+On Mesa's llvmpipe, listview cost 31.7 % CPU against qml6's 23.1 %. Per thread over 8 s, the
+llvmpipe threads (the fragments) were close (17.9 against 16.4 %), and the gap was Ljós's main
+thread (13.4 %) against qml6's render and GUI threads (5.1 + 4.5 %). llvmpipe does a draw's vertex
+work, binning and state checks on the thread that draws: about 45–66 k instructions a draw.
+
+**Rows were a draw each.** `fill_rects` draws an opaque rectangle as a scissored clear through a
+paint callback, and egui_glow sets its whole GL state up before and after every callback, then
+starts a new draw for what follows. Each row of the list (a full-width Rectangle and its Text) was
+a callback, its state, and a draw for its text: under callgrind (`--instr-atstart=no`, 10 s of
+scrolling), `GlPainter::paint` took 2.90 M instructions a frame, with 20 `paint_primitives` a
+frame. The clears are now a `Clear` the meshes' painter draws itself (a scissor and `glClear`),
+and each is moved back, at most 256 shapes, past the shapes whose bounds it does not touch;
+another callback stays a barrier. The rows clear first and their texts are one draw:
+`GlPainter::paint` 1.87 M a frame (−35 %), no `paint_primitives` left.
+
+Old and new binaries interleaved in one sandbox (`ljos run --mcp bench/listview.qml`, 12 s,
+`app_metrics`), medians of three: frame time p50 2.48 → 1.64 ms, mean 1.38 → 1.01 ms.
+`mise run bench listview photosurface --profile desktop --settle 3 --idle 3 --load 5 --gesture
+scroll`, `--repeat 3`, medians, load average falling 100 → 25 through the after run (72–104 before):
+
+| App | CPU scrolled %: before / after / qml6 after | fps: before / after / qml6 after |
+|---|---:|---:|
+| listview | 42.2 / 31.7 / 23.0 | 58.6 / 60.5 / 61.8 |
+| photosurface | 9.6 / 13.0 / 46.1 | 54.8 / 56.4 / 57.6 |
+
+The load moved qml6 too (26.2 → 23.0 % on listview), so the bench's CPU is not the measure of
+this change; the frame times are. photosurface scrolls at qml6's rate here for a fifth of its CPU.
+
+**For the GPU path (H2), not done here.** Per frame on the main thread, after this change:
+
+- Each draw still costs the driver's validation; listview has about 20 a frame (the clip and the
+  glyph atlas against pictures split them). Fewer, larger draws help any driver.
+- Every paint callback other than a clear still makes egui_glow set up its whole state twice.
+- `swap_buffers_with_damage` costs about 260 k instructions a frame, and the vertex and index
+  uploads about 130 k a call.
+- The scene: a delegate made costs about 115 k instructions in polish, reconcile and adopt, and its
+  Text's polish about 101 k; the bench makes and drops about eight a frame at 60 frames a second.
