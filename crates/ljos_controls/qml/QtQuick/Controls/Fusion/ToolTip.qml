@@ -31,6 +31,17 @@ T.ToolTip {
         Rectangle {
             color: control.palette.toolTipBase
             border.color: control.palette.toolTipText
+
+            // A shadow a pixel down and to the right.
+            Rectangle {
+                x: 1
+                y: 1
+                z: -1
+                width: parent.width
+                height: parent.height
+                color: control.palette.shadow
+                opacity: 0.5
+            }
         }
     }
 }

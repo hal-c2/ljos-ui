@@ -41,6 +41,17 @@ T.Menu {
             implicitHeight: 20
             color: control.palette.base
             border.color: Qt.darker(control.palette.window, 1.4)
+
+            // A faint shadow a pixel down and to the right.
+            Rectangle {
+                x: 1
+                y: 1
+                z: -1
+                width: parent.width
+                height: parent.height
+                color: control.palette.shadow
+                opacity: 0.2
+            }
         }
     }
 }

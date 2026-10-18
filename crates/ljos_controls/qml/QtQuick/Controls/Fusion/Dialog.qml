@@ -24,6 +24,19 @@ T.Dialog {
             color: control.palette.window
             border.color: control.palette.mid
             radius: 2
+
+            // A shadow a pixel in from each edge, so it stays behind the
+            // dialog: what qml6 has.
+            Rectangle {
+                x: 1
+                y: 1
+                z: -1
+                width: parent.width - 2
+                height: parent.height - 2
+                radius: parent.radius
+                color: control.palette.shadow
+                opacity: 0.2
+            }
         }
     }
 
