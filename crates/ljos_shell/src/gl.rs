@@ -730,42 +730,98 @@ fn keep(gl: &glow::Context, gw: &mut GlWindow) {
 struct Kept {
     px: Px,
     framebuffer: glow::Framebuffer,
-    pixels: glow::Renderbuffer,
+    pixels: Pixels,
     /// Whether they are what the last frame drew there.
     drawn: bool,
     /// Frames drawn since the last that moved them.
     idle: u32,
 }
 
+/// What a [`Kept`] clip's pixels are held in.
+///
+/// A software rasteriser copies between buffers byte for byte only when
+/// they share a format and an orientation; otherwise it runs a shader over
+/// every pixel, which on llvmpipe costs more than drawing the clip anew. A
+/// window's buffer is BGRA and bottom-up, so where the driver can hold BGRA
+/// the clip is kept so, upside down; a plain RGBA buffer is the fallback.
+enum Pixels {
+    Bgra(glow::Texture),
+    Rgba(glow::Renderbuffer),
+}
+
 impl Kept {
     fn new(gl: &glow::Context, px: Px) -> Option<Kept> {
-        let [x0, y0, x1, y1] = px.0;
+        let [w, h] = [(px.0[2] - px.0[0]) as i32, (px.0[3] - px.0[1]) as i32];
         // SAFETY: the context is current; the framebuffer bound is put
         // back to the window's before anything else draws.
         unsafe {
-            let pixels = gl.create_renderbuffer().ok()?;
-            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(pixels));
-            gl.renderbuffer_storage(
-                glow::RENDERBUFFER,
-                glow::RGBA8,
-                (x1 - x0) as i32,
-                (y1 - y0) as i32,
-            );
-            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
-            let Ok(framebuffer) = gl.create_framebuffer() else {
-                gl.delete_renderbuffer(pixels);
-                return None;
-            };
+            let framebuffer = gl.create_framebuffer().ok()?;
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-            gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::RENDERBUFFER,
-                Some(pixels),
-            );
+            let mut pixels = None;
+            // Not every driver takes BGRA as a texture's own format; one
+            // that does not says so in an error, and the clip is RGBA.
+            if let Ok(t) = gl.create_texture() {
+                for _ in 0..8 {
+                    if gl.get_error() == glow::NO_ERROR {
+                        break;
+                    }
+                }
+                gl.bind_texture(glow::TEXTURE_2D, Some(t));
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::BGRA as i32,
+                    w,
+                    h,
+                    0,
+                    glow::BGRA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(None),
+                );
+                gl.bind_texture(glow::TEXTURE_2D, None);
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    Some(t),
+                    0,
+                );
+                if gl.get_error() == glow::NO_ERROR
+                    && gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE
+                {
+                    pixels = Some(Pixels::Bgra(t));
+                } else {
+                    gl.framebuffer_texture_2d(
+                        glow::FRAMEBUFFER,
+                        glow::COLOR_ATTACHMENT0,
+                        glow::TEXTURE_2D,
+                        None,
+                        0,
+                    );
+                    gl.delete_texture(t);
+                }
+            }
+            if pixels.is_none()
+                && let Ok(r) = gl.create_renderbuffer()
+            {
+                gl.bind_renderbuffer(glow::RENDERBUFFER, Some(r));
+                gl.renderbuffer_storage(glow::RENDERBUFFER, glow::RGBA8, w, h);
+                gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+                gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::RENDERBUFFER,
+                    Some(r),
+                );
+                pixels = Some(Pixels::Rgba(r));
+            }
             let complete =
                 gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            let Some(pixels) = pixels else {
+                gl.delete_framebuffer(framebuffer);
+                return None;
+            };
             let kept = Kept {
                 px,
                 framebuffer,
@@ -785,6 +841,7 @@ impl Kept {
     /// Takes the clip's pixels from the window's buffer, drawn.
     fn copy_from(&mut self, gl: &glow::Context, size: [u32; 2]) {
         let [w, h] = self.size();
+        let flip = self.upside_down();
         let r = self.px.egl(size);
         // SAFETY: as in `new`; a copy is not scissored.
         unsafe {
@@ -797,9 +854,9 @@ impl Kept {
                 r.x + r.width,
                 r.y + r.height,
                 0,
-                0,
+                if flip { h } else { 0 },
                 w,
-                h,
+                if flip { 0 } else { h },
                 glow::COLOR_BUFFER_BIT,
                 glow::NEAREST,
             );
@@ -821,6 +878,7 @@ impl Kept {
         }
         let [x0, y0, ..] = self.px.0.map(|v| v as i32);
         let height = size[1] as i32;
+        let flip = self.upside_down();
         // SAFETY: as in `copy_from`.
         unsafe {
             gl.disable(glow::SCISSOR_TEST);
@@ -828,9 +886,9 @@ impl Kept {
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
             gl.blit_framebuffer(
                 sx0,
-                h - sy1,
+                if flip { sy1 } else { h - sy1 },
                 sx1,
-                h - sy0,
+                if flip { sy0 } else { h - sy0 },
                 x0 + sx0 + dx,
                 height - (y0 + sy1 + dy),
                 x0 + sx1 + dx,
@@ -842,6 +900,13 @@ impl Kept {
         }
     }
 
+    /// Whether the clip is kept top row first, as the window's buffer is
+    /// not: only a BGRA clip, which a software rasteriser then copies as it
+    /// is, row by row.
+    fn upside_down(&self) -> bool {
+        matches!(self.pixels, Pixels::Bgra(_))
+    }
+
     fn size(&self) -> [i32; 2] {
         let [x0, y0, x1, y1] = self.px.0;
         [(x1 - x0) as i32, (y1 - y0) as i32]
@@ -851,7 +916,10 @@ impl Kept {
         // SAFETY: the context is current; nothing draws with them after.
         unsafe {
             gl.delete_framebuffer(self.framebuffer);
-            gl.delete_renderbuffer(self.pixels);
+            match self.pixels {
+                Pixels::Bgra(t) => gl.delete_texture(t),
+                Pixels::Rgba(r) => gl.delete_renderbuffer(r),
+            }
         }
     }
 }
