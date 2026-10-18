@@ -688,6 +688,18 @@ impl HostObjects for EngineHost {
         Ok(engine.to_js(&out.map_err(host_err)?))
     }
 
+    fn method_face<'js>(
+        &self,
+        scope: &Scope<'js>,
+        obj: u64,
+        method: u32,
+    ) -> ljos_js::MethodFace<'js> {
+        match self.engine() {
+            Ok(engine) => engine.method_face(scope, u64_to_obj(obj), MethodIndex(method)),
+            Err(_) => ljos_js::MethodFace::Call { keep: true },
+        }
+    }
+
     fn emit<'js>(
         &self,
         scope: &Scope<'js>,

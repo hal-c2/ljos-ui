@@ -44,6 +44,7 @@ use crate::types::{TypeTag, Url};
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
 
+pub(crate) mod direct_methods;
 pub(crate) mod dynamic;
 pub(crate) mod reload;
 pub(crate) mod scripts;
@@ -1428,6 +1429,9 @@ impl Engine {
         };
         let noted = tier1::Noted::of(inst, f.expr);
         let code = self.reload_code(inst, f.expr);
+        if let reload::in_place::Code::Fixed(i, e) = &code {
+            self.set_direct_method(id, m, i.clone(), *e);
+        }
         let _ = self.set_script_method(
             id,
             m,

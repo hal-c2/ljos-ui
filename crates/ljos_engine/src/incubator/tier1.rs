@@ -569,6 +569,34 @@ pub(super) fn passed(e: &Engine, v: Value) -> Value {
     }
 }
 
+/// Whether `v` holds a `-0`, itself or as a field. A method called from a
+/// script may be a script function of its own (`direct_methods`), which
+/// is given the zero with its sign; a register crossing the engine would
+/// lose it, so a run with one gives way to JavaScript.
+pub(super) fn signed_zero(v: &Value) -> bool {
+    match v {
+        Value::Real(r) => negative_zero(*r),
+        Value::Map(fields) => fields.iter().any(|(_, v)| signed_zero(v)),
+        Value::Point(p) => negative_zero(p.x) || negative_zero(p.y),
+        Value::Size(s) => negative_zero(s.width) || negative_zero(s.height),
+        Value::Rect(r) => [r.x, r.y, r.width, r.height].into_iter().any(negative_zero),
+        Value::Font(f) => [f.point_size, f.letter_spacing, f.word_spacing]
+            .into_iter()
+            .any(negative_zero),
+        Value::Vector2d(q) => [q.x, q.y].into_iter().any(|x| negative_zero(f64::from(x))),
+        Value::Vector3d(q) => [q.x, q.y, q.z]
+            .into_iter()
+            .any(|x| negative_zero(f64::from(x))),
+        Value::Vector4d(q) => [q.x, q.y, q.z, q.w]
+            .into_iter()
+            .any(|x| negative_zero(f64::from(x))),
+        Value::Quaternion(q) => [q.scalar, q.x, q.y, q.z]
+            .into_iter()
+            .any(|x| negative_zero(f64::from(x))),
+        _ => false,
+    }
+}
+
 /// Whether there is a JS value in `v`, itself or in a list.
 pub(super) fn has_js(v: &Value) -> bool {
     match v {

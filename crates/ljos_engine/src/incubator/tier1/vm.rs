@@ -13,7 +13,7 @@ use std::rc::{Rc, Weak};
 use ljos_ir::{Arg, Binding, BindingKind, ExprId, Op, Tier1};
 use smallvec::SmallVec;
 
-use super::{MethodFn, Program, builtins, has_js, normal, ops, passed};
+use super::{MethodFn, Program, builtins, has_js, normal, ops, passed, signed_zero};
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{MethodIndex, ObjectId, PropIndex};
@@ -80,6 +80,9 @@ impl Run<'_> {
                 Op::Move { dst, src } => r[usize::from(dst)] = r[usize::from(src)].clone(),
                 Op::Pass { reg } => {
                     let v = std::mem::take(&mut r[usize::from(reg)]);
+                    if signed_zero(&v) {
+                        return None;
+                    }
                     r[usize::from(reg)] = passed(self.e, v);
                 }
                 Op::Param { dst, param } => r[usize::from(dst)] = self.param(param)?,

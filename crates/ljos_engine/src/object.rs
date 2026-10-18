@@ -443,6 +443,13 @@ pub(crate) struct BindingLoc {
 pub(crate) struct ObjectExt {
     pub(crate) aliases: Vec<(PropIndex, AliasTarget)>,
     pub(crate) methods: Vec<(MethodIndex, ScriptMethod)>,
+    /// The code of each of `methods` a script may call without the host
+    /// in between (incubator/direct_methods.rs).
+    pub(crate) direct: Vec<(
+        MethodIndex,
+        std::rc::Rc<crate::incubator::Instance>,
+        ljos_ir::ExprId,
+    )>,
     pub(crate) location: Option<Location>,
     /// Where the binding of each property was written, for binding-loop
     /// messages.
