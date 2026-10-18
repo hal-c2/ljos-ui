@@ -47,6 +47,9 @@ pub struct TypeDef {
     pub signals: Vec<SignalDef>,
     /// Prints as a plain object (`[object Object]`), not as a QObject.
     pub plain: bool,
+    /// The type whose prototype this one's inherits: what that one has is
+    /// read through it, and only what differs is given here.
+    pub base: Option<HostTypeId>,
 }
 
 /// Failure of a host callback.

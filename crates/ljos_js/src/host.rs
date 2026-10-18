@@ -1514,38 +1514,25 @@ impl JsHost {
             for sig in &def.signals {
                 install_signal(&proto, weak.clone(), sig)?;
             }
-            if def.plain {
-                return Ok(Persistent::save(&scope.ctx, proto));
+            if let Some(base) = def.base {
+                let base = self
+                    .state
+                    .types
+                    .borrow()
+                    .get(base.0 as usize)
+                    .cloned()
+                    .flatten();
+                let Some(base) = base else {
+                    return Err(rquickjs::Exception::throw_message(
+                        &scope.ctx,
+                        "stale type handle",
+                    ));
+                };
+                proto.set_prototype(Some(&base.restore(&scope.ctx)?))?;
             }
-            let name = def.name.clone();
-            // As Qt prints an object: its class, its address, and its
-            // objectName when it has one.
-            let to_string = Function::new(
-                scope.ctx.clone(),
-                move |ctx: Ctx<'_>, This(this): This<Class<'_, HostWrapper>>| -> String {
-                    let id = this.borrow().id;
-                    let named = match this.get::<_, Value>("objectName") {
-                        Ok(v) => v
-                            .as_string()
-                            .and_then(|s| s.to_string().ok())
-                            .filter(|s| !s.is_empty()),
-                        // A destroyed object has no name to read.
-                        Err(_) => {
-                            let _ = ctx.catch();
-                            None
-                        }
-                    };
-                    match named {
-                        Some(n) => format!("{name}({id:#x}, \"{n}\")"),
-                        None => format!("{name}({id:#x})"),
-                    }
-                },
-            )?
-            .with_name("toString")?;
-            proto.prop(
-                "toString",
-                Property::from(to_string).writable().configurable(),
-            )?;
+            if !def.plain && !def.name.is_empty() {
+                install_to_string(&scope.ctx, &proto, def.name.clone())?;
+            }
             Ok(Persistent::save(&scope.ctx, proto))
         })?;
         let mut types = self.state.types.borrow_mut();
@@ -1562,6 +1549,25 @@ impl JsHost {
         Ok(HostTypeId(
             u32::try_from(slot).expect("type count fits u32"),
         ))
+    }
+
+    /// Gives the type `id`, registered with no name, the name an object of
+    /// it prints with.
+    pub fn name_type(&self, id: HostTypeId, name: &str) -> Result<(), JsFault> {
+        let proto = self
+            .state
+            .types
+            .borrow()
+            .get(id.0 as usize)
+            .cloned()
+            .flatten();
+        let Some(proto) = proto else {
+            return Ok(());
+        };
+        let name = name.to_owned();
+        self.enter("name_type", self.cfg.load_slice, |scope| {
+            install_to_string(&scope.ctx, &proto.restore(&scope.ctx)?, name)
+        })
     }
 
     /// Lets go of the prototype of `id`, for a type no object will have
@@ -2588,6 +2594,42 @@ fn panic_message(p: &(dyn Any + Send)) -> String {
         .map(|s| (*s).to_owned())
         .or_else(|| p.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "<non-string panic>".into())
+}
+
+/// As Qt prints an object: its class, its address, and its objectName when
+/// it has one.
+fn install_to_string<'js>(
+    ctx: &Ctx<'js>,
+    proto: &Object<'js>,
+    name: String,
+) -> rquickjs::Result<()> {
+    let to_string = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'_>, This(this): This<Class<'_, HostWrapper>>| -> String {
+            let id = this.borrow().id;
+            let named = match this.get::<_, Value>("objectName") {
+                Ok(v) => v
+                    .as_string()
+                    .and_then(|s| s.to_string().ok())
+                    .filter(|s| !s.is_empty()),
+                // A destroyed object has no name to read.
+                Err(_) => {
+                    let _ = ctx.catch();
+                    None
+                }
+            };
+            match named {
+                Some(n) => format!("{name}({id:#x}, \"{n}\")"),
+                None => format!("{name}({id:#x})"),
+            }
+        },
+    )?
+    .with_name("toString")?;
+    proto.prop(
+        "toString",
+        Property::from(to_string).writable().configurable(),
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

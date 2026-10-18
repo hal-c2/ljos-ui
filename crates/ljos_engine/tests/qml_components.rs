@@ -620,3 +620,47 @@ fn a_url_is_resolved_against_the_file_that_declares_the_object() {
     let again = e.resolve_url(inner, "Part.qml");
     assert!(e.create_from_url(&again, Some(main), Vec::new()).is_ok());
 }
+
+/// A type's prototype inherits its base's, so the first object of a type
+/// made from another builds only what the type adds, and every type made
+/// from the same base shares the base's.
+#[test]
+fn a_type_s_first_object_builds_only_what_its_type_adds() {
+    let h = engine();
+    h.files(&[
+        (
+            "Base",
+            "import QtQuick\nItem { property int alpha: 1\n function hello() { return 'hi' }\n signal rang }\n",
+        ),
+        (
+            "One",
+            "import QtQuick\nBase { property int omega: 2\n function bye() { return alpha + omega } }\n",
+        ),
+        (
+            "Two",
+            "import QtQuick\nBase { property int alpha: 5\n function hello() { return 'own' } }\n",
+        ),
+        (
+            "Main",
+            r#"import QtQuick
+Item {
+    One { id: one }
+    Two { id: two }
+    function shape() {
+        var own = (o) => Object.getOwnPropertyNames(Object.getPrototypeOf(o)).sort().join(",");
+        var base = (o) => Object.getPrototypeOf(Object.getPrototypeOf(o));
+        return [own(one), own(two), base(one) === base(two),
+                one.bye(), one.hello(), two.alpha, two.hello(), typeof two.rang,
+                String(one).replace(/\(.*/, "")].join(" ")
+    }
+}
+"#,
+        ),
+    ]);
+    let root = h.engine.create_from_url("Main", None, vec![]).unwrap();
+    let shape = h.engine.invoke_by_name(root, "shape", &[]).unwrap();
+    assert_eq!(
+        shape.to_js_string().to_string(),
+        "bye,omega,omegaChanged,toString alpha,alphaChanged,hello,toString true 3 hi 5 own function One_QMLTYPE_1"
+    );
+}

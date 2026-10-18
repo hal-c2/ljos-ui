@@ -227,7 +227,10 @@ pub(crate) struct JsState {
     pub(crate) host: JsHost,
     /// Prototype per type description; the `MetaRef` keeps the pointer the
     /// key is made from alive.
-    types: RefCell<rustc_hash::FxHashMap<usize, (MetaRef, HostTypeId)>>,
+    /// The prototype of each type a script has met, and whether it is
+    /// named yet: a base registered for the types made from it is named
+    /// when an object of its own is first given to a script.
+    types: RefCell<rustc_hash::FxHashMap<usize, (MetaRef, HostTypeId, bool)>>,
     /// The number each type QML declares prints with, by description.
     numbers: RefCell<rustc_hash::FxHashMap<usize, usize>>,
     /// How many numbers were given: one let go of is not given again.
@@ -331,7 +334,7 @@ impl JsState {
         loop {
             let mut gone = Vec::new();
             // A description holds its base: the base goes in a later round.
-            self.types.borrow_mut().retain(|key, (meta, id)| {
+            self.types.borrow_mut().retain(|key, (meta, id, _)| {
                 let held = match meta {
                     MetaRef::Static(_) => true,
                     MetaRef::Shared(m) => Arc::strong_count(m) > 1,
@@ -353,14 +356,50 @@ impl JsState {
     }
 
     fn type_id(&self, engine: &Engine, meta: &MetaRef) -> Result<HostTypeId, JsFault> {
+        self.prototype(engine, meta, true)
+    }
+
+    /// The prototype of `meta`'s objects. It inherits its base's, so a
+    /// type's first object builds only what its type adds; `named`, the
+    /// name it prints with too. Only a type of its own is numbered
+    /// ([`JsState::printed`]), in the order scripts first meet its objects.
+    fn prototype(
+        &self,
+        engine: &Engine,
+        meta: &MetaRef,
+        named: bool,
+    ) -> Result<HostTypeId, JsFault> {
         let key = std::ptr::from_ref::<crate::meta::MetaObject>(meta) as usize;
-        if let Some((_, id)) = self.types.borrow().get(&key) {
-            return Ok(*id);
+        let known = self.types.borrow().get(&key).map(|(_, id, n)| (*id, *n));
+        if let Some((id, was_named)) = known {
+            if named && !was_named {
+                if !meta.plain_object {
+                    self.host.name_type(id, &self.printed(meta))?;
+                }
+                if let Some(e) = self.types.borrow_mut().get_mut(&key) {
+                    e.2 = true;
+                }
+            }
+            return Ok(id);
         }
-        let mut def = type_def(engine, meta);
-        def.name = self.printed(meta);
+        let base = match meta.base.as_ref().filter(|b| extends(meta, b)) {
+            Some(b) => Some(self.prototype(engine, b, false)?),
+            None => None,
+        };
+        let mut def = match base {
+            Some(_) => own_type_def(meta),
+            None => type_def(engine, meta),
+        };
+        def.base = base;
+        if named {
+            def.name = self.printed(meta);
+        } else {
+            def.name.clear();
+        }
         let id = self.host.register_type(&def)?;
-        self.types.borrow_mut().insert(key, (meta.clone(), id));
+        self.types
+            .borrow_mut()
+            .insert(key, (meta.clone(), id, named));
         Ok(id)
     }
 }
@@ -397,6 +436,45 @@ fn qt_class(meta: &crate::meta::MetaObject) -> String {
     }
 }
 
+/// Whether `meta` is the type `name` or inherits it.
+fn is(meta: &MetaRef, name: &str) -> bool {
+    let mut cur = Some(meta);
+    while let Some(m) = cur {
+        if m.name == name {
+            return true;
+        }
+        cur = m.base.as_ref();
+    }
+    false
+}
+
+/// Whether `meta`'s tables are `base`'s with its own after them, so its
+/// prototype can inherit `base`'s.
+fn extends(meta: &crate::meta::MetaObject, base: &crate::meta::MetaObject) -> bool {
+    let props = meta.property_offset as usize;
+    let signals = meta.signal_offset as usize;
+    let methods = meta.method_offset as usize;
+    meta.plain_object == base.plain_object
+        && props == base.properties.len()
+        && signals == base.signals.len()
+        && methods == base.methods.len()
+        && meta.properties.len() >= props
+        && meta.signals.len() >= signals
+        && meta.methods.len() >= methods
+        && meta.properties[..props]
+            .iter()
+            .zip(&base.properties)
+            .all(|(a, b)| Arc::ptr_eq(a, b))
+        && meta.signals[..signals]
+            .iter()
+            .zip(&base.signals)
+            .all(|(a, b)| Arc::ptr_eq(a, b))
+        && meta.methods[..methods]
+            .iter()
+            .zip(&base.methods)
+            .all(|(a, b)| a.name == b.name)
+}
+
 /// The JS shape of a type. Every property is an accessor, dotted grouped
 /// leaves included (`obj["border.width"]`), so the group proxy can reach
 /// them; a later property of the same name shadows an earlier one.
@@ -417,18 +495,7 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
             }
         }
     }
-    let is_item = {
-        let mut cur = Some(meta);
-        let mut found = false;
-        while let Some(m) = cur {
-            if m.name == "Item" {
-                found = true;
-                break;
-            }
-            cur = m.base.as_ref();
-        }
-        found
-    };
+    let is_item = is(meta, "Item");
     if !seen.contains_key("parent") && is_item {
         props.push(PropDef {
             name: "parent".into(),
@@ -481,6 +548,66 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
         methods,
         signals,
         plain: meta.plain_object,
+        base: None,
+    }
+}
+
+/// What [`type_def`] gives `meta` that its base's prototype, which this
+/// one inherits (`extends`), does not have already: its own entries that
+/// win, as there. An inherited entry that wins is the base's winner too.
+fn own_type_def(meta: &MetaRef) -> TypeDef {
+    let at = |i: usize, o: u32| u32::try_from(i).unwrap_or(u32::MAX) + o;
+    let mut props = Vec::new();
+    for (i, p) in meta.own_properties().iter().enumerate() {
+        let id = at(i, meta.property_offset);
+        if meta.property_index(&p.name) == Some(PropIndex(id))
+            && meta.method_index(&p.name).is_none()
+        {
+            props.push(PropDef {
+                name: p.name.to_string(),
+                id,
+                writable: !p.flags.contains(PropertyFlags::GROUP),
+            });
+        }
+    }
+    let base_is_item = meta.base.as_ref().is_some_and(|b| is(b, "Item"));
+    if !base_is_item && is(meta, "Item") && meta.property_index("parent").is_none() {
+        props.push(PropDef {
+            name: "parent".into(),
+            id: PARENT_ID,
+            writable: false,
+        });
+    }
+    let mut methods = Vec::new();
+    for (i, m) in meta.own_methods().iter().enumerate() {
+        let id = at(i, meta.method_offset);
+        if meta.method_index(&m.name) == Some(MethodIndex(id)) {
+            methods.push(MethodDef {
+                name: m.name.to_string(),
+                id,
+            });
+        }
+    }
+    let mut signals = Vec::new();
+    for (i, sig) in meta.own_signals().iter().enumerate() {
+        let id = at(i, meta.signal_offset);
+        if meta.signal_index(&sig.name) == Some(SignalIndex(id))
+            && meta.property_index(&sig.name).is_none()
+            && meta.method_index(&sig.name).is_none()
+        {
+            signals.push(SignalDef {
+                name: sig.name.to_string(),
+                id,
+            });
+        }
+    }
+    TypeDef {
+        name: meta.name.to_string(),
+        props,
+        methods,
+        signals,
+        plain: meta.plain_object,
+        base: None,
     }
 }
 
