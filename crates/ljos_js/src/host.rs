@@ -18,9 +18,12 @@ use rquickjs::{
 use rustc_hash::FxHashMap;
 use slotmap::{SlotMap, new_key_type};
 
+mod direct;
+pub use direct::{DirectCall, DirectParam};
+
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
+    MethodFace, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
     objects::HostWrapper,
     value::{Pending, WeakRef},
 };
@@ -89,6 +92,9 @@ pub(crate) struct HostState {
     color: RefCell<Option<ColorFace>>,
     /// Indexed by [`ValueKind`].
     kinds: RefCell<Vec<KindFace>>,
+    /// What makes a direct method, by the shape of its parameters
+    /// (direct.rs).
+    direct: RefCell<FxHashMap<String, Persistent<Function<'static>>>>,
 }
 
 /// One JS value held for Rust.
@@ -1144,6 +1150,7 @@ impl Drop for JsHost {
         self.state.color.borrow_mut().take();
         self.state.owned_face.borrow_mut().take();
         self.state.kinds.borrow_mut().clear();
+        self.state.direct.borrow_mut().clear();
     }
 }
 
@@ -1213,6 +1220,7 @@ impl JsHost {
             handle_release: Arc::default(),
             color: RefCell::default(),
             kinds: RefCell::default(),
+            direct: RefCell::default(),
         });
         Ok(Self {
             state,
@@ -1911,8 +1919,16 @@ fn install_method<'js>(
                        This(this): This<Class<'js, HostWrapper>>|
           -> rquickjs::Result<Value<'js>> {
         let id = this.borrow().id;
-        let f = make_method(&ctx, state.clone(), id, method, &key)?;
-        if let Some(o) = this.as_object() {
+        let (scope, host) = callback_scope(&ctx, &state)?;
+        // What the getter gives is the object's from now on, unless the
+        // host says it may give another later.
+        let (f, keep) = match host.method_face(&scope, id, method) {
+            MethodFace::Direct(f) => (f, true),
+            MethodFace::Call { keep } => {
+                (make_method(&ctx, state.clone(), id, method, &key)?, keep)
+            }
+        };
+        if keep && let Some(o) = this.as_object() {
             o.prop(
                 key.as_str(),
                 Property::from(f.clone()).writable().configurable(),

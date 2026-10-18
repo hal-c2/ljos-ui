@@ -39,8 +39,10 @@ pub use ahead::compile_ahead;
 pub use bytecode::{Bytecode, BytecodeOptions};
 pub use config::{JsConfig, Slice};
 pub use fault::{JsFault, SourceMapper, SourceText};
-pub use host::{FnId, HostFn, JsHost, MemoryStats, ModuleHandle, Scope};
-pub use objects::{HostError, HostObjects, HostTypeId, MethodDef, PropDef, SignalDef, TypeDef};
+pub use host::{DirectCall, DirectParam, FnId, HostFn, JsHost, MemoryStats, ModuleHandle, Scope};
+pub use objects::{
+    HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PropDef, SignalDef, TypeDef,
+};
 pub use value::{JsArg, JsOut, JsRef, JsValue, ValueKind};
 
 /// Re-export so callers write closures against the exact rquickjs we link.

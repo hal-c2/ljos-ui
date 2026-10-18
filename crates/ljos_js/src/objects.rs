@@ -83,6 +83,18 @@ impl HostError {
     }
 }
 
+/// What a script reads for a method of an object
+/// ([`HostObjects::method_face`]).
+#[derive(Debug)]
+pub enum MethodFace<'js> {
+    /// A function of the script's own to call instead, usually made with
+    /// [`Scope::direct_method`]. The object keeps it.
+    Direct(rquickjs::Function<'js>),
+    /// A function that calls [`HostObjects::call`]. `keep`: the object
+    /// keeps it; otherwise the next read asks again.
+    Call { keep: bool },
+}
+
 /// What the Engine implements so that JS accessors reach the object store.
 ///
 /// Methods take `&self` because they run while the Engine is mid-dispatch;
@@ -116,6 +128,11 @@ pub trait HostObjects {
         method: u32,
         args: &[JsArg],
     ) -> Result<JsOut, HostError>;
+
+    /// What a script reads for `obj.method`, the first time it reads it.
+    fn method_face<'js>(&self, _scope: &Scope<'js>, _obj: u64, _method: u32) -> MethodFace<'js> {
+        MethodFace::Call { keep: true }
+    }
 
     /// `obj.signal(args)` from JS.
     fn emit<'js>(
