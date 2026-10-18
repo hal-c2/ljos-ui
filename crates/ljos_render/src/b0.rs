@@ -1400,43 +1400,70 @@ fn image_segs(
         let [r, g, b, _] = t.to_straight_u8();
         Color32::from_rgb(r, g, b)
     });
-    let (mut clamp, mut repeat) = (Mesh::default(), Mesh::default());
+    let key = |repeat| TextureKey {
+        image: image.id(),
+        smooth,
+        repeat,
+        mipmap: false,
+    };
+    // Clamped quads are made right in the mesh of the segment they would
+    // join: a particle system draws each of hundreds of pictures alone,
+    // and a mesh of its own for each, appended and freed, was most of
+    // what drawing them cost.
+    let taken = match segs.last_mut() {
+        Some(LocalSeg::Image(last)) if last.key == key(false) => {
+            Arc::get_mut(&mut last.mesh).map(std::mem::take)
+        }
+        _ => None,
+    };
+    let joined = taken.is_some();
+    let mut clamp = taken.unwrap_or_default();
+    let from = clamp.vertices.len();
+    let mut repeat = Mesh::default();
     let mut complete = true;
     for blit in blits {
         complete &= blit_quads(blit, size, smooth, &mut clamp, &mut repeat);
     }
-    for (mut mesh, repeat) in [(clamp, false), (repeat, true)] {
-        if mesh.is_empty() {
-            continue;
-        }
+    let colour = |vertices: &mut [Vertex]| {
         if let Some(tint) = tint {
-            for v in &mut mesh.vertices {
+            for v in &mut *vertices {
                 v.color = tint;
             }
         }
         if opacity < 1.0 {
-            for v in &mut mesh.vertices {
+            for v in vertices {
                 v.color = v.color.gamma_multiply(opacity);
             }
         }
-        let key = TextureKey {
-            image: image.id(),
-            smooth,
-            repeat,
-            mipmap: false,
-        };
+    };
+    colour(&mut clamp.vertices[from..]);
+    if joined {
         if let Some(LocalSeg::Image(last)) = segs.last_mut()
-            && last.key == key
+            && let Some(mesh) = Arc::get_mut(&mut last.mesh)
+        {
+            *mesh = clamp;
+        }
+    } else if !clamp.is_empty() {
+        segs.push(LocalSeg::Image(ImageSeg {
+            key: key(false),
+            image: image.downgrade(),
+            mesh: Arc::new(clamp),
+        }));
+    }
+    if !repeat.is_empty() {
+        colour(&mut repeat.vertices);
+        if let Some(LocalSeg::Image(last)) = segs.last_mut()
+            && last.key == key(true)
             && let Some(joined) = Arc::get_mut(&mut last.mesh)
         {
-            joined.append(mesh);
-            continue;
+            joined.append(repeat);
+        } else {
+            segs.push(LocalSeg::Image(ImageSeg {
+                key: key(true),
+                image: image.downgrade(),
+                mesh: Arc::new(repeat),
+            }));
         }
-        segs.push(LocalSeg::Image(ImageSeg {
-            key,
-            image: image.downgrade(),
-            mesh: Arc::new(mesh),
-        }));
     }
     complete
 }
