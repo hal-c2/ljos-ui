@@ -65,21 +65,7 @@ impl Rectangle {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let obj = cx.this;
         let e = cx.engine;
-        // Most rectangles are square and stay so: while no radius has a
-        // value, the corners and `antialiasing` already read what their
-        // bindings would give, so one effect waits for the first radius in
-        // place of five bindings on every rectangle.
-        if RADII.iter().all(|&r| is_unset(e, obj, r)) {
-            e.effect_in(obj, move |e| {
-                if RADII.iter().any(|&r| e.read(obj, r).to_number() != 0.0)
-                    && let Err(err) = e.untrack(|| follow_radius(e, obj))
-                {
-                    e.log(LogLevel::Warning, "qml", format!("Rectangle: {err}"));
-                }
-            })?;
-        } else {
-            follow_radius(e, obj)?;
-        }
+        follow_radius(e, obj)?;
         // What is not a gradient is refused when it is assigned, as Qt
         // does, and not each time the rectangle is painted: what was given
         // before now, here, and later writes by `gradient_written`.
@@ -102,15 +88,22 @@ const RADII: [ljos_engine::PropIndex; 5] = [
 
 /// Binds each corner that has no value of its own to `radius`, and
 /// `antialiasing`, while it is not assigned, to whether any is rounded.
+/// Each binding is made when something first reads or watches the
+/// property: painting works the same out for itself, so most rectangles
+/// never have them.
 fn follow_radius(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     for &corner in &RADII[1..] {
         if is_unset(engine, obj, corner) {
-            engine.bind(obj, corner, move |e| e.read(obj, Rectangle::RADIUS.index))?;
+            engine.bind_on_read(obj, corner, |e, obj, corner| {
+                e.bind(obj, corner, move |e| e.read(obj, Rectangle::RADIUS.index))
+            })?;
         }
     }
     if is_unset(engine, obj, Item::ANTIALIASING.index) {
-        engine.bind(obj, Item::ANTIALIASING.index, move |e| {
-            Value::Bool(RADII.iter().any(|&r| e.read(obj, r).to_number() > 0.0))
+        engine.bind_on_read(obj, Item::ANTIALIASING.index, |e, obj, aa| {
+            e.bind(obj, aa, move |e| {
+                Value::Bool(RADII.iter().any(|&r| e.read(obj, r).to_number() > 0.0))
+            })
         })?;
     }
     Ok(())
@@ -226,9 +219,9 @@ impl RectanglePaint {
                 Some(ljos_engine::Provenance::Default) | None
             )
         };
-        let corner = |p: ljos_engine::PropIndex| {
-            let v = engine.read(obj, p).to_number();
-            if assigned(p) { v } else { radius }
+        let corner = |p: ljos_engine::PropIndex| match engine.read_unless_bound_on_read(obj, p) {
+            Some(v) if assigned(p) => v.to_number(),
+            _ => radius,
         };
         let radii = [
             corner(Rectangle::TOP_LEFT_RADIUS.index),

@@ -278,10 +278,10 @@ fn rectangle_border_is_drawn_only_once_assigned() {
     assert_eq!(RectanglePaint::read(&e, r).border_width, 1.0);
 }
 
-/// A square rectangle makes no bindings for corners and `antialiasing`
-/// that would only give what they already hold; a rounded one has them.
+/// A rectangle makes no bindings for corners and `antialiasing` until
+/// something reads them, rounded or not: painting works them out itself.
 #[test]
-fn a_square_rectangle_binds_no_corners() {
+fn a_rectangle_binds_no_corners_until_they_are_read() {
     let nodes = |radius: &str| {
         let e = engine();
         let rects = format!("Rectangle {{ {radius} }}\n").repeat(20);
@@ -292,9 +292,8 @@ fn a_square_rectangle_binds_no_corners() {
     };
     let (_, _, square) = nodes("");
     let (e, root, round) = nodes("radius: 3");
-    // Four corners and `antialiasing`, less the effect that waits.
     assert!(
-        square + 20 * 4 <= round,
+        round == square,
         "{square} nodes for square rectangles, {round} for rounded"
     );
     let r = e.children(root)[0];

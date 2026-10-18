@@ -17,8 +17,14 @@ use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::value::Value;
 
-/// See [`Engine::make_on_read`].
-pub(crate) type Maker = Box<dyn FnOnce(&Engine) -> Value>;
+/// See [`Engine::make_on_read`] and [`Engine::bind_on_read`].
+pub(crate) enum Maker {
+    Value(Box<dyn FnOnce(&Engine) -> Value>),
+    Bind(BindOnRead),
+}
+
+/// Binds `prop` of `obj`; see [`Engine::bind_on_read`].
+pub type BindOnRead = fn(&Engine, ObjectId, PropIndex) -> Result<(), EngineError>;
 
 impl Engine {
     /// Makes the value of `prop` when it is next read, by `make`, instead
@@ -41,8 +47,69 @@ impl Engine {
             .ok_or_else(|| EngineError::dead(obj))?;
         let makers = &mut h.ext_mut().made_on_read;
         makers.retain(|(p, _)| *p != prop);
-        makers.push((prop, Box::new(make)));
+        makers.push((prop, Maker::Value(Box::new(make))));
         Ok(())
+    }
+
+    /// Binds `prop` by `bind` when it is first read or observed, instead
+    /// of now: a default that follows other properties costs nothing on
+    /// the many objects where nothing asks for it. Until then the property
+    /// holds the value it has, and readers of what `bind` would read are
+    /// not told about it; whoever paints from it reads the same way
+    /// ([`Engine::read_unless_bound_on_read`]). A write or a binding to the
+    /// property before that drops `bind`. Something that already observes
+    /// the property gets the binding at once.
+    pub fn bind_on_read(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        bind: BindOnRead,
+    ) -> Result<(), EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let observed = {
+            let mut store = self.inner.store.borrow_mut();
+            let h = store
+                .objects
+                .get_mut(obj)
+                .ok_or_else(|| EngineError::dead(obj))?;
+            if h.node(prop).is_some() || h.read_without_node(prop) {
+                true
+            } else {
+                let makers = &mut h.ext_mut().made_on_read;
+                makers.retain(|(p, _)| *p != prop);
+                makers.push((prop, Maker::Bind(bind)));
+                false
+            }
+        };
+        if observed {
+            bind(self, obj, prop)?;
+        }
+        Ok(())
+    }
+
+    /// Reads `prop` (tracked), or gives `None` while it is still to be
+    /// bound by [`Engine::bind_on_read`]: the reader is then told when
+    /// something is written to it, and works out the value itself.
+    pub fn read_unless_bound_on_read(&self, obj: ObjectId, prop: PropIndex) -> Option<Value> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let due = {
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .get(obj)
+                .and_then(|h| h.ext.as_ref())
+                .is_some_and(|x| {
+                    x.made_on_read
+                        .iter()
+                        .any(|(p, m)| *p == prop && matches!(m, Maker::Bind(_)))
+                })
+        };
+        if due {
+            self.keep_field_read(obj, prop);
+            None
+        } else {
+            Some(self.read(obj, prop))
+        }
     }
 
     /// Whether the value of `prop` is still to be made by a read.
@@ -109,8 +176,16 @@ impl Engine {
     /// A read of `prop` is about to happen: its value is made first if it
     /// is still to be.
     pub(crate) fn make_if_due(&self, obj: ObjectId, prop: PropIndex) {
-        let Some(make) = self.take_maker(obj, prop) else {
-            return;
+        let make = match self.take_maker(obj, prop) {
+            None => return,
+            Some(Maker::Value(make)) => make,
+            Some(Maker::Bind(bind)) => {
+                // Untracked: the binding's reads are not the reader's.
+                if let Err(err) = self.untrack(|| bind(self, obj, prop)) {
+                    self.log(crate::LogLevel::Warning, "qml", err.to_string());
+                }
+                return;
+            }
         };
         // Untracked: what the maker reads is not what the reader reads.
         let v = self.untrack(|| make(self));

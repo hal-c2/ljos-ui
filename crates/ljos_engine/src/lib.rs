@@ -70,6 +70,7 @@ mod listmodel;
 mod loader;
 mod log;
 mod made_on_read;
+pub use made_on_read::BindOnRead;
 mod made_when_reached;
 mod member_aliases;
 mod meta;

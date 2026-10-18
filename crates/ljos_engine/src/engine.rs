@@ -1915,6 +1915,13 @@ impl Engine {
             if let Some(n) = h.node(prop) {
                 return Ok(n);
             }
+            if h.binds_on_read(prop) {
+                drop(store);
+                // Observed from now on: the binding it was to get on its
+                // first read is made, with the node.
+                self.make_if_due(obj, prop);
+                return self.ensure_node(obj, prop);
+            }
             let p = h
                 .meta
                 .property(prop)
@@ -1963,7 +1970,7 @@ impl Engine {
 
     /// Keeps a tracked read of a property that has no node
     /// ([`FieldReads`]).
-    fn keep_field_read(&self, obj: ObjectId, prop: PropIndex) {
+    pub(crate) fn keep_field_read(&self, obj: ObjectId, prop: PropIndex) {
         let g = &self.inner.graph;
         let Some(r) = g.reader() else {
             return;

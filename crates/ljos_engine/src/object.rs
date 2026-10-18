@@ -361,6 +361,16 @@ impl ObjectHeader {
             .is_some_and(|x| x.made_on_read.iter().any(|(p, _)| *p == prop))
     }
 
+    /// Whether `prop` is still to be bound on its next read
+    /// ([`Engine::bind_on_read`]).
+    pub(crate) fn binds_on_read(&self, prop: PropIndex) -> bool {
+        self.ext.as_ref().is_some_and(|x| {
+            x.made_on_read
+                .iter()
+                .any(|(p, m)| *p == prop && matches!(m, crate::made_on_read::Maker::Bind(_)))
+        })
+    }
+
     pub(crate) fn set_node(&mut self, prop: PropIndex, n: NodeId) {
         let len = self.meta.properties.len();
         let nodes = self

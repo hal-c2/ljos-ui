@@ -802,9 +802,12 @@ pub fn init_item(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             }
             follow_implicit_size(engine, obj, size)?;
         }
-        // Lazy: costs nothing until something reads `childrenRect`.
-        engine.bind_initial(obj, Item::CHILDREN_RECT.index, move |e| {
-            Value::Rect(std::sync::Arc::new(children_rect(e, obj)))
+        // Made when something first reads `childrenRect`: nearly nothing
+        // does, and a binding is a node on every item.
+        engine.bind_on_read(obj, Item::CHILDREN_RECT.index, |e, obj, p| {
+            e.bind_initial(obj, p, move |e| {
+                Value::Rect(std::sync::Arc::new(children_rect(e, obj)))
+            })
         })?;
         // Assigning `parent` reparents the item.
         engine.watch(obj, Item::PARENT.index, move |e, v| {
