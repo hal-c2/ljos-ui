@@ -361,8 +361,8 @@ impl JsState {
         self.prototype(engine, meta, true)
     }
 
-    /// The prototype of `meta`'s objects. It inherits its base's, so a
-    /// type's first object builds only what its type adds; `named`, the
+    /// The prototype of `meta`'s objects. It is given its base's accessors,
+    /// so a type's first object builds only what its type adds; `named`, the
     /// name it prints with too. Only a type of its own is numbered
     /// ([`JsState::printed`]), in the order scripts first meet its objects.
     fn prototype(
@@ -451,7 +451,7 @@ fn is(meta: &MetaRef, name: &str) -> bool {
 }
 
 /// Whether `meta`'s tables are `base`'s with its own after them, so its
-/// prototype can inherit `base`'s.
+/// prototype can be given `base`'s accessors.
 fn extends(meta: &crate::meta::MetaObject, base: &crate::meta::MetaObject) -> bool {
     let props = meta.property_offset as usize;
     let signals = meta.signal_offset as usize;
@@ -554,8 +554,8 @@ fn type_def(_engine: &Engine, meta: &MetaRef) -> TypeDef {
     }
 }
 
-/// What [`type_def`] gives `meta` that its base's prototype, which this
-/// one inherits (`extends`), does not have already: its own entries that
+/// What [`type_def`] gives `meta` that its base's prototype, whose entries
+/// this one is given (`extends`), does not have already: its own entries that
 /// win, as there. An inherited entry that wins is the base's winner too.
 fn own_type_def(meta: &MetaRef) -> TypeDef {
     let at = |i: usize, o: u32| u32::try_from(i).unwrap_or(u32::MAX) + o;

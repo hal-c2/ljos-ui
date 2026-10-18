@@ -23,7 +23,7 @@ pub use direct::{DirectCall, DirectParam};
 
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
-    MethodFace, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
+    MethodDef, MethodFace, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
     objects::HostWrapper,
     value::{Pending, WeakRef},
 };
@@ -56,6 +56,9 @@ pub(crate) struct HostState {
     /// Prototype per registered type, indexed by [`HostTypeId`]; None
     /// where one was let go of, for the next type to take.
     types: RefCell<Vec<Option<Persistent<Object<'static>>>>>,
+    /// The names each prototype of [`HostState::types`] has, in the order
+    /// they were given it, for a type made from it to list them in.
+    listings: RefCell<Vec<Option<Rc<Listing>>>>,
     /// Engine-owned wrappers. Kept strongly so identity is stable and so the
     /// Engine decides when a wrapper may die ([`JsHost::drop_wrapper`]).
     wrappers: RefCell<FxHashMap<u64, Persistent<Object<'static>>>>,
@@ -1144,6 +1147,7 @@ impl Drop for JsHost {
     fn drop(&mut self) {
         self.state.fns.borrow_mut().clear();
         self.state.types.borrow_mut().clear();
+        self.state.listings.borrow_mut().clear();
         self.state.wrappers.borrow_mut().clear();
         self.state.handles.borrow_mut().clear();
         self.state.by_object.borrow_mut().clear();
@@ -1204,6 +1208,7 @@ impl JsHost {
         let state = Rc::new(HostState {
             fns: RefCell::default(),
             types: RefCell::default(),
+            listings: RefCell::default(),
             wrappers: RefCell::default(),
             host: RefCell::default(),
             released: Rc::default(),
@@ -1502,47 +1507,90 @@ impl JsHost {
     /// Registers a host type: one prototype with accessor properties whose
     /// getters and setters call [`HostObjects`].
     pub fn register_type(&self, def: &TypeDef) -> Result<HostTypeId, JsFault> {
+        let base = def.base.map(|b| {
+            let at = b.0 as usize;
+            let proto = self.state.types.borrow().get(at).cloned().flatten();
+            let listing = self.state.listings.borrow().get(at).cloned().flatten();
+            proto.zip(listing)
+        });
+        let mut listing = Listing::default();
         let proto = self.enter("register_type", self.cfg.load_slice, |scope| {
             let proto = Object::new(scope.ctx.clone())?;
             let weak = Rc::downgrade(&scope.state);
-            for p in &def.props {
+            let ctx = &scope.ctx;
+            // A base's entries are its type's too. They are listed first,
+            // as Qt lists what a base has before what a type adds; the
+            // accessors are the base's, not made again.
+            let base = match base {
+                None => None,
+                Some(None) => {
+                    return Err(rquickjs::Exception::throw_message(ctx, "stale type handle"));
+                }
+                Some(Some((p, l))) => Some((p.restore(ctx)?, l)),
+            };
+            let mut own_props: Vec<Option<&PropDef>> = def.props.iter().map(Some).collect();
+            let mut own_signals: Vec<Option<&SignalDef>> = def.signals.iter().map(Some).collect();
+            let mut own_methods: Vec<Option<&MethodDef>> = def.methods.iter().map(Some).collect();
+            fn take<'a, T>(
+                list: &mut [Option<&'a T>],
+                name: &str,
+                of: impl Fn(&T) -> &str,
+            ) -> Option<&'a T> {
+                list.iter_mut()
+                    .find(|e| e.is_some_and(|e| of(e) == name))?
+                    .take()
+            }
+            if let Some((from, names)) = &base {
+                for name in &names.props {
+                    match take(&mut own_props, name, |p| p.name.as_str()) {
+                        Some(p) => install_prop(&proto, weak.clone(), p)?,
+                        None => copy_entry(ctx, from, &proto, name)?,
+                    }
+                    listing.props.push(name.clone());
+                }
+            }
+            for p in own_props.into_iter().flatten() {
                 install_prop(&proto, weak.clone(), p)?;
+                listing.props.push(p.name.clone());
             }
-            for m in &def.methods {
-                install_method(&proto, weak.clone(), m.id, &m.name)?;
+            if let Some((from, names)) = &base {
+                for name in &names.members {
+                    if let Some(sig) = take(&mut own_signals, name, |s| s.name.as_str()) {
+                        install_signal(&proto, weak.clone(), sig)?;
+                    } else if let Some(m) = take(&mut own_methods, name, |m| m.name.as_str()) {
+                        install_method(&proto, weak.clone(), m.id, &m.name)?;
+                    } else {
+                        copy_entry(ctx, from, &proto, name)?;
+                    }
+                    listing.members.push(name.clone());
+                }
             }
-            for sig in &def.signals {
+            for sig in own_signals.into_iter().flatten() {
                 install_signal(&proto, weak.clone(), sig)?;
+                listing.members.push(sig.name.clone());
             }
-            if let Some(base) = def.base {
-                let base = self
-                    .state
-                    .types
-                    .borrow()
-                    .get(base.0 as usize)
-                    .cloned()
-                    .flatten();
-                let Some(base) = base else {
-                    return Err(rquickjs::Exception::throw_message(
-                        &scope.ctx,
-                        "stale type handle",
-                    ));
-                };
-                proto.set_prototype(Some(&base.restore(&scope.ctx)?))?;
+            for m in own_methods.into_iter().flatten() {
+                install_method(&proto, weak.clone(), m.id, &m.name)?;
+                listing.members.push(m.name.clone());
             }
             if !def.plain && !def.name.is_empty() {
-                install_to_string(&scope.ctx, &proto, def.name.clone())?;
+                install_to_string(ctx, &proto, def.name.clone())?;
             }
-            Ok(Persistent::save(&scope.ctx, proto))
+            Ok(Persistent::save(ctx, proto))
         })?;
+        let listing = Some(Rc::new(listing));
+        let mut listings = self.state.listings.borrow_mut();
         let mut types = self.state.types.borrow_mut();
         let slot = match types.iter().position(Option::is_none) {
             Some(free) => {
                 types[free] = Some(proto);
+                listings[free] = listing;
                 free
             }
             None => {
                 types.push(Some(proto));
+                listings.resize(types.len() - 1, None);
+                listings.push(listing);
                 types.len() - 1
             }
         };
@@ -1575,6 +1623,9 @@ impl JsHost {
     /// the id may be given to a type registered later.
     pub fn unregister_type(&self, id: HostTypeId) {
         if let Some(slot) = self.state.types.borrow_mut().get_mut(id.0 as usize) {
+            *slot = None;
+        }
+        if let Some(slot) = self.state.listings.borrow_mut().get_mut(id.0 as usize) {
             *slot = None;
         }
     }
@@ -2594,6 +2645,58 @@ fn panic_message(p: &(dyn Any + Send)) -> String {
         .map(|s| (*s).to_owned())
         .or_else(|| p.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "<non-string panic>".into())
+}
+
+/// The names a type's prototype was given: its properties, then its
+/// signals and methods, each a base's first.
+#[derive(Default)]
+struct Listing {
+    props: Vec<String>,
+    members: Vec<String>,
+}
+
+/// Gives `to` the entry `name` of `from` as it is: the same accessor
+/// functions, or the same value. Nothing when `from` has none.
+fn copy_entry<'js>(
+    ctx: &Ctx<'js>,
+    from: &Object<'js>,
+    to: &Object<'js>,
+    name: &str,
+) -> rquickjs::Result<()> {
+    use rquickjs::qjs;
+    let c = ctx.as_raw().as_ptr();
+    // SAFETY: the context is alive for the call and both objects are its.
+    // The descriptor's values are owned references: the define takes
+    // over those it is given, and the others are freed here.
+    unsafe {
+        let atom = qjs::JS_NewAtomLen(c, name.as_ptr().cast(), name.len() as _);
+        let mut d = std::mem::MaybeUninit::<qjs::JSPropertyDescriptor>::uninit();
+        let got = qjs::JS_GetOwnProperty(c, d.as_mut_ptr(), from.as_raw(), atom);
+        if got <= 0 {
+            qjs::JS_FreeAtom(c, atom);
+            return if got < 0 {
+                Err(rquickjs::Error::Exception)
+            } else {
+                Ok(())
+            };
+        }
+        let d = d.assume_init();
+        let kept = (qjs::JS_PROP_CONFIGURABLE | qjs::JS_PROP_ENUMERABLE) as i32;
+        let done = if d.flags & qjs::JS_PROP_GETSET as i32 != 0 {
+            qjs::JS_FreeValue(c, d.value);
+            qjs::JS_DefinePropertyGetSet(c, to.as_raw(), atom, d.getter, d.setter, d.flags & kept)
+        } else {
+            qjs::JS_FreeValue(c, d.getter);
+            qjs::JS_FreeValue(c, d.setter);
+            let kept = kept | qjs::JS_PROP_WRITABLE as i32;
+            qjs::JS_DefinePropertyValue(c, to.as_raw(), atom, d.value, d.flags & kept)
+        };
+        qjs::JS_FreeAtom(c, atom);
+        if done < 0 {
+            return Err(rquickjs::Error::Exception);
+        }
+    }
+    Ok(())
 }
 
 /// As Qt prints an object: its class, its address, and its objectName when
