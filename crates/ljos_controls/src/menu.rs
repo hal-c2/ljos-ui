@@ -35,7 +35,7 @@ use ljos_render::kurbo;
 
 use crate::action::Action;
 use crate::button::{AbstractButton, Icon};
-use crate::containers::{Page, host_append};
+use crate::containers::{Page, host_append, host_insert};
 use crate::control::{Control, focus_policy, takes_input};
 use crate::parts::{PartKind, manage_part};
 use crate::popup::{self, POPUP, Popup};
@@ -469,19 +469,33 @@ fn first_choice(engine: &Engine, menu: ObjectId) -> i32 {
 
 /// The append hook of a menu's `contentData`.
 pub(crate) fn append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
+    put(cx, child, None)
+}
+
+/// The insert hook of a menu's `contentData`: [`append`], with `child`
+/// right before the item `anchor`, or last when that is not one.
+pub(crate) fn insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    put(cx, child, Some(anchor))
+}
+
+fn put(cx: &Cx, child: ObjectId, anchor: Option<ObjectId>) -> Result<(), EngineError> {
     let (e, menu) = (cx.engine, cx.this);
     let complete = e
         .flags(menu)
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
     if !complete {
         // Taken in when the menu is complete, when its delegate is known.
-        return host_append(cx, child, POPUP);
+        return match anchor {
+            Some(a) => host_insert(cx, child, a, POPUP),
+            None => host_append(cx, child, POPUP),
+        };
     }
     if state_of(e, menu).is_some_and(|s| s.making.get()) {
         // The menu takes in what it makes itself.
         return Ok(());
     }
-    take_in(e, menu, child, None)?;
+    let at = anchor.and_then(|a| items(e, menu).iter().position(|i| *i == a));
+    take_in(e, menu, child, at)?;
     changed(e, menu)
 }
 

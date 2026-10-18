@@ -1291,6 +1291,371 @@ Feature: What a reload changes
       And the property "order" of "root" is "uno,two|0"
       And the property "x" of "box" is at least 40
 
+  Rule: An object added before others in a list that sorts what it holds goes in place
+
+    The content of a Flickable, a Pane, a Popup, a Menu, a container such
+    as SwipeView, an application window and an ObjectModel takes an object
+    added before one that stays where the file puts it. The rest goes on
+    as it was, an animation half way too.
+
+    Scenario: An object added before another in a Flickable is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Flickable { id: holder; width: 50; height: 50
+            Item { objectName: "a" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentItem.children
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Flickable { id: holder; width: 50; height: 50
+            Item { objectName: "a" }
+            Item { objectName: "c" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentItem.children
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in a Pane is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Pane { id: holder
+            Item { objectName: "a" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Pane { id: holder
+            Item { objectName: "a" }
+            Item { objectName: "c" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in a Popup is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Popup { id: holder
+            Item { objectName: "a" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Popup { id: holder
+            Item { objectName: "a" }
+            Item { objectName: "c" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in a SwipeView is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          SwipeView { id: holder; width: 50; height: 50
+            Item { objectName: "a" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          SwipeView { id: holder; width: 50; height: 50
+            Item { objectName: "a" }
+            Item { objectName: "c" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in an ObjectModel is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQml.Models
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          ObjectModel { id: holder
+            Item { objectName: "a" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.children
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQml.Models
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          ObjectModel { id: holder
+            Item { objectName: "a" }
+            Item { objectName: "c" }
+            Item { objectName: "b" }
+          }
+          function probe() {
+            var r = [], l = holder.children
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in an ApplicationWindow is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Item { objectName: "a" }
+          Item { objectName: "b" }
+          function probe() {
+            var r = [], l = root.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Item { objectName: "a" }
+          Item { objectName: "c" }
+          Item { objectName: "b" }
+          function probe() {
+            var r = [], l = root.contentChildren
+            for (var i = 0; i < l.length; i++) r.push(l[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "box,a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in a Menu is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Menu { id: holder
+            MenuItem { objectName: "a" }
+            MenuItem { objectName: "b" }
+          }
+          function probe() {
+            var r = []
+            for (var i = 0; i < holder.count; i++) r.push(holder.itemAt(i).objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Menu { id: holder
+            MenuItem { objectName: "a" }
+            MenuItem { objectName: "c" }
+            MenuItem { objectName: "b" }
+          }
+          function probe() {
+            var r = []
+            for (var i = 0; i < holder.count; i++) r.push(holder.itemAt(i).objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
   Rule: Other changes to objects make them again, as the file now writes them
 
     An object moved, or given another type or another id, is there as the

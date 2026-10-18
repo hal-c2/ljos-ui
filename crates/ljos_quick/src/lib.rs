@@ -157,7 +157,10 @@ pub use text_input::{
     AccessibleTextAction, Clipboard, DoubleValidator, ImeState, IntValidator, PlatformTextInput,
     RegularExpressionValidator, TextEdit, TextEditor, TextInput,
 };
-pub use tree::{add_data, child_items, resources, set_parent_item, sync_parent};
+pub use tree::{
+    add_data, child_items, list_put_before, resources, set_parent_item, set_parent_item_before,
+    sync_parent,
+};
 pub use views::table::{CellBlock, CellSelector, cell_block_rect, select_by, set_cell_selector};
 pub use views::{
     DelegateModel, DelegateModelAttached, DelegateModelGroup, ObjectModel, drive_delegate_model,

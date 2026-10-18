@@ -134,9 +134,9 @@ pub struct Flickable {
     pub content_item: Option<ObjectId>,
     /// What was declared inside the Flickable. An `Item` goes onto the
     /// content item, anything else is a resource of the Flickable.
-    #[qml(notify, list, append = flickable_append)]
+    #[qml(notify, list, append = flickable_append, insert = flickable_insert)]
     pub flickable_data: QmlList,
-    #[qml(notify, list, append = flickable_append)]
+    #[qml(notify, list, append = flickable_append, insert = flickable_insert)]
     pub flickable_children: QmlList,
     #[qml(notify, readonly)]
     pub origin_x: f64,
@@ -623,6 +623,21 @@ fn flickable_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
         tree::add_data(e, f, child)?;
     }
     e.list_push(f, Flickable::FLICKABLE_DATA.index, child)
+}
+
+/// The insert hook of `flickableData` and `flickableChildren`:
+/// [`flickable_append`], with `child` right before `anchor` in the lists
+/// it goes to.
+fn flickable_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    let (e, f) = (cx.engine, cx.this);
+    if is_item(e, child) {
+        let ci = ensure_content_item(e, f)?;
+        tree::set_parent_item_before(e, child, ci, anchor)?;
+        tree::list_put_before(e, f, Flickable::FLICKABLE_CHILDREN.index, child, anchor)?;
+    } else {
+        e.list_insert(f, Item::DATA.index, child, anchor)?;
+    }
+    tree::list_put_before(e, f, Flickable::FLICKABLE_DATA.index, child, anchor)
 }
 
 /// Gives the four `at…` flags their first values without a change

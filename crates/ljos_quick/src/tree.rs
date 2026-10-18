@@ -50,6 +50,22 @@ pub(crate) fn item_data_insert(
     }
 }
 
+/// Puts `item` right before `anchor` in the list `prop` of `obj` as it
+/// is, without its hooks, or at its end when `anchor` is not in it: what
+/// an insert hook calls for each list it keeps in step.
+pub fn list_put_before(
+    engine: &Engine,
+    obj: ObjectId,
+    prop: PropIndex,
+    item: ObjectId,
+    anchor: ObjectId,
+) -> Result<(), EngineError> {
+    if !engine.list_insert_before(obj, prop, item, anchor)? {
+        engine.list_push(obj, prop, item)?;
+    }
+    Ok(())
+}
+
 /// What QML's default property does with a declared child: appends it to
 /// `parent`'s `data`.
 pub fn add_data(engine: &Engine, parent: ObjectId, child: ObjectId) -> Result<(), EngineError> {
@@ -80,7 +96,7 @@ pub fn set_parent_item(
 ///
 /// `false`, and nothing done, when `child` is a child of `parent` already:
 /// moving it among its siblings is the caller's.
-pub(crate) fn set_parent_item_before(
+pub fn set_parent_item_before(
     engine: &Engine,
     child: ObjectId,
     parent: ObjectId,

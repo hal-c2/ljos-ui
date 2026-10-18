@@ -45,7 +45,7 @@ pub use system::{
     WindowRequest, WindowShow, WindowSpec, WindowSystem,
 };
 
-use crate::containers::{Host, bar_height, host_append, host_complete};
+use crate::containers::{Host, bar_height, host_append, host_complete, host_insert};
 use crate::inherit::{self, InheritState, Kind};
 use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{check, flag, is_a, is_unset, num, object, set_computed};
@@ -996,7 +996,7 @@ pub struct ApplicationWindow {
     /// Lies across the top of the window, above the header.
     #[qml(notify, holds = "Item")]
     pub menu_bar: Option<ObjectId>,
-    #[qml(notify, list, append = window_append)]
+    #[qml(notify, list, append = window_append, insert = window_insert)]
     pub content_data: QmlList,
     #[qml(notify, list)]
     pub content_children: QmlList,
@@ -1010,6 +1010,10 @@ const HOST: Host = Host {
 
 fn window_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     host_append(cx, child, HOST)
+}
+
+fn window_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    host_insert(cx, child, anchor, HOST)
 }
 
 /// How far down the header of an application window begins: below the

@@ -38,7 +38,7 @@ pub struct ObjectModel {
     pub object: QtObject,
     #[qml(notify, readonly)]
     pub count: i32,
-    #[qml(list, append = child_append)]
+    #[qml(list, append = child_append, insert = child_insert)]
     pub children: QmlList,
     #[qml(skip)]
     pub(crate) rows: Rc<ObjectRows>,
@@ -47,6 +47,14 @@ pub struct ObjectModel {
 fn child_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     let rows = cx.with(|m: &ObjectModel| m.rows.clone())?;
     rows.insert(cx.engine, rows.len(), child);
+    sync(cx.engine, cx.this, &rows)
+}
+
+/// [`child_append`], with `child` right before `anchor`.
+fn child_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    let rows = cx.with(|m: &ObjectModel| m.rows.clone())?;
+    let at = rows.objects().iter().position(|o| *o == anchor);
+    rows.insert(cx.engine, at.unwrap_or(rows.len()), child);
     sync(cx.engine, cx.this, &rows)
 }
 

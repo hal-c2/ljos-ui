@@ -20,8 +20,8 @@ use ljos_engine::{
     Value, WriteKind, qml_impl,
 };
 use ljos_quick::{
-    Item, ItemView, ObjectModel, Repeater, is_item, object_model_changed, object_model_rows,
-    set_parent_item,
+    Item, ItemView, ObjectModel, Repeater, is_item, list_put_before, object_model_changed,
+    object_model_rows, set_parent_item,
 };
 
 use crate::control::Control;
@@ -57,7 +57,7 @@ pub(crate) struct ContainerState {
 pub struct Container {
     #[qml(base)]
     pub control: Control,
-    #[qml(notify, list, append = container_append)]
+    #[qml(notify, list, append = container_append, insert = container_insert)]
     pub content_data: QmlList,
     #[qml(notify, list)]
     pub content_children: QmlList,
@@ -133,6 +133,21 @@ fn container_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
         return Ok(());
     }
     take_in(e, me, child, None)?;
+    changed(e, me, Change::Added)
+}
+
+/// [`container_append`], with `child` right before `anchor`.
+fn container_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    let (e, me) = (cx.engine, cx.this);
+    list_put_before(e, me, Container::CONTENT_DATA.index, child, anchor)?;
+    let complete = e
+        .flags(me)
+        .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+    if !complete {
+        return Ok(());
+    }
+    let at = items(e, me).iter().position(|i| *i == anchor);
+    take_in(e, me, child, at)?;
     changed(e, me, Change::Added)
 }
 

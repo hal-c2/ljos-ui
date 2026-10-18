@@ -39,7 +39,7 @@ use ljos_engine::{
 use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 use ljos_quick::{Item, is_item, set_parent_item};
 
-use crate::containers::{Host, content_size, host_append, host_complete};
+use crate::containers::{Host, content_size, host_append, host_complete, host_insert};
 use crate::control::Control;
 use crate::parts::settle_parts;
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
@@ -249,7 +249,7 @@ pub struct Popup {
     pub background: Option<ObjectId>,
     #[qml(notify, holds = "Item")]
     pub content_item: Option<ObjectId>,
-    #[qml(notify, list, append = popup_append)]
+    #[qml(notify, list, append = popup_append, insert = popup_insert)]
     pub content_data: QmlList,
     #[qml(notify, list)]
     pub content_children: QmlList,
@@ -384,6 +384,13 @@ fn popup_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
         return crate::menu::append(cx, child);
     }
     host_append(cx, child, POPUP)
+}
+
+fn popup_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    if is_a::<crate::menu::Menu>(cx.engine, cx.this) {
+        return crate::menu::insert(cx, child, anchor);
+    }
+    host_insert(cx, child, anchor, POPUP)
 }
 
 #[qml_impl]

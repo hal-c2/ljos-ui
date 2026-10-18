@@ -11,7 +11,10 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, ObjectFlags, ObjectId, PropIndex, QmlList, QmlObject, Value,
     WriteKind, qml_impl,
 };
-use ljos_quick::{Item, defer_states, is_item, set_parent_item, start_states};
+use ljos_quick::{
+    Item, defer_states, is_item, list_put_before, set_parent_item, set_parent_item_before,
+    start_states,
+};
 
 use crate::control::Control;
 use crate::parts::{PartKind, manage_part};
@@ -28,12 +31,36 @@ pub(crate) struct Host {
 /// The append hook of a host's `contentData`, its default property: an
 /// item goes into the content item, anything else is only kept.
 pub(crate) fn host_append(cx: &Cx, child: ObjectId, host: Host) -> Result<(), EngineError> {
+    host_put(cx, child, None, host)
+}
+
+/// The insert hook of a host's `contentData`: [`host_append`], with
+/// `child` right before `anchor`.
+pub(crate) fn host_insert(
+    cx: &Cx,
+    child: ObjectId,
+    anchor: ObjectId,
+    host: Host,
+) -> Result<(), EngineError> {
+    host_put(cx, child, Some(anchor), host)
+}
+
+fn host_put(
+    cx: &Cx,
+    child: ObjectId,
+    anchor: Option<ObjectId>,
+    host: Host,
+) -> Result<(), EngineError> {
     let e = cx.engine;
-    e.list_push(cx.this, host.content_data, child)?;
+    let put = |prop| match anchor {
+        Some(a) => list_put_before(e, cx.this, prop, child, a),
+        None => e.list_push(cx.this, prop, child),
+    };
+    put(host.content_data)?;
     if !is_item(e, child) {
         return Ok(());
     }
-    e.list_push(cx.this, host.content_children, child)?;
+    put(host.content_children)?;
     // Until the host is complete its content item may still be replaced
     // (the style's, then the application's); `host_complete` moves what
     // was declared in.
@@ -41,7 +68,11 @@ pub(crate) fn host_append(cx: &Cx, child: ObjectId, host: Host) -> Result<(), En
         .flags(cx.this)
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
     if complete && let Some(ci) = e.untrack(|| object(e, cx.this, host.content_item)) {
-        set_parent_item(e, child, Some(holder(e, cx.this, ci)))?;
+        let to = holder(e, cx.this, ci);
+        match anchor {
+            Some(a) => drop(set_parent_item_before(e, child, to, a)?),
+            None => set_parent_item(e, child, Some(to))?,
+        }
     } else if !complete {
         // The child has no parent yet, so a state that anchors it to
         // `parent` waits until `host_complete` has given it one.
@@ -151,7 +182,7 @@ pub(crate) fn content_size(engine: &Engine, obj: ObjectId, host: Host, size: Pro
 pub struct Pane {
     #[qml(base)]
     pub control: Control,
-    #[qml(notify, list, append = pane_append)]
+    #[qml(notify, list, append = pane_append, insert = pane_insert)]
     pub content_data: QmlList,
     #[qml(notify, list)]
     pub content_children: QmlList,
@@ -183,6 +214,10 @@ fn content_asked(engine: &Engine, obj: ObjectId, size: PropIndex) -> Value {
 
 fn pane_append(cx: &Cx, child: ObjectId) -> Result<(), EngineError> {
     host_append(cx, child, PANE)
+}
+
+fn pane_insert(cx: &Cx, child: ObjectId, anchor: ObjectId) -> Result<(), EngineError> {
+    host_insert(cx, child, anchor, PANE)
 }
 
 #[qml_impl]
