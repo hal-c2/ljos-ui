@@ -1737,3 +1737,54 @@ from the corpus's shader (the corpus has none, so without it qml6 draws no backd
 
 **What is left.** A cheaper frame: scrolling is not partial damage, so the gain is in the raster.
 A 441 ms pass about 8.4 s into one run is not explained yet.
+
+### Solid rectangles, the write path and particle quads (2026-10-18)
+
+Callgrind, prof build, GPU sandbox, main-thread instructions per frame as in the per-frame section
+above; "all threads" is the perf counter of every thread over 10 s (I(14 s) − I(4 s)), one run,
+with Qt's `qml6` on the same sandbox. "Before" is 12ace64e.
+
+| Main thread, a frame | Before | After |
+|---|---:|---:|
+| animations | 1.379 M | 1.322 M |
+| clocks | 441 k | 438 k |
+| samegame: a picture's quads and their encoding | ≥ 625 | ≤ 410 |
+| samegame: mapping meshes to the screen, over the run | 40.2 M | 14.8 M |
+
+| All threads, M/s | Ljós before | Ljós after | Qt |
+|---|---:|---:|---:|
+| animations, GPU | 73 | 71 | 43 |
+| clocks, GPU | 21–29 | 22–29 | 14 |
+| samegame, idle board, GPU | 17 | 16 | 16 |
+| thermostat, todolist, GPU | 0 | 0 | 0 |
+| animations, llvmpipe | 474 | 478 | 1 036–1 076 |
+| clocks, llvmpipe | 150 | 175 | 939–945 |
+| samegame, llvmpipe | 246 | 246 | 1 584–1 600 |
+
+At 60 frames a second the GPU animations frame is about 1.2 M on all threads against Qt's 0.72 M.
+On llvmpipe Ljós draws only what changed and Qt redraws the window, so Ljós takes less than half
+of Qt. Clocks moves by a third between runs of one binary, with where its one-second tick falls.
+
+- **Solid rectangles.** A solid's encoded output is already one `RectShape`; what each frame paid
+  for was asking again whether it is a pixel-exact opaque quad. An upright transform now maps two
+  corners instead of four, opacity 1 skips re-multiplying the colour, and `near_whole` rounds by
+  adding 1.5 × 2²³. `solid()`'s closure, 30 k a frame, is gone from the top of the profile, and
+  the shell's `fill_rects`, which asks the same, fell from 40 k to 34 k a frame.
+- **Told moves** set the scene entry's place directly. Before, they went through the shared place
+  map only to be drained again.
+- **The write path.** An animated `x` write is about 1.1 k, with no one part above 360: the
+  graph's write and marks 360, the native store 240 (finding the `Item` in the native chain 74,
+  the setter 82), the timeline 157, the write's checks 107. No signal arguments are built and no
+  value is boxed on it. `from_value` cloned the `Value` before matching it; plain-data types now
+  match it in place.
+- **Particle quads.** Pictures of one image were already one mesh. Each picture took the mesh out
+  of its segment and put it back, pushed white corners and coloured them after, and grew the mesh
+  by doubling. Quads now go into the mesh where it lies, already coloured. A new segment is sized
+  for the run of pictures of that image that follows, and an upright node's meshes are mapped to
+  the screen per axis.
+
+**What is left.** The animations frame is still 0.6 M main-thread instructions above Qt's. The
+largest parts are the tick (about 1.1 k an animation, spread over the generic write), the egui
+painter (`GlPainter::paint` about 200 k, the swap about 84 k) and the reads of told places (about
+170 each). Cutting the write further needs typed write handles that keep the native field's place
+instead of finding it per write.
