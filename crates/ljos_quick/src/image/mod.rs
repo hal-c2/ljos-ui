@@ -1026,7 +1026,9 @@ pub(crate) fn shows(e: &Engine, me: ObjectId, key: &ImageKey) -> bool {
 /// or fetched again: the pixels are made from what is kept, and a row
 /// scrolled back in at the same size paints them as they are. Only once a
 /// scene has said how large it is, which is also what the device scale
-/// is known from.
+/// is known from. Run when the picture arrives and, as the painted size
+/// is kept, whenever the item's size or fill mode changes: a row is
+/// often laid out after its picture is.
 fn fit_unpainted(e: &Engine, me: ObjectId) {
     if !is_a::<Image>(e, me) {
         return;
@@ -1142,6 +1144,7 @@ fn update_painted(e: &Engine, me: ObjectId) {
             Value::Real(painted.height),
         );
     });
+    e.untrack(|| fit_unpainted(e, me));
 }
 
 /// What an `Image` or `BorderImage` paints. Built by the scene's paint

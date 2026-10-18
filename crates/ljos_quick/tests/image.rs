@@ -1805,6 +1805,39 @@ Item {
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn a_picture_not_painted_is_kept_small_once_its_item_is_given_a_size() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Item {
+        objectName: "row"; visible: false; width: 0
+        Image {
+            objectName: "picture"; width: parent.width / 2; height: 50
+        }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let picture = find(&e, root, "picture");
+    set(&e, picture, "source", Value::Url("file:///big.png".into()));
+    frame(&mut s, &e);
+    // With no size it draws nothing yet, and is kept as the view needs.
+    assert_eq!(store.bytes(), 448 * 224 * 4);
+    // A row laid out later, never painted: kept as drawn, 100 by 50.
+    set(&e, find(&e, root, "row"), "width", Value::from(200));
+    frame(&mut s, &e);
+    assert_eq!(store.bytes(), 112 * 56 * 4);
+    assert_eq!(store.decodes(), 1);
+}
+
 /// Lets the pixels of what `item` paints go, as an upload does, and says
 /// whether they went and whether reading them gives them back as they were.
 fn let_go_and_read_back(s: &QuickScene, item: ObjectId) -> (bool, bool) {
