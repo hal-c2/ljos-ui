@@ -210,6 +210,26 @@ todo = "warn"
 [profile.dev]
 debug = "line-tables-only"
 
+# What a debug build spends its time in when nothing of ours is slow: the
+# script interpreter (C, built at the package's opt-level), the picture
+# decoders and the pixel loops of the painter. Optimised, a debug build
+# stays fast enough to work in with hot reload; our own crates stay
+# unoptimised for the debugger.
+[profile.dev.package]
+rquickjs-sys.opt-level = 3
+png.opt-level = 3
+fdeflate.opt-level = 3
+zune-jpeg.opt-level = 3
+zune-core.opt-level = 3
+jpeg-decoder.opt-level = 3
+gif.opt-level = 3
+weezl.opt-level = 3
+resvg.opt-level = 3
+tiny-skia.opt-level = 3
+vello_cpu.opt-level = 3
+epaint.opt-level = 3
+ecolor.opt-level = 3
+
 [profile.release]
 panic = "unwind" # the supervisor recovers from panics (D11)
 lto = "thin"
