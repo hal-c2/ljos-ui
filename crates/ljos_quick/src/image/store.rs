@@ -594,9 +594,23 @@ impl ImageStore {
         drop(dropped);
     }
 
-    /// Bytes of the cached pictures.
+    /// Bytes of the cached pictures, each counted as its pixels, held or
+    /// let go: what they come to once all are shown.
     pub fn bytes(&self) -> usize {
         self.state.borrow().cache.bytes()
+    }
+
+    /// Bytes of the cached pictures whose pixels are held now. Those let
+    /// go until they are read are not counted, nor what they are made
+    /// again from.
+    pub fn resident_bytes(&self) -> usize {
+        let s = self.state.borrow();
+        s.cache
+            .keys_by_age()
+            .filter_map(|k| s.cache.peek(k))
+            .filter(|p| p.image.is_resident())
+            .map(|p| p.image.byte_len())
+            .sum()
     }
 
     /// Cached pictures.
@@ -1168,6 +1182,7 @@ impl ImageStore {
             {
                 self.keep(&key, &Picture::of(loaded));
             }
+            let only_loads = waiters.iter().all(|w| matches!(w, Waiter::Load { .. }));
             let loaded_by: Vec<ObjectId> = waiters
                 .iter()
                 .filter_map(|w| match w {
@@ -1193,9 +1208,18 @@ impl ImageStore {
                 std::mem::take(&mut s.released)
             };
             // Kept for an item it went to that still shows it as it is.
-            if released && !loaded_by.iter().any(|&i| super::shows(engine, i, &key)) {
+            let shown = loaded_by.iter().any(|&i| super::shows(engine, i, &key));
+            if released && !shown {
                 drop(result);
                 self.release(&key);
+            } else if let Ok(loaded) = result
+                && !shown
+                && only_loads
+            {
+                // Arrived for items gone since, as a list's rows made and
+                // let go: kept as what it is made again from, which costs
+                // less, and a row made later decodes that, not the network.
+                loaded.image.let_go();
             }
         }
         count

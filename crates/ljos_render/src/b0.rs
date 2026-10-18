@@ -41,7 +41,7 @@
 //! drawn, one per sampling mode it is used with. The backend holds the image
 //! only weakly: the texture goes when the image does, or when it has not been
 //! drawn for a while. Once uploaded, pixels that can be made again are let
-//! go ([`ImageHandle::let_go_after_upload`]).
+//! go ([`ImageHandle::let_go`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -299,7 +299,7 @@ fn texture_for(
     // The texture has them now. A picture that can be made again is not
     // held twice; what reads it later has it made again.
     drop(fitted);
-    image.let_go_after_upload();
+    image.let_go();
     let filter = if key.smooth {
         TextureFilter::Linear
     } else {

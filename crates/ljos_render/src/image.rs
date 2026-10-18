@@ -12,9 +12,9 @@
 //! cannot disagree on where a tile or a border part goes.
 //!
 //! Pixels that can be made again ([`ImageHandle::make_again_with`]) are
-//! let go once they are a texture ([`ImageHandle::let_go_after_upload`]),
-//! so a picture is not held twice. Whatever reads them after that has them
-//! made again, once, and they stay.
+//! let go ([`ImageHandle::let_go`]) once they are a texture, so a picture
+//! is not held twice, and while nothing shows them. Whatever reads them
+//! after that has them made again, once, and they stay.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
@@ -317,10 +317,11 @@ impl ImageHandle {
         self.0.again.get().cloned()
     }
 
-    /// Lets the pixels go after a backend uploaded them, when they can be
-    /// made again from fewer bytes than they are, no other reader read them
-    /// back before and nothing holds them right now. Whether they went.
-    pub fn let_go_after_upload(&self) -> bool {
+    /// Lets the pixels go, after a backend uploaded them or while nothing
+    /// shows them, when they can be made again from fewer bytes than they
+    /// are, no reader read them back before and nothing holds them right
+    /// now. Whether they went.
+    pub fn let_go(&self) -> bool {
         let worth = |a: &MakeAgain| a.holds < self.byte_len();
         if !self.0.again.get().is_some_and(worth) || self.0.read_back.load(Ordering::Relaxed) {
             return false;

@@ -1838,12 +1838,56 @@ Item {
     assert_eq!(store.decodes(), 1);
 }
 
+#[test]
+fn a_network_picture_that_arrives_for_a_row_gone_keeps_only_what_it_is_made_from() {
+    let (e, store) = pictures();
+    let asked = Arc::new(AtomicUsize::new(0));
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(Counting {
+        bytes: png(2048, 1024, GREEN),
+        asked: asked.clone(),
+    }));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image { objectName: "row"; width: 100; height: 50 }
+    Image { objectName: "later"; width: 100; height: 50 }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let url = Value::from("http://example.invalid/a.png");
+    set(&e, find(&e, root, "row"), "source", url.clone());
+    // The row is let go while its picture is on its way.
+    let row = find(&e, root, "row");
+    e.destroy(row);
+    frame(&mut s, &e);
+    assert!(!e.is_alive(row));
+    store.finish(&e);
+    assert_eq!(store.bytes(), 448 * 224 * 4);
+    assert_eq!(store.resident_bytes(), 0);
+    // A row made later has it from what it was read from.
+    let later = find(&e, root, "later");
+    set(&e, later, "source", url);
+    frame(&mut s, &e);
+    store.finish(&e);
+    frame(&mut s, &e);
+    assert_eq!(status(&e, later), image_status::READY);
+    let image = painted(&s, later).unwrap();
+    assert_eq!((image.width(), image.height()), (112, 56));
+    assert_eq!(image.pixel(5, 5), GREEN);
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+}
+
 /// Lets the pixels of what `item` paints go, as an upload does, and says
 /// whether they went and whether reading them gives them back as they were.
 fn let_go_and_read_back(s: &QuickScene, item: ObjectId) -> (bool, bool) {
     let image = painted(s, item).unwrap();
     let before = image.data().to_vec();
-    let went = image.let_go_after_upload();
+    let went = image.let_go();
     let gone = !image.is_resident();
     (went && gone, image.data().to_vec() == before)
 }
@@ -1975,7 +2019,7 @@ Item {
     frame(&mut s, &e);
     let image = painted(&s, find(&e, root, "noise")).unwrap();
     assert!(image.byte_len() < 512 * 512 * 4);
-    assert!(!image.let_go_after_upload());
+    assert!(!image.let_go());
     assert!(image.is_resident());
     // Nor does it hold the bytes it was read from, which it never needs.
     assert!(image.made_again_by().is_none());
