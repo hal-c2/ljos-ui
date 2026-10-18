@@ -60,7 +60,8 @@ type Deferred = Box<dyn FnOnce(&Engine)>;
 struct Run {
     anim: ObjectId,
     /// Taken out while it advances: a script in it may come back here.
-    timeline: RefCell<Option<Timed>>,
+    /// Boxed, as taking it out and putting it back is every frame's.
+    timeline: RefCell<Option<Box<Timed>>>,
     /// Microseconds it has been going, pauses left out.
     elapsed: Cell<i64>,
     /// The frame time `elapsed` is of. `None`: it begins with the next
@@ -171,7 +172,10 @@ impl Run {
     }
 
     fn is_done(&self) -> bool {
-        self.timeline.borrow().as_ref().is_some_and(Timed::is_done)
+        self.timeline
+            .borrow()
+            .as_deref()
+            .is_some_and(Timed::is_done)
     }
 
     /// Where reduced motion takes the run in this frame: to its end, or,
@@ -274,7 +278,7 @@ pub(crate) fn start_timeline(engine: &Engine, key: ObjectId, timeline: Timed, do
     let run = Rc::new(Run {
         anim: key,
         finishes_when_stopped: false,
-        timeline: RefCell::new(Some(timeline)),
+        timeline: RefCell::new(Some(Box::new(timeline))),
         elapsed: Cell::new(0),
         last: Cell::new(d.ticking.get()),
         paused: Cell::new(false),
@@ -330,7 +334,7 @@ fn begin(
     let run = Rc::new(Run {
         anim,
         finishes_when_stopped: timeline.finishes_when_stopped(),
-        timeline: RefCell::new(Some(timeline)),
+        timeline: RefCell::new(Some(Box::new(timeline))),
         elapsed: Cell::new(0),
         // Inside a frame it begins with that frame, else with the next.
         last: Cell::new(d.ticking.get()),
