@@ -134,10 +134,13 @@ impl Flow {
     }
 }
 
+/// A cell as read: its text, whether it is a header, and its background.
+pub(crate) type CellBuf = (InlineBuf, bool, Option<Arc<str>>);
+
 /// The text of a table and where its cells are in it: cells of a row are
 /// set apart by tabs, rows by line breaks.
 pub(crate) fn table_block(
-    rows: Vec<Vec<(InlineBuf, bool)>>,
+    rows: Vec<Vec<CellBuf>>,
     border: f32,
     spacing: f32,
     padding: f32,
@@ -150,7 +153,7 @@ pub(crate) fn table_block(
             buf.text.push('\n');
         }
         columns = columns.max(row_cells.len());
-        for (column, (cell, header)) in row_cells.into_iter().enumerate() {
+        for (column, (cell, header, background)) in row_cells.into_iter().enumerate() {
             if column > 0 {
                 buf.text.push('\t');
             }
@@ -161,6 +164,7 @@ pub(crate) fn table_block(
                 column,
                 range: start..buf.text.len(),
                 header,
+                background,
             });
         }
     }
@@ -170,6 +174,8 @@ pub(crate) fn table_block(
         border,
         spacing,
         padding,
+        background: None,
+        width: None,
     };
     (buf, table)
 }

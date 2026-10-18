@@ -526,6 +526,12 @@ fn whole_pixels(bar: kurbo::Rect) -> kurbo::Rect {
     kurbo::Rect::new(bar.x0.round(), top, bar.x1.round(), top + height)
 }
 
+/// The colour of a table's frames, measured on Qt 6.11 in a rich Text and
+/// a rich TextEdit alike.
+pub(crate) fn table_frame() -> Rgba {
+    to_rgba(Color::from_rgba8(128, 128, 128, 255))
+}
+
 /// A colour as rich text writes it: what QML reads as one, and `rgb()`.
 fn css_color(text: &str) -> Option<Color> {
     let text = text.trim();
@@ -613,6 +619,11 @@ pub(crate) fn paint(
         }
     }
     block.take().map(&mut fill_block);
+    for (rect, color) in s.doc.fills() {
+        if let Some(color) = css_color(&color).filter(|c| c.a != 0) {
+            out.fill_rect(rect + down, to_rgba(color));
+        }
+    }
     // Measured on Qt 6.11: the colour behind a part of the text fills that
     // part of its line from the line's top to its bottom, whatever size the
     // part itself is set in.
@@ -653,6 +664,11 @@ pub(crate) fn paint(
     let base = to_rgba(t.color);
     for rule in s.doc.rules(&view) {
         out.fill_rect(rule + down, base);
+    }
+    // Measured on Qt 6.11: the frames of a table are grey whatever the
+    // text's colour is.
+    for frame in s.doc.frames() {
+        out.fill_rect(frame + down, table_frame());
     }
     for placed in &lines {
         let origin = kurbo::Vec2::new(placed.x, placed.y) + down;

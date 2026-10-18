@@ -126,7 +126,10 @@ fn exercise(engine: &mut TextEngine, format: TextFormat, source: &str) {
         for placed in doc.lines(&view) {
             assert!(placed.x.is_finite() && placed.y.is_finite());
         }
-        for rect in doc.rules(&view) {
+        for rect in doc.rules(&view).into_iter().chain(doc.frames()) {
+            assert!(rect.is_finite());
+        }
+        for (rect, _) in doc.fills() {
             assert!(rect.is_finite());
         }
         for image in doc.images(&view) {

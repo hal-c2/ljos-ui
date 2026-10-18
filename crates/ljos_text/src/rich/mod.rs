@@ -276,6 +276,11 @@ pub struct Table {
     pub spacing: f32,
     /// Space between a cell's edge and its text.
     pub padding: f32,
+    /// The colour behind the whole table, spacing included, as written.
+    pub background: Option<Arc<str>>,
+    /// The width the table was given (`width="…"`), as written. Kept for
+    /// an editor to write back; the layout does not read it.
+    pub width: Option<Arc<str>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -285,6 +290,8 @@ pub struct Cell {
     /// Bytes of the block's text.
     pub range: Range<usize>,
     pub header: bool,
+    /// The colour behind the cell inside its padding, as written.
+    pub background: Option<Arc<str>>,
 }
 
 impl Hash for Table {
@@ -292,6 +299,7 @@ impl Hash for Table {
         (
             self.columns,
             &self.cells,
+            (&self.background, &self.width),
             [
                 self.border.to_bits(),
                 self.spacing.to_bits(),

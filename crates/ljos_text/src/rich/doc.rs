@@ -117,6 +117,9 @@ pub struct BlockLayout {
     pub marker: Option<Part>,
     /// Frames of a table: from the document's left edge and the block's top.
     pub rules: Vec<Rect>,
+    /// The colours behind a table and its cells, painted under the text,
+    /// where `rules` are.
+    pub fills: Vec<(Rect, Arc<str>)>,
     /// Width when nothing wraps, indents included.
     pub natural_width: f64,
     /// Width as laid out, indents included.
@@ -611,8 +614,25 @@ impl RichDoc {
         out
     }
 
-    /// The frames of tables and the horizontal rules, as rectangles to fill.
+    /// The horizontal rules, as rectangles to fill.
     pub fn rules(&self, view: &View) -> Vec<Rect> {
+        let mut out = Vec::new();
+        for block in &self.blocks {
+            let Some(laid) = &block.laid else {
+                continue;
+            };
+            if block.kind == BlockKind::Rule {
+                let x0 = f64::from(block.indent);
+                let x1 = (view.width - f64::from(block.indent_right)).max(x0);
+                let y = (laid.y + laid.layout.height / 2.0).floor();
+                out.push(Rect::new(x0, y, x1, y + 1.0));
+            }
+        }
+        out
+    }
+
+    /// The frames of tables, as rectangles to fill.
+    pub fn frames(&self) -> Vec<Rect> {
         let mut out = Vec::new();
         for block in &self.blocks {
             let Some(laid) = &block.laid else {
@@ -624,12 +644,24 @@ impl RichDoc {
                     .iter()
                     .map(|r| Rect::new(r.x0, r.y0 + laid.y, r.x1, r.y1 + laid.y)),
             );
-            if block.kind == BlockKind::Rule {
-                let x0 = f64::from(block.indent);
-                let x1 = (view.width - f64::from(block.indent_right)).max(x0);
-                let y = (laid.y + laid.layout.height / 2.0).floor();
-                out.push(Rect::new(x0, y, x1, y + 1.0));
-            }
+        }
+        out
+    }
+
+    /// The colours behind tables and their cells, in the order to paint
+    /// them.
+    pub fn fills(&self) -> Vec<(Rect, Arc<str>)> {
+        let mut out = Vec::new();
+        for block in &self.blocks {
+            let Some(laid) = &block.laid else {
+                continue;
+            };
+            out.extend(laid.layout.fills.iter().map(|(r, c)| {
+                (
+                    Rect::new(r.x0, r.y0 + laid.y, r.x1, r.y1 + laid.y),
+                    c.clone(),
+                )
+            }));
         }
         out
     }
@@ -905,6 +937,7 @@ fn lay_flat(
         }],
         marker: None,
         rules: Vec::new(),
+        fills: Vec::new(),
     }
 }
 
@@ -963,15 +996,47 @@ fn lay_block(
         }],
         marker,
         rules: Vec::new(),
+        fills: Vec::new(),
     }
+}
+
+/// How wide the columns of a table are, Qt 6.11's way as measured: as wide
+/// as their widest text when the table has the room (`avail`, the width
+/// left for the columns' text), else each as wide as its widest word and
+/// what room is left shared out evenly, no column wider than its widest
+/// text. When even the words do not fit, the table is wider than its room.
+pub(crate) fn column_widths(mins: &[f64], maxs: &[f64], avail: Option<f64>) -> Vec<f64> {
+    let Some(avail) = avail else {
+        return maxs.to_vec();
+    };
+    if maxs.iter().sum::<f64>() <= avail {
+        return maxs.to_vec();
+    }
+    let mut widths: Vec<f64> = mins.iter().zip(maxs).map(|(n, x)| n.min(*x)).collect();
+    let mut left = avail - widths.iter().sum::<f64>();
+    // Each round fills at least one column up to its widest text, or uses
+    // up the room.
+    for _ in 0..widths.len() {
+        let open: Vec<usize> = (0..widths.len()).filter(|&i| widths[i] < maxs[i]).collect();
+        if left <= 0.0 || open.is_empty() {
+            break;
+        }
+        let share = left / open.len() as f64;
+        for i in open {
+            let grow = share.min(maxs[i] - widths[i]);
+            widths[i] += grow;
+            left -= grow;
+        }
+    }
+    widths
 }
 
 /// A table: every cell on its own, columns as wide as their widest cell.
 ///
 /// The geometry is Qt's as measured: `spacing` between cells and around
-/// them, `padding` inside, a frame of `border` around the table and, when
-/// there is one, a frame of one pixel around each cell. Column widths are
-/// whole pixels. Cells do not wrap.
+/// them, `padding` inside, a frame of `border` around the table and around
+/// each cell. Column widths are whole pixels when nothing wraps; given less
+/// room than that, the cells wrap ([`column_widths`]).
 fn lay_table(
     engine: &mut TextEngine,
     block: &Block,
@@ -985,8 +1050,18 @@ fn lay_table(
         ..LayoutParams::default()
     };
     let rows = table.cells.iter().map(|c| c.row + 1).max().unwrap_or(0);
-    let mut widths = vec![0.0_f64; table.columns];
-    let mut heights = vec![0.0_f64; rows];
+    let border = f64::from(table.border);
+    let spacing = f64::from(table.spacing);
+    let padding = f64::from(table.padding);
+    let frame = border;
+    let around = 2.0 * (padding + frame);
+    let indent = f64::from(block.indent);
+    let chrome = indent
+        + f64::from(block.indent_right)
+        + 2.0 * border
+        + spacing * (table.columns + 1) as f64
+        + around * table.columns as f64;
+    let mut maxs = vec![0.0_f64; table.columns];
     let mut layouts = Vec::with_capacity(table.cells.len());
     for cell in &table.cells {
         let layout = lay_range(
@@ -997,19 +1072,52 @@ fn lay_table(
             &cell_params,
             sizes,
         );
-        if let Some(w) = widths.get_mut(cell.column) {
+        if let Some(w) = maxs.get_mut(cell.column) {
             *w = w.max(layout.natural_width.ceil());
-        }
-        if let Some(h) = heights.get_mut(cell.row) {
-            *h = h.max(layout.content_height);
         }
         layouts.push(layout);
     }
-    let border = f64::from(table.border);
-    let spacing = f64::from(table.spacing);
-    let padding = f64::from(table.padding);
-    let frame = if border > 0.0 { 1.0 } else { 0.0 };
-    let around = 2.0 * (padding + frame);
+    let natural = maxs.iter().sum::<f64>() + chrome;
+    let room = params
+        .usable_width()
+        .filter(|_| params.wrap != WrapMode::NoWrap)
+        .map(|w| w - chrome);
+    let widths = if room.is_some_and(|room| maxs.iter().sum::<f64>() > room) {
+        let words = LayoutParams {
+            width: Some(1.0),
+            wrap: WrapMode::WordWrap,
+            ..cell_params
+        };
+        let mut mins = vec![0.0_f64; table.columns];
+        for cell in &table.cells {
+            let layout = lay_range(engine, block, cell.range.clone(), style, &words, sizes);
+            let widest = layout.lines.iter().map(|l| l.width).fold(0.0, f64::max);
+            if let Some(w) = mins.get_mut(cell.column) {
+                *w = w.max(widest.ceil());
+            }
+        }
+        let widths = column_widths(&mins, &maxs, room);
+        for (cell, layout) in table.cells.iter().zip(&mut layouts) {
+            let width = widths.get(cell.column).copied().unwrap_or(0.0);
+            if layout.natural_width > width {
+                let wrapped = LayoutParams {
+                    width: Some(width),
+                    wrap: params.wrap,
+                    ..cell_params
+                };
+                *layout = lay_range(engine, block, cell.range.clone(), style, &wrapped, sizes);
+            }
+        }
+        widths
+    } else {
+        maxs
+    };
+    let mut heights = vec![0.0_f64; rows];
+    for (cell, layout) in table.cells.iter().zip(&layouts) {
+        if let Some(h) = heights.get_mut(cell.row) {
+            *h = h.max(layout.content_height);
+        }
+    }
     // Left edges of the columns and top edges of the rows (of the cells'
     // frames), and where the last one ends.
     let edges = |sizes: &[f64]| {
@@ -1023,23 +1131,37 @@ fn lay_table(
     };
     let (lefts, total_width) = edges(&widths);
     let (tops, total_height) = edges(&heights);
-    let indent = f64::from(block.indent);
     let mut parts = Vec::with_capacity(layouts.len());
     let mut rules = Vec::new();
+    let mut fills = Vec::new();
+    if let Some(color) = &table.background {
+        fills.push((
+            Rect::new(indent, 0.0, indent + total_width, total_height),
+            color.clone(),
+        ));
+    }
     let mut baseline = 0.0;
     for (cell, layout) in table.cells.iter().zip(layouts) {
         let (Some(&left), Some(&top)) = (lefts.get(cell.column), tops.get(cell.row)) else {
             continue;
         };
         let (width, height) = (widths[cell.column] + around, heights[cell.row] + around);
+        let (x0, y0, x1, y1) = (indent + left, top, indent + left + width, top + height);
         if frame > 0.0 {
-            let (x0, y0, x1, y1) = (indent + left, top, indent + left + width, top + height);
             rules.extend([
-                Rect::new(x0, y0, x1, y0 + 1.0),
-                Rect::new(x0, y1 - 1.0, x1, y1),
-                Rect::new(x0, y0, x0 + 1.0, y1),
-                Rect::new(x1 - 1.0, y0, x1, y1),
+                Rect::new(x0, y0, x1, y0 + frame),
+                Rect::new(x0, y1 - frame, x1, y1),
+                Rect::new(x0, y0, x0 + frame, y1),
+                Rect::new(x1 - frame, y0, x1, y1),
             ]);
+        }
+        if let Some(color) = &cell.background {
+            // Measured: inside the padding, which keeps the table's colour.
+            let inset = frame + padding;
+            fills.push((
+                Rect::new(x0 + inset, y0 + inset, x1 - inset, y1 - inset),
+                color.clone(),
+            ));
         }
         if parts.is_empty() {
             baseline = top + frame + padding + layout.baseline;
@@ -1067,7 +1189,8 @@ fn lay_table(
         parts,
         marker: None,
         rules,
-        natural_width: width,
+        fills,
+        natural_width: natural,
         width,
         height: total_height,
         implicit_height: total_height,
@@ -1078,6 +1201,31 @@ fn lay_table(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn columns_share_out_the_room_a_table_has() {
+        // Widths measured on Qt 6.11 (a "c" ten pixels wide).
+        assert_eq!(
+            column_widths(&[20.0, 10.0], &[97.0, 26.0], Some(68.0)),
+            [42.0, 26.0]
+        );
+        assert_eq!(
+            column_widths(&[20.0, 10.0], &[117.0, 79.0], Some(138.0)),
+            [74.0, 64.0]
+        );
+        assert_eq!(
+            column_widths(&[100.0, 10.0], &[100.0, 88.0], Some(108.0)),
+            [100.0, 10.0]
+        );
+        assert_eq!(
+            column_widths(&[20.0, 10.0], &[30.0, 20.0], Some(68.0)),
+            [30.0, 20.0]
+        );
+        assert_eq!(
+            column_widths(&[20.0, 10.0], &[30.0, 20.0], None),
+            [30.0, 20.0]
+        );
+    }
 
     fn params(size: f32) -> DocParams {
         DocParams {
@@ -1251,7 +1399,7 @@ mod tests {
         let header = engine.advance_width("abc", &bold).ceil();
         assert_eq!(m.content_width, header + 9.0 + 4.0);
         assert_eq!(m.content_height, 2.0 * (line + 9.0) + 4.0);
-        assert!(!d.rules(&VIEW).is_empty());
+        assert!(!d.frames().is_empty());
     }
 
     #[test]

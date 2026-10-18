@@ -370,6 +370,10 @@ impl Reader {
                 let rows = std::mem::take(&mut self.rows);
                 // Qt 6.11 draws a Markdown table with a frame and 2.5
                 // pixels around each cell's text.
+                let rows = rows
+                    .into_iter()
+                    .map(|row| row.into_iter().map(|(b, h)| (b, h, None)).collect())
+                    .collect();
                 let (buf, table) = table_block(rows, 1.0, 2.0, 2.5);
                 if table.cells.is_empty() {
                     return;

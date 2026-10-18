@@ -29,14 +29,14 @@
 //! `font-weight`, `font-style`, `font-size` (pixels, points or a keyword)
 //! and the first family of `font-family`. Every other property is left
 //! out. The background of a block is the block's (filled across the
-//! document behind its lines), not its letters'; that of a table cell is
-//! left out.
+//! document behind its lines), not its letters'; that of a table or a
+//! table cell (its `bgcolor` too) is the table's or the cell's.
 
 use std::sync::Arc;
 
 use super::doc::HAlign;
 use super::entity;
-use super::flow::{Ctx, Flow, table_block};
+use super::flow::{CellBuf, Ctx, Flow, table_block};
 use super::styled::{FONT_SCALE, HEADING_SCALE, Marker, marker_text};
 use super::{Block, BlockKind, Inline, InlineBuf, InlineImage};
 use crate::style::BoxAlign;
@@ -65,12 +65,14 @@ struct Open {
 }
 
 struct TableState {
-    rows: Vec<Vec<(InlineBuf, bool)>>,
+    rows: Vec<Vec<CellBuf>>,
     /// A cell is open: text goes to it.
     cell: bool,
     border: f32,
     spacing: f32,
     padding: f32,
+    background: Option<Arc<str>>,
+    width: Option<Arc<str>>,
     /// How many elements were open when the table started.
     depth: usize,
 }
@@ -390,7 +392,7 @@ impl Parser<'_> {
 
     fn start_element(&mut self, name: &str, attrs: &Attrs<'_>) {
         if self.table.is_some() {
-            if self.table_tag(name) {
+            if self.table_tag(name, attrs) {
                 return;
             }
         } else if name == "table" {
@@ -629,12 +631,18 @@ impl Parser<'_> {
             border: number("border", 0.0),
             spacing: number("cellspacing", 2.0),
             padding: number("cellpadding", 0.0),
+            background: background_of(attrs),
+            width: attrs
+                .get("width")
+                .map(str::trim)
+                .filter(|w| !w.is_empty())
+                .map(Arc::from),
             depth: self.open.len(),
         });
     }
 
     /// Tags that mean something else inside a table. False for the others.
-    fn table_tag(&mut self, name: &str) -> bool {
+    fn table_tag(&mut self, name: &str, attrs: &Attrs<'_>) -> bool {
         let Some(t) = &mut self.table else {
             return false;
         };
@@ -651,7 +659,7 @@ impl Parser<'_> {
                 }
                 let header = name == "th";
                 if let Some(row) = t.rows.last_mut() {
-                    row.push((InlineBuf::default(), header));
+                    row.push((InlineBuf::default(), header, background_of(attrs)));
                 }
                 t.cell = true;
                 self.open.truncate(t.depth);
@@ -671,7 +679,9 @@ impl Parser<'_> {
             return;
         };
         self.open.truncate(t.depth);
-        let (buf, table) = table_block(t.rows, t.border, t.spacing, t.padding);
+        let (buf, mut table) = table_block(t.rows, t.border, t.spacing, t.padding);
+        table.background = t.background;
+        table.width = t.width;
         if table.cells.is_empty() {
             return;
         }
@@ -795,6 +805,34 @@ fn apply_style(open: &mut Open, css: &str) {
             _ => {}
         }
     }
+}
+
+/// The colour behind a table or a cell: its `bgcolor`, or the
+/// `background-color` of its style, which wins as in Qt 6.11.
+fn background_of(attrs: &Attrs<'_>) -> Option<Arc<str>> {
+    let mut out = attrs
+        .get("bgcolor")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(Arc::from);
+    if let Some(css) = attrs.get("style") {
+        let css = without_comments(css);
+        for declaration in css.split(';') {
+            let Some((name, value)) = declaration.split_once(':') else {
+                continue;
+            };
+            let name = name.trim().to_ascii_lowercase();
+            let value = important(value.trim());
+            let one_colour = !(name == "background" && value.contains(char::is_whitespace));
+            if matches!(name.as_str(), "background-color" | "background")
+                && one_colour
+                && !value.is_empty()
+            {
+                out = Some(Arc::from(value));
+            }
+        }
+    }
+    out
 }
 
 /// The margins of a box (`margin-top` and its kin, in pixels), which an
@@ -1417,9 +1455,22 @@ mod tests {
     }
 
     #[test]
+    fn a_table_and_its_cells_have_backgrounds() {
+        let blocks = parse(
+            "<table bgcolor='red' width='300'><tr><td bgcolor='lime'>a</td><td>b</td>\
+             <td bgcolor='lime' style='background-color: blue'>c</td></tr></table>",
+        );
+        let t = blocks[0].table.as_ref().expect("a table");
+        assert_eq!(t.background.as_deref(), Some("red"));
+        assert_eq!(t.width.as_deref(), Some("300"));
+        let colours: Vec<_> = t.cells.iter().map(|c| c.background.as_deref()).collect();
+        assert_eq!(colours, [Some("lime"), None, Some("blue")]);
+    }
+
+    #[test]
     fn a_background_is_of_text_and_not_of_a_block() {
         // A block's background fills the block, so it is the block's and
-        // not its letters'. A table cell's is left out.
+        // not its letters'. A table cell's is the cell's.
         for tag in ["p", "div", "li", "h1", "td"] {
             let source = match tag {
                 "td" => "<table><tr><td style=\"background-color: red; color: blue\">a</td></tr></table>".to_owned(),
