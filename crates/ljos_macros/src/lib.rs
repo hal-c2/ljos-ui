@@ -32,7 +32,10 @@
 //!
 //! Field attributes: `base`, `notify` (adds `nameChanged`), `readonly`,
 //! `required`, `constant`, `group` (a grouped property; the field's type
-//! derives `QmlObject` too), `list` (a QML `list<T>` property, on a
+//! derives `QmlObject` too), `lazy` (with `group`, on an `Option<Box<T>>`
+//! field: the group is made on its first write, and until then reads give
+//! `T::default()`, so an object that never sets the group pays for a
+//! pointer and not for the group), `list` (a QML `list<T>` property, on a
 //! `QmlList` field), `append = path` (with `list`: a
 //! `fn(&Cx, ObjectId) -> Result<(), EngineError>` every append goes
 //! through), `skip`, `rename = "name"`, `enumeration = "Name"` (on an `i32`
@@ -267,6 +270,8 @@ struct FieldAttrs {
     required: bool,
     constant: bool,
     group: bool,
+    /// With `group`: an `Option<Box<T>>` made on the first write.
+    lazy: bool,
     list: bool,
     append: Option<syn::Path>,
     skip: bool,
@@ -352,6 +357,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.constant = true;
             } else if p.is_ident("group") {
                 f.group = true;
+            } else if p.is_ident("lazy") {
+                f.lazy = true;
             } else if p.is_ident("list") {
                 f.list = true;
             } else if p.is_ident("append") {
@@ -380,13 +387,32 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, list, append, skip, rename, enumeration, flags, reset, object, holds, write",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, skip, rename, enumeration, flags, reset, object, holds, write",
                 ));
             }
             Ok(())
         })?;
     }
     Ok(f)
+}
+
+/// `T` of `Option<Box<T>>`.
+fn boxed_inner(t: &Type) -> Option<Type> {
+    fn only_arg(t: &Type, outer: &str) -> Option<Type> {
+        let Type::Path(tp) = t else { return None };
+        let seg = tp.path.segments.last()?;
+        if seg.ident != outer {
+            return None;
+        }
+        let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+            return None;
+        };
+        match args.args.first()? {
+            syn::GenericArgument::Type(inner) if args.args.len() == 1 => Some(inner.clone()),
+            _ => None,
+        }
+    }
+    only_arg(&only_arg(t, "Option")?, "Box")
 }
 
 fn type_key(t: &Type) -> String {
@@ -489,6 +515,9 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         let flags = quote!(#e::PropertyFlags::empty() #(.union(#flags))*);
         let index = quote!(#base_count #(+ #count)*);
 
+        if a.lazy && !a.group {
+            return Err(Error::new(ident.span(), "`lazy` is for a `group`"));
+        }
         if a.group {
             if a.enumeration.is_some() {
                 return Err(Error::new(
@@ -516,14 +545,39 @@ fn derive(input: &DeriveInput) -> Result<TokenStream2> {
             }
             let get = format_ident!("__qml_group_{}", ident);
             let get_mut = format_ident!("__qml_group_mut_{}", ident);
-            accessors.push(quote! {
-                fn #get(o: &dyn #e::QmlObject) -> &dyn #e::QmlObject {
-                    &#p::downcast::<#ty>(o).#ident
-                }
-                fn #get_mut(o: &mut dyn #e::QmlObject) -> &mut dyn #e::QmlObject {
-                    &mut #p::downcast_mut::<#ty>(o).#ident
-                }
-            });
+            let fty = if a.lazy {
+                let inner = boxed_inner(fty).ok_or_else(|| {
+                    Error::new(fty.span(), "a `lazy` group is an `Option<Box<T>>` field")
+                })?;
+                accessors.push(quote! {
+                    fn #get(o: &dyn #e::QmlObject) -> &dyn #e::QmlObject {
+                        static UNSET: ::std::sync::OnceLock<#inner> = ::std::sync::OnceLock::new();
+                        match &#p::downcast::<#ty>(o).#ident {
+                            ::std::option::Option::Some(g) => &**g,
+                            ::std::option::Option::None => {
+                                UNSET.get_or_init(<#inner as ::std::default::Default>::default)
+                            }
+                        }
+                    }
+                    fn #get_mut(o: &mut dyn #e::QmlObject) -> &mut dyn #e::QmlObject {
+                        &mut **#p::downcast_mut::<#ty>(o).#ident.get_or_insert_with(
+                            ::std::default::Default::default,
+                        )
+                    }
+                });
+                inner
+            } else {
+                accessors.push(quote! {
+                    fn #get(o: &dyn #e::QmlObject) -> &dyn #e::QmlObject {
+                        &#p::downcast::<#ty>(o).#ident
+                    }
+                    fn #get_mut(o: &mut dyn #e::QmlObject) -> &mut dyn #e::QmlObject {
+                        &mut #p::downcast_mut::<#ty>(o).#ident
+                    }
+                });
+                fty.clone()
+            };
+            let fty = &fty;
             builder.push(quote! {
                 .group(#name, <#fty as #e::QmlType>::static_meta(), #flags, #get, #get_mut)
             });
