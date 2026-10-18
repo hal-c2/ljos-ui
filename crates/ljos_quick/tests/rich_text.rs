@@ -359,12 +359,17 @@ Item {
 
     // No colour, no rectangle: nothing transparent is painted, and what is
     // no colour is not looked up anywhere.
-    for name in ["none", "block"] {
-        let any = ops(&s, item(name))
-            .iter()
-            .any(|op| matches!(op, DrawOp::Rect { .. }));
-        assert!(!any, "{name}");
-    }
+    let any = ops(&s, item("none"))
+        .iter()
+        .any(|op| matches!(op, DrawOp::Rect { .. }));
+    assert!(!any);
+    // A paragraph's colour is the paragraph's: across the document, as
+    // high as its lines.
+    let block = fills(&s, item("block"), RED);
+    assert_eq!(block.len(), 1);
+    let width = num(&e, item("block"), "width");
+    assert_eq!((block[0].x0, block[0].x1), (0.0, width));
+    assert_eq!((block[0].y0, block[0].y1), (0.0, line));
     // A style costs no room.
     let (w, h) = implicit(&e, item("two"));
     assert_eq!(h, line);

@@ -22,6 +22,9 @@ pub(crate) struct Ctx {
     pub(crate) kind: Option<BlockKind>,
     /// The bullet or number the first block inside gets.
     pub(crate) marker: Option<Arc<str>>,
+    /// The colour behind the blocks inside, unless a box further in has
+    /// its own.
+    pub(crate) background: Option<Arc<str>>,
     /// A list item: blocks inside take their marker from it, never from an
     /// item further out.
     pub(crate) item: bool,
@@ -96,6 +99,9 @@ impl Flow {
             ctx.any = true;
             block.align = ctx.align.or(block.align);
             inherited = ctx.kind.or(inherited);
+            if ctx.background.is_some() {
+                block.background.clone_from(&ctx.background);
+            }
         }
         if let Some(item) = self.ctxs.iter_mut().rev().find(|c| c.item) {
             block.marker = item.marker.take();

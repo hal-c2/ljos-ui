@@ -16,9 +16,9 @@
 //!
 //! Paragraph margins, indents and list markers are laid out as a rich
 //! `Text` lays them out ([`edit_blocks`]). What is read-only here: tables
-//! are read as their cells' text and are not written back as tables. A
-//! part's background colour is painted behind its line as a rich `Text`
-//! paints it.
+//! are read as their cells' text and are not written back as tables. The
+//! background colours of a part of the text and of a paragraph are
+//! painted as a rich `Text` paints them, and a paragraph's is written back.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -74,6 +74,8 @@ pub(crate) struct RichEdit {
     colors: Option<Arc<Vec<Option<Rgba>>>>,
     /// The colour behind each run, by the run's index.
     backgrounds: Option<Arc<Vec<Option<Rgba>>>>,
+    /// The colour behind each paragraph, by the paragraph's index.
+    block_backgrounds: Option<Arc<Vec<Option<Rgba>>>>,
 }
 
 impl std::fmt::Debug for RichEdit {
@@ -199,6 +201,7 @@ pub(crate) fn assign(s: &mut State, format: Option<TextFormat>, source: &str, fo
         pressed: None,
         colors: None,
         backgrounds: None,
+        block_backgrounds: None,
     });
     s.layout = None;
 }
@@ -355,6 +358,7 @@ fn changed(s: &mut State) {
         r.dirty = true;
         r.colors = None;
         r.backgrounds = None;
+        r.block_backgrounds = None;
     }
     s.layout = None;
 }
@@ -611,6 +615,26 @@ pub(crate) fn run_backgrounds(s: &mut State) -> Option<Arc<Vec<Option<Rgba>>>> {
     r.backgrounds.clone()
 }
 
+/// The colour behind each paragraph of rich text, when one has one.
+pub(crate) fn block_backgrounds(s: &mut State) -> Option<Arc<Vec<Option<Rgba>>>> {
+    let r = s.rich.as_mut()?;
+    if r.block_backgrounds.is_none() {
+        let backgrounds: Vec<_> = r.doc.blocks().iter().map(|b| block_background(b)).collect();
+        r.block_backgrounds = Some(Arc::new(backgrounds));
+    }
+    r.block_backgrounds
+        .clone()
+        .filter(|b| b.iter().any(Option::is_some))
+}
+
+fn block_background(b: &BlockFormat) -> Option<Rgba> {
+    b.background
+        .as_deref()
+        .and_then(editor_css_color)
+        .filter(|c| c.a != 0)
+        .map(to_rgba)
+}
+
 /// Where the pictures of the images are drawn, in the item.
 pub(crate) fn placed_images(s: &State) -> Vec<(ImageHandle, kurbo::Rect)> {
     let (Some(r), Some(layout)) = (s.rich.as_ref(), s.layout.as_ref()) else {
@@ -657,6 +681,7 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
             && b.indent == 0.0
             && b.indent_right == 0.0
             && b.marker.is_none()
+            && block_background(b).is_none()
     };
     if blocks.iter().all(|b| plain(b)) {
         return None;

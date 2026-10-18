@@ -318,6 +318,9 @@ pub struct Block {
     pub indent_right: f32,
     /// The bullet or number of a list item, drawn in the indent.
     pub marker: Option<Arc<str>>,
+    /// A colour filled behind the block's lines across the document, as
+    /// written; nothing resolves it here.
+    pub background: Option<Arc<str>>,
     /// An alignment the document asked for; none follows the item's.
     pub align: Option<HAlign>,
     pub table: Option<Table>,
@@ -342,6 +345,7 @@ impl PartialEq for Block {
             && self.spans == other.spans
             && self.images == other.images
             && self.marker == other.marker
+            && self.background == other.background
             && self.table == other.table
     }
 }
@@ -358,6 +362,7 @@ impl Block {
             indent: 0.0,
             indent_right: 0.0,
             marker: None,
+            background: None,
             align: None,
             table: None,
             tight_above: false,
@@ -387,6 +392,7 @@ impl Block {
                 self.indent_right.to_bits(),
             ],
             &self.marker,
+            &self.background,
             self.align,
             &self.table,
             self.tight_above,

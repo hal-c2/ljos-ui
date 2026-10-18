@@ -286,6 +286,9 @@ pub(crate) struct Geometry {
     pub line_x: Vec<f64>,
     /// The top of the first line.
     pub top: f64,
+    /// The left edge and the right edge of the document in a multi-line
+    /// editor: inside the padding, as wide as the item or as the text.
+    pub doc_x: (f64, f64),
 }
 
 /// The layout the state holds, laying the text out when it has none for
@@ -448,6 +451,7 @@ pub(crate) fn relayout(
         } else {
             inputs.width - left - right
         };
+        geo.doc_x = (left, left + avail.max(0.0));
         // A paragraph of rich text may have an alignment of its own.
         let held = st.borrow();
         let aligns = super::rich::block_aligns(&held);

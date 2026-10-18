@@ -28,8 +28,9 @@
 //! when it saves rich text are read too, so that what it wrote reads back:
 //! `font-weight`, `font-style`, `font-size` (pixels, points or a keyword)
 //! and the first family of `font-family`. Every other property is left
-//! out, and so is the background of a block or a table cell, which Qt
-//! paints across the block.
+//! out. The background of a block is the block's (filled across the
+//! document behind its lines), not its letters'; that of a table cell is
+//! left out.
 
 use std::sync::Arc;
 
@@ -379,8 +380,9 @@ impl Parser<'_> {
             apply_style(open, css);
             if open.boxed {
                 open.empty = css.contains("-qt-paragraph-type:empty");
+                let in_table = self.table.is_some();
                 if let Some(ctx) = self.flow.innermost_mut() {
-                    apply_box_style(ctx, css);
+                    apply_box_style(ctx, css, !in_table);
                 }
             }
         }
@@ -797,12 +799,25 @@ fn apply_style(open: &mut Open, css: &str) {
 
 /// The margins of a box (`margin-top` and its kin, in pixels), which an
 /// editor writes for every paragraph. The `margin` shorthand is not read.
-fn apply_box_style(ctx: &mut Ctx, css: &str) {
+/// With `background`, a colour behind the box too.
+fn apply_box_style(ctx: &mut Ctx, css: &str, background: bool) {
     let css = without_comments(css);
     for declaration in css.split(';') {
         let Some((name, value)) = declaration.split_once(':') else {
             continue;
         };
+        let name_lower = name.trim().to_ascii_lowercase();
+        if background && matches!(name_lower.as_str(), "background-color" | "background") {
+            let value = important(value.trim());
+            // Of the shorthand only a colour on its own is understood.
+            if !value.is_empty()
+                && !(name_lower == "background"
+                    && value.contains(|c: char| c.is_ascii_whitespace()))
+            {
+                ctx.background = Some(Arc::from(value));
+            }
+            continue;
+        }
         if name.trim().eq_ignore_ascii_case("-qt-list-indent") {
             if let Ok(levels) = value.trim().parse::<u8>() {
                 ctx.indent = 40.0 * f32::from(levels.min(50));
@@ -1403,18 +1418,23 @@ mod tests {
 
     #[test]
     fn a_background_is_of_text_and_not_of_a_block() {
-        // A block's background would fill the block; that is not drawn, so
-        // it is not kept as the background of the letters either.
+        // A block's background fills the block, so it is the block's and
+        // not its letters'. A table cell's is left out.
         for tag in ["p", "div", "li", "h1", "td"] {
             let source = match tag {
                 "td" => "<table><tr><td style=\"background-color: red; color: blue\">a</td></tr></table>".to_owned(),
                 "li" => "<ul><li style=\"background-color: red; color: blue\">a</li></ul>".to_owned(),
+                // Text right in a `div` goes on past its end, in a block
+                // that is not the div's.
+                "div" => "<div style=\"background-color: red; color: blue\"><p>a</p></div>".to_owned(),
                 _ => format!("<{tag} style=\"background-color: red; color: blue\">a</{tag}>"),
             };
             for block in parse(&source) {
                 for span in &block.spans {
                     assert_eq!(span.style.background, None, "{tag}");
                 }
+                let expected = (tag != "td").then_some("red");
+                assert_eq!(block.background.as_deref(), expected, "{tag}");
             }
         }
         let p = styled("<p style=\"color: blue\">a</p>");

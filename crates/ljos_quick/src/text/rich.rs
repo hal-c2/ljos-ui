@@ -591,6 +591,28 @@ pub(crate) fn paint(
         align: h_align(t.h_align),
     };
     let lines = s.doc.lines(&view);
+    // Measured on Qt 6.11: the colour behind a paragraph fills it from its
+    // first line's top to its last line's bottom, across the whole width
+    // of the document and not its margins.
+    let mut block: Option<(&Block, Rgba, f64, f64)> = None;
+    let mut fill_block = |(_, color, top, bottom): (&Block, Rgba, f64, f64)| {
+        out.fill_rect(kurbo::Rect::new(0.0, top, view.width, bottom), color);
+    };
+    for placed in lines.iter().filter(|p| !p.marker) {
+        let top = placed.y + placed.line.top + down.y;
+        let bottom = top + placed.line.height;
+        match &mut block {
+            Some((b, _, _, end)) if std::ptr::eq(*b, placed.block) => *end = bottom,
+            _ => {
+                block.take().map(&mut fill_block);
+                let color = placed.block.background.as_deref().and_then(css_color);
+                block = color
+                    .filter(|c| c.a != 0)
+                    .map(|c| (placed.block, to_rgba(c), top, bottom));
+            }
+        }
+    }
+    block.take().map(&mut fill_block);
     // Measured on Qt 6.11: the colour behind a part of the text fills that
     // part of its line from the line's top to its bottom, whatever size the
     // part itself is set in.

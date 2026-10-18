@@ -1,5 +1,5 @@
-//! What an editor paints: the backgrounds a program highlighted stretches
-//! with, the selection behind the text, the text in the colours a program
+//! What an editor paints: the backgrounds of rich text's paragraphs and
+//! parts, those a program highlighted stretches with, the selection behind the text, the text in the colours a program
 //! gave it with the selected part in its own colour, a line under what an
 //! input method is composing, and the cursor.
 //!
@@ -40,6 +40,8 @@ pub struct EditorPaint {
     run_colors: Option<Arc<Vec<Option<Rgba>>>>,
     /// The colour behind each run of rich text, by the same index.
     run_backgrounds: Option<Arc<Vec<Option<Rgba>>>>,
+    /// The colour behind each paragraph of rich text, by its index.
+    block_backgrounds: Option<Arc<Vec<Option<Rgba>>>>,
     /// The pictures of rich text's images, where they are drawn.
     images: Vec<(ImageHandle, kurbo::Rect)>,
     /// The left, top, right and bottom padding the text is clipped to,
@@ -94,6 +96,7 @@ impl EditorPaint {
         let highlighted = highlight::lines(&st);
         let run_colors = super::rich::run_colors(&mut st.borrow_mut());
         let run_backgrounds = super::rich::run_backgrounds(&mut st.borrow_mut());
+        let block_backgrounds = super::rich::block_backgrounds(&mut st.borrow_mut());
         let s = st.borrow();
         let images = super::rich::placed_images(&s);
         let selection = s.model.selection();
@@ -109,6 +112,7 @@ impl EditorPaint {
             highlighted,
             run_colors,
             run_backgrounds,
+            block_backgrounds,
             images,
             clip_inset,
         }
@@ -176,6 +180,37 @@ impl EditorPaint {
         }
     }
 
+    /// The colours behind paragraphs of rich text. Measured on Qt 6.11, as
+    /// for a rich `Text`: a paragraph's colour fills it from its first
+    /// line's top to its last line's bottom, across the document and not
+    /// the room between paragraphs.
+    fn paint_block_backgrounds(&self, layout: &EditLayout, out: &mut DisplayListBuilder) {
+        let Some(backgrounds) = &self.block_backgrounds else {
+            return;
+        };
+        let (x0, x1) = self.geo.doc_x;
+        for (index, block) in layout.blocks.iter().enumerate() {
+            let Some(color) = backgrounds.get(index).copied().flatten() else {
+                continue;
+            };
+            let end = layout
+                .blocks
+                .get(index + 1)
+                .map_or(layout.lines.len(), |b| b.first_line);
+            let (Some(first), Some(last)) = (
+                layout.lines.get(block.first_line),
+                end.checked_sub(1).and_then(|i| layout.lines.get(i)),
+            ) else {
+                continue;
+            };
+            let top = self.geo.top;
+            out.fill_rect(
+                kurbo::Rect::new(x0, top + first.top, x1, top + last.top + last.height),
+                color,
+            );
+        }
+    }
+
     fn line_x(&self, line: usize) -> f64 {
         self.geo.line_x.get(line).copied().unwrap_or(0.0)
     }
@@ -190,6 +225,7 @@ impl EditorPaint {
             return;
         };
         let top = self.geo.top;
+        self.paint_block_backgrounds(layout, out);
         self.paint_run_backgrounds(layout, out);
         // A highlighted background is behind the selection, which is what
         // the user is doing now.

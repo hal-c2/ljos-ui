@@ -83,6 +83,8 @@ pub struct BlockFormat {
     pub indent_right: f32,
     /// The bullet or number of a list item.
     pub marker: Option<Arc<str>>,
+    /// The colour behind the paragraph, as written.
+    pub background: Option<Arc<str>>,
     pub align: Option<HAlign>,
 }
 
@@ -95,6 +97,7 @@ impl Default for BlockFormat {
             indent: 0.0,
             indent_right: 0.0,
             marker: None,
+            background: None,
             align: None,
         }
     }
@@ -109,6 +112,7 @@ impl BlockFormat {
             indent: block.indent,
             indent_right: block.indent_right,
             marker: block.marker.clone(),
+            background: block.background.clone(),
             align: block.align,
         }
     }
@@ -213,7 +217,9 @@ impl RichText {
         };
         let plain = Arc::new(CharFormat::default());
         for (bi, block) in blocks.iter().enumerate() {
-            let bf = Arc::new(BlockFormat::of(block));
+            let mut bf = BlockFormat::of(block);
+            bf.background = bf.background.as_deref().and_then(resolve);
+            let bf = Arc::new(bf);
             if bi == 0 {
                 out.blocks[0] = Arc::clone(&bf);
             } else {
@@ -653,7 +659,7 @@ impl RichText {
             let _ = write!(
                 out,
                 " style=\"{}margin-top:{}px; margin-bottom:{}px; margin-left:{}px; \
-                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;\">",
+                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}\">",
                 if empty {
                     "-qt-paragraph-type:empty; "
                 } else {
@@ -663,6 +669,11 @@ impl RichText {
                 num(block.margin_bottom),
                 num(if in_list { 0.0 } else { block.indent }),
                 num(block.indent_right),
+                block
+                    .background
+                    .as_deref()
+                    .map(|c| format!(" background-color:{c};"))
+                    .unwrap_or_default(),
             );
             if fragment && index == 0 {
                 out.push_str("<!--StartFragment-->");
