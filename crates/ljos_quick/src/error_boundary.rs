@@ -267,6 +267,10 @@ impl Boundary for Behaviour {
             Err(err) => Err(Fault::Startup(format!("fallback: {err}"))),
         }
     }
+
+    fn failed(&self, e: &Engine, me: ObjectId) -> bool {
+        failed(e, me)
+    }
 }
 
 fn with_run<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Run) -> R) -> Option<R> {

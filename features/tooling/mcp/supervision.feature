@@ -7,11 +7,12 @@
 Feature: The supervision tree and the faults from the inspector
   Erlang's observer shows an application's supervision tree: which
   supervisor restarts what, and how often it may. An agent or the
-  `ljos observe` window sees a Ljós application's tree the same way: the
-  boundaries that have had a fault, each under the one around it, with
-  the restarts it allows within how long and the ones it has used. With
-  them come the last faults of every kind, each with where it happened
-  and what took it: a boundary, the application, or only the log.
+  `ljos observe` window sees a Ljós application's tree the same way:
+  every boundary from when it is made, each under the one around it, with
+  the restarts it allows within how long and the ones it has used, and
+  whether it gave up. With them come the last faults of every kind, each
+  with where it happened and what took it: a boundary, the application,
+  or only the log.
 
   Background:
     Given the QML:
@@ -33,6 +34,11 @@ Feature: The supervision tree and the faults from the inspector
             }
           }
         }
+        ErrorBoundary {
+          objectName: "lone"
+          maxRestarts: 0
+          Item { objectName: "alone" }
+        }
       }
       """
     And the inspector is connected
@@ -44,12 +50,32 @@ Feature: The supervision tree and the faults from the inspector
         """json
         {"kind": "supervisor"}
         """
-      Then the answer's "/processes" has 4 entries
+      Then the answer's "/processes" has 7 entries
       And the answer's "/processes/0/name" is "app"
       And the answer's "/processes/0/depth" is 0
       And the answer's "/processes/1/name" is "ui"
       And the answer's "/processes/1/depth" is 1
       And the answer's "/processes/1/strategy" is "one_for_one"
+      And the answer's "/processes/5/name" is "services"
+      And the answer's "/processes/5/depth" is 1
+
+    Scenario: A boundary is in the tree before its first fault
+      When the agent calls the tool "app_processes" with:
+        """json
+        {"kind": "supervisor"}
+        """
+      Then the answer's "/processes/2/name" is "ErrorBoundary \"outer\""
+      And the answer's "/processes/2/depth" is 2
+      And the answer's "/processes/2/restarts" is 0
+      And the answer's "/processes/2/state" is "running"
+      And the answer's "/processes/2/content" is "running"
+      And the answer's "/processes/3/name" is "ErrorBoundary \"inner\""
+      And the answer's "/processes/3/depth" is 3
+      And the answer's "/processes/3/max_restarts" is 2
+      And the answer's "/processes/3/within_ms" is 1000
+      And the answer's "/processes/3/restarts" is 0
+      And the answer's "/processes/4/name" is "ErrorBoundary \"lone\""
+      And the answer's "/processes/4/depth" is 2
 
     Scenario: An application that never faulted lists no faults
       When the agent calls the tool "app_processes" with:
@@ -64,7 +90,7 @@ Feature: The supervision tree and the faults from the inspector
         """json
         {"kind": "supervisor"}
         """
-      Then the answer's "/processes" has 6 entries
+      Then the answer's "/processes" has 7 entries
       And the answer's "/processes/2/name" is "ErrorBoundary \"outer\""
       And the answer's "/processes/2/depth" is 2
       And the answer's "/processes/2/restarts" is 0
@@ -84,9 +110,21 @@ Feature: The supervision tree and the faults from the inspector
         """json
         {"kind": "supervisor"}
         """
-      Then the answer's "/processes" has 5 entries
+      Then the answer's "/processes" has 6 entries
       And the answer's "/processes/2/name" is "ErrorBoundary \"outer\""
       And the answer's "/processes/2/content" is "running"
+      And the answer's "/processes/3/name" is "ErrorBoundary \"lone\""
+
+    Scenario: A boundary with none around it that gave up stays down
+      When a native handler of "alone" panics with "solo"
+      And the agent calls the tool "app_processes" with:
+        """json
+        {"kind": "supervisor"}
+        """
+      Then the answer's "/processes" has 7 entries
+      And the answer's "/processes/4/name" is "ErrorBoundary \"lone\""
+      And the answer's "/processes/4/state" is "down"
+      And the answer's "/processes/4/content" is "stopped"
 
   Rule: Each fault says where it happened and what took it
 

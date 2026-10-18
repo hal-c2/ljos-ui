@@ -9,8 +9,8 @@
 //!
 //! - It finds the boundary around the object a fault happened in.
 //! - It keeps the supervisor tree of §9.4 for them
-//!   ([`ljos_runtime::SupervisorTree`]): each boundary that has had a
-//!   fault is a supervisor with one child, its content. A boundary inside
+//!   ([`ljos_runtime::SupervisorTree`]): each boundary is a supervisor
+//!   with one child, its content. A boundary inside
 //!   another's content is linked to that content, so when it gives up (its
 //!   restart intensity is exceeded) the fault is the outer boundary's, and
 //!   when the outer content is made again it is gone with it. A boundary
@@ -20,8 +20,10 @@
 //!   to.
 //!
 //! Supervisors are made at a boundary's first fault, not when the boundary
-//! is made: an application that never faults has a tree of the four
-//! standard supervisors, or none at all.
+//! is made: an application that never faults keeps no tree. Tools still
+//! see every boundary ([`Engine::supervisors`]): the ones with no
+//! supervisor yet are found in the object store when asked, so making a
+//! boundary costs nothing more.
 //!
 //! An exception in a handler is not a fault of a boundary unless the
 //! boundary asks ([`BoundaryConfig::catch_exceptions`]): Qt logs it and
@@ -29,7 +31,7 @@
 
 use std::any::Any;
 use std::cell::{OnceCell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use ljos_runtime::{
@@ -81,6 +83,12 @@ pub trait Boundary {
     /// fallback). An error is one more exit of the content: it is retried
     /// only as often as the intensity allows.
     fn start(&self, engine: &Engine, boundary: ObjectId) -> Result<(), Fault>;
+
+    /// Whether the boundary shows a fault in its content's place. Tools
+    /// read it for a boundary that has no supervisor to ask.
+    fn failed(&self, _engine: &Engine, _boundary: ObjectId) -> bool {
+        false
+    }
 }
 
 /// The owner of everything no boundary is around.
@@ -103,6 +111,9 @@ pub(crate) struct Boundaries {
     types: RefCell<Vec<(&'static MetaObject, Rc<dyn Boundary>)>>,
     tree: OnceCell<(SupervisorTree<Engine>, StandardSups)>,
     nodes: RefCell<HashMap<ObjectId, Node>>,
+    /// Boundaries still alive whose supervisor gave up and was dropped:
+    /// tools show them down until they fault again or recover.
+    gave_up: RefCell<HashSet<ObjectId>>,
     procs: RefCell<Option<Procs>>,
     /// The fault being delivered, for the content that is stopped for it.
     current: RefCell<Option<FaultReport>>,
@@ -266,6 +277,7 @@ impl Engine {
                 sup
             }
             None => {
+                b.gave_up.borrow_mut().remove(&boundary);
                 let name = format!("boundary {boundary:?}");
                 let outer = above
                     .split_first()
@@ -399,8 +411,11 @@ impl Engine {
                 (!alive || !kept).then_some((*o, n.sup, kept))
             })
             .collect();
-        for (o, sup, _) in gone {
+        for (o, sup, kept) in gone {
             b.nodes.borrow_mut().remove(&o);
+            if !kept && !self.doomed(o) {
+                b.gave_up.borrow_mut().insert(o);
+            }
             // Nothing starts or stops here: the content went with its
             // object.
             tree.remove_supervisor(sup);
@@ -420,53 +435,174 @@ impl Engine {
     }
 
     /// The supervisor tree, each supervisor before what it supervises,
-    /// for tools. A boundary is in it from its first fault until it gives
-    /// up or goes; before any, the tree has the standard supervisors.
+    /// for tools. Every live boundary is in it under the one around it,
+    /// in document order, from when it is made: one that has not had a
+    /// fault, or whose supervisor gave up, is described from its
+    /// configuration, as its supervisor would be.
     pub fn supervisors(&self) -> Vec<SupervisorInfo> {
         let b = &self.inner.faults.boundaries;
-        let (tree, _) = b.tree();
-        let of: HashMap<SupId, (ObjectId, ChildId)> = b
-            .nodes
-            .borrow()
-            .iter()
-            .map(|(o, n)| (n.sup, (*o, n.content)))
-            .collect();
+        let (tree, sups) = b.tree();
+        let forest = self.boundary_forest();
         let mut out = Vec::new();
         let mut stack = vec![(tree.root(), 0)];
         while let Some((sup, depth)) = stack.pop() {
             let Some((strategy, intensity)) = tree.policy(sup) else {
                 continue;
             };
-            let children = tree.children(sup);
-            let boundary = of.get(&sup).copied();
-            let content = boundary.and_then(|(_, content)| {
-                children
-                    .iter()
-                    .find(|c| c.id == content)
-                    .map(|c| (c.restart, c.running))
-            });
             out.push(SupervisorInfo {
                 depth,
                 name: tree.name(sup).map(|n| n.to_string()).unwrap_or_default(),
-                boundary: boundary.map(|(o, _)| o),
+                boundary: None,
                 strategy,
                 intensity,
                 restarts: tree.recent_restarts(sup),
                 down: tree.is_down(sup),
-                content,
+                content: None,
             });
-            // Pushed last first, so that they come out in start order; a
-            // boundary inside another's content is under that content.
+            if sup == sups.ui {
+                self.push_boundaries(&forest, None, depth + 1, &mut out);
+            }
+            // Pushed last first, so that they come out in start order.
+            // The boundaries' own supervisors are in the forest.
             let mut below = Vec::new();
-            for c in &children {
+            for c in &tree.children(sup) {
                 match c.supervisor {
-                    Some(s) => below.push(s),
-                    None => below.extend(tree.linked(c.id)),
+                    Some(s) if !self.is_boundary_sup(s) => below.push(s),
+                    _ => {}
                 }
             }
             stack.extend(below.into_iter().rev().map(|s| (s, depth + 1)));
         }
         out
+    }
+
+    fn is_boundary_sup(&self, sup: SupId) -> bool {
+        let b = &self.inner.faults.boundaries;
+        b.nodes.borrow().values().any(|n| n.sup == sup)
+    }
+
+    /// The live boundaries, each with the one around it, in document
+    /// order. Found by a walk of the store: only tools ask, and an
+    /// application with no boundary type registered is not walked.
+    fn boundary_forest(&self) -> Vec<(ObjectId, Option<ObjectId>)> {
+        let b = &self.inner.faults.boundaries;
+        let mut found: Vec<(ObjectId, Vec<usize>, ObjectId)> = {
+            let types = b.types.borrow();
+            if types.is_empty() {
+                return Vec::new();
+            }
+            let store = self.inner.store.borrow();
+            store
+                .objects
+                .iter()
+                .filter(|(_, h)| {
+                    !h.flags.contains(ObjectFlags::PENDING_DELETE)
+                        && types.iter().any(|(m, _)| h.meta.inherits(m))
+                })
+                .map(|(id, _)| {
+                    // Its place: the index among its owner's children at
+                    // each level, from the root down.
+                    let mut path = Vec::new();
+                    let mut cur = id;
+                    for _ in 0..MAX_DEPTH {
+                        let Some(owner) = store.objects.get(cur).and_then(|h| h.owner) else {
+                            break;
+                        };
+                        let at = store.objects.get(owner).map_or(0, |o| {
+                            o.children.iter().position(|c| *c == cur).unwrap_or(0)
+                        });
+                        path.push(at);
+                        cur = owner;
+                    }
+                    path.reverse();
+                    (cur, path, id)
+                })
+                .collect()
+        };
+        found.retain(|(_, _, o)| !self.doomed(*o));
+        found.sort();
+        b.gave_up.borrow_mut().retain(|o| self.is_alive(*o));
+        found
+            .into_iter()
+            .map(|(_, _, o)| (o, self.boundary_of(o)))
+            .collect()
+    }
+
+    /// Pushes the boundaries `forest` has under `parent`, and theirs.
+    fn push_boundaries(
+        &self,
+        forest: &[(ObjectId, Option<ObjectId>)],
+        parent: Option<ObjectId>,
+        depth: usize,
+        out: &mut Vec<SupervisorInfo>,
+    ) {
+        // Ownership has no cycles, so neither does the forest; the depth
+        // bound is for a bug that makes one.
+        if depth > MAX_DEPTH {
+            return;
+        }
+        for &(o, around) in forest {
+            if around != parent {
+                continue;
+            }
+            if let Some(info) = self.boundary_info(o, depth) {
+                out.push(info);
+                self.push_boundaries(forest, Some(o), depth + 1, out);
+            }
+        }
+    }
+
+    /// One boundary as its supervisor, or as it would be.
+    fn boundary_info(&self, boundary: ObjectId, depth: usize) -> Option<SupervisorInfo> {
+        let b = &self.inner.faults.boundaries;
+        let (tree, _) = b.tree();
+        let behaviour = self.boundary_behaviour(boundary)?;
+        let failed = || self.untrack(|| behaviour.failed(self, boundary));
+        let node = b
+            .nodes
+            .borrow()
+            .get(&boundary)
+            .map(|n| (n.sup, n.content))
+            .filter(|(s, _)| tree.contains(*s));
+        let cfg = self.untrack(|| behaviour.config(self, boundary));
+        let name = format!("boundary {boundary:?}");
+        Some(
+            match node.and_then(|(sup, c)| Some((sup, c, tree.policy(sup)?))) {
+                Some((sup, content, (strategy, intensity))) => {
+                    let content = tree
+                        .children(sup)
+                        .iter()
+                        .find(|c| c.id == content)
+                        .map(|c| (c.restart, c.running))
+                        // A temporary content is forgotten when it exits.
+                        .unwrap_or((cfg.restart, !failed()));
+                    SupervisorInfo {
+                        depth,
+                        name: tree.name(sup).map_or(name, |n| n.to_string()),
+                        boundary: Some(boundary),
+                        strategy,
+                        intensity,
+                        restarts: tree.recent_restarts(sup),
+                        down: tree.is_down(sup),
+                        content: Some(content),
+                    }
+                }
+                None => {
+                    let failed = failed();
+                    let down = failed && b.gave_up.borrow().contains(&boundary);
+                    SupervisorInfo {
+                        depth,
+                        name,
+                        boundary: Some(boundary),
+                        strategy: Strategy::OneForOne,
+                        intensity: cfg.intensity,
+                        restarts: 0,
+                        down,
+                        content: Some((cfg.restart, !failed)),
+                    }
+                }
+            },
+        )
     }
 
     /// The supervisor tree as text, for tools; `None` before the first

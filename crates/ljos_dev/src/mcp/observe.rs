@@ -45,8 +45,8 @@ pub enum ProcessKind {
     /// The bounded inboxes threads reach the UI thread through. Read
     /// without the UI thread, so a stuck one still shows its inbox.
     Mailbox,
-    /// The supervision tree: the standard supervisors and each boundary
-    /// that has had a fault, under the one around it.
+    /// The supervision tree: the standard supervisors and every live
+    /// boundary, under the one around it.
     Supervisor,
     /// The last faults (at most 32), in `faults`: where each happened and
     /// what took it.

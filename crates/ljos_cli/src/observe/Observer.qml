@@ -2699,8 +2699,8 @@ ApplicationWindow {
 
                 // ----- Supervision -------------------------------------
                 // Erlang's observer shows an application's supervisors:
-                // here the boundaries that have had a fault, each under
-                // the one around it, and the faults each took.
+                // here every boundary, each under the one around it, and
+                // the faults each took.
                 ColumnLayout {
                     id: supervision
                     spacing: 10
@@ -2789,7 +2789,7 @@ ApplicationWindow {
                         Text { text: "Supervision"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Text {
                             Layout.leftMargin: 12
-                            text: "a boundary is shown once it has had a fault · the last 32 faults"
+                            text: "every boundary, from when it is made · the last 32 faults"
                             color: theme.subtle
                         }
                     }

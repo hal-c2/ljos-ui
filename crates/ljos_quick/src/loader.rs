@@ -258,6 +258,11 @@ impl Boundary for LoaderBoundary {
         // Never asked of a temporary child.
         Ok(())
     }
+
+    fn failed(&self, e: &Engine, me: ObjectId) -> bool {
+        e.untrack(|| e.read(me, Loader::STATUS.index).to_number())
+            == f64::from(loader_status::ERROR)
+    }
 }
 
 /// Called when `child` is appended to `parent`'s `data`: a Loader with a
