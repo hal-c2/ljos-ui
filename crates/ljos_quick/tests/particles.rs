@@ -344,3 +344,31 @@ fn a_wake_that_catches_up_on_steps_places_the_pictures_once() {
     frame(&mut s, &e);
     assert_eq!(ljos_quick::particles_painted(&e) - before, 50);
 }
+
+#[test]
+fn a_warm_up_reads_what_the_emitters_and_affectors_say_once() {
+    // Fifteen seconds ahead are some nine hundred steps, with no script
+    // between them to change what the emitter or the affector says.
+    let e = engine();
+    let clock = Arc::new(VirtualClock::new());
+    e.set_clock(Rc::new(clock.clone()));
+    let root = load(
+        &e,
+        r#"
+    import QtQuick
+    import QtQuick.Particles
+    ParticleSystem {
+      objectName: "system"
+      width: 300; height: 300
+      Emitter { emitRate: 20; lifeSpan: 2000; startTime: 15000; width: 10; height: 10 }
+      Wander { xVariance: 10; pace: 10 }
+    }"#,
+    );
+    let before = ljos_quick::particle_reads(&e);
+    clock.set(Time::from_millis(16));
+    e.advance_timers(Time::from_millis(16));
+    let reads = ljos_quick::particle_reads(&e) - before;
+    assert!(!get(&e, find(&e, root, "system"), "empty").to_boolean());
+    // The warm-up's affectors and emitter, then the step's own.
+    assert!(reads <= 4, "{reads} reads");
+}

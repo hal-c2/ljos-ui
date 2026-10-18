@@ -674,6 +674,8 @@ struct Registry {
     painters: RefCell<Vec<ObjectId>>,
     /// How many particles painters have looked at.
     painted: Cell<u64>,
+    /// How many times steps read what an emitter or the affectors say.
+    said: Cell<u64>,
     affectors: RefCell<Vec<ObjectId>>,
     shown: RefCell<FxHashMap<ObjectId, Shown>>,
     /// Each `MaskShape` picture's alpha, by URL, with the picture it was
@@ -783,6 +785,18 @@ fn enliven(e: &Engine, em: ObjectId) {
 #[doc(hidden)]
 pub fn emitters_looked_at(engine: &Engine) -> u64 {
     registry(engine).looked.get()
+}
+
+/// How many times the particle steps of this engine read what an emitter
+/// or a system's affectors say.
+#[doc(hidden)]
+pub fn particle_reads(engine: &Engine) -> u64 {
+    registry(engine).said.get()
+}
+
+fn said(e: &Engine) {
+    let reg = registry(e);
+    reg.said.set(reg.said.get() + 1);
 }
 
 fn painters_of(e: &Engine, sys: ObjectId) -> Vec<ObjectId> {
@@ -994,6 +1008,7 @@ fn mask_of(e: &Engine, url: String, img: ImageHandle) -> Rc<Mask> {
 }
 
 fn read_emitter(e: &Engine, sys: ObjectId, em: ObjectId) -> EmitterSpec {
+    said(e);
     let (so, eo) = (origin(e, sys), origin(e, em));
     let num = |p: PropIndex| number(e, em, p);
     let size = num(Emitter::SIZE.index);
@@ -1038,6 +1053,7 @@ struct Reach {
 }
 
 fn read_reaches(e: &Engine, sys: ObjectId) -> Vec<Reach> {
+    said(e);
     let so = origin(e, sys);
     affectors_of(e, sys)
         .into_iter()
@@ -1072,7 +1088,7 @@ fn read_reaches(e: &Engine, sys: ObjectId) -> Vec<Reach> {
 type Burst = (u32, Option<(f64, f64)>);
 
 /// Advances the live particles one step, then lets the emitters add theirs.
-fn step_particles(run: &mut SystemRun, reaches: &[Reach], emitters: &[(EmitterSpec, Vec<Burst>)]) {
+fn step_particles(run: &mut SystemRun, reaches: &[Reach], emitters: &[(&EmitterSpec, Vec<Burst>)]) {
     run.groups = None;
     let SystemRun { rng, particles, .. } = run;
     particles.retain_mut(|p| {
@@ -1138,15 +1154,23 @@ fn birth(spec: &EmitterSpec, at: Option<(f64, f64)>, rng: &mut Rng) -> Particle 
     }
 }
 
-/// One step of the whole system.
-fn advance_system(e: &Engine, sys: ObjectId) {
+/// What the emitters and affectors said, kept across the steps of a
+/// warm-up: no script runs between them, so nothing they say can change.
+#[derive(Default)]
+struct Said {
+    reaches: Option<Vec<Reach>>,
+    emitters: Vec<EmitterSpec>,
+}
+
+/// One step of the whole system, reading what was not said yet.
+fn advance_system(e: &Engine, sys: ObjectId, said: &mut Said) {
     let Some(run) = system_run(e, sys) else {
         return;
     };
-    let reaches = read_reaches(e, sys);
+    let reaches = said.reaches.get_or_insert_with(|| read_reaches(e, sys));
     // Only an emitter that gives birth has the rest of what it says read.
     let mut spent = Vec::new();
-    let emitters: Vec<(EmitterSpec, Vec<Burst>)> = lively_of(e, sys)
+    let owed: Vec<(ObjectId, Vec<Burst>)> = lively_of(e, sys)
         .into_iter()
         .filter_map(|em| {
             let run = emitter_run(e, em)?;
@@ -1171,7 +1195,7 @@ fn advance_system(e: &Engine, sys: ObjectId) {
                 }
                 owed
             };
-            (!owed.is_empty()).then(|| (read_emitter(e, sys, em), owed))
+            (!owed.is_empty()).then_some((em, owed))
         })
         .collect();
     if !spent.is_empty() {
@@ -1180,7 +1204,16 @@ fn advance_system(e: &Engine, sys: ObjectId) {
             .borrow_mut()
             .retain(|em| !spent.contains(em));
     }
-    step_particles(&mut run.borrow_mut(), &reaches, &emitters);
+    for (em, _) in &owed {
+        if !said.emitters.iter().any(|s| s.id == *em) {
+            said.emitters.push(read_emitter(e, sys, *em));
+        }
+    }
+    let emitters: Vec<(&EmitterSpec, Vec<Burst>)> = owed
+        .into_iter()
+        .filter_map(|(em, owed)| Some((said.emitters.iter().find(|s| s.id == em)?, owed)))
+        .collect();
+    step_particles(&mut run.borrow_mut(), reaches, &emitters);
 }
 
 /// The timer fired: simulate, draw, and say whether the system is empty.
@@ -1199,11 +1232,12 @@ fn step_system(e: &Engine, sys: ObjectId) {
             .map(|em| number(e, em, Emitter::START_TIME.index))
             .fold(0.0, f64::max);
         let steps = ((ms / 1000.0 / STEP) as usize).min(WARM_STEPS_MAX);
+        let mut said = Said::default();
         for _ in 0..steps {
-            advance_system(e, sys);
+            advance_system(e, sys, &mut said);
         }
     }
-    advance_system(e, sys);
+    advance_system(e, sys, &mut Said::default());
     finish(e, sys);
 }
 

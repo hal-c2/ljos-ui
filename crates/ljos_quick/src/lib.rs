@@ -40,7 +40,7 @@ mod paint_item;
 pub mod palette;
 mod particles;
 #[doc(hidden)]
-pub use particles::{emitters_looked_at, particles_painted};
+pub use particles::{emitters_looked_at, particle_reads, particles_painted};
 mod pointer_item;
 mod positioners;
 mod press_and_hold;
