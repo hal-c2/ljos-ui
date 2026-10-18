@@ -1,6 +1,7 @@
 // The Fusion style of Ljós (CLEAN_ROOM.md), from the sizes and colours a
-// running Qt reports.
+// running Qt reports. The ring is a drawing of our own.
 import QtQuick
+import QtQuick.Shapes
 import QtQuick.Templates as T
 
 T.BusyIndicator {
@@ -13,12 +14,15 @@ T.BusyIndicator {
 
     padding: 6
 
-    // A ring of dots, darker towards the head, that turns while it runs and
-    // fades out when it stops. The turn stops with the fade, and whenever
-    // the indicator is not shown, so a stopped one costs nothing.
+    // A ring in the text's colour, solid at its head and fading to nothing
+    // round to its tail, that turns while it runs and fades out when it
+    // stops. The turn stops with the fade, and whenever the indicator is
+    // not shown, so a stopped one costs nothing.
     contentItem: Component {
         Item {
             id: ring
+
+            property color color: control.palette.windowText
 
             implicitWidth: 28
             implicitHeight: 28
@@ -29,20 +33,40 @@ T.BusyIndicator {
                 NumberAnimation { duration: 250 }
             }
 
-            Repeater {
-                model: 8
+            Shape {
+                anchors.fill: parent
 
-                Rectangle {
-                    readonly property real turn: index / 8 * 2 * Math.PI
-                    readonly property real reach: (ring.width - width) / 2
+                ShapePath {
+                    id: band
 
-                    x: reach + Math.sin(turn) * reach
-                    y: reach - Math.cos(turn) * reach
-                    width: ring.width / 6
-                    height: width
-                    radius: width / 2
-                    color: control.palette.dark
-                    opacity: 0.25 + 0.75 * index / 7
+                    readonly property real outer: Math.min(ring.width, ring.height) / 2
+                    // DECISION: an eighth of the ring's width, as qml6 shows.
+                    readonly property real inner: outer * 3 / 4
+
+                    strokeWidth: -1
+                    fillRule: ShapePath.OddEvenFill
+                    fillGradient: ConicalGradient {
+                        centerX: ring.width / 2
+                        centerY: ring.height / 2
+                        angle: 90
+                        GradientStop { position: 0; color: ring.color }
+                        GradientStop { position: 1; color: Qt.rgba(ring.color.r, ring.color.g, ring.color.b, 0) }
+                    }
+
+                    PathAngleArc {
+                        centerX: ring.width / 2
+                        centerY: ring.height / 2
+                        radiusX: band.outer
+                        radiusY: band.outer
+                        sweepAngle: 360
+                    }
+                    PathAngleArc {
+                        centerX: ring.width / 2
+                        centerY: ring.height / 2
+                        radiusX: band.inner
+                        radiusY: band.inner
+                        sweepAngle: 360
+                    }
                 }
             }
 
