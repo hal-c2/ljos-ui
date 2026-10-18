@@ -199,7 +199,8 @@ pub struct FindArgs {
 pub struct InspectArgs {
     /// A reference (`e12`) or a locator that matches exactly one item.
     /// `#objectName` and `id=qmlId` also reach items the outline does not
-    /// list (not exposed, or not shown).
+    /// list (not exposed, or not shown), such as the window; `#name` falls
+    /// back to the id when no object has that name.
     pub target: String,
     /// List every property, including those still at their default.
     #[serde(default)]

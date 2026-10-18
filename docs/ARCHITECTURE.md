@@ -1382,7 +1382,7 @@ Static resources carry long `ttlMs` values.
 **Addressing**
 - **Refs** (`e9`) are short and valid for one snapshot epoch. A stale ref returns `stale_ref`, or resolves itself when its role and name are still unique.
 - **Locators** are durable across hot reload (section 12.1 identity rules). They use the widely known Playwright role-selector subset:
-  - `role=button[name="Delete"]`, `text=…`, `#objectName` and `ref=e9`;
+  - `role=button[name="Delete"]`, `text=…`, `#objectName` and `ref=e9`; `#name` names the object with that QML id when no object has that object name, so a window written with only an `id` is named as `#app`;
   - chaining with `>>`, plus `nth=` and `name~=regex`.
 - **Handles** (`@12.3`) name any object, item or not, as `app_objects` and `app_processes` give them: the place and generation of its key, so no table is kept, the handle holds for as long as the object lives and is `stale_ref` once it is gone. Every tool that takes a target takes one.
 

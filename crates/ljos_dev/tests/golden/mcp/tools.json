@@ -172,7 +172,7 @@
           ]
         },
         "target": {
-          "description": "A reference (`e12`) or a locator that matches exactly one item.\n`#objectName` and `id=qmlId` also reach items the outline does not\nlist (not exposed, or not shown).",
+          "description": "A reference (`e12`) or a locator that matches exactly one item.\n`#objectName` and `id=qmlId` also reach items the outline does not\nlist (not exposed, or not shown), such as the window; `#name` falls\nback to the id when no object has that name.",
           "type": "string"
         }
       },

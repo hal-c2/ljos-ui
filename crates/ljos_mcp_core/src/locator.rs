@@ -452,6 +452,20 @@ impl Locator {
         }
     }
 
+    /// `id=name`, when the locator is nothing but `#name`: what is meant
+    /// by `#app` when no object is named `app` is the object whose QML id
+    /// that is, as `#` names an element by its id on the web, and a window
+    /// written with an id seldom has an `objectName` too.
+    pub fn id_instead(&self) -> Option<Locator> {
+        let name = self.as_object_name()?;
+        self.source.trim_start().starts_with('#').then(|| Locator {
+            source: format!("id={name}"),
+            steps: vec![Step::Match(vec![StepFilter::Id(NameTest::Exact(
+                name.to_string(),
+            ))])],
+        })
+    }
+
     /// The QML `id`, when the locator is nothing but `id=name`.
     pub fn as_id(&self) -> Option<&str> {
         match self.steps.as_slice() {

@@ -1775,3 +1775,20 @@ fn app_objects_hands_out_handles_that_every_tool_takes() {
     assert_eq!(below[0]["handle"], rows[0]["handle"]);
     assert!(below.iter().all(|r| r["depth"].as_u64() <= Some(1)));
 }
+
+#[test]
+fn a_hash_names_the_object_with_that_id_when_none_has_that_object_name() {
+    let mut app = app_with(
+        "import QtQuick\n\
+         Item { id: top; width: 100; height: 50; property int count: 3\n\
+           Item { id: inner; property int n: 1 }\n\
+           Item { objectName: \"inner\"; property int n: 2 } }\n",
+        InspectorConfig::default(),
+    );
+    let root = app.call("app_inspect", json!({ "target": "#top" }));
+    assert_eq!(root.structured["id"], "top");
+    assert_eq!(property(&root.structured, "count")["value"], "3");
+    // The object name comes first: what named an object goes on naming it.
+    let named = app.call("app_inspect", json!({ "target": "#inner" }));
+    assert_eq!(property(&named.structured, "n")["value"], "2");
+}

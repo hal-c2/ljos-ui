@@ -238,7 +238,15 @@ impl Look<'_> {
             [one] => Ok(Target::Node(*one)),
             [] => match self.unlisted(&locator)?.as_slice() {
                 [one] => Ok(Target::Unlisted(*one)),
-                [] => Err(no_match(what)),
+                [] => match locator.id_instead() {
+                    Some(by_id) => self
+                        .resolve(by_id.source(), tool)
+                        .map_err(|e| match e.code {
+                            ErrorCode::NotFound => no_match(what),
+                            _ => e,
+                        }),
+                    None => Err(no_match(what)),
+                },
                 many => Err(SurfaceError::new(
                     ErrorCode::Ambiguous,
                     format!(
@@ -255,7 +263,8 @@ impl Look<'_> {
     }
 
     /// Objects the outline does not list that a plain `#objectName` or
-    /// `id=` locator names.
+    /// `id=` locator names (for `#` with no such name, see
+    /// `Locator::id_instead`).
     fn unlisted(&self, locator: &Locator) -> Result<Vec<ObjectId>, SurfaceError> {
         let engine = self.engine;
         if let Some(name) = locator.as_object_name() {
@@ -311,7 +320,12 @@ impl Look<'_> {
 
     pub(crate) fn find(&mut self, args: &FindArgs, per_copy: usize) -> Answer {
         let locator = Locator::parse(&args.locator)?;
-        let found = locator.find(&self.capture.tree, self.refs)?;
+        let mut found = locator.find(&self.capture.tree, self.refs)?;
+        if found.is_empty()
+            && let Some(by_id) = locator.id_instead()
+        {
+            found = by_id.find(&self.capture.tree, self.refs)?;
+        }
         let total = found.len();
         let limit = args.limit.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES);
         let mut rows: Vec<(Value, String)> = Vec::new();
