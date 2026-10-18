@@ -771,7 +771,11 @@ impl Migrate for ItemView {
                 auto_index: st.auto_index.get(),
                 cleared: st.cleared.get(),
             },
-            anchor: st.last_main.get().map(|(main, _)| (main, st.anchor.get())),
+            anchor: st.last_main.get().map(|(main, _)| state::CarriedAnchor {
+                main,
+                anchor: st.anchor.get(),
+                avg: st.avg.get(),
+            }),
         })
     }
 

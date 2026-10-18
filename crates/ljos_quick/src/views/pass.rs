@@ -874,12 +874,17 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         // A place that was declared is where the view starts.
         st.positioned.set(true);
     }
-    if let Some((main, anchor)) = st.carried_anchor.take()
+    if let Some(c) = st.carried_anchor.take()
         && first_pass
-        && main == g.main
+        && c.main == g.main
         && st.positioned.get()
     {
-        st.anchor.set(anchor);
+        st.anchor.set(c.anchor);
+        // The first pass may come before the view has its length, and
+        // then only the current row is made.
+        if st.avg.get() <= 0.0 {
+            st.avg.set(c.avg);
+        }
     }
     let to_begin = !st.positioned.get() && over.is_none();
     let v0 = match over {

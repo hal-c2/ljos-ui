@@ -275,11 +275,8 @@ pub(crate) struct ViewState {
     /// row, for the first pass to take instead of what the carried
     /// `currentIndex` would say.
     pub carried: Cell<Option<CarriedCurrent>>,
-    /// The anchor of the view this one replaced at a reload, and the
-    /// axis it is along: a carried place is measured from rows the new
-    /// view has not measured yet, and the row that started there still
-    /// does.
-    pub carried_anchor: Cell<Option<(usize, (usize, f64))>>,
+    /// Where the view this one replaced at a reload was along its rows.
+    pub carried_anchor: Cell<Option<CarriedAnchor>>,
     pub last_main: Cell<Option<(usize, bool)>>,
     /// The bounds the content last had: a pass that changes them brings
     /// the content inside.
@@ -331,7 +328,20 @@ pub struct CarriedCurrent {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CarriedView {
     pub(crate) current: CarriedCurrent,
-    pub(crate) anchor: Option<(usize, (usize, f64))>,
+    pub(crate) anchor: Option<CarriedAnchor>,
+}
+
+/// The anchor of a view a reload replaced, and the axis it is along: a
+/// carried place is measured from rows the new view has not measured
+/// yet, and the row that started there still does. With it, how long its
+/// rows were: what the rows the new view has not made yet are taken to
+/// be, so that the ones before the anchor take their room and the place
+/// is inside the content.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CarriedAnchor {
+    pub(crate) main: usize,
+    pub(crate) anchor: (usize, f64),
+    pub(crate) avg: f64,
 }
 
 impl Default for ViewState {
