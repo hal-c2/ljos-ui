@@ -2099,3 +2099,53 @@ The first object's extra cost fell from 4.3 M to 1.1 M Ir. Compiling the first f
 file is most of what is left. Tested by
 `a_type_s_first_object_builds_only_what_its_type_adds` (ljos_engine). As a side effect,
 `for…in` over an object lists a type's own members before its base's. Qt lists them base first.
+
+### Number slots, whole frames on a device and shared image pages (2026-10-18)
+
+Callgrind, prof build, GPU sandbox, main-thread instructions per frame. "All threads" is now
+counted per thread in one process: a 10 s window after 4 s of warm-up (`ljos-scratch` `thr.py`).
+Qt's `qml6` runs in the same sandbox. "Before" is c914a854.
+
+| Main thread, a frame | Before | Number slots | Whole on a device | Shared pages |
+|---|---:|---:|---:|---:|
+| animations | 1.312 M | 1.288 M | 1.176 M | 1.172 M |
+| clocks | 445 k | | 441 k | 396 k |
+
+| All threads, M/s | Ljós before | Ljós after | Qt |
+|---|---:|---:|---:|
+| animations, GPU | 69.8 | 63.2 | 43.6 |
+| clocks, GPU | 23.1 | 20.3 | 14.8 |
+| samegame, GPU | 14.9 | 14.7 | 15.8 |
+| thermostat, todolist, GPU | 0 | 0 | 0 |
+| animations, llvmpipe | 472 | 454 | 1 041 |
+| clocks, llvmpipe | 163 | 153 | 924 |
+| samegame, llvmpipe | 239 | 241 | 1 592 |
+
+At 60 fps the GPU animations frame is now 1.05 M on all threads, against Qt's 0.73 M.
+
+- **Where the other threads are.** In Ljós, painting, uploading, tessellating and handing frames to
+  the compositor all run on the main thread. The only other threads are egui-winit's clipboard
+  (0.5 M/s) and Mesa's shader compiler (0.15 M/s). Qt spends 25 M/s on its GUI thread, 15 M/s on
+  its render thread and 3 M/s on driver and Wayland threads.
+- **Number slots.** An animation resolves its target's number field once and then writes straight
+  through it, with no property lookup, `Value` or generic setter. Notify and change semantics are
+  unchanged. A write is now about 590 instructions, 384 of them the graph's write, which is mostly
+  marking the observers.
+- **Whole frames on a device.** Drawing damage in parts cuts each shape crossing a part, clears
+  each part and hands the compositor a list of rectangles. On a GPU that costs the CPU more than
+  the pixels it spares: a damaged swap cost 166 k against 99 k for a whole one, plus 103 k of
+  clipping. A frame whose damage covers half the window or more is now drawn whole. Software
+  rasterisers keep the ¾ threshold.
+- **Shared image pages.** Each texture a frame samples was a separate draw, and the driver
+  re-checks its state for every draw at the swap. Clocks drew each dial, hand and centre
+  separately, and the swap was 38 % of its frame. Clamped pictures up to 256 px a side now share
+  512² pages, so the swap fell from 172 k to 132 k per frame.
+- **Clocks' swing.** Measured in one process, clocks holds 22–25 M/s in every 2 s window, and five
+  runs spread over 22.7–23.7 M/s. The third came from the old method, which subtracts the
+  start-ups of two processes; those moved by 8 M with machine load (load average 17–39).
+- **Callgrind and the hardware counter.** Callgrind counts each `rep stos` step, so radeonsi's
+  memset in the swap shows as about 65 k per frame. The hardware counter does not see it, so it
+  reads about 55 k per frame lower than callgrind × fps.
+
+**What is left.** In clocks, the timers are 59 k per frame: 710 JS `timeChanged` calls at 47 k
+each. Typed write handles for bindings that write a native property are not done yet.
