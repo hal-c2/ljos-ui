@@ -1,8 +1,8 @@
 # Benchmarks: Ljós and Qt side by side
 
-`mise run bench` measures the same QML applications on Ljós (`ljos run`, release build) and on Qt
-(`qml6`). Each application runs inside a limit on memory and CPU. Every number is read from outside
-the application:
+`mise run bench` measures the same QML applications on Ljós (`ljos run`, release or `dist` build)
+and on Qt (`qml6`). Each application runs inside a limit on memory and CPU. Every number is read
+from outside the application:
 
 - **Memory and CPU:** the cgroup's own accounting and `/proc`.
 - **First frame:** when the compositor maps the window.
@@ -55,6 +55,9 @@ done
 ```
 
 **Where it runs.** The task builds the release `ljos` first. Nothing compiles while it measures.
+`BENCH_PROFILE=dist mise run bench …` builds and measures the `dist` profile instead, the binary
+that is handed out (one LLVM module; the build takes about 15 minutes). The report's notes name
+the profile.
 Apps draw on the headless sway of `scripts/cua-sandbox.sh` as Wayland clients, never on the user's
 display:
 
