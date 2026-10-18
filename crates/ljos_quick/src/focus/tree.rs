@@ -9,7 +9,7 @@
 //! ([`apply_all`]); nothing walks the item tree when focus moves.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{Engine, EngineError, LogLevel, NodeId, ObjectId, PropIndex, Value, WriteKind};
@@ -60,8 +60,10 @@ struct State {
     /// Focus items that claimed their scope while being created. Objects
     /// complete last-made-first, and Qt gives the scope to the first
     /// `focus: true` in the document; until the creation is over an
-    /// earlier item still takes the scope from a later one.
-    unsettled: HashSet<ObjectId>,
+    /// earlier item still takes the scope from a later one. `true` for an
+    /// item another's completion made (a Repeater's): it asked after the
+    /// items written around that one, as in Qt, whatever its place.
+    unsettled: HashMap<ObjectId, bool>,
     /// Items claimed a scope and nothing was applied yet.
     pending: bool,
     applying: bool,
@@ -277,16 +279,22 @@ fn focus_written(engine: &Engine, obj: ObjectId, want: bool) {
 /// An item made with `focus: true` joins its scope. A scope that has a
 /// focus item keeps it and the newcomer's `focus` is cleared, as when an
 /// item is moved into the scope; among items of one creation the first in
-/// the document counts as having joined first.
+/// the document counts as having joined first, and an item another's
+/// completion made after them all.
 fn initial_claim(engine: &Engine, obj: ObjectId) {
     let t = tree(engine);
+    let late = engine.completing_depth() > 1;
     let key = scope_of(engine, obj);
     let holder = t.state.borrow().sub.get(&key).copied();
     let holder = holder.filter(|h| engine.is_alive(*h));
     let takes = match holder {
         None => true,
         Some(h) if h == obj => return,
-        Some(h) => t.state.borrow().unsettled.contains(&h) && precedes(engine, obj, h),
+        Some(h) => match t.state.borrow().unsettled.get(&h) {
+            None => false,
+            Some(&was_late) if was_late != late => was_late,
+            Some(_) => precedes(engine, obj, h),
+        },
     };
     if !takes {
         write_flag(engine, obj, Item::FOCUS.index, false);
@@ -294,7 +302,7 @@ fn initial_claim(engine: &Engine, obj: ObjectId) {
     }
     claim(engine, &t, obj);
     let mut st = t.state.borrow_mut();
-    st.unsettled.insert(obj);
+    st.unsettled.insert(obj, late);
     // Applied at the next frame, not now: an item completing later may
     // still take the scope, and active focus must not visit both.
     if !st.pending {
@@ -383,7 +391,7 @@ pub(crate) fn forget(engine: &Engine, obj: ObjectId) {
     let t = tree(engine);
     let known = {
         let mut st = t.state.borrow_mut();
-        let mut known = st.unsettled.remove(&obj);
+        let mut known = st.unsettled.remove(&obj).is_some();
         if let Some(key) = st.home.remove(&obj) {
             known = true;
             if st.sub.get(&key) == Some(&obj) {

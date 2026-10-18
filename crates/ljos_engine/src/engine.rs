@@ -87,6 +87,8 @@ pub(crate) struct Inner {
     /// handlers and `untrack`. A read creates a node only when this is
     /// non-zero, because only then is there a reader to depend on it.
     pub(crate) tracking: Cell<u32>,
+    /// Depth of completion hooks on the stack.
+    completing: Cell<u32>,
     pub(crate) log: RefCell<LogState>,
     /// The JS host, made on first use.
     pub(crate) js: RefCell<Option<Rc<crate::js::JsState>>>,
@@ -271,6 +273,7 @@ impl Engine {
             root_context,
             registry: RefCell::new(Registry::new()),
             tracking: Cell::new(0),
+            completing: Cell::new(0),
             log: RefCell::new(LogState::default()),
             js: RefCell::new(None),
             loader: RefCell::new(crate::loader::LoaderState::default()),
@@ -2637,6 +2640,14 @@ impl Engine {
     /// are completed when it is, and [`Engine::create_native`] and
     /// [`Engine::create_by_name`] complete theirs, so calling it on those
     /// does nothing.
+    /// How many objects are completing right now, the one asking
+    /// included: above one, the object asking is made by another's
+    /// completion (a Repeater's item, a Loader's), after everything
+    /// written around that one was set.
+    pub fn completing_depth(&self) -> u32 {
+        self.inner.completing.get()
+    }
+
     pub fn complete(&self, obj: ObjectId) -> Result<(), EngineError> {
         let hooks: SmallVec<[CompleteThunk; 4]> = {
             let mut store = self.inner.store.borrow_mut();
@@ -2657,9 +2668,13 @@ impl Engine {
         let before = self.model_generation(obj);
         let pending = !hooks.is_empty() && before.is_some() && self.object_model(obj).is_none();
         let cx = Cx::new(self, obj);
-        for f in hooks {
-            self.guarded_result(obj, || f(&cx))?;
-        }
+        let depth = &self.inner.completing;
+        depth.set(depth.get() + 1);
+        let run = hooks
+            .into_iter()
+            .try_for_each(|f| self.guarded_result(obj, || f(&cx)));
+        depth.set(depth.get() - 1);
+        run?;
         // A view that named this object before it was complete takes it
         // now, as a plain object unless its hooks made it a model (which
         // told the view already).
