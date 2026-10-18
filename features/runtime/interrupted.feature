@@ -17,7 +17,10 @@ Feature: A handler that never returns is interrupted
         id: root
         objectName: "root"
         property int clicks: 0
+        property int total: sum(clicks)
         function spin() { while (true) { } }
+        function sum(n) { var t = 0; for (var i = 0; i < 10; i++) t += n; return t }
+        function spinReading() { while (true) { try { clicks += 1; total } catch (e) { } } }
         function click() { clicks += 1 }
       }
       """
@@ -29,6 +32,12 @@ Feature: A handler that never returns is interrupted
 
   Scenario: Without a boundary the application has the fault
     When the method "spin" of "root" is called
+    Then the application fault is a "JsInterrupted" matching "interrupted"
+
+  # The interrupt can come while the script is in the binding it reads;
+  # the script is stopped there all the same, and cannot catch it.
+  Scenario: A handler that keeps reading a binding is interrupted too
+    When the method "spinReading" of "root" is called
     Then the application fault is a "JsInterrupted" matching "interrupted"
 
   Scenario: An exception is logged and is not the application's fault

@@ -813,7 +813,9 @@ impl Engine {
             // JavaScript threw at the write: unchecked, the write is
             // refused here too and tier 2 takes over.
             (None, Some(w)) => wrote(w),
-            (None, None) => false,
+            // Tier 2 was cut off by the interrupt that ends the dispatch:
+            // unchecked, not a failure of its own.
+            (None, None) => self.js_interrupted(),
         };
         p.done();
         st.count(|s| {

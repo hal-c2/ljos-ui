@@ -754,6 +754,7 @@ Source: 03 §3.
 
 - **Entry points.** `JsHost::enter(slice, f)` sets the interrupt deadline and then enters the context. `pump_jobs(until)` drains microtasks. `collect_if_idle` runs GC in the Idle lane.
 - **Interrupt granularity** is about every 10k opcodes, roughly 266 µs. Native calls that run long (a huge `JSON.parse`, a regex) are not interruptible. They are chunked or moved to the compute pool.
+- **Nested runs.** JS that a callback runs inside a dispatch (a binding a script reads, a handler a write sets off) shares the dispatch's deadline. When the interrupt lands in it, the dispatch is over: every callback throws an uncatchable `interrupted` as it returns to the script. Otherwise the poll can keep landing in the nested runs while the script around them never stops.
 - **Prototypes.** One prototype per QML type, with `Accessor` getters and setters that call `Graph::read`/`write`. This keeps QuickJS shapes stable.
 - **`#[exotic]` objects** are used only for genuinely dynamic objects: model role objects, `ListModel` element proxies and context-property fallbacks.
 - **Wrappers** are created lazily and cached as `Persistent`. A JS-owned object is destroyed by its finaliser.

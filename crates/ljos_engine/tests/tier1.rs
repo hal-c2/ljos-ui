@@ -1961,3 +1961,33 @@ fn an_array_a_script_changed_is_read_as_it_is_now() {
     );
     assert_eq!(w.compare(w.root, "inner"), Ok(false));
 }
+
+/// The interrupt that ends a runaway handler can come while tier 2 checks
+/// a binding the handler reads: that binding did not throw.
+#[test]
+fn a_check_the_interrupt_cuts_off_is_not_a_difference() {
+    let h = engine();
+    h.engine.set_tier1_check(true);
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    property int clicks: 0
+    property int floor: Math.max(clicks, 1) + Math.max(clicks, 2) + Math.max(clicks, 3) + Math.max(clicks, 4)
+        + Math.max(clicks, 5) + Math.max(clicks, 6) + Math.max(clicks, 7) + Math.max(clicks, 8)
+    function spin() { var n = 0; while (true) { clicks += 1; n += floor } }
+}
+"#,
+    );
+    let _ = h.engine.invoke_by_name(root, "spin", &[]);
+    let warnings = h.warnings();
+    assert!(
+        warnings.iter().any(|w| w.contains("interrupted")),
+        "{warnings:?}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.contains("tier 1 and tier 2 differ")),
+        "{warnings:?}"
+    );
+}

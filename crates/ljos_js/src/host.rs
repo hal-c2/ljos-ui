@@ -67,6 +67,9 @@ pub(crate) struct HostState {
     mapper: RefCell<Option<Rc<SourceMapper>>>,
     text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
+    /// A run nested in this dispatch was interrupted: the dispatch is over,
+    /// and the script that called back is stopped as it gets control back.
+    stopped: Cell<bool>,
     /// JS values held by Rust through [`JsRef`].
     handles: RefCell<FxHashMap<u64, Held>>,
     /// The reference given out for each held JS object, by the object's
@@ -205,6 +208,30 @@ impl<'js> Deref for Scope<'js> {
 impl<'js> Scope<'js> {
     pub fn ctx(&self) -> &Ctx<'js> {
         &self.ctx
+    }
+
+    /// What a host callback gives back to the script that called it. Once a
+    /// run nested in the dispatch has been interrupted, the script is
+    /// interrupted too, uncatchably: QuickJS asks whether to interrupt only
+    /// every so many steps, and that can keep landing in the nested runs
+    /// while the script around them never stops.
+    fn back<T>(&self, r: rquickjs::Result<T>) -> rquickjs::Result<T> {
+        if !self.state.stopped.get() {
+            return r;
+        }
+        if matches!(r, Err(rquickjs::Error::Exception)) {
+            let _ = self.ctx.catch();
+        }
+        let e = Exception::from_message(self.ctx.clone(), "interrupted")?;
+        // SAFETY: both are alive for the call; the flag only marks the
+        // error object, as QuickJS marks the one its own interrupt throws.
+        unsafe {
+            rquickjs::qjs::JS_SetUncatchableError(
+                self.ctx.as_raw().as_ptr(),
+                e.as_value().as_raw(),
+            );
+        }
+        Err(self.ctx.throw(e.into_value()))
     }
 
     /// Calls an exported function. Safe to use from inside a [`HostObjects`]
@@ -1105,6 +1132,7 @@ impl JsHost {
             mapper: RefCell::default(),
             text: RefCell::default(),
             entered: Cell::new(false),
+            stopped: Cell::new(false),
             handles: RefCell::default(),
             by_object: RefCell::default(),
             arrays_by_reference: Cell::new(false),
@@ -1186,6 +1214,7 @@ impl JsHost {
         let guard = EnterGuard(&self.state.entered);
         self.state.drain_handles();
         self.interrupt.fired.set(false);
+        self.state.stopped.set(false);
         let start = Instant::now();
         self.interrupt.deadline.set(Some(start + slice.hard));
 
@@ -1203,6 +1232,7 @@ impl JsHost {
         }));
 
         self.interrupt.deadline.set(None);
+        self.state.stopped.set(false);
         let elapsed = start.elapsed();
         drop(guard);
 
@@ -1251,7 +1281,14 @@ impl JsHost {
             state: self.state.clone(),
         };
         let start = Instant::now();
-        f(&scope).map_err(|e| self.classify(&scope, e, label, start.elapsed()))
+        let fault = match f(&scope) {
+            Ok(v) => return Ok(v),
+            Err(e) => self.classify(&scope, e, label, start.elapsed()),
+        };
+        if matches!(fault, JsFault::JsInterrupted { .. }) {
+            self.state.stopped.set(true);
+        }
+        Err(fault)
     }
 
     fn classify<'js>(
@@ -1532,6 +1569,7 @@ impl JsHost {
         }
         let guard = EnterGuard(&self.state.entered);
         self.interrupt.fired.set(false);
+        self.state.stopped.set(false);
         self.interrupt.deadline.set(Some(until));
         let mut n = 0;
         while Instant::now() < until {
@@ -1551,9 +1589,16 @@ impl JsHost {
             }
         }
         self.interrupt.deadline.set(None);
+        self.state.stopped.set(false);
         drop(guard);
         self.flush_released();
         n
+    }
+
+    /// Whether a run nested in the current dispatch was interrupted, which
+    /// ends the dispatch: what that run did not give is not its own failure.
+    pub fn interrupted(&self) -> bool {
+        self.state.stopped.get()
     }
 
     pub fn has_pending_jobs(&self) -> bool {
@@ -1656,8 +1701,8 @@ fn install_prop<'js>(
           -> rquickjs::Result<Value<'js>> {
         let (scope, host) = callback_scope(&ctx, &st)?;
         let id = this.borrow().id;
-        let out = host.get(&scope, id, prop).map_err(|e| e.into_js(&ctx))?;
-        scope.to_value(&out)
+        let out = host.get(&scope, id, prop).map_err(|e| e.into_js(&ctx));
+        scope.back(out).and_then(|out| scope.to_value(&out))
     };
     if !p.writable {
         return proto.prop(
@@ -1672,7 +1717,7 @@ fn install_prop<'js>(
         let (scope, host) = callback_scope(&ctx, &state)?;
         let id = this.borrow().id;
         let v = scope.script_value(&value)?;
-        host.set(&scope, id, prop, v).map_err(|e| e.into_js(&ctx))
+        scope.back(host.set(&scope, id, prop, v).map_err(|e| e.into_js(&ctx)))
     };
     proto.prop(
         p.name.as_str(),
@@ -1708,8 +1753,10 @@ fn install_signal<'js>(
                     .iter()
                     .map(|a| scope.script_value(a))
                     .collect::<rquickjs::Result<Vec<_>>>()?;
-                host.emit(&scope, id, signal, &argv)
-                    .map_err(|e| e.into_js(&ctx))
+                scope.back(
+                    host.emit(&scope, id, signal, &argv)
+                        .map_err(|e| e.into_js(&ctx)),
+                )
             },
         )?
         .with_name(name.as_str())?;
@@ -1729,7 +1776,7 @@ fn install_signal<'js>(
                     } else {
                         host.disconnect(&scope, id, signal, &argv)
                     };
-                    r.map_err(|e| e.into_js(&ctx))
+                    scope.back(r.map_err(|e| e.into_js(&ctx)))
                 },
             )?
             .with_name(verb)?;
@@ -1764,8 +1811,8 @@ fn make_global<'js>(
                 .iter()
                 .map(|a| scope.from_value(a))
                 .collect::<rquickjs::Result<Vec<_>>>()?;
-            let out = f(&scope, &argv).map_err(|e| e.into_js(&ctx))?;
-            scope.to_value(&out)
+            let out = f(&scope, &argv).map_err(|e| e.into_js(&ctx));
+            scope.back(out).and_then(|out| scope.to_value(&out))
         },
     )?
     .with_name(name)
@@ -1816,8 +1863,8 @@ fn make_method<'js>(
                 .collect::<rquickjs::Result<Vec<_>>>()?;
             let out = host
                 .call(&scope, id, method, &argv)
-                .map_err(|e| e.into_js(&ctx))?;
-            scope.to_value(&out)
+                .map_err(|e| e.into_js(&ctx));
+            scope.back(out).and_then(|out| scope.to_value(&out))
         },
     )?
     .with_name(name)

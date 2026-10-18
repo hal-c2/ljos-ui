@@ -950,11 +950,19 @@ impl Engine {
         let slice = js.slice();
         match js.host.enter_naming(label, what, slice, f) {
             Ok(v) => Some(v),
+            // Nested in a dispatch that is now over: the dispatch is the
+            // fault, and is reported when it unwinds.
+            Err(JsFault::JsInterrupted { .. }) if js.host.interrupted() => None,
             Err(fault) => {
                 self.report_js_fault(&fault);
                 None
             }
         }
+    }
+
+    /// Whether the dispatch running now was interrupted inside a nested run.
+    pub(crate) fn js_interrupted(&self) -> bool {
+        self.js().is_ok_and(|js| js.host.interrupted())
     }
 
     /// Runs JS and gives its failure back, for a caller that reports it
