@@ -733,6 +733,19 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
 /// Writes what the model holds to the properties, lays the text out again
 /// and shows the cursor.
 pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Result<(), EngineError> {
+    let r = publish_unshown(engine, obj, st);
+    show_cursor(engine, st);
+    r
+}
+
+/// `publish` without showing the cursor: the pointer moves it without
+/// starting the blink over, as in Qt, so that pressing again and again
+/// neither holds the cursor on nor stops the blink.
+pub(crate) fn publish_unshown(
+    engine: &Engine,
+    obj: ObjectId,
+    st: &SharedState,
+) -> Result<(), EngineError> {
     let read_only = flag(engine, obj, TextEditor::READ_ONLY.index);
     super::rich::refresh(engine, obj, st);
     let text = text_to_publish(engine, obj, st)?;
@@ -798,7 +811,6 @@ pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Resul
     st.borrow_mut().syncing = false;
     super::highlight::sync_modified(engine, st);
     super::selection::sync(engine, obj, st);
-    show_cursor(engine, st);
     r
 }
 
@@ -971,14 +983,19 @@ fn blink(engine: &Engine, obj: ObjectId) {
     }
 }
 
-/// After the cursor moved or the text changed the cursor is shown, and a
-/// full blink passes before it hides.
+/// After a key moved the cursor or the text changed the cursor is shown,
+/// and a full blink passes before it hides.
 fn show_cursor(engine: &Engine, st: &SharedState) {
-    let timer = {
+    let (timer, epoch) = {
         let mut s = st.borrow_mut();
-        s.blink_on = true;
-        s.blink_timer
+        let was = std::mem::replace(&mut s.blink_on, true);
+        (s.blink_timer, (!was).then_some(s.paint_epoch).flatten())
     };
+    // The picture was taken when the layout changed, before this; only a
+    // cursor that was hidden needs another.
+    if let Some(n) = epoch {
+        bump(engine, n);
+    }
     if let Some(t) = timer.filter(|t| engine.is_alive(*t))
         && engine
             .untrack(|| engine.read(t, Timer::RUNNING.index))

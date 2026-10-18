@@ -7,7 +7,8 @@ use ljos_engine::{Engine, ObjectId, Value};
 use ljos_text::{TextModel, utf16_len};
 
 use super::base::{
-    EditKind, Run, SharedState, TextEditor, check, init_editor, publish, reconcile, state_of,
+    EditKind, Run, SharedState, TextEditor, check, init_editor, publish, publish_unshown,
+    reconcile, state_of,
 };
 use super::clipboard::Clipboard;
 use super::echo_mode;
@@ -48,16 +49,27 @@ pub(crate) fn echo(engine: &Engine, obj: ObjectId, st: &SharedState) -> i32 {
 /// Moves the cursor or changes the selection: `f` does it to the model.
 /// That ends a run of typing, so the next edit is an undo step of its own.
 pub(crate) fn act(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) {
-    let Some(st) = ready(engine, obj) else {
-        return;
-    };
+    if let Some(st) = acted(engine, obj, f) {
+        check(engine, "selection", publish(engine, obj, &st));
+    }
+}
+
+/// `act` for the pointer, which leaves the blink of the cursor as it is.
+pub(crate) fn act_by_pointer(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) {
+    if let Some(st) = acted(engine, obj, f) {
+        check(engine, "selection", publish_unshown(engine, obj, &st));
+    }
+}
+
+fn acted(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) -> Option<SharedState> {
+    let st = ready(engine, obj)?;
     f(&st);
     {
         let mut s = st.borrow_mut();
         s.run = None;
         s.sticky = None;
     }
-    check(engine, "selection", publish(engine, obj, &st));
+    Some(st)
 }
 
 /// How an edit is made.

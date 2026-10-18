@@ -61,7 +61,7 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
         r.pressed = link;
     }
     let extends = selects && ev.modifiers.contains(Modifiers::SHIFT);
-    ops::act(engine, obj, |st| {
+    ops::act_by_pointer(engine, obj, |st| {
         let mut s = st.borrow_mut();
         let s = &mut *s;
         if extends {
@@ -101,7 +101,7 @@ pub(super) fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurb
         return;
     };
     let pos = at_point(&st, at);
-    ops::act(engine, obj, |st| {
+    ops::act_by_pointer(engine, obj, |st| {
         let mut s = st.borrow_mut();
         // From where the press was, each time: a drag that turns round
         // gives back what it had taken.
