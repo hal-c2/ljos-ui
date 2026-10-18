@@ -462,6 +462,39 @@ impl TextModel {
         self.cursor = cursor;
     }
 
+    /// A drag that selects whole words, as `move_cursor_selection` with
+    /// words, except that the moving end takes in a word it only touches:
+    /// the start of the next word or the end of the one before, as a
+    /// multi-line editor does in Qt 6.11.
+    pub fn drag_by_words(&mut self, pos: usize) {
+        let to = self.byte(pos);
+        let anchor = self.anchor;
+        let touched = if to >= anchor {
+            self.words()
+                .find(|w| w.end >= to)
+                .filter(|w| w.start <= to)
+                .map_or(to, |w| w.end)
+        } else {
+            self.words()
+                .take_while(|w| w.start <= to)
+                .last()
+                .filter(|w| w.end >= to)
+                .map_or(to, |w| w.start)
+        };
+        self.move_cursor_selection(pos, true);
+        self.cursor = touched;
+    }
+
+    /// The word of letters and digits the character at `pos` is in, if it
+    /// is in one; a space or a mark of punctuation is in none.
+    pub fn word_of_character(&self, pos: usize) -> Option<Range<usize>> {
+        let at = self.byte(pos);
+        self.runs()
+            .find(|(r, _)| r.end > at)
+            .filter(|(r, class)| r.start <= at && *class == Class::Word)
+            .map(|(r, _)| self.units(r.start)..self.units(r.end))
+    }
+
     // --- editing ------------------------------------------------------
 
     /// How many more UTF-16 units fit once `removed` bytes at `at` are gone.
@@ -1117,6 +1150,33 @@ mod tests {
         m.move_to(9, false);
         m.move_cursor_selection(13, true);
         assert_eq!((m.selection(), m.cursor()), (6..17, 17));
+    }
+
+    #[test]
+    fn a_drag_by_words_takes_in_a_word_it_touches() {
+        let mut m = model("row second line");
+        m.move_to(7, false);
+        m.drag_by_words(11);
+        assert_eq!((m.selection(), m.cursor()), (4..15, 15));
+        m.move_to(7, false);
+        m.drag_by_words(10);
+        assert_eq!((m.selection(), m.cursor()), (4..10, 10));
+        m.move_to(7, false);
+        m.drag_by_words(3);
+        assert_eq!((m.selection(), m.cursor()), (0..10, 0));
+        m.move_to(7, false);
+        m.drag_by_words(4);
+        assert_eq!((m.selection(), m.cursor()), (4..10, 4));
+    }
+
+    #[test]
+    fn a_character_is_in_a_word_of_letters_or_in_none() {
+        let m = model("one, two");
+        assert_eq!(m.word_of_character(1), Some(0..3));
+        assert_eq!(m.word_of_character(3), None);
+        assert_eq!(m.word_of_character(4), None);
+        assert_eq!(m.word_of_character(5), Some(5..8));
+        assert_eq!(m.word_of_character(8), None);
     }
 
     #[test]

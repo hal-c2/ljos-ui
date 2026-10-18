@@ -638,6 +638,26 @@ pub(crate) fn position_at(st: &SharedState, at: kurbo::Point, mode: i32) -> usiz
     s.shown.pos_of(layout.hit_line(line, x, on_character))
 }
 
+/// The position of the character under a point of a multi-line editor, if
+/// there is one. Above the text there is none; below it the last line is
+/// read, as Qt 6.11 does for a drag that selects words.
+pub(crate) fn character_at(st: &SharedState, at: kurbo::Point) -> Option<usize> {
+    let s = st.borrow();
+    let layout = s.layout.as_ref()?;
+    let y = at.y - s.geo.top;
+    if y < 0.0 || layout.lines.is_empty() {
+        return None;
+    }
+    let line = if y >= layout.content_height {
+        layout.lines.len() - 1
+    } else {
+        layout.line_at(y)
+    };
+    let x = at.x - s.geo.line_x.get(line).copied().unwrap_or(0.0);
+    let range = layout.cluster_at(line, x)?;
+    Some(s.shown.pos_of(range.start))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

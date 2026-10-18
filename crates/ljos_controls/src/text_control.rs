@@ -9,6 +9,9 @@
 //! a press that stays for `Qt.styleHints.mousePressAndHoldInterval` is a
 //! press and hold and never reaches the editor. So a long press does not
 //! take the keyboard, which is what `features/controls/text-field.feature` shows of Qt.
+//! A move selects only once it has gone farther sideways than the drag
+//! threshold: a drag straight up or down a TextArea selects nothing,
+//! as `features/text-input/select-past-line-end.feature` shows of Qt.
 
 use std::cell::Cell;
 
@@ -32,6 +35,9 @@ use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 pub(crate) struct FieldState {
     /// The press the field has told of and not yet given to its editor.
     held: Cell<Option<(PointerEvent, kurbo::Point)>>,
+    /// Where the press the editor has landed, until a move has gone
+    /// sideways far enough to select.
+    still: Cell<Option<kurbo::Point>>,
     timer: Cell<Option<ObjectId>>,
 }
 
@@ -168,6 +174,7 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) ->
         return false;
     };
     st.held.set(Some((*ev, at)));
+    st.still.set(Some(at));
     ticker::start(
         engine,
         obj,
@@ -191,11 +198,27 @@ fn held_long(engine: &Engine, obj: ObjectId) {
     }
 }
 
+/// The pointer has not yet gone farther sideways from the press than the
+/// drag threshold since the press landed; past it, it never is again.
+fn still(st: &FieldState, at: kurbo::Point) -> bool {
+    let near = st
+        .still
+        .get()
+        .is_some_and(|from| (at.x - from.x).abs() <= ljos_quick::DRAG_THRESHOLD);
+    if !near {
+        st.still.set(None);
+    }
+    near
+}
+
 fn moved(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     let Some(st) = state(engine, obj) else {
         return;
     };
     hand_over(engine, obj, &st);
+    if still(&st, at) {
+        return;
+    }
     (text_input::pointer_hooks().moved)(engine, obj, ev, at);
 }
 
@@ -204,9 +227,7 @@ fn release(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) 
         return;
     };
     let hooks = text_input::pointer_hooks();
-    if let Some(from) = hand_over(engine, obj, &st)
-        && from != at
-    {
+    if hand_over(engine, obj, &st).is_some() && !still(&st, at) {
         // Released somewhere else with no move in between: it selected
         // on its way all the same.
         (hooks.moved)(engine, obj, ev, at);
@@ -219,6 +240,7 @@ fn release(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo::Point) 
 fn cancel(engine: &Engine, obj: ObjectId) {
     if let Some(st) = state(engine, obj) {
         st.held.set(None);
+        st.still.set(None);
         ticker::stop(engine, &st.timer);
     }
     (text_input::pointer_hooks().cancel)(engine, obj);

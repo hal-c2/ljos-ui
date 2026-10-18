@@ -7,7 +7,7 @@ use ljos_render::kurbo;
 use ljos_runtime::Time;
 
 use super::base::{SharedState, TextEditor};
-use super::layout::position_at;
+use super::layout::{character_at, position_at};
 use super::ops;
 use super::{cursor_position, selection_mode};
 use crate::flickable;
@@ -25,8 +25,20 @@ pub(crate) struct PointerState {
     /// the word a double click selected. `None` while it selects nothing
     /// (`selectByMouse: false`).
     anchor: Option<(usize, usize)>,
-    /// The drag selects whole words.
-    words: bool,
+    how: Drag,
+}
+
+/// How a drag selects, measured on Qt 6.11.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Drag {
+    /// To the gap nearest the pointer.
+    #[default]
+    Characters,
+    /// Out to the words at both ends (`mouseSelectionMode: SelectWords`).
+    Words,
+    /// From a double click in a multi-line editor: out to the word of the
+    /// character under the pointer, and nowhere while it is over no word.
+    WordsUnder,
 }
 
 fn flag(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> bool {
@@ -74,8 +86,20 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
             let reach = !s.multi;
             s.model.select_word(reach);
         }
+        let how = if by_words {
+            Drag::Words
+        } else if double && s.multi {
+            Drag::WordsUnder
+        } else {
+            Drag::Characters
+        };
         let base = if extends {
             (s.model.anchor(), s.model.anchor())
+        } else if double && how == Drag::Characters {
+            // A TextInput drags by characters from the start of the word
+            // a double click selected.
+            let start = s.model.selection().start;
+            (start, start)
         } else if double {
             let word = s.model.selection();
             (word.start, word.end)
@@ -87,7 +111,7 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
             // second.
             last: (!double).then_some((ev.time, at)),
             anchor: selects.then_some(base),
-            words: by_words || double,
+            how,
         };
     });
     // A TextEdit that selects keeps the mouse's press, so a Flickable
@@ -109,17 +133,46 @@ pub(super) fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: kurb
     let Some((start, end)) = pointer.anchor else {
         return;
     };
-    let pos = at_point(&st, at);
+    let pos = if pointer.how == Drag::WordsUnder {
+        let found = character_at(&st, at).and_then(|c| st.borrow().model.word_of_character(c));
+        // Over a space, punctuation, past a line's end or above the text
+        // the selection stays as it is.
+        let Some(word) = found else {
+            return;
+        };
+        ops::act_by_pointer(engine, obj, |st| {
+            let mut s = st.borrow_mut();
+            if word.start >= end {
+                s.model.select(start, word.end);
+            } else if word.end <= start {
+                s.model.select(end, word.start);
+            } else {
+                s.model.select(start, end);
+            }
+        });
+        return;
+    } else {
+        at_point(&st, at)
+    };
+    let words = pointer.how == Drag::Words;
+    let multi = st.borrow().multi;
+    let extend = |s: &mut super::base::State| {
+        if words && multi {
+            s.model.drag_by_words(pos);
+        } else {
+            s.model.move_cursor_selection(pos, words);
+        }
+    };
     ops::act_by_pointer(engine, obj, |st| {
         let mut s = st.borrow_mut();
         // From where the press was, each time: a drag that turns round
         // gives back what it had taken.
         if pos > end || (pos >= end && start == end) {
             s.model.select(start, start);
-            s.model.move_cursor_selection(pos, pointer.words);
+            extend(&mut s);
         } else if pos < start {
             s.model.select(end, end);
-            s.model.move_cursor_selection(pos, pointer.words);
+            extend(&mut s);
         } else {
             s.model.select(start, end);
         }
@@ -147,7 +200,7 @@ pub(super) fn cancel(engine: &Engine, obj: ObjectId) {
     if let Some(st) = super::base::state_of(engine, obj) {
         let mut s = st.borrow_mut();
         s.pointer.anchor = None;
-        s.pointer.words = false;
+        s.pointer.how = Drag::Characters;
         if let Some(r) = s.rich.as_mut() {
             r.pressed = None;
         }

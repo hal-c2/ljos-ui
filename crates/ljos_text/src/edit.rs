@@ -247,6 +247,17 @@ impl EditLayout {
         found.min(line.end.max(line.range.start))
     }
 
+    /// The bytes of the character under `x` on a line, if there is one: a
+    /// character holds its right edge and not its left. Past either end of
+    /// the line, and on its line break, there is none.
+    pub fn cluster_at(&self, index: usize, x: f64) -> Option<Range<usize>> {
+        let line = self.lines.get(index)?;
+        line.clusters
+            .iter()
+            .find(|c| c.x0 < x && x <= c.x1 && c.range.start < line.end)
+            .map(|c| c.range.clone())
+    }
+
     /// The position at a point. Above the text is its start, below its end.
     pub fn hit(&self, x: f64, y: f64, on_character: bool) -> usize {
         if y < 0.0 {
