@@ -103,8 +103,9 @@ impl Engine {
             root = outer;
         }
         let owner = (!script.library).then_some(root.context);
-        // Beside the file that imports it, as its own `path` says.
-        let url = crate::loader::join_url(&inst.file.url, &script.path);
+        // Beside the file that imports it, as its own `path` says. Only a
+        // script made now needs it: this runs at every call that reads it.
+        let url = || crate::loader::join_url(&inst.file.url, &script.path);
         match self.made_script(s, &inst.file.ir.scripts, script, &url, owner) {
             Some(held) => JsValue::Handle(held),
             None => JsValue::Undefined,
@@ -118,7 +119,7 @@ impl Engine {
         s: &Scope<'_>,
         all: &[Script],
         script: &Script,
-        url: &str,
+        url: &dyn Fn() -> String,
         owner: Option<ContextId>,
     ) -> Option<JsRef> {
         let objects = self.extension::<ScriptObjects>();
@@ -128,7 +129,7 @@ impl Engine {
             Some(h) => Some(h.clone()),
             None => None,
         };
-        let object = self.evaluate_script(s, all, script, url, &mut Vec::new())?;
+        let object = self.evaluate_script(s, all, script, &url(), &mut Vec::new())?;
         let starts = self
             .reload_tracking()
             .then(|| Rc::new(script_starts(s, &object)));
@@ -197,7 +198,9 @@ impl Engine {
             let at = crate::loader::join_url(url, &import.path);
             let made = match all.iter().find(|sc| sc.key == import.key) {
                 _ if chain.contains(&import.key) => None,
-                Some(inner) if inner.library => self.made_script(s, all, inner, &at, None),
+                Some(inner) if inner.library => {
+                    self.made_script(s, all, inner, &|| at.clone(), None)
+                }
                 Some(inner) => self.evaluate_script(s, all, inner, &at, chain),
                 None => None,
             };
