@@ -517,6 +517,37 @@ fn qml_declared_types_extend_natives() {
 }
 
 #[test]
+fn a_derived_type_shares_what_it_inherits_and_copies_what_it_changes() {
+    let base = Rectangle::static_meta();
+    let card = MetaBuilder::new("Card")
+        .base(base)
+        .require("radius")
+        .property("note", TypeTag::String, PropertyFlags::empty(), true)
+        .build_shared();
+    let radius = base.property_index("radius").unwrap().0 as usize;
+    let width = base.property_index("width").unwrap().0 as usize;
+    assert!(std::sync::Arc::ptr_eq(
+        &card.properties[width],
+        &base.properties[width]
+    ));
+    assert!(std::sync::Arc::ptr_eq(&card.signals[0], &base.signals[0]));
+    // Requiring an inherited property changes this type's copy only.
+    assert!(
+        card.properties[radius]
+            .flags
+            .contains(PropertyFlags::REQUIRED)
+    );
+    assert!(
+        !base.properties[radius]
+            .flags
+            .contains(PropertyFlags::REQUIRED)
+    );
+    // Nothing is kept for growing once the type is built.
+    assert_eq!(card.properties.capacity(), card.properties.len());
+    assert_eq!(card.signals.capacity(), card.signals.len());
+}
+
+#[test]
 fn destroyed_objects_read_as_null() {
     let e = engine();
     let card = qml_type();

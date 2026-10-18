@@ -14,6 +14,8 @@
 //! `Rectangle::RADIUS` be a compile-time constant and lets the compiler
 //! resolve `final` properties to an index ahead of time. Grouped properties
 //! are flattened too: `border.width` is an entry of `Rectangle` itself.
+//! A property or signal entry is shared, behind an `Arc`, by every type
+//! that inherits it; a type copies the entry only to change it.
 //! Name lookup goes through a per-meta map, built the first time a name is
 //! looked up.
 
@@ -347,9 +349,12 @@ pub struct MetaObject {
     pub native: Option<TypeId>,
     /// What declared the type, for a type declared in QML.
     pub declared: Option<Declared>,
-    /// All properties, inherited first.
-    pub properties: Vec<PropertyInfo>,
-    pub signals: Vec<SignalInfo>,
+    /// All properties, inherited first. Each is shared with the types
+    /// that inherit it, so a derived type copies a pointer per inherited
+    /// member rather than the member: across every registered type the
+    /// copies were most of the type registry's memory.
+    pub properties: Vec<Arc<PropertyInfo>>,
+    pub signals: Vec<Arc<SignalInfo>>,
     pub methods: Vec<MethodInfo>,
     /// Where this type's own entries start in each table.
     pub property_offset: u32,
@@ -424,7 +429,7 @@ impl MetaObject {
     }
 
     pub fn property(&self, i: PropIndex) -> Option<&PropertyInfo> {
-        self.properties.get(i.0 as usize)
+        self.properties.get(i.0 as usize).map(Arc::as_ref)
     }
 
     /// Where the `required property` `i` is declared, in this type or the
@@ -448,7 +453,7 @@ impl MetaObject {
     }
 
     pub fn signal(&self, i: SignalIndex) -> Option<&SignalInfo> {
-        self.signals.get(i.0 as usize)
+        self.signals.get(i.0 as usize).map(Arc::as_ref)
     }
 
     /// Whether the signal was declared in QML (`signal sent(var list)`)
@@ -481,11 +486,11 @@ impl MetaObject {
     }
 
     /// The type's own properties, without inherited ones.
-    pub fn own_properties(&self) -> &[PropertyInfo] {
+    pub fn own_properties(&self) -> &[Arc<PropertyInfo>] {
         &self.properties[self.property_offset as usize..]
     }
 
-    pub fn own_signals(&self) -> &[SignalInfo] {
+    pub fn own_signals(&self) -> &[Arc<SignalInfo>] {
         &self.signals[self.signal_offset as usize..]
     }
 
@@ -820,14 +825,14 @@ impl MetaBuilder {
         let index = PropIndex(self.meta.properties.len() as u32);
         let notify = notify.then(|| {
             let s = SignalIndex(self.meta.signals.len() as u32);
-            self.meta.signals.push(SignalInfo {
+            self.meta.signals.push(Arc::new(SignalInfo {
                 name: Atom::intern(&format!("{name}Changed")),
                 params: Vec::new(),
                 notify_of: Some(index),
-            });
+            }));
             s
         });
-        self.meta.properties.push(PropertyInfo {
+        self.meta.properties.push(Arc::new(PropertyInfo {
             name,
             ty,
             flags,
@@ -837,7 +842,22 @@ impl MetaBuilder {
             list_field: None,
             reset: None,
             holds: None,
-        });
+        }));
+    }
+
+    /// The property just added, to finish describing it.
+    fn last_property(&mut self) -> Option<&mut PropertyInfo> {
+        self.meta.properties.last_mut().map(Arc::make_mut)
+    }
+
+    /// An inherited property, copied for this type alone before it changes.
+    fn inherited_property(&mut self, name: &str) -> Option<&mut PropertyInfo> {
+        self.meta
+            .properties
+            .iter_mut()
+            .rev()
+            .find(|p| p.name == name)
+            .map(Arc::make_mut)
     }
 
     /// A property stored in a field of the native struct set by
@@ -907,7 +927,7 @@ impl MetaBuilder {
             );
             // The leaf's reset is the member's: it is given the object that
             // holds the group and the member's index there.
-            if let Some(p) = self.meta.properties.last_mut() {
+            if let Some(p) = self.last_property() {
                 p.reset = leaf.reset;
             }
         }
@@ -929,11 +949,11 @@ impl MetaBuilder {
     }
 
     pub fn signal(mut self, name: &str, params: Vec<(Atom, TypeTag)>) -> Self {
-        self.meta.signals.push(SignalInfo {
+        self.meta.signals.push(Arc::new(SignalInfo {
             name: Atom::intern(name),
             params,
             notify_of: None,
-        });
+        }));
         self
     }
 
@@ -955,7 +975,7 @@ impl MetaBuilder {
 
     /// Routes appends to the property just added through `f`.
     pub fn list_append(mut self, f: ListAppend) -> Self {
-        if let Some(p) = self.meta.properties.last_mut() {
+        if let Some(p) = self.last_property() {
             p.list_append = Some(f);
         }
         self
@@ -969,7 +989,7 @@ impl MetaBuilder {
     /// through it; taking the property back with `undefined` does not.
     pub fn write(mut self, f: WriteFilter) -> Self {
         if let Some(PropertyAccess::Field { write, .. }) =
-            self.meta.properties.last_mut().map(|p| &mut p.access)
+            self.last_property().map(|p| &mut p.access)
         {
             *write = Some(f);
         }
@@ -979,7 +999,7 @@ impl MetaBuilder {
     /// Says what class of object the property just added is described as
     /// holding ([`PropertyInfo::holds`]).
     pub fn holds(mut self, class: &str) -> Self {
-        if let Some(p) = self.meta.properties.last_mut() {
+        if let Some(p) = self.last_property() {
             p.holds = Some(Atom::intern(class));
         }
         self
@@ -987,7 +1007,7 @@ impl MetaBuilder {
 
     /// Says how assigning `undefined` takes the property just added back.
     pub fn reset(mut self, reset: Reset) -> Self {
-        if let Some(p) = self.meta.properties.last_mut() {
+        if let Some(p) = self.last_property() {
             p.reset = Some(reset);
         }
         self
@@ -997,13 +1017,7 @@ impl MetaBuilder {
     /// declares and cannot take back itself: an item only stores its
     /// `baselineOffset`, a control works one out.
     pub fn reset_inherited(mut self, name: &str, reset: Reset) -> Self {
-        if let Some(p) = self
-            .meta
-            .properties
-            .iter_mut()
-            .rev()
-            .find(|p| p.name == name)
-        {
+        if let Some(p) = self.inherited_property(name) {
             p.reset = Some(reset);
         }
         self
@@ -1011,7 +1025,7 @@ impl MetaBuilder {
 
     /// Says where the list property just added keeps its items.
     pub fn list_field(mut self, f: ListField) -> Self {
-        if let Some(p) = self.meta.properties.last_mut() {
+        if let Some(p) = self.last_property() {
             p.list_field = Some(f);
         }
         self
@@ -1020,13 +1034,7 @@ impl MetaBuilder {
     /// Marks an inherited property required (`required property` on a name
     /// a base declares).
     pub fn require(mut self, name: &str) -> Self {
-        if let Some(p) = self
-            .meta
-            .properties
-            .iter_mut()
-            .rev()
-            .find(|p| p.name == name)
-        {
+        if let Some(p) = self.inherited_property(name) {
             p.flags |= PropertyFlags::REQUIRED;
         }
         self
@@ -1110,12 +1118,20 @@ impl MetaBuilder {
         self
     }
 
-    pub fn build(self) -> MetaObject {
+    pub fn build(mut self) -> MetaObject {
+        // A table copied from the base and then grown keeps up to as much
+        // room again as it holds, for every type, for as long as it lives.
+        let m = &mut self.meta;
+        m.properties.shrink_to_fit();
+        m.signals.shrink_to_fit();
+        m.methods.shrink_to_fit();
+        m.enums.shrink_to_fit();
+        m.required_at.shrink_to_fit();
         self.meta
     }
 
     /// Builds a reference-counted description (types declared in QML).
     pub fn build_shared(self) -> MetaRef {
-        MetaRef::Shared(Arc::new(self.meta))
+        MetaRef::Shared(Arc::new(self.build()))
     }
 }
