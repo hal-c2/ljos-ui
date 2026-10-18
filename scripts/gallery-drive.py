@@ -27,6 +27,8 @@ ROLES = r"button|checkbox|switch|radio|radiobutton|tab|menuitem|link|combobox|sp
 CONTROL = re.compile(r'^[ \t]*- (?:' + ROLES + r')[ \t]+("([^"]*)"[ \t]+)?(?:[^\s\[]\S*[ \t]+)*?\[(e\d+)\]([^\n]*)', re.M)
 STARTUP = 120
 MAX_CLICKS = 40
+# How long the grid waits for the compositor to list the app's window.
+WINDOW_WAIT = 30
 GRID = 5
 # A control whose name or id says it ends the app.
 ENDS = re.compile(r"exit|quit|close|power|shut ?down", re.I)
@@ -137,15 +139,19 @@ def outcome(res, settled):
 
 
 def grid_clicks(app, w, d):
-    # The compositor may list the window a moment after the app answers its inspector.
-    for _ in range(20):
-        wins = [x for x in cua("list_windows", {"pid": app.pid}).get("windows", []) if x["pid"] == app.pid]
+    # The inspector answers before the first frame, and the compositor lists a window only once
+    # it has one: seconds later for a debug build loading many pictures (photosurface) or a
+    # large window (toycustomizer).
+    deadline = time.monotonic() + WINDOW_WAIT
+    while True:
+        listed = cua("list_windows", {"pid": app.pid})
+        wins = [x for x in listed.get("windows", []) if x.get("pid") == app.pid]
         if wins:
             break
+        if time.monotonic() > deadline or app.ended():
+            w(f"== grid: no window for pid {app.pid} after {WINDOW_WAIT} s: {json.dumps(listed)[:300]}")
+            return
         time.sleep(0.25)
-    else:
-        w(f"== grid: no window for pid {app.pid}")
-        return
     win = wins[0]
     # cua-driver reads x/y in the frame of the last window state it captured.
     cua("get_window_state", {"pid": app.pid, "window_id": win["window_id"], "include_accessibility_tree": False})
