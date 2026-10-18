@@ -185,7 +185,9 @@ OpenGL only on Linux by default.
 On the machine measured, most of the instance's time was the Vulkan loader loading the NVIDIA
 driver, which was installed with no NVIDIA GPU in the machine. With `VK_DRIVER_FILES` naming only
 the Radeon driver, Ljós showed its first frame in 85–115 ms (Qt: 110–205 ms) instead of about
-550 ms. Pass it with `--app-env` to tell the machine's drivers apart from Ljós.
+550 ms. Pass it with `--app-env` to tell the machine's drivers apart from Ljós. (Since
+2026-10-18 Ljós leaves NVIDIA's Vulkan driver and EGL vendor out itself while NVIDIA's kernel
+driver is not loaded; see "Vulkan drivers left out as EGL's are" below.)
 
 ## An example run (2026-10-15)
 
@@ -1508,8 +1510,9 @@ The rise in PSS is file pages of a binary just built under load, as in that run.
   through EGL and maps them too. When NVIDIA's kernel driver is not loaded (`/proc/driver/nvidia`)
   and the user has set neither `__EGL_VENDOR_LIBRARY_FILENAMES` nor `__EGL_VENDOR_LIBRARY_DIRS`,
   the shell names the other vendors in `__EGL_VENDOR_LIBRARY_FILENAMES` before anything loads
-  libEGL. clocks in the X11 sandbox: 47 NVIDIA mappings → 0, anon PSS 52.5 → 46.9 MiB. The Vulkan
-  loader of the wgpu painter still loads every ICD; `VK_DRIVER_FILES` above still applies there.
+  libEGL. clocks in the X11 sandbox: 47 NVIDIA mappings → 0, anon PSS 52.5 → 46.9 MiB. (The
+  Vulkan loader of the wgpu painter was left as it was; see "Vulkan drivers left out as EGL's are"
+  below.)
 
 **What is left.**
 
@@ -1520,3 +1523,34 @@ The rise in PSS is file pages of a binary just built under load, as in that run.
   And the `--example` oracle walks every registered module, so registering lazily would still
   load everything on `ljos run`. Cutting it needs registration by name, resolved when a type is
   first named.
+
+### Vulkan drivers left out as EGL's are (2026-10-18)
+
+The Vulkan loader loads every driver it finds when wgpu makes its instance. Like glvnd's libEGL, it
+has no call to leave one out, only its environment. When NVIDIA's kernel driver is not loaded and
+the user has set none of `VK_DRIVER_FILES`, `VK_ICD_FILENAMES`, `VK_ADD_DRIVER_FILES`,
+`VK_LOADER_DRIVERS_SELECT` and `VK_LOADER_DRIVERS_DISABLE`, the shell now names NVIDIA's manifests
+in `VK_LOADER_DRIVERS_DISABLE`, at the same point and for the same reasons as the EGL vendors. That
+variable leaves the loader looking wherever it looks. The loader's version is read from the file
+`libvulkan.so.1` resolves to (opened and closed again, which loads no driver). A loader older than
+1.3.234 does not read that variable, and is given the other drivers' files in `VK_ICD_FILENAMES`
+instead. `crates/ljos_shell/src/drivers.rs`.
+
+"Before" is the same binary with the step bypassed: `__EGL_VENDOR_LIBRARY_DIRS` set to glvnd's
+own directory and `VK_LOADER_DRIVERS_SELECT=*`, both of which the shell leaves alone. The bench
+(`--profile desktop --warm-up`, the off-screen sway on the Radeon render node, a load of 17–42)
+took turns, before and after, app by app and painter by painter, for three rounds; each cell is
+the median, in ms. The driver start is the graphics thread's own time, timed with a local patch
+that was not kept (the last round, on the same sway).
+
+| App | Painter | First frame, before → after | Driver start, before → after |
+|---|---|---:|---:|
+| clocks | wgpu | 711 → 82 | instance 658 → 41 |
+| calqlatr | wgpu | 733 → 80 | — |
+| clocks | GL | 175 → 58 | EGL display 146 → 28 |
+| calqlatr | GL | 187 → 68 | — |
+
+In the X11 sandbox (`desktop:cua`, llvmpipe), clocks's EGL display started in 22–26 ms before and
+13–14 ms after, and the wgpu instance in 181–191 ms before and 22–23 ms after (one run of 212 ms
+under load). No NVIDIA library is mapped on either painter after (47 mappings before), and anon PSS
+falls from 53.9 to 47.4 MiB (GL) and from 56.4 to 49.5 MiB (wgpu).

@@ -30,8 +30,8 @@ pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 mod badge;
 mod desktop;
 mod desktop_font;
-#[cfg(all(gl_painter, target_os = "linux"))]
-mod egl_vendor;
+#[cfg(target_os = "linux")]
+mod drivers;
 #[cfg(gl_painter)]
 mod gl;
 #[cfg(gl_painter)]
@@ -490,8 +490,8 @@ pub fn run<M: Send + 'static>(
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
     large_buffers_from_the_system();
-    #[cfg(all(gl_painter, target_os = "linux"))]
-    egl_vendor::leave_out_unused();
+    #[cfg(target_os = "linux")]
+    drivers::leave_out_unused();
     desktop::run(config, setup)
 }
 
