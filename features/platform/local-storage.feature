@@ -266,3 +266,61 @@ Feature: LocalStorage
         }
         """
       Then the property "got" of "o" is "3: Version mismatch: expected 0.9, found 1.0"
+
+  Rule: A database on disk is kept the way SQLite is told to keep it
+
+    # Qt 6.11.2 leaves SQLite as it comes: a journal that is deleted after
+    # each transaction, and every commit waits for the disk four times
+    # (journal twice, its directory, the file). A busy disk then holds the
+    # UI thread for seconds. Ljós keeps a write-ahead log and does not wait
+    # for the disk on commit, as Android keeps its databases: a committed
+    # transaction is read by every later one and by the next run, and is
+    # lost only to a crash of the whole machine, never to one of the
+    # application. Qt reports "delete,2".
+    @qt-diverges
+    Scenario: A database on disk keeps a write-ahead log and commits without waiting for the disk
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.LocalStorage
+        Item {
+          objectName: "o"
+          property string got
+          Component.onCompleted: {
+            const db = LocalStorage.openDatabaseSync("ljos-ls-journal", "1.0", "journal", 1000)
+            db.transaction(tx => {
+              const mode = tx.executeSql("PRAGMA journal_mode").rows.item(0).journal_mode
+              const sync = tx.executeSql("PRAGMA synchronous").rows.item(0).synchronous
+              got = mode + "," + sync
+            })
+          }
+        }
+        """
+      Then the property "got" of "o" is "wal,1"
+
+    # SQLite enforces a foreign key only when told to, and Qt does not tell
+    # it to.
+    @qt-parity
+    Scenario: A foreign key is not enforced
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.LocalStorage
+        Item {
+          objectName: "o"
+          property string got
+          Component.onCompleted: {
+            const db = LocalStorage.openDatabaseSync("ljos-ls-keys", "1.0", "keys", 1000)
+            db.transaction(tx => {
+              tx.executeSql("DROP TABLE IF EXISTS c")
+              tx.executeSql("DROP TABLE IF EXISTS p")
+              tx.executeSql("CREATE TABLE p(id INTEGER PRIMARY KEY)")
+              tx.executeSql("CREATE TABLE c(p INTEGER REFERENCES p(id))")
+              tx.executeSql("INSERT INTO c VALUES(5)")
+              got = tx.executeSql("PRAGMA foreign_keys").rows.item(0).foreign_keys + ","
+                  + tx.executeSql("SELECT count(*) AS n FROM c").rows.item(0).n
+            })
+          }
+        }
+        """
+      Then the property "got" of "o" is "0,1"

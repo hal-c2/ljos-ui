@@ -155,6 +155,22 @@ fn directory(engine: &Engine) -> Option<PathBuf> {
     }
 }
 
+/// A write-ahead log, synced at checkpoints rather than on every commit.
+/// SQLite's own default waits for the disk four times per commit, and on
+/// a busy disk that holds the UI thread for seconds. What a QML app can
+/// see stays the same: a committed transaction is read by every later
+/// one and by the next run, and only a crash of the whole machine can
+/// take the last commits back, never the database. A file system that
+/// cannot keep a log leaves SQLite's defaults in place.
+fn keep_on_disk(connection: &Connection) {
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+        .unwrap_or_default();
+    if mode.eq_ignore_ascii_case("wal") {
+        let _ = connection.execute_batch("PRAGMA synchronous = NORMAL");
+    }
+}
+
 /// The database `meta.name` names, opened if it is not yet, and whether
 /// it was made just now.
 fn open(cx: &Cx, meta: Meta) -> Result<(Rc<Database>, bool), String> {
@@ -178,9 +194,13 @@ fn open(cx: &Cx, meta: Meta) -> Result<(Rc<Database>, bool), String> {
                 .map(|t| stored_version(&t));
             let connection =
                 Connection::open(base.with_extension("sqlite")).map_err(|e| fail(&e))?;
+            keep_on_disk(&connection);
             (connection, Some(ini), stored)
         }
     };
+    // rusqlite's SQLite enforces foreign keys from the start; the one a
+    // QML app is written against leaves that to the app.
+    let _ = connection.execute_batch("PRAGMA foreign_keys = OFF");
     let name = meta.name.clone();
     let handle = cx
         .engine
@@ -611,6 +631,39 @@ mod tests {
              })",
         );
         assert_eq!(read, "1.0:kept");
+    }
+
+    /// The log is not synced on commit, so a second engine on the same
+    /// file must still read the commit while the first holds it open.
+    #[test]
+    fn a_commit_is_read_by_another_engine_while_the_first_keeps_it_open() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let first = engine(dir.path());
+        let wrote = run(
+            &first,
+            "(function (ls) {
+               var db = ls.openDatabaseSync('log', '1.0', 'Log', 1000), mode;
+               db.transaction(function (tx) {
+                 mode = tx.executeSql('PRAGMA journal_mode').rows.item(0).journal_mode;
+                 tx.executeSql('CREATE TABLE t(x)');
+                 tx.executeSql('INSERT INTO t VALUES(?)', ['seen']);
+               });
+               return mode;
+             })",
+        );
+        assert_eq!(wrote, "wal");
+        let read = run(
+            &engine(dir.path()),
+            "(function (ls) {
+               var db = ls.openDatabaseSync('log', '', '', 0), got;
+               db.readTransaction(function (tx) {
+                 got = tx.executeSql('SELECT x FROM t').rows.item(0).x;
+               });
+               return got;
+             })",
+        );
+        assert_eq!(read, "seen");
+        drop(first);
     }
 
     #[test]

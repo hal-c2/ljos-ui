@@ -1595,3 +1595,81 @@ In the X11 sandbox, run in pairs for two rounds, the binary's own PSS fell from 
 and the process's PSS from 110–117 to 101–108 MiB. The release figures are higher here than in the
 table's first runs that day (113 and 114 MiB): how much of a file the kernel maps depends on what
 the page cache holds, so only paired runs are compared.
+
+### LocalStorage: a commit that does not wait for the disk (2026-10-18)
+
+todolist's `createTasksLists` held the UI thread for 3.2 s at startup, and adding one task for
+52 ms to 5.75 s.
+
+**Method**
+
+- **Script.** A QML file makes the calls todolist's `Database.qml` makes and times them with
+  `Date.now()`:
+  - opening the database and `CREATE TABLE IF NOT EXISTS`;
+  - n transactions of an `INSERT` and a `SELECT … LIMIT 1`;
+  - one `SELECT` of every row;
+  - n one-row `UPDATE`s;
+  - one `DELETE`.
+- **Runs.** Both runtimes ran it in the `desktop:cua` sandbox, one after the other: `ljos run`,
+  and `qml6` with `QT_QPA_PLATFORM=offscreen`. Their databases sat in the same directory on the
+  same drive.
+- **Syncs.** An `LD_PRELOAD` shim counted and timed `fsync` and `fdatasync` per file.
+- **Builds.** Ljós at c5f25ce3 (before) and the commit after it (after); Qt 6.11.2.
+
+**Where the time went**
+
+- **Not in Ljós.** In memory, one transaction costs Ljós 15 µs, statements prepared anew
+  included. The connection was already kept open per database.
+- **Waits for the disk.** Both runtimes left SQLite as it comes: `journal_mode=delete`,
+  `synchronous=FULL`. Every commit then waits for the disk four times: the journal twice, its
+  directory, the database file.
+- **A slower sync than Qt's.** Ljós's bundled SQLite uses `fsync`; the system SQLite Qt links
+  uses `fdatasync`. For 61 commits:
+
+  | | syncs | time in them |
+  |---|---:|---:|
+  | Ljós | 244 (`fsync`) | 42–48 ms |
+  | qml6 | 244 (`fdatasync`) | 33 ms |
+
+- **The seconds.** They came from a busy drive. While builds wrote to it, both runtimes stalled:
+  - Ljós: 4.4 s to open, one insert taking 8.8 s;
+  - qml6: one insert taking 4.6 s, 300 inserts 12.7 s.
+
+**Change**
+
+On disk, Ljós now keeps a write-ahead log (`journal_mode=WAL`) with `synchronous=NORMAL`, as
+Android keeps its databases:
+
+- **Syncs.** A commit waits for no disk; the log is synced when it is copied into the database,
+  at most every 1000 pages and when the database closes.
+- **What the app sees is unchanged.**
+  - A committed transaction is read by every later one, in this process and in others.
+  - It is read by the next run, even after the application crashes.
+  - Only a crash of the whole machine can take the last commits back, and it never damages the
+    database.
+- **Foreign keys.** These are off, as in Qt. rusqlite's build turned them on.
+
+**Results** (idle drive, three runs each; transactions in ms)
+
+| n = 30 | inserts | updates | syncs |
+|---|---:|---:|---:|
+| Ljós before | 25–28 | 21–22 | 244 |
+| Ljós after | 1–8 | 0 | 4 (8 the first time, when the file becomes a log) |
+| qml6 | 33–50 | 31–42 | 244 |
+
+| n = 300 | inserts | updates | syncs | time in syncs |
+|---|---:|---:|---:|---:|
+| Ljós after | 14 | 3 | 4 | 4–5 ms |
+| qml6 | 187–209 | 173–316 | 2404 | 319–455 ms |
+
+- **todolist.** The first start after the change took 3.6 s in `createTasksLists`, on a busy
+  drive: the file became a log there. Later starts stayed under the 4 ms script budget and logged
+  nothing.
+
+**DECISIONs.**
+- **WAL with `NORMAL`, not `FULL`.** `FULL` would sync the log on every commit, which is the
+  wait this removes. A QML app cannot tell `NORMAL` from `FULL` without pulling the power.
+- **`PRAGMA journal_mode` reads `wal`.** This is a `@qt-diverges` scenario in
+  `features/platform/local-storage.feature`.
+- **No cache of prepared statements.** At 15 µs a transaction, it would not show, and rusqlite
+  would need its `cache` feature.
