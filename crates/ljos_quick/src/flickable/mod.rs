@@ -582,6 +582,21 @@ pub(crate) fn set_drag_moving(e: &Engine, f: ObjectId, st: &FlickState, moving: 
     sync_moving(e, f, st);
 }
 
+/// Whether `item` is the content of a Flickable that moves. It is drawn on
+/// whole pixels then: each scrolled frame moves the picture by whole
+/// pixels, so what was drawn can be moved and only what comes into view
+/// drawn. Read where the item's place is, so that it is placed again
+/// once the Flickable rests.
+pub(crate) fn content_moving(e: &Engine, item: ObjectId) -> bool {
+    let Some(f) = e.untrack(|| e.read(item, Item::PARENT.index).as_object()) else {
+        return false;
+    };
+    let Ok(st) = e.with(f, |fl: &Flickable| Rc::clone(&fl.state)) else {
+        return false;
+    };
+    st.content_item.get() == Some(item) && flag(e, f, Flickable::MOVING.index)
+}
+
 /// The item the children of `f` are on, made if it is not there yet.
 fn ensure_content_item(e: &Engine, f: ObjectId) -> Result<ObjectId, EngineError> {
     let st = e.with(f, |fl: &Flickable| fl.state.clone())?;

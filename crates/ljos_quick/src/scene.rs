@@ -203,9 +203,18 @@ struct Geom {
 }
 
 /// The transform of an item at `place` with geometry `g` and the map of
-/// its `transform` list.
-fn local_transform(place: Place, g: &Geom, list: &crate::transform::Projective) -> kurbo::Affine {
-    let (x, y) = place;
+/// its `transform` list, on a display of `scale` device pixels a point.
+fn local_transform(
+    place: Place,
+    g: &Geom,
+    list: &crate::transform::Projective,
+    scale: f32,
+) -> kurbo::Affine {
+    let (mut x, mut y, whole) = place;
+    if whole {
+        let s = f64::from(scale);
+        (x, y) = ((x * s).round() / s, (y * s).round() / s);
+    }
     crate::transform::compose(x, y, g.w, g.h, g.rotation, g.scale, g.origin, list)
 }
 
@@ -343,8 +352,10 @@ struct Entry {
     list_effect: Option<GraphNode>,
 }
 
-/// Where an item is in its parent: `x` and `y`.
-type Place = (f64, f64);
+/// Where an item is in its parent: `x` and `y`, and whether it is drawn
+/// on the nearest whole device pixel (the content of a moving Flickable:
+/// a scrolled frame then moves what the window shows by whole pixels).
+type Place = (f64, f64, bool);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Grab {
@@ -1139,7 +1150,7 @@ impl QuickScene {
                 inherit: Rc::clone(&inherit),
                 size: kurbo::Size::ZERO,
                 geom: None,
-                place: (0.0, 0.0),
+                place: (0.0, 0.0, false),
                 list: crate::transform::Projective::IDENTITY,
                 list_effect: None,
             },
@@ -1355,6 +1366,7 @@ impl QuickScene {
                 e.place = (
                     shown_num(engine, &shown, obj, Item::X.index),
                     shown_num(engine, &shown, obj, Item::Y.index),
+                    crate::flickable::content_moving(engine, obj),
                 );
                 self.told_moved.push(obj);
             }
@@ -1418,8 +1430,10 @@ impl QuickScene {
             e.geom = Some(g);
             let node = e.node;
             let size = kurbo::Size::new(g.w.max(0.0), g.h.max(0.0));
-            self.tree
-                .set_local(node, local_transform(e.place, &g, &e.list));
+            self.tree.set_local(
+                node,
+                local_transform(e.place, &g, &e.list, self.scale_factor),
+            );
             if size != e.size {
                 e.size = size;
                 if e.kind.paints() && e.content_effect.is_some() {
@@ -1449,8 +1463,10 @@ impl QuickScene {
             if let Some(e) = self.entries.get(&obj)
                 && let Some(g) = &e.geom
             {
-                self.tree
-                    .set_local(e.node, local_transform(e.place, g, &e.list));
+                self.tree.set_local(
+                    e.node,
+                    local_transform(e.place, g, &e.list, self.scale_factor),
+                );
             }
         }
     }
@@ -2564,6 +2580,7 @@ fn place_effect(e: &Engine, obj: ObjectId, shown: &Shown, shared: &SharedRc) {
     let place = (
         shown_num(e, shown, obj, Item::X.index),
         shown_num(e, shown, obj, Item::Y.index),
+        crate::flickable::content_moving(e, obj),
     );
     mark(shared, |s| {
         s.place.insert(obj, place);
