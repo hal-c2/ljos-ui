@@ -290,6 +290,13 @@ pub(crate) fn example_properties(example: Option<&str>) -> Vec<(String, ljos_eng
 /// Shared with `ljos run --example`, which compiles before its shell
 /// Engine exists.
 pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
+    // Describing every type of an Engine of the standard modules takes
+    // longer than the shell takes to register them (20 ms against 13 in
+    // todolist), and the first object waits for the compile: an example
+    // with no types of its own compiles as a program without one does.
+    if !ljos_gallery_backends::has_backends(id) {
+        return EngineOracle::table_only();
+    }
     let engine = Engine::new();
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);

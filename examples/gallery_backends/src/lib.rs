@@ -19,25 +19,37 @@ use ljos::prelude::Value;
 /// Registers the backends of the example `id` (a `corpus/examples.json`
 /// id) on `engine`. An example without a backend registers nothing.
 pub fn register(engine: &Engine, id: &str) {
-    match id {
+    if let Some(register) = backends(id) {
+        register(engine);
+    }
+}
+
+/// Whether the example `id` registers types of its own: one without
+/// compiles against the table of types alone, as any program does.
+pub fn has_backends(id: &str) -> bool {
+    backends(id).is_some()
+}
+
+fn backends(id: &str) -> Option<fn(&Engine)> {
+    Some(match id {
         // The ColorPalette client's own types (RestService and its
         // resources), in the module its QML files are types of.
-        "colorpaletteclient" => ljos_example_colorpalette::register(engine),
+        "colorpaletteclient" => ljos_example_colorpalette::register,
         // No types of its own: the generic `QtQml.XmlListModel` module
         // its feed is read with.
-        "rssnews" => ljos_xml::register(engine),
+        "rssnews" => ljos_xml::register,
         // The generic `Qt.labs.folderlistmodel` module it lists pictures with.
-        "photosurface" => ljos_folderlistmodel::register(engine),
+        "photosurface" => ljos_folderlistmodel::register,
         // `BackEnd`, answering as a device with none of the Android
         // services the demo is about.
-        "qtjennydemo" => ljos_example_qtjennydemo::register(engine),
+        "qtjennydemo" => ljos_example_qtjennydemo::register,
         // The snippet's widget, which its qmldir names and the
         // corpus does not carry.
-        "snippet-focus-scope-widget" => ljos_example_focusscopewidget::register(engine),
+        "snippet-focus-scope-widget" => ljos_example_focusscopewidget::register,
         // `FileNameProvider`; QtMultimedia itself is a standard module.
-        "mediaplayer" => ljos_example_mediaplayer::register(engine),
-        _ => {}
-    }
+        "mediaplayer" => ljos_example_mediaplayer::register,
+        _ => return None,
+    })
 }
 
 /// The properties the launcher of the example `id` gives its root
