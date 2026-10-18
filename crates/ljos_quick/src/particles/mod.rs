@@ -651,10 +651,24 @@ impl SystemRun {
             return;
         }
         let mut by_group: Vec<(Rc<str>, Vec<usize>)> = Vec::new();
+        // The particles of an emitter share its name, and come in runs:
+        // the last group found is tried first, and by pointer.
+        let mut last = usize::MAX;
         for (i, p) in self.particles.iter().enumerate() {
-            match by_group.iter_mut().find(|(g, _)| *g == p.group) {
-                Some((_, at)) => at.push(i),
-                None => by_group.push((p.group.clone(), vec![i])),
+            let same = |g: &Rc<str>| Rc::ptr_eq(g, &p.group) || *g == p.group;
+            if by_group.get(last).is_some_and(|(g, _)| same(g)) {
+                by_group[last].1.push(i);
+                continue;
+            }
+            match by_group.iter().position(|(g, _)| same(g)) {
+                Some(at) => {
+                    by_group[at].1.push(i);
+                    last = at;
+                }
+                None => {
+                    last = by_group.len();
+                    by_group.push((p.group.clone(), vec![i]));
+                }
             }
         }
         self.groups = Some(by_group);
@@ -681,6 +695,27 @@ struct Registry {
     /// Each `MaskShape` picture's alpha, by URL, with the picture it was
     /// read from: a new picture under the URL is read again.
     masks: RefCell<HashMap<String, (ImageHandle, Rc<Mask>)>>,
+    /// The group names emitters gave, each kept once: the particles of a
+    /// group then share the one name, and are told apart by pointer.
+    names: RefCell<Vec<Rc<str>>>,
+}
+
+/// More names than this are not kept: a scene that makes up a name for
+/// every particle would otherwise keep them all.
+const NAMES_KEPT: usize = 64;
+
+/// The one `Rc` of a group's name.
+fn group_name(e: &Engine, name: &str) -> Rc<str> {
+    let reg = registry(e);
+    let mut names = reg.names.borrow_mut();
+    if let Some(n) = names.iter().find(|n| ***n == *name) {
+        return Rc::clone(n);
+    }
+    let n: Rc<str> = Rc::from(name);
+    if names.len() < NAMES_KEPT {
+        names.push(Rc::clone(&n));
+    }
+    n
 }
 
 fn registry(e: &Engine) -> Rc<Registry> {
@@ -1036,10 +1071,10 @@ fn read_emitter(e: &Engine, sys: ObjectId, em: ObjectId) -> EmitterSpec {
     );
     EmitterSpec {
         id: em,
-        group: Rc::from(
-            e.untrack(|| e.read(em, Emitter::GROUP.index))
-                .to_js_string()
-                .as_str(),
+        group: group_name(
+            e,
+            &e.untrack(|| e.read(em, Emitter::GROUP.index))
+                .to_js_string(),
         ),
         life: num(Emitter::LIFE_SPAN.index) / 1000.0,
         life_var: num(Emitter::LIFE_SPAN_VARIATION.index) / 1000.0,
@@ -1105,19 +1140,41 @@ type Burst = (u32, Option<(f64, f64)>);
 fn step_particles(run: &mut SystemRun, reaches: &[Reach], emitters: &[(&EmitterSpec, Vec<Burst>)]) {
     run.groups = None;
     let SystemRun { rng, particles, .. } = run;
+    // The particles of an emitter share its group's name, and come in
+    // runs: which reaches take a group is found once for each run, where
+    // comparing names cost every particle every step.
+    let memo = reaches.len() <= 64;
+    let mut last: Option<(Rc<str>, u64)> = None;
     particles.retain_mut(|p| {
-        let reached: Vec<&Reach> = reaches
-            .iter()
-            .filter(|r| r.groups.is_empty() || r.groups.iter().any(|g| **g == *p.group))
-            .filter(|r| {
-                r.area
-                    .is_none_or(|(x, y, w, h)| p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h)
-            })
-            .collect();
-        for left in reached.iter().filter_map(|r| r.life_left) {
-            p.life = p.life.min(p.age + left);
+        // Most systems have no affector: nothing to gather per particle.
+        if reaches.is_empty() {
+            return sim::advance(p, &[], rng);
         }
-        let here: Vec<Wandering> = reached.iter().filter_map(|r| r.wander).collect();
+        let takes = |r: &Reach| r.groups.is_empty() || r.groups.iter().any(|g| **g == *p.group);
+        let mask = match &last {
+            Some((g, m)) if memo && Rc::ptr_eq(g, &p.group) => *m,
+            _ if memo => {
+                let m = (reaches.iter().enumerate())
+                    .filter(|(_, r)| takes(r))
+                    .fold(0u64, |m, (i, _)| m | 1 << i);
+                last = Some((p.group.clone(), m));
+                m
+            }
+            _ => u64::MAX,
+        };
+        let (x, y) = (p.x, p.y);
+        let reached = reaches.iter().enumerate().filter(|&(i, r)| {
+            (if memo { mask & 1 << i != 0 } else { takes(r) })
+                && r.area
+                    .is_none_or(|(ax, ay, w, h)| x >= ax && x <= ax + w && y >= ay && y <= ay + h)
+        });
+        let mut here: Vec<Wandering> = Vec::new();
+        for (_, r) in reached {
+            if let Some(left) = r.life_left {
+                p.life = p.life.min(p.age + left);
+            }
+            here.extend(r.wander);
+        }
         sim::advance(p, &here, rng)
     });
     for (spec, owed) in emitters {
