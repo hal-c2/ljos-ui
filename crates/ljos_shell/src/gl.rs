@@ -51,6 +51,9 @@ const AREAS: usize = (GRID * GRID) as usize;
 /// The cells a side of the window is cut into past [`AREAS`].
 const GRID: u32 = 4;
 
+/// Past this many areas a frame goes to the grid without joining them.
+const JOINED: usize = 4 * AREAS;
+
 /// Areas of at least this many pixels are cleared to the background;
 /// smaller ones are drawn together as one mesh.
 const CLEARED: u32 = 64 * 64;
@@ -501,8 +504,15 @@ struct Px([u32; 4]);
 impl Px {
     /// The pixels `area` (in points) touches, in a window of `size`.
     fn around(area: egui::Rect, pixels_per_point: f32, size: [u32; 2]) -> Px {
-        let lo = |v: f32, max: u32| ((v * pixels_per_point).floor().max(0.0) as u32).min(max);
-        let hi = |v: f32, max: u32| ((v * pixels_per_point).ceil().max(0.0) as u32).min(max);
+        // On what is not below zero a cast to an integer is the floor,
+        // and one more where it fell short the ceiling: no call to libm,
+        // for each corner of every area of every frame.
+        let lo = |v: f32, max: u32| ((v * pixels_per_point).max(0.0) as u32).min(max);
+        let hi = |v: f32, max: u32| {
+            let v = (v * pixels_per_point).max(0.0);
+            let t = (v as u32).min(max);
+            (t + u32::from((t as f32) < v)).min(max)
+        };
         Px([
             lo(area.min.x, size[0]),
             lo(area.min.y, size[1]),
@@ -574,6 +584,14 @@ impl Damage {
     /// a few, not with two hundred.
     fn of(areas: impl IntoIterator<Item = Px>) -> Damage {
         let mut v: Vec<Px> = areas.into_iter().filter(|px| !px.is_empty()).collect();
+        // So many that joining them would not bring them down to a few:
+        // the grid takes areas that overlap as they are. Two hundred bars,
+        // each overlapping the bars above and below once widened to whole
+        // pixels, were joined a few at a time over many sorted passes, the
+        // most of what a frame spent working out where to draw.
+        if v.len() > JOINED {
+            return Damage(grid(&v));
+        }
         let mut root: Vec<usize> = Vec::new();
         loop {
             v.sort_unstable_by_key(|px| px.0[1]);
@@ -629,23 +647,29 @@ fn grid(areas: &[Px]) -> Vec<Px> {
     let (w, h) = (x1 - x0, y1 - y0);
     // Cell `i` along a side of length `len` from `lo` holds the pixels
     // `p` with `(p - lo) * GRID / len == i`.
-    let edge = |lo: u32, len: u32, i: u32| lo + (len * i).div_ceil(GRID);
+    let edges = |lo: u32, len: u32| {
+        std::array::from_fn::<u32, { GRID as usize + 1 }, _>(|i| {
+            lo + (len * i as u32).div_ceil(GRID)
+        })
+    };
+    let (ex, ey) = (edges(x0, w), edges(y0, h));
     let cell = |lo: u32, len: u32, p: u32| ((p - lo) * GRID / len).min(GRID - 1);
     let mut cells = [None::<Px>; AREAS];
     for a in areas {
         let [ax0, ay0, ax1, ay1] = a.0;
         for cy in cell(y0, h, ay0)..=cell(y0, h, ay1 - 1) {
             for cx in cell(x0, w, ax0)..=cell(x0, w, ax1 - 1) {
+                let (cx, cy) = (cx as usize, cy as usize);
                 let part = Px([
-                    ax0.max(edge(x0, w, cx)),
-                    ay0.max(edge(y0, h, cy)),
-                    ax1.min(edge(x0, w, cx + 1)),
-                    ay1.min(edge(y0, h, cy + 1)),
+                    ax0.max(ex[cx]),
+                    ay0.max(ey[cy]),
+                    ax1.min(ex[cx + 1]),
+                    ay1.min(ey[cy + 1]),
                 ]);
                 if part.is_empty() {
                     continue;
                 }
-                let c = &mut cells[(cy * GRID + cx) as usize];
+                let c = &mut cells[cy * GRID as usize + cx];
                 *c = Some(c.map_or(part, |c| c.union(part)));
             }
         }
@@ -941,6 +965,23 @@ mod tests {
         ];
         fill_rects(&mut shapes, 1.0);
         assert!(shapes.iter().all(|s| matches!(s.shape, Shape::Rect(_))));
+    }
+
+    #[test]
+    fn an_area_takes_in_every_pixel_it_touches() {
+        for i in -40..4000 {
+            let v = i as f32 * 0.37;
+            let Px([x0, y0, x1, y1]) = Px::around(
+                egui::Rect::from_min_max([v, v].into(), [v + 1.3, v].into()),
+                1.25,
+                [2000, 2000],
+            );
+            let (lo, hi) = (v * 1.25, (v + 1.3) * 1.25);
+            assert_eq!(x0, (lo.floor().max(0.0) as u32).min(2000), "{v}");
+            assert_eq!(y1, (lo.ceil().max(0.0) as u32).min(2000), "{v}");
+            assert_eq!(x1, (hi.ceil().max(0.0) as u32).min(2000), "{v}");
+            assert_eq!(y0, x0);
+        }
     }
 
     #[test]
