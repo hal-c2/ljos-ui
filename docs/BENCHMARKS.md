@@ -912,6 +912,77 @@ A function a script made before an edit that moved lines (a `connect` callback, 
 now also throws at the line the file gives it now. The places the reload moved are applied to the
 line table of the script loaded for the file before, which those functions still run.
 
+### Hot reload: delegates, moved objects and sorted lists in place (2026-10-18, late night)
+
+More edits that change a file's shape now go in place:
+
+- An edit inside a delegate of a `ListView`, `GridView` or `Repeater`, or inside a `Loader`'s
+  inline `sourceComponent`, goes to every live row whose key matches. Rows keep their scroll
+  position, a field's text and a running animation. Rows made later use the new delegate.
+- An object moved to another parent in the same file, or among its siblings, is made again
+  where the file now puts it. It keeps its scripts' values, as on the full path. The longest
+  run of siblings still in order is kept, and only the others are made again.
+- An object of another type at the same place is made again, with what is in it. Nothing else
+  changes.
+- An object added before others goes in place in lists that sort what they hold:
+  - a `Flickable`'s content;
+  - the content of a `Pane`, a `Popup` or an `ApplicationWindow`;
+  - a `Container` such as `SwipeView`;
+  - a `Menu`;
+  - an `ObjectModel`;
+  - the `states` and `transitions` lists.
+
+  Each of these lists can now insert as well as append. `Window` already used `Item.data`, which
+  could insert.
+
+These still take the full path:
+
+- an id moved to another object;
+- an object removed or reordered in a list given to a member (`states: [ … ]`).
+
+Measured with `reload_profile`, as in the section before. Saves alternate between the edit and
+the file as it was. The delegate rows were measured once before, at load 16–20, and four times
+after, at load 31–36. The other rows were measured four times each, at load 36–46. "Kept, new"
+is now.
+
+| App, edit | Path before → now | Shown | Apply | Kept, new |
+|---|---|---:|---:|---:|
+| clocks, an object added in `Clock.qml`, the list's delegate | full → in place | 19.9 → 16.7–17.7 ms | 2.2 → 0.4–0.6 ms | 142, 7 |
+| rssnews, an object added in an inline delegate | full → in place | 21.7 → 17.4–18.5 ms | 3.6 → 0.4–0.5 ms | 80, 5 |
+| rssnews, an object added in `CategoryDelegate.qml` | full → in place | 21.7 → 17.3–18.7 ms | 3.2 → 0.4 ms | 80, 5 |
+| rssnews, that object removed | full → in place | 20.2 → 17.2–18.6 ms | 2.4 → 0.4–0.8 ms | 70, 0 |
+| clocks, two siblings swapped in `Clock.qml` | full → in place | 30.9–38.1 → 18.2–20.1 ms | 8.4–10.9 → 1.0–3.4 ms | 135, 7 |
+| clocks, `cityLabel` moved to the delegate's root | full → in place | 24.8–35.3 → 20.6–21.1 ms | 4.5–13.8 → 1.3–1.4 ms | 135, 7 |
+| thermostat, an `Item` added first in a `Pane` | full → in place | 94.0–100.1 → 34.0–34.9 ms | 53.5–59.9 → 1.7–1.8 ms | 1 426, 1 |
+
+A moved object is new in every row of the list that shows it, which is the 7 new in clocks.
+
+thermostat's full path for that edit spent 25–28 ms making, 12–13 ms swapping and 15–16 ms
+destroying. Its resident memory went from 100–104 MB to 80–83 MB. What is left of its 34 ms is
+the watcher's quiet time (15 ms) and the build (15 ms).
+
+**The 631 ms build.** The steps of the build were timed on thermostat over 124 saves. Each was
+timed for wall time, time on a processor, time waiting to run, and time spent reading the saved
+file:
+
+| Load | Build | On a processor | Waiting to run | Reading the file |
+|---|---:|---:|---:|---:|
+| 15–22 | 14.5–17.0 ms | 13.8–16.7 ms | under 0.1 ms | under 1 ms |
+| 32–106, 40 busy threads and a 3 GB write | 37–172 ms | 22–28 ms | 14–57 ms | up to 7 ms; twice 108–120 ms |
+| 44–56, a 3 GB write | 14–338 ms | 14–32 ms | 0–87 ms | up to 2.5 ms; twice 213–323 ms |
+
+The work of the build did not change with the load. It took the same faults, about 1 030 on a
+first save and 900 after, and nothing was done only the first time. The time on a processor rose
+from 15 to 23–28 ms when every core was busy. That is the cores being shared, not more work. The
+long builds were spent off the processor:
+
+- waiting to run, when other work held the cores;
+- or blocked reading the saved file while the drive was writing out other data. One build took
+  337.9 ms: 14.5 ms on a processor, none waiting to run, and 323 ms in the read.
+
+The 631 ms build was the second case. It was the machine, not the build, so the code was not
+changed.
+
 ### A write's cascade, a turning transform and the script crossing (2026-10-18)
 
 Measured as in the section before: callgrind over the egui passes, the 1200-frame run less the
