@@ -6,9 +6,14 @@
 // a reload happens, and holds otherwise: while the application rests,
 // neither it nor this window does any work. Each answer brings the page
 // shown up to date and adds a point to the charts.
+//
+// An inspector is to cost less than what it watches: words are Text, not
+// Label, each in the theme's colour (a Label costs over twice a Text to
+// make and hold), and a page out of sight lets the rows of its view go.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Ljos.Observer
 
 ApplicationWindow {
@@ -288,13 +293,13 @@ ApplicationWindow {
                 anchors.margins: 14
                 spacing: 2
 
-                Label {
+                Text {
                     text: "Observer"
                     color: theme.text
                     font.pixelSize: 21
                     font.bold: true
                 }
-                Label {
+                Text {
                     Layout.bottomMargin: 18
                     text: processes.process ? "pid " + processes.process.pid : "ljos observe"
                     color: theme.subtle
@@ -318,7 +323,7 @@ ApplicationWindow {
                             anchors.verticalCenter: parent.verticalCenter
                             color: theme.accent
                         }
-                        Label {
+                        Text {
                             anchors.left: parent.left
                             anchors.leftMargin: 14
                             anchors.verticalCenter: parent.verticalCenter
@@ -326,7 +331,7 @@ ApplicationWindow {
                             color: window.page === index ? theme.accent : theme.text
                             font.bold: window.page === index
                         }
-                        Label {
+                        Text {
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
@@ -359,7 +364,7 @@ ApplicationWindow {
                         color: !client.connected ? theme.bad
                              : watcher.live ? theme.good : theme.subtle
                     }
-                    Label {
+                    Text {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         text: !client.connected ? "not connected"
@@ -369,7 +374,7 @@ ApplicationWindow {
                         color: theme.subtle
                     }
                 }
-                Label {
+                Text {
                     Layout.fillWidth: true
                     text: client.url
                     elide: Text.ElideMiddle
@@ -509,9 +514,9 @@ ApplicationWindow {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text { text: "Overview"; color: theme.text; font.pixelSize: 19; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Label {
+                        Text {
                             color: theme.subtle
                             text: "one point each time the application changed"
                         }
@@ -538,12 +543,12 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     anchors.margins: 10
                                     spacing: 2
-                                    Label {
+                                    Text {
                                         text: modelData[0]
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }
-                                    Label {
+                                    Text {
                                         property var v: overview.latest[modelData[1]]
                                         text: v === undefined || v === null ? "—"
                                             : modelData[1] === "rss" ? window.bytes(v) : v
@@ -588,12 +593,12 @@ ApplicationWindow {
                                 readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
                                 readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
 
-                                Label {
+                                Text {
                                     x: 12; y: 10
                                     text: chart.modelData.title
                                     color: theme.subtle
                                 }
-                                Label {
+                                Text {
                                     anchors.right: parent.right
                                     anchors.rightMargin: 12
                                     y: 8
@@ -604,76 +609,91 @@ ApplicationWindow {
                                     color: theme.text
                                     font.bold: true
                                 }
-                                Canvas {
+                                // Lines, not a canvas: a canvas keeps a
+                                // picture of itself the size of the chart and
+                                // draws its text through the canvas's own
+                                // path, which cost more memory than the rest
+                                // of the page and took the first frame over
+                                // its budget.
+                                Item {
                                     id: plot
                                     anchors.fill: parent
                                     anchors.topMargin: 34
                                     anchors.margins: 12
-                                    property int seen: overview.version
-                                    property bool darkNow: window.dark
-                                    onSeenChanged: requestPaint()
-                                    onDarkNowChanged: requestPaint()
-                                    onWidthChanged: requestPaint()
-                                    onHeightChanged: requestPaint()
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        ctx.strokeStyle = theme.rule
-                                        ctx.lineWidth = 1
-                                        for (var g = 0; g <= 2; ++g) {
-                                            var gy = Math.round(height * g / 2) + 0.5
-                                            ctx.beginPath()
-                                            ctx.moveTo(0, gy)
-                                            ctx.lineTo(width, gy)
-                                            ctx.stroke()
-                                        }
-                                        var a = chart.values
-                                        var b = chart.seconds
-                                        if (a.length === 0) {
-                                            ctx.fillStyle = theme.subtle
-                                            ctx.font = "12px sans-serif"
-                                            ctx.fillText("waiting for the application to change", 4, height / 2 - 6)
-                                            return
-                                        }
+                                    // Each line its own property: a sample
+                                    // then makes one array of points per line
+                                    // and nothing in between.
+                                    readonly property real top: scaleOf(chart.values, chart.seconds)
+                                    readonly property var line: points(chart.values, top, width, height)
+                                    readonly property var second: points(chart.seconds, top, width, height)
+                                    // The line taken down to the bottom,
+                                    // filled under it. Empty for less than
+                                    // two points, which enclose nothing.
+                                    readonly property var area: line.length < 2 ? []
+                                        : line.concat([Qt.point(width, height), Qt.point(line[0].x, height)])
+
+                                    function scaleOf(a, b) {
                                         var top = 0
                                         for (var i = 0; i < a.length; ++i)
                                             top = Math.max(top, a[i])
                                         for (var k = 0; k < b.length; ++k)
                                             top = Math.max(top, b[k])
-                                        top = top <= 0 ? 1 : top * 1.15
-                                        var step = width / 119
-                                        function line(vs, colour, fill) {
-                                            var x0 = width - (vs.length - 1) * step
-                                            ctx.beginPath()
-                                            for (var n = 0; n < vs.length; ++n) {
-                                                var x = x0 + n * step
-                                                var y = height - vs[n] / top * height
-                                                if (n === 0)
-                                                    ctx.moveTo(x, y)
-                                                else
-                                                    ctx.lineTo(x, y)
-                                            }
-                                            ctx.strokeStyle = colour
-                                            ctx.lineWidth = 2
-                                            ctx.stroke()
-                                            if (fill) {
-                                                ctx.lineTo(x0 + (vs.length - 1) * step, height)
-                                                ctx.lineTo(x0, height)
-                                                ctx.closePath()
-                                                ctx.fillStyle = Qt.rgba(colour.r, colour.g, colour.b, 0.14)
-                                                ctx.fill()
-                                            }
-                                            if (vs.length === 1) {
-                                                ctx.fillStyle = colour
-                                                ctx.fillRect(x0 - 2, height - vs[0] / top * height - 2, 4, 4)
-                                            }
+                                        return top <= 0 ? 1 : top * 1.15
+                                    }
+                                    function points(vs, top, w, h) {
+                                        var step = w / 119
+                                        var x0 = w - (vs.length - 1) * step
+                                        var out = []
+                                        for (var n = 0; n < vs.length; ++n)
+                                            out.push(Qt.point(x0 + n * step, h - vs[n] / top * h))
+                                        return out
+                                    }
+
+                                    Rectangle { width: plot.width; height: 1; color: theme.rule }
+                                    Rectangle { y: Math.round(plot.height / 2); width: plot.width; height: 1; color: theme.rule }
+                                    Rectangle { y: plot.height - 1; width: plot.width; height: 1; color: theme.rule }
+                                    Shape {
+                                        anchors.fill: parent
+                                        ShapePath {
+                                            strokeWidth: -1
+                                            fillColor: Qt.rgba(chart.tone.r, chart.tone.g, chart.tone.b, 0.14)
+                                            PathPolyline { path: plot.area }
                                         }
-                                        if (b.length > 0)
-                                            line(b, theme.accent, false)
-                                        line(a, chart.tone, true)
-                                        ctx.fillStyle = theme.subtle
-                                        ctx.font = "10px sans-serif"
-                                        ctx.fillText(String(Math.round(top * 10) / 10), 2, 10)
+                                        ShapePath {
+                                            strokeColor: theme.accent
+                                            strokeWidth: 2
+                                            fillColor: "transparent"
+                                            PathPolyline { path: plot.second }
+                                        }
+                                        ShapePath {
+                                            strokeColor: chart.tone
+                                            strokeWidth: 2
+                                            fillColor: "transparent"
+                                            PathPolyline { path: plot.line }
+                                        }
+                                    }
+                                    // A single point is no line.
+                                    Rectangle {
+                                        visible: chart.values.length === 1
+                                        x: plot.width - 2
+                                        y: plot.line.length === 1 ? plot.line[0].y - 2 : 0
+                                        width: 4; height: 4
+                                        color: chart.tone
+                                    }
+                                    Text {
+                                        x: 2
+                                        visible: chart.values.length > 0
+                                        text: String(Math.round(plot.top * 10) / 10)
+                                        color: theme.subtle
+                                        font.pixelSize: 10
+                                    }
+                                    Text {
+                                        x: 4
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: chart.values.length === 0
+                                        text: "waiting for the application to change"
+                                        color: theme.subtle
+                                        font.pixelSize: 12
                                     }
                                 }
                             }
@@ -785,8 +805,8 @@ ApplicationWindow {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Label {
+                        Text { text: "Processes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
                             Layout.leftMargin: 12
                             visible: processes.process !== null
                             color: theme.subtle
@@ -827,7 +847,7 @@ ApplicationWindow {
                             height: 32
                             Repeater {
                                 model: ["Kind", "Name", "State", "Work", "Wakeups", "Detail"]
-                                delegate: Label {
+                                delegate: Text {
                                     required property string modelData
                                     required property int index
                                     width: index === 1 ? processes.nameWidth(heads.parent.width) : processes.widths[index]
@@ -848,7 +868,9 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.topMargin: 33
                             clip: true
-                            model: procRows
+                            // A page out of sight lets its rows go: they
+                            // are most of what a page costs to hold.
+                            model: window.page === 1 ? procRows : null
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: prow
@@ -870,14 +892,14 @@ ApplicationWindow {
                                 Row {
                                     x: 8
                                     height: parent.height
-                                    Label {
+                                    Text {
                                         width: processes.widths[0]; height: parent.height
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.what
                                         color: theme.subtle
                                         elide: Text.ElideRight
                                     }
-                                    Label {
+                                    Text {
                                         width: processes.nameWidth(prow.width); height: parent.height
                                         verticalAlignment: Text.AlignVCenter
                                         text: prow.name + (prow.truncated ? "…" : "")
@@ -894,7 +916,7 @@ ApplicationWindow {
                                             anchors.verticalCenter: parent.verticalCenter
                                             color: window.stateColor(prow.status)
                                         }
-                                        Label {
+                                        Text {
                                             anchors.left: dot.right
                                             anchors.leftMargin: 7
                                             anchors.verticalCenter: parent.verticalCenter
@@ -902,7 +924,7 @@ ApplicationWindow {
                                             color: theme.text
                                         }
                                     }
-                                    Label {
+                                    Text {
                                         width: processes.widths[3]; height: parent.height
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
@@ -911,7 +933,7 @@ ApplicationWindow {
                                         color: theme.text
                                         font.family: theme.mono
                                     }
-                                    Label {
+                                    Text {
                                         width: processes.widths[4]; height: parent.height
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
@@ -920,7 +942,7 @@ ApplicationWindow {
                                         color: theme.text
                                         font.family: theme.mono
                                     }
-                                    Label {
+                                    Text {
                                         width: processes.widths[5]; height: parent.height
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
@@ -950,13 +972,47 @@ ApplicationWindow {
                 ColumnLayout {
                     id: mailboxes
                     spacing: 10
-                    property var rows: []
-                    // Given to the view as a number, as the processes are.
-                    property int count: 0
+                    // Row by row, as the processes are: a box whose
+                    // figures are the same is left alone. There are few
+                    // boxes, so all are set in one go.
+                    ListModel { id: boxRows }
+                    property var held: []
 
                     function show(list) {
-                        rows = list
-                        count = list.length
+                        var h = held
+                        for (var i = 0; i < list.length; ++i) {
+                            var row = flat(list[i])
+                            if (i >= h.length) {
+                                boxRows.append(row)
+                                h.push(row)
+                            } else if (processes.differs(h[i], row)) {
+                                boxRows.set(i, row)
+                                h[i] = row
+                            }
+                        }
+                        if (h.length > list.length) {
+                            boxRows.remove(list.length, h.length - list.length)
+                            h.splice(list.length, h.length - list.length)
+                        }
+                        held = h
+                    }
+
+                    // A box as the view's model holds it: what the card
+                    // shows, worked out once.
+                    function flat(b) {
+                        return {
+                            name: b.name,
+                            depth: b.depth,
+                            capacity: b.capacity,
+                            sent: String(b.sent),
+                            drained: String(b.drained),
+                            refused: b.refused,
+                            replaced: String(b.replaced),
+                            senders: b.senders + (b.waiting_senders > 0 ? " (" + b.waiting_senders + " waiting)" : ""),
+                            oldest: b.oldest_us === undefined || b.oldest_us === null ? "—" : window.ms(b.oldest_us),
+                            kinds: b.kinds.length === 0 ? "empty"
+                                : b.kinds.map(function(k) { return k.kind + " ×" + k.count }).join(", ")
+                        }
                     }
 
                     function load() {
@@ -964,8 +1020,8 @@ ApplicationWindow {
                     }
 
                     RowLayout {
-                        Label { text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Label {
+                        Text { text: "Mailboxes"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
                             Layout.leftMargin: 12
                             text: "counted since the inspector started · kinds only, never contents"
                             color: theme.subtle
@@ -979,10 +1035,19 @@ ApplicationWindow {
                         clip: true
                         cellWidth: Math.max(280, width / Math.max(1, Math.floor(width / 320)))
                         cellHeight: 168
-                        model: mailboxes.count
+                        model: window.page === 2 ? boxRows : null
                         delegate: Item {
-                            required property int index
-                            readonly property var modelData: mailboxes.rows[index] || ({})
+                            id: box
+                            required property string name
+                            required property int depth
+                            required property int capacity
+                            required property string sent
+                            required property string drained
+                            required property int refused
+                            required property string replaced
+                            required property string senders
+                            required property string oldest
+                            required property string kinds
                             width: boxes.cellWidth
                             height: boxes.cellHeight
                             Rectangle {
@@ -996,10 +1061,10 @@ ApplicationWindow {
                                     anchors.margins: 14
                                     spacing: 7
                                     RowLayout {
-                                        Label { text: modelData.name; color: theme.text; font.bold: true; font.pixelSize: 15 }
+                                        Text { text: box.name; color: theme.text; font.bold: true; font.pixelSize: 15 }
                                         Item { Layout.fillWidth: true }
-                                        Label {
-                                            text: modelData.depth + " / " + modelData.capacity
+                                        Text {
+                                            text: box.depth + " / " + box.capacity
                                             color: theme.text
                                             font.family: theme.mono
                                         }
@@ -1013,46 +1078,37 @@ ApplicationWindow {
                                         Rectangle {
                                             height: parent.height
                                             radius: 3
-                                            width: parent.width * Math.min(1, modelData.depth / Math.max(1, modelData.capacity))
-                                            color: modelData.depth >= modelData.capacity ? theme.bad
-                                                 : modelData.depth > 0 ? theme.warn : theme.good
+                                            width: parent.width * Math.min(1, box.depth / Math.max(1, box.capacity))
+                                            color: box.depth >= box.capacity ? theme.bad
+                                                 : box.depth > 0 ? theme.warn : theme.good
                                         }
                                     }
                                     GridLayout {
                                         columns: 4
                                         columnSpacing: 12
                                         rowSpacing: 2
-                                        Label { text: "sent"; color: theme.subtle }
-                                        Label { text: modelData.sent; color: theme.text; font.family: theme.mono }
-                                        Label { text: "drained"; color: theme.subtle }
-                                        Label { text: modelData.drained; color: theme.text; font.family: theme.mono }
-                                        Label { text: "refused"; color: theme.subtle }
-                                        Label {
-                                            text: modelData.refused
+                                        Text { text: "sent"; color: theme.subtle }
+                                        Text { text: box.sent; color: theme.text; font.family: theme.mono }
+                                        Text { text: "drained"; color: theme.subtle }
+                                        Text { text: box.drained; color: theme.text; font.family: theme.mono }
+                                        Text { text: "refused"; color: theme.subtle }
+                                        Text {
+                                            text: box.refused
                                             font.family: theme.mono
-                                            color: modelData.refused > 0 ? theme.bad : theme.text
+                                            color: box.refused > 0 ? theme.bad : theme.text
                                         }
-                                        Label { text: "replaced"; color: theme.subtle }
-                                        Label { text: modelData.replaced; color: theme.text; font.family: theme.mono }
-                                        Label { text: "senders"; color: theme.subtle }
-                                        Label {
-                                            text: modelData.senders + (modelData.waiting_senders > 0 ? " (" + modelData.waiting_senders + " waiting)" : "")
-                                            color: theme.text
-                                            font.family: theme.mono
-                                        }
-                                        Label { text: "oldest"; color: theme.subtle }
-                                        Label {
-                                            text: modelData.oldest_us === undefined || modelData.oldest_us === null ? "—" : window.ms(modelData.oldest_us)
-                                            color: theme.text
-                                            font.family: theme.mono
-                                        }
+                                        Text { text: "replaced"; color: theme.subtle }
+                                        Text { text: box.replaced; color: theme.text; font.family: theme.mono }
+                                        Text { text: "senders"; color: theme.subtle }
+                                        Text { text: box.senders; color: theme.text; font.family: theme.mono }
+                                        Text { text: "oldest"; color: theme.subtle }
+                                        Text { text: box.oldest; color: theme.text; font.family: theme.mono }
                                     }
-                                    Label {
+                                    Text {
                                         Layout.fillWidth: true
                                         elide: Text.ElideRight
                                         color: theme.subtle
-                                        text: modelData.kinds.length === 0 ? "empty"
-                                              : modelData.kinds.map(function(k) { return k.kind + " ×" + k.count }).join(", ")
+                                        text: box.kinds
                                     }
                                     Item { Layout.fillHeight: true }
                                 }
@@ -1587,7 +1643,7 @@ ApplicationWindow {
                             Accessible.name: "Filter objects"
                             onTextChanged: objects.filter = text
                         }
-                        Label {
+                        Text {
                             x: 12
                             anchors.top: treeFilter.bottom
                             anchors.topMargin: 6
@@ -1604,7 +1660,12 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.topMargin: treeFilter.height + 34
                             clip: true
-                            model: treeRows
+                            model: window.page === 3 ? treeRows : null
+                            // Where it was scrolled to, kept while the
+                            // page is out of sight and its rows let go.
+                            property real keptY: 0
+                            onContentYChanged: if (model !== null) keptY = contentY
+                            onModelChanged: if (model !== null) Qt.callLater(function() { treeView.contentY = treeView.keptY })
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: node
@@ -1621,9 +1682,6 @@ ApplicationWindow {
                                 color: objects.picked === node.handle ? theme.accentSoft
                                      : nodeHover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
                                      : "transparent"
-                                // Text, not Label, as in the property table:
-                                // rows are made as a tree of thousands is
-                                // scrolled, and a Text is cheaper to make.
                                 Row {
                                     x: 10 + (objects.filter === "" ? node.depth * 14 : 0)
                                     height: parent.height
@@ -1715,7 +1773,7 @@ ApplicationWindow {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                Label {
+                                Text {
                                     Layout.fillWidth: true
                                     text: objects.picked === "" ? "Pick an object" : objects.head
                                     color: theme.text
@@ -1738,7 +1796,7 @@ ApplicationWindow {
                                     }
                                 }
                             }
-                            Label {
+                            Text {
                                 visible: objects.picked !== ""
                                 text: objects.picked + (objects.where === "" ? "" : "  ·  " + objects.where)
                                       + "  ·  =expression binds"
@@ -1752,7 +1810,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
-                                model: objects.propRows
+                                model: window.page === 3 ? objects.propRows : 0
                                 ScrollBar.vertical: ScrollBar {}
                                 delegate: Item {
                                     id: prop
@@ -2075,7 +2133,7 @@ ApplicationWindow {
                             fillMode: Image.PreserveAspectFit
                             onStatusChanged: frame.loaded(shotB)
                         }
-                        Label {
+                        Text {
                             anchors.centerIn: parent
                             width: parent.width - 24
                             wrapMode: Text.Wrap
@@ -2181,8 +2239,8 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 10
-                        Label { text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Label {
+                        Text { text: "Logs"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
                             text: shownLines.count + " of " + logs.entries.length + " lines"
                             color: theme.subtle
                         }
@@ -2218,7 +2276,8 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 6
                             clip: true
-                            model: shownLines
+                            model: window.page === 4 ? shownLines : null
+                            onModelChanged: if (model !== null) Qt.callLater(logView.positionViewAtEnd)
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Item {
                                 id: entry
@@ -2237,7 +2296,7 @@ ApplicationWindow {
                                     x: 6
                                     height: parent.height
                                     spacing: 10
-                                    Label {
+                                    Text {
                                         width: 64
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: entry.level
@@ -2245,7 +2304,7 @@ ApplicationWindow {
                                         font.bold: entry.level === "warning" || entry.level === "critical"
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: 110
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: entry.category
@@ -2253,7 +2312,7 @@ ApplicationWindow {
                                         elide: Text.ElideRight
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: entry.width - 64 - 110 - 160 - 50
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: entry.message
@@ -2262,7 +2321,7 @@ ApplicationWindow {
                                         font.family: theme.mono
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: 160
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
@@ -2274,7 +2333,7 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Label {
+                        Text {
                             anchors.centerIn: parent
                             visible: shownLines.count === 0
                             text: logs.entries.length === 0 ? "Nothing logged yet" : "No line matches"
@@ -2379,8 +2438,8 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 10
-                        Label { text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true }
-                        Label {
+                        Text { text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Text {
                             text: traceLines.count + " events"
                                   + (trace.dropped > 0 ? " · " + trace.dropped + " older gave way" : "")
                             color: theme.subtle
@@ -2401,7 +2460,7 @@ ApplicationWindow {
                     Flow {
                         Layout.fillWidth: true
                         spacing: 6
-                        Label {
+                        Text {
                             visible: trace.tracing.length === 0
                             text: "Nothing is traced. Pick an object on the Objects page and press Trace."
                             color: theme.subtle
@@ -2420,13 +2479,13 @@ ApplicationWindow {
                                     x: 8
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 6
-                                    Label {
+                                    Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: chip.modelData.name
                                         color: theme.accent
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: "✕"
                                         color: theme.subtle
@@ -2456,7 +2515,8 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 6
                             clip: true
-                            model: traceLines
+                            model: window.page === 5 ? traceLines : null
+                            onModelChanged: if (model !== null) Qt.callLater(traceView.positionViewAtEnd)
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Item {
                                 id: traceRow
@@ -2477,7 +2537,7 @@ ApplicationWindow {
                                     x: 6
                                     height: parent.height
                                     spacing: 10
-                                    Label {
+                                    Text {
                                         width: 80
                                         anchors.verticalCenter: parent.verticalCenter
                                         horizontalAlignment: Text.AlignRight
@@ -2486,7 +2546,7 @@ ApplicationWindow {
                                         font.family: theme.mono
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: 180
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: traceRow.object
@@ -2494,14 +2554,14 @@ ApplicationWindow {
                                         elide: Text.ElideRight
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: 70
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: traceRow.kind
                                         color: trace.tone(traceRow.kind)
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: 150
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: traceRow.name
@@ -2510,7 +2570,7 @@ ApplicationWindow {
                                         elide: Text.ElideRight
                                         font.pixelSize: 12
                                     }
-                                    Label {
+                                    Text {
                                         width: traceRow.width - 80 - 180 - 70 - 150 - 50
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: traceRow.what
@@ -2522,7 +2582,7 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Label {
+                        Text {
                             anchors.centerIn: parent
                             visible: traceLines.count === 0
                             text: "Nothing written down yet"
@@ -2533,7 +2593,7 @@ ApplicationWindow {
             }
 
             // What the last refusal or failure said.
-            Label {
+            Text {
                 id: status
                 Layout.fillWidth: true
                 Layout.leftMargin: 18
