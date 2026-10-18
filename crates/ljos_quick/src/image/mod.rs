@@ -1191,6 +1191,10 @@ fn drawn_scale(e: &Engine, me: ObjectId) -> f64 {
     let mut at = Some(me);
     while let Some(item) = at.filter(|&i| is_a::<Item>(e, i)) {
         let s = e.read(item, Item::SCALE.index).to_number().abs();
+        // The picture's own scale below 1 does not keep fewer pixels: it
+        // is mostly on its way to 1 (a pop-in, a press), and every step
+        // back up would decode the picture again. A parent's scale holds.
+        let s = if item == me { s.max(1.0) } else { s };
         if s.is_finite() && s > 0.0 {
             scale *= s;
         }

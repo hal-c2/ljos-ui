@@ -1658,6 +1658,39 @@ Item {
 }
 
 #[test]
+fn a_picture_that_grows_into_view_by_its_scale_is_decoded_once() {
+    let (e, store) = pictures();
+    store.register_resource("file:///big.png", png(2048, 1024, BLUE));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 200; height: 100
+    Image { objectName: "picture"; width: 200; height: 100; scale: 0 }
+}
+"#,
+    );
+    let picture = find(&e, root, "picture");
+    let mut s = scene(&e, root, 200.0, 100.0);
+    frame(&mut s, &e);
+    set(&e, picture, "source", Value::Url("file:///big.png".into()));
+    // A pop-in: the scale goes from nothing to 1 over a few frames.
+    for step in 0..=20 {
+        set(&e, picture, "scale", Value::from(f64::from(step) / 20.0));
+        frame(&mut s, &e);
+    }
+    // A picture this large is decoded aside.
+    store.finish(&e);
+    frame(&mut s, &e);
+    let image = painted(&s, picture).unwrap();
+    assert_eq!((image.width(), image.height()), (224, 112));
+    // Kept for the item's own size from the start: the frames between
+    // drew it smaller and decoded nothing again.
+    assert_eq!(store.decodes(), 1);
+}
+
+#[test]
 fn a_picture_drawn_much_smaller_than_it_is_kept_is_kept_smaller() {
     let (e, store) = pictures();
     store.register_resource("file:///big.png", png(500, 250, BLUE));
