@@ -1673,3 +1673,38 @@ Android keeps its databases:
   `features/platform/local-storage.feature`.
 - **No cache of prepared statements.** At 15 µs a transaction, it would not show, and rusqlite
   would need its `cache` feature.
+
+### photosurface's backdrop and pictures arriving (2026-10-18)
+
+photosurface on a folder of 472 pictures, in the desktop:cua sandbox (sway, llvmpipe), release
+`ljos`, for 30 s from start. CPU is the process's user and system time; "last busy" is the last
+second with more than 0.1 s of CPU. qml6 was given a `gneiss.frag.qsb` built with Qt's `qsb`
+from the corpus's shader (the corpus has none, so without it qml6 draws no backdrop at all).
+
+| | Total CPU (s) | Last busy (s) |
+|---|---:|---:|
+| qml6 6.11.2, with the backdrop | 67.1 | 23.8 |
+| qml6 6.11.2, no backdrop (no .qsb) | 4.0 | 23.4 |
+| Ljós before | 38.8 | 25.1 |
+| Ljós, effect kept as a picture | 14.4 | 21.9 |
+| Ljós, kept, and arrivals 50 ms apart | 12.8–13.8 | 22.9–24.1 |
+| Ljós, kept, and arrivals 100 ms apart | 12.9–13.0 | about 25 |
+
+- **The backdrop was the cost.** Its program takes about 150 ms of llvmpipe for the window, and
+  it ran again for every frame anything over it changed. Kept as a picture after its second
+  unchanged frame, each slide costs about 0.2 s of llvmpipe instead of about 4 s. qml6 spends
+  11–12 s of llvmpipe at each slide change. The screen is the same pixel for pixel outside the
+  photo pile, which is random in each run.
+- **Arrivals.** Decoded pictures now wait up to 50 ms for their frame, so the arrival drew 46
+  frames instead of 96. Arrivals while the window is hidden or the pictures are off-screen
+  already drew nothing: about 220 passes were "unchanged and not presented".
+- **What remains is overdraw.** 472 photos pile about 24 deep in one window, and buffer-age
+  unions widen the damaged area; llvmpipe holds about 3 cores while the pool decodes on 1 for
+  about 2.4 s. Qt decodes each Image on the spot and draws the pile once.
+
+**DECISIONs.**
+- 50 ms: 100 ms saved no CPU and showed the last picture later.
+- No feature scenario: frames presented are not visible from QML and no step counts them;
+  Rust tests in `ljos_shell` (`gl_shader`) and `ljos_egui` (`tests/image.rs`) cover both.
+
+**What is left.** Not drawing what opaque pictures above hide (Qt's opaque pass does this).
