@@ -586,7 +586,7 @@ fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
 /// from `QT_QUICK_CONTROLS_FALLBACK_STYLE` or `FallbackStyle` likewise.
 /// A `qtquickcontrols2.conf` beside the files is not read, as `qml` does
 /// not read it.
-fn controls_style(
+pub fn controls_style(
     var: impl Fn(&str) -> Option<String>,
     read: impl Fn(&str) -> Option<String>,
 ) -> Option<ControlsStyle> {

@@ -100,6 +100,9 @@ pub struct QtBackend {
     cache: Option<(usize, Run)>,
     /// `QT_QUICK_CONTROLS_STYLE` for the run.
     controls_style: Option<String>,
+    /// The scenario's controls configuration file and variables.
+    controls_conf: Option<String>,
+    controls_vars: Vec<(String, String)>,
     /// The locale variables of the run; `None` is `LANG=en_US.UTF-8`.
     locale_env: Option<Vec<(String, String)>>,
 }
@@ -140,6 +143,8 @@ impl QtBackend {
             binders: Vec::new(),
             cache: None,
             controls_style: None,
+            controls_conf: None,
+            controls_vars: Vec::new(),
             locale_env: None,
         }
     }
@@ -384,6 +389,18 @@ impl QtBackend {
             Some(style) => command.env("QT_QUICK_CONTROLS_STYLE", style),
             None => command.env_remove("QT_QUICK_CONTROLS_STYLE"),
         };
+        // The style is the scenario's, never the developer's.
+        command
+            .env_remove("QT_QUICK_CONTROLS_CONF")
+            .env_remove("QT_QUICK_CONTROLS_FALLBACK_STYLE");
+        if let Some(text) = &self.controls_conf {
+            let path = driver.with_file_name("qtquickcontrols2.conf");
+            fs::write(&path, text)?;
+            command.env("QT_QUICK_CONTROLS_CONF", path);
+        }
+        for (k, v) in &self.controls_vars {
+            command.env(k, v);
+        }
         // The developer's own locale stays out: a parity scenario has one
         // expectation.
         for k in LOCALE_VARS {
@@ -413,9 +430,6 @@ impl QtBackend {
             // them would give the controls a dark palette on a desktop that
             // prefers one, and a parity scenario has one expectation.
             .env("GSETTINGS_BACKEND", "memory")
-            // The style is the scenario's, never the developer's.
-            .env_remove("QT_QUICK_CONTROLS_CONF")
-            .env_remove("QT_QUICK_CONTROLS_FALLBACK_STYLE")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -589,6 +603,18 @@ impl Backend for QtBackend {
 
     fn controls_style(&mut self, name: &str) -> Result<()> {
         self.controls_style = Some(name.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn controls_configuration(&mut self, text: &str) -> Result<()> {
+        self.controls_conf = Some(text.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn controls_variable(&mut self, name: &str, value: &str) -> Result<()> {
+        self.controls_vars.push((name.to_owned(), value.to_owned()));
         self.cache = None;
         Ok(())
     }

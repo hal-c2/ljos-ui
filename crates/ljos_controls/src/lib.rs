@@ -117,6 +117,7 @@ pub use window::{
 };
 
 use style::{BASIC, FUSION, MATERIAL, StyleLibrary, UNIVERSAL};
+pub use style::{MaterialDefaults, set_material_defaults};
 
 /// The modules the style's types are registered in. Qt picks the style
 /// behind `QtQuick.Controls` when the application starts; here that URI

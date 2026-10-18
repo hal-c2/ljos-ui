@@ -321,6 +321,18 @@ pub trait Backend: fmt::Debug {
     fn controls_style(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("choosing a style"))
     }
+    /// The program starts with this text in the file
+    /// `QT_QUICK_CONTROLS_CONF` names.
+    fn controls_configuration(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "a controls configuration file",
+        ))
+    }
+    /// The program starts with the variable `name` (one of
+    /// `QT_QUICK_CONTROLS_`) set to `value`.
+    fn controls_variable(&mut self, _name: &str, _value: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a controls variable"))
+    }
     /// The program starts with these locale variables (`LANG`, `LC_ALL`,
     /// `LC_NUMERIC`, …) in its environment and no others.
     fn locale_environment(&mut self, _vars: &[(String, String)]) -> Result<()> {

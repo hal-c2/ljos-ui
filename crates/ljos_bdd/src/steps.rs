@@ -523,6 +523,18 @@ fn locale_environment(w: &mut LjosWorld, vars: String) -> StepResult {
     w.each(|b| b.locale_environment(&vars))
 }
 
+/// The text of the file `QT_QUICK_CONTROLS_CONF` names.
+#[given(regex = r#"^the application starts with the controls configuration:$"#)]
+fn controls_configuration(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let text = docstring(step)?;
+    w.each(|b| b.controls_configuration(&text))
+}
+
+#[given(regex = r#"^the application starts with "(QT_QUICK_CONTROLS_[A-Z_]+)" set to "([^"]*)"$"#)]
+fn controls_variable(w: &mut LjosWorld, name: String, value: String) -> StepResult {
+    w.each(|b| b.controls_variable(&name, &value))
+}
+
 #[given(regex = r#"^the application starts with the controls style "([^"]+)"$"#)]
 fn controls_style(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.controls_style(&name))

@@ -813,6 +813,136 @@ fn reset_material_background(
     Ok(())
 }
 
+/// The Material theme and colours an application starts with: what an
+/// item has that neither it nor an item it is in sets. Qt reads them from
+/// the `QT_QUICK_CONTROLS_MATERIAL_` variables and the `[Material]` group
+/// of the file `QT_QUICK_CONTROLS_CONF` names, a variable first.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialDefaults {
+    theme: Option<i32>,
+    primary: RawColor,
+    accent: RawColor,
+    foreground: RawColor,
+    background: RawColor,
+}
+
+impl Default for MaterialDefaults {
+    fn default() -> Self {
+        Self {
+            theme: None,
+            primary: RawColor::Unset,
+            accent: RawColor::Unset,
+            foreground: RawColor::Unset,
+            background: RawColor::Unset,
+        }
+    }
+}
+
+impl MaterialDefaults {
+    /// The defaults of a program started with the variables `var` gives;
+    /// `read` reads the configuration file.
+    pub fn from_vars(
+        var: impl Fn(&str) -> Option<String>,
+        read: impl Fn(&str) -> Option<String>,
+    ) -> Self {
+        let conf = var("QT_QUICK_CONTROLS_CONF").and_then(|path| read(&path));
+        let setting = |key: &str| {
+            var(&format!(
+                "QT_QUICK_CONTROLS_MATERIAL_{}",
+                key.to_ascii_uppercase()
+            ))
+            .or_else(|| {
+                conf.as_deref()
+                    .and_then(|text| material_ini_value(text, key))
+            })
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+        };
+        let color = |key: &str| setting(key).map_or(RawColor::Unset, |v| parse_material_color(&v));
+        Self {
+            theme: setting("Theme").and_then(|v| enum_value("Theme", &v)),
+            primary: color("Primary"),
+            accent: color("Accent"),
+            foreground: color("Foreground"),
+            background: color("Background"),
+        }
+    }
+
+    /// The defaults of this process's environment.
+    pub fn from_environment() -> Self {
+        Self::from_vars(
+            |name| std::env::var(name).ok(),
+            |path| std::fs::read_to_string(path).ok(),
+        )
+    }
+
+    fn color(&self, prop: PropIndex) -> RawColor {
+        if prop == MaterialAttached::PRIMARY.index {
+            self.primary
+        } else if prop == MaterialAttached::ACCENT.index {
+            self.accent
+        } else if prop == MaterialAttached::FOREGROUND.index {
+            self.foreground
+        } else if prop == MaterialAttached::BACKGROUND.index {
+            self.background
+        } else {
+            RawColor::Unset
+        }
+    }
+}
+
+#[derive(Default)]
+struct MaterialStart(Cell<Option<MaterialDefaults>>);
+
+fn material_defaults(engine: &Engine) -> MaterialDefaults {
+    engine
+        .extension::<MaterialStart>()
+        .0
+        .get()
+        .unwrap_or_default()
+}
+
+/// Gives the application these Material defaults, before its root is
+/// built.
+pub fn set_material_defaults(engine: &Engine, defaults: MaterialDefaults) {
+    engine.extension::<MaterialStart>().0.set(Some(defaults));
+    bump_style_epoch(engine);
+}
+
+/// A Material colour enum's name (`Green`) or a colour (`#123456`, `red`).
+fn parse_material_color(text: &str) -> RawColor {
+    match enum_value("Color", text) {
+        Some(c) => RawColor::Enum(c),
+        None => Color::parse(text).map_or(RawColor::Unset, RawColor::Direct),
+    }
+}
+
+fn enum_value(enumeration: &str, key: &str) -> Option<i32> {
+    material_enums()
+        .into_iter()
+        .find(|(name, _)| *name == enumeration)?
+        .1
+        .into_iter()
+        .find(|(k, _)| *k == key)
+        .and_then(|(_, v)| i32::try_from(v).ok())
+}
+
+/// `key` in the `[Material]` group of an INI text.
+fn material_ini_value(text: &str, key: &str) -> Option<String> {
+    let mut in_group = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(group) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            in_group = group.trim() == "Material";
+        } else if in_group
+            && let Some((k, v)) = line.split_once('=')
+            && k.trim() == key
+        {
+            return Some(v.trim().trim_matches('"').to_owned());
+        }
+    }
+    None
+}
+
 fn inherited_material_theme(engine: &Engine, att: ObjectId) -> i32 {
     let meta = material_attacher();
     let mut cur = engine.owner(att).and_then(|o| above(engine, o));
@@ -828,7 +958,7 @@ fn inherited_material_theme(engine: &Engine, att: ObjectId) -> i32 {
         }
         cur = above(engine, p);
     }
-    0
+    i32::from(material_defaults(engine).theme == Some(1))
 }
 
 fn effective_material_theme(engine: &Engine, att: ObjectId) -> i32 {
@@ -884,7 +1014,9 @@ fn inherited_material_color(
         }
         cur = above(engine, p);
     }
-    default_for_theme(theme)
+    let given = material_defaults(engine).color(prop);
+    resolve_raw_material_color(given, theme, dark_shade200)
+        .unwrap_or_else(|| default_for_theme(theme))
 }
 
 fn parse_assigned_material_color(
@@ -1928,6 +2060,34 @@ pub(crate) fn register(engine: &Engine) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_material_variable_comes_before_the_file() {
+        let conf = "[Controls]\nAccent=Red\n\n[Material]\nTheme=Dark\nAccent=Green\n\
+                    Primary=#123456\nForeground=Nonsense\n";
+        let vars = |accent: Option<&str>| {
+            let accent = accent.map(str::to_owned);
+            MaterialDefaults::from_vars(
+                move |name| match name {
+                    "QT_QUICK_CONTROLS_CONF" => Some("x.conf".to_owned()),
+                    "QT_QUICK_CONTROLS_MATERIAL_ACCENT" => accent.clone(),
+                    _ => None,
+                },
+                |_| Some(conf.to_owned()),
+            )
+        };
+        let file = vars(None);
+        assert_eq!(file.theme, Some(1));
+        assert_eq!(file.accent, RawColor::Enum(9));
+        assert_eq!(file.primary, RawColor::Direct(rgb(0x123456)));
+        // A value that is no colour leaves the style's own.
+        assert_eq!(file.foreground, RawColor::Unset);
+        assert_eq!(file.background, RawColor::Unset);
+        assert_eq!(vars(Some("Teal")).accent, RawColor::Enum(8));
+        // Without a file, nothing is read.
+        let none = MaterialDefaults::from_vars(|_| None, |_| Some(conf.to_owned()));
+        assert_eq!(none, MaterialDefaults::default());
+    }
 
     #[test]
     fn a_truncated_pack_gives_what_fits() {
