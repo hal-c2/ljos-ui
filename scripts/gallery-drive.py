@@ -4,11 +4,14 @@
 gallery-drive.py <out dir> <id>...
 
 Each example runs in the desktop:cua sandbox with the inspector on (`gallery:run <id>
---mcp=inspect,input`). Every control the snapshot shows is clicked once, re-snapshotting after
-each click, since a click may open a page with new controls. An example with almost no controls
-(a game or a snippet built from MouseAreas) gets real pointer clicks through cua-driver on a grid
-instead. What the app logs after it started goes in <out>/<id>/report.txt, with screenshots;
-<out>/summary.txt lists, per example, whether it started and the distinct lines it logged."""
+--mcp=inspect,input`). Every enabled control the snapshot shows is clicked once, those that look
+like they end the app last. After each click the driver waits for the animations it started (a
+page sliding in) and snapshots again, since a click may open a page with new controls. An example
+with almost no controls (a game or a snippet built from MouseAreas) gets real pointer clicks
+through cua-driver on a grid instead. What each click did (the outline's changes, or why the
+inspector refused it) and what the app logged go in <out>/<id>/report.txt, with screenshots;
+<out>/summary.txt lists, per example, whether it started, what its clicks did and the distinct
+lines it logged."""
 import base64, glob, json, os, re, shutil, signal, subprocess, sys, time, urllib.error, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,10 +22,16 @@ SANDBOX = os.path.join(ROOT, "scripts", "cua-sandbox.sh")
 # user's fonts, for each command it runs.
 XDG = os.path.join(os.environ.get("LJOS_CUA_HOME") or os.path.join(TARGET, "cua"), "xdg")
 ROLES = r"button|checkbox|switch|radio|radiobutton|tab|menuitem|link|combobox|spinbox|slider"
-CONTROL = re.compile(r'\b(?:' + ROLES + r')\s+("([^"]*)"\s+)?\[(e\d+)\]')
+# An outline line of a control: its role, its name if it has one, what else is shown before its
+# reference (a slider's value), the reference and its states.
+CONTROL = re.compile(r'^[ \t]*- (?:' + ROLES + r')[ \t]+("([^"]*)"[ \t]+)?(?:[^\s\[]\S*[ \t]+)*?\[(e\d+)\]([^\n]*)', re.M)
 STARTUP = 120
 MAX_CLICKS = 40
 GRID = 5
+# A control whose name or id says it ends the app.
+ENDS = re.compile(r"exit|quit|close|power|shut ?down", re.I)
+# How long a click may keep the app moving (a page sliding in) before the driver looks again.
+SETTLE = 3.0
 
 
 class Inspector:
@@ -83,6 +92,20 @@ class Inspector:
             time.sleep(0.25)
         return False
 
+    def animations(self):
+        r = self.rpc("tools/call", {"name": "app_status", "arguments": {}})
+        return ((r.get("result") or {}).get("structuredContent") or {}).get("animations", 0)
+
+    def settle(self, before):
+        """Waits until the animations a click started have ended: down to as many as ran before
+        it (a spinner that runs for ever is not waited for). False: they were still running."""
+        end = time.monotonic() + SETTLE
+        while self.animations() > before:
+            if time.monotonic() > end:
+                return False
+            time.sleep(0.1)
+        return True
+
     def new_logs(self):
         """The lines logged since the last call, without the paging note."""
         text = self.call("app_logs", {} if self.since is None else {"since": self.since})
@@ -98,6 +121,19 @@ def cua(tool, args):
         return json.loads(r.stdout)
     except ValueError:
         return {"error": (r.stdout + r.stderr)[-400:]}
+
+
+def outcome(res, settled):
+    """What a click did, in a few words: what changed in the outline, or why it was refused."""
+    if res.startswith("TOOL ERROR"):
+        m = re.search(r'"code":"(\w+)","message":"((?:[^"\\]|\\.)*)"', res)
+        return f"refused, {m.group(1)}: {m.group(2)}" if m else "refused: " + res[10:200].strip()
+    m = re.search(r"\(snapshot \d+: (\d+) changed, (\d+) added, (\d+) removed", res)
+    if not m:
+        return "clicked: " + res.splitlines()[0][:200]
+    parts = [f"{n} {what}" for n, what in zip(map(int, m.groups()), ("changed", "added", "removed")) if n]
+    did = ", ".join(parts) if parts else "nothing changed"
+    return did if settled else did + f" (still moving after {SETTLE:g} s)"
 
 
 def grid_clicks(app, w, d):
@@ -144,7 +180,7 @@ def drive(out, eid):
     p = subprocess.Popen([SANDBOX, "exec", "mise", "run", "gallery:run", eid, "--mcp=inspect,input"],
                          cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     rep = open(os.path.join(d, "report.txt"), "w")
-    said, clicks = [], 0
+    said, clicks, outcomes = [], 0, {}
 
     def w(*lines):
         for l in lines:
@@ -185,15 +221,27 @@ def drive(out, eid):
         w("== logged while starting", *app.new_logs())
         seen = set()
         while clicks < MAX_CLICKS:
-            todo = [(m.group(3), m.group(2) or "") for m in CONTROL.finditer(app.call("app_snapshot"))]
-            todo = [(r, n) for r, n in todo if (n or r) not in seen]
+            todo = []
+            for m in CONTROL.finditer(app.call("app_snapshot")):
+                ref, name, states = m.group(3), m.group(2) or "", m.group(4)
+                if (name or ref) in seen:
+                    continue
+                # What the app does not let a person click is not clicked; it may be enabled
+                # later, by another click, and is tried then.
+                if re.search(r"(?:^|\s)disabled(?:\s|$)", states):
+                    continue
+                todo.append((ref, name, bool(ENDS.search(name + states))))
             if not todo:
                 break
-            ref, name = todo[0]
+            # A control that may end the app goes last, so that it does not cut the drive short.
+            todo.sort(key=lambda t: t[2])
+            ref, name, _ = todo[0]
             seen.add(name or ref)
             clicks += 1
             try:
+                before = app.animations()
                 res = app.call("app_click", {"target": ref})
+                settled = app.settle(before)
                 logs = app.new_logs()
             except (OSError, urllib.error.URLError, ValueError):
                 # A control may end the app (a power button calling Qt.quit()): that is
@@ -202,18 +250,23 @@ def drive(out, eid):
                     raise
                 status = p.wait(timeout=10)
                 w(f"== click {name!r} [{ref}]: the app ended (exit status {status}); see stderr.log")
-                return {"id": eid, "started": True, "clicks": clicks, "said": said,
+                return {"id": eid, "started": True, "clicks": clicks, "outcomes": outcomes, "said": said,
                         "why": [f"the app ended after clicking {name or ref!r} (exit status {status})"]}
-            refused = re.search(r'"code":"(\w+)"', res) if res.startswith("TOOL ERROR") else None
-            w(f"== click {name!r} [{ref}]" + (f" TOOL ERROR {refused.group(1) if refused else ''}".rstrip()
-                                                if res.startswith("TOOL ERROR") else ""), *logs)
+            did = outcome(res, settled)
+            outcomes[did] = outcomes.get(did, 0) + 1
+            w(f"== click {name!r} [{ref}]: {did}")
+            # The outline's changes go in the report; only what the app logged is counted.
+            for l in res.splitlines()[1:]:
+                if not l.startswith("(snapshot"):
+                    print("   " + l, file=rep, flush=True)
+            w(*logs)
         if clicks < 3:
             grid_clicks(app, w, d)
         app.call("app_screenshot", {}, os.path.join(d, "end.png"))
-        return {"id": eid, "started": True, "clicks": clicks, "said": said}
+        return {"id": eid, "started": True, "clicks": clicks, "outcomes": outcomes, "said": said}
     except Exception as x:
         w(f"== driver error {x!r}")
-        return {"id": eid, "started": True, "clicks": clicks, "said": said, "why": [repr(x)]}
+        return {"id": eid, "started": True, "clicks": clicks, "outcomes": outcomes, "said": said, "why": [repr(x)]}
     finally:
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGTERM)
@@ -248,6 +301,15 @@ def main():
             else:
                 head = f"{eid}: {r['clicks']} controls clicked"
             lines = [head] + ["    " + l for l in r.get("why", [])]
+            # What the clicks did: each refusal with its reason, the rest by whether the
+            # outline changed (report.txt has each click's changes).
+            kinds = {}
+            for did, n in r.get("outcomes", {}).items():
+                kind = did if did.startswith(("refused", "nothing")) else "changed the outline"
+                if "still moving" in did:
+                    kind += " (still moving after the click)"
+                kinds[kind] = kinds.get(kind, 0) + n
+            lines += [f"    {n:4}x click: {k[:240]}" for k, n in sorted(kinds.items(), key=lambda kv: -kv[1])]
             counts = {}
             for l in r.get("said", []):
                 counts[l] = counts.get(l, 0) + 1
