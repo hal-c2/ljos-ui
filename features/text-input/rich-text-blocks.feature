@@ -18,34 +18,24 @@ Feature: A rich TextEdit lays out its paragraphs as a rich Text does
       """qml
       import QtQuick
       Item {
-        id: root
-        objectName: "root"
+        id: root; objectName: "root"
         width: 400; height: 400
-        property real twoY
-        property real threeX
-        property real threeY
-        property real fiveY
+        property real twoY; property real threeX; property real threeY; property real fiveY
+        function at(s) { return edit.positionToRectangle(edit.getText(0, edit.length).indexOf(s)) }
         function measure() {
-          const plain = edit.getText(0, edit.length)
-          twoY = edit.positionToRectangle(plain.indexOf("two")).y
-          threeX = edit.positionToRectangle(plain.indexOf("three")).x
-          threeY = edit.positionToRectangle(plain.indexOf("three")).y
-          fiveY = edit.positionToRectangle(plain.indexOf("five")).y
+          twoY = at("two").y; threeX = at("three").x
+          threeY = at("three").y; fiveY = at("five").y
         }
         TextEdit {
-          id: edit
-          objectName: "edit"
-          width: 300
-          focus: true
-          selectByMouse: true
+          id: edit; objectName: "edit"
+          width: 300; focus: true; selectByMouse: true
           textFormat: TextEdit.RichText
           font.family: "Liberation Sans"; font.pixelSize: 14
           text: "<p>one</p><p>two</p><ul><li>three</li><li>four</li></ul><p>five</p>"
         }
         Text {
           objectName: "label"
-          y: 200
-          width: 300
+          y: 200; width: 300
           textFormat: Text.RichText
           font.family: "Liberation Sans"; font.pixelSize: 14
           text: edit.text
