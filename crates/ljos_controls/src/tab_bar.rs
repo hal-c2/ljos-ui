@@ -155,7 +155,12 @@ pub(crate) fn content_size(engine: &Engine, bar: ObjectId, horizontal: bool) -> 
         } else {
             (Item::HEIGHT, Item::IMPLICIT_HEIGHT)
         };
-        num(engine, item, if ours { implicit.index } else { size.index })
+        // Both are read, so that a button the bar holds only after this
+        // first ran still brings it back when what it asks for changes:
+        // the bar may hold it at the very size it had.
+        let implicit = num(engine, item, implicit.index);
+        let size = num(engine, item, size.index);
+        if ours { implicit } else { size }
     };
     if horizontal {
         let spacing = num(engine, bar, Control::SPACING.index);

@@ -54,6 +54,26 @@ Feature: TabBar
     Then the property "contentHeight" of "bar" is 40
     And the property "contentWidth" of "fixed" is at least 113
 
+  Scenario: A bar given no width is as wide as its buttons ask
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        objectName: "sums"
+        TabBar {
+          id: natural; objectName: "natural"
+          TabButton { id: left; text: "One" }
+          TabButton { id: right; text: "Two" }
+        }
+        property bool asked: Math.abs(natural.width - left.implicitWidth - right.implicitWidth - natural.spacing) < 0.01
+        property bool shared: Math.abs(natural.width - left.width - right.width - natural.spacing) < 0.01
+      }
+      """
+    Then the property "width" of "natural" is at least 60
+    And the property "asked" of "sums" is true
+    And the property "shared" of "sums" is true
+
   Scenario: A button that was given a width keeps it
     Then the property "width" of "wide" is 100
 
