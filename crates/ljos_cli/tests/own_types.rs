@@ -31,8 +31,8 @@ use std::{
 };
 
 use ljos_engine::{
-    Engine, MetaObject, MetaRef, PropertyAccess, PropertyFlags, PropertyInfo, TypeTag, VALUE_TYPES,
-    qt_namespace,
+    Engine, EnumInfo, MetaObject, MetaRef, PropertyAccess, PropertyFlags, PropertyInfo, TypeTag,
+    VALUE_TYPES, qt_namespace,
 };
 use qml_front::{QtTypeOracle, TypeOracle};
 
@@ -389,13 +389,16 @@ impl<'a, 'c> Module<'a, 'c> {
         if engine.has_open_body(meta) {
             let _ = writeln!(out, "\t\tis parser");
         }
-        let inherited: BTreeSet<&str> = meta
-            .base
-            .iter()
-            .flat_map(|base| base.enums.iter().map(|e| e.name.as_str()))
-            .collect();
+        // The enums are flattened: one a base has is said there, unless
+        // this type gives the name keys of its own.
+        let inherited = |own: &EnumInfo| {
+            meta.base
+                .iter()
+                .flat_map(|base| base.enums.iter())
+                .any(|e| e.name == own.name && e.keys == own.keys)
+        };
         for enumeration in &meta.enums {
-            if inherited.contains(enumeration.name.as_str()) {
+            if inherited(enumeration) {
                 continue;
             }
             let is_flags = meta

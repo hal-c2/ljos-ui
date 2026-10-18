@@ -6657,6 +6657,19 @@ module QtQuick.Templates
 		signal tumblerChanged
 		signal displacementChanged
 
+module QtQuick.VectorImage
+	VectorImage QtQuick.VectorImage.VectorImage
+	type QtQuick.VectorImage.VectorImage VectorImage
+		prototype QtQuick.Image named
+		enum FillMode NoResize=0 PreserveAspectFit=1 PreserveAspectCrop=2 Stretch=3
+		enum RendererType GeometryRenderer=0 CurveRenderer=1
+		prop preferredRendererType RendererType
+		prop assumeTrustedSource QtQml.bool named
+		prop asynchronousShapes QtQml.bool named
+		signal preferredRendererTypeChanged
+		signal assumeTrustedSourceChanged
+		signal asynchronousShapesChanged
+
 module QtQuick.Window
 	import QtQuick
 	Window QtQuick.Window

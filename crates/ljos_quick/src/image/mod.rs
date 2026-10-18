@@ -23,6 +23,7 @@ mod border;
 mod decode;
 mod store;
 mod tint;
+mod vector;
 
 pub use animated::AnimatedImage;
 pub use border::{BorderImage, BorderImageBorder};
@@ -30,6 +31,7 @@ pub use decode::{LoadError, Request, requested_size};
 use store::Picture;
 pub use store::{ImageKey, ImageReply, ImageStore};
 pub use tint::{ImageTint, register_image_tint};
+pub use vector::{VectorImage, vector_fill_mode};
 
 use ljos_engine::{
     Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject, Rect, Size, Url, Value,
@@ -434,6 +436,8 @@ fn warn(e: &Engine, me: ObjectId, reason: &LoadError) {
     let at = e.declared_at(me).unwrap_or_default();
     let name = if is_a::<BorderImage>(e, me) {
         "BorderImage"
+    } else if is_a::<VectorImage>(e, me) {
+        "VectorImage"
     } else {
         "Image"
     };
@@ -470,6 +474,21 @@ fn fit_of(mode: i32) -> ImageFit {
         fill_mode::TILE_VERTICALLY => ImageFit::TileVertically,
         fill_mode::TILE_HORIZONTALLY => ImageFit::TileHorizontally,
         fill_mode::PAD => ImageFit::Pad,
+        _ => ImageFit::Stretch,
+    }
+}
+
+/// How `me`, an `Image`, fits its picture to itself: a `VectorImage`
+/// numbers its fill modes otherwise.
+fn fit(e: &Engine, me: ObjectId) -> ImageFit {
+    let mode = int(e, me, Image::FILL_MODE.index);
+    if !is_a::<VectorImage>(e, me) {
+        return fit_of(mode);
+    }
+    match mode {
+        vector_fill_mode::NO_RESIZE => ImageFit::Pad,
+        vector_fill_mode::PRESERVE_ASPECT_FIT => ImageFit::Fit,
+        vector_fill_mode::PRESERVE_ASPECT_CROP => ImageFit::Crop,
         _ => ImageFit::Stretch,
     }
 }
@@ -1022,8 +1041,28 @@ fn sharp_pixels(e: &Engine, me: ObjectId, on_screen: bool) -> Option<ImageHandle
         if !on_screen {
             return None;
         }
-        let request = key.request.at_scale(store.device_scale(e));
-        if request.scale == 0 {
+        let request = if is_a::<VectorImage>(e, me) {
+            // Drawn at the size it is painted, as Qt's shapes are, rather
+            // than made at its own size and stretched.
+            let side = |p: PropIndex| e.read(me, p).to_number().round().max(0.0) as u32;
+            let (width, height) = (
+                side(Image::PAINTED_WIDTH.index),
+                side(Image::PAINTED_HEIGHT.index),
+            );
+            if width == 0 || height == 0 {
+                return None;
+            }
+            Request {
+                width,
+                height,
+                cover: false,
+                ..key.request
+            }
+        } else {
+            key.request
+        }
+        .at_scale(store.device_scale(e));
+        if request == key.request {
             return None;
         }
         request
@@ -1285,7 +1324,7 @@ fn wanted_limit(e: &Engine, me: ObjectId, natural: (u32, u32), device: f32) -> u
         e.read(me, Item::HEIGHT.index).to_number(),
     );
     let picture = kurbo::Size::new(f64::from(natural.0), f64::from(natural.1));
-    let shown = match fit_of(int(e, me, Image::FILL_MODE.index)) {
+    let shown = match fit(e, me) {
         fit @ (ImageFit::Stretch | ImageFit::Fit | ImageFit::Crop) => {
             painted_size(picture, area, fit)
         }
@@ -1349,7 +1388,7 @@ fn update_painted(e: &Engine, me: ObjectId) {
         e.read(me, Item::WIDTH.index).to_number(),
         e.read(me, Item::HEIGHT.index).to_number(),
     );
-    let fit = fit_of(int(e, me, Image::FILL_MODE.index));
+    let fit = fit(e, me);
     let painted = if natural.0 == 0 || natural.1 == 0 {
         // Qt, with no picture: the stretching and tiling modes still
         // report the item's size.
@@ -1481,7 +1520,7 @@ impl ImagePaint {
                 _ => ImageAlign::Center,
             };
             Shape::Picture {
-                fit: fit_of(int(e, obj, Image::FILL_MODE.index)),
+                fit: fit(e, obj),
                 align: [h, v],
                 mirror: [mirror, flag(Image::MIRROR_VERTICALLY.index)],
             }

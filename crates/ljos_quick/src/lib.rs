@@ -92,6 +92,7 @@ pub use image::{
     kept_pixels, requested_size, tile_mode,
 };
 pub use image::{ImageTint, register_image_tint};
+pub use image::{VectorImage, vector_fill_mode};
 pub use incubation::{BASE_REFRESH_HZ, MIN_INCUBATION_BUDGET, incubation_budget};
 pub use input::{HandlerPoint, WheelEventObject};
 pub use input::{KeyEvent, KeyKind};
@@ -235,6 +236,7 @@ pub fn register(engine: &Engine) {
     flipable::register(engine);
     canvas::register(engine);
     effects::register(engine);
+    engine.register_module(ljos_engine::module!("QtQuick.VectorImage" 1.0 => [VectorImage]));
     shader_effect::register(engine);
     particles::register(engine);
     sprites::register(engine);
