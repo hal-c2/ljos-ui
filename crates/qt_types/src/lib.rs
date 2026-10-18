@@ -341,6 +341,10 @@ pub struct Type {
     /// properties, signals and methods the runtime adds to one of Qt's
     /// types (`font.scaleWithSystem`).
     added: Vec<&'static str>,
+    /// Of a QML file Qt's table names but does not describe (the parts of
+    /// a style, `CheckIndicator`), the type Ljós's own file is built on:
+    /// the runtime has what that has.
+    stands_on: Option<usize>,
 }
 
 impl Type {
@@ -352,7 +356,15 @@ impl Type {
     /// inherits, where Qt's table describes them: the runtime has it,
     /// though Qt does not.
     pub fn adds(&self, name: &str) -> bool {
-        self.added.contains(&name) || self.prototype().is_some_and(|ty| ty.adds(name))
+        self.added.contains(&name)
+            || self.prototype().is_some_and(|ty| ty.adds(name))
+            || self.stands_on.is_some_and(|index| {
+                let ty = &table().types[index];
+                ty.property(name).is_some()
+                    || ty.signal(name).is_some()
+                    || ty.has_method(name)
+                    || ty.adds(name)
+            })
     }
 
     /// Whether the type is, or inherits, one of `classes`. The same type has
@@ -702,16 +714,17 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             (1, "import") if passed_over => {}
             (1, "type") if passed_over => {
                 over.classes.insert(word(), over.types.len());
-                over.types.push((Vec::new(), None));
+                over.types.push(OverType::default());
             }
             (1, name) if passed_over => over.exports.push((module, name, word())),
             (_, member) if passed_over => {
-                let Some((names, attached)) = over.types.last_mut() else {
+                let Some(ty) = over.types.last_mut() else {
                     continue;
                 };
                 match member {
-                    "prop" | "signal" | "method" => names.push(word()),
-                    "attached" => *attached = Some(word()),
+                    "prop" | "signal" | "method" => ty.names.push(word()),
+                    "attached" => ty.attached = Some(word()),
+                    "prototype" => ty.prototype = Some((word(), word() == "named")),
                     _ => {}
                 }
             }
@@ -755,6 +768,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     extension_is_namespace: false,
                     attached: None,
                     added: Vec::new(),
+                    stands_on: None,
                 });
             }
             (1, name) => exports.push((module, name, word())),
@@ -877,23 +891,43 @@ fn read(qt: &'static str, own: &'static str) -> Table {
         ) else {
             continue;
         };
-        let (names, attached) = &over.types[*own];
-        table.types[index].added.extend(names);
+        let ty = &over.types[*own];
+        table.types[index].added.extend(&ty.names);
+        if table.types[index].qml_file.is_some() && table.types[index].prototype.is_none() {
+            let base = ty.prototype.and_then(|(class, named)| {
+                if named {
+                    table.type_meant(class)
+                } else {
+                    table.classes.get(class).copied()
+                }
+            });
+            table.types[index].stands_on = base;
+        }
         // What one attaches is the same type of the other: `Accessible.`.
-        let attached = attached.and_then(|class| over.classes.get(class));
+        let attached = ty.attached.and_then(|class| over.classes.get(class));
         if let (Some(own), Some(to)) = (attached, table.types[index].attached) {
-            table.types[to].added.extend(&over.types[*own].0);
+            table.types[to].added.extend(&over.types[*own].names);
         }
     }
     table.shrink();
     table
 }
 
+/// A type of a passed-over module.
+#[derive(Default)]
+struct OverType {
+    /// The names of its members.
+    names: Vec<&'static str>,
+    /// The class it attaches.
+    attached: Option<&'static str>,
+    /// The class it is built on, and whether that is a QML name.
+    prototype: Option<(&'static str, bool)>,
+}
+
 /// What a module of Ljós's own table that Qt's describes has.
 #[derive(Default)]
 struct PassedOver {
-    /// Of each type, the names of its members, and the class it attaches.
-    types: Vec<(Vec<&'static str>, Option<&'static str>)>,
+    types: Vec<OverType>,
     classes: HashMap<&'static str, usize>,
     /// The module, the name and the class.
     exports: Vec<(&'static str, &'static str, &'static str)>,

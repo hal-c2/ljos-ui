@@ -535,6 +535,26 @@ fn ljos_adds_members_to_qt_types() {
     assert!(!font.adds("sparkle"));
 }
 
+/// A style's part that Qt's table names but does not describe has what the
+/// type Ljós's own file builds it on has: a `CheckIndicator` is a
+/// `Rectangle`, so `height` is its own.
+#[test]
+fn an_undescribed_qml_file_has_what_ljos_builds_it_on() {
+    let indicator = ty("QtQuick.Controls.Fusion.impl", "CheckIndicator");
+    if indicator.is_own {
+        assert!(indicator.property("height").is_some());
+        return;
+    }
+    if indicator.prototype().is_some() {
+        // Described by this Qt; nothing stands in.
+        return;
+    }
+    for name in ["height", "color", "control", "childrenRectChanged"] {
+        assert!(indicator.adds(name), "{name}");
+    }
+    assert!(!indicator.adds("widht"));
+}
+
 /// The listing is every module `module` finds, once, in order.
 #[test]
 fn modules_lists_every_module_in_order() {
