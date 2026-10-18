@@ -1050,24 +1050,27 @@ impl ImageStore {
         let remote = fetcher.is_some();
         let work = move || {
             let result = (|| {
-                let origin;
-                let bytes = match (located, &fetcher) {
-                    (Ok(Origin::Remote), Some(fetcher)) => {
+                // None for a picture fetched from the network.
+                let origin = match located {
+                    Ok(Origin::Remote) if fetcher.is_some() => None,
+                    located => Some(located?),
+                };
+                let bytes = match (&origin, &fetcher) {
+                    (None, Some(fetcher)) => {
                         let fetching = gate.fetch(cap);
                         let body = fetch(fetcher.as_ref(), &key.url)?;
                         drop(fetching);
                         std::borrow::Cow::Owned(body)
                     }
-                    (located, _) => {
-                        origin = located?;
-                        decode::read(&key.url, &origin)?
+                    (origin, _) => {
+                        decode::read(&key.url, origin.as_ref().unwrap_or(&Origin::Remote))?
                     }
                 };
                 let _body = gate.body(bytes.len());
                 let _decoding = gate.decode(decode::cost(&bytes, key.request), cap);
                 // A decoder that panics on a hostile file must still answer,
                 // or its Image would say "Loading" for ever.
-                catch_unwind(AssertUnwindSafe(|| {
+                let loaded = catch_unwind(AssertUnwindSafe(|| {
                     decode::load_bytes(&key.url, &bytes, key.request)
                 }))
                 .unwrap_or_else(|_| {
@@ -1075,7 +1078,23 @@ impl ImageStore {
                         url: key.url.clone(),
                         reason: "the decoder failed".to_owned(),
                     })
-                })
+                })?;
+                // Made again from what is at hand, never from the network.
+                match &origin {
+                    Some(Origin::File(path)) => {
+                        decode::made_again_from_file(&loaded, &key.url, path, key.request);
+                    }
+                    Some(Origin::Bytes(held)) => {
+                        decode::made_again_from_bytes(&loaded, &key.url, held, key.request);
+                    }
+                    // Fetched: kept only when fewer than the pixels.
+                    _ if bytes.len() < loaded.image.byte_len() => {
+                        let fetched: Arc<[u8]> = Arc::from(&*bytes);
+                        decode::made_again_from_bytes(&loaded, &key.url, &fetched, key.request);
+                    }
+                    _ => {}
+                }
+                Ok(loaded)
             })();
             // A closed inbox means the engine is gone and nobody waits.
             let _ = tx.send(Done { key, result });

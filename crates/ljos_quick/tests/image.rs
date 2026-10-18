@@ -1804,3 +1804,137 @@ Item {
     assert_eq!((image.width(), image.height()), (224, 112));
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
+
+/// Lets the pixels of what `item` paints go, as an upload does, and says
+/// whether they went and whether reading them gives them back as they were.
+fn let_go_and_read_back(s: &QuickScene, item: ObjectId) -> (bool, bool) {
+    let image = painted(s, item).unwrap();
+    let before = image.data().to_vec();
+    let went = image.let_go_after_upload();
+    let gone = !image.is_resident();
+    (went && gone, image.data().to_vec() == before)
+}
+
+#[test]
+fn a_shown_picture_can_be_let_go_and_made_again_from_what_it_was_read_from() {
+    let dir = std::env::temp_dir().join(format!("ljos-again-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("big.png"), png(2048, 1024, BLUE)).unwrap();
+    let (e, store) = pictures();
+    store.register_resource("file:///small.png", png(64, 32, RED));
+    let asked = Arc::new(AtomicUsize::new(0));
+    ljos_platform::Platform::of(&e).set_fetcher(Arc::new(Counting {
+        bytes: png(512, 256, GREEN),
+        asked: asked.clone(),
+    }));
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Column {
+        Image { objectName: "file"; width: 100; height: 50 }
+        Image { objectName: "held"; width: 64; height: 32 }
+        Image { objectName: "web"; width: 100; height: 50 }
+        Image { objectName: "hidden"; visible: false; width: 50; height: 25 }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let file = format!("file://{}", dir.join("big.png").display());
+    set(
+        &e,
+        find(&e, root, "file"),
+        "source",
+        Value::Url(file.as_str().into()),
+    );
+    set(
+        &e,
+        find(&e, root, "held"),
+        "source",
+        Value::Url("file:///small.png".into()),
+    );
+    set(
+        &e,
+        find(&e, root, "web"),
+        "source",
+        Value::from("http://example.invalid/a.png"),
+    );
+    set(
+        &e,
+        find(&e, root, "hidden"),
+        "source",
+        Value::Url(file.as_str().into()),
+    );
+    store.finish(&e);
+    frame(&mut s, &e);
+    store.finish(&e);
+    frame(&mut s, &e);
+    // Read from a file, shrunk when painted: the file is read again.
+    assert_eq!(
+        let_go_and_read_back(&s, find(&e, root, "file")),
+        (true, true)
+    );
+    // Registered bytes are held anyway.
+    assert_eq!(
+        let_go_and_read_back(&s, find(&e, root, "held")),
+        (true, true)
+    );
+    // From the web, from the bytes fetched, which are fewer than the
+    // pixels: not fetched again.
+    assert_eq!(
+        let_go_and_read_back(&s, find(&e, root, "web")),
+        (true, true)
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    // Shrunk to its item's size after the load, never painted.
+    let hidden = find(&e, root, "hidden");
+    set(&e, hidden, "visible", Value::from(true));
+    frame(&mut s, &e);
+    assert_eq!(let_go_and_read_back(&s, hidden), (true, true));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_picture_whose_bytes_outweigh_its_pixels_is_not_let_go() {
+    let (e, store) = pictures();
+    // A noisy picture kept small: its bytes are more than what is kept.
+    let noise: Vec<u8> = (0..512u32 * 512)
+        .flat_map(|i| {
+            let n = i.wrapping_mul(2_654_435_761);
+            [(n >> 8) as u8, (n >> 16) as u8, (n >> 24) as u8, 255]
+        })
+        .collect();
+    let mut bytes = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut bytes, 512, 512);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()
+            .unwrap()
+            .write_image_data(&noise)
+            .unwrap();
+    }
+    store.register_resource("file:///noise.png", bytes);
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 400; height: 300
+    Image { objectName: "noise"; width: 50; height: 50; source: "file:///noise.png" }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    store.finish(&e);
+    frame(&mut s, &e);
+    let image = painted(&s, find(&e, root, "noise")).unwrap();
+    assert!(image.byte_len() < 512 * 512 * 4);
+    assert!(!image.let_go_after_upload());
+    assert!(image.is_resident());
+}
