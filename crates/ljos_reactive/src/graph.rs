@@ -1261,6 +1261,50 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(())
     }
 
+    /// [`Graph::write`] of an animation's step inside an open batch, then
+    /// [`Graph::settled`], in one look at the node: an animation writes
+    /// each of its properties every frame and reads back what it holds.
+    /// Outside a batch it is the two calls.
+    pub fn write_animated(&self, n: NodeId, v: V) -> Result<Option<V>, ReactiveError> {
+        let held = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            if i.batch_depth == 0 {
+                drop(g);
+                self.write(n, v, WriteKind::Animation)?;
+                return Ok(self.settled(n));
+            }
+            if !i.nodes.contains_key(n) {
+                return Err(ReactiveError::DeadNode(n));
+            }
+            if !matches!(i.nodes[n].kind, Kind::Property(_)) {
+                return Err(ReactiveError::NotAProperty(n));
+            }
+            // As in `write`: a binding that writes becomes a root.
+            if let Some(&running) = i.eval_stack.last()
+                && running != n
+                && let Some(r) = i.nodes.get_mut(running)
+                && matches!(r.kind, Kind::Property(_))
+            {
+                r.eager = true;
+            }
+            let was_unset = i.unset(n);
+            let Kind::Property(p) = &mut i.nodes[n].kind else {
+                unreachable!()
+            };
+            p.animated = true;
+            p.host = false;
+            i.set_value(n, v);
+            i.tell_if_set(n, was_unset);
+            let node = &i.nodes[n];
+            (node.state == NodeState::Clean).then(|| node.value.clone())
+        };
+        Ok(match held {
+            Some(v) => v,
+            None => self.settled(n),
+        })
+    }
+
     /// Takes a property back to a value nothing gave it (`x = undefined` on
     /// a property with a reset): as an imperative write, the binding on the
     /// top layer goes and observers are told if the value changed, but the
