@@ -104,7 +104,9 @@ pub struct Run {
     #[arg(long, value_name = "ID")]
     example: Option<String>,
     /// What the application is given after `--`, in `Application.arguments`
-    /// after the program and the entry file.
+    /// after the program and the entry file. `-style NAME` among them
+    /// chooses the controls style before `QT_QUICK_CONTROLS_STYLE` and the
+    /// configuration file do, and is taken out, as Qt takes it out.
     #[arg(last = true, value_name = "ARGS")]
     args: Vec<String>,
 }
@@ -313,6 +315,30 @@ pub(crate) fn print_log(entry: &LogEntry) {
     crate::stderr::line(&format!("{level}: {}", entry.message));
 }
 
+/// The style `-style NAME`, `-style=NAME` or `--style NAME` among a
+/// program's arguments names, the last if it is named twice, and the
+/// arguments without it.
+fn style_argument(args: &[String]) -> (Option<String>, Vec<String>) {
+    let (mut style, mut rest) = (None, Vec::new());
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if let Some(name) = ["-style=", "--style="]
+            .iter()
+            .find_map(|p| arg.strip_prefix(p))
+        {
+            style = Some(name.to_owned());
+        } else if arg == "-style" || arg == "--style" {
+            match args.next() {
+                Some(name) => style = Some(name.clone()),
+                None => rest.push(arg.clone()),
+            }
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+    (style, rest)
+}
+
 /// Refuses a socket path the system cannot bind before a window opens,
 /// with the words of the inspector's own refusal.
 fn socket_path(text: &str) -> Result<PathBuf, String> {
@@ -328,11 +354,18 @@ impl Run {
     fn arguments(&self) -> Vec<String> {
         [program(), self.file.display().to_string()]
             .into_iter()
-            .chain(self.args.iter().cloned())
+            .chain(style_argument(&self.args).1)
             .collect()
     }
 
     pub fn run(self) -> anyhow::Result<()> {
+        if let Some(style) = style_argument(&self.args).0 {
+            // The compiler reads the variable, here and on every save
+            // `--watch` applies; `-style` comes before it, as in Qt.
+            // SAFETY: no other thread runs yet: the font reader starts
+            // below and the stderr writer at the first line written.
+            unsafe { std::env::set_var("QT_QUICK_CONTROLS_STYLE", style) };
+        }
         // While the project is compiled.
         ljos_shell::read_system_fonts_early();
         let (dir, key) = match &self.project {
@@ -509,6 +542,35 @@ mod tests {
         assert_eq!(run.arguments(), [program().as_str(), "Main.qml"]);
         // What is not after `--` is still `run`'s.
         assert!(line(&["Main.qml", "/pictures"]).is_err());
+    }
+
+    /// As qml6 takes `-style` out of what the application is given.
+    #[test]
+    fn a_style_on_the_command_line_is_chosen_and_taken_out() {
+        let run = line(&["Main.qml", "--", "x", "-style", "Basic", "y"]).unwrap();
+        assert_eq!(run.arguments(), [program().as_str(), "Main.qml", "x", "y"]);
+        let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        for form in [
+            &["-style", "Basic"][..],
+            &["-style=Basic"],
+            &["--style", "Basic"],
+            &["--style=Basic"],
+        ] {
+            assert_eq!(
+                style_argument(&args(form)),
+                (Some("Basic".to_owned()), vec![]),
+                "{form:?}"
+            );
+        }
+        assert_eq!(
+            style_argument(&args(&["-style", "Material", "-style=Basic"])).0,
+            Some("Basic".to_owned())
+        );
+        // Another word that begins like it is the application's.
+        assert_eq!(
+            style_argument(&args(&["-stylex", "-style"])),
+            (None, args(&["-stylex", "-style"]))
+        );
     }
 
     #[test]

@@ -107,6 +107,9 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
             env.push(("XDG_RUNTIME_DIR".to_owned(), dir.display().to_string()));
         }
     }
+    // One style for both, so both draw the same controls; Basic, so the
+    // numbers stay comparable with the runs before Fusion was the default.
+    env.push(("QT_QUICK_CONTROLS_STYLE".to_owned(), "Basic".to_owned()));
     let (program, args): (PathBuf, Vec<OsString>) = match name {
         "ljos" => {
             let mut args: Vec<OsString> = vec!["run".into(), app.file.clone().into()];
@@ -118,8 +121,6 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
         }
         "qt" => {
             env.push(("QT_QPA_PLATFORM".to_owned(), "wayland".to_owned()));
-            // The style Ljós draws, so both draw the same controls.
-            env.push(("QT_QUICK_CONTROLS_STYLE".to_owned(), "Basic".to_owned()));
             let mut args = Vec::new();
             for dir in &app.imports {
                 args.extend([OsString::from("-I"), dir.clone().into()]);

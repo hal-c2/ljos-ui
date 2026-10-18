@@ -540,6 +540,11 @@ fn controls_style(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.controls_style(&name))
 }
 
+#[given(regex = r#"^the application starts with "-style ([^"]+)" on its command line$"#)]
+fn command_line_style(w: &mut LjosWorld, name: String) -> StepResult {
+    w.each(|b| b.command_line_style(&name))
+}
+
 #[given(regex = r#"^the system setting "([^"]+)" is (.+)$"#)]
 fn system_setting_is(w: &mut LjosWorld, setting: String, value: String) -> StepResult {
     let setting = system_setting(&setting, &value)?;

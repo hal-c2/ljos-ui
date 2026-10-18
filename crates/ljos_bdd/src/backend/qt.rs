@@ -100,6 +100,8 @@ pub struct QtBackend {
     cache: Option<(usize, Run)>,
     /// `QT_QUICK_CONTROLS_STYLE` for the run.
     controls_style: Option<String>,
+    /// `-style` on qml6's command line.
+    command_line_style: Option<String>,
     /// The scenario's controls configuration file and variables.
     controls_conf: Option<String>,
     controls_vars: Vec<(String, String)>,
@@ -143,6 +145,7 @@ impl QtBackend {
             binders: Vec::new(),
             cache: None,
             controls_style: None,
+            command_line_style: None,
             controls_conf: None,
             controls_vars: Vec::new(),
             locale_env: None,
@@ -417,8 +420,11 @@ impl QtBackend {
                 command.env("LANG", "en_US.UTF-8");
             }
         }
+        command.arg(driver);
+        if let Some(name) = &self.command_line_style {
+            command.arg("-style").arg(name);
+        }
         let mut child = command
-            .arg(driver)
             .env("QT_FORCE_STDERR_LOGGING", "1")
             .env("QT_QPA_PLATFORM", platform)
             .env("QT_QUICK_BACKEND", "software")
@@ -604,6 +610,12 @@ impl Backend for QtBackend {
 
     fn controls_style(&mut self, name: &str) -> Result<()> {
         self.controls_style = Some(name.to_owned());
+        self.cache = None;
+        Ok(())
+    }
+
+    fn command_line_style(&mut self, name: &str) -> Result<()> {
+        self.command_line_style = Some(name.to_owned());
         self.cache = None;
         Ok(())
     }

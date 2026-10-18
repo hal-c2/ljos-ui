@@ -215,6 +215,8 @@ pub struct LjosBackend {
     /// with.
     controls_conf: Option<String>,
     controls_vars: Vec<(String, String)>,
+    /// The style `-style` names on the program's command line.
+    command_line_style: Option<String>,
     /// The locale variables the program starts with, as a desktop
     /// program reads them.
     locale_env: Option<Vec<(String, String)>>,
@@ -1070,27 +1072,30 @@ impl Backend for LjosBackend {
                 });
                 live.engine.use_system_locale_from(&system);
             }
-            if self.controls_conf.is_some() || !self.controls_vars.is_empty() {
-                let conf = self.controls_conf.take();
-                let vars = std::mem::take(&mut self.controls_vars);
-                let var = |name: &str| match name {
-                    "QT_QUICK_CONTROLS_CONF" => {
-                        conf.as_ref().map(|_| "qtquickcontrols2.conf".into())
-                    }
-                    _ => vars
-                        .iter()
-                        .rev()
-                        .find(|(k, _)| k == name)
-                        .map(|(_, v)| v.clone()),
-                };
-                let read = |_: &str| conf.clone();
+            let conf = self.controls_conf.take();
+            let mut vars = std::mem::take(&mut self.controls_vars);
+            // `-style` comes before the variable; `ljos run` gives it as one.
+            if let Some(name) = self.command_line_style.take() {
+                vars.push(("QT_QUICK_CONTROLS_STYLE".to_owned(), name));
+            }
+            let var = |name: &str| match name {
+                "QT_QUICK_CONTROLS_CONF" => conf.as_ref().map(|_| "qtquickcontrols2.conf".into()),
+                _ => vars
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone()),
+            };
+            let read = |_: &str| conf.clone();
+            if conf.is_some() || !vars.is_empty() {
                 ljos_controls::set_material_defaults(
                     &live.engine,
                     ljos_controls::MaterialDefaults::from_vars(var, read),
                 );
-                if self.controls_style.is_none() {
-                    self.controls_style = ljos_compiler::controls_style(var, read);
-                }
+            }
+            // With nothing chosen, the platform's style, as a program has.
+            if self.controls_style.is_none() {
+                self.controls_style = ljos_compiler::controls_style(var, read);
             }
             self.platform.install(&live.engine)?;
             live.engine.set_wall_clock_origin(self.wall_clock);
@@ -1506,6 +1511,14 @@ impl Backend for LjosBackend {
             name: name.to_owned(),
             fallback: None,
         });
+        Ok(())
+    }
+
+    fn command_line_style(&mut self, name: &str) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed("a style is chosen before anything is loaded"));
+        }
+        self.command_line_style = Some(name.to_owned());
         Ok(())
     }
 

@@ -65,7 +65,8 @@ Apps draw on the headless sway of `scripts/cua-sandbox.sh` as Wayland clients, n
 display:
 
 - Ljós draws with egui's GL painter on EGL (llvmpipe on a headless compositor); `LJOS_PAINTER=wgpu` measures wgpu's GL backend instead.
-- Qt uses its Wayland platform with `QT_QUICK_CONTROLS_STYLE=Basic`, the style Ljós draws.
+- Qt uses its Wayland platform.
+- Both run with `QT_QUICK_CONTROLS_STYLE=Basic`, so both draw the same controls.
 
 ## Profiles
 

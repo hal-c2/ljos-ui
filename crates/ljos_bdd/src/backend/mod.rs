@@ -322,6 +322,11 @@ pub trait Backend: fmt::Debug {
     fn controls_style(&mut self, _name: &str) -> Result<()> {
         Err(BackendError::NotImplemented("choosing a style"))
     }
+    /// The program starts with `-style name` on its command line, which
+    /// comes before the variables and the file.
+    fn command_line_style(&mut self, _name: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a style on the command line"))
+    }
     /// The program starts with this text in the file
     /// `QT_QUICK_CONTROLS_CONF` names.
     fn controls_configuration(&mut self, _text: &str) -> Result<()> {
