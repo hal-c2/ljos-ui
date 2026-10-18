@@ -10,7 +10,7 @@ use std::thread::ThreadId;
 
 use common::*;
 use ljos_engine::{Engine, LogLevel, ObjectId, Value};
-use ljos_quick::{ImageStore, QuickScene, image_status};
+use ljos_quick::{ImageStore, QuickScene, child_items, image_status};
 use ljos_render::{DrawOp, ImageHandle, Insets, TileMode, kurbo};
 use ljos_runtime::{Evictable, MemoryPressure};
 
@@ -2250,4 +2250,124 @@ Item {
     assert!(image.is_resident());
     // Nor does it hold the bytes it was read from, which it never needs.
     assert!(image.made_again_by().is_none());
+}
+
+/// A list of six large pictures, two rows in view, whose pixels are
+/// decoded aside after the frame, as on the desktop, and handed out only
+/// at [`ImageStore::finish`]. Rows 4 and 5 are red; row 1 is green.
+fn large_rows(reuse: bool) -> (Engine, std::rc::Rc<ImageStore>, ObjectId, ObjectId) {
+    let (e, store) = pictures();
+    store.set_start_after_frame(true);
+    store.set_held(true);
+    for (name, colour) in [
+        ("a", BLUE),
+        ("b", GREEN),
+        ("c", BLUE),
+        ("d", GREEN),
+        ("e", RED),
+        ("f", RED),
+    ] {
+        // Row 1's picture takes the longest to decode.
+        let side = if name == "b" { 3000 } else { 1024 };
+        store.register_resource(format!("file:///{name}.png"), png(side, side, colour));
+    }
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+Item {{
+    width: 200; height: 200
+    ListView {{
+        objectName: "list"
+        anchors.fill: parent
+        cacheBuffer: 0
+        reuseItems: {reuse}
+        model: ["a", "b", "c", "d", "e", "f"]
+        delegate: Image {{
+            required property int index
+            required property string modelData
+            objectName: "row" + index
+            width: 200; height: 100
+            source: "file:///" + modelData + ".png"
+        }}
+    }}
+}}
+"#
+        ),
+    );
+    let list = find(&e, root, "list");
+    (e, store, root, list)
+}
+
+/// The delegate named `name` among the view's rows, if it is shown.
+fn shown_row(e: &Engine, list: ObjectId, name: &str) -> Option<ObjectId> {
+    let content = get(e, list, "contentItem").as_object()?;
+    child_items(e, content)
+        .into_iter()
+        .find(|o| get(e, *o, "objectName").to_js_string().as_str() == name)
+}
+
+/// Frames 16 ms apart from `from` ms on, until a view's delegates are made
+/// and the ones scrolled out are let go.
+fn frames_from(s: &mut QuickScene, e: &Engine, from: u64) {
+    for i in 0..40 {
+        s.frame(e, ljos_runtime::Time::from_millis(from + i * 16));
+    }
+}
+
+#[test]
+fn a_reused_row_never_shows_the_picture_its_last_row_asked_for() {
+    let (e, store, root, list) = large_rows(true);
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frames_from(&mut s, &e, 0);
+    // Row 1's green picture is decoding when the row is pooled and shows
+    // row 4 or 5. (Row 0 is the current item and stays.)
+    store.frame_drawn(&e);
+    let before = shown_row(&e, list, "row1").expect("row 1 is shown");
+    set(&e, list, "contentY", Value::from(400.0));
+    frames_from(&mut s, &e, 1000);
+    let item = [shown_row(&e, list, "row4"), shown_row(&e, list, "row5")]
+        .into_iter()
+        .flatten()
+        .find(|o| *o == before)
+        .expect("row 1's delegate is reused");
+    // Row 1's picture is the largest, so it comes back last.
+    ljos_runtime::ComputePool::global().wait_idle();
+    store.finish(&e);
+    frames_from(&mut s, &e, 2000);
+    if let Some(image) = painted(&s, item) {
+        assert_eq!(image.pixel(5, 5), RED, "the old row's picture is not shown");
+    }
+    store.frame_drawn(&e);
+    store.wait_for_frame(&e, std::time::Duration::from_secs(30));
+    store.finish(&e);
+    frames_from(&mut s, &e, 3000);
+    let image = painted(&s, item).expect("its own picture");
+    assert_eq!(image.pixel(5, 5), RED);
+}
+
+#[test]
+fn a_large_picture_that_comes_back_for_a_row_gone_keeps_no_pixels() {
+    let (e, store, root, list) = large_rows(false);
+    let mut s = scene(&e, root, 200.0, 200.0);
+    frames_from(&mut s, &e, 0);
+    store.frame_drawn(&e);
+    let row = shown_row(&e, list, "row1").expect("row 1 is shown");
+    // Scrolled on, the row is let go while its decode runs.
+    set(&e, list, "contentY", Value::from(400.0));
+    frames_from(&mut s, &e, 1000);
+    assert!(!e.is_alive(row));
+    ljos_runtime::ComputePool::global().wait_idle();
+    store.frame_drawn(&e);
+    store.wait_for_frame(&e, std::time::Duration::from_secs(30));
+    store.finish(&e);
+    frames_from(&mut s, &e, 2000);
+    assert_eq!(store.pending(), 0);
+    let shown = painted(&s, shown_row(&e, list, "row4").unwrap()).expect("row 4 in view");
+    assert_eq!(shown.pixel(5, 5), RED);
+    // Rows 0 (the current item), 4 and 5 hold pixels; row 1's picture is
+    // let go when it comes, to be read from the file again.
+    let one = (shown.width() * shown.height() * 4) as usize;
+    assert_eq!(store.resident_bytes(), 3 * one);
 }
