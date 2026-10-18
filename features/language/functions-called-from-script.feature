@@ -92,3 +92,27 @@ Feature: A function declared in QML, called from a script
       """
     When the method "run" of "root" is called
     Then the property "seen" of "root" is "5:3"
+
+  Scenario: A function that hands its argument to a script file passes it as it is
+    Given the file "sign.js":
+      """
+      let calls = 0
+      function neg(x) { calls = calls + 1; return -x }
+      function count() { return calls }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import "sign.js" as Sign
+      Item {
+        objectName: "root"
+        property string seen
+        Item {
+          id: other
+          function neg(x) { return Sign.neg(x) }
+        }
+        function run() { seen = (1 / other.neg(0)) + ":" + (1 / other.neg(-0)) + ":" + Sign.count() }
+      }
+      """
+    When the method "run" of "root" is called
+    Then the property "seen" of "root" is "-Infinity:Infinity:2"

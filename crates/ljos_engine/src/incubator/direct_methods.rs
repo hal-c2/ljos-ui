@@ -10,8 +10,9 @@
 //! completed (a type made from it may still give the method another body),
 //! not for a function that makes objects (`createObject` and
 //! `createQmlObject` read which file's code is running, which the host
-//! notes as it calls) or reads a script file (whose functions may), and
-//! not with a parameter only the host can supply at the call. A script
+//! notes as it calls) or reads a script file whose text may make them or
+//! that imports another, and not with a parameter only the host can supply
+//! at the call. A script
 //! function holds its object, which a script-owned object must not have
 //! hold it back from collection.
 
@@ -118,7 +119,14 @@ impl Engine {
                 Arg::Namespace {
                     source: ImportSource::Path(path),
                     ..
-                } if path.ends_with(".js") || path.ends_with(".mjs") => return None,
+                } if path.ends_with(".js") || path.ends_with(".mjs") => {
+                    let script = file.ir.scripts.iter().find(|sc| &sc.path == path)?;
+                    // What the script imports could make objects in turn.
+                    if !script.imports.is_empty() || names_a_maker(&script.source) {
+                        return None;
+                    }
+                    DirectParam::Value(self.arg_js(s, inst, &p.arg))
+                }
                 Arg::Type(_) | Arg::Singleton(_) | Arg::Attached { .. } | Arg::Namespace { .. } => {
                     DirectParam::Value(self.arg_js(s, inst, &p.arg))
                 }
@@ -179,14 +187,21 @@ fn makes_objects(source: &str, export: &str) -> bool {
     let body = rest
         .find("\nexport function ")
         .map_or(rest, |end| &rest[..end]);
+    names_a_maker(body)
+}
+
+/// Whether `text` names a way to make an object, or to read another
+/// script that could.
+fn names_a_maker(text: &str) -> bool {
     [
         "createObject",
         "createQmlObject",
         "createComponent",
         "incubateObject",
+        "include",
     ]
     .iter()
-    .any(|w| body.contains(w))
+    .any(|w| text.contains(w))
 }
 
 #[cfg(test)]
