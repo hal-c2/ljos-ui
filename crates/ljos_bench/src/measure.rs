@@ -783,11 +783,12 @@ fn run_once(
                 said.trim()
             )));
         }
-        // The executable first: the launcher moves itself before it execs
-        // the gate, so a cgroup read after the gate is seen is the final
-        // one. Read the other way round, a busy machine can let both happen
-        // between the reads and refuse a launch that was isolated.
-        let handed = procfs::exe(pid).is_some_and(|e| e == gate_exe);
+        // The gate first: the launcher moves itself before it execs the
+        // gate, so a cgroup read after the gate is seen is the final one.
+        // The gate is this program, and so is the child between its fork
+        // and the launcher's exec; its own fifo tells the gate apart.
+        let handed = procfs::exe(pid).is_some_and(|e| e == gate_exe)
+            && procfs::has_arg(pid, gate.path().as_os_str());
         let cg = cgroup::of_pid(&setup.cgroup_root, pid)?;
         match isolated(&cg, pid, profile) {
             Ok(()) => break cg,

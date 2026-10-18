@@ -126,6 +126,14 @@ pub fn exe(pid: u32) -> Option<PathBuf> {
     fs::read_link(format!("/proc/{pid}/exe")).ok()
 }
 
+/// Whether `arg` is one of the arguments a process runs with.
+#[must_use]
+pub fn has_arg(pid: u32, arg: &std::ffi::OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt as _;
+    fs::read(format!("/proc/{pid}/cmdline"))
+        .is_ok_and(|args| args.split(|&b| b == 0).any(|a| a == arg.as_bytes()))
+}
+
 /// A mapped file: its size on disk and how much of it is resident in the
 /// process.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +214,20 @@ pub fn group(path: &str, runtime: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_process_is_told_by_its_arguments() {
+        let me = std::process::id();
+        let first = std::env::args_os().next().unwrap();
+        assert!(has_arg(me, &first));
+        assert!(!has_arg(
+            me,
+            std::ffi::OsStr::new("--no-such-argument-here")
+        ));
+        // A part of an argument is not one.
+        let part = &first.to_str().unwrap()[1..];
+        assert!(!has_arg(me, std::ffi::OsStr::new(part)));
+    }
 
     #[test]
     fn what_woke_is_told_by_thread_name() {
