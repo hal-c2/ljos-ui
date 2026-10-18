@@ -375,7 +375,7 @@ fn take_in_repeater(e: &Engine, me: ObjectId, repeater: ObjectId) -> Result<(), 
     // The repeater makes its items beside itself, which is among the
     // container's items.
     if let Some(ci) = e.untrack(|| object(e, me, Control::CONTENT_ITEM.index)) {
-        set_parent_item(e, repeater, Some(rows::home(e, ci)))?;
+        Repeater::carry_to(e, repeater, rows::home(e, ci))?;
     }
     let made = e
         .with::<Repeater, _>(repeater, |r| r.delegates().map(|d| d.objects()))

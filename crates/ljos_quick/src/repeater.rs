@@ -37,12 +37,41 @@ pub struct Repeater {
     pub count: i32,
     #[qml(skip)]
     delegates: Option<Delegates>,
+    /// The next parent change hands the items over instead of making
+    /// them again.
+    #[qml(skip)]
+    carried: bool,
 }
 
 impl Repeater {
     /// The delegates, for tests and tools that count what was made.
     pub fn delegates(&self) -> Option<&Delegates> {
         self.delegates.as_ref()
+    }
+
+    /// Moves `repeater` to `parent` with the items it has made, which a
+    /// parent change otherwise makes again: for a container that takes a
+    /// declared Repeater into its content item as it is completed, where
+    /// Qt makes the items once.
+    pub fn carry_to(e: &Engine, repeater: ObjectId, parent: ObjectId) -> Result<(), EngineError> {
+        if e.untrack(|| e.visual_parent(repeater)) == Some(parent) {
+            return Ok(());
+        }
+        let items = e
+            .with_mut::<Repeater, _>(repeater, |r| {
+                r.carried = r.delegates.is_some();
+                r.delegates.as_ref().map(Delegates::objects)
+            })?
+            .unwrap_or_default();
+        e.batch(|| {
+            tree::set_parent_item(e, repeater, Some(parent))?;
+            for item in &items {
+                if is_item(e, *item) {
+                    tree::set_parent_item_before(e, *item, parent, repeater)?;
+                }
+            }
+            place_before(e, parent, &items, repeater)
+        })
     }
 }
 
@@ -199,12 +228,21 @@ impl Repeater {
         let me = cx.this;
         let delegates = Delegates::new(me, Rc::new(Host(me)), RemovalOrder::LastToFirst);
         cx.with_mut::<Repeater, _>(|r| r.delegates = Some(delegates.clone()))?;
+        let seen = std::cell::RefCell::new(None);
         cx.engine.effect_in(me, move |e| {
             let model = e.get(me, Repeater::MODEL).unwrap_or_default();
             let delegate = e.get(me, Repeater::DELEGATE).ok().flatten();
             // Tracked: the items live in the parent.
             let _ = e.visual_parent(me);
             e.track_model(&model);
+            let carried = e
+                .with_mut::<Repeater, _>(me, |r| std::mem::take(&mut r.carried))
+                .unwrap_or(false);
+            let now = (model.clone(), delegate);
+            if carried && seen.borrow().as_ref() == Some(&now) {
+                return;
+            }
+            *seen.borrow_mut() = Some(now);
             e.untrack(|| {
                 let model = e.model_from_value(&model, Some(me));
                 delegates.set_source(e, Some(model), delegate);
