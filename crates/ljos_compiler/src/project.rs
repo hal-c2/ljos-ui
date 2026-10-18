@@ -301,8 +301,10 @@ impl<O: TypeOracle> Project<O> {
             .iter()
             .map(|(dir, module)| {
                 let types = module.types.iter();
+                // A file beside what describes the module sees its types.
                 types
                     .map(|ty| project::directory(&join(dir, &ty.path)).to_owned())
+                    .chain(std::iter::once(dir.clone()))
                     .collect()
             })
             .collect();
@@ -501,7 +503,19 @@ fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf
         && let Ok(text) = std::fs::read_to_string(dir.join("CMakeLists.txt"))
     {
         let at = |path: &str| dir.join(path.strip_prefix("./").unwrap_or(path));
-        let built = discover::cmake(&text);
+        let mut built = discover::cmake(&text);
+        // A program reads the qmldir, not the build: where both name a type
+        // of the same module, the qmldir's file is the type.
+        for module in &mut built {
+            let uri = &module.uri;
+            let named = |name: &str| {
+                modules
+                    .iter()
+                    .filter(|by| &by.uri == uri)
+                    .any(|by| by.types.iter().any(|ty| ty.name == name))
+            };
+            module.types.retain(|ty| !named(&ty.name));
+        }
         for module in &built {
             for file in &module.resources {
                 resources.push((module.address(file), at(file)));

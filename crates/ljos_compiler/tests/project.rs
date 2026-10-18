@@ -216,3 +216,39 @@ fn an_opened_project_reads_what_its_entry_reaches() {
         "each file is read once"
     );
 }
+
+/// A directory with both a `qmldir` and a `CMakeLists.txt` that name a type
+/// by different files: a program reads the `qmldir`, so its file is the
+/// type, whether the project is read whole or as the entry reaches it.
+#[test]
+fn the_qmldir_says_which_file_a_type_is_over_the_build() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let root = dir.path();
+    write_tree(
+        root,
+        &[
+            ("qmldir", "module Demo\nDisplay 1.0 content/Display2.qml\n"),
+            (
+                "CMakeLists.txt",
+                "qt_add_qml_module(demo URI Demo QML_FILES Main.qml content/Display.qml)\n",
+            ),
+            ("Main.qml", "import QtQuick\nItem { Display {} }\n"),
+            ("content/Display.qml", "import QtQuick\nItem {}\n"),
+            ("content/Display2.qml", "import QtQuick\nRectangle {}\n"),
+        ],
+    );
+    let display = TypeRef::Component {
+        file: "content/Display2".into(),
+        inline: None,
+    };
+
+    let results = compile_project_with(root, Runtime::new()).expect("readable");
+    let main = results.iter().find(|r| r.key == "Main").expect("Main");
+    let main = main.usable().expect("Main compiles");
+    assert_eq!(main.file.components[0].objects[1].ty, display);
+
+    let mut project = ljos_compiler::Project::open(root, Runtime::new()).expect("readable");
+    project.reach("Main");
+    let main = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+    assert_eq!(main.file.components[0].objects[1].ty, display);
+}
