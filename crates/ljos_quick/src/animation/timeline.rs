@@ -1234,9 +1234,10 @@ impl Timed {
         let pass = self.pass;
         match &mut self.node {
             Node::Prop(p) => {
-                if p.lerps.is_none() {
-                    p.begin(cx.engine);
-                }
+                let resting = match p.lerps {
+                    None => p.begin(cx.engine),
+                    Some(_) => Vec::new(),
+                };
                 let progress = if pass == 0 {
                     1.0
                 } else {
@@ -1244,6 +1245,11 @@ impl Timed {
                 };
                 let eased = p.curve.value(progress);
                 for (i, (slot, lerp)) in p.slots.iter().zip(p.lerps.iter().flatten()).enumerate() {
+                    // A Behavior's start shows the property where it is: a
+                    // write of what it holds changes nothing.
+                    if eased == 0.0 && p.held.is_none() && resting.get(i) == Some(&true) {
+                        continue;
+                    }
                     let Some(v) = lerp.at(eased) else {
                         continue;
                     };
@@ -1411,7 +1417,9 @@ impl Timed {
 
 impl PropNode {
     /// Takes the start values: the property's own where `from` is not set.
-    fn begin(&mut self, engine: &Engine) {
+    /// Per slot, whether the start value is the one the property holds.
+    fn begin(&mut self, engine: &Engine) -> Vec<bool> {
+        let mut resting = Vec::with_capacity(self.slots.len());
         let lerps = self
             .slots
             .iter()
@@ -1428,14 +1436,17 @@ impl PropNode {
                 let to = own
                     .or_else(|| self.tos.get(i).and_then(Option::as_ref))
                     .and_then(convert);
-                let from = match self.from.as_ref().and_then(convert) {
-                    Some(v) => v,
-                    None => engine.untrack(|| engine.read(slot.obj, slot.prop)),
+                let (from, own) = match self.from.as_ref().and_then(convert) {
+                    Some(v) => (v, false),
+                    None => (engine.untrack(|| engine.read(slot.obj, slot.prop)), true),
                 };
-                Lerp::new(self.kind, &slot.ty, &from, to.as_ref())
+                let lerp = Lerp::new(self.kind, &slot.ty, &from, to.as_ref());
+                resting.push(own && lerp.at(0.0).is_some_and(|v| v == from));
+                lerp
             })
             .collect();
         self.lerps = Some(lerps);
+        resting
     }
 }
 
