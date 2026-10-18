@@ -54,9 +54,6 @@ Feature: The palette of a plain item
       | deep   | palette.button     | #ff0000 |
       | free   | palette.button     | #e0e0e0 |
 
-  # A plain item's colours are found when a control inside it resolves its
-  # own; reading them on the item itself would cost a check on every read.
-  @backlog
   Scenario: A plain item reads the colours of the items it is in
     Then the property "palette.button" of "inner" is "#ff0000"
     When the property "palette.button" of "outer" is set to "#0000ff"

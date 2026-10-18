@@ -31,9 +31,9 @@ pub const ROLE_RESET: Reset = Reset::Custom {
     value: role_from_above,
 };
 
-/// Told of an item that completes with a colour set on its palette, or
-/// that is given its first colour after it completed.
-pub type OnItemPalette = fn(&Engine, ObjectId);
+/// Told of an item that completes, and of a colour about to be written on
+/// an item that completed (`true`).
+pub type OnItemPalette = fn(&Engine, ObjectId, bool);
 
 #[derive(Default)]
 struct Hooks {
@@ -46,38 +46,38 @@ pub fn set_role_reset(engine: &Engine, apply: ResetApply, value: ResetValue) {
     engine.extension::<Hooks>().reset.set(Some((apply, value)));
 }
 
-/// What is told of an item that completes with a colour of its palette
-/// set, or given its first one after it completed, so that the controls
-/// inside it can take it.
+/// What is told of an item that completes and of a colour set on an item
+/// that completed, so that the items inside it can take its colours, and
+/// it those of the items it is in.
 pub fn set_on_item_palette(engine: &Engine, hook: OnItemPalette) {
     engine.extension::<Hooks>().on_item.set(Some(hook));
 }
 
-/// Whether a colour of the item's palette was ever set: it has a palette
-/// of its own.
+/// Whether a colour of the item's palette was ever set or handed down to
+/// it: it has a palette of its own.
 pub fn has_own(engine: &Engine, item: ObjectId) -> bool {
     engine
         .with(item, |i: &crate::Item| i.palette.is_some())
         .unwrap_or(false)
 }
 
-pub(crate) fn item_palette_set(engine: &Engine, item: ObjectId) {
+pub(crate) fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
     if let Some(hook) = engine.extension::<Hooks>().on_item.get() {
-        hook(engine, item);
+        hook(engine, item, written);
     }
 }
 
-/// A colour's setter: an item given its first colour after it completed
-/// tells the controls inside it, as on qml6. One that completes with a
-/// colour is told of at completion ([`crate::Item`]).
+/// A colour's setter: an item given a colour after it completed tells the
+/// items inside it, as on qml6. One that completes is told of at
+/// completion ([`crate::Item`]).
 fn role_written(cx: &Cx, c: Color) -> Option<Color> {
     let (engine, item) = (cx.engine, cx.this);
     let complete = engine
         .flags(item)
         .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
-    if complete && !has_own(engine, item) {
+    if complete {
         // What it installs hears this write when it is stored.
-        item_palette_set(engine, item);
+        item_palette_set(engine, item, true);
     }
     Some(c)
 }

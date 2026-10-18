@@ -5,7 +5,7 @@
 //! plain `Text` or `Rectangle` has no font and lets it through, and hands
 //! down the colours of its palette that were set on it. Only a control,
 //! a `Label` or a window finds out which colours it has where nobody set
-//! one: a plain item reads the style's then. An attribute of the font
+//! one: a plain item reads the style's where no item above it set one. An attribute of the font
 //! (or a colour of the palette) that the author set on an object stays;
 //! every other one is the nearest such ancestor's, and follows it. In a
 //! style with a font of its own ([`crate::style_font`]) a control starts
@@ -18,6 +18,13 @@
 //! The `locale` of a control or an `ApplicationWindow` is the nearest
 //! such ancestor's as a whole until it is given one, and the
 //! application's (`Qt.locale()`) when no ancestor has one.
+//!
+//! A plain item's own colours are the nearest ancestor's too, as on qml6.
+//! They are handed down when an author sets one, not looked up when they
+//! are read: each plain item below is given the colour to make on its
+//! next read ([`Engine::make_on_read`]), or at once when something
+//! observes it, and one made later looks up when it completes. Reading a
+//! colour costs what it did; setting one costs a walk of the items below.
 //!
 //! Most objects never set any of them. Until the first one does, nothing
 //! walks the tree: one graph node per kind (an epoch, as `LayoutMirroring`
@@ -42,6 +49,7 @@
 //! it was given when the application's changes.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
@@ -259,6 +267,18 @@ struct Epochs {
     looks: Cell<bool>,
 }
 
+/// The plain items whose colours the items inside them follow, and the
+/// objects whose colours an author changed, to hand down to the plain
+/// items below them once the creation running now is complete.
+#[derive(Default)]
+struct PlainItems {
+    watched: RefCell<HashSet<ObjectId>>,
+    from: RefCell<Vec<ObjectId>>,
+    /// This module is writing a plain item's colours: the write is not an
+    /// author's.
+    handing: Cell<bool>,
+}
+
 /// The engine's application font: a graph node, so that what reads it runs
 /// again when it changes, and its attributes that differ from the default.
 #[derive(Default)]
@@ -358,6 +378,9 @@ fn bump(engine: &Engine, which: Which) {
                 if pending & 1 << which as u8 != 0 {
                     move_epoch(e, which);
                 }
+            }
+            if pending & 1 << Which::Palette as u8 != 0 {
+                hand_down_to_plain_items(e);
             }
         });
     }
@@ -537,10 +560,9 @@ pub(crate) fn attach(
     // After that, the objects made with this one read its colours as they
     // resolve (a creation assigns before anything completes), and one
     // bump per object would resolve every palette again for each.
-    if !engine.untrack(|| in_use(engine, Which::Palette))
-        && roles.iter().any(|p| author_set(engine, obj, *p))
-    {
-        bump(engine, Which::Palette);
+    if roles.iter().any(|p| author_set(engine, obj, *p)) {
+        // The plain items inside it take them.
+        colours_changed(engine, obj);
     }
     if has_children {
         for p in roles.iter().copied() {
@@ -548,7 +570,7 @@ pub(crate) fn attach(
                 // The colours this module hands down change too; only the
                 // author's are news to the items below.
                 if author_set(e, obj, p) {
-                    bump(e, Which::Palette);
+                    colours_changed(e, obj);
                 }
             })?;
         }
@@ -861,31 +883,131 @@ fn hands_down(engine: &Engine, obj: ObjectId, kind: Kind) -> bool {
 
 /// `palette.button = undefined`: the colour is the one from above again,
 /// or the style's. A plain item that completes with a colour set, or is
-/// given its first one later, tells the controls inside it.
+/// given its first one later, tells the items inside it.
 pub(crate) fn register(engine: &Engine) {
     ljos_quick::palette::set_role_reset(engine, take_role_back, role_from_above);
     ljos_quick::palette::set_on_item_palette(engine, item_palette_set);
 }
 
-/// A plain item has colours of its own, from when it completed or from
-/// its first one set since: the controls inside it look, now and whenever
-/// a colour of it changes.
-fn item_palette_set(engine: &Engine, item: ObjectId) {
+/// An item completed, or was given a colour after it completed. A plain
+/// item with colours of its own makes the items inside it look, now and
+/// whenever a colour of it changes; one made inside an item with colours
+/// takes them.
+fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
+    // Most items: no palette, and none set anywhere.
+    let own = ljos_quick::palette::has_own(engine, item);
+    if !written && !own && !engine.untrack(|| in_use(engine, Which::Palette)) {
+        return;
+    }
+    let plain = engine.extension::<PlainItems>();
+    if plain.handing.get() || plain.watched.borrow().contains(&item) {
+        return;
+    }
     if kind_of(engine, item) != Some(Kind::Item) {
         return;
     }
-    // As for a control: the colours were set before anything completed,
-    // so once something looks, what is made with this item reads them.
-    if !engine.untrack(|| in_use(engine, Which::Palette)) {
-        bump(engine, Which::Palette);
+    let roles = roles_of(Kind::Item);
+    // A colour being written is not yet stored nor marked as the author's.
+    if written || own && roles.iter().any(|p| author_set(engine, item, *p)) {
+        plain.watched.borrow_mut().insert(item);
+        for p in roles.iter().copied() {
+            let watched = engine.watch(item, p, move |e, _| {
+                if author_set(e, item, p) {
+                    colours_changed(e, item);
+                }
+            });
+            check(engine, "palette", watched.map(|_| ()));
+        }
+        // As for a control: the colours were set before anything
+        // completed, so once something looks, what is made with this item
+        // reads them; the plain items inside are handed them.
+        colours_changed(engine, item);
+    } else if !own {
+        // Made inside items that hand colours down: they did so before it was.
+        engine.untrack(|| take_from_above(engine, item));
     }
-    for p in roles_of(Kind::Item).iter().copied() {
-        let watched = engine.watch(item, p, move |e, _| {
-            if author_set(e, item, p) {
-                bump(e, Which::Palette);
+}
+
+/// An author changed `obj`'s colours: the controls below look again, and
+/// the plain items below are handed them.
+fn colours_changed(engine: &Engine, obj: ObjectId) {
+    engine.extension::<PlainItems>().from.borrow_mut().push(obj);
+    bump(engine, Which::Palette);
+}
+
+/// Hands the colours of the objects an author changed down to the plain
+/// items below them.
+fn hand_down_to_plain_items(engine: &Engine) {
+    let from = std::mem::take(&mut *engine.extension::<PlainItems>().from.borrow_mut());
+    let mut seen = HashSet::new();
+    let mut stack: Vec<ObjectId> = Vec::new();
+    for obj in from {
+        if !engine.is_alive(obj) {
+            continue;
+        }
+        stack.extend(engine.visual_children(obj));
+        while let Some(item) = stack.pop() {
+            // Under two of the objects: handed down once.
+            if !seen.insert(item) {
+                continue;
             }
-        });
-        check(engine, "palette", watched.map(|_| ()));
+            stack.extend(engine.visual_children(item));
+            if kind_of(engine, item) == Some(Kind::Item) {
+                engine.untrack(|| take_from_above(engine, item));
+            }
+        }
+    }
+}
+
+/// Gives a plain item the colours of the items it is in, for each role
+/// it did not set itself: on its next read, or now if something observes
+/// the role. A role nobody above set is the style's again, where it had
+/// another.
+fn take_from_above(engine: &Engine, item: ObjectId) {
+    let own = roles_of(Kind::Item);
+    let mut inherited: [Option<Color>; ROLE_COUNT] = [None; ROLE_COUNT];
+    let mine: Vec<bool> = own.iter().map(|p| author_set(engine, item, *p)).collect();
+    let mut open = mine.iter().filter(|m| !**m).count();
+    let mut cur = above(engine, item);
+    for _ in 0..4096 {
+        let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
+            break;
+        };
+        if open == 0 {
+            break;
+        }
+        if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
+            let theirs = roles_of(k);
+            for i in 0..ROLE_COUNT {
+                if !mine[i] && inherited[i].is_none() && author_set(engine, p, theirs[i]) {
+                    inherited[i] = color_of(&engine.read(p, theirs[i]));
+                    open -= usize::from(inherited[i].is_some());
+                }
+            }
+        }
+        cur = above(engine, p);
+    }
+    let has_palette = ljos_quick::palette::has_own(engine, item);
+    let plain = engine.extension::<PlainItems>();
+    for i in 0..ROLE_COUNT {
+        let p = own[i];
+        if mine[i] {
+            continue;
+        }
+        // Nothing above, and the item still has the style's colour.
+        if inherited[i].is_none() && !has_palette && !engine.is_made_on_read(item, p) {
+            continue;
+        }
+        let c = Value::Color(inherited[i].unwrap_or(ROLES[i].active));
+        let done = if engine.observers_of(item, p).is_empty() {
+            engine.make_on_read(item, p, move |_| c)
+        } else {
+            plain.handing.set(true);
+            let done = engine.write_derived(item, p, c);
+            plain.handing.set(false);
+            done
+        };
+        check(engine, "palette", done);
     }
 }
 
@@ -938,8 +1060,8 @@ fn take_role_back(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Result<(),
     }
     let above = engine.untrack(|| role_from_above(engine, obj, prop));
     engine.reset_to(obj, prop, above)?;
-    // The controls below had the colour from here.
-    bump(engine, Which::Palette);
+    // The items below had the colour from here.
+    colours_changed(engine, obj);
     Ok(())
 }
 

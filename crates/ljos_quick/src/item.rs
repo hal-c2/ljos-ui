@@ -680,9 +680,7 @@ impl Item {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         init_item(cx.engine, cx.this)?;
-        if crate::palette::has_own(cx.engine, cx.this) {
-            crate::palette::item_palette_set(cx.engine, cx.this);
-        }
+        crate::palette::item_palette_set(cx.engine, cx.this, false);
         Ok(())
     }
 
