@@ -1394,3 +1394,33 @@ without it. Release (lto thin) `ljos` on 8c0e5e1 with and without it:
   shows PDFs turns it on, as it would install Qt's plugin.
 - The windowed bench's peak and cgroup figures were not used: the load average went from 22 to
   84 while it ran, and the runs varied from 58 to 147 MiB.
+
+## Per-frame cost against Qt (2026-10-18)
+
+Callgrind, prof build, GPU sandbox. The figures are main-thread instructions per frame: animations
+over 10 s after 45 s, clocks over 10 s after 30 s. Qt's animations frame is 0.72 M.
+
+| Run | animations | its compose | its tick | clocks | its compose |
+|---|---|---|---|---|---|
+| before | 1.487 M | 108 k | 500 k | 440 k | 22.7 k |
+| subtree reuse, axis-aligned bounds, fused bounds | 1.484 M | 100 k | — | 439 k | 18.9 k |
+| + a place effect that is told, not rerun | 1.379 M | 100 k | 273 k | 441 k | — |
+
+- **Compose** copies a subtree that did not change since the last snapshot whole. The tree marks
+  each change up its ancestors, which is about 16 subtrees a frame on clocks. On animations every
+  node moves, so its compose falls only through the cheaper bounds: a box that is only scaled
+  and moved is mapped from two corners, not four.
+- **Tick.** A moving item reran its place effect, which cost about 1 k per animation. Now
+  `Graph::effect_told` tells the scene which items moved, and the scene reads their x and y when
+  it lays out. What is left for each animation is the generic write path, about 1.1 k.
+- **samegame particles.** The step timer runs only while the system has live particles or an
+  emitter that may emit. samegame's paint spots live 30 s, so its steps are real work.
+  - Group names are now kept once and compared by pointer. That took the string compares in
+    grouping from 375 k to none, and grouping from 71 to 42 a particle.
+  - A step no longer gathers a list for each particle under an affector.
+  - A particle step stays about 120. Painting the particles costs more than stepping them:
+    `image_segs` 94 M against `step_system` 118 M over the run.
+- **Encode** is about 127 k a frame on animations, about 634 an item, of which `solid()` takes
+  243. A node's display list already reuses its mapped segments while the list, the transform
+  and the opacity stay the same. Solid rectangles take their own path, which maps them again
+  every frame: that is what is left to cache.
