@@ -242,6 +242,10 @@ struct Epochs {
     font: Cell<Option<NodeId>>,
     palette: Cell<Option<NodeId>>,
     locale: Cell<Option<NodeId>>,
+    /// The epochs to move once the creation running now is complete, as
+    /// bits of [`Which`]. Moved for each control made, every control made
+    /// before it looked again: a creation of many was many times many.
+    pending: Cell<u8>,
 }
 
 /// The engine's application font: a graph node, so that what reads it runs
@@ -333,6 +337,22 @@ fn in_use(engine: &Engine, which: Which) -> bool {
 }
 
 fn bump(engine: &Engine, which: Which) {
+    let all = engine.extension::<Epochs>();
+    let before = all.pending.get();
+    all.pending.set(before | 1 << which as u8);
+    if before == 0 {
+        engine.after_creation(|e| {
+            let pending = e.extension::<Epochs>().pending.take();
+            for which in [Which::Font, Which::Palette, Which::Locale] {
+                if pending & 1 << which as u8 != 0 {
+                    move_epoch(e, which);
+                }
+            }
+        });
+    }
+}
+
+fn move_epoch(engine: &Engine, which: Which) {
     if let Some(node) = epoch(engine, which) {
         let g = engine.graph();
         let n = g.get_untracked(node).to_number() as i32;

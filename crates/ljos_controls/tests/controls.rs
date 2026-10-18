@@ -406,3 +406,88 @@ Item {
     assert_eq!(writes.map(|n| n.get()), [2, 2, 2]);
     assert_eq!(own.get(), 0);
 }
+
+/// Makes `controls` Buttons with a font, palette and locale of their own
+/// and `paths` icons drawn by `Shape`s between them, in one creation, and
+/// shows them. What it cost: the effects run, how often an icon's path
+/// was made again, and what was said about runs in one update.
+fn controls_and_icons(controls: usize, paths: usize) -> (u64, Value, Vec<String>) {
+    let button = |i: usize| {
+        format!(
+            r#"
+    Button {{
+        font.pixelSize: {}
+        locale: Qt.locale("de_DE")
+        palette.button: "red"
+        text: "Go"
+    }}"#,
+            10 + i % 7
+        )
+    };
+    let icon = r#"
+    Shape {
+        width: 16; height: 16
+        ShapePath {
+            onChanged: rebuilt++
+            strokeColor: "black"
+            PathLine { x: 16; y: 16 }
+            PathLine { x: 0; y: 16 }
+        }
+    }"#;
+    let items: String = (0..controls.max(paths))
+        .flat_map(|i| {
+            [
+                (i < controls).then(|| button(i)),
+                (i < paths).then(|| icon.to_owned()),
+            ]
+        })
+        .flatten()
+        .collect();
+    let e = engine();
+    let root = load(
+        &e,
+        &format!(
+            r#"
+import QtQuick
+import QtQuick.Shapes
+import QtQuick.Controls.Basic
+Column {{
+    property int rebuilt: 0{items}
+}}
+"#
+        ),
+    );
+    let mut s = scene(&e, root);
+    settle(&mut s, &e, Time::ZERO);
+    let reran = e
+        .take_log()
+        .into_iter()
+        .filter(|l| l.message.contains("re-ran"))
+        .map(|l| l.message)
+        .collect();
+    (
+        e.graph().stats().effect_runs,
+        e.read_by_name(root, "rebuilt"),
+        reran,
+    )
+}
+
+/// Each control with a font, palette or locale of its own moves what the
+/// controls inherit along. Moved once for each as they were made, every
+/// control made before looked again, and so did what was drawn from
+/// them: a creation of many cost many times many. Moved once the
+/// creation is complete, twice the controls cost twice as much, and the
+/// icons' paths are made once.
+#[test]
+fn controls_with_fonts_made_together_cost_what_each_costs() {
+    let (once, rebuilt, reran) = controls_and_icons(40, 40);
+    assert_eq!(rebuilt, Value::Int(0));
+    assert!(reran.is_empty(), "{reran:?}");
+    let (twice, rebuilt, reran) = controls_and_icons(80, 80);
+    assert_eq!(rebuilt, Value::Int(0));
+    assert!(reran.is_empty(), "{reran:?}");
+    assert!(
+        twice * 10 < once * 22,
+        "twice the controls ran {twice} effects, against {once}"
+    );
+}
