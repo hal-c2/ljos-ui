@@ -939,6 +939,9 @@ ApplicationWindow {
                     // done. It is the field's focus, not its active
                     // focus, which the window losing activation takes.
                     property string editing: ""
+                    // The picture was asked with the properties, not
+                    // after them.
+                    property bool shotAsked: false
 
                     // The tree is asked again when a reload made new
                     // objects; a drawn pass changes values, not objects.
@@ -946,7 +949,7 @@ ApplicationWindow {
                         if (tree || objects.tree.length === 0)
                             window.ask("app_objects", { max: 3000 }, "objects")
                         if (picked !== "")
-                            inspect()
+                            inspect(true)
                     }
 
                     function showTree(ok, s, r) {
@@ -979,13 +982,19 @@ ApplicationWindow {
                         editing = ""
                         picked = handle
                         pickedName = name || handle
-                        inspect()
+                        inspect(false)
                     }
 
                     // Asks again for the one picked, leaving a field
-                    // being typed in as it is.
-                    function inspect() {
+                    // being typed in as it is. An item already known to
+                    // be one has its picture asked at the same time, so
+                    // that a change is shown one answer after it is made
+                    // rather than two.
+                    function inspect(withPicture) {
                         window.ask("app_inspect", { target: picked, all: all }, "inspect")
+                        shotAsked = withPicture === true && pickedItem
+                        if (shotAsked)
+                            window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture")
                     }
 
                     function showProperties(ok, s, r) {
@@ -1005,12 +1014,14 @@ ApplicationWindow {
                             propRows = props.length
                         }
                         pickedItem = s.geometry !== undefined && s.geometry !== null
-                        if (pickedItem)
-                            window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture")
-                        else {
+                        if (pickedItem) {
+                            if (!shotAsked)
+                                window.ask("app_screenshot", { target: picked, max_size: 640 }, "picture")
+                        } else {
                             picture = ""
                             pictureNote = "Not drawn: it is not an item"
                         }
+                        shotAsked = false
                     }
 
                     function showPicture(ok, r) {
@@ -1053,13 +1064,23 @@ ApplicationWindow {
                                    "edited")
                     }
 
+                    // Text that starts with `=` is an expression the
+                    // property is bound to, as a spreadsheet's formula
+                    // is: it follows what it reads from then on.
+                    function bind(name, expression) {
+                        editing = ""
+                        window.ask("app_set_property",
+                                   { target: picked, property: name, binding: expression, keep_binding: true },
+                                   "edited")
+                    }
+
                     function revert(name) {
                         window.ask("app_set_property", { target: picked, property: name, revert: true }, "edited")
                     }
 
                     function edited(ok, r) {
                         if (ok)
-                            inspect()
+                            inspect(true)
                     }
 
                     // The tree.
@@ -1189,6 +1210,7 @@ ApplicationWindow {
                             Label {
                                 visible: objects.picked !== ""
                                 text: objects.picked + (objects.where === "" ? "" : "  ·  " + objects.where)
+                                      + "  ·  =expression binds"
                                 color: theme.subtle
                                 font.family: theme.mono
                                 font.pixelSize: 11
@@ -1211,11 +1233,17 @@ ApplicationWindow {
                                     readonly property bool fixed: modelData.read_only === true
                                     readonly property bool boolean: modelData.type === "bool"
                                     readonly property bool held: modelData.items !== undefined || modelData.handle !== undefined
+                                    readonly property bool editable: !fixed && !boolean && !held
+                                    // A row is text and frames until its value
+                                    // is typed in: a field is made for that and
+                                    // let go after, as a screenful of fields
+                                    // costs more to make than a frame has.
+                                    property bool typing: false
                                     Rectangle {
                                         anchors.fill: parent
                                         color: prop.index % 2 ? theme.cardAlt : "transparent"
                                     }
-                                    Label {
+                                    Text {
                                         id: propName
                                         x: 6
                                         width: 130
@@ -1224,7 +1252,7 @@ ApplicationWindow {
                                         color: theme.text
                                         elide: Text.ElideRight
                                     }
-                                    Label {
+                                    Text {
                                         id: propType
                                         anchors.left: propName.right
                                         anchors.verticalCenter: parent.verticalCenter
@@ -1234,65 +1262,136 @@ ApplicationWindow {
                                         font.pixelSize: 11
                                         elide: Text.ElideRight
                                     }
-                                    // A value that can be changed is a
-                                    // field; one that cannot is text.
-                                    TextField {
-                                        id: field
-                                        visible: !prop.fixed && !prop.boolean && !prop.held
+                                    // A value that can be changed is framed, so
+                                    // it reads apart from one that cannot.
+                                    Rectangle {
+                                        id: valueBox
                                         anchors.left: propType.right
                                         anchors.right: chips.left
                                         anchors.rightMargin: 8
                                         anchors.verticalCenter: parent.verticalCenter
                                         height: 28
-                                        topPadding: 4
-                                        bottomPadding: 4
-                                        leftPadding: 6
-                                        clip: true
-                                        color: theme.text
-                                        background: Rectangle {
-                                            radius: 5
-                                            // Framed at rest, so a value that can be
-                                            // changed reads apart from one that cannot.
-                                            color: field.activeFocus ? theme.bg : "transparent"
-                                            border.color: field.activeFocus ? theme.accent
-                                                : field.hovered ? theme.subtle : theme.rule
+                                        radius: 5
+                                        color: "transparent"
+                                        border.color: !prop.editable ? "transparent"
+                                            : valueArea.containsMouse ? theme.subtle : theme.rule
+                                        Text {
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: prop.editable ? 6 : 0
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: 6
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: !prop.typing && !prop.boolean
+                                            text: prop.modelData.value === null && !prop.editable ? "—"
+                                                : objects.valueText(prop.modelData.value)
+                                            color: prop.modelData.handle !== undefined ? theme.accent : theme.text
+                                            elide: Text.ElideRight
                                         }
-                                        text: objects.valueText(prop.modelData.value)
-                                        onFocusChanged: {
-                                            if (focus)
-                                                objects.editing = prop.modelData.name
-                                            else if (objects.editing === prop.modelData.name)
-                                                objects.editing = ""
+                                        // A check for a value that is true or false.
+                                        Loader {
+                                            active: prop.boolean
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            sourceComponent: check
                                         }
-                                        onAccepted: {
-                                            objects.edit(prop.modelData.name, prop.modelData.type,
-                                                         objects.typed(prop.modelData.type, text))
-                                            focus = false
+                                        Component {
+                                            id: check
+                                            Row {
+                                                spacing: 8
+                                                Accessible.role: Accessible.CheckBox
+                                                Accessible.name: prop.modelData.name || ""
+                                                Accessible.checked: prop.modelData.value === "true"
+                                                Rectangle {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: 16; height: 16; radius: 4
+                                                    color: prop.modelData.value === "true" && !prop.fixed ? theme.accent : "transparent"
+                                                    border.color: prop.modelData.value === "true" && !prop.fixed ? theme.accent
+                                                        : valueArea.containsMouse ? theme.subtle : theme.rule
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        visible: prop.modelData.value === "true"
+                                                        text: "✓"
+                                                        color: prop.fixed ? theme.subtle : theme.bg
+                                                        font.pixelSize: 12
+                                                        font.bold: true
+                                                    }
+                                                }
+                                                Text {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: prop.modelData.value === null ? "" : String(prop.modelData.value)
+                                                    color: theme.text
+                                                }
+                                            }
                                         }
-                                    }
-                                    CheckBox {
-                                        visible: !prop.fixed && prop.boolean
-                                        anchors.left: propType.right
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        checked: prop.modelData.value === "true"
-                                        text: prop.modelData.value === null ? "" : String(prop.modelData.value)
-                                        onToggled: objects.edit(prop.modelData.name, "bool", checked)
-                                    }
-                                    Label {
-                                        visible: prop.fixed || prop.held
-                                        anchors.left: propType.right
-                                        anchors.leftMargin: 6
-                                        anchors.right: chips.left
-                                        anchors.rightMargin: 8
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: prop.modelData.value === null ? "—" : objects.valueText(prop.modelData.value)
-                                        color: prop.modelData.handle !== undefined ? theme.accent : theme.text
-                                        elide: Text.ElideRight
                                         MouseArea {
+                                            id: valueArea
                                             anchors.fill: parent
-                                            enabled: prop.modelData.handle !== undefined
-                                            onClicked: objects.pick(prop.modelData.handle, prop.modelData.value)
+                                            enabled: !prop.typing && (prop.editable || prop.modelData.handle !== undefined
+                                                                       || (prop.boolean && !prop.fixed))
+                                            hoverEnabled: enabled
+                                            cursorShape: prop.editable ? Qt.IBeamCursor : Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (prop.modelData.handle !== undefined)
+                                                    objects.pick(prop.modelData.handle, prop.modelData.value)
+                                                else if (prop.boolean)
+                                                    objects.edit(prop.modelData.name, "bool", prop.modelData.value !== "true")
+                                                else
+                                                    prop.typing = true
+                                            }
                                         }
+                                        Loader {
+                                            anchors.fill: parent
+                                            active: prop.typing
+                                            // Focus is given once the click that
+                                            // made the field is over.
+                                            onLoaded: {
+                                                objects.editing = prop.modelData.name
+                                                Qt.callLater(function() {
+                                                    if (!item)
+                                                        return
+                                                    item.forceActiveFocus()
+                                                    item.selectAll()
+                                                })
+                                            }
+                                            sourceComponent: TextField {
+                                                id: field
+                                                topPadding: 4
+                                                bottomPadding: 4
+                                                leftPadding: 6
+                                                clip: true
+                                                color: theme.text
+                                                background: Rectangle {
+                                                    radius: 5
+                                                    color: theme.bg
+                                                    border.color: theme.accent
+                                                }
+                                                // A bound value is typed in as the
+                                                // expression it is bound to.
+                                                text: prop.modelData.expression !== undefined
+                                                    ? "=" + prop.modelData.expression
+                                                    : objects.valueText(prop.modelData.value)
+                                                // Its focus, not its active focus,
+                                                // which the window losing activation
+                                                // takes.
+                                                onFocusChanged: if (!focus) prop.done()
+                                                onAccepted: {
+                                                    var name = prop.modelData.name
+                                                    var typed = text
+                                                    prop.done()
+                                                    if (typed.charAt(0) === "=")
+                                                        objects.bind(name, typed.substring(1))
+                                                    else
+                                                        objects.edit(name, prop.modelData.type,
+                                                                     objects.typed(prop.modelData.type, typed))
+                                                }
+                                                Keys.onEscapePressed: prop.done()
+                                            }
+                                        }
+                                    }
+                                    // The field is let go once its handler is over.
+                                    function done() {
+                                        if (objects.editing === modelData.name)
+                                            objects.editing = ""
+                                        Qt.callLater(function() { prop.typing = false })
                                     }
                                     Row {
                                         id: chips
@@ -1310,17 +1409,18 @@ ApplicationWindow {
                                                 : prop.modelData.provenance === "animated" ? theme.violet
                                                 : theme.subtle
                                             color: Qt.rgba(tone.r, tone.g, tone.b, 0.16)
-                                            Label {
+                                            Text {
                                                 id: chipText
                                                 anchors.centerIn: parent
-                                                text: prop.edited ? (prop.modelData.binding_kept ? "edited · bound below" : "edited")
+                                                text: prop.edited ? (prop.modelData.provenance === "bound" ? "rebound" : "edited")
+                                                        + (prop.modelData.binding_kept ? " · bound below" : "")
                                                     : prop.fixed ? prop.modelData.provenance + " · read-only"
                                                     : prop.modelData.provenance
                                                 color: parent.tone
                                                 font.pixelSize: 11
                                             }
                                         }
-                                        Label {
+                                        Text {
                                             visible: prop.edited
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: "Revert"
@@ -1331,7 +1431,8 @@ ApplicationWindow {
                                                 id: revertArea
                                                 anchors.fill: parent
                                                 anchors.margins: -4
-                                                hoverEnabled: true
+                                                enabled: prop.edited
+                                                hoverEnabled: enabled
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: objects.revert(prop.modelData.name)
                                             }
