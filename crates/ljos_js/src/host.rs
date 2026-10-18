@@ -638,34 +638,47 @@ impl<'js> Scope<'js> {
     /// Anything else (a host object, a function, an instance of a class,
     /// a proxy) is the value itself.
     pub fn copied(&self, v: &JsValue) -> rquickjs::Result<JsValue> {
-        self.copied_at(v, 0)
+        self.copied_at(v, &mut Vec::new())
     }
 
-    fn copied_at(&self, v: &JsValue, depth: u32) -> rquickjs::Result<JsValue> {
-        // Deeper than this is a cycle, which is left shared.
-        if depth > 32 {
+    /// `within` holds the addresses of the arrays and objects being copied
+    /// round `v`: one of them met again is a cycle, and from there the copy
+    /// shares it rather than copying it again.
+    fn copied_at(&self, v: &JsValue, within: &mut Vec<usize>) -> rquickjs::Result<JsValue> {
+        // Rust-side entries have no cycles, but a copy this deep would sooner
+        // run out of stack than end.
+        if within.len() > 64 {
             return Ok(v.clone());
         }
-        let each = |items: &[JsValue]| {
+        let each = |items: &[JsValue], within: &mut Vec<usize>| {
             items
                 .iter()
-                .map(|i| self.copied_at(i, depth + 1))
+                .map(|i| self.copied_at(i, within))
                 .collect::<rquickjs::Result<Vec<_>>>()
         };
         Ok(match v {
-            JsValue::Array(items) => JsValue::Array(each(items)?),
-            JsValue::Typed(kind, fields) => JsValue::Typed(*kind, each(fields)?),
+            JsValue::Array(items) => JsValue::Array(each(items, within)?),
+            JsValue::Typed(kind, fields) => JsValue::Typed(*kind, each(fields, within)?),
             JsValue::Handle(r) => {
                 if let Some(items) = r.pending_items() {
-                    return Ok(JsValue::Array(each(&items)?));
+                    return Ok(JsValue::Array(each(&items, within)?));
                 }
                 let value = self.restore(r)?;
                 if value.is_proxy() {
                     return Ok(v.clone());
                 }
+                let Some(address) = object_address(&value) else {
+                    return Ok(v.clone());
+                };
+                if within.contains(&address) {
+                    return Ok(v.clone());
+                }
                 if value.is_array() {
                     let items = self.array_items(r)?;
-                    return Ok(JsValue::Array(each(&items)?));
+                    within.push(address);
+                    let out = each(&items, within);
+                    within.pop();
+                    return Ok(JsValue::Array(out?));
                 }
                 let Some(o) = value
                     .as_object()
@@ -682,16 +695,29 @@ impl<'js> Scope<'js> {
                     Some(p) if p != object_proto => return Ok(v.clone()),
                     _ => {}
                 }
-                let mut fields = Vec::new();
-                for kv in o.props::<String, Value>() {
-                    let (k, f) = kv?;
-                    let f = self.read_value_at(&f, depth + 1)?;
-                    fields.push((k, self.copied_at(&f, depth + 1)?));
-                }
-                JsValue::Handle(JsRef::object(fields))
+                within.push(address);
+                let fields = self.copied_fields(o, within);
+                within.pop();
+                JsValue::Handle(JsRef::object(fields?))
             }
             other => other.clone(),
         })
+    }
+
+    fn copied_fields(
+        &self,
+        o: &Object<'js>,
+        within: &mut Vec<usize>,
+    ) -> rquickjs::Result<Vec<(String, JsValue)>> {
+        let mut fields = Vec::new();
+        for kv in o.props::<String, Value>() {
+            let (k, f) = kv?;
+            // A field is read as it would cross on its own: an object in it
+            // is a handle, which the copy then follows with `within`.
+            let f = self.from_value(&f)?;
+            fields.push((k, self.copied_at(&f, within)?));
+        }
+        Ok(fields)
     }
 
     /// `Number(value)`: an object is asked its `valueOf`, so a Date is its
