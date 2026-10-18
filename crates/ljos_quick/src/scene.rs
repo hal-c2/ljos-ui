@@ -215,18 +215,17 @@ fn shown_num(e: &Engine, shown: &Shown, obj: ObjectId, p: PropIndex) -> f64 {
 }
 
 impl Geom {
-    fn read(e: &Engine, obj: ObjectId) -> Geom {
-        let shown = crate::animation::shown::shown(e);
+    fn read(e: &Engine, obj: ObjectId, shown: &Shown) -> Geom {
         Geom {
             z: num(e, obj, Item::Z.index),
             w: num(e, obj, Item::WIDTH.index),
             h: num(e, obj, Item::HEIGHT.index),
             visible: e.read(obj, Item::VISIBLE.index).to_boolean(),
             faces_away: crate::flipable::faces_away(e, obj),
-            opacity: shown_num(e, &shown, obj, Item::OPACITY.index),
+            opacity: shown_num(e, shown, obj, Item::OPACITY.index),
             clip: e.read(obj, Item::CLIP.index).to_boolean(),
-            rotation: shown_num(e, &shown, obj, Item::ROTATION.index),
-            scale: shown_num(e, &shown, obj, Item::SCALE.index),
+            rotation: shown_num(e, shown, obj, Item::ROTATION.index),
+            scale: shown_num(e, shown, obj, Item::SCALE.index),
             origin: num(e, obj, Item::TRANSFORM_ORIGIN.index) as i32,
             listed: matches!(e.read(obj, Item::TRANSFORM.index), Value::List(l) if !l.is_empty()),
         }
@@ -1119,10 +1118,13 @@ impl QuickScene {
         let lifted = Rc::clone(&self.shared);
         effects.push(engine.effect_in(obj, move |e| inherit_effect(e, obj, &inherit, &lifted))?);
         effects.push(engine.effect_in(obj, move |e| anchors::run(e, obj, &anchors))?);
+        // What an Animator shows is one table for the engine: looked up
+        // here, not on each of the runs that follow an animated value.
+        let shown = crate::animation::shown::shown(engine);
+        let (place, shared) = (Rc::clone(&shown), Rc::clone(&self.shared));
+        effects.push(engine.effect_in(obj, move |e| place_effect(e, obj, &place, &shared))?);
         let shared = Rc::clone(&self.shared);
-        effects.push(engine.effect_in(obj, move |e| place_effect(e, obj, &shared))?);
-        let shared = Rc::clone(&self.shared);
-        effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shared))?);
+        effects.push(engine.effect_in(obj, move |e| geometry_effect(e, obj, &shown, &shared))?);
         if kind.polishes() {
             let shared = Rc::clone(&self.shared);
             effects.push(engine.effect_in(obj, move |e| polish_effect(e, obj, kind, &shared))?);
@@ -2440,25 +2442,20 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
     });
 }
 
-fn place_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
-    if !e.is_alive(obj) {
-        return;
-    }
-    let shown = crate::animation::shown::shown(e);
+/// Run where `obj` is alive: as its effect, or by [`shown_changed`].
+fn place_effect(e: &Engine, obj: ObjectId, shown: &Shown, shared: &SharedRc) {
     let place = (
-        shown_num(e, &shown, obj, Item::X.index),
-        shown_num(e, &shown, obj, Item::Y.index),
+        shown_num(e, shown, obj, Item::X.index),
+        shown_num(e, shown, obj, Item::Y.index),
     );
     mark(shared, |s| {
         s.place.insert(obj, place);
     });
 }
 
-fn geometry_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
-    if !e.is_alive(obj) {
-        return;
-    }
-    let g = Geom::read(e, obj);
+/// Run where `obj` is alive, as [`place_effect`] is.
+fn geometry_effect(e: &Engine, obj: ObjectId, shown: &Shown, shared: &SharedRc) {
+    let g = Geom::read(e, obj, shown);
     mark(shared, |s| {
         s.geom.insert(obj, g);
     });
@@ -2509,13 +2506,17 @@ fn polish_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
 /// An Animator showed another value of `prop`, or stopped showing one:
 /// whatever draws that property reads it again.
 fn shown_changed(e: &Engine, obj: ObjectId, prop: PropIndex, shared: &SharedRc) {
+    if !e.is_alive(obj) {
+        return;
+    }
+    let shown = crate::animation::shown::shown(e);
     if prop == Item::X.index || prop == Item::Y.index {
-        place_effect(e, obj, shared);
+        place_effect(e, obj, &shown, shared);
     } else if [Item::OPACITY, Item::ROTATION, Item::SCALE]
         .iter()
         .any(|p| p.index == prop)
     {
-        geometry_effect(e, obj, shared);
+        geometry_effect(e, obj, &shown, shared);
     } else if is_a::<crate::shader_effect::ShaderEffect>(e, obj) {
         content_effect(e, obj, Kind::Shader, shared);
     }
@@ -2588,7 +2589,7 @@ fn inherit_effect(e: &Engine, obj: ObjectId, st: &RefCell<Inherit>, shared: &Sha
     let lifted = covered && st.visible.is_none();
     drop(guard);
     if lifted {
-        let g = e.untrack(|| Geom::read(e, obj));
+        let g = e.untrack(|| Geom::read(e, obj, &crate::animation::shown::shown(e)));
         mark(shared, |s| {
             s.geom.insert(obj, g);
         });
