@@ -10,6 +10,14 @@
 //! for a driver that answers no display. Neither loader has a call that
 //! leaves a driver out, only its environment, so the shell sets that
 //! before anything loads either.
+//!
+//! Mesa's software rasteriser (llvmpipe, and lavapipe for Vulkan) starts
+//! one thread per core and wakes every one of them for each frame. On 32
+//! cores an animation at 60 frames a second woke the process about 8,000
+//! times a second, Qt's as much; with four threads about 1,300, with the
+//! same frames shown (docs/BENCHMARKS.md). It is told how many threads to
+//! use only by its environment, so the shell caps that too, unless the
+//! user chose. Hardware drivers do not read it.
 
 use std::path::{Path, PathBuf};
 
@@ -28,10 +36,24 @@ const VULKAN_CHOSEN: [&str; 5] = [
 /// The first Vulkan loader that reads `VK_LOADER_DRIVERS_DISABLE`.
 const DISABLE_SINCE: (u32, u32, u32) = (1, 3, 234);
 
-/// Leaves NVIDIA's EGL vendor and Vulkan driver out when its kernel
-/// driver is not loaded. Leaves each loader alone when the user chose its
-/// drivers themselves.
-pub(crate) fn leave_out_unused() {
+/// The variable by which Mesa's software rasteriser is told its threads.
+const RASTER_THREADS: &str = "LP_NUM_THREADS";
+/// The most threads the software rasteriser is given unless the user
+/// chose: more woke the process more often and showed no more frames.
+const MOST_RASTER_THREADS: usize = 4;
+
+/// Caps the software rasteriser's threads, and leaves NVIDIA's EGL vendor
+/// and Vulkan driver out when its kernel driver is not loaded. Leaves each
+/// alone when the user chose themselves.
+pub(crate) fn choose() {
+    let raster = raster_threads(
+        std::env::var_os(RASTER_THREADS).is_some(),
+        std::thread::available_parallelism().map_or(1, usize::from),
+    );
+    if let Some(n) = raster {
+        // SAFETY: as below.
+        unsafe { std::env::set_var(RASTER_THREADS, n.to_string()) };
+    }
     if Path::new(NVIDIA_DRIVER).exists() {
         return;
     }
@@ -51,6 +73,12 @@ pub(crate) fn leave_out_unused() {
             std::env::set_var(name, value);
         }
     }
+}
+
+/// The threads to give the software rasteriser, or `None` to leave it as
+/// it is: the user chose, or it would start no more than that anyway.
+fn raster_threads(chosen: bool, cores: usize) -> Option<usize> {
+    (!chosen && cores > MOST_RASTER_THREADS).then_some(MOST_RASTER_THREADS)
 }
 
 /// The EGL vendors to name, or `None` to leave glvnd as it is.
@@ -288,6 +316,14 @@ mod tests {
             nvidia_names(&drivers).as_deref(),
             Some("nvidia_icd.json,nvidia_layers.json")
         );
+    }
+
+    #[test]
+    fn the_software_rasteriser_is_capped_unless_the_user_chose() {
+        assert_eq!(raster_threads(false, 32), Some(MOST_RASTER_THREADS));
+        assert_eq!(raster_threads(true, 32), None);
+        assert_eq!(raster_threads(false, MOST_RASTER_THREADS), None);
+        assert_eq!(raster_threads(false, 2), None);
     }
 
     #[test]

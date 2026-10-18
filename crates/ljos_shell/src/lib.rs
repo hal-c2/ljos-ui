@@ -499,7 +499,7 @@ pub fn run<M: Send + 'static>(
 ) -> Result<(), ShellError> {
     large_buffers_from_the_system();
     #[cfg(target_os = "linux")]
-    drivers::leave_out_unused();
+    drivers::choose();
     desktop::run(config, setup)
 }
 

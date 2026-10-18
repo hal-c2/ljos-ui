@@ -1561,6 +1561,38 @@ In the X11 sandbox (`desktop:cua`, llvmpipe), clocks's EGL display started in 22
 under load). No NVIDIA library is mapped on either painter after (47 mappings before), and anon PSS
 falls from 53.9 to 47.4 MiB (GL) and from 56.4 to 49.5 MiB (wgpu).
 
+### llvmpipe's threads, and what wakes an animated application (2026-10-18)
+
+An application drawing at 60 frames a second in the X11 sandbox woke about 8,000 times a second,
+and colorpaletteclient 8,200–16,000 while its busy indicator turned. Counted by thread
+(`/proc/<pid>/task/*/status`, voluntary switches), about four in five were llvmpipe's raster
+threads: Mesa starts one per core (32 here) and wakes each of them for every frame. Qt's are the
+same, so qml6 woke as often. Nothing in Ljós polled: at rest both stayed at 0.
+
+Mesa is told how many threads to start only by `LP_NUM_THREADS`, which hardware drivers do not
+read. The bench was run with it unset and at 2, 4 and 8 for both (`--profile desktop --repeat 1`,
+a load of 27–64; the Qt column at 8 is left out, its run was disturbed). Wakeups per second while
+idle, CPU while driven (% of a core) and frames shown while driven:
+
+| App | Threads | Wakeups, Ljós / Qt | CPU driven, Ljós / Qt | Frames driven, Ljós / Qt |
+|---|---|---:|---:|---:|
+| animations | 32 | 7974 / 6802 | 17.9 / 23.6 | 59.1 / 59.1 |
+| animations | 8 | 2418 / — | 12.8 / — | 59.8 / — |
+| animations | 4 | 1348 / 1225 | 9.0 / 13.8 | 59.0 / 58.8 |
+| animations | 2 | 787 / 871 | 9.5 / 10.8 | 57.3 / 60.6 |
+| samegame | 32 | 5886 / 6800 | 111 / 186 | 56.5 / 60.3 |
+| samegame | 8 | 1801 / — | 72.8 / — | 54.1 / — |
+| samegame | 4 | 979 / 1340 | 82.4 / 184 | 56.1 / 60.7 |
+| samegame | 2 | 666 / 1245 | 72.8 / 133 | 40.6 / 41.8 |
+
+Four threads show the frames 32 do; two lose samegame's while it is clicked. When the user has not
+set it and the machine has more than four cores, the shell now sets `LP_NUM_THREADS=4` where it
+leaves out NVIDIA's drivers, before anything loads Mesa (`crates/ljos_shell/src/drivers.rs`). A
+turning square (`ljos run`, 500×400) then woke 1,572 times a second against qml6's 7,914, at 4 %
+of a core against 9 %, and colorpaletteclient's connect at most 506 times a second. What is left
+is the UI thread, about 15 wakeups a frame (928 a second), as Qt's render thread (841): the frame
+callback, the swap and llvmpipe's fences.
+
 ### The binary's size and the file pages it keeps in memory (2026-10-18)
 
 The `ljos` command is the development tool: the runner, the inspector and authoring servers, the
