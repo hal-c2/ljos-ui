@@ -2602,6 +2602,144 @@ them for an edit to a member of a group or an attached object (`font.pixelSize`,
 - **Model rows.** The row objects `get()` made (todolist) are a cache, compared through the
   model.
 
+### Hot reload: fewer full-path reloads (2026-10-18)
+
+The same fuzzer, three lanes, seeds 7 and 13, run again after each step. A step's column is
+the build with that step and the ones before it. "step 4" also has the fixes made after it.
+
+1. A user of the component sets the edited member: the other instances take the edit in
+   place, and those whose user sets it keep the user's value.
+2. A member no longer given, or a same-type sibling moved into another's place: the member
+   goes back to what a new object of its type has (the reset, else the native default and its
+   default binding). The object stays.
+3. A `ListElement` added, removed or moved in a model written in QML: the model's own insert,
+   remove and move. Views keep the delegates of the rows that stay.
+4. A property renamed: in place when no other file of the app reads or sets either name.
+   Otherwise it takes the full path, and the debug log says which file.
+
+**Seed 7, edits that took the full path, by reason:**
+
+| Reason | before | step 1 | step 2 | step 3 | step 4 |
+|---|---:|---:|---:|---:|---:|
+| a component's signature changed | 34 | 34 | 34 | 34 | 9 |
+| objects came or went where they cannot be put | 10 | 10 | 10 | 1 | 1 |
+| a member is no longer given | 8 | 8 | – | – | – |
+| an object's grouped members changed | 7 | 7 | 1 | 1 | 1 |
+| ComponentRemoved | 6 | 6 | 6 | 6 | 6 |
+| an object's declared properties changed | 6 | 6 | 6 | 6 | 4 |
+| a user of the component sets the edited member | 6 | – | – | – | – |
+| an edited binding reads an id that is gone | 5 | 5 | 5 | 5 | 5 |
+| a model's elements changed | 4 | 4 | 4 | – | – |
+| an object's members given objects changed | 3 | 3 | 3 | 3 | 3 |
+| a singleton's file edited | 1 | 1 | 1 | 1 | 5 |
+| a state or a Binding holds the edited object | 1 | 1 | 1 | 1 | 2 |
+| an edited member is not found | 1 | 1 | 1 | 1 | 1 |
+| the parent can't hold the object | 1 | 1 | 1 | 1 | 1 |
+| FileAdded | 1 | 1 | 1 | 1 | 1 |
+| an object's attached members changed | 1 | 1 | – | – | – |
+| an element is not in a model that stays | – | – | – | 3 | 3 |
+| a renamed property's object has members its user declares | – | – | – | – | 3 |
+| a renamed property is read or set in another file | – | – | – | – | 1 |
+| **full path** | **95** | **89** | **74** | **64** | **46** |
+| **in place** | **535** | **541** | **556** | **566** | **561** |
+| **diverged** | **38** | **37** | **48** | **55** | **48** |
+
+**Seed 13:**
+
+| Reason | before | step 1 | step 2 | step 3 | step 4 |
+|---|---:|---:|---:|---:|---:|
+| a component's signature changed | 54 | 54 | 54 | 54 | 13 |
+| ComponentRemoved | 8 | 8 | 8 | 8 | 9 |
+| an edited member is not found | 7 | 7 | 7 | 7 | 7 |
+| objects came or went where they cannot be put | 7 | 7 | 7 | – | – |
+| a state or a Binding holds the edited object | 6 | 6 | 6 | 6 | 6 |
+| a member is no longer given | 5 | 5 | – | – | – |
+| a user of the component sets the edited member | 5 | – | – | – | – |
+| an object's members given objects changed | 4 | 4 | 4 | 4 | 4 |
+| an object's declared properties changed | 4 | 4 | 4 | 4 | 3 |
+| a model's elements changed | 3 | 3 | 3 | – | – |
+| an object's grouped members changed | 3 | 3 | – | – | – |
+| a singleton's file edited | 2 | 2 | 2 | 2 | 5 |
+| an edited binding reads an id that is gone | 2 | 2 | 2 | 2 | 2 |
+| FileAdded | 1 | 1 | 1 | 1 | 1 |
+| a component's name, id, kind or signature changed | 1 | 1 | 1 | 1 | – |
+| an object's members changed | 1 | 1 | 1 | 1 | – |
+| a renamed property is read or set in another file | – | – | – | – | 5 |
+| a renamed property's object has members its user declares | – | – | – | – | 3 |
+| an element is not in a model that stays | – | – | – | 1 | 1 |
+| a component's name, id or kind changed | – | – | – | – | 1 |
+| **full path** | **113** | **108** | **100** | **91** | **60** |
+| **in place** | **548** | **553** | **561** | **570** | **578** |
+| **diverged** | **48** | **50** | **56** | **55** | **54** |
+
+`ComponentRemoved` and `FileAdded` are the reload's own names for a component or a file that
+came or went. Some reasons grow in the last column because the edits before them now go in
+place: the next edit then meets other code. For example, a rename that now goes in place
+leaves the next edit to a singleton's file. The number of edits that compile also changes
+from build to build, so the in-place and full-path counts don't add up to the same total.
+
+What stays on the full path:
+
+- **A renamed property that another file reads or sets.** The users' bindings name it.
+- **A renamed property on an object whose user declares members.** The user's members are laid
+  out after the type's.
+- **A partial grouped member or an alias given a value.** What the member was before can't be
+  worked out per field.
+- **A singleton's file, a component removed, a signal or a declared property's type changed,
+  members given objects changed, an id that a binding reads removed.** Same as before.
+
+**Bugs found on the way and fixed, each with a scenario or a test:**
+
+1. A rename on an object whose user declares members took the user's members' places.
+2. A native member no longer given lost its default binding, for example `Accessible.name`.
+3. An object destroyed by a reload's model edit waited for the next input to be deleted. It
+   now wakes the host, as any deferred delete does.
+4. An id removed from a component's file kept naming the removed object. The bindings that
+   read it got `null` where a fresh load finds the user's object of that name (todolist).
+
+**More state kept on purpose:**
+
+- **Delegate order after a row moved or was removed.** The delegates of the rows that stay are
+  kept, so they are made in another order than a fresh load makes them (clocks, rssnews). Qt
+  keeps them too when a script changes the model.
+- **A view's highlight before its new delegates.** When the model a view reads becomes another
+  model, the highlight stays and the new delegates come after it, as when a script sets
+  `model`.
+- **A `LayoutItemProxy` given another target.** It keeps the items it holds, as when a script
+  sets `target` (calqlatr).
+- **Nested models.** A row whose nested list changed gets a new nested model, made after the
+  others. Every delegate reads the same data, as after a script's `set()` (alarms).
+- **Follow bindings after a reset.** A side margin or a corner radius no longer given follows
+  `margins` or `radius` again with a binding. A fresh object binds it only when needed, so the
+  value is the same and only "bound" differs.
+
+photosurface is not fixed. After an in-place rename, its full path makes 11 to 14 objects new
+that it used to keep. This is a matching count only: the values agree.
+
+### Hot reload: from saving a file to the frame that shows it (2026-10-18)
+
+The time from a file's save to the first frame that shows the edit, median of 20 saves 2.5 s
+apart.
+
+- **Ljós:** `reload_profile` with `--features dev` and no GPU paint, on a loaded machine. The
+  edits were a binding's value (in place), and a change to the signature of `Clock` or of
+  calqlatr's `Display` (full path).
+- **qml6:** qml6 has no reload of its own, so it was timed through Qt's `qmlpreview`, which
+  reloads the whole file each time. A copy of the app had a `frameSwapped` probe added.
+
+| App | Ljós in place | Ljós full path | qml6 through qmlpreview |
+|---|---:|---:|---:|
+| clocks | 16.8 ms | 21.1 ms | 119.5 ms |
+| calqlatr | 19.0 ms | 28.4 ms | 131 ms |
+
+- **The quiet wait.** Ljós's times include the 15.1 ms quiet wait that gathers an editor's
+  writes into one reload. The reload itself, to the frame, takes about 1.7 ms (clocks) and
+  3.9 ms (calqlatr) in place, and 6 ms and 13 ms on the full path.
+- **qmlpreview's watcher.** Most of qml6's time is the watcher's own delay: no new tree was
+  made in less than 104 ms.
+- **The slowest saves.** On both sides, a few saves out of 20 took hundreds of ms because the
+  machine was loaded. The medians leave them out.
+
 ### Clicks on a settled window, and a press that arrives (2026-10-18)
 
 `BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench samegame --profile desktop --settle 3 --idle 4
