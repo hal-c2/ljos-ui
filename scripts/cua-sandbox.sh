@@ -84,6 +84,14 @@ own_dirs() {
   mkdir -p "$xdg/config" "$xdg/data" "$xdg/state"
   if [[ -d $user_config/fontconfig ]]; then ln -sfn "$user_config/fontconfig" "$xdg/config/fontconfig"; fi
   if [[ -d $user_data/fonts ]]; then ln -sfn "$user_data/fonts" "$xdg/data/fonts"; fi
+  # The user's own folders stay out too: an app that opens the pictures folder (photosurface)
+  # would otherwise load every photo the user has, and show something else on each machine.
+  local dir
+  : > "$xdg/config/user-dirs.dirs"
+  for dir in DESKTOP DOCUMENTS DOWNLOAD MUSIC PICTURES VIDEOS PUBLICSHARE TEMPLATES; do
+    mkdir -p "$xdg/user/${dir,,}"
+    echo "XDG_${dir}_DIR=\"$xdg/user/${dir,,}\"" >> "$xdg/config/user-dirs.dirs"
+  done
 }
 
 sandbox_env=()
