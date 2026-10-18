@@ -22,7 +22,7 @@
 //! [`Engine::refresh_fields`] first.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::Instant;
 
 use ljos_reactive::{
@@ -1084,10 +1084,8 @@ impl Engine {
             .objects
             .get(obj)
             .ok_or_else(|| EngineError::dead(obj))?;
-        let t = downcast_chain::<T>(&*h.native).ok_or_else(|| EngineError::WrongType {
-            ty: h.meta.name.to_string(),
-            expected: T::static_meta().name.to_string(),
-        })?;
+        let t = downcast_chain::<T>(&*h.native)
+            .ok_or_else(|| wrong_type(&h.meta.name, T::static_meta()))?;
         Ok(f(t))
     }
 
@@ -1104,10 +1102,8 @@ impl Engine {
             .get_mut(obj)
             .ok_or_else(|| EngineError::dead(obj))?;
         let name = h.meta.name.clone();
-        let t = downcast_chain_mut::<T>(&mut *h.native).ok_or_else(|| EngineError::WrongType {
-            ty: name.to_string(),
-            expected: T::static_meta().name.to_string(),
-        })?;
+        let t = downcast_chain_mut::<T>(&mut *h.native)
+            .ok_or_else(|| wrong_type(&name, T::static_meta()))?;
         Ok(f(t))
     }
 
@@ -2333,13 +2329,10 @@ impl Engine {
         let n = self.ensure_node(obj, prop)?;
         let scope = self.ensure_scope(obj)?;
         let weak = Rc::downgrade(&self.inner);
-        Ok(self.inner.graph.watch(scope, n, move |_g, v| {
-            if let Some(inner) = weak.upgrade() {
-                let engine = Engine::from_inner(inner);
-                let _t = Tracking::pause(&engine.inner.tracking);
-                f(&engine, v);
-            }
-        })?)
+        Ok(self
+            .inner
+            .graph
+            .watch(scope, n, move |_g, v| heard(&weak, v, &f))?)
     }
 
     fn effect_scoped(
@@ -2349,13 +2342,7 @@ impl Engine {
     ) -> Result<NodeId, EngineError> {
         let weak = Rc::downgrade(&self.inner);
         let g = &self.inner.graph;
-        Ok(g.effect(scope, move |_g| {
-            if let Some(inner) = weak.upgrade() {
-                let engine = Engine::from_inner(inner);
-                let _t = Tracking::enter(&engine.inner.tracking);
-                f(&engine);
-            }
-        })?)
+        Ok(g.effect(scope, move |_g| run_effect(&weak, &mut f))?)
     }
 
     // ------------------------------------------------------------- methods
@@ -3054,4 +3041,36 @@ fn attaching(attacher: &MetaRef) -> Option<(crate::meta::AttachedTypeId, fn() ->
         let key = crate::meta::AttachedTypeId(std::ptr::from_ref(m) as usize);
         m.attached.map(|make| (key, make))
     })
+}
+
+/// What a watch does when its property changes, for every handler: the
+/// handler is the one part that differs.
+#[inline(never)]
+fn heard(weak: &Weak<Inner>, v: &Value, f: &dyn Fn(&Engine, &Value)) {
+    if let Some(inner) = weak.upgrade() {
+        let engine = Engine::from_inner(inner);
+        let _t = Tracking::pause(&engine.inner.tracking);
+        f(&engine, v);
+    }
+}
+
+/// What an effect does when it runs, for every effect.
+#[inline(never)]
+fn run_effect(weak: &Weak<Inner>, f: &mut dyn FnMut(&Engine)) {
+    if let Some(inner) = weak.upgrade() {
+        let engine = Engine::from_inner(inner);
+        let _t = Tracking::enter(&engine.inner.tracking);
+        f(&engine);
+    }
+}
+
+/// The error of a borrow as the wrong type: built out of line, as it is
+/// in every typed borrow and taken by almost none.
+#[cold]
+#[inline(never)]
+fn wrong_type(have: &Atom, expected: &MetaObject) -> EngineError {
+    EngineError::WrongType {
+        ty: have.to_string(),
+        expected: expected.name.to_string(),
+    }
 }

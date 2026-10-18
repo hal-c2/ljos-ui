@@ -347,14 +347,22 @@ struct BatchGuard<'g, V: Clone + 'static>(&'g Graph<V>);
 
 impl<V: Clone + 'static> Drop for BatchGuard<'_, V> {
     fn drop(&mut self) {
+        self.0.leave_batch();
+    }
+}
+
+impl<V: Clone + 'static> Graph<V> {
+    /// What a [`BatchGuard`] does, once rather than in each batch's caller.
+    #[inline(never)]
+    fn leave_batch(&self) {
         let outermost = {
-            let mut i = self.0.inner.borrow_mut();
+            let mut i = self.inner.borrow_mut();
             i.batch_depth -= 1;
             i.batch_depth == 0
         };
         if outermost && !std::thread::panicking() {
-            self.0.flush();
-            self.0.freeze_waiting();
+            self.flush();
+            self.freeze_waiting();
         }
     }
 }
@@ -417,7 +425,7 @@ struct UntrackGuard<'g, V: Clone + 'static>(&'g Graph<V>);
 
 impl<V: Clone + 'static> Drop for UntrackGuard<'_, V> {
     fn drop(&mut self) {
-        self.0.inner.borrow_mut().frames.pop();
+        self.0.leave_untracked();
     }
 }
 
@@ -823,21 +831,34 @@ impl<V: Clone + 'static> Graph<V> {
         target: NodeId,
         mut handler: impl FnMut(&Graph<V>, &V) + 'static,
     ) -> Result<NodeId, ReactiveError> {
+        // What depends on the handler is only the call: there is a copy of
+        // this per handler, so the rest is not in it.
+        self.watch_with(
+            scope,
+            target,
+            Box::new(move |g: &Graph<V>| g.watched(target, &mut handler)),
+        )
+    }
+
+    #[inline(never)]
+    fn watched(&self, target: NodeId, handler: &mut dyn FnMut(&Graph<V>, &V)) {
+        if let Some(v) = self.try_get(target) {
+            self.untrack(|| handler(self, &v));
+        }
+    }
+
+    #[inline(never)]
+    fn watch_with(
+        &self,
+        scope: ScopeId,
+        target: NodeId,
+        f: EffectFn<V>,
+    ) -> Result<NodeId, ReactiveError> {
         // The target must be clean before we link to it, or a later change
         // would stop at the already-dirty target and never reach us.
         self.try_get_untracked(target)?;
         let mut g = self.inner.borrow_mut();
-        let f = move |g: &Graph<V>| {
-            if let Some(v) = g.try_get(target) {
-                g.untrack(|| handler(g, &v));
-            }
-        };
-        let n = g.insert_node(
-            scope,
-            Kind::Effect(Some(Box::new(f))),
-            None,
-            NodeState::Clean,
-        )?;
+        let n = g.insert_node(scope, Kind::Effect(Some(f)), None, NodeState::Clean)?;
         let i = &mut *g;
         let h = i.nodes[target].height;
         // `n` is new, so the target is its only source: index 0.
@@ -1016,13 +1037,25 @@ impl<V: Clone + 'static> Graph<V> {
     /// Runs `f` without recording reads as dependencies of the running
     /// binding or effect.
     pub fn untrack<R>(&self, f: impl FnOnce() -> R) -> R {
+        // Called from a thousand places: what does not depend on `f` is a
+        // call each way, not a copy in every caller.
+        self.enter_untracked();
+        let _guard = UntrackGuard(self);
+        f()
+    }
+
+    #[inline(never)]
+    fn enter_untracked(&self) {
         self.inner.borrow_mut().frames.push(Frame {
             node: None,
             stamp: 0,
             reads: Vec::new(),
         });
-        let _guard = UntrackGuard(self);
-        f()
+    }
+
+    #[inline(never)]
+    fn leave_untracked(&self) {
+        self.inner.borrow_mut().frames.pop();
     }
 
     /// Whether a read right now would be recorded as a dependency: true

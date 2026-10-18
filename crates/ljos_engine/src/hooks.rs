@@ -86,24 +86,31 @@ impl Engine {
     /// The engine's one `T`, made on first use. For per-engine state of a
     /// crate built on the engine.
     pub fn extension<T: Default + 'static>(&self) -> Rc<T> {
+        // One lookup for every type; what is per type is its key and how
+        // to make it.
+        let any = self.extension_of(TypeId::of::<T>(), || Rc::new(T::default()));
+        any.downcast::<T>()
+            .unwrap_or_else(|_| unreachable!("extensions are keyed by their type"))
+    }
+
+    #[inline(never)]
+    fn extension_of(&self, id: TypeId, make: fn() -> Rc<dyn Any>) -> Rc<dyn Any> {
         let hooks = &self.inner.hooks;
-        let found = hooks.extensions.borrow().get(&TypeId::of::<T>()).cloned();
-        let any = match found {
+        let found = hooks.extensions.borrow().get(&id).cloned();
+        match found {
             Some(a) => a,
             None => {
                 // Made outside the borrow: `T::default()` may ask for
                 // another extension.
-                let made: Rc<dyn Any> = Rc::new(T::default());
+                let made = make();
                 hooks
                     .extensions
                     .borrow_mut()
-                    .entry(TypeId::of::<T>())
+                    .entry(id)
                     .or_insert(made)
                     .clone()
             }
-        };
-        any.downcast::<T>()
-            .unwrap_or_else(|_| unreachable!("extensions are keyed by their type"))
+        }
     }
 
     /// Calls `f` once the JS host has started, or now when it already has.
