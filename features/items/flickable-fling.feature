@@ -414,6 +414,31 @@ Feature: Flinging a Flickable
       And the user releases the pointer at 100, 320
       Then the property "thrown" of "root" is within 1 of 637.2
 
+    # qmltestrunner showed these with mouse moves 16 milliseconds apart. Its
+    # offscreen startDragDistance is 10, a desktop's 8: moves of 12 pixels
+    # begin the drag at the same move under both.
+    @ljos-only @api-QtQuick.Flickable.verticalVelocity
+    Scenario: While dragged the velocity is the last move's, and first the way since the press
+      When the user presses the pointer at 100, 390
+      And 16 milliseconds pass
+      And the user moves the pointer to 100, 378
+      And 16 milliseconds pass
+      And the user moves the pointer to 100, 366
+      Then the property "verticalVelocity" of "f" is 0
+      When 16 milliseconds pass
+      And the user moves the pointer to 100, 354
+      Then the property "contentY" of "f" is 12
+      And the property "verticalVelocity" of "f" is within 0.01 of 250
+      When 16 milliseconds pass
+      And the user moves the pointer to 100, 342
+      Then the property "verticalVelocity" of "f" is within 0.01 of 750
+      When 16 milliseconds pass
+      And the user moves the pointer to 100, 302
+      Then the property "verticalVelocity" of "f" is within 0.01 of 2500
+      When 16 milliseconds pass
+      And the user moves the pointer to 100, 297
+      Then the property "verticalVelocity" of "f" is within 0.01 of 312.5
+
     @qt-parity
     Scenario: A pointer that creeps flings nothing
       When the user presses the pointer at 100, 390

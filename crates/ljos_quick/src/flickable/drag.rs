@@ -50,6 +50,10 @@ pub(crate) struct DragState {
     /// direction began to follow.
     anchor: Cell<[Option<(f64, f64)>; 2]>,
     velocity: RefCell<[VelocityTracker; 2]>,
+    /// Per direction, what `verticalVelocity` and the like show while the
+    /// content follows: when the content last moved, where it was asked
+    /// to be then, and the speed it moved at.
+    shown: Cell<[Option<(Time, f64, f64)>; 2]>,
 }
 
 /// The presses of an engine's scenes, counted, so that a Flickable knows
@@ -128,6 +132,7 @@ fn watch(engine: &Engine, f: ObjectId, st: &FlickState, press_scene: kurbo::Poin
     d.armed.set(false);
     d.taken.set(false);
     d.anchor.set([None; 2]);
+    d.shown.set([None; 2]);
     let mut trackers = d.velocity.borrow_mut();
     for axis in [X, Y] {
         trackers[axis].clear();
@@ -182,6 +187,11 @@ fn anchor(e: &Engine, f: ObjectId, st: &FlickState, axes: [bool; 2], at: kurbo::
             // drag there would: from what that drag asked for.
             let content = physics.undragged(&fling::virtual_position(e, f, axis), &s);
             anchors[axis] = Some((coordinate(at, axis), content));
+            // The first speed shown is the way from the press: the content
+            // was there then.
+            let mut shown = d.shown.get();
+            shown[axis] = Some((e.extension::<Presses>().time.get(), content, 0.0));
+            d.shown.set(shown);
         }
     }
     d.anchor.set(anchors);
@@ -237,9 +247,27 @@ fn follow(e: &Engine, f: ObjectId, st: &FlickState, at: kurbo::Point, time: Time
         // past a bound: it is what a fling is thrown with.
         let wanted = content + pointer - coordinate(at, axis);
         let to = physics.dragged(&state, wanted, &s);
-        let velocity = st.drag.velocity.borrow()[axis].velocity(time);
+        let velocity = shown_velocity(&st.drag, axis, time, wanted);
         fling::place(e, f, axis, to, velocity);
     }
+}
+
+/// The speed shown while the content follows: the last move's, as qml6
+/// shows, not the smoothed one a release throws. A move that leaves the
+/// content where it was shows the last speed and is not counted.
+fn shown_velocity(d: &DragState, axis: usize, time: Time, wanted: f64) -> f64 {
+    let mut shown = d.shown.get();
+    let Some((t0, w0, v0)) = shown[axis] else {
+        return 0.0;
+    };
+    let dt = time.saturating_since(t0).as_secs_f64();
+    if wanted == w0 || dt <= 0.0 {
+        return v0;
+    }
+    let v = (wanted - w0) / dt;
+    shown[axis] = Some((time, wanted, v));
+    d.shown.set(shown);
+    v
 }
 
 /// The press ended, or was taken away: the content is let go. It flings,
