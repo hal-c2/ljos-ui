@@ -1295,8 +1295,9 @@ Feature: What a reload changes
 
     The content of a Flickable, a Pane, a Popup, a Menu, a container such
     as SwipeView, an application window and an ObjectModel takes an object
-    added before one that stays where the file puts it. The rest goes on
-    as it was, an animation half way too.
+    added before one that stays where the file puts it, and so does a list
+    of objects given to a member, such as states. The rest goes on as it
+    was, an animation half way too.
 
     Scenario: An object added before another in a Flickable is in its place
       Given the QML:
@@ -1654,6 +1655,108 @@ Feature: What a reload changes
       And a reload happens
       And the method "probe" of "root" is called
       Then the property "order" of "root" is "a,c,b"
+      And the property "x" of "box" is at least 40
+
+    Scenario: An object added before another in a list given to states is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          states: [
+            State { name: "one"; objectName: "one"; PropertyChanges { target: root; width: 11 } },
+            State { name: "two"; objectName: "two"; PropertyChanges { target: root; width: 33 } },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < states.length; i++) r.push(states[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          states: [
+            State { name: "one"; objectName: "one"; PropertyChanges { target: root; width: 11 } },
+            State { name: "mid"; objectName: "mid"; PropertyChanges { target: root; width: 22 } },
+            State { name: "two"; objectName: "two"; PropertyChanges { target: root; width: 33 } },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < states.length; i++) r.push(states[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "one,mid,two"
+      And the property "x" of "box" is at least 40
+      When the property "state" of "root" is set to "mid"
+      Then the property "width" of "root" is 22
+
+    Scenario: An object added before another in a list given to transitions is in its place
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          transitions: [
+            Transition { objectName: "one"; to: "a" },
+            Transition { objectName: "two"; to: "b" },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < transitions.length; i++) r.push(transitions[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string order: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          transitions: [
+            Transition { objectName: "one"; to: "a" },
+            Transition { objectName: "mid"; to: "m" },
+            Transition { objectName: "two"; to: "b" },
+          ]
+          function probe() {
+            var r = []
+            for (var i = 0; i < transitions.length; i++) r.push(transitions[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "one,mid,two"
       And the property "x" of "box" is at least 40
 
   Rule: Other changes to objects make them again, as the file now writes them

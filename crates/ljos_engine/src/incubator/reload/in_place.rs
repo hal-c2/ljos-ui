@@ -36,7 +36,6 @@ use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap as HashMap;
 
 use super::{Phases, ReloadOutcome, resets};
-use crate::WriteKind;
 use crate::engine::Engine;
 use crate::ids::ObjectId;
 use crate::incubator::{
@@ -47,6 +46,7 @@ use crate::meta::MetaRef;
 use crate::object::QmlType;
 use crate::qtqml::Component;
 use crate::value::Value;
+use crate::{EngineError, PropIndex, WriteKind};
 
 /// Where the dead instances and components are first swept out.
 const FIRST_SWEEP: usize = 1024;
@@ -733,7 +733,7 @@ impl Engine {
             }
             let i = m.to_old[p.index()]?;
             let takes = self
-                .children_default(file, &comp.objects[p.index()].ty)
+                .list_of(file, &comp.objects[p.index()], j, old.objects[i])
                 .is_ok_and(|prop| self.list_takes_insert(old.objects[i], prop));
             if !takes {
                 tracing::debug!(
@@ -842,9 +842,8 @@ impl Engine {
             self.apply_value_source(parent, child, on);
             return;
         }
-        let ty = &comp.objects[p.index()].ty;
         let r = self
-            .children_default(&inst.file, ty)
+            .list_of(&inst.file, &comp.objects[p.index()], j, parent)
             .and_then(|prop| match before {
                 Some(a) => self.list_insert(parent, prop, child, a).map(drop),
                 None => self.list_append(parent, prop, child),
@@ -854,6 +853,21 @@ impl Engine {
                 "{}Cannot assign to non-existent default property ({e})",
                 self.location_of(child).unwrap_or_default()
             ));
+        }
+    }
+
+    /// The list property of `parent` (written as `def`) the object `j` is
+    /// written in.
+    fn list_of(
+        &self,
+        file: &Rc<LoadedFile>,
+        def: &ObjectDef,
+        j: usize,
+        parent: ObjectId,
+    ) -> Result<PropIndex, EngineError> {
+        match place(def, j).and_then(|(name, _, _)| name) {
+            Some(name) => self.property_index(parent, name),
+            None => self.children_default(file, &def.ty),
         }
     }
 
@@ -1277,6 +1291,19 @@ fn same_but_edits(
     edits.retain(|e| objects[e.comp.index()].to_old[e.obj].is_some());
     for e in edits.iter_mut() {
         e.was = objects[e.comp.index()].to_old[e.obj]?;
+        // A list of objects in both: what it holds is matched as objects
+        // are, and the shapes below tell whether it only grew.
+        let listed = |od: &ObjectDef, name: &str| {
+            od.members
+                .objects
+                .iter()
+                .any(|oa| oa.is_list && oa.name == name)
+        };
+        let (o, n) = (
+            &old.component(e.comp).objects[e.was],
+            &new.component(e.comp).objects[e.obj],
+        );
+        e.names.retain(|name| !(listed(o, name) && listed(n, name)));
     }
     let none: Vec<String> = Vec::new();
     let mut remap = vec![None; old.exprs.len()];
@@ -1296,9 +1323,11 @@ fn same_but_edits(
             let mut b = shape(no, names);
             if !m.same() {
                 renumber(&mut a, c, &objects);
-                b.children.retain(
-                    |v| !matches!(v, ObjectValue::Object(k) if m.to_old[k.index()].is_none()),
-                );
+                let added = |v: &ObjectValue| matches!(v, ObjectValue::Object(k) if m.to_old[k.index()].is_none());
+                b.children.retain(|v| !added(v));
+                for oa in b.members.objects.iter_mut().filter(|oa| oa.is_list) {
+                    oa.values.retain(|v| !added(v));
+                }
             }
             if a != b {
                 return None;
@@ -1526,23 +1555,35 @@ fn longest_rising(seq: &[usize]) -> Vec<bool> {
     stay
 }
 
-/// Whether the objects of `n` are those of `o` with objects added after
-/// the children of one that stays and objects removed, in the same order
-/// otherwise: what a reload in place can make and destroy.
-/// The object that stays and comes right after the added object `j` among
-/// the children of its parent, which `j` is put before.
+/// Where `j` is written in `parent`: among the children of its default
+/// property (no name) or in a list given to the member named, those
+/// values, and its place among them.
+fn place(parent: &ObjectDef, j: usize) -> Option<(Option<&str>, &[ObjectValue], usize)> {
+    let me = ObjectValue::Object(ObjIdx(j as u32));
+    if let Some(at) = parent.children.iter().position(|v| *v == me) {
+        return Some((None, &parent.children, at));
+    }
+    parent.members.objects.iter().find_map(|oa| {
+        let at = oa.values.iter().position(|v| *v == me)?;
+        oa.is_list
+            .then_some((Some(oa.name.as_str()), oa.values.as_slice(), at))
+    })
+}
+
+/// The object that stays and comes right after the added object `j`
+/// where its parent holds it, which `j` is put before.
 fn anchor(comp: &ComponentDef, m: &Objects, j: usize) -> Option<usize> {
     let parent = &comp.objects[comp.objects[j].parent?.index()];
-    let at = parent
-        .children
-        .iter()
-        .position(|v| *v == ObjectValue::Object(ObjIdx(j as u32)))?;
-    parent.children[at + 1..].iter().find_map(|v| match v {
+    let (_, values, at) = place(parent, j)?;
+    values[at + 1..].iter().find_map(|v| match v {
         ObjectValue::Object(k) if m.to_old[k.index()].is_some() => Some(k.index()),
         _ => None,
     })
 }
 
+/// Whether the objects of `n` are those of `o` with objects added after
+/// the children of one that stays and objects removed, in the same order
+/// otherwise: what a reload in place can make and destroy.
 fn grows_simply(o: &ComponentDef, n: &ComponentDef, m: &Objects) -> bool {
     // The root is the instance's own object.
     if m.to_new.first() != Some(&Some(0)) {
@@ -1559,17 +1600,14 @@ fn grows_simply(o: &ComponentDef, n: &ComponentDef, m: &Objects) -> bool {
         if is_model(od) || is_model(parent) {
             return false;
         }
-        // A child of the default property, put before the object that
-        // stays after it, if one does. A `Component` written there is not
-        // an object of the instance to put it before.
-        let Some(at) = parent
-            .children
-            .iter()
-            .position(|v| *v == ObjectValue::Object(ObjIdx(j as u32)))
-        else {
+        // A child of the default property or of a list a member is
+        // given, put before the object that stays after it, if one does. A
+        // `Component` written there is not an object of the instance to
+        // put it before.
+        let Some((_, values, at)) = place(parent, j) else {
             return false;
         };
-        if parent.children[at..]
+        if values[at..]
             .iter()
             .any(|v| matches!(v, ObjectValue::Component(_)))
         {
