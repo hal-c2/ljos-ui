@@ -10,8 +10,7 @@ use std::{
 };
 
 use rquickjs::{
-    Array, Class, Context, Ctx, Exception, Function, Module, Object, Persistent, Runtime, Type,
-    Value,
+    Array, Context, Ctx, Exception, Function, Module, Object, Persistent, Runtime, Type, Value,
     function::{Args, Rest, This},
     object::{Accessor, Property},
 };
@@ -24,7 +23,7 @@ pub use direct::{DirectCall, DirectParam};
 use crate::{
     Bytecode, HostError, HostObjects, HostTypeId, JsArg, JsConfig, JsFault, JsOut, JsRef, JsValue,
     MethodDef, MethodFace, PropDef, SignalDef, Slice, SourceMapper, SourceText, TypeDef, ValueKind,
-    objects::HostWrapper,
+    objects::{HostWrapper, new_wrapper, register_wrapper_class, wrapper_id},
     value::{Pending, WeakRef},
 };
 
@@ -101,6 +100,8 @@ pub(crate) struct HostState {
     /// A panic in a raw accessor ([`raw_accessor`]), which cannot unwind
     /// through QuickJS: kept until the dispatch is back in Rust.
     panicked: RefCell<Option<Box<dyn Any + Send>>>,
+    /// The QuickJS class of every wrapper (objects::register_wrapper_class).
+    wrapper_class: rquickjs::qjs::JSClassID,
     /// The functions of [`JsHost::set_global_function`], by the `magic`
     /// QuickJS calls them with.
     globals: RefCell<Vec<HostFn>>,
@@ -777,8 +778,7 @@ impl<'js> Scope<'js> {
         }
         // Its collection is told too: only once the Engine dropped it
         // ([`JsHost::drop_wrapper`]) and no script held it any more.
-        let w = self.instantiate(obj, Some(self.state.released.clone()))?;
-        let obj_handle = w.into_inner();
+        let obj_handle = self.instantiate(obj, Some(self.state.released.clone()))?;
         self.state
             .wrappers
             .borrow_mut()
@@ -791,7 +791,7 @@ impl<'js> Scope<'js> {
     /// by script, such as `Component.createObject`.
     pub fn new_owned(&self, obj: u64) -> rquickjs::Result<Object<'js>> {
         let q = self.state.released.clone();
-        Ok(self.instantiate(obj, Some(q))?.into_inner())
+        self.instantiate(obj, Some(q))
     }
 
     fn owned_wrapper(&self, obj: u64) -> rquickjs::Result<Object<'js>> {
@@ -834,7 +834,7 @@ impl<'js> Scope<'js> {
         &self,
         obj: u64,
         release_queue: Option<Rc<RefCell<Vec<u64>>>>,
-    ) -> rquickjs::Result<Class<'js, HostWrapper>> {
+    ) -> rquickjs::Result<Object<'js>> {
         let host = self.state.host()?;
         let Some(ty) = host.type_of(obj) else {
             return Err(Exception::throw_message(
@@ -856,13 +856,20 @@ impl<'js> Scope<'js> {
             ));
         };
         let proto = proto.restore(&self.ctx)?;
-        Class::instance_proto(
-            HostWrapper {
-                id: obj,
-                release_queue,
-            },
-            proto,
-        )
+        let w = HostWrapper {
+            id: obj,
+            release_queue,
+        };
+        let raw = self.ctx.as_raw().as_ptr();
+        // SAFETY: the context is entered and the class is its runtime's.
+        let Some(o) = (unsafe { new_wrapper(raw, self.state.wrapper_class, proto.as_raw(), w) })
+        else {
+            return Err(rquickjs::Error::Exception);
+        };
+        // SAFETY: a new object, owned by the Value from here.
+        let v = unsafe { Value::from_raw(self.ctx.clone(), o) };
+        v.into_object()
+            .ok_or_else(|| Exception::throw_type(&self.ctx, "not an object"))
     }
 
     pub fn to_value(&self, v: &JsValue) -> rquickjs::Result<Value<'js>> {
@@ -1056,17 +1063,9 @@ impl<'js> Scope<'js> {
             }
             Type::Object => {
                 let o = v.as_object().expect("object");
-                // A point, a colour or an object a script made is a plain
-                // object. Asked whether it is a host object, QuickJS
-                // throws a TypeError and rquickjs catches it, which costs
-                // more than all the rest of reading the value.
-                let host = if is_plain_object(v) {
-                    None
-                } else {
-                    Class::<HostWrapper>::from_object(o)
-                };
-                match host {
-                    Some(c) => JsValue::Object(c.borrow().id),
+                // SAFETY: the class is this runtime's.
+                match unsafe { wrapper_id(self.state.wrapper_class, o.as_raw()) } {
+                    Some(id) => JsValue::Object(id),
                     None => match self.read_color(o)? {
                         Some(c) => c,
                         None => match self.read_typed(o, depth)? {
@@ -1103,15 +1102,6 @@ fn object_address(v: &Value<'_>) -> Option<usize> {
     // SAFETY: the value is tagged as an object, so its payload is the
     // pointer to it; the pointer is only compared, never followed.
     Some(unsafe { rquickjs::qjs::JS_VALUE_GET_PTR(v.as_raw()) } as usize)
-}
-
-/// Whether `v` is an ordinary object, of QuickJS's first class
-/// (`JS_CLASS_OBJECT`, which the bindings do not export): never a host
-/// object, whose class is one registered after the built-in ones.
-fn is_plain_object(v: &Value<'_>) -> bool {
-    const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
-    // SAFETY: only reads the class of the value, whatever it is tagged as.
-    unsafe { rquickjs::qjs::JS_GetClassID(v.as_raw()) == JS_CLASS_OBJECT }
 }
 
 /// A loaded module and the functions it exports.
@@ -1246,6 +1236,10 @@ impl JsHost {
 
         let ctx = Context::full(&rt)?;
         let raw = ctx.with(|c| c.as_raw());
+        // SAFETY: the runtime is alive.
+        let wrapper_class =
+            unsafe { register_wrapper_class(rquickjs::qjs::JS_GetRuntime(raw.as_ptr())) }
+                .ok_or(rquickjs::Error::Allocation)?;
         let state = Rc::new(HostState {
             fns: RefCell::default(),
             types: RefCell::default(),
@@ -1269,6 +1263,7 @@ impl JsHost {
             direct: RefCell::default(),
             panicked: RefCell::default(),
             globals: RefCell::default(),
+            wrapper_class,
         });
         // SAFETY: the context is alive; the raw accessors read it back as a
         // `Weak` (raw_state), and `Drop` takes it out before the context goes.
@@ -1935,7 +1930,7 @@ unsafe extern "C" fn raw_get(
             let out = host
                 .get(scope, id, prop_id(data))
                 .map_err(|e| e.into_js(&scope.ctx));
-            scope.back(out).and_then(|out| scope.to_value(&out))
+            raw_out(scope, &scope.back(out)?)
         })
     }
 }
@@ -1954,15 +1949,63 @@ unsafe extern "C" fn raw_set(
     unsafe {
         let value = if argc > 0 { *argv } else { qjs::JS_UNDEFINED };
         raw_accessor(ctx, this, |scope, host, id| {
-            let value = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, value));
-            let v = scope.script_value(&value)?;
+            let v = match raw_in(value) {
+                Some(v) => v,
+                None => {
+                    let value = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(ctx, value));
+                    scope.script_value(&value)?
+                }
+            };
             scope.back(
                 host.set(scope, id, prop_id(data), v)
                     .map_err(|e| e.into_js(&scope.ctx)),
             )?;
-            Ok(Value::new_undefined(scope.ctx.clone()))
+            Ok(qjs::JS_UNDEFINED)
         })
     }
+}
+
+/// A value with no reference, made by its tag rather than through a
+/// Value, which would hold the context and be freed.
+fn raw_out(scope: &Scope<'_>, v: &JsValue) -> rquickjs::Result<rquickjs::qjs::JSValue> {
+    use rquickjs::qjs;
+    Ok(match *v {
+        JsValue::Undefined => qjs::JS_UNDEFINED,
+        JsValue::Null => qjs::JS_NULL,
+        JsValue::Bool(b) => {
+            if b {
+                qjs::JS_TRUE
+            } else {
+                qjs::JS_FALSE
+            }
+        }
+        // As `Value::new_number` makes it.
+        #[allow(clippy::float_cmp)]
+        JsValue::Number(n) if n == f64::from(n as i32) => qjs::JS_MKVAL(qjs::JS_TAG_INT, n as i32),
+        JsValue::Number(n) => qjs::JS_NewFloat64(n),
+        _ => owned_raw(scope.to_value(v)?),
+    })
+}
+
+/// What [`raw_out`] makes, the other way: a number or a bool, by its tag.
+fn raw_in(v: rquickjs::qjs::JSValue) -> Option<JsValue> {
+    use rquickjs::qjs;
+    // SAFETY: reading a tag and the number or bool it says is there.
+    unsafe {
+        match qjs::JS_VALUE_GET_NORM_TAG(v) {
+            qjs::JS_TAG_INT => Some(JsValue::Number(f64::from(qjs::JS_VALUE_GET_INT(v)))),
+            qjs::JS_TAG_FLOAT64 => Some(JsValue::Number(qjs::JS_VALUE_GET_FLOAT64(v))),
+            qjs::JS_TAG_BOOL => Some(JsValue::Bool(qjs::JS_VALUE_GET_BOOL(v))),
+            _ => None,
+        }
+    }
+}
+
+/// `v`'s raw value, with the reference `v` held.
+fn owned_raw(v: Value<'_>) -> rquickjs::qjs::JSValue {
+    let raw = v.as_raw();
+    // SAFETY: the reference dropped with `v` is the one taken here.
+    unsafe { rquickjs::qjs::JS_DupValue(v.ctx().as_raw().as_ptr(), raw) }
 }
 
 /// The property id an accessor was made with ([`install_prop`]).
@@ -1982,6 +2025,14 @@ unsafe fn prop_id(data: *mut rquickjs::qjs::JSValue) -> u32 {
     }
 }
 
+/// The id of the object `this` wraps, or a TypeError.
+fn this_id(ctx: &Ctx<'_>, this: &Value<'_>) -> rquickjs::Result<u64> {
+    let raw = ctx.as_raw().as_ptr();
+    // SAFETY: the context is live; the class is its runtime's.
+    unsafe { raw_state(raw).and_then(|st| wrapper_id(st.wrapper_class, this.as_raw())) }
+        .ok_or_else(|| Exception::throw_type(ctx, "not an object of this type"))
+}
+
 /// The host a raw accessor runs for, from the context's opaque (set by
 /// [`JsHost::new`]).
 unsafe fn raw_state(ctx: *mut rquickjs::qjs::JSContext) -> Option<Rc<HostState>> {
@@ -1996,26 +2047,16 @@ unsafe fn raw_state(ctx: *mut rquickjs::qjs::JSContext) -> Option<Rc<HostState>>
     }
 }
 
-/// Runs `f` for the wrapper `this` is ([`raw_entry`]). `this` is borrowed,
-/// so it is duplicated for the Value that frees it.
+/// Runs `f` for the wrapper `this` is ([`raw_entry`]).
 unsafe fn raw_accessor<'js>(
     raw: *mut rquickjs::qjs::JSContext,
     this: rquickjs::qjs::JSValue,
-    f: impl FnOnce(&Scope<'js>, &dyn HostObjects, u64) -> rquickjs::Result<Value<'js>>,
+    f: impl FnOnce(&Scope<'js>, &dyn HostObjects, u64) -> rquickjs::Result<rquickjs::qjs::JSValue>,
 ) -> rquickjs::qjs::JSValue {
-    use rquickjs::qjs;
     // SAFETY: as the caller's.
     unsafe {
         raw_entry(raw, |scope| {
-            let this = Value::from_raw(scope.ctx.clone(), qjs::JS_DupValue(raw, this));
-            // `is_object` reads the tag; `as_object` would ask the object
-            // what kind it is, which costs more than the rest of the check.
-            let Some(id) = this
-                .is_object()
-                .then(|| this.ref_object())
-                .and_then(|o| o.as_class::<HostWrapper>())
-                .map(|c| c.borrow().id)
-            else {
+            let Some(id) = wrapper_id(scope.state.wrapper_class, this) else {
                 return Err(Exception::throw_type(
                     &scope.ctx,
                     "not an object of this type",
@@ -2032,7 +2073,7 @@ unsafe fn raw_accessor<'js>(
 /// for the dispatch to resume, and the script is stopped.
 unsafe fn raw_entry<'js>(
     raw: *mut rquickjs::qjs::JSContext,
-    f: impl FnOnce(&Scope<'js>) -> rquickjs::Result<Value<'js>>,
+    f: impl FnOnce(&Scope<'js>) -> rquickjs::Result<rquickjs::qjs::JSValue>,
 ) -> rquickjs::qjs::JSValue {
     use rquickjs::qjs;
     // SAFETY: QuickJS calls with a live context.
@@ -2042,7 +2083,7 @@ unsafe fn raw_entry<'js>(
             return Err(Exception::throw_message(&ctx, "JS host was dropped"));
         };
         let scope = Scope { ctx, state };
-        f(&scope).map(|v| qjs::JS_DupValue(raw, v.as_raw()))
+        f(&scope)
     };
     match catch_unwind(AssertUnwindSafe(run)) {
         Ok(Ok(v)) => v,
@@ -2081,51 +2122,50 @@ fn install_signal<'js>(
 ) -> rquickjs::Result<()> {
     let signal = sig.id;
     let name = sig.name.clone();
-    let getter = move |ctx: Ctx<'js>,
-                       This(this): This<Class<'js, HostWrapper>>|
-          -> rquickjs::Result<Function<'js>> {
-        let id = this.borrow().id;
-        let st = state.clone();
-        let emit = Function::new(
-            ctx.clone(),
-            move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
-                let (scope, host) = callback_scope(&ctx, &st)?;
-                let argv = args
-                    .0
-                    .iter()
-                    .map(|a| scope.script_value(a))
-                    .collect::<rquickjs::Result<Vec<_>>>()?;
-                scope.back(
-                    host.emit(&scope, id, signal, &argv)
-                        .map_err(|e| e.into_js(&ctx)),
-                )
-            },
-        )?
-        .with_name(name.as_str())?;
-        for (verb, connect) in [("connect", true), ("disconnect", false)] {
+    let getter =
+        move |ctx: Ctx<'js>, This(this): This<Value<'js>>| -> rquickjs::Result<Function<'js>> {
+            let id = this_id(&ctx, &this)?;
             let st = state.clone();
-            let f = Function::new(
+            let emit = Function::new(
                 ctx.clone(),
                 move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
                     let (scope, host) = callback_scope(&ctx, &st)?;
                     let argv = args
                         .0
                         .iter()
-                        .map(|a| scope.from_value(a))
+                        .map(|a| scope.script_value(a))
                         .collect::<rquickjs::Result<Vec<_>>>()?;
-                    let r = if connect {
-                        host.connect(&scope, id, signal, &argv)
-                    } else {
-                        host.disconnect(&scope, id, signal, &argv)
-                    };
-                    scope.back(r.map_err(|e| e.into_js(&ctx)))
+                    scope.back(
+                        host.emit(&scope, id, signal, &argv)
+                            .map_err(|e| e.into_js(&ctx)),
+                    )
                 },
             )?
-            .with_name(verb)?;
-            emit.set(verb, f)?;
-        }
-        Ok(emit)
-    };
+            .with_name(name.as_str())?;
+            for (verb, connect) in [("connect", true), ("disconnect", false)] {
+                let st = state.clone();
+                let f = Function::new(
+                    ctx.clone(),
+                    move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> rquickjs::Result<()> {
+                        let (scope, host) = callback_scope(&ctx, &st)?;
+                        let argv = args
+                            .0
+                            .iter()
+                            .map(|a| scope.from_value(a))
+                            .collect::<rquickjs::Result<Vec<_>>>()?;
+                        let r = if connect {
+                            host.connect(&scope, id, signal, &argv)
+                        } else {
+                            host.disconnect(&scope, id, signal, &argv)
+                        };
+                        scope.back(r.map_err(|e| e.into_js(&ctx)))
+                    },
+                )?
+                .with_name(verb)?;
+                emit.set(verb, f)?;
+            }
+            Ok(emit)
+        };
     proto.prop(
         sig.name.as_str(),
         Accessor::new_get(getter).configurable().enumerable(),
@@ -2193,7 +2233,7 @@ unsafe extern "C" fn raw_global(
                 })
                 .collect::<rquickjs::Result<Vec<_>>>()?;
             let out = f(scope, &args).map_err(|e| e.into_js(&scope.ctx));
-            scope.back(out).and_then(|out| scope.to_value(&out))
+            raw_out(scope, &scope.back(out)?)
         })
     }
 }
@@ -2209,27 +2249,26 @@ fn install_method<'js>(
     name: &str,
 ) -> rquickjs::Result<()> {
     let key = name.to_owned();
-    let getter = move |ctx: Ctx<'js>,
-                       This(this): This<Class<'js, HostWrapper>>|
-          -> rquickjs::Result<Value<'js>> {
-        let id = this.borrow().id;
-        let (scope, host) = callback_scope(&ctx, &state)?;
-        // What the getter gives is the object's from now on, unless the
-        // host says it may give another later.
-        let (f, keep) = match host.method_face(&scope, id, method) {
-            MethodFace::Direct(f) => (f, true),
-            MethodFace::Call { keep } => {
-                (make_method(&ctx, state.clone(), id, method, &key)?, keep)
+    let getter =
+        move |ctx: Ctx<'js>, This(this): This<Value<'js>>| -> rquickjs::Result<Value<'js>> {
+            let id = this_id(&ctx, &this)?;
+            let (scope, host) = callback_scope(&ctx, &state)?;
+            // What the getter gives is the object's from now on, unless the
+            // host says it may give another later.
+            let (f, keep) = match host.method_face(&scope, id, method) {
+                MethodFace::Direct(f) => (f, true),
+                MethodFace::Call { keep } => {
+                    (make_method(&ctx, state.clone(), id, method, &key)?, keep)
+                }
+            };
+            if keep && let Some(o) = this.as_object() {
+                o.prop(
+                    key.as_str(),
+                    Property::from(f.clone()).writable().configurable(),
+                )?;
             }
+            Ok(f.into_value())
         };
-        if keep && let Some(o) = this.as_object() {
-            o.prop(
-                key.as_str(),
-                Property::from(f.clone()).writable().configurable(),
-            )?;
-        }
-        Ok(f.into_value())
-    };
     proto.prop(name, Accessor::new_get(getter).configurable())
 }
 
@@ -2945,8 +2984,8 @@ fn install_to_string<'js>(
 ) -> rquickjs::Result<()> {
     let to_string = Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'_>, This(this): This<Class<'_, HostWrapper>>| -> String {
-            let id = this.borrow().id;
+        move |ctx: Ctx<'_>, This(this): This<Object<'_>>| -> rquickjs::Result<String> {
+            let id = this_id(&ctx, this.as_value())?;
             let named = match this.get::<_, Value>("objectName") {
                 Ok(v) => v
                     .as_string()
@@ -2958,10 +2997,10 @@ fn install_to_string<'js>(
                     None
                 }
             };
-            match named {
+            Ok(match named {
                 Some(n) => format!("{name}({id:#x}, \"{n}\")"),
                 None => format!("{name}({id:#x})"),
-            }
+            })
         },
     )?
     .with_name("toString")?;

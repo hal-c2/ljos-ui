@@ -1,10 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use rquickjs::{
-    Ctx, Exception, JsLifetime,
-    class::{JsClass, Readable, Trace, Tracer},
-    function::Constructor,
-};
+use rquickjs::{Ctx, Exception, qjs};
 
 use crate::{JsArg, JsOut, Scope};
 
@@ -196,9 +192,10 @@ pub trait HostObjects {
     }
 }
 
-/// The JS class behind every wrapper. Its `Drop` is the finaliser: QuickJS
-/// frees it from inside the collector where running Rust callbacks (or JS) is
-/// not allowed, so it only queues the id.
+/// What a wrapper object holds: QuickJS's class of its own
+/// ([`register_wrapper_class`]), with this boxed as its opaque. Its `Drop`
+/// is the finaliser: QuickJS frees it from inside the collector where
+/// running Rust callbacks (or JS) is not allowed, so it only queues the id.
 pub(crate) struct HostWrapper {
     pub(crate) id: u64,
     /// Where its collection is told. The cache keeps an Engine-owned
@@ -216,22 +213,72 @@ impl Drop for HostWrapper {
     }
 }
 
-impl<'js> Trace<'js> for HostWrapper {
-    fn trace<'a>(&self, _tracer: Tracer<'a, 'js>) {}
+/// Registers the wrappers' class in `rt` and gives its id.
+///
+/// A class of its own rather than an rquickjs class: rquickjs gives every
+/// Rust class one QuickJS class id and tells them apart by a table, two
+/// lookups per access; here `JS_GetOpaque` with the id is the whole check.
+///
+/// # Safety
+/// `rt` is a live runtime.
+pub(crate) unsafe fn register_wrapper_class(rt: *mut qjs::JSRuntime) -> Option<qjs::JSClassID> {
+    let mut id: qjs::JSClassID = 0;
+    let def = qjs::JSClassDef {
+        class_name: c"LjosHostObject".as_ptr(),
+        finalizer: Some(finalize_wrapper),
+        gc_mark: None,
+        call: None,
+        exotic: std::ptr::null_mut(),
+    };
+    // SAFETY: as the caller's; QuickJS copies the definition.
+    unsafe {
+        qjs::JS_NewClassID(rt, &mut id);
+        (qjs::JS_NewClass(rt, id, &def) == 0).then_some(id)
+    }
 }
 
-// SAFETY: HostWrapper holds no JS values, so lifetime changes are trivially
-// sound.
-unsafe impl<'js> JsLifetime<'js> for HostWrapper {
-    type Changed<'to> = HostWrapper;
+unsafe extern "C" fn finalize_wrapper(_rt: *mut qjs::JSRuntime, val: qjs::JSValue) {
+    let mut class = 0;
+    // SAFETY: QuickJS finalises only objects of the class, whose opaque is
+    // the box `new_wrapper` made, or null.
+    unsafe {
+        let p = qjs::JS_GetAnyOpaque(val, &mut class).cast::<HostWrapper>();
+        if !p.is_null() {
+            drop(Box::from_raw(p));
+        }
+    }
 }
 
-impl<'js> JsClass<'js> for HostWrapper {
-    const NAME: &'static str = "LjosHostObject";
-    type Mutable = Readable;
+/// A new wrapper of `class` over `proto`, holding `w`.
+///
+/// # Safety
+/// `ctx` is live and entered, `class` is [`register_wrapper_class`]'s id
+/// in its runtime.
+pub(crate) unsafe fn new_wrapper(
+    ctx: *mut qjs::JSContext,
+    class: qjs::JSClassID,
+    proto: qjs::JSValue,
+    w: HostWrapper,
+) -> Option<qjs::JSValue> {
+    // SAFETY: as the caller's; the object owns the box from here.
+    unsafe {
+        let o = qjs::JS_NewObjectProtoClass(ctx, proto, class);
+        if qjs::JS_IsException(o) {
+            return None;
+        }
+        qjs::JS_SetOpaque(o, Box::into_raw(Box::new(w)).cast());
+        Some(o)
+    }
+}
 
-    fn constructor(_ctx: &Ctx<'js>) -> rquickjs::Result<Option<Constructor<'js>>> {
-        // Not constructible from script: wrappers come from the Engine.
-        Ok(None)
+/// The id of the object `v` wraps, if it is a wrapper of `class`.
+///
+/// # Safety
+/// `class` is [`register_wrapper_class`]'s id in `v`'s runtime.
+pub(crate) unsafe fn wrapper_id(class: qjs::JSClassID, v: qjs::JSValue) -> Option<u64> {
+    // SAFETY: the opaque of the class is a live `HostWrapper`.
+    unsafe {
+        let p = qjs::JS_GetOpaque(v, class).cast::<HostWrapper>();
+        (!p.is_null()).then(|| (*p).id)
     }
 }
