@@ -801,6 +801,62 @@ impl QmlView {
         Vec2::new(w as f32, h as f32)
     }
 
+    /// Lays the scene out at `size` points and `pixels_per_point` before
+    /// it is first shown, as the first pass would. A host that waits for
+    /// its painter to start does it meanwhile; the first pass then only
+    /// draws, unless its size or scale turns out to be another. Nothing
+    /// once the scene has a frame.
+    pub fn lay_out_ahead(&mut self, size: Vec2, pixels_per_point: f32) {
+        if self.scene.snapshot().is_some() {
+            return;
+        }
+        let was = self.gate.held.replace(true);
+        let size = match self.resize {
+            ResizeMode::RootToView | ResizeMode::Fill => size,
+            ResizeMode::ViewToRoot => self.root_size(),
+        };
+        self.fit(size, pixels_per_point);
+        self.run_frame(self.clock.now());
+        self.gate.held.set(was);
+    }
+
+    /// The scene's viewport is `size` points at `ppp` pixels a point.
+    fn fit(&mut self, size: Vec2, ppp: f32) {
+        if self.ppp != Some(ppp) {
+            self.ppp = Some(ppp);
+            // Text is laid out in logical pixels with unhinted metrics, so a
+            // new scale changes how it is painted and not where it breaks.
+            self.scene.set_scale_factor(ppp);
+        }
+        if self.size != Some(size) {
+            self.size = Some(size);
+            self.scene.set_viewport(kurbo::Rect::new(
+                0.0,
+                0.0,
+                f64::from(size.x),
+                f64::from(size.y),
+            ));
+            if self.resize == ResizeMode::RootToView
+                && let Some(root) = self.scene.root()
+            {
+                // Like Qt's SizeRootObjectToView this is an imperative
+                // write; it replaces a binding on the root's size.
+                let _ = self.engine.set(root, Item::WIDTH, f64::from(size.x));
+                let _ = self.engine.set(root, Item::HEIGHT, f64::from(size.y));
+            }
+        }
+    }
+
+    /// Pipeline steps 3-9.
+    fn run_frame(&mut self, now: Time) {
+        let out = self.scene.frame(&self.engine, now);
+        self.stats.frames += 1;
+        if out.changed {
+            self.stats.changed += 1;
+        }
+        self.next_wake = out.next_wake;
+    }
+
     fn show_at(&mut self, ui: &mut Ui, rect: Rect) {
         let ctx = ui.ctx().clone();
         // In the pass after the first frame, so that frame is not kept
@@ -829,30 +885,7 @@ impl QmlView {
 
         // 1. Size and scale.
         let ppp = ctx.pixels_per_point();
-        if self.ppp != Some(ppp) {
-            self.ppp = Some(ppp);
-            // Text is laid out in logical pixels with unhinted metrics, so a
-            // new scale changes how it is painted and not where it breaks.
-            self.scene.set_scale_factor(ppp);
-        }
-        let size = rect.size();
-        if self.size != Some(size) {
-            self.size = Some(size);
-            self.scene.set_viewport(kurbo::Rect::new(
-                0.0,
-                0.0,
-                f64::from(size.x),
-                f64::from(size.y),
-            ));
-            if self.resize == ResizeMode::RootToView
-                && let Some(root) = self.scene.root()
-            {
-                // Like Qt's SizeRootObjectToView this is an imperative
-                // write; it replaces a binding on the root's size.
-                let _ = self.engine.set(root, Item::WIDTH, f64::from(size.x));
-                let _ = self.engine.set(root, Item::HEIGHT, f64::from(size.y));
-            }
-        }
+        self.fit(rect.size(), ppp);
 
         // 2. Input, against the snapshot the user is looking at.
         let now = self.clock.now();
@@ -863,12 +896,7 @@ impl QmlView {
         // 3-9. The pipeline, only when something asked for it.
         let timer_due = self.next_wake.is_some_and(|t| t <= now + self.early());
         if self.scene.needs_frame() || timer_due || self.scene.snapshot().is_none() {
-            let out = self.scene.frame(&self.engine, now);
-            self.stats.frames += 1;
-            if out.changed {
-                self.stats.changed += 1;
-            }
-            self.next_wake = out.next_wake;
+            self.run_frame(now);
         }
         self.gate.held.set(false);
 

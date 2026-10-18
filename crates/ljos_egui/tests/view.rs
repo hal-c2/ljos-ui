@@ -159,6 +159,32 @@ fn root_follows_the_view_size() {
 }
 
 #[test]
+fn a_scene_laid_out_ahead_is_only_drawn_by_the_first_pass() {
+    // The size the view is given, from a scene shown the usual way.
+    let shown = scene();
+    let mut h = harness(&shown, None);
+    h.run();
+    let size = h.state().rect.size();
+
+    let s = scene();
+    let mut h = harness(&s, None);
+    h.state_mut().view.lay_out_ahead(size, 1.0);
+    assert_eq!(h.state().view.stats().frames, 1);
+    assert_eq!(
+        s.engine.get(s.root, Item::WIDTH).unwrap(),
+        f64::from(size.x)
+    );
+    h.run();
+    assert_eq!(h.state().view.stats().frames, 1);
+    // Ahead again does nothing once the scene has a frame.
+    h.state_mut().view.lay_out_ahead(size * 2.0, 1.0);
+    assert_eq!(
+        s.engine.get(s.root, Item::WIDTH).unwrap(),
+        f64::from(size.x)
+    );
+}
+
+#[test]
 fn view_to_root_allocates_the_root_size() {
     let s = scene();
     s.engine.set(s.root, Item::WIDTH, 120.0).unwrap();

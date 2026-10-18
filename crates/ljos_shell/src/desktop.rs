@@ -949,6 +949,17 @@ impl<M: Send + 'static> Desktop<M> {
         };
         let display = host.event_loop().owned_display_handle();
         if self.gpu.is_none() {
+            // The drivers are still starting: the first frame's layout
+            // and text need no device, and are done while they do.
+            if self.starting.is_some() {
+                let ppp = window.scale_factor() as f32 * self.slots[i].ctx.zoom_factor();
+                let px = window.inner_size();
+                let size = egui::vec2(px.width as f32, px.height as f32) / ppp;
+                match self.slots[i].view.as_mut() {
+                    Some(view) => view.lay_out_ahead(size, ppp),
+                    None => self.app.view_mut().lay_out_ahead(size, ppp),
+                }
+            }
             // Without a device from them, the painter makes its own and
             // says why there is none.
             self.gpu = self
