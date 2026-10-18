@@ -3031,3 +3031,87 @@ DECISIONs:
 - `children` keeps returning a new wrapper at each read, as qml6 does.
 - An animation looks up its target's property again when it starts. Its `properties` may
   change between the build and the start.
+
+### Two passes a click, and the gallery against qml6 again (2026-10-18)
+
+A click that changes nothing on a static snippet ran six to eight UI passes in Ljós (204 passes for
+25 clicks under callgrind); qml6 wakes about three times. egui asked for two more passes after each
+pass with input, and one more after each pass that asked for another at once. Those passes serve
+egui's own widgets, which answer a frame late. The scene answers in its own pass, so the extra
+passes drew nothing. Now the shell schedules only what the scene asks for, and a click is two
+passes: the press, which arms press-and-hold, and the release. A press-and-hold timer stopped
+before its 800 ms no longer leaves a wake behind. `features/window/passes-per-click.feature` pins
+this on the desktop sandbox.
+
+The gallery was run again as in "The whole gallery against qml6" above, with the same 28 examples,
+command and bold rule, and one more column. Before each chunk of four, the runner waited up to
+1 200 s for a 1-minute load average under 16. Ljós is the release build of the pass change (bdf5998c), built on an older base for chunks 1–6 and
+on the current one for chunk 7 (the last four snippets). The machine never stayed
+under 16: chunk 2 started at 64.2 after the full wait, and the runs reached load averages of
+7.0–117.4. The new column, "driven busiest thread", is the CPU of the one thread that worked
+hardest while driven. Qt splits a frame between its GUI thread and `QSGRenderThread`, while Ljós
+does script, layout and the frame's recording on one thread.
+
+| example | first frame ms (Qt) | settled MiB (Qt) | idle CPU % (Qt) | driven CPU % (Qt) | driven busiest thread % (Qt) | lag p50 ms (Qt) | lag p95 ms (Qt) | clicks |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| calqlatr | 62.6 (332) | 51.7 (102) | 0.00 (0.00) | 2.3 (7.4) | 1.8 (2.2) | 2.0 (18.2) | 583 (583) | 19 |
+| clocks | 81.6 (313) | 54.7 (105) | 6.0 (21.1) | 6.2 (21.8) | **4.1 (3.2)** | 8.4 (8.6) | 15.7 (15.9) | 25 |
+| hangman | 167 (337) | 68.0 (124) | 0.00 (0.00) | 0.20 (0.09) | 0.17 (0.06) | — (—) | — (—) | 25 |
+| maroon | 111 (471) | 65.5 (134) | 32.4 (61.2) | 36.9 (68.9) | **8.1 (4.8)** | 7.7 (8.1) | 15.5 (15.3) | 25 |
+| rssnews | 105 (499) | 104 (833) | 0.00 (0.00) | 1.8 (7.0) | 0.95 (0.88) | 514 (515) | 1 924 (1 923) | 25 |
+| samegame | 73.9 (345) | 56.2 (127) | 4.8 (27.4) | 65.1 (191) | 14.2 (21.3) | 8.5 (9.3) | **34.1 (15.8)** | 25 |
+| thermostat | 115 (948) | 85.5 (190) | 0.00 (0.00) | 2.4 (5.9) | 2.2 (2.0) | 1 707 (—) | 2 689 (—) | 25 |
+| todolist | 90.8 (610) | 60.9 (160) | 0.00 (0.00) | **2.6 (1.5)** | **0.96 (0.29)** | 2 572 (2 572) | 2 654 (2 572) | 4 |
+| photosurface | 190 (313) | 61.6 (129) | **12.2 (6.0)** | 2.9 (4.3) | 0.82 (0.39) | 456 (927) | 3 834 (3 749) | 25 |
+| alarms | 73.5 (335) | 53.8 (109) | 0.00 (0.00) | 0.36 (7.0) | 0.29 (1.6) | 1.2 (2.1) | 47.4 (34.4) | 8 |
+| snippet-borderimage-defaults | 56.0 (269) | 41.9 (96.6) | 0.00 (0.00) | 0.16 (0.08) | 0.14 (0.05) | — (—) | — (—) | 25 |
+| snippet-vertical-positioner-transition | 65.5 (264) | 39.1 (92.0) | 0.00 (0.00) | 0.21 (0.10) | 0.19 (0.07) | 40.9 (40.9) | 40.9 (40.9) | 25 |
+| snippet-flow-diagram | 53.7 (287) | 43.0 (103) | 0.00 (0.00) | 0.18 (0.08) | 0.16 (0.05) | — (—) | — (—) | 25 |
+| snippet-focus-column | 55.3 (253) | 42.1 (100) | 0.00 (0.00) | 0.15 (0.07) | 0.13 (0.05) | — (—) | — (—) | 25 |
+| snippet-focus-scopes | 61.2 (280) | 52.4 (101) | 0.00 (0.42) | 0.32 (0.48) | 0.28 (0.10) | 184 (173) | 456 (466) | 25 |
+| snippet-rectangle-smooth | 65.6 (270) | 50.9 (97.3) | 0.00 (0.00) | 0.18 (0.08) | 0.16 (0.06) | — (—) | — (—) | 25 |
+| snippet-texteditor | 54.3 (287) | 43.1 (99.3) | 0.00 (0.22) | 0.39 (0.70) | 0.34 (0.20) | 183 (173) | 457 (464) | 25 |
+| snippet-text-lines | 53.7 (494) | 43.1 (145) | 0.00 (0.00) | 0.16 (0.08) | 0.14 (0.06) | — (—) | — (—) | 25 |
+| snippet-components-application | 89.7 (594) | 81.9 (128) | 0.00 (0.00) | 0.21 (0.14) | 0.19 (0.09) | — (—) | — (—) | 25 |
+| snippet-properties-application | 99.8 (289) | 49.1 (105) | 0.00 (0.00) | 0.17 (0.07) | 0.14 (0.05) | — (—) | — (—) | 25 |
+| snippet-alias-application | 53.2 (454) | 44.2 (105) | 0.00 (0.00) | 0.17 (0.10) | 0.14 (0.06) | — (—) | — (—) | 25 |
+| snippet-property-signals | 59.8 (252) | 49.0 (92.4) | 0.00 (0.00) | 0.15 (0.08) | 0.13 (0.05) | — (—) | — (—) | 25 |
+| snippet-signals-basic | 50.1 (269) | 41.1 (95.7) | 0.00 (0.00) | 0.21 (0.10) | 0.19 (0.07) | — (—) | — (—) | 25 |
+| snippet-signals-parameters | 55.9 (433) | 41.9 (95.1) | 0.00 (0.00) | 0.27 (0.11) | 0.24 (0.08) | — (—) | — (—) | 25 |
+| snippet-signals-no-parameters | 45.6 (214) | 41.4 (95.9) | 0.00 (0.00) | 0.30 (0.12) | 0.27 (0.09) | — (—) | — (—) | 25 |
+| snippet-signals-connectslots | 48.1 (256) | 40.1 (96.9) | 0.00 (0.00) | 0.33 (0.10) | 0.30 (0.07) | — (—) | — (—) | 25 |
+| snippet-signals-connectdynamic | 54.1 (269) | 42.4 (96.8) | 0.00 (0.00) | 0.31 (0.11) | 0.27 (0.08) | — (—) | — (—) | 25 |
+| snippet-methods-app | 188 (255) | 41.9 (96.0) | 0.00 (0.00) | 0.42 (0.10) | 0.39 (0.07) | — (—) | — (—) | 25 |
+
+**Static snippets.** Driven CPU went from 0.22–0.55 % of a core to 0.15–0.42 %, against qml6's
+0.07–0.14 %. All four snippets above 0.27 % are in chunk 7, which ran at another time and load.
+Ljós still loses in every one, inside the bold margin. What is left is the cost of each of the two
+passes after a sleep, not the number of passes.
+
+Where Ljós loses:
+
+| example | loss | cause | owner |
+|---|---|---|---|
+| photosurface | idle CPU 12.2 against 6.0 % | As in the section above: both runtimes keep animating the slide show over a shader backdrop, and Ljós rasterises the PDF page and the backdrop on llvmpipe. | render |
+| todolist | driven CPU 2.6 against 1.5 %; busiest thread 0.96 against 0.29 % | Two of the four clicks start a page transition. Over each, Ljós drew 32–44 frames at 32 ms intervals and qml6 drew 30 at 16 ms. Ljós's llvmpipe threads used about 160 ms rasterising them, against 30–40 ms for Qt's. Ljós's own thread used 72–115 ms, about what qml6's GUI and render threads used together (42–64 ms). This is raster cost per animated frame, not click passes. | render |
+| samegame | lag p95 34.1 against 15.8 ms | Ljós's four llvmpipe threads ran 1.3–1.7 s each in a 12 s drive, and qml6's ran 0.8–1.1 s. Its slowest frames are those the raster threads finish late, the same per-frame cost as todolist's. One Ljós run reached 72.7 ms. | render |
+| maroon | busiest thread 8.1 against 4.8 % (driven CPU 36.9 against 68.9 %) | The busiest threads are llvmpipe's. Ljós's work goes to four raster threads of about 1 s each, while qml6's is spread over more threads of about 0.34 s. In total Ljós uses half the CPU. | render |
+| clocks | busiest thread 4.1 against 3.2 % (driven CPU 6.2 against 21.8 %) | Ljós's one thread does what qml6 splits between its GUI thread (about 0.1 s) and `QSGRenderThread` (0.38–0.51 s), and it does less in total. | shell (threading) |
+| the static snippets | driven CPU 0.15–0.42 against 0.07–0.14 % (inside the margin) | Two passes a click now. Each costs 1–2 ms of main-thread time after a sleep on a busy machine. | shell pacing |
+| alarms | lag p95 47.4 against 34.4 ms (inside the margin) | Unchanged from the section above. Not investigated, as it is inside the spread. | controls |
+
+snippet-texteditor no longer loses (p95 457 against 464 ms). Its lag is set by the cursor's blink:
+a click that changes nothing on screen is timed to the next blink frame, 500 ms apart in both
+runtimes. Where in that phase a click lands sets its lag, which is why its p95 swings either way
+within the spread. thermostat now times clicks in Ljós (p50 1 707 ms) that changed no frame in
+qml6. The lag is the next frame an animation draws, not the click's.
+
+- **DECISION: chunk 7 was run on the rebased change.** The first try of that chunk hit the
+  30-minute limit on background commands. The change is the same on both bases, so the chunk was
+  re-run on the rebased tree instead of rebuilding the older one.
+- **DECISION: the table was published at loads above 16.** The machine is shared, and waiting
+  longer did not bring the load down. The bold rule's margins were set at loads like these
+  (4.8–119.6 last time).
+- **DECISION: the render losses are reported, not fixed here.** todolist, samegame, maroon and
+  photosurface all lose on raster cost per animated frame on llvmpipe, a render-path change
+  outside this batch.
