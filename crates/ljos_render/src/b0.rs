@@ -893,12 +893,8 @@ fn pixels_of(rect: ERect, aa: bool, ppp: f32) -> Option<ERect> {
 /// Whether every edge of `rect` (in points) lies on a device pixel's
 /// edge, where a feathered edge and a hard one cover the same pixels.
 fn on_pixels(rect: ERect, ppp: f32) -> bool {
-    let whole = |v: f32| near_whole(v * ppp);
     rect.is_positive()
-        && whole(rect.min.x)
-        && whole(rect.min.y)
-        && whole(rect.max.x)
-        && whole(rect.max.y)
+        && all_near_whole([rect.min.x, rect.min.y, rect.max.x, rect.max.y].map(|v| v * ppp))
 }
 
 /// Whether `px` lies within a thousandth of a whole number:
@@ -914,6 +910,20 @@ pub fn near_whole(px: f32) -> bool {
     }
     // From 2^23 on every `f32` is whole; below it, halves are not.
     px.is_finite() && (px.abs() >= 8_388_608.0 || px == (px as i32) as f32)
+}
+
+/// [`near_whole`] of each of `px`, the four edges of a rectangle: asked of
+/// every rectangle of every frame, and with no branch for each edge.
+pub fn all_near_whole(px: [f32; 4]) -> bool {
+    const ROUND: f32 = 12_582_912.0;
+    let [a, b, c, d] = px;
+    // `&`, not `&&`: four comparisons and one branch. NaN is not small.
+    let small = |v: f32| v.abs() < 4_194_304.0;
+    if small(a) & small(b) & small(c) & small(d) {
+        let near = |v: f32| (v - ((v + ROUND) - ROUND)).abs() < 1e-3;
+        return near(a) & near(b) & near(c) & near(d);
+    }
+    px.iter().all(|&v| near_whole(v))
 }
 
 /// `v.ceil()` without the call to libm (see [`near_whole`]).
@@ -2037,7 +2047,7 @@ impl RenderBackend for EpaintBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{ceil, near_whole};
+    use super::{all_near_whole, ceil, near_whole};
 
     #[test]
     fn the_rounding_without_libm_says_what_libm_does() {
@@ -2077,6 +2087,13 @@ mod tests {
         values.extend([-4_194_304.5, -6_000_001.5, 8_388_608.0, 8_388_610.0]);
         for v in values {
             assert_eq!(near_whole(v), (v - v.round()).abs() < 1e-3, "{v}");
+            for w in [0.0, 1.5, 3.0004, f32::NAN, 5_000_000.0] {
+                assert_eq!(
+                    all_near_whole([w, v, 2.0, w]),
+                    near_whole(w) && near_whole(v),
+                    "{w} {v}"
+                );
+            }
             let (ours, theirs) = (ceil(v), v.ceil());
             assert!(
                 ours.to_bits() == theirs.to_bits() || (ours.is_nan() && theirs.is_nan()),

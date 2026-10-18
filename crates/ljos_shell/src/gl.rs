@@ -1134,15 +1134,16 @@ fn quads_into_mesh(
 
 /// The colour of `rect` when a clear draws the same pixels it does.
 fn clearable(rect: &RectShape, pixels_per_point: f32) -> Option<egui::Color32> {
-    let whole = |v: f32| ljos_render::b0::near_whole(v * pixels_per_point);
     let r = rect.rect;
     let plain = rect.corner_radius == CornerRadius::ZERO
         && rect.stroke.is_empty()
         && rect.blur_width <= 0.0
         && rect.brush.is_none()
         && rect.fill.is_opaque();
-    let on_pixels =
-        r.is_positive() && whole(r.min.x) && whole(r.min.y) && whole(r.max.x) && whole(r.max.y);
+    let on_pixels = r.is_positive()
+        && ljos_render::b0::all_near_whole(
+            [r.min.x, r.min.y, r.max.x, r.max.y].map(|v| v * pixels_per_point),
+        );
     (plain && on_pixels).then_some(rect.fill)
 }
 
