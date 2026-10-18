@@ -1425,3 +1425,54 @@ over 10 s after 45 s, clocks over 10 s after 30 s. Qt's animations frame is 0.72
   243. A node's display list already reuses its mapped segments while the list, the transform
   and the opacity stay the same. Solid rectangles take their own path, which maps them again
   every frame: that is what is left to cache.
+
+### Rows measured one by one, a smaller node table, and EGL vendors (2026-10-18)
+
+The profile and options of "Rows let go, pictures for rows gone, and shared type tables" above,
+Ljós and Qt, one app at a time (`--append`), because under a load of 12–75 the bench refused some
+runs whose cgroup held another process. Before is the list change and after is the node table
+change, both built on 36f3338; the two binaries differ only in `ljos_reactive`.
+
+| App | Peak, before → after (Qt) | Settled | Anon PSS | PSS |
+|---|---:|---:|---:|---:|
+| calqlatr | 65.2 → 65.8 (99.8) | 63.4 → 64.3 (100) | 56.6 → 56.4 (90.9) | 114 → 182 (133) |
+| clocks | 68.5 → 64.6 (107) | 65.4 → 65.1 (108) | 54.6 → 54.2 (98.2) | 114 → 180 (136) |
+| samegame | 81.6 → 74.3 (109) | 69.5 → 67.2 (115) | 56.9 → 56.8 (104) | 112 → 123 (150) |
+| thermostat | 114 → 117 (159) | 115 → 113 (166) | 97.0 → 94.4 (141) | 159 → 173 (211) |
+| todolist | 74.4 → 72.2 (117) | 74.2 → 73.0 (118) | 65.1 → 64.0 (107) | 123 → 133 (167) |
+
+The rise in PSS is file pages of a binary just built under load, as in that run.
+
+- **Rows measured one by one.** A list now lays out each new row before it makes the next, as Qt
+  does, instead of taking a row it has not measured to be as long as the first. Polishes spent on
+  this do not count toward the scene's loop limit. With a local feed, rssnews makes rows 0–6, as
+  Qt does, and none of them twice; before, it made rows 0–14 and remade rows 1–6.
+  `features/views/list-rows-measured.feature`; on Qt and on Ljós.
+- **The node table.** In all five apps the largest Ljós-owned item in a dhat profile was the
+  reactive graph's node table. It only grows, by doubling. Thermostat held 36 863 nodes in room for
+  65 536, 304 bytes each: 19.0 MiB of its 42.3 MiB of Rust heap. 58 % of the nodes have no
+  sources and 52 % have no observers; 6–8 % have more than two. Edges are now held
+  inline up to two, a property's override layers sit behind one pointer, and the tag only an
+  application sets is kept in a side map. A node is 224 bytes. Rust heap went down from 42.3 to
+  37.8 MiB in thermostat, 23.5 → 21.2 in todolist, 11.8 → 11.2 in calqlatr, 8.3 → 8.0 in clocks
+  and 10.7 → 10.5 in samegame. Anon PSS falls by less, because the part of the doubled table that
+  is never written is never resident (live nodes × 80 bytes, about 2.8 MiB in thermostat).
+  `a_node_holds_little_inline` (ljos_reactive).
+- **EGL vendors.** glvnd's libEGL loads every vendor it is told of. This machine has NVIDIA's
+  user-space package and no NVIDIA GPU, so each Ljós process mapped 34 MiB of NVIDIA libraries,
+  4.4 MiB of it private. Qt on X11 draws through GLX and maps none of them; on Wayland it goes
+  through EGL and maps them too. When NVIDIA's kernel driver is not loaded (`/proc/driver/nvidia`)
+  and the user has set neither `__EGL_VENDOR_LIBRARY_FILENAMES` nor `__EGL_VENDOR_LIBRARY_DIRS`,
+  the shell names the other vendors in `__EGL_VENDOR_LIBRARY_FILENAMES` before anything loads
+  libEGL. clocks in the X11 sandbox: 47 NVIDIA mappings → 0, anon PSS 52.5 → 46.9 MiB. The Vulkan
+  loader of the wgpu painter still loads every ICD; `VK_DRIVER_FILES` above still applies there.
+
+**What is left.**
+
+- **The Controls styles.** (Also the next step for startup, above.) Every application decodes the whole embedded style pack at start,
+  about 1.8 MiB of IR, and registers every type of every style, which loads each file and builds
+  its type table. Plain Quick apps such as clocks and samegame pay for it too. It is not cut here.
+  A registered type's identity holds its file, so a file cannot be dropped and loaded again later.
+  And the `--example` oracle walks every registered module, so registering lazily would still
+  load everything on `ljos run`. Cutting it needs registration by name, resolved when a type is
+  first named.

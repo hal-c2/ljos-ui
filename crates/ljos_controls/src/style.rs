@@ -42,8 +42,9 @@ pub(crate) fn is_style_url(location: &str) -> bool {
     location.starts_with(URL_PREFIX)
 }
 
-/// The embedded files. A file's IR is decoded when a type made of it is
-/// first registered, and shared from then on.
+/// The embedded files. Every file's IR is decoded when the pack is read
+/// at start, in every application, whether or not it uses a control, and
+/// shared from then on.
 #[derive(Debug)]
 pub(crate) struct StyleLibrary {
     directory: String,
