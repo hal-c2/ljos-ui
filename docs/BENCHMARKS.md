@@ -626,3 +626,61 @@ costs past the pass: painting, submitting and presenting.
   finish and the edge diff. A rotated item's whole geometry effect reruns while only its transform
   list moves (7 a frame in clocks, 48 k). Giving the transform list an effect of its own would add
   an effect to every item.
+
+- **rssnews keeps working after it settles.** It uses 3–4 % with no frames and no wakeups, while
+  pictures are still fetched and decoded. Qt has finished by then.
+
+### Hot reload: from the save to the first frame (2026-10-18)
+
+`ljos run --watch` now logs each reload with its own clock:
+
+```text
+ljos: reloaded in 83.9 ms (compile 4.2 ms, apply 79.7 ms): 8137 kept, 0 new, 0 made again; shown 111.4 ms after the save
+```
+
+"Shown" runs from the file's modification time to the end of the first frame painted after the
+reload. Each corpus app was copied to scratch and run in the off-screen sandbox
+(`desktop:cua`: headless sway, Xwayland, llvmpipe) as a release build. A script drove it into a
+non-initial state and edited its QML as a developer would. Other builds
+were running on the machine, so take the spread, not the digits.
+
+At the start there was no in-app clock. "Before" is the sweep's own time from the save to the
+change showing in the accessibility tree, polled every 50 ms. It is an upper bound and includes the
+watcher's wait for the save to settle.
+
+| App, edit | Before: save → seen | After: reload | After: shown after the save |
+|---|---:|---:|---:|
+| calqlatr, a colour in `content/Display.qml` | 1 000–2 040 ms | 10–13 ms | 28–43 ms |
+| samegame, a text in `Main.qml` (8 137 objects kept) | 1 050–1 510 ms | 84–104 ms | 111–140 ms |
+| samegame, a component used by every block | 1 110 ms (did not show) | 129–328 ms | 153–376 ms |
+| thermostat, a text in a `.ui.qml` page | 360–376 ms (in-app clock) | 217–234 ms | 266–285 ms |
+| todolist, a label on a pushed page | 330–450 ms | 33–36 ms | 52–61 ms |
+| maroon, a text in a scene | 50–585 ms | 10–12 ms | 26–35 ms |
+| rssnews, a text in a delegate | 50–60 ms | 6–7 ms | 22–38 ms |
+| clocks, a colour in the delegate | 50–490 ms | 9–13 ms | 34–37 ms |
+
+What dominated, and what was cut:
+
+- **Waiting for the save.** The watcher waited a fixed debounce after each event. A save that has
+  finished now reloads 15 ms after its last write.
+- **Formatting at every object.** The reload built a path string and a log line for each object it
+  matched, even with logging off. Paths are now pushed segment by segment and hashed with Fx, and
+  the steps are logged at debug level only.
+- **Bookkeeping for the tree being replaced.** The tree that a reload throws away no longer works
+  out the bindings and connections it still owes.
+- **Quadratic script output.** A script that made hundreds of objects was counted past all of them
+  for each one it made.
+- **Measuring the JS heap to find a log line's origin.** A warning logged outside a script looked
+  for its script by measuring the heap. It now looks only while a script runs.
+- **Palette and font cascades.** Setting a colour on one control told every palette in the scene
+  to look again at every reload. Now only the first colour set does. A font set on a control tells
+  the others only under a style font.
+
+What is left: apply is now the whole cost. On samegame it is re-binding the 8 137 objects it keeps. On
+thermostat it is remaking the `.ui.qml` page that was edited, with its anchors and images. Getting
+under 100 ms on large Controls pages needs a reload to leave alone the subtrees whose source did
+not change.
+
+Over 20 reloads, RSS stayed within 1.3 MB on samegame, thermostat and todolist. calqlatr's grew
+by 11.8 MB in two steps in one run and stayed flat in the next. Idle CPU after the reloads was 0 % on every app except the ones that animate
+themselves (clocks' timer, maroon's scene).
