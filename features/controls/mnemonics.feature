@@ -7,8 +7,9 @@
 Feature: Mnemonics in the text of a control
   An "&" in the text of a button, menu title or menu item marks the letter
   after it as the mnemonic: the "&" is not drawn, and "&&" is one "&".
-  The text property keeps what was written. Alt with the letter activates
-  a button, and opens the menu of a menu bar.
+  The text property keeps what was written. The letter is drawn
+  underlined, before Alt is pressed too. Alt with the letter activates a
+  button, and opens the menu of a menu bar.
 
   Scenario Outline: The marker is not drawn
     Given the QML:
@@ -95,6 +96,23 @@ Feature: Mnemonics in the text of a control
       """
     Then the property "same" of "o" is true
     And the property "kept" of "o" is "&File"
+
+  # qml6 underlines the letter in a button, a menu bar's title and a menu
+  # item alike; a check box draws its "&".
+  Scenario: The mnemonic letter is drawn underlined
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Rectangle {
+        width: 120; height: 60
+        color: "#ffffff"
+        Button { padding: 0; background: null; font.pixelSize: 40; text: "&H" }
+        Button { x: 60; padding: 0; background: null; font.pixelSize: 40; text: "H" }
+      }
+      """
+    Then the pixel at 16, 39 of the window is within 120 of "#000000"
+    And the pixel at 76, 39 of the window is within 10 of "#ffffff"
 
   Scenario: Alt and the letter clicks a button
     Given the QML:

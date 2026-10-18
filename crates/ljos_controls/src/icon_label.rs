@@ -31,10 +31,11 @@ use ljos_engine::{
     QmlObject, QmlType, Value, qml_impl,
 };
 use ljos_quick::enums::{align, elide};
+use ljos_quick::text_input::text_format;
 use ljos_quick::{Image, ImageBase, Item, Text, register_image_tint, set_parent_item};
 
 use crate::button::{AbstractButton, Icon, display, icon_giver};
-use crate::util::{check, flag, is_a, num, set_computed, without_mnemonic};
+use crate::util::{check, flag, is_a, mnemonic_underlined, num, set_computed, without_mnemonic};
 
 /// `IconImage`: an `Image` drawn in one colour.
 #[derive(Debug, QmlObject)]
@@ -344,6 +345,15 @@ fn show(engine: &Engine, label: ObjectId, made: &Made) -> Result<(), EngineError
     }
     let mut text_size = (0.0, 0.0);
     if let Some(words) = words {
+        let written = engine.read(label, IconLabel::TEXT.index).to_js_string();
+        let (text, format) = match mnemonic_underlined(&written) {
+            Some(styled) => (
+                Value::String(Atom::from(styled.as_str())),
+                text_format::STYLED_TEXT,
+            ),
+            None => (text, text_format::AUTO_TEXT),
+        };
+        set_computed(engine, words, Text::TEXT_FORMAT.index, Value::Int(format))?;
         set_computed(engine, words, Text::TEXT.index, text)?;
         for (to, from) in [
             (Text::FONT.index, IconLabel::FONT.index),

@@ -116,6 +116,42 @@ pub(crate) fn spoken_without_mnemonic(text: &str) -> String {
     out
 }
 
+/// What [`without_mnemonic`] draws, as `StyledText` with the letter after
+/// the first dropped `&` underlined (qml6 underlines it before Alt is
+/// pressed too), or `None` when no letter is.
+pub(crate) fn mnemonic_underlined(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut after_ampersand = false;
+    let mut dropped = false;
+    let mut marked = false;
+    for c in text.chars() {
+        if c == '&' && !after_ampersand {
+            after_ampersand = true;
+            dropped = true;
+            continue;
+        }
+        let underline = dropped && !marked && c != '&' && !c.is_whitespace();
+        marked |= underline;
+        dropped = false;
+        after_ampersand = c == '&';
+        if underline {
+            out.push_str("<u>");
+        }
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\n' => out.push_str("<br>"),
+            c => out.push(c),
+        }
+        if underline {
+            out.push_str("</u>");
+        }
+    }
+    marked.then_some(out)
+}
+
 /// The mnemonic of `text`: the letter after the first single `&`,
 /// lower-cased, so that Alt+that letter activates the control.
 pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
