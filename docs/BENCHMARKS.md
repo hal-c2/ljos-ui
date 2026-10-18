@@ -548,10 +548,12 @@ was left running to stop. It asks for 9 pictures with no screen reader and 14 wi
 
 - **Decoded pictures stay on the CPU after upload.** Effects, tinting, Canvas, particles, the R
   backend, re-shrinking and video all read `ImageHandle`'s pixels, so they cannot simply go.
-  Dropping them needs a way to read pixels back or decode again when one of those asks.
+  Dropping them needs a way to read pixels back or decode again when one of those asks. (Done in
+  "Pictures kept at the size they are drawn" below.)
 - **Pictures of unpainted rows** stay at the window's size (896 px for 800 × 600). Only painted
   items are shrunk to what they draw. Shrinking the others to their item's size would save most of
-  rssnews's 17 MiB. Dropping them would cost a network fetch when they scroll in.
+  rssnews's 17 MiB. Dropping them would cost a network fetch when they scroll in. (Done in
+  "Pictures kept at the size they are drawn" below.)
 - **Memory outside Rust**, chiefly llvmpipe and Mesa, is about half of anon PSS.
 - **The binary's resident text** (36–43 MiB of PSS) is above Qt's shared libraries. On a system that
   runs several Ljós apps, it is shared like theirs.
@@ -746,3 +748,54 @@ measure.
   settles, which a write to a property with a `SpringAnimation` Behavior needs.
 - **samegame on a GPU** is still most of all render compose and encode, with texture keys hashed
   by SipHash. That is renderer work.
+
+### Pictures kept at the size they are drawn, and let go once drawn (2026-10-18)
+
+The same apps, profile and options as "Memory against Qt" above, Ljós only. Qt is the same 2026-10-17 run.
+Before (8ea10ca) and after were run back to back under a load of 2–33 and 13–58. The after run was
+made in parts: the bench twice refused an app whose scope it found in a cgroup holding other
+processes, and the apps it refused were run again with `--append`.
+
+| App | Peak, before → after (Qt) | Settled | Anon PSS | PSS |
+|---|---:|---:|---:|---:|
+| animations | 79.2 → 74.1 (103) | 69.4 → 68.9 (106) | 57.4 → 57.4 (92.7) | 143 → 115 (144) |
+| listview | 64.0 → 64.7 (110) | 67.3 → 67.7 (106) | 58.1 → 58.0 (87.3) | 122 → 111 (142) |
+| calqlatr | 69.8 → 70.1 (112) | 69.3 → 69.9 (113) | 61.0 → 60.9 (90.9) | 121 → 117 (159) |
+| clocks | 74.4 → 72.9 (107) | 71.1 → 69.8 (110) | 58.8 → 58.3 (98.2) | 130 → 110 (151) |
+| maroon | 81.2 → 73.6 (115) | 81.9 → 75.2 (120) | 72.4 → 66.1 (108) | 138 → 116 (157) |
+| rssnews | 80.2 → 77.8 (116) | 98.1 → 92.2 (261) | 88.8 → 82.1 (245) | 152 → 140 (307) |
+| samegame | 77.4 → 77.9 (111) | 72.6 → 71.5 (116) | 61.6 → 60.9 (104) | 123 → 113 (166) |
+
+Anon PSS moved in the two apps that show pictures larger than a few icons: maroon by 6.3 MiB and
+rssnews by 6.7 MiB. The others' pictures are small, and the rest of their memory is the same code.
+As before, PSS and peak follow the page cache.
+
+- **Pictures not painted** are kept at the size their item draws them, as painted ones were. That
+  is done from the pixels already kept, as soon as the picture comes and whenever the item's size
+  or fill mode changes, so nothing is fetched or decoded again. In rssnews a row's width follows
+  its picture's size, so the row has no size when the picture comes.
+  `features/items/image-kept-size.feature` and four tests in `ljos_quick/tests/image.rs` count the
+  bytes kept.
+- **Pixels once drawn.** A picture that can be made again from fewer bytes than its pixels lets
+  them go once it is a texture. A file is read again; registered, `data:` and fetched bytes are kept
+  for it when they are fewer than the pixels. A reader (Canvas `drawImage`, effects, tinting,
+  particles, the R backend, a shrink) has them made again once, and they stay. Nothing is done per
+  frame: letting go happens at upload, and making again only when a reader asks.
+- **Pictures for rows gone.** In rssnews six of the nine pictures it asks for arrive after the row
+  that asked has been let go. They were kept as about 2 MiB of pixels each. One that can be made
+  again from fewer bytes is now kept as those bytes, so a row made later decodes them and does not
+  fetch them again.
+- **The table of types** that compiling from source reads (`ljos run`, `--example`) gives back
+  the room its lists grew: 1.02 → 0.87 MiB. A shipped application never reads it.
+
+**What is left.**
+
+- **Pictures whose bytes outweigh their pixels.** rssnews's feed names JPEGs up to 7728 × 5152,
+  of several MiB each, kept at 896 px (2 MiB). They stay as pixels: keeping the bytes instead
+  would cost more, and dropping them would cost a fetch. Three of the pictures for rows gone are
+  such pictures, about 6 MiB.
+- **On llvmpipe a texture is in the process's own memory.** There, letting pixels go after upload
+  frees one of two copies; on a GPU it frees the only copy in system memory.
+- **Why rssnews lets rows go before their pictures come** was not looked into. Qt asks for 7
+  pictures where Ljós asks for 9.
+- **Memory outside Rust** (llvmpipe, Mesa) and **the binary's resident text** are as above.
