@@ -1,7 +1,6 @@
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    collections::HashMap,
     ops::Deref,
     panic::{AssertUnwindSafe, catch_unwind},
     ptr::NonNull,
@@ -16,6 +15,7 @@ use rquickjs::{
     function::{Args, Rest, This},
     object::{Accessor, Property},
 };
+use rustc_hash::FxHashMap;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::{
@@ -55,25 +55,25 @@ pub(crate) struct HostState {
     types: RefCell<Vec<Option<Persistent<Object<'static>>>>>,
     /// Engine-owned wrappers. Kept strongly so identity is stable and so the
     /// Engine decides when a wrapper may die ([`JsHost::drop_wrapper`]).
-    wrappers: RefCell<HashMap<u64, Persistent<Object<'static>>>>,
+    wrappers: RefCell<FxHashMap<u64, Persistent<Object<'static>>>>,
     host: RefCell<Option<Rc<dyn HostObjects>>>,
     released: Rc<RefCell<Vec<u64>>>,
     /// The objects scripts own ([`JsHost::give_to_script`]), each with
     /// how many of the wrappers made for it are still alive. One at most
     /// is reachable; one more may be dead and not yet reported.
-    owned: RefCell<HashMap<u64, u32>>,
+    owned: RefCell<FxHashMap<u64, u32>>,
     /// Made with the first wrapper of a script-owned object.
     owned_face: RefCell<Option<OwnedFace>>,
     mapper: RefCell<Option<Rc<SourceMapper>>>,
     text: RefCell<Option<Rc<SourceText>>>,
     entered: Cell<bool>,
     /// JS values held by Rust through [`JsRef`].
-    handles: RefCell<HashMap<u64, Held>>,
+    handles: RefCell<FxHashMap<u64, Held>>,
     /// The reference given out for each held JS object, by the object's
     /// address, so one object has one [`JsRef`] while any is held and
     /// equal references mean the same object. The address cannot be
     /// another object's while the entry in `handles` keeps this one alive.
-    by_object: RefCell<HashMap<usize, (u64, WeakRef)>>,
+    by_object: RefCell<FxHashMap<usize, (u64, WeakRef)>>,
     /// Whether an array crosses to the embedder by reference
     /// ([`HostObjects::arrays_by_reference`]).
     arrays_by_reference: Cell<bool>,

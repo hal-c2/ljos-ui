@@ -16,13 +16,13 @@
 //! answer is `None`: nothing polls.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
 use ljos_engine::{Engine, ObjectId, PropIndex, Value};
 use ljos_reactive::WriteKind;
 use ljos_runtime::{FrameScheduler, Time, TimerId, TimerKind};
+use rustc_hash::FxHashMap;
 
 use super::timeline::{Ctx, Defaults, FOREVER, Timed, warn};
 use super::types::{Animation, is_managed};
@@ -38,7 +38,7 @@ pub(crate) struct Driver {
     runs: RefCell<Vec<Rc<Run>>>,
     /// Some of `runs` are cancelled.
     stale: Cell<bool>,
-    by_anim: RefCell<HashMap<ObjectId, Rc<Run>>>,
+    by_anim: RefCell<FxHashMap<ObjectId, Rc<Run>>>,
     /// Turns "a frame per tick" and "a wake at this moment" into one time.
     sched: RefCell<FrameScheduler>,
     /// The wake asked for by the runs that need no frames.

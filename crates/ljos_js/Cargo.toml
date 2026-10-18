@@ -14,6 +14,7 @@ publish.workspace = true
 # and Ljós has no module imports yet, so `loader` stays off.
 rquickjs = { workspace = true, features = ["std"] }
 ljos_runtime = { path = "../ljos_runtime" }
+rustc-hash.workspace = true
 slotmap.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

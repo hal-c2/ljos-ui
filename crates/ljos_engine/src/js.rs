@@ -205,9 +205,9 @@ pub(crate) struct JsState {
     pub(crate) host: JsHost,
     /// Prototype per type description; the `MetaRef` keeps the pointer the
     /// key is made from alive.
-    types: RefCell<HashMap<usize, (MetaRef, HostTypeId)>>,
+    types: RefCell<rustc_hash::FxHashMap<usize, (MetaRef, HostTypeId)>>,
     /// The number each type QML declares prints with, by description.
-    numbers: RefCell<HashMap<usize, usize>>,
+    numbers: RefCell<rustc_hash::FxHashMap<usize, usize>>,
     /// How many numbers were given: one let go of is not given again.
     numbered: Cell<usize>,
     conns: RefCell<Vec<JsConn>>,
@@ -889,8 +889,8 @@ impl Engine {
         })));
         let state = Rc::new(JsState {
             host,
-            types: RefCell::new(HashMap::new()),
-            numbers: RefCell::new(HashMap::new()),
+            types: RefCell::default(),
+            numbers: RefCell::default(),
             numbered: Cell::new(0),
             modules: RefCell::new(HashMap::new()),
             conns: RefCell::new(Vec::new()),
