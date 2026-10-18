@@ -2161,6 +2161,9 @@ the tree at the start of this work, built the same way into a target directory o
 | release, unstripped | 115 760 032 | 110 529 328 |
 | dist (fat LTO, one codegen unit), stripped | 75 994 760 | 70 674 896 (−7.0 %) |
 
+The release "after" figures were measured with packed relocations. Only `dist` packs them now (see
+below), so a release build is about 2.8 MB larger than the table says.
+
 What is in it (release, rust-lld's link map summed by the crate each input section came from).
 Code is 60.8 MB. The largest crates are `ljos_quick` 4.2 MB, the `ljos` binary 3.8, `ljos_bdd` 2.8,
 `ljos_engine` 2.3, `ljos_controls` 2.2, naga 1.9, SQLite 1.8 and wgpu-core 1.4; drop glue is 2.1 MB
@@ -2173,8 +2176,9 @@ What was cut:
 
 - **Packed relocations** (`-z pack-relative-relocs`, from `ljos_cli`'s build script, for Linux and
   glibc): 140 000 relative relocations of 24 bytes each became a 44 kB bitmap, −2.8 MB. The binary
-  now needs glibc 2.36, and the loader says so by version. This keeps ASLR, which a non-PIE link
-  would have given up.
+  then needs glibc 2.36, and the loader says so by version, so only the `dist` profile packs them;
+  debug and release builds still run on older systems. This keeps ASLR, which a non-PIE link would
+  have given up.
 - **egui without its own fonts** (`default-features = false`): −1.4 MB. egui draws only the dev
   overlay and the inspector's text, and the shell now gives it ljos_text's Liberation Sans for both
   of its families. The overlay's monospace text is Liberation Sans as well.
