@@ -266,8 +266,11 @@ impl Engine {
         roots: &[ObjectId],
     ) -> Option<ReloadOutcome> {
         let st = &self.inner.reload;
-        if !patch.removed.is_empty() || self.application_fault().is_some() {
-            return None;
+        if !patch.removed.is_empty() {
+            return not_here("a file was removed");
+        }
+        if self.application_fault().is_some() {
+            return not_here("the application has a fault");
         }
         let mut phases = Phases::start();
         let changed = self.in_place_files(patch)?;
@@ -275,7 +278,7 @@ impl Engine {
         let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
         // A file that asks for a reset starts afresh at every reload.
         if instances.iter().any(|i| resets(&i.file.ir)) {
-            return None;
+            return not_here("a file asks for a reset");
         }
         // An instance used as the type of an object (`Foo {}`), to that
         // object's instance and index: what the user writes there
@@ -300,8 +303,8 @@ impl Engine {
                         names: &e.names,
                         functions: &e.functions,
                     };
-                    if !self.in_place_applies(&t, c, &users) {
-                        return None;
+                    if let Err(why) = self.in_place_applies(&t, c, &users) {
+                        return not_here(why);
                     }
                     targets.push(t);
                 }
@@ -360,7 +363,7 @@ impl Engine {
                     // The full reload tells what is wrong.
                     st.epoch.set(st.epoch.get() - 1);
                     self.reload_restore_loader(saved);
-                    return None;
+                    return not_here("a file does not load");
                 }
             }
         }
@@ -399,7 +402,7 @@ impl Engine {
             }
             st.epoch.set(st.epoch.get() - 1);
             self.reload_restore_loader(saved);
-            return None;
+            return not_here("what is added cannot be made");
         }
         drop(saved);
         phases.mark("grow");
@@ -644,8 +647,14 @@ impl Engine {
         let mut out = Vec::new();
         for f in &patch.files {
             let new = &f.file;
-            if f.added || resets(new) || new.pragmas.iter().any(|p| p.name == "Singleton") {
-                return None;
+            if f.added {
+                return not_here(format_args!("{} is new", new.file));
+            }
+            if resets(new) {
+                return not_here(format_args!("{} asks for a reset", new.file));
+            }
+            if new.pragmas.iter().any(|p| p.name == "Singleton") {
+                return not_here(format_args!("{} is a singleton", new.file));
             }
             let old = self.inner.loader.borrow().files.get(&new.file).cloned();
             // Nothing is made of it.
@@ -959,31 +968,31 @@ impl Engine {
         t: &Target,
         c: &Changed,
         users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
-    ) -> bool {
+    ) -> Result<(), &'static str> {
         let id = t.inst.objects[t.was];
         if !self.is_alive(id) {
-            return true;
+            return Ok(());
         }
         // A PropertyChanges or a Binding keeps what it is given for its
         // target.
         if self.foreign_keeper(id).is_some() {
-            return false;
+            return Err("a state or a Binding holds the edited object");
         }
         let given = self.inner.reload.given.borrow();
         let given = given.get(&id);
         let old = &c.old.ir.component(t.inst.comp).objects[t.was];
         for name in t.names {
             let Ok(target) = self.untrack(|| self.member_target(id, &[], name)) else {
-                return false;
+                return Err("an edited member is not found");
             };
             // A member the file did not give may be held by what took it
             // over (a view sizes a page that has no size of its own),
             // which decides again when the object is made again.
             if !sets(old, name) && self.overridden(target.obj, target.prop) {
-                return false;
+                return Err("an edited member is held by what took it over");
             }
             if given.is_some_and(|g| g.iter().any(|n| is_or_under(n, name))) {
-                return false;
+                return Err("an edited member is given where the object is made");
             }
         }
         let wholes: Vec<&str> = c
@@ -1002,14 +1011,14 @@ impl Engine {
             let ud = &user.file.ir.component(user.comp).objects[*i];
             // Its own function of the name is the one the object has.
             if root && ud.functions.iter().any(|f| t.functions.contains(&f.name)) {
-                return false;
+                return Err("a user of the component has its own function of the name");
             }
             for name in t.names {
                 if root && (sets(ud, name) || aliased(&user.file.ir, user.comp, *i, name)) {
-                    return false;
+                    return Err("a user of the component sets the edited member");
                 }
                 if first && wholes.iter().any(|a| sets_through(ud, a, name)) {
-                    return false;
+                    return Err("a user of the component sets the edited member by an alias");
                 }
             }
             first = false;
@@ -1019,7 +1028,7 @@ impl Engine {
             }
             below = user.clone();
         }
-        true
+        Ok(())
     }
 
     fn overridden(&self, obj: ObjectId, prop: crate::PropIndex) -> bool {
@@ -1324,16 +1333,16 @@ fn same_but_edits(
         || old.invocable != new.invocable
         || old.components.len() != new.components.len()
     {
-        return None;
+        return not_here("its imports, pragmas, scripts or components changed");
     }
     let mut objects = Vec::with_capacity(old.components.len());
     for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
         if o.name != n.name || o.id != n.id || o.kind != n.kind || o.signature != n.signature {
-            return None;
+            return not_here("a component's name, id, kind or signature changed");
         }
         let m = match_objects(old, new, CompIdx(c as u32), moves)?;
         if !m.same() && !grows_simply(o, n, &m) {
-            return None;
+            return not_here("objects came or went where they cannot be put");
         }
         objects.push(m);
     }
@@ -1380,14 +1389,14 @@ fn same_but_edits(
                 }
             }
             if a != b {
-                return None;
+                return not_here(format_args!("an object's {} changed", differs(&a, &b)));
             }
             was.clear();
             now.clear();
             exprs_of(oo, names, &mut was);
             exprs_of(no, names, &mut now);
             if was.len() != now.len() {
-                return None;
+                return not_here("an object has other expressions");
             }
             for (w, n) in was.iter().zip(&now) {
                 *remap.get_mut(w.index())? = Some(*n);
@@ -1397,7 +1406,7 @@ fn same_but_edits(
             places(oo, names, &mut here);
             places(no, names, &mut there);
             if here.len() != there.len() {
-                return None;
+                return not_here("an object has other places");
             }
             for (h, t) in here.drain(..).zip(there.drain(..)) {
                 if (h.line, h.column) != (t.line, t.column) {
@@ -1412,7 +1421,7 @@ fn same_but_edits(
         let n = &new.component(e.comp).objects[e.obj];
         let parent = n.parent.map(|p| &new.component(e.comp).objects[p.index()]);
         if is_model(n) || parent.is_some_and(is_model) {
-            return None;
+            return not_here("a model's elements changed");
         }
         for name in &e.names {
             let given = |m: &Members| {
@@ -1422,11 +1431,14 @@ fn same_but_edits(
             let written = |m: &Members| m.objects.iter().any(|a| a.name == *name);
             // A member no longer given goes back to its default, which
             // nothing here knows.
-            if !given(&n.members) || written(&n.members) || written(&o.members) {
-                return None;
+            if !given(&n.members) {
+                return not_here("a member is no longer given");
+            }
+            if written(&n.members) || written(&o.members) {
+                return not_here("a member given an object changed");
             }
             if aliased(new, e.comp, e.obj, name) {
-                return None;
+                return not_here("an aliased member changed");
             }
         }
         // A function edited in body alone: the object's method stays.
@@ -1439,7 +1451,7 @@ fn same_but_edits(
             };
             match (args(o, old), args(n, new)) {
                 (Some(a), Some(b)) if a == b => {}
-                _ => return None,
+                _ => return not_here("a function's parameters changed"),
             }
         }
         let at = ObjRef {
@@ -1457,6 +1469,37 @@ fn same_but_edits(
         }
     }
     Some((whole, remap, moved, objects))
+}
+
+/// None, telling why at debug level: the reload does not go in place.
+fn not_here<T>(why: impl std::fmt::Display) -> Option<T> {
+    tracing::debug!("reload not in place: {why}");
+    None
+}
+
+/// What part of an object's shape `a` and `b` differ in.
+fn differs(a: &ObjectDef, b: &ObjectDef) -> &'static str {
+    if a.properties != b.properties {
+        "declared properties"
+    } else if a.signals != b.signals {
+        "signals"
+    } else if a.functions != b.functions {
+        "functions"
+    } else if a.members.objects != b.members.objects {
+        "members given objects"
+    } else if a.children != b.children {
+        "children"
+    } else if a.members != b.members {
+        "members"
+    } else if a.grouped != b.grouped {
+        "grouped members"
+    } else if a.attached != b.attached {
+        "attached members"
+    } else if a.enums != b.enums || a.required != b.required {
+        "enums or required members"
+    } else {
+        "shape"
+    }
 }
 
 /// A model's elements are its data, read once.
@@ -1482,7 +1525,7 @@ fn match_objects(
     let mut at: HashMap<ObjectKey, usize> = HashMap::default();
     for j in 0..n.objects.len() {
         if at.insert(key(new, j), j).is_some() {
-            return None;
+            return not_here("two objects have one key");
         }
     }
     let mut to_new = Vec::with_capacity(o.objects.len());
@@ -1505,7 +1548,7 @@ fn match_objects(
     }
     // Two old objects of one key: the second finds it taken.
     if to_new.iter().flatten().count() != to_old.iter().flatten().count() {
-        return None;
+        return not_here("two old objects have one key");
     }
     // One of another type, or under another parent, is another object, and
     // so is all that is in it. A parent comes before what is in it.
