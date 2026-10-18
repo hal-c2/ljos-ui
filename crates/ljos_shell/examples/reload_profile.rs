@@ -134,7 +134,10 @@ fn main() -> anyhow::Result<()> {
                 Duration::from_secs(5),
                 [4, 32, 200, 1000, 4000],
             );
-            println!("{e}: {}", said.map_or_else(|e| e.to_string(), |v| v.to_string()));
+            println!(
+                "{e}: {}",
+                said.map_or_else(|e| e.to_string(), |v| v.to_string())
+            );
             settle(&mut app, &mut pass, Duration::from_millis(500));
         }
     }
