@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use egui::Rect;
-use egui::epaint::{ClippedShape, Shape};
+use egui::epaint::{ClippedShape, CornerRadius, Shape};
 use ljos_render::b0::ShaderPaint;
 
 /// What a window last showed.
@@ -86,9 +86,15 @@ impl LastPicture {
             changed.for_each(add);
         }
         if areas.is_empty() {
-            Change::None
-        } else {
-            Change::Area(areas)
+            return Change::None;
+        }
+        match scrolled(before, now, pixels_per_point) {
+            // Moving what the window shows costs about as much as drawing
+            // a quarter of it: a scroll is taken only where it spares more.
+            Some(scroll) if covered(&scroll.areas) + scroll.rect.area() / 4.0 < covered(&areas) => {
+                Change::Scroll(scroll)
+            }
+            _ => Change::Area(areas),
         }
     }
 
@@ -129,7 +135,263 @@ pub(crate) enum Change {
     None,
     /// Inside these areas, which may overlap.
     Area(Vec<Rect>),
+    /// What one clip showed, moved: a painter that keeps what the window
+    /// showed there may move it and draw only the areas.
+    Scroll(Scroll),
     All,
+}
+
+/// The content of `rect` (on whole device pixels) moved `by` (whole device
+/// pixels) from the last picture: moved there, it is the picture again
+/// except inside `areas` (which may overlap, and take in what the move
+/// brings into view). Outside `rect`, only `areas` change.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Scroll {
+    pub(crate) rect: Rect,
+    pub(crate) by: egui::Vec2,
+    pub(crate) areas: Vec<Rect>,
+}
+
+/// How far ahead in the other picture a shape's moved twin is looked for,
+/// past those that came into view or went out of it.
+const AHEAD: usize = 64;
+
+/// Whether the change from `before` to `now` is the content of one clip
+/// moved by whole pixels (a list or a page scrolled), and what else then
+/// changed. The content of a moving Flickable is drawn on whole pixels
+/// (`flickable-whole-pixels.feature`), so each of its shapes is the same
+/// as before, moved by the same distance, with the same clip; some come
+/// into view and some go out. What does not move with them but lies over
+/// or under them (a scroll bar, a header) is drawn again where it is and
+/// where the move took its pixels.
+fn scrolled(before: &[ClippedShape], now: &[ClippedShape], ppp: f32) -> Option<Scroll> {
+    let head = before
+        .iter()
+        .zip(now)
+        .take_while(|(a, b)| same_clipped(a, b))
+        .count();
+    let tail = before[head..]
+        .iter()
+        .rev()
+        .zip(now[head..].iter().rev())
+        .take_while(|(a, b)| same_clipped(a, b))
+        .count();
+    let (a, b) = (
+        &before[head..before.len() - tail],
+        &now[head..now.len() - tail],
+    );
+    // The clip and the distance: those the first shapes moved by most
+    // often. Rows that look the same (a list's separators) are each
+    // other moved by a row too, so the few most often found are each
+    // tried, and the one that leaves least to draw is taken.
+    let mut found: Vec<((Rect, egui::Vec2), usize)> = Vec::new();
+    for x in a.iter().take(VOTERS) {
+        for y in b.iter().take(AHEAD) {
+            if x.clip_rect != y.clip_rect {
+                continue;
+            }
+            let Some(by) = shift(&x.shape, &y.shape, ppp) else {
+                continue;
+            };
+            match found.iter_mut().find(|(f, _)| *f == (x.clip_rect, by)) {
+                Some((_, n)) => *n += 1,
+                None => found.push(((x.clip_rect, by), 1)),
+            }
+        }
+    }
+    found.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    found
+        .iter()
+        .take(TRIED)
+        .filter_map(|&((rect, by), _)| moved_in(before, now, (head, tail), rect, by, ppp))
+        .min_by(|p, q| covered(&p.areas).total_cmp(&covered(&q.areas)))
+}
+
+/// How many of the first shapes that changed say what moved.
+const VOTERS: usize = 8;
+
+/// How many of the clips and distances they found most often are tried.
+const TRIED: usize = 3;
+
+/// What else changes when the content of `rect` moved `by` from `before`
+/// to `now`, which start with `head` shapes and end with `tail` that are
+/// the same.
+fn moved_in(
+    before: &[ClippedShape],
+    now: &[ClippedShape],
+    (head, tail): (usize, usize),
+    rect: Rect,
+    by: egui::Vec2,
+    ppp: f32,
+) -> Option<Scroll> {
+    let (a, b) = (
+        &before[head..before.len() - tail],
+        &now[head..now.len() - tail],
+    );
+    let on_pixels = |v: f32| ((v * ppp).round() - v * ppp).abs() < 1e-3;
+    if !rect.is_finite()
+        || ![rect.min.x, rect.min.y, rect.max.x, rect.max.y]
+            .into_iter()
+            .all(on_pixels)
+        || by.x.abs() >= rect.width()
+        || by.y.abs() >= rect.height()
+    {
+        return None;
+    }
+    let moved = |x: &ClippedShape, y: &ClippedShape| {
+        let clipped = (x.clip_rect == rect && y.clip_rect == rect)
+            || (y.clip_rect == x.clip_rect.translate(by)
+                && rect.contains_rect(x.clip_rect)
+                && rect.contains_rect(y.clip_rect));
+        clipped && moved_by(&x.shape, &y.shape, by)
+    };
+    let mut areas = Vec::new();
+    let mut add = |area: Rect| {
+        if area.is_positive() {
+            areas.push(area);
+        }
+    };
+    // What comes into view.
+    let mut moved_rect = rect.translate(by);
+    if by.x > 0.0 {
+        add(Rect::from_x_y_ranges(
+            rect.min.x..=moved_rect.min.x,
+            rect.y_range(),
+        ));
+    } else if by.x < 0.0 {
+        add(Rect::from_x_y_ranges(
+            moved_rect.max.x..=rect.max.x,
+            rect.y_range(),
+        ));
+    }
+    moved_rect = moved_rect.intersect(rect);
+    if by.y > 0.0 {
+        add(Rect::from_x_y_ranges(
+            rect.x_range(),
+            rect.min.y..=moved_rect.min.y,
+        ));
+    } else if by.y < 0.0 {
+        add(Rect::from_x_y_ranges(
+            rect.x_range(),
+            moved_rect.max.y..=rect.max.y,
+        ));
+    }
+    // A shape that went: where it was, and where the move took it.
+    let went = |s: &ClippedShape, add: &mut dyn FnMut(Rect)| {
+        let at = extent(s, ppp);
+        add(at);
+        add(at.translate(by).intersect(rect));
+    };
+    // One that stays where it is while what lies in the clip moves: where
+    // it is, and where the move took its pixels, unless it is the same
+    // everywhere in the clip (a background).
+    let stays = |s: &ClippedShape, add: &mut dyn FnMut(Rect)| {
+        let at = extent(s, ppp);
+        if at.intersects(rect) && !even_over(s, rect) {
+            add(at.intersect(rect));
+            add(at.translate(by).intersect(rect));
+        }
+    };
+    for s in before[..head].iter().chain(&before[before.len() - tail..]) {
+        stays(s, &mut add);
+    }
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if moved(&a[i], &b[j]) {
+            (i, j) = (i + 1, j + 1);
+            continue;
+        }
+        if same_clipped(&a[i], &b[j]) {
+            stays(&a[i], &mut add);
+            (i, j) = (i + 1, j + 1);
+            continue;
+        }
+        // Shapes came into view before the next that moved, or went out
+        // of it: whichever skips fewer.
+        let came = (1..AHEAD).find(|&k| b.get(j + k).is_some_and(|y| moved(&a[i], y)));
+        let gone = (1..AHEAD).find(|&k| a.get(i + k).is_some_and(|x| moved(x, &b[j])));
+        match (came, gone) {
+            (Some(k), g) if g.is_none_or(|g| k <= g) => {
+                b[j..j + k].iter().for_each(|s| add(extent(s, ppp)));
+                j += k;
+            }
+            (_, Some(k)) => {
+                a[i..i + k].iter().for_each(|s| went(s, &mut add));
+                i += k;
+            }
+            _ => {
+                went(&a[i], &mut add);
+                add(extent(&b[j], ppp));
+                (i, j) = (i + 1, j + 1);
+            }
+        }
+    }
+    a[i..].iter().for_each(|s| went(s, &mut add));
+    b[j..].iter().for_each(|s| add(extent(s, ppp)));
+    Some(Scroll { rect, by, areas })
+}
+
+/// How far `b` lies from `a` when it is `a` moved by whole pixels, not
+/// by none.
+fn shift(a: &Shape, b: &Shape, ppp: f32) -> Option<egui::Vec2> {
+    let by = match (a, b) {
+        (Shape::Mesh(a), Shape::Mesh(b)) => b.vertices.first()?.pos - a.vertices.first()?.pos,
+        (Shape::Callback(_), _) | (_, Shape::Callback(_)) => return None,
+        _ => b.visual_bounding_rect().min - a.visual_bounding_rect().min,
+    };
+    let px = (by * ppp).round();
+    if px == egui::Vec2::ZERO || ((by * ppp) - px).length() > 1e-3 {
+        return None;
+    }
+    let by = px / ppp;
+    moved_by(a, b, by).then_some(by)
+}
+
+/// Whether `b` is `a` moved by `by`. A mesh's vertices are placed again
+/// in each frame, so they may be a rounding apart.
+fn moved_by(a: &Shape, b: &Shape, by: egui::Vec2) -> bool {
+    match (a, b) {
+        (Shape::Mesh(a), Shape::Mesh(b)) => {
+            a.texture_id == b.texture_id
+                && a.indices == b.indices
+                && a.vertices.len() == b.vertices.len()
+                && a.vertices.iter().zip(&b.vertices).all(|(u, v)| {
+                    u.color == v.color
+                        && u.uv == v.uv
+                        && (v.pos - u.pos - by).abs().max_elem() < 1e-3
+                })
+        }
+        (Shape::Vec(a), Shape::Vec(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| moved_by(a, b, by))
+        }
+        (Shape::Callback(_), _) | (_, Shape::Callback(_)) => false,
+        (a, b) => {
+            let mut a = a.clone();
+            a.translate(by);
+            a == *b
+        }
+    }
+}
+
+/// Whether `s` draws the same over all of `rect`: a filled rectangle with
+/// square corners that covers it.
+fn even_over(s: &ClippedShape, rect: Rect) -> bool {
+    match &s.shape {
+        Shape::Rect(r) => {
+            r.corner_radius == CornerRadius::ZERO
+                && r.stroke.is_empty()
+                && r.fill_texture_id() == egui::TextureId::default()
+                && r.blur_width == 0.0
+                && r.rect.contains_rect(rect)
+                && s.clip_rect.contains_rect(rect)
+        }
+        _ => false,
+    }
+}
+
+/// The pixels `areas` cover, counted again where they overlap.
+fn covered(areas: &[Rect]) -> f32 {
+    areas.iter().map(|a| a.area()).sum()
 }
 
 /// How long the steps of a painted pass took on this thread, where the
@@ -498,6 +760,123 @@ mod tests {
             "{} comparisons, not 40 000",
             COMPARED.get()
         );
+    }
+
+    const LIST: Rect = Rect {
+        min: Pos2::ZERO,
+        max: Pos2::new(100.0, 100.0),
+    };
+
+    /// Row `i` of a list in `LIST`, at `y`.
+    fn row(i: u8, y: f32) -> ClippedShape {
+        ClippedShape {
+            clip_rect: LIST,
+            shape: Shape::Rect(RectShape::filled(
+                Rect::from_min_size(Pos2::new(0.0, y), vec2(100.0, 10.0)),
+                CornerRadius::ZERO,
+                Color32::from_rgb(i * 20, 0, 0),
+            )),
+        }
+    }
+
+    fn rows(from: f32) -> Vec<ClippedShape> {
+        (0..10)
+            .map(|i| row(i, from + f32::from(i) * 20.0))
+            .collect()
+    }
+
+    fn scroll(before: &[ClippedShape], now: &[ClippedShape]) -> Scroll {
+        match change(before, now) {
+            Change::Scroll(scroll) => scroll,
+            other => panic!("a scroll, not {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_list_moved_by_whole_pixels_is_a_scroll_that_draws_what_comes_into_view() {
+        let s = scroll(&rows(0.0), &rows(-3.0));
+        assert_eq!((s.rect, s.by), (LIST, vec2(0.0, -3.0)));
+        let strip = Rect::from_min_max(Pos2::new(0.0, 97.0), Pos2::new(100.0, 100.0));
+        assert_eq!(s.areas, [strip]);
+    }
+
+    #[test]
+    fn a_row_that_comes_into_view_is_drawn() {
+        let now = &rows(-3.0)[..6];
+        let s = scroll(&rows(0.0)[..5], now);
+        assert!(
+            s.areas.contains(&extent(&now[5], 1.0)),
+            "the row that came: {:?}",
+            s.areas
+        );
+        let mut gone = rows(-3.0);
+        gone.remove(0);
+        let s = scroll(&rows(0.0), &gone);
+        let went = extent(&row(0, 0.0), 1.0);
+        assert!(s.areas.contains(&went), "where the row was: {:?}", s.areas);
+        assert!(
+            s.areas
+                .contains(&went.translate(vec2(0.0, -3.0)).intersect(LIST)),
+            "where the move took it: {:?}",
+            s.areas
+        );
+    }
+
+    #[test]
+    fn what_stays_over_a_moving_list_is_drawn_where_it_is_and_where_it_was_moved() {
+        let bar = ClippedShape {
+            clip_rect: Rect::EVERYTHING,
+            shape: Shape::Rect(RectShape::filled(
+                Rect::from_min_max(Pos2::new(95.0, 10.0), Pos2::new(100.0, 30.0)),
+                CornerRadius::ZERO,
+                Color32::BLUE,
+            )),
+        };
+        let (mut before, mut now) = (rows(0.0), rows(-3.0));
+        before.push(bar.clone());
+        now.push(bar.clone());
+        let s = scroll(&before, &now);
+        let at = extent(&bar, 1.0);
+        assert!(s.areas.contains(&at.intersect(LIST)), "{:?}", s.areas);
+        let moved = at.translate(vec2(0.0, -3.0)).intersect(LIST);
+        assert!(s.areas.contains(&moved), "{:?}", s.areas);
+    }
+
+    #[test]
+    fn a_background_under_a_moving_list_is_not_drawn_again() {
+        let back = ClippedShape {
+            clip_rect: Rect::EVERYTHING,
+            shape: Shape::Rect(RectShape::filled(
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(200.0, 200.0)),
+                CornerRadius::ZERO,
+                Color32::WHITE,
+            )),
+        };
+        let (mut before, mut now) = (vec![back.clone()], vec![back]);
+        before.extend(rows(0.0));
+        now.extend(rows(-3.0));
+        assert_eq!(scroll(&before, &now).areas.len(), 1, "only the strip");
+    }
+
+    #[test]
+    fn a_move_between_pixels_is_no_scroll() {
+        assert!(matches!(change(&rows(0.0), &rows(-0.5)), Change::Area(_)));
+    }
+
+    #[test]
+    fn one_small_thing_moving_in_a_large_clip_is_drawn_where_it_moves() {
+        let dot = |x: f32| ClippedShape {
+            clip_rect: LIST,
+            shape: Shape::Rect(RectShape::filled(
+                Rect::from_min_size(Pos2::new(x, 50.0), vec2(4.0, 4.0)),
+                CornerRadius::ZERO,
+                Color32::RED,
+            )),
+        };
+        assert!(matches!(
+            change(&[dot(10.0)], &[dot(12.0)]),
+            Change::Area(_)
+        ));
     }
 
     #[test]

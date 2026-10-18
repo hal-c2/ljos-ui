@@ -58,6 +58,10 @@ const JOINED: usize = 4 * AREAS;
 /// smaller ones are drawn together as one mesh.
 const CLEARED: u32 = 64 * 64;
 
+/// How many frames drawn without a scroll the pixels of the clip last
+/// scrolled are kept for.
+const KEPT_FOR: u32 = 30;
+
 /// The display, the context and GL's functions all windows share.
 pub(crate) struct Gl {
     // Field order is drop order: the context goes before its display.
@@ -196,6 +200,8 @@ pub(crate) struct GlPainter {
     meshes: crate::gl_mesh::Meshes,
     window: Option<GlWindow>,
     programs: crate::gl_shader::Programs,
+    /// Whether GL can copy pixels between framebuffers (GL 3, GLES 3).
+    blits: bool,
 }
 
 struct GlWindow {
@@ -205,6 +211,14 @@ struct GlWindow {
     /// The pixels each of the last frames drew, the last first (`None`:
     /// all of them), for a buffer that holds an older frame.
     drawn: VecDeque<Option<Damage>>,
+    /// The pixels of the clip a scroll last moved, as the last frame
+    /// drew them.
+    kept: Option<Kept>,
+    /// What the frame [`GlPainter::frame`] decided on moves before it
+    /// draws: the clip's pixels, kept, by how many pixels.
+    scroll: Option<(Px, [i32; 2])>,
+    /// The clip whose pixels the frame keeps once drawn, from now on.
+    keep: Option<Px>,
     // The surface draws into the window: it stays while the surface does.
     _window: Arc<Window>,
 }
@@ -217,12 +231,14 @@ impl GlPainter {
         let painter = egui_glow::Painter::new(Arc::clone(&gl.glow), "", None, true)
             .map_err(|e| e.to_string())?;
         let meshes = crate::gl_mesh::Meshes::new(&gl.glow)?;
+        let blits = gl.glow.version().major >= 3;
         Ok(Self {
             gl,
             painter,
             meshes,
             window: None,
             programs: crate::gl_shader::Programs::default(),
+            blits,
         })
     }
 
@@ -294,6 +310,9 @@ impl GlPainter {
             surface,
             px,
             drawn: VecDeque::new(),
+            kept: None,
+            scroll: None,
+            keep: None,
             _window: Arc::clone(window),
         });
         Ok(())
@@ -301,9 +320,15 @@ impl GlPainter {
 
     /// The window is going: its surface goes first.
     pub(crate) fn forget_window(&mut self) {
-        if let Some(window) = self.window.take()
-            && self.gl.current.get() == window.id
+        let Some(mut window) = self.window.take() else {
+            return;
+        };
+        if let Some(kept) = window.kept.take()
+            && self.gl.make_current(Some((window.id, &window.surface)))
         {
+            kept.destroy(&self.gl.glow);
+        }
+        if self.gl.current.get() == window.id {
             self.gl.make_current(None);
         }
     }
@@ -313,6 +338,9 @@ impl GlPainter {
             window.surface.resize(&self.gl.context, w, h);
             window.px = [w.get(), h.get()];
             window.drawn.clear();
+            if let Some(kept) = &mut window.kept {
+                kept.drawn = false;
+            }
         }
     }
 
@@ -333,40 +361,79 @@ impl GlPainter {
         let Some(gw) = self.window.as_mut() else {
             return Frame::Whole;
         };
-        let now = match change {
-            _ if replaced => None,
+        gw.scroll = None;
+        let px = |areas: Vec<egui::Rect>| -> Vec<Px> {
+            areas
+                .into_iter()
+                .map(|area| Px::around(area, pixels_per_point, gw.px))
+                .collect()
+        };
+        // What this frame changes, and the clip whose pixels it moves.
+        let (now, scroll) = match change {
+            _ if replaced => (None, None),
             Change::None => return Frame::Nothing,
-            Change::Area(areas) => Some(Damage::of(
-                areas
-                    .into_iter()
-                    .map(|area| Px::around(area, pixels_per_point, gw.px)),
-            )),
-            Change::All => None,
+            Change::Area(areas) => (Some(px(areas)), None),
+            Change::Scroll(s) if self.blits => {
+                let rect = Px::around(s.rect, pixels_per_point, gw.px);
+                let by = (s.by * pixels_per_point).round();
+                let mut areas = px(s.areas);
+                let kept = gw.kept.as_mut().filter(|k| k.px == rect && k.drawn);
+                match kept {
+                    Some(kept) => {
+                        kept.idle = 0;
+                        (Some(areas), Some((rect, [by.x as i32, by.y as i32])))
+                    }
+                    // The first frame of a scroll draws the clip, and
+                    // keeps it for the next.
+                    None => {
+                        gw.keep = Some(rect);
+                        areas.push(rect);
+                        (Some(areas), None)
+                    }
+                }
+            }
+            Change::Scroll(s) => {
+                let mut areas = px(s.areas);
+                areas.push(Px::around(s.rect, pixels_per_point, gw.px));
+                (Some(areas), None)
+            }
+            Change::All => (None, None),
         };
         // What it draws with the frames before it covers at least as
         // much: drawn whole, then and in the frames that redraw it.
+        // The clip a scroll moves is copied, not drawn, so it is left out.
         let software = self.gl.software;
-        let now = now.filter(|d| !d.mostly(gw.px, software));
+        let now = now.map(Damage::of).filter(|d| !d.mostly(gw.px, software));
         // Asked before the context is current with the surface: EGL
         // answers for the surface either way.
         let age = gw.surface.buffer_age() as usize;
-        gw.drawn.push_front(now);
+        let mut drawn = now.as_ref().map(|d| d.0.clone()).unwrap_or_default();
+        // For a later frame, this one changed all of the clip it moved.
+        gw.drawn.push_front(now.map(|now| match scroll {
+            Some((rect, _)) => Damage::of(now.0.into_iter().chain([rect])),
+            None => now,
+        }));
         gw.drawn.truncate(REMEMBERED);
-        if age == 0 || age > gw.drawn.len() {
+        if age == 0 || age > gw.drawn.len() || gw.drawn[0].is_none() {
             return Frame::Whole;
         }
-        let mut drawn = Vec::new();
-        for d in gw.drawn.iter().take(age) {
-            match d {
-                Some(d) => drawn.extend_from_slice(&d.0),
-                None => return Frame::Whole,
+        for d in gw.drawn.iter().take(age).skip(1) {
+            match (d, scroll) {
+                (None, _) => return Frame::Whole,
+                (Some(d), None) => drawn.extend_from_slice(&d.0),
+                // The clip is all moved or drawn again: what the frames
+                // since changed in it is not drawn again.
+                (Some(d), Some((rect, _))) => {
+                    drawn.extend(d.0.iter().flat_map(|px| px.minus(rect)))
+                }
             }
         }
         let damage = Damage::of(drawn);
         if damage.mostly(gw.px, self.gl.software) {
             return Frame::Whole;
         }
-        if damage.0.is_empty() {
+        gw.scroll = scroll;
+        if damage.0.is_empty() && scroll.is_none() {
             Frame::Nothing
         } else {
             Frame::Part(
@@ -392,7 +459,7 @@ impl GlPainter {
         pending: &mut egui::TexturesDelta,
         window: &Window,
     ) -> Steps {
-        let Some(gw) = self.window.as_ref() else {
+        let Some(gw) = self.window.as_mut() else {
             return Steps::default();
         };
         if !self.gl.make_current(Some((gw.id, &gw.surface))) {
@@ -425,6 +492,14 @@ impl GlPainter {
             ),
             Frame::Whole => None,
         };
+        let mut moved = None;
+        if part.is_some()
+            && let Some((rect, by)) = gw.scroll.take()
+            && let Some(kept) = &gw.kept
+        {
+            kept.move_into(&self.gl.glow, gw.px, by);
+            moved = Some(rect);
+        }
         let gamma = clear.to_normalized_gamma_f32();
         let mut backdrop = None;
         match &part {
@@ -456,6 +531,7 @@ impl GlPainter {
             backdrop.iter().chain(primitives),
         );
         free_pending(&mut self.painter, pending);
+        keep(&self.gl.glow, gw);
         let drawn = Instant::now();
         window.pre_present_notify();
         // A lost frame is drawn again with the next change; there is
@@ -463,7 +539,7 @@ impl GlPainter {
         // take only that.
         let _ = match part {
             Some(areas) => {
-                let rects: Vec<_> = areas.iter().map(|px| px.egl(gw.px)).collect();
+                let rects: Vec<_> = areas.iter().chain(&moved).map(|px| px.egl(gw.px)).collect();
                 gw.surface
                     .swap_buffers_with_damage(&self.gl.context, &rects)
             }
@@ -525,6 +601,163 @@ fn is_software(renderer: &str) -> bool {
     .any(|s| r.contains(s))
 }
 
+/// Keeps the pixels of the clip a scroll moves as this frame drew them,
+/// for the next frame to move; lets go of them after [`KEPT_FOR`] frames
+/// without a scroll.
+fn keep(gl: &glow::Context, gw: &mut GlWindow) {
+    if let Some(rect) = gw.keep.take()
+        && gw.kept.as_ref().is_none_or(|k| k.px != rect)
+    {
+        if let Some(old) = gw.kept.take() {
+            old.destroy(gl);
+        }
+        gw.kept = Kept::new(gl, rect);
+    }
+    let Some(kept) = gw.kept.as_mut() else {
+        return;
+    };
+    kept.idle += 1;
+    if kept.idle > KEPT_FOR {
+        if let Some(kept) = gw.kept.take() {
+            kept.destroy(gl);
+        }
+        return;
+    }
+    kept.copy_from(gl, gw.px);
+}
+
+/// The pixels of a clip of the window, kept in a framebuffer of their own.
+/// Moving them is a copy GL makes without drawing a shape; drawing what
+/// they show again is every shape in the clip, rasterised.
+struct Kept {
+    px: Px,
+    framebuffer: glow::Framebuffer,
+    pixels: glow::Renderbuffer,
+    /// Whether they are what the last frame drew there.
+    drawn: bool,
+    /// Frames drawn since the last that moved them.
+    idle: u32,
+}
+
+impl Kept {
+    fn new(gl: &glow::Context, px: Px) -> Option<Kept> {
+        let [x0, y0, x1, y1] = px.0;
+        // SAFETY: the context is current; the framebuffer bound is put
+        // back to the window's before anything else draws.
+        unsafe {
+            let pixels = gl.create_renderbuffer().ok()?;
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(pixels));
+            gl.renderbuffer_storage(
+                glow::RENDERBUFFER,
+                glow::RGBA8,
+                (x1 - x0) as i32,
+                (y1 - y0) as i32,
+            );
+            gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+            let Ok(framebuffer) = gl.create_framebuffer() else {
+                gl.delete_renderbuffer(pixels);
+                return None;
+            };
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::RENDERBUFFER,
+                Some(pixels),
+            );
+            let complete =
+                gl.check_framebuffer_status(glow::FRAMEBUFFER) == glow::FRAMEBUFFER_COMPLETE;
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            let kept = Kept {
+                px,
+                framebuffer,
+                pixels,
+                drawn: false,
+                idle: 0,
+            };
+            if complete {
+                Some(kept)
+            } else {
+                kept.destroy(gl);
+                None
+            }
+        }
+    }
+
+    /// Takes the clip's pixels from the window's buffer, drawn.
+    fn copy_from(&mut self, gl: &glow::Context, size: [u32; 2]) {
+        let [w, h] = self.size();
+        let r = self.px.egl(size);
+        // SAFETY: as in `new`; a copy is not scissored.
+        unsafe {
+            gl.disable(glow::SCISSOR_TEST);
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(self.framebuffer));
+            gl.blit_framebuffer(
+                r.x,
+                r.y,
+                r.x + r.width,
+                r.y + r.height,
+                0,
+                0,
+                w,
+                h,
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+        self.drawn = true;
+    }
+
+    /// Puts the clip's pixels back into the window's buffer, moved `by`
+    /// pixels (right and down): all of the clip but what comes into view.
+    fn move_into(&self, gl: &glow::Context, size: [u32; 2], by: [i32; 2]) {
+        let [w, h] = self.size();
+        let [dx, dy] = by;
+        // What stays in the clip, in its own pixels from the top left.
+        let (sx0, sx1) = ((-dx).max(0), (w - dx).min(w));
+        let (sy0, sy1) = ((-dy).max(0), (h - dy).min(h));
+        if sx1 <= sx0 || sy1 <= sy0 {
+            return;
+        }
+        let [x0, y0, ..] = self.px.0.map(|v| v as i32);
+        let height = size[1] as i32;
+        // SAFETY: as in `copy_from`.
+        unsafe {
+            gl.disable(glow::SCISSOR_TEST);
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.framebuffer));
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+            gl.blit_framebuffer(
+                sx0,
+                h - sy1,
+                sx1,
+                h - sy0,
+                x0 + sx0 + dx,
+                height - (y0 + sy1 + dy),
+                x0 + sx1 + dx,
+                height - (y0 + sy0 + dy),
+                glow::COLOR_BUFFER_BIT,
+                glow::NEAREST,
+            );
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+    }
+
+    fn size(&self) -> [i32; 2] {
+        let [x0, y0, x1, y1] = self.px.0;
+        [(x1 - x0) as i32, (y1 - y0) as i32]
+    }
+
+    fn destroy(self, gl: &glow::Context) {
+        // SAFETY: the context is current; nothing draws with them after.
+        unsafe {
+            gl.delete_framebuffer(self.framebuffer);
+            gl.delete_renderbuffer(self.pixels);
+        }
+    }
+}
+
 /// A rectangle of the window's pixels, from the top left: `[x0, y0, x1,
 /// y1)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -563,6 +796,23 @@ impl Px {
     fn pixels(self) -> u32 {
         let [x0, y0, x1, y1] = self.0;
         (x1 - x0) * (y1 - y0)
+    }
+
+    /// The pixels of `self` that are not `other`'s: up to four rectangles.
+    fn minus(self, other: Px) -> impl Iterator<Item = Px> {
+        let ([x0, y0, x1, y1], [a0, b0, a1, b1]) = (self.0, other.0);
+        let parts = if self.overlaps(other) {
+            let (top, bottom) = (b0.max(y0), b1.min(y1));
+            [
+                Px([x0, y0, x1, top]),
+                Px([x0, bottom, x1, y1]),
+                Px([x0, top, a0.min(x1), bottom]),
+                Px([a1.max(x0), top, x1, bottom]),
+            ]
+        } else {
+            [self, Px([0; 4]), Px([0; 4]), Px([0; 4])]
+        };
+        parts.into_iter().filter(|px| !px.is_empty())
     }
 
     fn overlaps(self, other: Px) -> bool {
@@ -1056,6 +1306,26 @@ mod tests {
             assert_eq!(x1, (hi.ceil().max(0.0) as u32).min(2000), "{v}");
             assert_eq!(y0, x0);
         }
+    }
+
+    #[test]
+    fn what_lies_outside_a_rectangle_is_at_most_four() {
+        let window = Px([0, 0, 100, 100]);
+        let middle = Px([20, 30, 60, 70]);
+        let rest: Vec<_> = window.minus(middle).collect();
+        assert_eq!(
+            rest.iter().map(|px| px.pixels()).sum::<u32>(),
+            10_000 - 1_600
+        );
+        assert!(rest.iter().all(|px| !px.overlaps(middle)));
+        assert_eq!(middle.minus(window).count(), 0);
+        let apart = Px([200, 200, 210, 210]);
+        assert_eq!(apart.minus(window).collect::<Vec<_>>(), [apart]);
+        let top = Px([0, 0, 100, 50]);
+        assert_eq!(
+            window.minus(top).collect::<Vec<_>>(),
+            [Px([0, 50, 100, 100])]
+        );
     }
 
     #[test]
