@@ -475,6 +475,10 @@ fn load_with(e: &Engine, me: ObjectId, stream: Option<Played>) -> u64 {
         return generation;
     }
     set_status(e, me, status::LOADING);
+    // A player with an output will want the device: it opens meanwhile.
+    if get(e, me, MediaPlayer::AUDIO_OUTPUT).is_some() {
+        let _ = Audio::of(e).soon();
+    }
     let url = e.resolve_url(me, &source);
     open::start(e, me, generation, url, None, opened, Some(source_streams));
     generation
@@ -821,7 +825,8 @@ fn halt(e: &Engine, me: ObjectId) {
 /// Where the player is, by its clock.
 fn clock(e: &Engine, me: ObjectId) -> f64 {
     let rate = get(e, me, MediaPlayer::PLAYBACK_RATE);
-    let format = Audio::of(e).format();
+    // A voice the device has played means the device is open.
+    let format = Audio::of(e).known();
     run(e, me, |r| {
         if let Some(s) = &r.stream {
             // A stream's time is the pictures it has shown.

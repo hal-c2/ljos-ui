@@ -12,7 +12,7 @@ use ljos_platform::{Platform, is_remote, url_path};
 use std::sync::Arc;
 
 use crate::meta::Entry;
-use crate::sink::Format;
+use crate::sink::{Format, Soon};
 use crate::stream::{MediaStream, StreamFormat, StreamOptions};
 
 /// What opening found.
@@ -80,14 +80,14 @@ pub(crate) type Streams =
 
 /// Opens `url` (already resolved) for `me`, answering through `done` on
 /// the Engine thread. `samples` asks for the sound decoded whole, for a
-/// device of that format. A remote source that `streams` can take is
+/// device of that format, which the thread opening it waits for. A remote source that `streams` can take is
 /// read into it as it arrives, instead of whole before it plays.
 pub(crate) fn start(
     e: &Engine,
     me: ObjectId,
     generation: u64,
     url: String,
-    samples: Option<Format>,
+    samples: Option<Soon>,
     done: Done,
     streams: Option<Streams>,
 ) {
@@ -95,7 +95,7 @@ pub(crate) fn start(
     if let Some(bytes) = platform.resource(&url) {
         let bytes: Vec<u8> = bytes.to_vec();
         spawn(e, me, generation, done, move || {
-            from_bytes(&name_of(&url), bytes, samples)
+            from_bytes(&name_of(&url), bytes, samples.and_then(|s| s.wait()))
         });
         return;
     }
@@ -104,7 +104,7 @@ pub(crate) fn start(
         let Some(streams) = streams else {
             platform.fetch(&url, move |e, got| match got {
                 Ok(bytes) => spawn(e, me, generation, done, move || {
-                    from_bytes(&name, bytes, samples)
+                    from_bytes(&name, bytes, samples.and_then(|s| s.wait()))
                 }),
                 Err(err) => done(e, me, generation, Err(OpenError::Network(err.to_string()))),
             });
@@ -133,7 +133,7 @@ pub(crate) fn start(
                     let outcome = read
                         .and_then(|()| incoming.body.read_to_end(&mut head).map(drop))
                         .map_err(|err| OpenError::Network(err.to_string()))
-                        .and_then(|()| from_bytes(&name, head, samples));
+                        .and_then(|()| from_bytes(&name, head, samples.and_then(|s| s.wait())));
                     reply.send(move |e| done(e, me, generation, outcome));
                     return;
                 };
@@ -157,7 +157,7 @@ pub(crate) fn start(
     }
     let real = url_path(&url).map(|p| platform.env().real(&p));
     spawn(e, me, generation, done, move || match real {
-        Some(path) => from_path(&path, samples),
+        Some(path) => from_path(&path, samples.and_then(|s| s.wait())),
         None => Err(OpenError::Resource),
     });
 }

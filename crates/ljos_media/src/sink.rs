@@ -11,7 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 
 use ljos_engine::Engine;
 
@@ -159,7 +159,7 @@ impl Voice {
 /// The voices one device mixes.
 #[cfg_attr(not(feature = "audio"), allow(dead_code))]
 #[derive(Debug, Default)]
-struct Mixer {
+pub(crate) struct Mixer {
     voices: Mutex<Vec<Arc<Voice>>>,
 }
 
@@ -178,10 +178,40 @@ impl Mixer {
 }
 
 /// The engine's sound output: an extension, one per engine.
-#[derive(Default)]
+///
+/// The device is opened on a thread of its own, which keeps the stream
+/// for as long as the engine has it: opening asks the sound server and
+/// takes milliseconds, which the user interface would show as a hitch the
+/// first time something makes a sound. A decoder that needs the device's
+/// format waits for it on its own thread.
 pub(crate) struct Audio {
     null: Cell<bool>,
+    opener: Option<Opener>,
     device: RefCell<Device>,
+}
+
+impl Default for Audio {
+    fn default() -> Self {
+        #[cfg(feature = "audio")]
+        let opener: Option<Opener> = Some(cpal_device::default_output);
+        #[cfg(not(feature = "audio"))]
+        let opener = None;
+        Audio {
+            null: Cell::new(false),
+            opener,
+            device: RefCell::default(),
+        }
+    }
+}
+
+/// Opens the default output, mixing what `Mixer` holds, on the audio
+/// thread: its format, and what plays and pauses it there.
+pub(crate) type Opener = fn(Arc<Mixer>) -> Option<(Format, Box<dyn Playback>)>;
+
+/// A stream the audio thread owns.
+pub(crate) trait Playback {
+    fn play(&self);
+    fn pause(&self);
 }
 
 #[derive(Default)]
@@ -189,8 +219,53 @@ enum Device {
     #[default]
     Untried,
     Absent,
-    #[cfg(feature = "audio")]
-    Open(cpal_device::Open),
+    Output(Output),
+}
+
+/// The device as the Engine thread sees it, open or still opening.
+struct Output {
+    told: Soon,
+    mixer: Arc<Mixer>,
+    commands: mpsc::Sender<Command>,
+    running: Cell<bool>,
+}
+
+enum Command {
+    Play,
+    Pause,
+}
+
+/// The device's format, once the audio thread has tried to open it:
+/// `None` when there is no device.
+#[derive(Clone, Default)]
+pub(crate) struct Soon(Arc<(Mutex<Option<Option<Format>>>, Condvar)>);
+
+impl Soon {
+    fn tell(&self, format: Option<Format>) {
+        let (slot, ready) = &*self.0;
+        *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(format);
+        ready.notify_all();
+    }
+
+    /// The format, waiting for the device to be tried.
+    pub(crate) fn wait(&self) -> Option<Format> {
+        let (slot, ready) = &*self.0;
+        let mut told = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(format) = *told {
+                return format;
+            }
+            told = ready.wait(told).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// The format if the device has been tried.
+    fn known(&self) -> Option<Format> {
+        let (slot, _) = &*self.0;
+        slot.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .flatten()
+    }
 }
 
 /// What `MediaDevices` reports of the output.
@@ -210,16 +285,26 @@ impl Audio {
         *self.device.borrow_mut() = Device::Absent;
     }
 
-    /// The device's format, opening it the first time; `None` for the null
-    /// sink.
-    pub(crate) fn format(&self) -> Option<Format> {
-        if self.null.get() {
-            return None;
-        }
+    /// The device's format, to be known off the Engine thread; `None` for
+    /// the null sink. Starts opening the device the first time.
+    pub(crate) fn soon(&self) -> Option<Soon> {
         self.open();
         match &*self.device.borrow() {
-            #[cfg(feature = "audio")]
-            Device::Open(open) => Some(open.format),
+            Device::Output(out) => Some(out.told.clone()),
+            _ => None,
+        }
+    }
+
+    /// The device's format, waiting for it to open the first time; `None`
+    /// for the null sink.
+    pub(crate) fn format(&self) -> Option<Format> {
+        self.soon().and_then(|s| s.wait())
+    }
+
+    /// The device's format if it is open, never waiting.
+    pub(crate) fn known(&self) -> Option<Format> {
+        match &*self.device.borrow() {
+            Device::Output(out) => out.told.known(),
             _ => None,
         }
     }
@@ -242,20 +327,34 @@ impl Audio {
     /// Starts `voice` on the device. With the null sink nothing happens:
     /// the caller's clock is the engine's.
     pub(crate) fn play(&self, voice: &Arc<Voice>) {
-        #[cfg(feature = "audio")]
-        if let Device::Open(open) = &*self.device.borrow() {
-            open.add(Arc::clone(voice));
+        if let Device::Output(out) = &*self.device.borrow() {
+            out.mixer
+                .voices
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(Arc::clone(voice));
+            if !out.running.get() && out.commands.send(Command::Play).is_ok() {
+                out.running.set(true);
+            }
         }
-        #[cfg(not(feature = "audio"))]
-        let _ = voice;
     }
 
     /// Ends `voice`, pausing the stream when it was the last.
     pub(crate) fn remove(&self, voice: &Arc<Voice>) {
         voice.stop();
-        #[cfg(feature = "audio")]
-        if let Device::Open(open) = &*self.device.borrow() {
-            open.prune();
+        if let Device::Output(out) = &*self.device.borrow() {
+            let empty = {
+                let mut voices = out
+                    .mixer
+                    .voices
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                voices.retain(|v| !v.is_done());
+                voices.is_empty()
+            };
+            if empty && out.running.get() && out.commands.send(Command::Pause).is_ok() {
+                out.running.set(false);
+            }
         }
     }
 
@@ -263,32 +362,61 @@ impl Audio {
         if !matches!(*self.device.borrow(), Device::Untried) {
             return;
         }
-        #[cfg(feature = "audio")]
-        let device = match cpal_device::Open::default_output() {
-            Some(open) => Device::Open(open),
+        let device = match self.opener.filter(|_| !self.null.get()) {
+            Some(opener) => spawn_output(opener).map_or(Device::Absent, Device::Output),
             None => Device::Absent,
         };
-        #[cfg(not(feature = "audio"))]
-        let device = Device::Absent;
         *self.device.borrow_mut() = device;
     }
 }
 
+/// Starts the audio thread: it opens the device, says its format, and
+/// then plays and pauses it as told until the engine lets it go.
+fn spawn_output(opener: Opener) -> Option<Output> {
+    let told = Soon::default();
+    let mixer = Arc::new(Mixer::default());
+    let (commands, heard) = mpsc::channel();
+    let (tell, feed) = (told.clone(), Arc::clone(&mixer));
+    std::thread::Builder::new()
+        .name("ljos-audio".to_owned())
+        .spawn(move || {
+            let opened = opener(feed);
+            tell.tell(opened.as_ref().map(|(format, _)| *format));
+            let Some((_, stream)) = opened else {
+                return;
+            };
+            while let Ok(command) = heard.recv() {
+                match command {
+                    Command::Play => stream.play(),
+                    Command::Pause => stream.pause(),
+                }
+            }
+        })
+        .ok()?;
+    Some(Output {
+        told,
+        mixer,
+        commands,
+        running: Cell::new(false),
+    })
+}
+
 #[cfg(feature = "audio")]
 mod cpal_device {
-    use std::cell::Cell;
-    use std::sync::{Arc, PoisonError};
+    use std::sync::Arc;
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    use super::{Description, Format, Mixer, Voice};
+    use super::{Description, Format, Mixer, Playback};
 
-    /// An output stream on the default device, and what it mixes.
-    pub(super) struct Open {
-        pub format: Format,
-        mixer: Arc<Mixer>,
-        stream: cpal::Stream,
-        running: Cell<bool>,
+    impl Playback for cpal::Stream {
+        fn play(&self) {
+            let _ = StreamTrait::play(self);
+        }
+
+        fn pause(&self) {
+            let _ = StreamTrait::pause(self);
+        }
     }
 
     pub(super) fn describe() -> Option<Description> {
@@ -304,64 +432,29 @@ mod cpal_device {
         Some(Description { id, description })
     }
 
-    impl Open {
-        /// The default device, with a stream built and paused; `None` when
-        /// there is none or it refuses.
-        pub(super) fn default_output() -> Option<Open> {
-            let device = cpal::default_host().default_output_device()?;
-            let supported = device.default_output_config().ok()?;
-            let config = supported.config();
-            let format = Format {
-                rate: config.sample_rate,
-                channels: config.channels.max(1),
-            };
-            let mixer = Arc::new(Mixer::default());
-            let feed = Arc::clone(&mixer);
-            let channels = usize::from(format.channels);
-            let stream = device
-                .build_output_stream::<f32, _, _>(
-                    config,
-                    move |out: &mut [f32], _| feed.fill(out, channels),
-                    |_err| {},
-                    None,
-                )
-                .ok()?;
-            // Built streams may start on their own; this one waits for a
-            // voice.
-            let _ = stream.pause();
-            Some(Open {
-                format,
-                mixer,
-                stream,
-                running: Cell::new(false),
-            })
-        }
-
-        pub(super) fn add(&self, voice: Arc<Voice>) {
-            self.mixer
-                .voices
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(voice);
-            if !self.running.get() && self.stream.play().is_ok() {
-                self.running.set(true);
-            }
-        }
-
-        pub(super) fn prune(&self) {
-            let empty = {
-                let mut voices = self
-                    .mixer
-                    .voices
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                voices.retain(|v| !v.is_done());
-                voices.is_empty()
-            };
-            if empty && self.running.get() && self.stream.pause().is_ok() {
-                self.running.set(false);
-            }
-        }
+    /// The default device, with a stream built and paused; `None` when
+    /// there is none or it refuses.
+    pub(super) fn default_output(mixer: Arc<Mixer>) -> Option<(Format, Box<dyn Playback>)> {
+        let device = cpal::default_host().default_output_device()?;
+        let supported = device.default_output_config().ok()?;
+        let config = supported.config();
+        let format = Format {
+            rate: config.sample_rate,
+            channels: config.channels.max(1),
+        };
+        let channels = usize::from(format.channels);
+        let stream = device
+            .build_output_stream::<f32, _, _>(
+                config,
+                move |out: &mut [f32], _| mixer.fill(out, channels),
+                |_err| {},
+                None,
+            )
+            .ok()?;
+        // Built streams may start on their own; this one waits for a
+        // voice.
+        let _ = StreamTrait::pause(&stream);
+        Some((format, Box::new(stream)))
     }
 }
 
@@ -379,4 +472,89 @@ pub(crate) fn interleave(channels: &[Vec<f32>], out: u16) -> Vec<f32> {
         }
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+
+    /// Held shut until the test has seen the Engine thread go on.
+    static GATE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+    static OPENED_ON: Mutex<Option<String>> = Mutex::new(None);
+    static PLAYS: AtomicUsize = AtomicUsize::new(0);
+    static PAUSES: AtomicUsize = AtomicUsize::new(0);
+
+    struct Counted;
+
+    impl Playback for Counted {
+        fn play(&self) {
+            PLAYS.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn pause(&self) {
+            PAUSES.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn slow_device(_: Arc<Mixer>) -> Option<(Format, Box<dyn Playback>)> {
+        let (open, shut) = &GATE;
+        let mut open = open.lock().unwrap();
+        while !*open {
+            open = shut.wait(open).unwrap();
+        }
+        *OPENED_ON.lock().unwrap() = std::thread::current().name().map(str::to_owned);
+        let format = Format {
+            rate: 48_000,
+            channels: 2,
+        };
+        Some((format, Box::new(Counted)))
+    }
+
+    #[test]
+    fn the_device_is_opened_on_a_thread_of_its_own() {
+        let audio = Audio {
+            null: Cell::new(false),
+            opener: Some(slow_device),
+            device: RefCell::default(),
+        };
+        // The device cannot open yet, and asking for its format does not
+        // wait for it.
+        let soon = audio.soon().expect("a device is being opened");
+        assert_eq!(audio.known(), None);
+        let voice = Voice::clip(Arc::from([0.0; 4]), 0, 1.0);
+        audio.play(&voice);
+
+        *GATE.0.lock().unwrap() = true;
+        GATE.1.notify_all();
+        let format = Some(Format {
+            rate: 48_000,
+            channels: 2,
+        });
+        assert_eq!(soon.wait(), format);
+        assert_eq!(audio.format(), format);
+        assert_eq!(OPENED_ON.lock().unwrap().as_deref(), Some("ljos-audio"));
+
+        // What was asked while it opened is done once it has.
+        audio.remove(&voice);
+        drop(audio);
+        let waited = std::time::Instant::now();
+        while PAUSES.load(Ordering::SeqCst) == 0 && waited.elapsed().as_secs() < 10 {
+            std::thread::yield_now();
+        }
+        assert_eq!(PLAYS.load(Ordering::SeqCst), 1);
+        assert_eq!(PAUSES.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_null_sink_opens_nothing() {
+        let audio = Audio {
+            null: Cell::new(true),
+            opener: Some(|_| panic!("opened")),
+            device: RefCell::default(),
+        };
+        assert!(audio.soon().is_none());
+        assert_eq!(audio.format(), None);
+    }
 }
