@@ -3115,3 +3115,52 @@ qml6. The lag is the next frame an animation draws, not the click's.
 - **DECISION: the render losses are reported, not fixed here.** todolist, samegame, maroon and
   photosurface all lose on raster cost per animated frame on llvmpipe, a render-path change
   outside this batch.
+
+### Software GL: listview's draws, todolist's pages and the scroll copies (2026-10-19)
+
+All runs use the off-screen sway sandbox. GL is Mesa's llvmpipe, and Qt is `qml6` 6.11.2 with
+`QT_QUICK_CONTROLS_STYLE=Basic`. "llvmpipe" is the CPU of the process's `llvmpipe-*` threads.
+The base is 5614814f, and the builds are release. The load average was 6 to 60 from other work.
+Each cell is the range of three runs.
+
+| bench/listview.qml, scrolling, per second | base | draws only | all | Qt |
+|---|---:|---:|---:|---:|
+| CPU (ms) | 225–287 | 215–278 | 118–163 | 216–228 |
+| llvmpipe (ms) | 131–165 | 140–160 | 15–23 | 163–165 |
+
+| todolist, gear then back (2 s, `ljos bench` clicks) | base | all | Qt |
+|---|---:|---:|---:|
+| CPU (ms) | 234–266 | 177–202 | 114–170 |
+| llvmpipe (ms) | 142–162 | 45–51 | 71–124 |
+| Frames shown, median interval (ms) | 54, 16.1 | 54, 16.2 | 19–30, 16.2 |
+| 95th percentile interval (ms) | 16.2 | 16.3 | 44–333 |
+
+| photosurface `surface` and `grid` (2026-10-18 section), `--gesture scroll` | before | after |
+|---|---:|---:|
+| surface: frames shown per second | 25.4 | 51.1 |
+| surface: median interval, median input-to-frame (ms) | 32.4, 21.4 | 16.2, 10.5 |
+| surface: CPU while driven (% of a core) | 187 | 96 |
+| grid: CPU while driven (% of a core) | 53 | 14 |
+
+- **Draws.** A row cut to a few changed pixels counted as a whole row and became a clear. Now
+  it is a quad of the pixels that show. Flat colour joins any draw, and a ShaderEffect skips
+  egui_glow's state setup. listview went from 17 draws a frame to 2. That alone does not change
+  llvmpipe's time: the pixels are the cost, not the calls.
+- **Pictures handed over again.** Glyphs filled into the atlas during a page slide made every
+  frame whole. Now the atlas sends only the boxes it filled. The painter redraws only the shapes
+  whose triangles sample those texels (`present.rs` tests,
+  `b0_hands_over_only_the_glyphs_it_fills`).
+- **The scroll copies.** The kept clip was an RGBA renderbuffer, the other way up from the
+  window's BGRA buffer, so llvmpipe ran a shader for each copy. That cost more than drawing the
+  clip again. The clip is now a BGRA texture kept top row first, and both copies are row copies.
+
+**DECISIONs.**
+- The clip is copied cheaply rather than skipped on a software rasteriser. Never scrolling on
+  llvmpipe gave about the same todolist numbers (44–55 ms) but would give up the copies that
+  photosurface's scroll was measured to need when they came in (d44ff1a1).
+- A driver that refuses a BGRA texture gets the RGBA renderbuffer, which says so with a GL error.
+  No extension is looked up, because Mesa's desktop context takes BGRA without advertising it.
+
+**What is left.** todolist's pop waits about 59 ms for its first frame, on the engine side.
+Ljós's CPU outside llvmpipe (about 130 ms for the push and pop) is still above Qt's total. Qt
+gets there by showing about half the frames.
