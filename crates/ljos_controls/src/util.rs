@@ -57,12 +57,9 @@ pub(crate) fn bind_default(
     engine: &Engine,
     obj: ObjectId,
     prop: PropIndex,
-    f: impl FnMut(&Engine) -> Value + 'static,
+    f: impl Fn(&Engine) -> Value + 'static,
 ) -> Result<(), EngineError> {
-    if is_unset(engine, obj, prop) {
-        engine.bind(obj, prop, f)?;
-    }
-    Ok(())
+    engine.bind_default(obj, prop, f)
 }
 
 /// Writes a value this crate computed, unless it is the value already.

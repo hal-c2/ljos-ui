@@ -2143,6 +2143,27 @@ impl Engine {
         self.bind_impl(obj, prop, Box::new(move |e| Some(f(e))), false)
     }
 
+    /// [`Engine::bind`] for what a native type gives a property it was not
+    /// given: does nothing when the property has a value of its own. A
+    /// reload that takes that value away binds it to `f` again, as a new
+    /// object would be.
+    pub fn bind_default(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        f: impl Fn(&Engine) -> Value + 'static,
+    ) -> Result<(), EngineError> {
+        let f: crate::incubator::reload::DefaultBinding = Rc::new(f);
+        self.reload_default(obj, prop, &f);
+        if matches!(
+            self.provenance(obj, prop),
+            Some(Provenance::Default | Provenance::Animated | Provenance::Host) | None
+        ) {
+            self.bind_impl(obj, prop, Box::new(move |e| Some(f(e))), false)?;
+        }
+        Ok(())
+    }
+
     /// [`Engine::bind`] for the object creator: allowed on read-only
     /// properties, whose initial binding is set by their declaration.
     pub fn bind_initial(

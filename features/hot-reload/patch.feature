@@ -2742,6 +2742,31 @@ Feature: What a reload changes
       And the property "color" of "first" is "#ff0000"
       And the property "x" of "box" is at least 40
 
+    Scenario: An attached member no longer given follows what its type gives it again
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          Button { objectName: "b"; text: "add"; Accessible.name: "plus" }
+        }
+        """
+      And a reload happens
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          Button { objectName: "b"; text: "add" }
+        }
+        """
+      And a reload happens
+      Then the property "Accessible.name" of "b" is "add"
+      When the property "text" of "b" is set to "sum"
+      Then the property "Accessible.name" of "b" is "sum"
+
   Rule: An element added to a model, removed from it or moved in it is the model's own insert, remove or move
 
     A view keeps the delegates of the rows that stay, as when a script

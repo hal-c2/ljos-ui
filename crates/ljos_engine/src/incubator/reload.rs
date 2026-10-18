@@ -394,7 +394,13 @@ pub(crate) struct ReloadState {
     /// The properties whoever made a root gave it, which outrank what its
     /// file says.
     given: RefCell<HashMap<ObjectId, Vec<String>>>,
+    /// What a native type binds a property to when it is not given one,
+    /// which a member taken away by a reload is bound to again.
+    defaults: RefCell<HashMap<(ObjectId, PropIndex), DefaultBinding>>,
 }
+
+/// A native type's binding for a property it was not given.
+pub(crate) type DefaultBinding = Rc<dyn Fn(&Engine) -> Value>;
 
 // Paths and prints are made for every object a reload makes, so they are
 // pushed piece by piece rather than formatted.
@@ -1342,6 +1348,32 @@ impl Engine {
         );
     }
 
+    /// Keeps what a native type binds `prop` of `obj` to when not given
+    /// it, while a reload may take a given value away.
+    pub(crate) fn reload_default(&self, obj: ObjectId, prop: PropIndex, f: &DefaultBinding) {
+        if self.inner.reload.tracking.get() {
+            self.inner
+                .reload
+                .defaults
+                .borrow_mut()
+                .insert((obj, prop), f.clone());
+        }
+    }
+
+    /// What a native type binds `prop` of `obj` to when not given it.
+    pub(crate) fn reload_default_of(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+    ) -> Option<DefaultBinding> {
+        self.inner
+            .reload
+            .defaults
+            .borrow()
+            .get(&(obj, prop))
+            .cloned()
+    }
+
     /// Objects are gone.
     pub(crate) fn reload_forget(&self, dead: &[ObjectId]) {
         let st = &self.inner.reload;
@@ -1354,6 +1386,7 @@ impl Engine {
         let mut assigned = st.assigned.borrow_mut();
         let mut origins = st.origins.borrow_mut();
         let mut given = st.given.borrow_mut();
+        let mut defaults = st.defaults.borrow_mut();
         for id in dead {
             if let Some(i) = info.remove(id)
                 && by_path.get(&i.path) == Some(id)
@@ -1364,7 +1397,11 @@ impl Engine {
             origins.remove(id);
             given.remove(id);
         }
-        drop((info, by_path, assigned, origins, given));
+        if !defaults.is_empty() {
+            let dead: HashSet<&ObjectId> = dead.iter().collect();
+            defaults.retain(|(id, _), _| !dead.contains(id));
+        }
+        drop((info, by_path, assigned, origins, given, defaults));
         let mut scripted = st.scripted.borrow_mut();
         if !scripted.is_empty() {
             for id in dead {

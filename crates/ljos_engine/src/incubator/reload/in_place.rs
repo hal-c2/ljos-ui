@@ -1488,6 +1488,11 @@ impl Engine {
             Some(_) => self.reset_impl(t.obj, t.prop, true),
             None => self.reset_to_default(t.obj, t.prop),
         };
+        // A native type follows something of its own when not given it.
+        let r = r.and_then(|()| match self.reload_default_of(t.obj, t.prop) {
+            Some(f) => self.bind(t.obj, t.prop, move |e| f(e)),
+            None => Ok(()),
+        });
         if let Err(e) = r {
             let at = self.location_of(t.obj).unwrap_or_default();
             self.warn(format!("{at}{e}"));
