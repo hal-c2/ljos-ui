@@ -70,6 +70,10 @@ pub(crate) struct Gl {
     current: Cell<u64>,
     /// Hands out the numbers `current` tells surfaces apart by.
     surfaces: Cell<u64>,
+    /// Whether the pixels are drawn by the CPU (llvmpipe and the like):
+    /// then every pixel a frame spares is work spared, and on a device
+    /// next to none is.
+    software: bool,
 }
 
 /// EGL's display with its driver started: the slow part of making a
@@ -155,6 +159,8 @@ impl Gl {
         // SAFETY: the context is current and its functions are the
         // display's.
         let glow = unsafe { glow::Context::from_loader_function_cstr(|s| egl.get_proc_address(s)) };
+        // SAFETY: a plain query of a string on the current context.
+        let software = is_software(&unsafe { glow.get_parameter_string(glow::RENDERER) });
         Ok(Rc::new(Gl {
             glow: Arc::new(glow),
             context,
@@ -162,6 +168,7 @@ impl Gl {
             display: egl,
             current: Cell::new(0),
             surfaces: Cell::new(0),
+            software,
         }))
     }
 
@@ -336,6 +343,10 @@ impl GlPainter {
             )),
             Change::All => None,
         };
+        // What it draws with the frames before it covers at least as
+        // much: drawn whole, then and in the frames that redraw it.
+        let software = self.gl.software;
+        let now = now.filter(|d| !d.mostly(gw.px, software));
         // Asked before the context is current with the surface: EGL
         // answers for the surface either way.
         let age = gw.surface.buffer_age() as usize;
@@ -352,7 +363,7 @@ impl GlPainter {
             }
         }
         let damage = Damage::of(drawn);
-        if damage.mostly(gw.px) {
+        if damage.mostly(gw.px, self.gl.software) {
             return Frame::Whole;
         }
         if damage.0.is_empty() {
@@ -499,6 +510,21 @@ impl Drop for GlPainter {
     }
 }
 
+/// Whether GL's `renderer` draws on the CPU: Mesa's llvmpipe and
+/// softpipe, SwiftShader, and the software renderers of Windows and macOS.
+fn is_software(renderer: &str) -> bool {
+    let r = renderer.to_ascii_lowercase();
+    [
+        "llvmpipe",
+        "softpipe",
+        "swiftshader",
+        "software",
+        "gdi generic",
+    ]
+    .iter()
+    .any(|s| r.contains(s))
+}
+
 /// A rectangle of the window's pixels, from the top left: `[x0, y0, x1,
 /// y1)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -580,14 +606,20 @@ impl Px {
 struct Damage(Vec<Px>);
 
 impl Damage {
-    /// Whether the areas leave little of a window of `size` out. Then they
-    /// cost more apart than the window does whole: every shape that
-    /// crosses from one into another is cut and drawn in each, and each is
-    /// a clear of its own, to spare a few pixels.
-    fn mostly(&self, size: [u32; 2]) -> bool {
+    /// Whether the areas leave too little of a window of `size` out to be
+    /// worth drawing apart: every shape that crosses from one into another
+    /// is cut and drawn in each, each is a clear of its own and a
+    /// rectangle told to the compositor. On a `software` rasteriser that
+    /// is paid back by each pixel spared, so a quarter of the window left
+    /// out is worth it. On a device, pixels cost the CPU nothing and only
+    /// the shapes left out spare it work: two hundred moving bars drawn
+    /// in the cells around them spared a third of the window and cost a
+    /// tenth of the frame more than drawing it whole.
+    fn mostly(&self, size: [u32; 2], software: bool) -> bool {
         let window = u64::from(size[0]) * u64::from(size[1]);
         let covered: u64 = self.0.iter().map(|px| u64::from(px.pixels())).sum();
-        window > 0 && covered * 4 >= window * 3
+        let (part, of) = if software { (3, 4) } else { (1, 2) };
+        window > 0 && covered * of >= window * part
     }
 
     /// The areas that cover `areas`: those that overlap become one around
@@ -835,10 +867,33 @@ mod tests {
     #[test]
     fn areas_that_leave_little_of_the_window_out_draw_it_whole() {
         let most = Damage(vec![Px([0, 0, 100, 60]), Px([0, 60, 50, 100])]);
-        assert!(most.mostly([100, 100]));
+        assert!(most.mostly([100, 100], true));
         let some = Damage(vec![Px([0, 0, 100, 60]), Px([0, 60, 30, 100])]);
-        assert!(!some.mostly([100, 100]));
-        assert!(!Damage::default().mostly([0, 0]));
+        assert!(!some.mostly([100, 100], true));
+        assert!(!Damage::default().mostly([0, 0], true));
+    }
+
+    #[test]
+    fn on_a_device_areas_that_leave_less_than_half_out_draw_it_whole() {
+        let some = Damage(vec![Px([0, 0, 100, 60]), Px([0, 60, 30, 100])]);
+        assert!(some.mostly([100, 100], false));
+        let half = Damage(vec![Px([0, 0, 100, 50])]);
+        assert!(half.mostly([100, 100], false));
+        let less = Damage(vec![Px([0, 0, 100, 40]), Px([0, 90, 50, 100])]);
+        assert!(!less.mostly([100, 100], false));
+        assert!(!Damage::default().mostly([0, 0], false));
+    }
+
+    #[test]
+    fn rasterisers_on_the_cpu_are_told_by_their_names() {
+        assert!(is_software("llvmpipe (LLVM 21.1.0, 256 bits)"));
+        assert!(is_software("softpipe"));
+        assert!(is_software("SwiftShader Device (LLVM 10.0.0)"));
+        assert!(is_software("Apple Software Renderer"));
+        assert!(!is_software(
+            "AMD Radeon Graphics (radeonsi, gfx1103, LLVM 21.1.0, DRM 3.64)"
+        ));
+        assert!(!is_software("Mesa Intel(R) UHD Graphics 620 (KBL GT2)"));
     }
 
     fn disjoint(damage: &Damage) -> bool {
