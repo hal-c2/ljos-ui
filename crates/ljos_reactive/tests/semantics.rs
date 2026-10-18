@@ -853,3 +853,31 @@ fn an_effect_that_a_check_finds_dirty_runs_once_though_it_writes() {
     }
     assert_eq!(g.get(out), 20);
 }
+
+#[test]
+fn an_effect_hears_of_a_change_its_own_write_ran_after_it_first_read() {
+    // The first effect reads `src` for the first time in this run, then
+    // writes; that write runs the second effect, which changes `src`. The
+    // first had no edge to `src` yet, and runs again all the same.
+    let g = Graph::new();
+    let gate = g.property(g.root(), 0).unwrap();
+    let src = g.property(g.root(), 0).unwrap();
+    let out = g.property(g.root(), 0).unwrap();
+    let seen = Rc::new(Cell::new(-1));
+    let s = seen.clone();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            s.set(g.get(src));
+            g.set(out, 1);
+        }
+    })
+    .unwrap();
+    g.effect(g.root(), move |g| {
+        if g.get(gate) != 0 {
+            g.set(src, 7);
+        }
+    })
+    .unwrap();
+    g.set(gate, 1);
+    assert_eq!(seen.get(), 7);
+}

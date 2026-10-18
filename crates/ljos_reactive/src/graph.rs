@@ -2415,6 +2415,22 @@ impl<V: Clone + 'static> Inner<V> {
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
             stack.extend(node.observers.iter().map(|o| (o.node, first, stamp)));
+            // A run still going that read `n` for the first time has no
+            // edge to it yet: a flush nested in that run (a write it
+            // made) changed what it read, and only `finish` would have
+            // linked it. It runs again.
+            if stamp != 0
+                && let Some(r) = self
+                    .frames
+                    .iter()
+                    .rev()
+                    .find(|f| f.stamp == stamp)
+                    .and_then(|f| f.node)
+                && r != n
+                && !node.observers.iter().any(|o| o.node == r)
+            {
+                stack.push((r, first, stamp));
+            }
         }
         self.mark_stack = stack;
         self.propagate_marks();
