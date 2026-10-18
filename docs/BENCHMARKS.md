@@ -1788,3 +1788,97 @@ largest parts are the tick (about 1.1 k an animation, spread over the generic wr
 painter (`GlPainter::paint` about 200 k, the swap about 84 k) and the reads of told places (about
 170 each). Cutting the write further needs typed write handles that keep the native field's place
 instead of finding it per write.
+
+### Startup off the main thread, library types described on first use, and memory (2026-10-18)
+
+Desktop profile, `--settle 1 --idle 10`, on llvmpipe and on the GPU (radeon, `VK_DRIVER_FILES`), in
+the headless sway sandbox. Before is the build of "Startup: the first frame, and the first that
+answers" above. Each round runs before, after and qml6 one after the other, over all 11 apps, so
+that load from other work on the machine falls on all three. The load average was 5–125 over the
+runs, so the tables give each binary's best round: the round least disturbed. Memory is the median.
+
+**First frame and first answer, ms (best of 3 rounds on llvmpipe, of 2 on the GPU).** After is
+this section's work. On llvmpipe it is measured without the rebase; on the GPU it is rebased on main.
+
+| App | llvmpipe: before → after | qml6 | GPU: before → after | qml6 |
+|---|---:|---:|---:|---:|
+| animations | 66 / 83 → 60 / 77 | 111 / 128 | 47 / 64 → 41 / 64 | 68 / 85 |
+| form | 78 / 95 → 62 / 78 | 162 / 179 | 67 / 85 → 48 / 65 | 113 / 130 |
+| listview | 69 / 86 → 65 / 82 | 134 / 150 | 56 / 73 → 34 / 51 | 88 / 106 |
+| rectangles | 73 / 90 → 68 / 85 | 119 / 143 | 63 / 84 → 52 / 70 | 71 / 88 |
+| text | 76 / 93 → 65 / 82 | 143 / 176 | 67 / 84 → 60 / 94 | 92 / 111 |
+| calqlatr | 87 / 104 → 59 / 76 | 156 / 173 | 82 / 100 → 56 / 74 | 123 / 140 |
+| samegame | 85 / 102 → 63 / 80 | 146 / 163 | 87 / 105 → 51 / 84 | 104 / 121 |
+| clocks | 79 / 97 → 61 / 78 | 145 / 162 | 67 / 84 → 45 / 63 | 93 / 110 |
+| thermostat | 172 → 111 | 221 | 128 → 88 | 206 |
+| todolist | 98 / 114 → 76 / 92 | 183 / 199 | 92 / 109 → 67 / 84 | 164 / 181 |
+| rssnews | 84 / 101 → 63 / 80 | 170 / 187 | 73 / 90 → 55 / 89 | 114 / 131 |
+
+Thermostat's first answer was not reached within the bench's window on any runtime.
+
+**Idle CPU.** The animated apps idled at 3.06 % → 4.34 % on the GPU in one run after the first of
+these changes. Interleaved, the medians are animations 4.78 → 2.54 %, samegame 3.47 → 1.70 %,
+clocks 4.33 → 4.46 %, listview 10.98 → 9.73 % and rssnews 2.42 → 2.28 %; on llvmpipe they are the
+same or lower. The rise was load. The static apps stay at 0.00 %. Every thread started for startup
+ends before the window is up: `ljos-fonts`, `ljos-compile`, and the two new ones, `ljos-fontrules`
+(scoped to the font engine's build) and `ljos-scripts` (ends when its scripts are compiled).
+
+**What changed on the main thread** (callgrind, rectangles, instructions):
+
+- **Library QML types are described on first use.** Importing `QtQuick.Controls` registered every
+  type of every style, which loaded each file and built its type table. Registration now records
+  the file's key; a lookup describes the type the first time it is named. A library file that does
+  not load is warned about at that first use, not at import. `type_dump` and the `--example`
+  oracle describe everything first, as they did. The style pack's IR is decoded per file when the
+  file is first read. Registration went from 26.4 M to 6.7 M instructions. The note about this in
+  "What is left" in the section before is done.
+- **`create_from_url`: 67.1 M → 45.4 M.** The biggest piece was QuickJS parsing the scripts every
+  engine runs first (the global prelude and the module scripts). They are compiled once per
+  process, on a thread started with the engine, and each engine reads the bytecode; a script whose
+  text differs is parsed as before. The JS host's start went from about 3.2 to 1.5 ms.
+- **First polish.** The biggest piece was fontconfig's set-up, paid at the first substitution of
+  "Sans Serif". The rules are now loaded on a thread beside the font collection, and the first
+  substitution went from 16.6 to about 1.5 ms.
+
+**Memory against qml6 (MiB, median, GPU).** After is rebased on main, which brings the node table
+and the EGL vendors of the section before. The filters (below) are measured on their own on four
+apps; their row is the last column.
+
+| App | PSS: before → after (qml6) | Anon PSS: before → after (qml6) | After 10 s idle, anon PSS | Anon PSS with the filters |
+|---|---:|---:|---:|---:|
+| animations | 98.4 → 76.0 (83.7) | 42.2 → 30.3 (37.1) | 30.4 (37.1) | |
+| form | 114.5 → 85.1 (107.5) | 51.1 → 37.5 (50.9) | 37.5 (50.9) | 37.3 |
+| listview | 101.4 → 75.6 (91.3) | 42.1 → 29.9 (43.4) | 31.1 (43.7) | |
+| rectangles | 118.4 → 94.0 (86.9) | 60.9 → 47.2 (42.9) | 47.2 (42.9) | 46.1 |
+| text | 102.4 → 78.4 (93.3) | 44.3 → 31.6 (46.3) | 31.6 (46.3) | |
+| calqlatr | 110.2 → 83.4 (111.6) | 45.7 → 33.4 (49.7) | 33.4 (49.7) | |
+| samegame | 107.0 → 78.5 (102.3) | 46.2 → 33.6 (48.6) | 35.0 (49.3) | |
+| clocks | 101.3 → 76.7 (103.0) | 42.5 → 29.9 (45.9) | 29.9 (46.0) | |
+| thermostat | 124.4 → 105.1 (112.6) | 70.8 → 56.1 (62.1) | 56.4 (62.1) | 55.5 |
+| todolist | 113.0 → 94.6 (120.2) | 55.4 → 42.2 (55.0) | 42.2 (55.0) | 41.8 |
+| rssnews | 130.5 → 99.5 (173.4) | 68.6 → 49.6 (120.4) | 38.0 (186.9) | |
+
+On llvmpipe Ljós is below qml6 in every app, in PSS and in anon PSS (rectangles 136 against 162 and
+72.0 against 100.1). On the GPU, rectangles is the one app above qml6.
+
+- **Startup threads move memory, they do not add it.** The fontconfig state and the compiled
+  scripts are made on their threads, so they live in those threads' malloc arenas: four more
+  arenas, 3.9 MiB, against 6.7 MiB less in the main heap (smaps, rectangles). The trim after start
+  (`give_back_freed_heap`) already runs; what the arenas hold is live.
+- **File-backed PSS** varies by 30 MiB between runs of one binary, with how many other processes
+  map the same libraries; RSS of the same binaries agrees within 1 MiB. Read the anon column.
+- **The biggest item left on rectangles is still the node table**: 26 nodes per Rectangle. Ten of
+  them are for properties the file never sets. Every item watched `anchors.margins` for its first
+  value, and every rectangle watched `gradient` to refuse what is no gradient. Each watch is a node
+  and an effect. Both are now write filters, which see the same writes (bindings' included) and
+  need no node. 1000 rectangles: 26 044 nodes → 22 038.
+
+**What is left.**
+
+- **Rectangles on the GPU**, 3.2 MiB anon over qml6. Its nodes are now 22 per Rectangle. Of those
+  left for properties it never sets, the `parent` and `focus` watchers cannot become filters: what
+  they run writes the same property back, which a filter refuses. `childrenRect` is a binding made
+  for every item so that it costs nothing until read; its node is made all the same.
+- **Startup**: the fallback for a glyph no font in the family has ("⅟x" in calqlatr) runs
+  fontconfig's sort, 4–7 ms. The QML module files are still parsed when the engine starts, not
+  compiled ahead.
