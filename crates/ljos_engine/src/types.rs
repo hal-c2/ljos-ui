@@ -497,15 +497,37 @@ macro_rules! qml_value {
             }
         }
     };
+    // A plain-data payload is read in place: cloning the value first costs
+    // an animated write as much as the rest of its setter.
+    (copy $t:ty, $tag:expr, |$s:ident| $to:expr, $pat:pat => $from:expr) => {
+        impl QmlValue for $t {
+            fn type_tag() -> TypeTag {
+                $tag
+            }
+            fn to_value(&self) -> Value {
+                let $s = self;
+                $to
+            }
+            fn from_value(v: &Value) -> Result<Self, ConvertError> {
+                if let $pat = *v {
+                    return Ok($from);
+                }
+                match Self::type_tag().coerce(v)? {
+                    $pat => Ok($from),
+                    _ => unreachable!("coerce returns the tag's own variant"),
+                }
+            }
+        }
+    };
 }
 
-qml_value!(bool, TypeTag::Bool, |s| Value::Bool(*s), Value::Bool(b) => b);
-qml_value!(i32, TypeTag::Int, |s| Value::Int(*s), Value::Int(i) => i);
-qml_value!(f64, TypeTag::Real, |s| Value::Real(*s), Value::Real(r) => r);
-qml_value!(f32, TypeTag::Real, |s| Value::Real(f64::from(*s)), Value::Real(r) => r as f32);
+qml_value!(copy bool, TypeTag::Bool, |s| Value::Bool(*s), Value::Bool(b) => b);
+qml_value!(copy i32, TypeTag::Int, |s| Value::Int(*s), Value::Int(i) => i);
+qml_value!(copy f64, TypeTag::Real, |s| Value::Real(*s), Value::Real(r) => r);
+qml_value!(copy f32, TypeTag::Real, |s| Value::Real(f64::from(*s)), Value::Real(r) => r as f32);
 qml_value!(Atom, TypeTag::String, |s| Value::String(s.clone()), Value::String(a) => a);
 qml_value!(String, TypeTag::String, |s| Value::String(Atom::new(s)), Value::String(a) => a.to_string());
-qml_value!(Color, TypeTag::Color, |s| Value::Color(*s), Value::Color(c) => c);
+qml_value!(copy Color, TypeTag::Color, |s| Value::Color(*s), Value::Color(c) => c);
 qml_value!(Url, TypeTag::Url, |s| Value::Url(s.0.clone()), Value::Url(u) => Url(u));
 qml_value!(Point, TypeTag::Point, |s| Value::Point(Arc::new(*s)), Value::Point(p) => *p);
 
