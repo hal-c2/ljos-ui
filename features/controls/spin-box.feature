@@ -332,6 +332,21 @@ Feature: SpinBox
     Scenario: A spin box is a spin button
       Then the object "s" is exposed as a "spinbutton" named "Count"
 
+    # Read from qml6 through AT-SPI: the number is a text node inside the
+    # spin button, and both can be typed in only when the box is editable.
+    Scenario: The number is a text inside the box, as it shows it
+      Then the "textinput" named "" is inside the "spinbutton" named "Count"
+      And the "textinput" named "" has the value "0"
+      When the property "value" of "s" is set to 7
+      Then the "textinput" named "" has the value "7"
+
+    Scenario: A box that is not editable is read-only, and so is its number
+      Then the "spinbutton" named "Count" is read-only
+      And the "textinput" named "" is read-only
+      When the property "editable" of "s" is set to true
+      Then the "spinbutton" named "Count" is not read-only
+      And the "textinput" named "" is not read-only
+
     Scenario: An increase is a step by the user
       When an assistive technology asks the "spinbutton" named "Count" to increase
       Then the property "value" of "s" is 1

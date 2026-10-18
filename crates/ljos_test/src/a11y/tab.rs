@@ -167,6 +167,9 @@ pub(super) fn walk(cx: &mut Cx) {
     let mut reached = seen.clone();
     for stop in &seen {
         if cx.scene.accessible_node(*stop).is_some() {
+            // Tab that lands inside something that takes the keyboard is
+            // in it too: the number of a spin box is its box's.
+            reached.extend(speaker(cx, *stop));
             continue;
         }
         match speaker(cx, *stop) {

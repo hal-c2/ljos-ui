@@ -1273,6 +1273,8 @@ fn describe(engine: &Engine, obj: ObjectId, node: &mut NodeData) {
         max: hi,
         step: num(engine, obj, p.step_size).abs(),
     });
+    // AccessKit makes a spin button editable text; only an editable box is.
+    node.read_only |= !flag(engine, obj, p.editable);
 }
 
 fn act(engine: &Engine, obj: ObjectId, action: AccessibleAction) -> bool {

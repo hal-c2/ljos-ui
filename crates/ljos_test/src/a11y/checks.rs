@@ -33,10 +33,18 @@ fn has_name(data: &NodeData) -> bool {
 
 /// `a11y-unnamed-interactive`: what a user acts on says what it is.
 pub(super) fn names(cx: &mut Cx) {
-    for (key, _, data) in nodes(cx) {
+    let all = nodes(cx);
+    // The number of a spin box is told inside the box, as Qt has it; the
+    // box's name says what it counts.
+    let boxes: Vec<NodeKey> = all
+        .iter()
+        .filter(|(_, _, d)| d.qt_role == Role::SpinBox)
+        .map(|(k, _, _)| *k)
+        .collect();
+    for (key, parent, data) in all {
         // A scroll bar says what it is by its role and which way it goes;
         // nobody gives one a name.
-        if data.qt_role == Role::ScrollBar {
+        if data.qt_role == Role::ScrollBar || boxes.contains(&parent) {
             continue;
         }
         if acted_on(&data) && !has_name(&data) {
