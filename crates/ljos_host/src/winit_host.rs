@@ -161,9 +161,10 @@ enum SeatHint {
 
 fn seat_hint(raw: &Raw) -> SeatHint {
     match raw {
-        Raw::Focused(_) | Raw::KeyboardInput { .. } | Raw::ModifiersChanged(_) | Raw::Ime(_) => {
-            SeatHint::Keyboard
-        }
+        Raw::Focused(_)
+        | Raw::KeyboardInput { .. }
+        | Raw::ModifiersChanged(_)
+        | Raw::Ime(Ime::Preedit(..) | Ime::Commit(_)) => SeatHint::Keyboard,
         Raw::MouseInput {
             state: ElementState::Pressed,
             ..
@@ -1091,6 +1092,18 @@ mod tests {
             SeatHint::Keyboard
         );
         assert_eq!(seat_hint(&Raw::RedrawRequested), SeatHint::Other);
+    }
+
+    #[test]
+    fn an_input_method_turned_on_or_off_says_nothing_of_a_keyboard() {
+        // winit on Wayland hands the application's own `set_ime_allowed`
+        // back as these, on a seat with no keyboard as on any other.
+        assert_eq!(seat_hint(&Raw::Ime(Ime::Enabled)), SeatHint::Other);
+        assert_eq!(seat_hint(&Raw::Ime(Ime::Disabled)), SeatHint::Other);
+        assert_eq!(
+            seat_hint(&Raw::Ime(Ime::Commit("a".into()))),
+            SeatHint::Keyboard
+        );
     }
 
     #[test]
