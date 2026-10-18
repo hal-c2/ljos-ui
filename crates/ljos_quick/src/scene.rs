@@ -355,6 +355,10 @@ struct Entry {
     list_effect: Option<GraphNode>,
     /// The [`QuickScene::places_read`] that last read its place.
     place_read: u64,
+    /// Adopted under a Flickable, so it may be its content item: that one
+    /// is the Flickable's child from when it is made. No other item asks
+    /// whether its Flickable moves.
+    may_scroll: bool,
 }
 
 /// Where an item is in its parent: `x` and `y`, and whether it is drawn
@@ -1140,6 +1144,7 @@ impl QuickScene {
         init_item(engine, obj)?;
         let node = self.tree.insert_child(parent_node, index);
         let kind = Kind::of(engine, obj);
+        let may_scroll = parent.is_some_and(|p| is_a::<crate::flickable::Flickable>(engine, p));
         if kind == Kind::Editor {
             crate::text_input::init(engine, obj)?;
         }
@@ -1162,6 +1167,7 @@ impl QuickScene {
                 list: crate::transform::Projective::IDENTITY,
                 list_effect: None,
                 place_read: 0,
+                may_scroll,
             },
         );
         self.by_node.insert(node, obj);
@@ -1183,7 +1189,7 @@ impl QuickScene {
         let told = Rc::clone(&self.shared);
         effects.push(engine.effect_told_in(
             obj,
-            move |e| place_effect(e, obj, &place, &shared),
+            move |e| place_effect(e, obj, may_scroll, &place, &shared),
             move || {
                 mark(&told, |s| {
                     s.placed.push(obj);
@@ -1379,7 +1385,7 @@ impl QuickScene {
                 e.place = (
                     shown_num(engine, &shown, obj, Item::X.index),
                     shown_num(engine, &shown, obj, Item::Y.index),
-                    crate::flickable::content_moving(engine, obj),
+                    e.may_scroll && crate::flickable::content_moving(engine, obj),
                 );
                 self.told_moved.push(obj);
             }
@@ -2589,11 +2595,11 @@ fn structure_effect(e: &Engine, obj: ObjectId, shared: &SharedRc) {
 }
 
 /// Run where `obj` is alive: as its effect, or by [`shown_changed`].
-fn place_effect(e: &Engine, obj: ObjectId, shown: &Shown, shared: &SharedRc) {
+fn place_effect(e: &Engine, obj: ObjectId, may_scroll: bool, shown: &Shown, shared: &SharedRc) {
     let place = (
         shown_num(e, shown, obj, Item::X.index),
         shown_num(e, shown, obj, Item::Y.index),
-        crate::flickable::content_moving(e, obj),
+        may_scroll && crate::flickable::content_moving(e, obj),
     );
     mark(shared, |s| {
         s.place.insert(obj, place);
@@ -2658,7 +2664,8 @@ fn shown_changed(e: &Engine, obj: ObjectId, prop: PropIndex, shared: &SharedRc) 
     }
     let shown = crate::animation::shown::shown(e);
     if prop == Item::X.index || prop == Item::Y.index {
-        place_effect(e, obj, &shown, shared);
+        // Not told whether it may scroll: asked, which is only dearer.
+        place_effect(e, obj, true, &shown, shared);
     } else if [Item::OPACITY, Item::ROTATION, Item::SCALE]
         .iter()
         .any(|p| p.index == prop)

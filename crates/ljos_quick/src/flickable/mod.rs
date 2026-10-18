@@ -588,9 +588,15 @@ pub(crate) fn set_drag_moving(e: &Engine, f: ObjectId, st: &FlickState, moving: 
 /// drawn. Read where the item's place is, so that it is placed again
 /// once the Flickable rests.
 pub(crate) fn content_moving(e: &Engine, item: ObjectId) -> bool {
-    let Some(f) = e.untrack(|| e.read(item, Item::PARENT.index).as_object()) else {
+    // Asked of every item that moves, most of them not in a Flickable: its
+    // parent is taken from the field, not read, and `with` on one that is
+    // not a Flickable would make an error to say so.
+    let Some(f) = e.with(item, |i: &Item| i.parent).ok().flatten() else {
         return false;
     };
+    if !crate::item::is_a::<Flickable>(e, f) {
+        return false;
+    }
     let Ok(st) = e.with(f, |fl: &Flickable| Rc::clone(&fl.state)) else {
         return false;
     };
