@@ -99,6 +99,7 @@ fn main() -> anyhow::Result<()> {
     let mut app = ShellApp::<()>::new(&ctx, &config, Arc::new(SystemClock::new()), |setup| {
         ljos_localstorage::register(setup.engine());
         ljos_localstorage::set_storage(setup.engine(), ljos_localstorage::Storage::Memory);
+        ljos_xml::register(setup.engine());
         let root = setup.watch(&main)?;
         setup.on_reload(move |r| heard.borrow_mut().push(r.clone()));
         Ok(root)
@@ -142,7 +143,11 @@ fn main() -> anyhow::Result<()> {
         }
     }
     settle(&mut app, &mut pass, Duration::from_millis(1500));
-    let _ = app.engine().take_warnings();
+    // What the load warned of, so that a reload's warnings can be told
+    // from those the project always gives.
+    for w in app.engine().take_warnings().iter().take(5) {
+        println!("  load warning: {w}");
+    }
     println!("rss before {} kB", rss_kb());
     let mut shown_all = Vec::new();
     for i in 0..a.times {

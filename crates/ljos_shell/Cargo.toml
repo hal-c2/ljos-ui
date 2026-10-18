@@ -115,6 +115,8 @@ ljos = { path = "../ljos", features = ["dev-qml"] }
 ljos_compiler = { path = "../ljos_compiler" }
 # examples/frame_profile.rs: a project that keeps scores in a database.
 ljos_localstorage = { path = "../ljos_localstorage" }
+# examples/reload_profile.rs: projects that read a feed (rssnews).
+ljos_xml = { path = "../ljos_xml" }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 anyhow.workspace = true
 png.workspace = true
