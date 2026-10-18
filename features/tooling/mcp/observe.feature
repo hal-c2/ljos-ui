@@ -223,10 +223,19 @@ Feature: Processes and mailboxes from the inspector
       Then the answer's "/waited" is true
       And the answer's "/changed" has 0 entries
 
-    Scenario: A watch of more than thirty seconds is refused
+    # A client following an application at rest asks again only when its
+    # wait is over, so the longest wait is how often that costs anything.
+    Scenario: A watch may wait an hour
       When the agent calls the tool "app_watch" with:
         """json
-        {"wait_ms": 30001}
+        {"wait_ms": 3600000}
+        """
+      Then the answer's "/waited" is false
+
+    Scenario: A watch of more than an hour is refused
+      When the agent calls the tool "app_watch" with:
+        """json
+        {"wait_ms": 3600001}
         """
       Then the agent is refused with "invalid_argument"
 

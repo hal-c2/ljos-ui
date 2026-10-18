@@ -29,8 +29,9 @@ Wait until the app changes: frames run, passes drawn (`paints`), log lines, relo
 passes that drew the `items` given by handle. Give the `counts` of the last answer as `since`; it \
 answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst.";
 
-/// The longest a watch waits.
-pub const MAX_WAIT_MS: u64 = 30_000;
+/// The longest a watch waits: a client that follows an application at
+/// rest is answered, and asks again, this often.
+pub const MAX_WAIT_MS: u64 = 3_600_000;
 /// The longest a watch gathers a burst.
 pub const MAX_SETTLE_MS: u64 = 5_000;
 pub(crate) const DEFAULT_WAIT_MS: u64 = 10_000;
@@ -118,7 +119,7 @@ pub struct WatchArgs {
     #[serde(default)]
     pub items: Vec<String>,
     /// How long to wait at most, in milliseconds (default 10000, at most
-    /// 30000).
+    /// 3600000).
     #[serde(default)]
     pub wait_ms: Option<u64>,
     /// After the first change, wait this much longer so that a burst is

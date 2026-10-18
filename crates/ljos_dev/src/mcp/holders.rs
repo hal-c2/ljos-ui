@@ -4,9 +4,9 @@
 //! is known to be there only while it waits for the application with
 //! `app_watch`. A client that follows the application asks again as soon
 //! as it is answered. One that has not asked again within the time its
-//! last watch said it would wait (and at least [`LEAST`]) is gone, as is
-//! one whose watch was dropped before it was answered: its connection
-//! closed. The traces it holds are then stopped.
+//! last watch said it would wait (at least [`LEAST`], at most [`MOST`])
+//! is gone, as is one whose watch was dropped before it was answered: its
+//! connection closed. The traces it holds are then stopped.
 //!
 //! Nothing here runs while nobody holds anything: the one timer is armed
 //! when a holder's last watch ends, and the UI thread is woken only to
@@ -18,6 +18,9 @@ use std::time::Duration;
 
 /// The least time a holder has to ask again.
 pub(crate) const LEAST: Duration = Duration::from_secs(1);
+/// The most: a watch may wait an hour, and its holder, gone right after
+/// it was answered, would hold its traces for as long again.
+pub(crate) const MOST: Duration = Duration::from_secs(30);
 /// The time a holder that has never watched has to start.
 pub(crate) const FIRST: Duration = Duration::from_millis(super::watch::DEFAULT_WAIT_MS);
 
@@ -71,7 +74,7 @@ impl Holders {
         Watching {
             holders: self.clone(),
             name: name.to_owned(),
-            grace: wait.max(LEAST),
+            grace: wait.clamp(LEAST, MOST),
             answered: false,
         }
     }

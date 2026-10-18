@@ -231,8 +231,10 @@ ApplicationWindow {
                     since.items[item] = counts.items[item]
                 }
                 // An item not followed yet is counted from now: the
-                // first answer comes at once with its count.
-                args = { since: since, wait_ms: item === "" || known ? 30000 : 0,
+                // first answer comes at once with its count. Otherwise
+                // the longest wait there is, so that an application at
+                // rest is asked again once an hour.
+                args = { since: since, wait_ms: item === "" || known ? 3600000 : 0,
                          settle_ms: 1000, holder: window.holder }
             }
             if (item !== "")
@@ -247,10 +249,11 @@ ApplicationWindow {
                 return
             if (!ok) {
                 // The application is gone or not there yet: try again
-                // in a while, and only while that is so.
+                // in a while, longer each time, and only while that is so.
                 retry.start()
                 return
             }
+            retry.interval = retry.least
             var first = counts === null
             counts = s.counts
             if (!live) {
@@ -278,8 +281,12 @@ ApplicationWindow {
 
     Timer {
         id: retry
-        interval: 2000
-        onTriggered: watcher.start()
+        readonly property int least: 2000
+        interval: least
+        onTriggered: {
+            interval = Math.min(interval * 2, 60000)
+            watcher.start()
+        }
     }
 
     Shortcut {

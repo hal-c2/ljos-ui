@@ -96,6 +96,50 @@ struct Running {
 }
 
 impl Running {
+    /// Talks to the inspector of `app` through `ljos attach`.
+    fn attach(ljos: &Path, token: &Path, app: Child, rect: (i32, i32, i32, i32)) -> Result<Self> {
+        let mut attach = Command::new(ljos)
+            .args(["attach".as_ref(), token.as_os_str()])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let to_app = attach.stdin.take().expect("piped");
+        let from_app = BufReader::new(attach.stdout.take().expect("piped"));
+        Ok(Running {
+            app,
+            attach,
+            to_app,
+            from_app,
+            next_id: 0,
+            rect,
+        })
+    }
+
+    /// What the process has done so far, by kind: its window's passes and
+    /// frames, its jobs and messages (`app_metrics`), and what was sent to
+    /// each of its mailboxes (`app_processes`).
+    fn work(&mut self) -> Result<BTreeMap<String, u64>> {
+        let metrics = self.ask("app_metrics", json!({}))?;
+        let n = |v: &Value| v.as_u64().unwrap_or(0);
+        let paint = &metrics["paint"];
+        let mut work = BTreeMap::from([
+            ("frames".to_owned(), n(&metrics["frames"]["count"])),
+            (
+                "passes".to_owned(),
+                n(&paint["presented"]) + n(&paint["unchanged"]),
+            ),
+            ("jobs".to_owned(), n(&metrics["jobs"]["polled"])),
+            ("messages".to_owned(), n(&metrics["messages"]["drained"])),
+        ]);
+        let processes = self.ask("app_processes", json!({"kind": "mailbox"}))?;
+        for mailbox in processes["mailboxes"].as_array().into_iter().flatten() {
+            let name = mailbox["name"].as_str().unwrap_or("?");
+            work.insert(format!("sent to {name}"), n(&mailbox["sent"]));
+        }
+        Ok(work)
+    }
+
     fn ask(&mut self, tool: &str, arguments: Value) -> Result<Value> {
         self.next_id += 1;
         let id = self.next_id;
@@ -160,10 +204,18 @@ pub struct DesktopBackend {
     pointer: Option<Pointer>,
     dir: Option<tempfile::TempDir>,
     running: Option<Running>,
+    /// `ljos observe` on the running application.
+    observer: Option<Running>,
     /// The passes read when counting began, and how many each reading
     /// itself runs.
     passes_from: Option<(u64, u64)>,
+    /// The work of the application and of its observer when counting
+    /// began, and what each reading itself does.
+    work_from: Vec<(&'static str, Counted)>,
 }
+
+/// Work read when counting began, and the work one reading does.
+type Counted = (BTreeMap<String, u64>, BTreeMap<String, u64>);
 
 impl DesktopBackend {
     #[must_use]
@@ -203,6 +255,7 @@ impl DesktopBackend {
     }
 
     fn start(&mut self, entry: &str) -> Result<()> {
+        self.observer = None;
         self.running = None;
         let sandbox = match &self.sandbox {
             Some(s) => s,
@@ -256,27 +309,80 @@ impl DesktopBackend {
             }
             std::thread::sleep(Duration::from_millis(50));
         };
-        let mut attach = Command::new(&ljos)
-            .args(["attach".as_ref(), token.as_os_str()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-        let to_app = attach.stdin.take().expect("piped");
-        let from_app = BufReader::new(attach.stdout.take().expect("piped"));
-        let mut running = Running {
-            app,
-            attach,
-            to_app,
-            from_app,
-            next_id: 0,
-            rect,
-        };
+        let mut running = Running::attach(&ljos, &token, app, rect)?;
         // The window is mapped once its first frame is up; the scene
         // answers once it is built.
         running.ask("app_eval", json!({"source": "true"}))?;
         self.running = Some(running);
         Ok(())
+    }
+
+    /// What the application and its observer have done so far.
+    fn work(&mut self) -> Result<Vec<(&'static str, BTreeMap<String, u64>)>> {
+        let mut work = vec![("application", self.running()?.work()?)];
+        if let Some(observer) = self.observer.as_mut() {
+            work.push(("observer", observer.work()?));
+        }
+        Ok(work)
+    }
+
+    /// `ljos observe` on the running application, with an inspector of
+    /// its own through which what it does is read.
+    fn start_observer(&mut self) -> Result<Running> {
+        let sandbox = self
+            .sandbox
+            .as_ref()
+            .ok_or_else(|| BackendError::Failed("no sandbox".into()))?;
+        let dir = self.dir.as_ref().expect("files are written first").path();
+        let app =
+            self.running.as_ref().map(|r| r.app.id()).ok_or_else(|| {
+                BackendError::Failed("no application is running to observe".into())
+            })?;
+        let target = dir.join(format!("target/ljos/mcp-{app}.json"));
+        // Its token file apart from the application's.
+        let home = dir.join("observer");
+        std::fs::create_dir_all(&home)?;
+        let ljos = Self::ljos()?;
+        let mut observer = Command::new(&ljos)
+            .current_dir(&home)
+            .arg("observe")
+            .arg(&target)
+            .arg("--mcp=inspect")
+            .env_remove("DISPLAY")
+            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
+            .env_remove("AT_SPI_BUS_ADDRESS")
+            .envs(sandbox.env.iter().filter(|(k, _)| *k != "DISPLAY"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(
+                crate::runner::target_dir().join("features/observer.log"),
+            )?)
+            .spawn()?;
+        let token = home.join(format!("target/ljos/mcp-{}.json", observer.id()));
+        let deadline = Instant::now() + STARTUP;
+        while !token.is_file() {
+            if let Some(status) = observer.try_wait()? {
+                let log = std::fs::read_to_string(
+                    crate::runner::target_dir().join("features/observer.log"),
+                )
+                .unwrap_or_default();
+                return Err(BackendError::Failed(format!(
+                    "ljos observe ended ({status}) before it served its inspector:\n{log}"
+                )));
+            }
+            if Instant::now() > deadline {
+                let _ = observer.kill();
+                let _ = observer.wait();
+                return Err(BackendError::Failed(format!(
+                    "ljos observe served no inspector in {} s",
+                    STARTUP.as_secs()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let mut running = Running::attach(&ljos, &token, observer, (0, 0, 0, 0))?;
+        running.ask("app_status", json!({}))?;
+        Ok(running)
     }
 
     /// The passes of the application's window so far, painted or not
@@ -428,6 +534,57 @@ impl Backend for DesktopBackend {
             .ok_or_else(|| BackendError::Failed("the passes were not being counted".into()))?;
         let now = self.passes()?;
         Ok(now.saturating_sub(from).saturating_sub(reading))
+    }
+
+    fn observe(&mut self) -> Result<()> {
+        self.observer = None;
+        self.observer = Some(self.start_observer()?);
+        Ok(())
+    }
+
+    fn count_work(&mut self) -> Result<()> {
+        // Two readings a while apart say what one costs.
+        let first = self.work()?;
+        std::thread::sleep(INPUT_SETTLES);
+        let second = self.work()?;
+        self.work_from = first
+            .into_iter()
+            .zip(second)
+            .map(|((who, first), (_, second))| {
+                let cost = second
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            v.saturating_sub(first.get(k).copied().unwrap_or(0)),
+                        )
+                    })
+                    .collect();
+                (who, (second, cost))
+            })
+            .collect();
+        Ok(())
+    }
+
+    fn work_counted(&mut self) -> Result<Vec<String>> {
+        if self.work_from.is_empty() {
+            return Err(BackendError::Failed(
+                "the work was not being counted".into(),
+            ));
+        }
+        let now = self.work()?;
+        let mut did = Vec::new();
+        for ((who, (from, cost)), (_, now)) in self.work_from.iter().zip(now) {
+            for (kind, n) in now {
+                let was = from.get(&kind).copied().unwrap_or(0);
+                let reading = cost.get(&kind).copied().unwrap_or(0);
+                let more = n.saturating_sub(was).saturating_sub(reading);
+                if more > 0 {
+                    did.push(format!("the {who} did {more} more of {kind}"));
+                }
+            }
+        }
+        Ok(did)
     }
 
     fn pointer(&mut self, step: PointerStep, x: f64, y: f64) -> Result<()> {

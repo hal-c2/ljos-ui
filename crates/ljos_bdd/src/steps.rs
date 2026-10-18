@@ -1154,6 +1154,28 @@ fn ran_at_most_passes(w: &mut LjosWorld, most: u64) -> StepResult {
     })
 }
 
+#[when("the application is observed")]
+fn application_observed(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.observe())
+}
+
+#[when("the work of the application and its observer is counted")]
+fn work_is_counted(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.count_work())
+}
+
+#[then("the application and its observer did no work since it was counted")]
+fn did_no_work(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| {
+        let did = b.work_counted()?;
+        if did.is_empty() {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(did.join("; ")))
+        }
+    })
+}
+
 // Nothing would wake the application: 0 % CPU when idle.
 #[then("the application has nothing scheduled")]
 fn nothing_scheduled(w: &mut LjosWorld) -> StepResult {

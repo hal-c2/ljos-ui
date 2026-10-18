@@ -613,6 +613,30 @@ pub trait Backend: fmt::Debug {
             what: "counting the passes a window runs",
         })
     }
+    /// Starts `ljos observe` on the running application. Only a shell is
+    /// observed: the observer is a window of its own.
+    fn observe(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "an observer window",
+        })
+    }
+    /// Starts counting the work the application and its observer do
+    /// (passes, frames, jobs, messages), less what the counting causes.
+    fn count_work(&mut self) -> Result<()> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the work an observed application does",
+        })
+    }
+    /// The work done since [`Backend::count_work`], one line for each
+    /// kind that was; empty when there was none.
+    fn work_counted(&mut self) -> Result<Vec<String>> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "counting the work an observed application does",
+        })
+    }
     /// The `Qt.CursorShape` the pointer shows. The oracle runs off-screen,
     /// where there is no pointer to show one.
     fn pointer_cursor(&mut self) -> Result<i64> {
