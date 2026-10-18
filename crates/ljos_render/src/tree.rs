@@ -135,6 +135,8 @@ pub struct RenderNode {
     /// `opacity` multiplied down from the root.
     pub(crate) effective_opacity: f32,
     pub(crate) clip: Option<ClipSpec>,
+    /// A clip of the node's own drawing only, not of its descendants.
+    pub(crate) content_clip: Option<ClipSpec>,
     pub(crate) layer: Option<LayerSpec>,
     pub(crate) visible: bool,
     /// Whether it and what is below it paint. One that does not is still
@@ -170,6 +172,7 @@ impl RenderNode {
             opacity: 1.0,
             effective_opacity: 1.0,
             clip: None,
+            content_clip: None,
             layer: None,
             visible: true,
             drawn: true,
@@ -222,6 +225,10 @@ impl RenderNode {
     /// Clip, if any.
     pub fn clip(&self) -> Option<&ClipSpec> {
         self.clip.as_ref()
+    }
+    /// Clip of the node's own drawing, if any.
+    pub fn content_clip(&self) -> Option<&ClipSpec> {
+        self.content_clip.as_ref()
     }
     /// Layer spec, if any.
     pub fn layer(&self) -> Option<&LayerSpec> {
@@ -572,6 +579,21 @@ impl RenderTree {
         if changed {
             self.mark_bounds_from(id);
         }
+    }
+
+    /// Set or clear the clip of the node's own drawing. Its descendants
+    /// are not clipped by it, and hit testing does not heed it: a field
+    /// draws its text only inside its padding, and its background under
+    /// the padding is still drawn and still takes a press.
+    pub fn set_content_clip(&mut self, id: NodeId, clip: Option<ClipSpec>) {
+        self.with_node(id, |n| {
+            if n.content_clip == clip {
+                return false;
+            }
+            n.content_clip = clip;
+            n.dirty.insert(Dirty::CLIP);
+            true
+        });
     }
 
     /// Set or clear the layer spec.

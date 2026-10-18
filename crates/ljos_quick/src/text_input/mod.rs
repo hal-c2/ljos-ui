@@ -260,6 +260,32 @@ pub(crate) fn has_own_implicit_size(engine: &Engine, obj: ljos_engine::ObjectId)
         .is_some_and(|meta| types.iter().any(|m| meta.inherits(m)))
 }
 
+#[derive(Default)]
+struct ClipToPadding {
+    types: std::cell::RefCell<Vec<MetaRef>>,
+}
+
+/// Makes editors of type `meta` (and of the types derived from it) draw
+/// their text only inside their padding: a control whose background
+/// shows around the text.
+pub fn register_clip_to_padding(engine: &Engine, meta: MetaRef) {
+    engine
+        .extension::<ClipToPadding>()
+        .types
+        .borrow_mut()
+        .push(meta);
+}
+
+/// Whether `obj`'s type was given to [`register_clip_to_padding`].
+pub(crate) fn clips_to_padding(engine: &Engine, obj: ljos_engine::ObjectId) -> bool {
+    let reg = engine.extension::<ClipToPadding>();
+    let types = reg.types.borrow();
+    !types.is_empty()
+        && engine
+            .meta_of(obj)
+            .is_some_and(|meta| types.iter().any(|m| meta.inherits(m)))
+}
+
 pub(crate) fn register(engine: &Engine) {
     for ty in [
         TextInput::static_meta(),

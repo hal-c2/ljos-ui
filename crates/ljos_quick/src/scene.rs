@@ -1438,6 +1438,10 @@ impl QuickScene {
             self.tree.set_drawn(node, self.drawn(obj));
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
+            if let Some(Paint::Editor(ed)) = self.paint.get(&obj) {
+                self.tree
+                    .set_content_clip(node, ed.clip(size).map(ClipSpec::rect));
+            }
             self.tree.set_z(node, g.z as f32);
         }
         // What only moved or turned: its transform, and nothing else.
@@ -1535,6 +1539,10 @@ impl QuickScene {
                     }
                     p => p,
                 };
+                if let Paint::Editor(ed) = &p {
+                    let clip = ed.clip(e.size).map(ClipSpec::rect);
+                    self.tree.set_content_clip(e.node, clip);
+                }
                 self.paint.insert(obj, p);
             }
         }

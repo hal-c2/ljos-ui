@@ -10,10 +10,8 @@ Feature: A field's text stays inside it
   A text longer than its field scrolls, and what scrolled out of the field
   is not drawn.
 
-  # Ljós clips an item's content and its children together, and a field's
-  # background is a child that lies under its padding: the text needs a
-  # clip of its own in the renderer.
-  @backlog
+  # The clip is of the field's own drawing only: its background, a child
+  # that lies under its padding, is still drawn there.
   Scenario: The part of a long text that scrolled out of the field is not drawn
     Given the QML:
       """qml

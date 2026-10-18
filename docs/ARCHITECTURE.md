@@ -443,6 +443,7 @@ Source: 02 §3; text from 05 §3.3.
 - `ljos_render::RenderTree` is a slotmap of `RenderNode`s. Each node holds:
   - its local and world `kurbo::Affine`, size and subtree AABB;
   - opacity (multiplied down the tree, as Qt does), `ClipSpec` and `LayerSpec`;
+  - a second, optional `ClipSpec` for the node's own drawing only (`set_content_clip`), which neither its children nor hit testing heed: a `TextField` draws its text inside its padding while its background, a child, fills the padding;
   - `visible`, a cached `Arc<DisplayList>` in local coordinates, `Dirty` bitflags and `last_visible_frame`.
 - The `Dirty` flags are `CONTENT`, `TRANSFORM`, `OPACITY`, `CLIP`, `ORDER`, `BOUNDS`, `LAYER`, `A11Y` and `VISIBLE`.
 - Only `CONTENT` rebuilds a node's display list. Transform, opacity, clip and z changes only re-compose.

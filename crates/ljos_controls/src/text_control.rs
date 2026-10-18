@@ -235,6 +235,9 @@ fn hover(engine: &Engine, obj: ObjectId, over: bool) {
 }
 
 pub(crate) fn register(engine: &Engine) {
+    // A field shows its text only inside its padding (checked on qml6);
+    // a bare TextInput draws past its edges.
+    text_input::register_clip_to_padding(engine, MetaRef::Static(TextField::static_meta()));
     for meta in [TextField::static_meta(), TextArea::static_meta()] {
         // The style says how large a field would like to be: its
         // background and its placeholder count, not only its text.

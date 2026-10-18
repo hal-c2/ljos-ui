@@ -10,7 +10,7 @@ use std::sync::Arc;
 use vello_cpu::kurbo::{Affine, Point, Rect, RoundedRect, Shape, Size};
 
 use crate::display_list::DisplayList;
-use crate::tree::{Dirty, NodeId, RenderTree};
+use crate::tree::{ClipSpec, Dirty, NodeId, RenderTree};
 
 /// Index into [`FrameSnapshot::clips`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -33,6 +33,9 @@ pub struct ClipEntry {
     /// True when `transform` is translate-and-scale only, i.e. `rect` maps to
     /// an axis-aligned world rectangle. B0 can only clip those exactly.
     pub axis_aligned: bool,
+    /// The clip of one node's own drawing ([`RenderTree::set_content_clip`]):
+    /// only that node's item is in it, and hit testing passes over it.
+    pub content: bool,
 }
 
 impl ClipEntry {
@@ -189,10 +192,49 @@ pub fn hit_test(snapshot: &FrameSnapshot, point: Point) -> impl Iterator<Item = 
         if !rect_contains(hit_rect, local) {
             return None;
         }
+        // The clip of the node's own drawing is not of where it is.
+        let clip = item
+            .clip
+            .map(|c| snapshot.clip(c))
+            .filter(|c| c.content)
+            .map_or(item.clip, |c| c.parent);
         snapshot
-            .clip_chain_contains(item.clip, point)
+            .clip_chain_contains(clip, point)
             .then_some(item.node)
     })
+}
+
+/// The clip of a node's own drawing, `spec` inside the clip it sits in,
+/// or the clip it sits in when it has none.
+fn content_clip(
+    walk: &mut Walk,
+    here: &Parent,
+    world: Affine,
+    spec: Option<ClipSpec>,
+) -> Option<ClipId> {
+    let Some(spec) = spec else {
+        return here.clip;
+    };
+    let wb = bbox_of(world, spec.rect);
+    let (x0, y0) = (wb.x0.max(here.clip_bbox.x0), wb.y0.max(here.clip_bbox.y0));
+    // Nothing of it is left: empty, not inverted.
+    let bbox = Rect::new(
+        x0,
+        y0,
+        wb.x1.min(here.clip_bbox.x1).max(x0),
+        wb.y1.min(here.clip_bbox.y1).max(y0),
+    );
+    let id = ClipId(walk.clips.len() as u32);
+    walk.clips.push(ClipEntry {
+        parent: here.clip,
+        transform: world,
+        rect: spec.rect,
+        radii: spec.radii,
+        bbox,
+        axis_aligned: is_axis_aligned(world),
+        content: true,
+    });
+    Some(id)
 }
 
 /// Cached output of the last compose.
@@ -373,6 +415,7 @@ impl RenderTree {
                 radii: spec.radii,
                 bbox: inter,
                 axis_aligned: is_axis_aligned(world),
+                content: false,
             });
             here.clip = Some(cid);
             here.clip_bbox = inter;
@@ -387,7 +430,7 @@ impl RenderTree {
             opacity,
             size: n.size,
             list: n.content.clone(),
-            clip: here.clip,
+            clip: content_clip(walk, &here, world, n.content_clip),
             hit_testable: false,
         };
         for c in &order[..neg] {
@@ -542,6 +585,7 @@ impl RenderTree {
                 radii: spec.radii,
                 bbox: inter,
                 axis_aligned: aligned,
+                content: false,
             });
             here.clip = Some(cid);
             here.clip_bbox = inter;
@@ -559,13 +603,14 @@ impl RenderTree {
             self.compose_node(*c, &here, walk);
         }
         let n = &self.nodes[id];
+        let clip = content_clip(walk, &here, world, n.content_clip);
         walk.items.push(PaintItem {
             node: id,
             world,
             opacity,
             size: n.size,
             list: n.content.clone().filter(|_| here.drawn),
-            clip: here.clip,
+            clip,
             hit_testable: n.hit_testable,
         });
         for c in &order[neg..] {

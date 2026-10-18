@@ -202,6 +202,30 @@ fn clips_cull_children_and_stack() {
     assert!(snap.clip(inner_clip).parent.is_some());
 }
 
+#[test]
+fn a_content_clip_clips_only_the_nodes_own_drawing() {
+    let mut t = RenderTree::new();
+    let r = t.root();
+    let field = sized(&mut t, r, 10.0, 10.0, 40.0, 20.0);
+    t.set_hit_testable(field, true);
+    t.set_content_clip(field, Some(ClipSpec::rect(Rect::new(5.0, 2.0, 35.0, 18.0))));
+    let child = sized(&mut t, field, 0.0, 0.0, 40.0, 20.0);
+    let snap = t.compose(VP, 1);
+    let own = snap.items.iter().find(|i| i.node == field).unwrap();
+    let clip = snap.clip(own.clip.unwrap());
+    assert!(clip.content);
+    assert_eq!(clip.bbox, Rect::new(15.0, 12.0, 45.0, 28.0));
+    let below = snap.items.iter().find(|i| i.node == child).unwrap();
+    assert_eq!(below.clip, None);
+    // Where it does not draw, it is still there to press.
+    assert!(hit_test(&snap, Point::new(12.0, 11.0)).any(|n| n == field));
+
+    t.set_content_clip(field, None);
+    let snap = t.compose(VP, 2);
+    let own = snap.items.iter().find(|i| i.node == field).unwrap();
+    assert_eq!(own.clip, None);
+}
+
 fn build_scene(t: &mut RenderTree, n: usize) -> Vec<NodeId> {
     let r = t.root();
     t.set_size(r, Size::new(100.0, 100.0));

@@ -40,6 +40,9 @@ pub struct EditorPaint {
     run_colors: Option<Arc<Vec<Option<Rgba>>>>,
     /// The pictures of rich text's images, where they are drawn.
     images: Vec<(ImageHandle, kurbo::Rect)>,
+    /// The left, top, right and bottom padding the text is clipped to,
+    /// for a type given to [`super::register_clip_to_padding`].
+    clip_inset: Option<[f64; 4]>,
 }
 
 fn color(engine: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> Rgba {
@@ -63,8 +66,20 @@ impl EditorPaint {
         let has_delegate = !engine
             .read(obj, TextEditor::CURSOR_DELEGATE.index)
             .is_nullish();
+        let clip_inset = super::clips_to_padding(engine, obj).then(|| {
+            [
+                TextEditor::LEFT_PADDING,
+                TextEditor::TOP_PADDING,
+                TextEditor::RIGHT_PADDING,
+                TextEditor::BOTTOM_PADDING,
+            ]
+            .map(|p| engine.read(obj, p.index).to_number())
+        });
         let Some(st) = state_of(engine, obj) else {
-            return EditorPaint::default();
+            return EditorPaint {
+                clip_inset,
+                ..EditorPaint::default()
+            };
         };
         // Copied out first: reading the node may run what borrows the
         // state.
@@ -91,7 +106,20 @@ impl EditorPaint {
             highlighted,
             run_colors,
             images,
+            clip_inset,
         }
+    }
+
+    /// Where in an editor of `size` its text is drawn, when it is clipped.
+    pub(crate) fn clip(&self, size: kurbo::Size) -> Option<kurbo::Rect> {
+        let [l, t, r, b] = self.clip_inset?;
+        let (x0, y0) = (l.max(0.0), t.max(0.0));
+        Some(kurbo::Rect::new(
+            x0,
+            y0,
+            (size.width - r).max(x0),
+            (size.height - b).max(y0),
+        ))
     }
 
     /// The colour a run of the layout is drawn in.
