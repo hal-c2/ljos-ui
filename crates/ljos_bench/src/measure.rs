@@ -138,6 +138,15 @@ pub struct Frames {
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,
     pub max_ms: Option<f64>,
+    /// From each input the bench sent to the first frame shown after it,
+    /// when it drove the window: how long a person waits to see a drag or
+    /// a wheel answered (bounded below by the compositor's refresh).
+    #[serde(default)]
+    pub latency_p50_ms: Option<f64>,
+    #[serde(default)]
+    pub latency_p95_ms: Option<f64>,
+    #[serde(default)]
+    pub latency_max_ms: Option<f64>,
 }
 
 /// CPU over a window of time.
@@ -378,22 +387,34 @@ impl Watch<'_> {
     }
 }
 
-fn frames(times: &[u64], seconds: f64) -> Frames {
+/// The value at quantile `q` of sorted `values`.
+fn quantile(values: &[f64], q: f64) -> Option<f64> {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    let i = ((values.len().checked_sub(1)?) as f64 * q).round() as usize;
+    values.get(i).copied()
+}
+
+fn frames(times: &[u64], seconds: f64, inputs: &[u64]) -> Frames {
     #[allow(clippy::cast_precision_loss)]
     let mut gaps: Vec<f64> = times
         .windows(2)
         .map(|w| w[1].saturating_sub(w[0]) as f64 / 1e6)
         .collect();
     gaps.sort_by(f64::total_cmp);
-    let at = |q: f64| {
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss
-        )]
-        let i = ((gaps.len() - 1) as f64 * q).round() as usize;
-        gaps.get(i).copied()
-    };
+    // An input after the last frame was never answered while counting.
+    #[allow(clippy::cast_precision_loss)]
+    let mut waits: Vec<f64> = inputs
+        .iter()
+        .filter_map(|&sent| {
+            let i = times.partition_point(|&t| t <= sent);
+            times.get(i).map(|&t| (t - sent) as f64 / 1e6)
+        })
+        .collect();
+    waits.sort_by(f64::total_cmp);
     #[allow(clippy::cast_precision_loss)]
     let fps = if seconds > 0.0 {
         times.len() as f64 / seconds
@@ -403,9 +424,12 @@ fn frames(times: &[u64], seconds: f64) -> Frames {
     Frames {
         count: times.len(),
         fps,
-        p50_ms: (!gaps.is_empty()).then(|| at(0.5)).flatten(),
-        p95_ms: (!gaps.is_empty()).then(|| at(0.95)).flatten(),
+        p50_ms: quantile(&gaps, 0.5),
+        p95_ms: quantile(&gaps, 0.95),
         max_ms: gaps.last().copied(),
+        latency_p50_ms: quantile(&waits, 0.5),
+        latency_p95_ms: quantile(&waits, 0.95),
+        latency_max_ms: waits.last().copied(),
     }
 }
 
@@ -430,13 +454,16 @@ fn span(
     let ns0 = procfs::thread_cpu_ns(pid);
     let start = Instant::now();
     let mut clicks = None;
+    let mut inputs = Vec::new();
     match (drive, &setup.wayland, &setup.sway) {
         (Some(rect), Some(display), Some(sway)) => {
-            clicks = Some(match gesture {
+            let (n, sent) = match gesture {
                 Gesture::Click => click_grid(display, sway, rect, time, w),
                 Gesture::Drag => drag(display, sway, rect, time, w),
                 Gesture::Scroll => scroll(display, sway, rect, time, w),
-            });
+            };
+            clicks = Some(n);
+            inputs = sent;
         }
         _ => {
             w.wait(time);
@@ -466,7 +493,7 @@ fn span(
         } else {
             0.0
         },
-        frames: times.map(|t| frames(&t, seconds)),
+        frames: times.map(|t| frames(&t, seconds, &inputs)),
         clicks,
         woken,
         // Rounding between the two clocks is not an ended thread.
@@ -481,10 +508,10 @@ fn click_grid(
     (x, y, width, height): (i32, i32, i32, i32),
     time: Duration,
     w: &mut Watch<'_>,
-) -> u32 {
+) -> (u32, Vec<u64>) {
     let Ok(mut pointer) = Pointer::new(display) else {
         w.wait(time);
-        return 0;
+        return (0, Vec::new());
     };
     let extent = sway
         .layout()
@@ -509,11 +536,11 @@ fn click_grid(
                 clicks += 1;
             }
             if !w.wait(step) {
-                return clicks;
+                return (clicks, pointer.sent().to_vec());
             }
         }
     }
-    clicks
+    (clicks, pointer.sent().to_vec())
 }
 
 /// The size of the compositor's layout, which pointer positions are in,
@@ -544,10 +571,10 @@ fn drag(
     rect @ (x, y, width, height): (i32, i32, i32, i32),
     time: Duration,
     w: &mut Watch<'_>,
-) -> u32 {
+) -> (u32, Vec<u64>) {
     let Ok(mut pointer) = Pointer::new(display) else {
         w.wait(time);
-        return 0;
+        return (0, Vec::new());
     };
     let (cx, cy, reach) = (x + width / 2, y + height / 2, height / 3);
     let start = Instant::now();
@@ -583,7 +610,7 @@ fn drag(
     if held {
         let _ = pointer.release();
     }
-    moves
+    (moves, pointer.sent().to_vec())
 }
 
 /// Turns the wheel in the middle of the window, ten notches down and ten
@@ -594,14 +621,14 @@ fn scroll(
     rect @ (x, y, width, height): (i32, i32, i32, i32),
     time: Duration,
     w: &mut Watch<'_>,
-) -> u32 {
+) -> (u32, Vec<u64>) {
     let Ok(mut pointer) = Pointer::new(display) else {
         w.wait(time);
-        return 0;
+        return (0, Vec::new());
     };
     let Some((px, py, extent)) = on_layout(sway, rect, x + width / 2, y + height / 2) else {
         w.wait(time);
-        return 0;
+        return (0, Vec::new());
     };
     let start = Instant::now();
     let mut notches = 0;
@@ -615,7 +642,7 @@ fn scroll(
             break;
         }
     }
-    notches
+    (notches, pointer.sent().to_vec())
 }
 
 fn install(pid: u32) -> Install {
@@ -1010,11 +1037,26 @@ mod tests {
 
     #[test]
     fn frame_intervals() {
-        let f = frames(&[0, 16_000_000, 33_000_000, 100_000_000], 1.0);
+        let f = frames(&[0, 16_000_000, 33_000_000, 100_000_000], 1.0, &[]);
         assert_eq!(f.count, 4);
         assert_eq!(f.max_ms, Some(67.0));
         assert_eq!(f.p50_ms, Some(17.0));
-        let none = frames(&[], 1.0);
+        assert_eq!(f.latency_p50_ms, None);
+        let none = frames(&[], 1.0, &[]);
         assert_eq!((none.count, none.p50_ms), (0, None));
+    }
+
+    #[test]
+    fn input_to_frame() {
+        // Inputs at 5, 20 and 40 ms; frames at 16, 33 and 100 ms; one
+        // input after the last frame is not answered.
+        let ms = 1_000_000;
+        let f = frames(
+            &[16 * ms, 33 * ms, 100 * ms],
+            1.0,
+            &[5 * ms, 20 * ms, 40 * ms, 120 * ms],
+        );
+        assert_eq!(f.latency_p50_ms, Some(13.0));
+        assert_eq!(f.latency_max_ms, Some(60.0));
     }
 }

@@ -206,6 +206,14 @@ const METRICS: &[Metric] = &[
         value: |r| r.load.as_ref()?.frames.as_ref()?.p95_ms,
     },
     Metric {
+        title: "Median input-to-frame latency while driven (ms)",
+        value: |r| r.load.as_ref()?.frames.as_ref()?.latency_p50_ms,
+    },
+    Metric {
+        title: "95th percentile input-to-frame latency while driven (ms)",
+        value: |r| r.load.as_ref()?.frames.as_ref()?.latency_p95_ms,
+    },
+    Metric {
         title: "Mapped install (MiB on disk: runtime, libraries, plugins, fonts)",
         value: |r| {
             r.install

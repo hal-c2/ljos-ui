@@ -151,6 +151,7 @@ pub struct Pointer {
     state: State,
     pointer: ZwlrVirtualPointerV1,
     started: Instant,
+    sent: Vec<u64>,
 }
 
 impl Pointer {
@@ -174,7 +175,20 @@ impl Pointer {
             state,
             pointer,
             started: Instant::now(),
+            sent: Vec::new(),
         })
+    }
+
+    /// When each input that moves the picture was sent, in nanoseconds of
+    /// the clock screencopy times frames by, so that the frame that
+    /// answered it can be found.
+    #[must_use]
+    pub fn sent(&self) -> &[u64] {
+        &self.sent
+    }
+
+    fn mark(&mut self) {
+        self.sent.push(monotonic_ns());
     }
 
     fn time(&self) -> u32 {
@@ -196,6 +210,7 @@ impl Pointer {
         p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Pressed);
         p.frame();
         self.queue.flush().map_err(protocol)?;
+        self.mark();
         thread::sleep(Duration::from_millis(40));
         let p = &self.pointer;
         p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Released);
@@ -215,6 +230,7 @@ impl Pointer {
         p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Pressed);
         p.frame();
         self.queue.flush().map_err(protocol)?;
+        self.mark();
         pump(&mut self.queue, &mut self.state, Duration::ZERO)
     }
 
@@ -227,6 +243,7 @@ impl Pointer {
         p.motion_absolute(self.time(), x, y, extent.0, extent.1);
         p.frame();
         self.queue.flush().map_err(protocol)?;
+        self.mark();
         pump(&mut self.queue, &mut self.state, Duration::ZERO)
     }
 
@@ -260,8 +277,21 @@ impl Pointer {
         );
         p.frame();
         self.queue.flush().map_err(protocol)?;
+        self.mark();
         pump(&mut self.queue, &mut self.state, Duration::ZERO)
     }
+}
+
+/// `CLOCK_MONOTONIC` in nanoseconds: the clock wlroots stamps a
+/// screencopy frame with.
+fn monotonic_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: a valid timespec, owned by this frame.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
+    u64::try_from(ts.tv_sec).unwrap_or(0) * 1_000_000_000 + u64::try_from(ts.tv_nsec).unwrap_or(0)
 }
 
 /// Frames the compositor showed of a region while the counter ran.
