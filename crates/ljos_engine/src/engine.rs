@@ -127,6 +127,9 @@ pub(crate) struct Inner {
     /// The properties whose setters (those that get a `Cx`) are running,
     /// innermost last: a write to one of them from inside is refused.
     setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
+    /// How many objects [`Engine::set_frozen`] froze and did not thaw,
+    /// dead ones too: none, and nothing is frozen (freeze.rs).
+    pub(crate) frozen: Cell<u32>,
 }
 
 /// Restores the tracking depth when dropped (also on unwind).
@@ -274,6 +277,7 @@ impl Engine {
             slow: Default::default(),
             delayed: Default::default(),
             setters: RefCell::new(SmallVec::new()),
+            frozen: Cell::new(0),
         });
         let weak = Rc::downgrade(&inner);
         inner.graph.set_diagnostic_handler(move |d| {

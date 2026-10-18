@@ -57,3 +57,22 @@ fn a_timer_started_while_frozen_waits_for_the_thaw() {
     h.pass_ms(1);
     assert_eq!(h.num(root, "once"), 1.0);
 }
+
+#[test]
+fn freezing_twice_is_undone_by_one_thaw() {
+    let h = engine();
+    let root = h.load(PAGE);
+    let page = h.find(root, "page");
+    let late = h.find(root, "late");
+    h.engine.set_frozen(page, true).unwrap();
+    h.engine.set_frozen(page, true).unwrap();
+    h.engine.set_frozen(late, true).unwrap();
+    h.engine.set_frozen(page, false).unwrap();
+    assert!(!h.engine.is_frozen(page));
+    assert!(h.engine.is_frozen(late), "frozen on its own");
+    h.engine.set_frozen(late, false).unwrap();
+    h.engine.set_frozen(late, false).unwrap();
+    assert!(!h.engine.is_frozen(late));
+    h.engine.set_frozen(late, true).unwrap();
+    assert!(h.engine.is_frozen(late), "and counted again");
+}

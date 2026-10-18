@@ -30,6 +30,12 @@ impl Engine {
             }
             h.flags.set(ObjectFlags::FROZEN, frozen);
         }
+        let count = &self.inner.frozen;
+        count.set(if frozen {
+            count.get() + 1
+        } else {
+            count.get() - 1
+        });
         self.inner.graph.set_frozen(scope, frozen)?;
         if frozen {
             crate::qtqml::park_timers(self);
@@ -43,6 +49,11 @@ impl Engine {
 
     /// Whether `obj` or an object that owns it is frozen.
     pub fn is_frozen(&self, obj: ObjectId) -> bool {
+        // Asked for each animation in every frame, where nearly always
+        // nothing is frozen.
+        if self.inner.frozen.get() == 0 {
+            return false;
+        }
         let store = self.inner.store.borrow();
         let mut at = Some(obj);
         while let Some(o) = at {
