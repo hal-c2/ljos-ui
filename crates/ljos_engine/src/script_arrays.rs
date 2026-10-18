@@ -135,7 +135,7 @@ impl Engine {
                 Value::Color(crate::js::color_from_js(&v))
             }
             JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
-            JsValue::Handle(r) => self.plain(&Value::Js(JsHandle(r))),
+            JsValue::Handle(r) | JsValue::CopyOf(r) => self.plain(&Value::Js(JsHandle(r))),
             // `to_js` makes none.
             JsValue::Map(_) => Value::Undefined,
         }

@@ -1117,6 +1117,8 @@ impl Engine {
             // Whatever it is going to: a `var` keeps the value, and a
             // property of another type refuses it by its name.
             JsValue::Typed(kind, fields) => value_faces::from_js(kind, &fields),
+            // Made only into JS; read back, it is what it copies.
+            JsValue::CopyOf(r) => self.js_to_value(scope, JsValue::Handle(r), ty),
             // The script's own array, going where a list is kept.
             JsValue::Handle(r) if r.is_array() => {
                 let items = scope.array_items(&r).unwrap_or_default();

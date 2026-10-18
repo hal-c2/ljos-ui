@@ -372,9 +372,7 @@ impl Engine {
                     r
                 }
             };
-            Ok(scope
-                .copy_array(&array)?
-                .map_or(JsValue::Undefined, JsValue::Handle))
+            Ok(JsValue::CopyOf(array))
         })())
     }
 

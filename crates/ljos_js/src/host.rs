@@ -490,15 +490,14 @@ impl<'js> Scope<'js> {
         key
     }
 
-    /// A new array of the entries `r`, an array, holds now: made whole, where
-    /// `slice` defines its entries one by one. `None` when `r` is not an
-    /// array.
-    pub fn copy_array(&self, r: &JsRef) -> rquickjs::Result<Option<JsRef>> {
-        let Some(from) = self.restore(r)?.into_array() else {
-            return Ok(None);
+    /// A new array of the entries `from` holds, made whole, where `slice`
+    /// defines them one by one; `from` itself when it is not an array.
+    fn copy_array(&self, from: Value<'js>) -> rquickjs::Result<Value<'js>> {
+        let Some(array) = from.as_array() else {
+            return Ok(from);
         };
         let ctx = self.ctx.as_raw().as_ptr();
-        let entries = from
+        let entries = array
             .iter::<Value<'js>>()
             .collect::<rquickjs::Result<Vec<_>>>()?
             .iter()
@@ -519,7 +518,7 @@ impl<'js> Scope<'js> {
         if made.is_exception() {
             return Err(rquickjs::Error::Exception);
         }
-        Ok(Some(self.keep(made)))
+        Ok(made)
     }
 
     /// Keeps a JS value alive for Rust. An object that is held already
@@ -852,6 +851,7 @@ impl<'js> Scope<'js> {
             }
             JsValue::Object(id) => self.wrapper(*id)?.into_value(),
             JsValue::Handle(r) => self.restore(r)?,
+            JsValue::CopyOf(r) => self.copy_array(self.restore(r)?)?,
             JsValue::Map(fields) => {
                 let o = Object::new(ctx.clone())?;
                 for (k, v) in fields {
