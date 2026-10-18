@@ -197,6 +197,42 @@ fn a_step_looks_only_at_the_emitters_that_may_give_birth() {
     assert!(few <= 2 * 64 + 2, "{few} looks");
 }
 
+/// How many emitters are looked at while `n` emitters of one system are
+/// each asked to pulse, as the blocks of a board do when they die at once.
+fn emitters_looked_at_pulsing(n: usize) -> u64 {
+    let e = engine();
+    let emitters = (0..n)
+        .map(|_| r#"Emitter { enabled: false; lifeSpan: 500; width: 10; height: 10 }"#)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let root = load(
+        &e,
+        &format!(
+            r#"
+    import QtQuick
+    import QtQuick.Particles
+    ParticleSystem {{
+      width: 300; height: 300
+      {emitters}
+      function pulseAll() {{ for (var i = 0; i < children.length; i++) children[i].pulse(100) }}
+    }}"#
+        ),
+    );
+    let before = ljos_quick::emitters_looked_at(&e);
+    e.invoke_by_name(root, "pulseAll", &[]).unwrap();
+    ljos_quick::emitters_looked_at(&e) - before
+}
+
+#[test]
+fn a_pulse_does_not_look_at_the_other_emitters() {
+    // The pulse makes its own emitter owe particles, so its system has
+    // something to step without asking the rest.
+    let few = emitters_looked_at_pulsing(10);
+    let many = emitters_looked_at_pulsing(200);
+    assert_eq!(few, 0, "{few} looks for 10 pulses");
+    assert_eq!(many, 0, "{many} looks for 200 pulses");
+}
+
 /// How many particles a second of steps and frames hands painters, with
 /// ten particles in each of four groups, a painter for each group and
 /// `idle` painters of groups that have none.

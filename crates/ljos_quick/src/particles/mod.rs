@@ -932,9 +932,12 @@ fn sync_timer_busy(e: &Engine, sys: ObjectId, known: bool) {
 }
 
 /// An emitter was asked to burst or pulse: make sure its system steps.
+/// The emitter owes particles now, so the system is busy without asking
+/// its other emitters; a board of blocks that die at once asked them all
+/// for each block.
 fn wake(e: &Engine, em: ObjectId) {
     if let Some(sys) = system_of(e, em, Emitter::SYSTEM.index) {
-        sync_timer(e, sys);
+        sync_timer_busy(e, sys, true);
     }
 }
 
