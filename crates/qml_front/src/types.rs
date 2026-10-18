@@ -34,6 +34,9 @@ pub enum Origin {
     Inline,
     /// A member of what the file imports `as` something.
     Namespace,
+    /// A name of a module the runtime does not have, by its URI: it stands
+    /// in as an empty `Item` ([`TypeOracle::stands_in`]).
+    StandIn(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,11 +138,19 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                 });
             }
         }
+        // The last such module the file imports, if the name is nothing
+        // else.
+        let mut stand_in = None;
         for import in summary.imports.iter().rev() {
             if import.alias.as_deref() != qualifier {
                 continue;
             }
             match &import.source {
+                Source::Module(uri)
+                    if self.oracle.stands_in(uri) && !self.project.has_module(uri) =>
+                {
+                    stand_in.get_or_insert(uri);
+                }
                 Source::Module(uri) => {
                     if uri == CONTROLS
                         && let Some(found) = self.styled_control(name, qualifier)
@@ -181,7 +192,7 @@ impl<'p, O: TypeOracle> Types<'p, O> {
             }
         }
         if qualifier.is_some() {
-            return None;
+            return stand_in.and_then(|uri| self.standing_in(uri));
         }
         // The file's own directory is imported before anything else, so
         // everything else comes first.
@@ -204,7 +215,16 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                 });
             }
         }
-        None
+        stand_in.and_then(|uri| self.standing_in(uri))
+    }
+
+    /// What a name of `uri`, a module the runtime does not have, is.
+    fn standing_in(&self, uri: &str) -> Option<Found<O::Type>> {
+        let item = self.oracle.module_type("QtQuick", "Item")?;
+        Some(Found {
+            kind: Kind::Builtin(item),
+            origin: Origin::StandIn(uri.to_string()),
+        })
     }
 
     /// The type `name` of `import QtQuick.Controls` under the style the
@@ -367,6 +387,28 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                     let shape = self.project.shape(&key)?;
                     kind = self.root(&key, shape)?;
                 }
+            }
+        }
+        None
+    }
+
+    /// The name of the type of a module the runtime does not have that a
+    /// component's objects are, however many components down: the empty
+    /// Item it stands in as ([`Origin::StandIn`]).
+    pub fn stands_in(&self, kind: &Kind<O::Type>) -> Option<&'p str> {
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            let Kind::Component(key) = kind else {
+                return None;
+            };
+            let shape = self.project.shape(&key)?;
+            let parts: Vec<&str> = shape.root.iter().map(String::as_str).collect();
+            match self.of(&key.file).find(&parts)? {
+                Found {
+                    origin: Origin::StandIn(_),
+                    ..
+                } => return parts.last().copied(),
+                found => kind = found.kind,
             }
         }
         None

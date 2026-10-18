@@ -151,6 +151,49 @@ pub fn has_qt_table() -> bool {
 /// without Qt's table: the name may be Qt's all the same.
 pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: with a table of Qt's types it could tell whether Qt has it";
 
+/// Qt's modules Ljós does not build (ARCHITECTURE.md §1), with the modules
+/// below them: what they draw (a 3D scene, a web page, a map, a chart) is
+/// one part of a window, and the rest of an application that shows one
+/// still loads. Then the ones it has not built yet: an application that
+/// animates with a timeline (Qt Design Studio's) shows where it starts.
+const STANDING_IN: &[&str] = &[
+    "QtQuick3D",
+    "Qt3D",
+    "QtWebEngine",
+    "QtLocation",
+    "QtGraphs",
+    "QtQuick.Timeline",
+];
+
+/// Whether `uri` is one of Qt's modules Ljós does not build: a type of it
+/// stands in as an empty `Item`, whether or not Qt's table describes it.
+pub fn stands_in(uri: &str) -> bool {
+    STANDING_IN.iter().any(|module| {
+        uri.strip_prefix(module)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+    })
+}
+
+/// The types of those modules that are Items in Qt, placed in a window as
+/// any other: the rest (a 3D node, a material, a keyframe) is not, and
+/// keeps nothing of the Item it stands in as but its name, its children
+/// and what the file declares on it.
+const STANDING_IN_ITEMS: &[&str] = &[
+    "View3D",
+    "WebEngineView",
+    "MapView",
+    "Map",
+    "GraphsView",
+    "Bars3D",
+    "Scatter3D",
+    "Surface3D",
+];
+
+/// Whether `name`, a type of a module that [`stands_in`], is an Item in Qt.
+pub fn stands_in_as_item(name: &str) -> bool {
+    STANDING_IN_ITEMS.contains(&name)
+}
+
 /// For a test that holds only of Qt's description of its types (a class
 /// name, a type Ljós does not have): whether there is one to hold it of.
 /// Without it the test is named as skipped on the terminal, past what the

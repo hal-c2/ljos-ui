@@ -28,7 +28,7 @@ pub mod color;
 /// Bumped whenever the serialised shape changes, or what the compiled
 /// functions ask of the engine, so a cache written by an older compiler is
 /// rebuilt instead of misread.
-pub const IR_VERSION: u32 = 11;
+pub const IR_VERSION: u32 = 12;
 
 macro_rules! index {
     ($(#[$doc:meta])* $name:ident) => {
@@ -194,6 +194,9 @@ pub struct Import {
     /// The module is the project's own: its types are files compiled with
     /// this one, and the runtime has no module of the name to look for.
     pub in_project: bool,
+    /// The runtime does not have the module, and its types stand in as
+    /// empty Items: the file loads without it.
+    pub stands_in: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -140,6 +140,21 @@ pub trait TypeOracle {
         None
     }
 
+    /// Whether the module `uri` is one the runtime does not have and whose
+    /// types stand in as an empty `Item` of `QtQuick`: a name of it that is
+    /// nothing else the file imports is such an Item, and what only the
+    /// missing type has is left out.
+    fn stands_in(&self, _uri: &str) -> bool {
+        false
+    }
+
+    /// Whether the type `name` of such a module is an Item where it is
+    /// written, placed as one; otherwise it keeps nothing of the Item but
+    /// its name, its children and what the file declares on it.
+    fn stands_in_as_item(&self, _name: &str) -> bool {
+        true
+    }
+
     /// Whether the property `name` of the type holds one object, not a
     /// value: what is written for it is an object or `null`, never a
     /// number or a string. An oracle that cannot tell says it does not.
@@ -423,6 +438,14 @@ impl TypeOracle for QtTypeOracle {
         // the file lacks an import, and Qt's table would say no more.
         (!qt_types::has_qt_table() && !qt_types::is_type_name(name))
             .then_some(qt_types::WITHOUT_QT_TABLE)
+    }
+
+    fn stands_in(&self, uri: &str) -> bool {
+        qt_types::stands_in(uri)
+    }
+
+    fn stands_in_as_item(&self, name: &str) -> bool {
+        qt_types::stands_in_as_item(name)
     }
 
     fn holds_object(&self, ty: QtType, name: &str) -> bool {

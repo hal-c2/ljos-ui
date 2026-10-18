@@ -257,11 +257,11 @@ impl Suite {
 }
 
 /// The modules a file imports that the runtime has to have: the ones no
-/// file of the project is a type of.
+/// file of the project is a type of, and whose types do not stand in.
 fn runtime_modules(file: &CompiledFile) -> Vec<String> {
     file.imports
         .iter()
-        .filter(|import| !import.in_project)
+        .filter(|import| !import.in_project && !import.stands_in)
         .filter_map(|import| match &import.source {
             ImportSource::Module(uri) => Some(uri.clone()),
             ImportSource::Path(_) => None,

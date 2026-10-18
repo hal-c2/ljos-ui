@@ -4,7 +4,7 @@
 //! the bindings simple enough to run without JS.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -412,7 +412,11 @@ pub(crate) struct LoaderState {
     pub(crate) qml_types: crate::qml_types::QmlTypes,
     /// The modules the application's files import or make objects of
     /// ([`Engine::uses_module`]).
-    pub(crate) used_modules: std::collections::HashSet<String>,
+    pub(crate) used_modules: HashSet<String>,
+    /// The modules whose types stand in as empty Items that the log has
+    /// said so of, by the first part of their name (`QtQuick3D`): once
+    /// each, however many files import them.
+    pub(crate) stood_in: HashSet<String>,
 }
 
 /// A binding that reads a path of properties from one parameter
@@ -738,16 +742,7 @@ impl Engine {
             )));
         }
         let url = source.url(key);
-        for import in &ir.imports {
-            if let ImportSource::Module(uri) = &import.source
-                && !import.in_project
-                && !self.has_module(uri)
-            {
-                return Err(EngineError::Load(format!(
-                    "{url}: module \"{uri}\" is not installed"
-                )));
-            }
-        }
+        self.check_imports(&url, &ir)?;
         let used = modules_of(&ir);
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
         file.epoch.set(self.inner.reload.epoch.get());
@@ -784,6 +779,46 @@ fn modules_of(ir: &CompiledFile) -> Vec<String> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+impl Engine {
+    /// Refuses a file that imports a module the engine does not have,
+    /// unless the compiler made its types stand in as empty Items: then
+    /// the log says so, once for the module.
+    pub(crate) fn check_imports(&self, url: &str, ir: &CompiledFile) -> Result<(), EngineError> {
+        for import in &ir.imports {
+            let ImportSource::Module(uri) = &import.source else {
+                continue;
+            };
+            if import.in_project || self.has_module(uri) {
+                continue;
+            }
+            if !import.stands_in {
+                return Err(EngineError::Load(format!(
+                    "{url}: module \"{uri}\" is not installed"
+                )));
+            }
+            // `QtQuick3D.Helpers` comes with `QtQuick3D`: one word for both.
+            // `QtQuick.Timeline` is a module of its own all the same.
+            let family = match uri.split_once('.') {
+                Some(("QtQuick", _)) | None => uri.as_str(),
+                Some((first, _)) => first,
+            };
+            if self
+                .inner
+                .loader
+                .borrow_mut()
+                .stood_in
+                .insert(family.to_owned())
+            {
+                self.warn(format!(
+                    "{url}: module \"{uri}\" is not part of Ljós: the types of {family} and the \
+                     modules below it are empty Items, and what only they have is left out"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

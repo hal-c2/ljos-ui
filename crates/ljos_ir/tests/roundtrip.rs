@@ -334,6 +334,7 @@ fn sample() -> CompiledFile {
             version: Some("2.15".into()),
             alias: None,
             in_project: false,
+            stands_in: false,
         }],
         pragmas: vec![Pragma {
             name: "ComponentBehavior".into(),

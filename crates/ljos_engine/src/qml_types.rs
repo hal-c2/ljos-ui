@@ -14,8 +14,6 @@
 use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 
-use ljos_ir::ImportSource;
-
 use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
@@ -216,16 +214,7 @@ impl Engine {
                 ljos_ir::IR_VERSION
             )));
         }
-        for import in &ir.imports {
-            if let ImportSource::Module(uri) = &import.source
-                && !import.in_project
-                && !self.has_module(uri)
-            {
-                return Err(EngineError::Load(format!(
-                    "{url}: module \"{uri}\" is not installed"
-                )));
-            }
-        }
+        self.check_imports(&url, &ir)?;
         let file = Rc::new(LoadedFile::new(key, url, ir, source.bytecode(key)));
         self.inner
             .loader

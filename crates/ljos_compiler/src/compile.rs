@@ -369,6 +369,10 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     if path == ["id"] {
                         continue;
                     }
+                    if self.stand_in_lacks(owner, &path) {
+                        self.keep_objects(owner, &binding.value);
+                        continue;
+                    }
                     self.check_member(owner, &path, binding.name.span);
                     let (slot, name) = self.slot(&path, binding.name.span);
                     self.value(owner, slot, name, binding.name.span, &binding.value, true);
@@ -412,6 +416,106 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     };
                     self.def_mut(at).enums.push(declaration);
                 }
+            }
+        }
+    }
+
+    /// Whether `path` is written on a type that stands in for one of a
+    /// module the runtime does not have ([`Origin::StandIn`]), and is what
+    /// only the missing type has: left out, as the missing type is.
+    fn stand_in_lacks(&self, owner: usize, path: &[&str]) -> bool {
+        let Some(first) = path.first() else {
+            return false;
+        };
+        if first.starts_with(|c: char| c.is_ascii_uppercase()) {
+            // What such a type attaches (`Type.member`, `Module.Type.member`).
+            return (1..path.len().min(3)).any(|n| {
+                matches!(
+                    self.types.find(&path[..n]),
+                    Some(Found {
+                        origin: Origin::StandIn(_),
+                        ..
+                    })
+                )
+            });
+        }
+        let object = &self.tree.objects[owner];
+        let stand_in = match (&object.origin, &object.kind) {
+            (Some(Origin::StandIn(_)), _) => object.name.rsplit('.').next(),
+            (_, Some(kind)) => self.types.stands_in(kind),
+            _ => None,
+        };
+        let Some(stand_in) = stand_in else {
+            return false;
+        };
+        // A 3D node is not placed as an Item: its `rotation` is a
+        // quaternion, not the Item's angle.
+        if !self.types.oracle.stands_in_as_item(stand_in) {
+            let name = handled(first)
+                .filter(|_| path.len() == 1)
+                .map(|signal| {
+                    signal
+                        .strip_suffix("Changed")
+                        .unwrap_or(&signal)
+                        .to_string()
+                })
+                .unwrap_or_else(|| first.to_string());
+            let item = self.types.oracle.module_type("QtQuick", "Item");
+            if name != "objectName"
+                && item.is_some_and(|item| {
+                    self.types
+                        .lookup(&Kind::Builtin(item), &name)
+                        .found()
+                        .is_some()
+                })
+            {
+                return true;
+            }
+        }
+        if let [first, name, ..] = path {
+            // `scale.x` of a 3D node, whose `scale` the Item has as a number.
+            return match self.tree.lookup(self.types, owner, first) {
+                Lookup::Found(Member::Property(property)) => property.value.is_some_and(|ty| {
+                    self.types
+                        .lookup(&Kind::Builtin(ty), name)
+                        .found()
+                        .is_none()
+                }),
+                Lookup::Found(_) => false,
+                Lookup::Missing | Lookup::Undecided => true,
+            };
+        }
+        if let [name] = path
+            && let Some(signal) = handled(name)
+        {
+            let changed = signal.strip_suffix("Changed").is_some_and(|property| {
+                matches!(
+                    self.tree.lookup(self.types, owner, property),
+                    Lookup::Found(Member::Property(_))
+                )
+            });
+            return !changed
+                && self
+                    .tree
+                    .lookup_signal(self.types, owner, &signal)
+                    .found()
+                    .is_none();
+        }
+        self.tree.lookup(self.types, owner, first).found().is_none()
+    }
+
+    /// The objects written for a member that is left out, as children of
+    /// the object: their ids still name them.
+    fn keep_objects(&mut self, owner: usize, value: &QmlBindingValue<'a>) {
+        let objects = match value {
+            QmlBindingValue::Object(object) => std::slice::from_ref(object),
+            QmlBindingValue::Objects(objects) => objects.as_slice(),
+            _ => return,
+        };
+        let at = self.place[owner];
+        for object in objects {
+            if let Some(value) = self.object_value(owner, object, "default") {
+                self.def_mut(at).children.push(value);
             }
         }
     }
@@ -2480,6 +2584,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     in_project: matches!(
                         &import.source,
                         QmlImportSource::Module(name) if self.project.front.has_module(&name.to_string())
+                    ),
+                    stands_in: matches!(
+                        &import.source,
+                        QmlImportSource::Module(name) if self.types.oracle.stands_in(&name.to_string())
+                            && !self.project.front.has_module(&name.to_string())
                     ),
                 })
                 .collect(),
