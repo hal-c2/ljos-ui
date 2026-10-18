@@ -392,6 +392,36 @@ fn moving_a_container_moves_the_nodes_inside() {
 }
 
 #[test]
+fn a_container_moved_again_and_again_before_a_frame_places_once() {
+    let e = engine();
+    let root = load(&e, NESTED);
+    let mut sc = active(&e, root);
+    let open = sc.accessible_node(find(&e, root, "open")).unwrap();
+    let before = sc.accessibility_tree().stats();
+
+    let spacer = find(&e, root, "spacer");
+    for x in [24.0, 48.0, 6.0] {
+        set(&e, spacer, "x", Value::Real(x));
+    }
+    frame(&mut sc, &e);
+    assert_eq!(
+        sc.accessibility_tree().get(open).unwrap().bounds,
+        Bounds::new(16.0, 14.0, 76.0, 44.0)
+    );
+    // Each button is placed once, where it ended up.
+    let after = sc.accessibility_tree().stats();
+    assert_eq!(after.node_updates, before.node_updates + 2);
+
+    // Told of the next move as well.
+    set(&e, spacer, "x", Value::Real(24.0));
+    frame(&mut sc, &e);
+    assert_eq!(
+        sc.accessibility_tree().get(open).unwrap().bounds,
+        Bounds::new(34.0, 14.0, 94.0, 44.0)
+    );
+}
+
+#[test]
 fn resizing_a_container_places_nothing_again() {
     let e = engine();
     let root = load(&e, NESTED);

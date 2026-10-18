@@ -602,6 +602,9 @@ struct Pending {
     /// The latest description of an item; `None`: it is not exposed.
     described: FxHashMap<ObjectId, Option<NodeData>>,
     bounds: FxHashMap<ObjectId, Bounds>,
+    /// Items whose bounds effect was told that something it read changed:
+    /// it runs again at the next sync, not once per change in between.
+    moved: FxHashSet<ObjectId>,
     /// Items that got their `Accessible` object after their effect looked
     /// for it.
     late: Vec<ObjectId>,
@@ -615,6 +618,7 @@ impl Pending {
     fn is_empty(&self) -> bool {
         self.described.is_empty()
             && self.bounds.is_empty()
+            && self.moved.is_empty()
             && self.late.is_empty()
             && self.announced.is_empty()
             && self.parts.is_empty()
@@ -726,6 +730,7 @@ impl A11yPass {
             let mut p = self.pending.borrow_mut();
             p.described.clear();
             p.bounds.clear();
+            p.moved.clear();
             p.late.clear();
             p.announced.clear();
             p.parts.clear();
@@ -802,6 +807,7 @@ impl A11yPass {
         let mut p = self.pending.borrow_mut();
         p.described.remove(&obj);
         p.bounds.remove(&obj);
+        p.moved.remove(&obj);
         drop(p);
         self.restructure.remove(&obj);
         self.tree.remove(key_of(obj));
@@ -845,16 +851,30 @@ impl A11yPass {
         if st.bounds.is_some() {
             return;
         }
+        // Told, not run: a row put in at the top of a list moves every
+        // row below it, and each would walk its ancestors again inside
+        // the handler that put it there.
         let pending = Rc::clone(&self.pending);
         let wake = Rc::clone(&self.wake);
-        let effect = engine.effect_in(obj, move |e| {
-            if !e.is_alive(obj) {
-                return;
-            }
-            let b = scene_bounds(e, obj);
-            pending.borrow_mut().bounds.insert(obj, b);
-            wake();
-        });
+        let told = Rc::downgrade(&self.pending);
+        let told_wake = Rc::clone(&self.wake);
+        let effect = engine.effect_told_in(
+            obj,
+            move |e| {
+                if !e.is_alive(obj) {
+                    return;
+                }
+                let b = scene_bounds(e, obj);
+                pending.borrow_mut().bounds.insert(obj, b);
+                wake();
+            },
+            move || {
+                if let Some(p) = told.upgrade() {
+                    p.borrow_mut().moved.insert(obj);
+                    told_wake();
+                }
+            },
+        );
         match effect {
             Ok(n) => st.bounds = Some(n),
             Err(err) => warn(engine, format!("cannot place an item: {err}")),
@@ -989,6 +1009,13 @@ impl A11yPass {
             self.pending.borrow_mut().parts.drain().collect();
         for (obj, list) in parts {
             self.apply_parts(engine, obj, list);
+        }
+        let moved = std::mem::take(&mut self.pending.borrow_mut().moved);
+        for obj in moved {
+            if let Some(n) = self.items.get(&obj).and_then(|st| st.bounds) {
+                // Runs it again, tracked: what it reads can have changed.
+                let _ = engine.graph().refresh(n);
+            }
         }
         let bounds: Vec<(ObjectId, Bounds)> = self.pending.borrow_mut().bounds.drain().collect();
         for (obj, b) in bounds {
