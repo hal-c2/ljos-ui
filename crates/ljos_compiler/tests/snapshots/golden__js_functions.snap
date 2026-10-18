@@ -26,17 +26,13 @@ export function f0($scope) {
 }
 
 // Main.qml:7:5 Item.add()
-export function f1($scope, ...$args) {
-  return (function add(a, b) {
+export function f1($scope, a, b) {
         const sum = a + b
         return sum + $scope.width
-    }).apply(this, $args);
-}
+    }
 
 // Main.qml:11:5 Item.reset()
-export function f2(root, $scope, ...$args) {
-  return (function reset() {
+export function f2(root, $scope) {
         for (let i = 0; i < 3; i++) root.x = i
         $scope.total = 0
-    }).apply(this, $args);
-}
+    }

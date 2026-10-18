@@ -165,10 +165,26 @@ pub(crate) struct Analysis {
     /// The function a `Form::Function` script declares, and its parameters
     /// where they are plain names.
     pub function_params: Vec<String>,
+    /// A `Form::Function` script that can be the function it is exported
+    /// as, its parameters after the ones given for its names: one with
+    /// plain parameters that reads neither `arguments` nor its own name.
+    /// What is left of the declaration is dropped by
+    /// [`Flat::head`]; [`Flat::names`] are what its body declares, which
+    /// must not be the names given before.
+    pub flat: Option<Flat>,
     /// What the script writes members of, in order of appearance.
     pub member_writes: Vec<ValueSource>,
     /// The variables in `member_writes` whose value was read from a place.
     pub places: Vec<Place>,
+}
+
+/// See [`Analysis::flat`].
+#[derive(Debug)]
+pub(crate) struct Flat {
+    /// The script's text up to and with the `(` of its parameters.
+    pub head: Span,
+    /// The parameters and what the function's own scope declares.
+    pub names: Vec<String>,
 }
 
 /// `p = <init>` of a declaration, for [`Place`].
@@ -244,6 +260,33 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
             .iter()
             .filter_map(|param| param.pattern.get_identifier_name().map(|n| n.to_string()))
             .collect();
+        let plain = !function.r#async
+            && !function.generator
+            && function.type_parameters.is_none()
+            && function.this_param.is_none()
+            && function.params.rest.is_none()
+            && function.params.items.iter().all(|param| {
+                param.initializer.is_none() && param.pattern.get_identifier_name().is_some()
+            });
+        let named = function
+            .id
+            .as_ref()
+            .and_then(|id| id.symbol_id.get())
+            .is_some_and(|symbol| !scoping.get_resolved_reference_ids(symbol).is_empty());
+        if plain
+            && !named
+            && !analysis.uses_arguments
+            && let Some(scope) = function.scope_id.get()
+        {
+            analysis.flat = Some(Flat {
+                head: Span::new(0, function.params.span.start + 1),
+                names: scoping
+                    .get_bindings(scope)
+                    .keys()
+                    .map(|name| name.to_string())
+                    .collect(),
+            });
+        }
     }
     analysis.edits.sort_by_key(|edit| edit.span.start);
     Ok(analysis)

@@ -30,8 +30,7 @@ export function f0(to) {
 }
 
 // Main.qml:11:5 Item.change()
-export function f1($scope, root, other, ...$args) {
-  return (function change(given) {
+export function f1($scope, root, other, given) {
         __ljos_vt($scope, "area").x = 1
         __ljos_vt(root, "area").width += 2
         __ljos_vt(other, "spot").y++
@@ -43,5 +42,4 @@ export function f1($scope, root, other, ...$args) {
         let fixed$ljos = __ljos_at($scope, "area"), fixed = fixed$ljos.v
         __ljos_vp(fixed, fixed$ljos, ($v) => fixed = $v).x = 7
         __ljos_vt(this, "area").height = 8
-    }).apply(this, $args);
-}
+    }

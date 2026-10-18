@@ -2015,12 +2015,37 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 self.translations.push(translatable);
             }
         }
+        let mut signature: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+        // A method is the exported function itself where it can be: a
+        // function applied would be made anew, with a list of the
+        // arguments, on every call.
+        let flat = (form == Form::Function)
+            .then_some(analysis.flat.as_ref())
+            .flatten()
+            .filter(|flat| !flat.names.iter().any(|name| signature.contains(name)));
+        if let Some(flat) = flat {
+            edits.push(js::Edit {
+                span: flat.head,
+                text: String::new(),
+            });
+        }
         let body = js::apply(text, &edits);
         let close = if body.contains("//") { "\n  " } else { "" };
-        let mut signature: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
         let wrapped = args.is_none() || analysis.uses_arguments;
         let known = args.clone().unwrap_or_default();
         let (body_args, code) = match form {
+            Form::Function if flat.is_some() => {
+                let between = if signature.is_empty() || analysis.function_params.is_empty() {
+                    ""
+                } else {
+                    ", "
+                };
+                let code = format!(
+                    "export function {export}({}{between}{body}\n",
+                    signature.join(", ")
+                );
+                (analysis.function_params.clone(), code)
+            }
             Form::Function => {
                 signature.push("...$args".into());
                 let code = format!(

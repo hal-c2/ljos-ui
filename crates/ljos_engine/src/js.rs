@@ -91,6 +91,9 @@ struct ModuleLines {
     url: String,
     /// (First JS line of a function, its QML line and column).
     lines: Vec<(u32, u32, u32)>,
+    /// (Export, QML name) of each method compiled as the exported
+    /// function itself, whose frames QuickJS names by the export.
+    methods: Vec<(String, String)>,
     /// The file its source is in. A file loaded again after a reload lets
     /// the earlier one go: its lines stay, its source does not.
     file: Option<Source>,
@@ -108,6 +111,7 @@ impl LineTable {
     pub(crate) fn add(&mut self, module: &str, url: &str, file: &Arc<CompiledFile>) {
         let source = &file.js.source;
         let mut lines = Vec::new();
+        let mut methods = Vec::new();
         let all: Vec<&str> = source.lines().collect();
         for (i, l) in all.iter().enumerate() {
             let Some(rest) = l.strip_prefix("// ") else {
@@ -137,6 +141,17 @@ impl LineTable {
                     && all
                         .get(i + 2)
                         .is_some_and(|b| b.trim_start().starts_with("return (function "));
+                if !method && let Some(name) = rest.strip_suffix("()") {
+                    let export = all
+                        .get(i + 1)
+                        .and_then(|l| l.strip_prefix("export function "))
+                        .and_then(|l| l.split_once('('))
+                        .map(|(export, _)| export);
+                    let name = name.rsplit(['.', ' ']).next().unwrap_or(name);
+                    if let Some(export) = export {
+                        methods.push((export.to_owned(), name.to_owned()));
+                    }
+                }
                 let first = if wrapped || method { i + 3 } else { i + 2 };
                 // QuickJS may place a throw in a wrapped expression on
                 // the `export function` line itself (`null.foo()`): that
@@ -157,6 +172,7 @@ impl LineTable {
             ModuleLines {
                 url: url.to_owned(),
                 lines,
+                methods,
                 file: Some(Source::Qml(file.clone())),
             },
         );
@@ -177,9 +193,19 @@ impl LineTable {
             ModuleLines {
                 url: url.to_owned(),
                 lines: vec![(1, 1, 1)],
+                methods: Vec::new(),
                 file: Some(Source::Script(source.into())),
             },
         );
+    }
+
+    /// The QML name of the method `module` exports as `export`.
+    pub(crate) fn method_name(&self, module: &str, export: &str) -> Option<&str> {
+        let m = self.modules.get(module)?;
+        m.methods
+            .iter()
+            .find(|(e, _)| e == export)
+            .map(|(_, name)| name.as_str())
     }
 
     pub(crate) fn map(&self, module: &str, js_line: u32) -> Option<(String, u32)> {

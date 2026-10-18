@@ -587,3 +587,27 @@ Rectangle {\n\
     assert_eq!(place(border, "width"), (5, 5, "border.width"));
     assert_eq!(place(border, "color"), (7, 9, "color"));
 }
+
+/// A method that needs nothing of a function of its own is the exported
+/// function itself: a call makes no closure and applies nothing. One that
+/// reads `arguments`, names itself, or has a default or a rest parameter
+/// keeps its own function inside the export.
+#[test]
+fn a_plain_method_makes_no_function_per_call() {
+    let out = compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    function plain(a, b) { return a + b + width }
+    function counted() { return arguments.length }
+    function again(n) { return n > 0 ? again(n - 1) : 0 }
+    function given(a = 1) { return a }
+    function rest(...a) { return a.length }
+}
+"##,
+    )]);
+    assert_eq!(out.matches(".apply(this, $args)").count(), 4, "{out}");
+    assert!(out.contains("export function f0($scope, a, b) {"), "{out}");
+}

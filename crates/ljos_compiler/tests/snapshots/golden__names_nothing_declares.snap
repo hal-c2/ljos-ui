@@ -40,14 +40,12 @@ export function f2(short) {
 }
 
 // Main.qml:8:5 Item.later()
-export function f3(absent, other, $w_written, ...$args) {
-  return (function later() {
+export function f3(absent, other, $w_written) {
         __ljos_named(absent, "absent")()
         __ljos_vl(__ljos_named(other, "other"), ($v) => other = $v).x = 1
         $w_written.written = 2
         return $w_written.written
-    }).apply(this, $args);
-}
+    }
 
 diagnostics
   5:34: warning: `nowhere` is not a name in sight: it is looked up when the program runs

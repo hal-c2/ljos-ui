@@ -346,8 +346,9 @@ impl Engine {
     /// The compiler wraps a QML function as
     /// `export function fN(…) { return (function name() { … }).apply(this, $args); }`,
     /// so a call shows as three frames: `name`, `apply (native)` and `fN`.
-    /// Only the first is the user's. A handler or a binding is the body of
-    /// its `fN` and has no name of its own.
+    /// Only the first is the user's. A plain method is compiled as `fN`
+    /// itself, named by the line table. A handler or a binding is the body
+    /// of its `fN` and has no name of its own.
     fn qml_stack(&self, raw: &str) -> Vec<StackFrame> {
         let Some(js) = self.inner.js.borrow().clone() else {
             return Vec::new();
@@ -373,8 +374,13 @@ impl Engine {
             let named = !frame.name.is_empty()
                 && frame.name != "<anonymous>"
                 && !is_generated_name(frame.name);
+            let function = if named {
+                Some(frame.name.to_owned())
+            } else {
+                lines.method_name(module, frame.name).map(str::to_owned)
+            };
             out.push(StackFrame {
-                function: named.then(|| frame.name.to_owned()),
+                function,
                 file,
                 line,
             });

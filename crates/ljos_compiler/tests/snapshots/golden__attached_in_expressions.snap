@@ -53,6 +53,4 @@ export function f3($scope, Text) {
 }
 
 // Main.qml:13:5 Item.set()
-export function f4($a_Keys, $scope, other, ...$args) {
-  return (function set(v) { $a_Keys.enabled = v; __ljos_att($scope.parent, "QtQuick", "Keys").enabled = v; __ljos_att(other.children[0], "QtQuick", "Keys").priority++ }).apply(this, $args);
-}
+export function f4($a_Keys, $scope, other, v) { $a_Keys.enabled = v; __ljos_att($scope.parent, "QtQuick", "Keys").enabled = v; __ljos_att(other.children[0], "QtQuick", "Keys").priority++ }

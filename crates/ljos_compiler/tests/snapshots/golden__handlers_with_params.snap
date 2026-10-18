@@ -81,9 +81,7 @@ export function f7(root) {
 }
 
 // Main.qml:21:9 Connections.onPicked
-export function f8(...$args) {
-  return (function onPicked(index, name) { console.log(index, name) }).apply(this, $args);
-}
+export function f8(index, name) { console.log(index, name) }
 
 // Main.qml:22:25 Connections.onCountChanged
 export function f9(root) {
