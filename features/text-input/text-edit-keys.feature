@@ -47,6 +47,30 @@ Feature: Editing a TextEdit with the keyboard
         | Enter        |
         | Shift+Return |
 
+    # Each platform's InsertLineSeparator and InsertParagraphSeparator
+    # (qkeysequence.html#standard-shortcuts); the oracle runs on Linux and
+    # has only Linux's key bindings.
+    @ljos-only
+    Scenario Outline: <key> breaks the line under <platform>'s key bindings
+      Given the application uses the key bindings of "<platform>"
+      When the property "cursorPosition" of "edit" is set to 5
+      And the user presses "<key>"
+      Then the property "text" of "edit" is "hello\n brave\nworld\nlast line here"
+      And the property "cursorPosition" of "edit" is 6
+      And the property "keys" of "root" is ""
+
+      Examples:
+        | platform | key          |
+        | Linux    | Shift+Return |
+        | Linux    | Shift+Enter  |
+        | Windows  | Shift+Return |
+        | Windows  | Shift+Enter  |
+        | macOS    | Return       |
+        | macOS    | Shift+Return |
+        | macOS    | Shift+Enter  |
+        | macOS    | Meta+Return  |
+        | macOS    | Meta+Enter   |
+
     Scenario: A new line is a step of its own to undo
       When the property "text" of "edit" is set to ""
       And the user types "abc"

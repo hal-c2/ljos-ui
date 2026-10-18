@@ -3,7 +3,8 @@
 //! (doc.qt.io/qt-6/qkeysequence.html#standard-shortcuts).
 //!
 //! The Linux column is what Qt 6.11 answers there; the Windows and Apple
-//! columns are the documentation's table.
+//! columns are the documentation's table, with what Qt is seen to do there
+//! besides.
 
 use std::cell::Cell;
 
@@ -213,11 +214,13 @@ const TABLE: &[Row] = &[
         "Enter|Return",
         "Enter|Return",
     ),
+    // Shift+Return breaks a line everywhere, though the documentation's
+    // Apple column names only its own sequences; they stay preferred.
     (
         "InsertLineSeparator",
         "Shift+Enter|Shift+Return",
         "Shift+Enter|Shift+Return",
-        "Meta+Enter|Meta+Return|Meta+O",
+        "Meta+Enter|Meta+Return|Meta+O|Shift+Enter|Shift+Return",
     ),
     ("SaveAs", "Ctrl+Shift+S", "Ctrl+Shift+S", "Ctrl+Shift+S"),
     ("Preferences", "", "", "Ctrl+,"),
@@ -225,7 +228,9 @@ const TABLE: &[Row] = &[
     ("FullScreen", "F11", "F11|Alt+Enter", "Ctrl+Meta+F"),
     ("Deselect", "Ctrl+Shift+A", "", ""),
     ("DeleteCompleteLine", "Ctrl+U", "", ""),
-    ("Backspace", "", "", "Meta+H"),
+    // The Apple column's "Delete" is the key labelled so there, which Qt
+    // calls Backspace; "Forward Delete" is Del.
+    ("Backspace", "", "", "Backspace|Meta+H"),
     ("Cancel", "Esc", "Esc", "Esc|Ctrl+."),
 ];
 
@@ -354,6 +359,8 @@ mod tests {
         assert_eq!(first("Preferences", Platform::MacOs), "Ctrl+,");
         assert_eq!(first("Preferences", Platform::Linux), "");
         assert_eq!(first("Cancel", Platform::Linux), "Esc");
+        assert_eq!(first("InsertLineSeparator", Platform::MacOs), "Meta+Enter");
+        assert_eq!(first("Backspace", Platform::MacOs), "Backspace");
         assert!(standard_key_sequences(999, Platform::Linux).is_empty());
         assert!(standard_key_sequences(-1, Platform::Linux).is_empty());
     }
@@ -388,6 +395,22 @@ mod tests {
             key::INSERT,
             Modifiers::CONTROL,
             copy,
+            Platform::MacOs
+        ));
+    }
+
+    #[test]
+    fn shift_return_breaks_a_line_on_every_platform() {
+        let line = standard_key("InsertLineSeparator").unwrap();
+        for p in [Platform::Linux, Platform::Windows, Platform::MacOs] {
+            for k in [key::RETURN, key::ENTER] {
+                assert!(matches_standard_key(k, Modifiers::SHIFT, line, p), "{p:?}");
+            }
+        }
+        assert!(matches_standard_key(
+            key::RETURN,
+            Modifiers::META,
+            line,
             Platform::MacOs
         ));
     }

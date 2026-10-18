@@ -13,8 +13,7 @@ Feature: KeyEvent
       """qml
       import QtQuick
       Item {
-        id: root
-        objectName: "root"
+        id: root; objectName: "root"
         focus: true
         property int key: 0
         property string text: "?"
@@ -22,6 +21,7 @@ Feature: KeyEvent
         property int modifiers: -1
         property int count: 0
         property bool copy: false
+        property string standard: "?"
         property int presses: 0
         property int repeats: 0
         property int releases: 0
@@ -29,8 +29,9 @@ Feature: KeyEvent
           key = event.key; text = event.text; modifiers = event.modifiers
           code = text.length ? text.charCodeAt(0) : -1
           count = event.count; copy = event.matches(StandardKey.Copy)
-          presses++
-          if (event.isAutoRepeat) repeats++
+          standard = [[StandardKey.Backspace, "Backspace"], [StandardKey.InsertParagraphSeparator, "InsertParagraphSeparator"],
+            [StandardKey.InsertLineSeparator, "InsertLineSeparator"]].filter(k => event.matches(k[0])).map(k => k[1]).join(" ")
+          presses++; if (event.isAutoRepeat) repeats++
         }
         Keys.onReleased: releases++
       }
@@ -148,6 +149,42 @@ Feature: KeyEvent
     Then the property "copy" of "root" is true
     When the user presses "C"
     Then the property "copy" of "root" is false
+
+  @qt-parity
+  Scenario Outline: <chord> is the standard keys "<keys>"
+    When the user presses "<chord>"
+    Then the property "standard" of "root" is "<keys>"
+
+    Examples:
+      | chord        | keys                     |
+      | Backspace    |                          |
+      | Return       | InsertParagraphSeparator |
+      | Enter        | InsertParagraphSeparator |
+      | Shift+Return | InsertLineSeparator      |
+      | Shift+Enter  | InsertLineSeparator      |
+
+  # Each platform's column of qkeysequence.html#standard-shortcuts, where
+  # Apple's "Delete" is the key Qt calls Backspace; Shift+Return and
+  # Shift+Enter break a line on macOS as well. The oracle runs on Linux.
+  @ljos-only
+  Scenario Outline: <chord> is the standard keys "<keys>" under <platform>'s key bindings
+    Given the application uses the key bindings of "<platform>"
+    When the user presses "<chord>"
+    Then the property "standard" of "root" is "<keys>"
+
+    Examples:
+      | platform | chord        | keys                     |
+      | Linux    | Backspace    |                          |
+      | Linux    | Shift+Return | InsertLineSeparator      |
+      | Windows  | Backspace    |                          |
+      | Windows  | Shift+Enter  | InsertLineSeparator      |
+      | macOS    | Backspace    | Backspace                |
+      | macOS    | Meta+H       | Backspace                |
+      | macOS    | Return       | InsertParagraphSeparator |
+      | macOS    | Shift+Return | InsertLineSeparator      |
+      | macOS    | Shift+Enter  | InsertLineSeparator      |
+      | macOS    | Meta+Return  | InsertLineSeparator      |
+      | macOS    | Meta+O       | InsertLineSeparator      |
 
   # The oracle's input platform does not mark repeated presses as repeats.
   @ljos-only
