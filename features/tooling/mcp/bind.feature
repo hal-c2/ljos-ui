@@ -9,7 +9,8 @@
 Feature: An agent that binds a property to an expression
   With `mutate` and `eval` together an agent can give a property a binding
   of its own: a JavaScript expression that names the object's properties
-  bare, as a binding written in the object names them, and that is worked
+  and the ids of its file bare, as a binding written in the object names
+  them, and that is worked
   out again whenever what it read changes, as `Qt.binding` is. Like a value,
   a binding can cover the one that was there and be taken back. The picture
   of the item says what the edit did as soon as the call is answered.
@@ -27,6 +28,7 @@ Feature: An agent that binds a property to an expression
         property string title: "first"
         property int twice: count * 2
         Rectangle { objectName: "swatch"; width: 40; height: 20; color: "#ff0000" }
+        Item { id: ruler; objectName: "ruler"; width: 7 }
         TextInput { objectName: "secret"; y: 40; width: 100; height: 20; echoMode: TextInput.Password }
       }
       """
@@ -42,6 +44,14 @@ Feature: An agent that binds a property to an expression
         """
       And the property "count" of "root" is set to 4
       Then the property "title" of "root" is "n=4"
+
+    Scenario: The expression names the ids of the file as a binding written there does
+      When the agent calls the tool "app_set_property" with:
+        """json
+        {"target": "#swatch", "property": "height", "binding": "ruler.width + 1"}
+        """
+      And the property "width" of "ruler" is set to 10
+      Then the property "height" of "swatch" is 11
 
     Scenario: The answer says what the binding gave and that it is one
       When the agent calls the tool "app_set_property" with:

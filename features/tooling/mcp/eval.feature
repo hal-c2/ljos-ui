@@ -53,6 +53,15 @@ Feature: An agent that may run script
         """
       Then the answer's "/value" is 206
 
+    # `top` is an anchor line of the item as well: the id comes first, as
+    # in a binding written there.
+    Scenario: The ids of the file are named as a binding names them
+      When the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#save", "source": "top.count + width"}
+        """
+      Then the answer's "/value" is 83
+
     Scenario: A reference names the object as a locator does
       When the agent calls the tool "app_eval" on the reference of the "button" named "Save" with:
         """json
@@ -166,6 +175,14 @@ Feature: An agent that may run script
       When the agent calls the tool "app_eval" with:
         """json
         {"target": "#root", "source": "mirror"}
+        """
+      Then the answer's "/value" is "<redacted>"
+      And the answer does not contain "hunter2"
+
+    Scenario: The text of a field that hides it is masked when it is named by its id
+      When the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#root", "source": "pw.text"}
         """
       Then the answer's "/value" is "<redacted>"
       And the answer does not contain "hunter2"

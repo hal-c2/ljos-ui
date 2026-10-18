@@ -1472,6 +1472,8 @@ impl Engine {
         self.install_list_globals(js)?;
         // The `URL` and `URLSearchParams` globals: see url_global.rs.
         crate::url_global::install(js)?;
+        // What a devtools script names besides its object: see devtools.rs.
+        self.install_devtools_globals(js)?;
         // The enums by name first: a key the older tables also have is
         // written again with the same number.
         let keys: Vec<String> = crate::qt_enums::QT_ENUMS

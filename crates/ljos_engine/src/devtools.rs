@@ -5,22 +5,26 @@
 //! Both are for tools that sit outside the application. Nothing here is
 //! used by the application itself.
 
+use std::rc::Rc;
 use std::time::Duration;
 
-use ljos_js::{JsRef, JsValue, Slice, rquickjs};
+use ljos_js::{HostFn, JsRef, JsValue, Slice, rquickjs};
 use ljos_reactive::OverrideId;
 
 use crate::engine::{Engine, OverrideContent};
 use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
 use crate::introspect::BindingTier;
-use crate::js::obj_to_u64;
+use crate::js::{JsState, obj_to_u64, u64_to_obj};
 use crate::types::TypeTag;
 use crate::value::Value;
 
 /// The script a devtools evaluation runs inside. It is sloppy-mode code on
 /// purpose: `with (this)` lets the source name the properties of the object
 /// it runs in (`width`, `text`) as a binding written in that object would.
+/// The scopes around it give the names its file sees as such a binding
+/// does: the ids before the object's properties, the context's other
+/// names after them.
 ///
 /// The result is written as JSON by this script rather than by the caller,
 /// so that the size of what crosses into Rust is bounded here, before it is
@@ -70,7 +74,10 @@ const RUNNER: &str = r#"(function (self, src, depthMax, itemsMax, charsMax, node
   }
   var result;
   try {
-    result = (function () { with (self || {}) { return eval(src); } }).call(self);
+    result = (function () {
+      with (self ? __ljos_scopeOf(self, false) : {}) with (self || {})
+        with (self ? __ljos_scopeOf(self, true) : {}) { return eval(src); }
+    }).call(self);
   } catch (e) {
     var msg = (e && e.message !== undefined) ? String(e.message) : String(e);
     return JSON.stringify({ error: msg, name: (e && e.name) ? String(e.name) : 'Error' });
@@ -80,17 +87,30 @@ const RUNNER: &str = r#"(function (self, src, depthMax, itemsMax, charsMax, node
 })"#;
 
 /// Makes the function of a binding an agent writes: `this` is the object,
-/// and `with` names its properties bare, as in a binding written in it.
+/// and `with` names the ids of its file, its properties and then the
+/// context's other names bare, in that order, as in a binding written in it.
 /// The newline lets the expression end in a `//` comment. What does not
 /// compile comes back as the text of the error, not thrown, so that it is
 /// told to the agent and not logged as the application's.
 const MAKER: &str = r#"(function (src) {
   try {
-    return (0, eval)('(function () { with (this) { return (' + src + '\n); } })');
+    return (0, eval)('(function () { with (__ljos_scopeOf(this, false)) with (this) with (__ljos_scopeOf(this, true)) { return (' + src + '\n); } })');
   } catch (e) {
     return String((e && e.name) || 'Error') + ': ' + String(e && e.message);
   }
 })"#;
+
+/// The names an object's file sees besides its own properties, for `with`:
+/// its ids alone, or every name, found from the object's context outwards.
+/// A name the script declares is never asked, as `with` asks only for what
+/// is not found closer in.
+const SCOPE_OF: &str = r#"globalThis.__ljos_scopeOf = (self, ids) => new Proxy({}, {
+  has: (_, k) => typeof k === 'string' && __ljos_name(self, k, ids) !== null,
+  get: (_, k) => {
+    const r = typeof k === 'string' ? __ljos_name(self, k, ids) : null;
+    return r === null ? undefined : r[0];
+  },
+});"#;
 
 /// The most a devtools script may be allowed to take.
 pub const MAX_EVAL_TIME: Duration = Duration::from_secs(10);
@@ -128,6 +148,39 @@ pub struct BindingGraph {
 }
 
 impl Engine {
+    /// What devtools scripts use to name what a binding written in an
+    /// object names: `__ljos_name(object, name, ids)` is `[value]` when the
+    /// object's context finds it (an id only, with `ids`), else `null`.
+    pub(crate) fn install_devtools_globals(&self, js: &JsState) -> Result<(), EngineError> {
+        let err = |e: ljos_js::JsFault| EngineError::Js(e.to_string());
+        let w = Rc::downgrade(&self.inner);
+        let name: HostFn = Rc::new(move |_scope, args| {
+            let (Some(inner), [JsValue::Object(o), JsValue::String(name), ids, ..]) =
+                (w.upgrade(), args)
+            else {
+                return Ok(JsValue::Null);
+            };
+            let engine = Engine::from_inner(inner);
+            let Some(ctx) = engine.context_of(u64_to_obj(*o)) else {
+                return Ok(JsValue::Null);
+            };
+            // Tracked: a binding that names a property of a context object
+            // follows it, as one written in the file does.
+            let found = match ids {
+                JsValue::Bool(true) => engine.resolve_id(ctx, name).map(Value::Object),
+                _ => engine.context_name(ctx, name),
+            };
+            Ok(found.map_or(JsValue::Null, |v| JsValue::Array(vec![engine.to_js(&v)])))
+        });
+        js.host
+            .set_global_function("__ljos_name", name)
+            .map_err(err)?;
+        js.host
+            .eval_script("devtools-scope", SCOPE_OF)
+            .map_err(err)?;
+        Ok(())
+    }
+
     /// Runs `source` as a script. With `this` it runs in that object: `this`
     /// is the object and its properties can be named bare. The script is
     /// interrupted after `limit`, which is never more than
