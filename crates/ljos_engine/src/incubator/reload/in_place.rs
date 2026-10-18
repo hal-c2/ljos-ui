@@ -1173,6 +1173,16 @@ impl Engine {
         }) {
             return Err("a renamed property is given where the object is made");
         }
+        // A user that declares members on the object gave it a type of
+        // its own, built on the old one; only a full load rebuilds it.
+        if !t.renamed.is_empty()
+            && !self.meta_of(id).is_some_and(|live| {
+                self.object_meta(&t.inst.file, t.inst.comp, t.was)
+                    .is_ok_and(|own| MetaRef::ptr_eq(&live, &own))
+            })
+        {
+            return Err("a renamed property's object has members its user declares");
+        }
         for name in &t.names {
             if !gives(t.def, name) {
                 self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;

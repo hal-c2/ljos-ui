@@ -2984,3 +2984,42 @@ Feature: What a reload changes
       Then the property "tint" of "root" is 1
       And the property "seen" of "pill" is 0
       And the property "x" of "box" is at most 20
+
+    Scenario: A property of a component file renamed goes in place for its users
+      When the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; property real looked: parent ? parent.shade : 0 }
+        """
+      And a reload happens
+      Then the property "looked" of "pill" is 1
+      And the property "x" of "box" is at least 40
+
+    Scenario: A property renamed under members a user declares makes the roots again
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int count: 3
+          property real shade: 1
+          property string shown: "n" + count
+          property int heard: 0
+          onCountChanged: heard++
+          Pill { objectName: "pill"; property int mine: 2 }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function bump() { count++ }
+        }
+        """
+      And a reload happens
+      And the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; property real looked: parent ? parent.shade : 0 }
+        """
+      And a reload happens
+      Then the property "looked" of "pill" is 1
+      And the property "mine" of "pill" is 2
