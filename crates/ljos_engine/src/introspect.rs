@@ -188,10 +188,9 @@ impl Engine {
     /// handler calls this to learn where a `console.log` was written.
     pub fn js_origin(&self) -> Option<SourcePlace> {
         let js = self.inner.js.borrow().clone()?;
-        // The host gives no usage inside a run and only there: entering it
-        // from outside one would start a run of its own, with the pending
-        // jobs that brings.
-        if js.host.memory_stats().is_some() {
+        // Only inside a run: entering the host from outside one would start
+        // a run of its own, with the pending jobs that brings.
+        if !js.host.in_run() {
             return None;
         }
         let slice = js.host.config().slice;

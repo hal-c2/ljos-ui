@@ -1589,6 +1589,12 @@ impl JsHost {
         true
     }
 
+    /// Whether JS is running: a native function called from a script, or
+    /// what that calls.
+    pub fn in_run(&self) -> bool {
+        self.state.entered.get()
+    }
+
     /// `None` inside a run: rquickjs panics if asked for usage while its lock
     /// is held (03 section 2.2).
     pub fn memory_stats(&self) -> Option<MemoryStats> {
