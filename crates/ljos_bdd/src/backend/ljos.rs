@@ -1747,8 +1747,10 @@ impl Backend for LjosBackend {
 
     fn first_frame(&mut self) -> Result<()> {
         let live = self.live()?;
+        // That the frame waits is the behaviour; how long a desktop host
+        // lets it is a budget a debug build on a busy runner can miss.
         ljos_quick::ImageStore::of(&live.engine)
-            .wait_for_frame(&live.engine, ljos_quick::ImageStore::FIRST_FRAME_WAIT);
+            .wait_for_frame(&live.engine, Duration::from_secs(30));
         live.settle()
     }
 
