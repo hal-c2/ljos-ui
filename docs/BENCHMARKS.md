@@ -869,10 +869,11 @@ As before, PSS and peak follow the page cache.
   of several MiB each, kept at 896 px (2 MiB). They stay as pixels: keeping the bytes instead
   would cost more, and dropping them would cost a fetch. Three of the pictures for rows gone are
   such pictures, about 6 MiB.
+  Since then, such a picture that comes for rows gone is no longer kept ("Rows let go, …" below).
 - **On llvmpipe a texture is in the process's own memory.** There, letting pixels go after upload
   frees one of two copies; on a GPU it frees the only copy in system memory.
 - **Why rssnews lets rows go before their pictures come** was not looked into. Qt asks for 7
-  pictures where Ljós asks for 9.
+  pictures where Ljós asks for 9. Since then, it was looked into and the extra rows are fixed ("Rows let go, …" below).
 - **Memory outside Rust** (llvmpipe, Mesa) and **the binary's resident text** are as above.
 
 ### photosurface on a folder of 472 large pictures (2026-10-18)
@@ -940,3 +941,56 @@ for 5 s, while the pool threads decoded at 5–9 cores; RSS peaked at 404 MB.
   threads at once and keeps drawing frames. Qt blocks instead.
 - **CPU to first frame** is unchanged by this work; it is the compile from source, as in the
   sections above.
+
+### Rows let go, pictures for rows gone, and shared type tables (2026-10-18)
+
+The same apps, profile and options as "Pictures kept at the size they are drawn" above, Ljós only. Qt is the same 2026-10-17 run. Before
+(8d9db17) and after (c6a8508) were run back to back under a load of 10–44 and 15–83.
+
+| App | Peak, before → after (Qt) | Settled | Anon PSS | PSS |
+|---|---:|---:|---:|---:|
+| animations | 73.3 → 72.5 (103) | 69.2 → 65.0 (106) | 58.0 → 53.7 (92.7) | 116 → 145 (144) |
+| listview | 64.7 → 59.8 (110) | 67.5 → 63.6 (106) | 58.4 → 53.9 (87.3) | 116 → 141 (142) |
+| calqlatr | 70.1 → 65.1 (112) | 69.3 → 63.9 (113) | 61.2 → 56.7 (90.9) | 121 → 144 (159) |
+| clocks | 86.8 → 72.3 (107) | 75.2 → 66.0 (110) | 58.5 → 54.4 (98.2) | 118 → 142 (151) |
+| maroon | 75.8 → 70.0 (115) | 75.2 → 71.7 (120) | 66.5 → 62.0 (108) | 121 → 147 (157) |
+| rssnews | 79.1 → 73.4 (116) | 91.6 → 75.4 (261) | 80.7 → 67.3 (245) | 137 → 157 (307) |
+| samegame | 78.2 → 76.3 (111) | 71.8 → 68.8 (116) | 61.4 → 56.9 (104) | 117 → 146 (166) |
+
+Anon PSS went down by 4.1–4.5 MiB in every app, and by 13.4 MiB in rssnews. PSS went up by 20–29 MiB,
+and all of that is file pages. The after run's file PSS was 83–88 MiB against 52–58 MiB before,
+because its binary had just been built while the load was higher. Anon PSS and the cgroup's
+settled memory both went down. Time to first frame moved within the noise of these loads.
+
+- **Rows a new list lets go.** A row was measured after one polish since it was made. When the row
+  is a text over a block whose height follows the text, that is before the text has been shaped.
+  The list then made rows for a size that was too small and let them go a polish later. The row
+  the list waits for is now measured after two polishes, as Qt measures a row before it makes the
+  next. At 800 × 600, rssnews makes rows 0–10 where Qt makes 0–8. It keeps rows 0–4, as Qt does,
+  and asks for the same 8 pictures as Qt, none of them twice. The 9 and 7 noted above were counted
+  at another window height. `features/views/list-rows-let-go.feature`; on Qt and on Ljós.
+- **A picture kept in shape** (`PreserveAspectFit`) with only a width given is now as tall as it is
+  drawn, not as tall as the picture, as on Qt (`features/items/image-fill-mode.feature`). A row
+  whose height follows its picture is then measured right the first time.
+- **Pictures for rows gone whose bytes outweigh their pixels** are no longer kept. Qt fetches such
+  a picture again, and so does Ljós now. A smaller one is still kept as its bytes.
+  `features/items/image-network.feature`; on Qt and on Ljós. The large JPEGs were already decoded
+  straight to the kept size (a scaled IDCT, 1/2 to 1/8), so neither the full pixels nor the bytes
+  of a picture on screen were kept. What was left was these pictures for rows gone.
+- **Type tables.** Each type's property and signal tables began as a full copy of its base's, so
+  every description was held once per type that inherits it. A dhat profile of clocks had 6.4 of its
+  13.7 MiB of Rust heap there. Property and signal entries are now behind an `Arc` shared down the
+  hierarchy, and a built table keeps no room to grow. Rust heap in clocks went from 13.7 to 8.3 MiB.
+  `a_derived_type_shares_what_it_inherits_and_copies_what_it_changes` (ljos_engine).
+
+**What is left.**
+
+- **llvmpipe.** massif puts 34 MB of clocks's heap in libgallium. Its call stacks have no symbols. By
+  their sizes, they are mostly the rasteriser's scene bins and textures. The textures are the window's buffers and Ljós's glyph atlas, its
+  pictures and its shapes. egui's atlas was cut in the run before. What is left there is set by
+  the window size and the driver, not by Ljós's choices.
+- **The NVIDIA user-space libraries** hold about 4.4 MiB anon in each app on this machine, which
+  has no NVIDIA GPU. glvnd loads them. This is the machine, not Ljós: Qt's GL goes through glvnd
+  too (not measured here).
+- **The reactive graph** (1.2 MiB, sized at start) and **the type oracle read for `--example`**
+  (0.9 MiB) are now the largest Rust items. A shipped application never reads the oracle.
