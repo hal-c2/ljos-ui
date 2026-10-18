@@ -384,6 +384,8 @@ pub struct QuickScene {
     by_node: SecondaryMap<NodeId, ObjectId>,
     /// `Shared::placed` of the last frame, kept for its capacity.
     placed: FxHashSet<ObjectId>,
+    /// The items whose place was read this frame, kept for its capacity.
+    told_moved: Vec<ObjectId>,
     paint: FxHashMap<ObjectId, Paint>,
     /// Each `MultiEffect` as read, before it is given the picture of a
     /// source with children, and a fingerprint of the picture it was given
@@ -488,6 +490,7 @@ impl QuickScene {
             entries: FxHashMap::default(),
             by_node: SecondaryMap::new(),
             placed: FxHashSet::default(),
+            told_moved: Vec::new(),
             paint: FxHashMap::default(),
             effect_base: HashMap::new(),
             source_base: HashMap::new(),
@@ -1341,13 +1344,26 @@ impl QuickScene {
             return;
         }
         let shown = crate::animation::shown::shown(engine);
+        // Set on the entry as it is read: by way of `Shared::place` each
+        // moved item cost an insert, a drain and a look more, every frame.
         for obj in self.placed.drain() {
-            if self.entries.contains_key(&obj) && engine.is_alive(obj) {
-                let place = (
+            let Some(e) = self.entries.get_mut(&obj) else {
+                continue;
+            };
+            if engine.is_alive(obj) {
+                e.place = (
                     shown_num(engine, &shown, obj, Item::X.index),
                     shown_num(engine, &shown, obj, Item::Y.index),
                 );
-                self.shared.borrow_mut().place.insert(obj, place);
+                self.told_moved.push(obj);
+            }
+        }
+        // A place the effect's first run gave this frame is older than
+        // the one just read.
+        let mut s = self.shared.borrow_mut();
+        if !s.place.is_empty() {
+            for obj in &self.told_moved {
+                s.place.remove(obj);
             }
         }
     }
@@ -1359,7 +1375,7 @@ impl QuickScene {
         let (geoms, moved) = {
             let mut s = self.shared.borrow_mut();
             let s = &mut *s;
-            let mut moved = Vec::new();
+            let mut moved = Vec::with_capacity(self.told_moved.len());
             // Before the places, so an item that also moved is told once.
             for (obj, list) in s.list.drain() {
                 if let Some(e) = self.entries.get_mut(&obj) {
@@ -1375,6 +1391,11 @@ impl QuickScene {
                     if !s.geom.contains_key(&obj) {
                         moved.push(obj);
                     }
+                }
+            }
+            for obj in self.told_moved.drain(..) {
+                if !s.geom.contains_key(&obj) {
+                    moved.push(obj);
                 }
             }
             let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
