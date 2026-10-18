@@ -16,9 +16,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use egui::epaint::{
-    ClippedShape, CornerRadius, PaintCallback, PaintCallbackInfo, RectShape, Shape,
-};
+use egui::epaint::{ClippedShape, CornerRadius, PaintCallback, RectShape, Shape};
 use egui_winit::winit::event_loop::OwnedDisplayHandle;
 use egui_winit::winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use egui_winit::winit::window::Window;
@@ -69,6 +67,16 @@ const CLEARED: u32 = 64 * 64;
 /// How many frames drawn without a scroll the pixels of the clip last
 /// scrolled are kept for.
 const KEPT_FOR: u32 = 30;
+
+/// How many shapes back a clear is moved past at most (see
+/// [`fill_rects`]): a list's rows lie within a screen of each other, and
+/// a frame of ten thousand shapes does not compare each with the rest.
+const HOISTED: usize = 256;
+
+/// What a [`fill_rects`] clear is, as the callback the meshes draw it
+/// from: the colour, in gamma, that the shape's rectangle (in its clip)
+/// is cleared to.
+pub(crate) struct Clear(pub(crate) [f32; 4]);
 
 /// The display, the context and GL's functions all windows share.
 pub(crate) struct Gl {
@@ -1057,9 +1065,14 @@ fn count_compared() {
 /// of them. A smaller one costs little either way, but a clear is a draw
 /// of its own and ends the mesh around it (two hundred small bars were two
 /// hundred draws), so it becomes a quad on the pixels' edges, drawn with
-/// the shapes next to it, and quads one after another are one mesh. Done to the shapes about to be drawn, after they
-/// were compared with the last picture (a callback is never the same as
-/// another).
+/// the shapes next to it, and quads one after another are one mesh.
+///
+/// A clear is then drawn before the shapes ahead of it that it does not
+/// touch, which leaves the same pixels: a list's rows, each a clear and a
+/// text, were a draw a row, and llvmpipe spends about 60 000 instructions
+/// on the drawing thread for each; their texts are now one draw. Done to
+/// the shapes about to be drawn, after they were compared with the last
+/// picture (a callback is never the same as another).
 pub(crate) fn fill_rects(all: &[ClippedShape], pixels_per_point: f32) -> Vec<ClippedShape> {
     // Made anew from what the window keeps (`LastPicture::keep`) rather
     // than from a copy of it: a rectangle that becomes a quad or a clear
@@ -1093,20 +1106,59 @@ pub(crate) fn fill_rects(all: &[ClippedShape], pixels_per_point: f32) -> Vec<Cli
             continue;
         }
         quads_into_mesh(&mut shapes, &mut run, run_clip);
-        let color = color.to_normalized_gamma_f32();
-        let clear = egui_glow::CallbackFn::new(move |info, painter| {
-            clear_in(&info, painter.gl(), color);
-        });
         shapes.push(ClippedShape {
             clip_rect: cs.clip_rect,
             shape: Shape::Callback(PaintCallback {
                 rect: r,
-                callback: Arc::new(clear),
+                callback: Arc::new(Clear(color.to_normalized_gamma_f32())),
             }),
         });
     }
     quads_into_mesh(&mut shapes, &mut run, run_clip);
+    hoist_clears(&mut shapes, pixels_per_point);
     shapes
+}
+
+/// Moves each clear back past the shapes before it that draw none of its
+/// pixels, so that what lay between clears is drawn together. Another
+/// callback draws what only it knows, so a clear stays after it.
+fn hoist_clears(shapes: &mut [ClippedShape], pixels_per_point: f32) {
+    // Where each shape may draw, in points: feathered edges reach half a
+    // pixel out, and a pixel is kept for rounding.
+    let margin = 1.0 / pixels_per_point;
+    let reach = |s: &ClippedShape| -> Option<egui::Rect> {
+        let r = match &s.shape {
+            Shape::Noop => return Some(egui::Rect::NOTHING),
+            Shape::Callback(cb) if cb.callback.is::<Clear>() => cb.rect,
+            Shape::Callback(_) => return None,
+            other => other.visual_bounding_rect().expand(margin),
+        };
+        Some(r.intersect(s.clip_rect))
+    };
+    let mut reaches: Vec<Option<egui::Rect>> = Vec::new();
+    for i in 0..shapes.len() {
+        let Shape::Callback(cb) = &shapes[i].shape else {
+            continue;
+        };
+        if !cb.callback.is::<Clear>() {
+            continue;
+        }
+        if reaches.is_empty() {
+            reaches = shapes.iter().map(reach).collect();
+        }
+        let Some(mine) = reaches[i] else { continue };
+        let mut to = i;
+        while to > 0 && i - to < HOISTED {
+            match reaches[to - 1] {
+                Some(r) if !r.intersects(mine) => to -= 1,
+                _ => break,
+            }
+        }
+        if to < i {
+            shapes[to..=i].rotate_right(1);
+            reaches[to..=i].rotate_right(1);
+        }
+    }
 }
 
 /// Adds the quads of `run`, all in `clip_rect`, to `shapes` as one mesh,
@@ -1145,25 +1197,6 @@ fn clearable(rect: &RectShape, pixels_per_point: f32) -> Option<egui::Color32> {
             [r.min.x, r.min.y, r.max.x, r.max.y].map(|v| v * pixels_per_point),
         );
     (plain && on_pixels).then_some(rect.fill)
-}
-
-fn clear_in(info: &PaintCallbackInfo, gl: &glow::Context, color: [f32; 4]) {
-    let (v, c) = (info.viewport_in_pixels(), info.clip_rect_in_pixels());
-    let left = v.left_px.max(c.left_px);
-    let right = (v.left_px + v.width_px).min(c.left_px + c.width_px);
-    let bottom = v.from_bottom_px.max(c.from_bottom_px);
-    let top = (v.from_bottom_px + v.height_px).min(c.from_bottom_px + c.height_px);
-    if right <= left || top <= bottom {
-        return;
-    }
-    // SAFETY: called by the painter while its context is current; it
-    // sets the scissor again for the shapes after.
-    unsafe {
-        gl.enable(glow::SCISSOR_TEST);
-        gl.scissor(left, bottom, right - left, top - bottom);
-        gl.clear_color(color[0], color[1], color[2], color[3]);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-    }
 }
 
 #[cfg(test)]
@@ -1341,6 +1374,95 @@ mod tests {
         ];
         let shapes = fill_rects(&shapes, 1.0);
         assert_eq!(cleared(&shapes), [true, true]);
+    }
+
+    /// A rectangle that is not cleared: a row's text, as far as order goes.
+    fn label(min: [f32; 2], max: [f32; 2]) -> ClippedShape {
+        let mut s = rect(min, max, Color32::BLACK);
+        if let Shape::Rect(r) = &mut s.shape {
+            r.corner_radius = CornerRadius::same(2);
+        }
+        s
+    }
+
+    /// Each shape as `c` (a clear), `l` (anything else) or `x` (another
+    /// callback), in the order they are drawn, with where each started.
+    fn order(shapes: &[ClippedShape], before: &[ClippedShape]) -> Vec<(char, usize)> {
+        shapes
+            .iter()
+            .map(|s| {
+                let kind = match &s.shape {
+                    Shape::Callback(cb) if cb.callback.is::<Clear>() => 'c',
+                    Shape::Callback(_) => 'x',
+                    _ => 'l',
+                };
+                let from = before
+                    .iter()
+                    .position(|b| b.shape.visual_bounding_rect() == s.shape.visual_bounding_rect())
+                    .unwrap_or(usize::MAX);
+                (kind, from)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rows_are_cleared_first_and_their_texts_drawn_together() {
+        let mut before = Vec::new();
+        for row in 0..4 {
+            let y = row as f32 * 40.0;
+            before.push(rect([0.0, y], [400.0, y + 40.0], Color32::WHITE));
+            before.push(label([12.0, y + 10.0], [80.0, y + 30.0]));
+        }
+        let shapes = fill_rects(&before, 1.0);
+        assert_eq!(
+            order(&shapes, &before),
+            [
+                ('c', 0),
+                ('c', 2),
+                ('c', 4),
+                ('c', 6),
+                ('l', 1),
+                ('l', 3),
+                ('l', 5),
+                ('l', 7)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_clear_stays_after_what_it_covers_and_after_other_callbacks() {
+        let other = ClippedShape {
+            clip_rect: Rect::EVERYTHING,
+            shape: Shape::Callback(PaintCallback {
+                rect: Rect::from_min_max(pos2(0.0, 500.0), pos2(10.0, 510.0)),
+                callback: Arc::new(egui_glow::CallbackFn::new(|_, _| {})),
+            }),
+        };
+        let before = vec![
+            label([0.0, 0.0], [50.0, 50.0]),
+            // Covers the first label: drawn after it.
+            rect([0.0, 0.0], [400.0, 80.0], Color32::WHITE),
+            label([0.0, 100.0], [50.0, 150.0]),
+            other,
+            // Drawn after the callback, though it lies apart from it.
+            rect([0.0, 200.0], [400.0, 280.0], Color32::WHITE),
+            // Half a pixel from the clear below: a smoothed edge reaches it.
+            label([0.0, 300.0], [50.0, 399.5]),
+            rect([0.0, 400.0], [400.0, 480.0], Color32::WHITE),
+        ];
+        let shapes = fill_rects(&before, 1.0);
+        assert_eq!(
+            order(&shapes, &before),
+            [
+                ('l', 0),
+                ('c', 1),
+                ('l', 2),
+                ('x', 3),
+                ('c', 4),
+                ('l', 5),
+                ('c', 6)
+            ]
+        );
     }
 
     #[test]

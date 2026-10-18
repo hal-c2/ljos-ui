@@ -8,7 +8,9 @@
 //! mesh is a draw of its range; consecutive meshes with one picture and one
 //! clip are one draw. The shader is egui's: the same colours, in gamma,
 //! with the same dithering. Textures stay egui_glow's, and so do paint
-//! callbacks, which it draws between.
+//! callbacks, which it draws between, but for the clears of
+//! [`crate::gl::fill_rects`]: egui_glow sets its whole state up before and
+//! after each callback, which cost a list as much as a draw a row.
 
 use egui::epaint::{Primitive, Vertex};
 use egui::{ClippedPrimitive, Rect};
@@ -99,6 +101,10 @@ enum Draw {
         /// Into the frame's indices.
         start: usize,
         count: usize,
+    },
+    Clear {
+        scissor: [i32; 4],
+        color: [f32; 4],
     },
     Callback(ClippedPrimitive),
 }
@@ -217,6 +223,14 @@ impl Meshes {
                             (*start * size_of::<u32>()) as i32,
                         );
                     }
+                    Draw::Clear { scissor: s, color } => {
+                        if scissor != Some(*s) {
+                            gl.scissor(s[0], s[1], s[2], s[3]);
+                            scissor = Some(*s);
+                        }
+                        gl.clear_color(color[0], color[1], color[2], color[3]);
+                        gl.clear(glow::COLOR_BUFFER_BIT);
+                    }
                     Draw::Callback(p) => {
                         painter.paint_primitives(px, pixels_per_point, std::slice::from_ref(p));
                         self.prepare(&gl, px, pixels_per_point);
@@ -255,7 +269,17 @@ impl Meshes {
         for p in primitives {
             let mesh = match &p.primitive {
                 Primitive::Mesh(m) => m,
-                Primitive::Callback(_) => {
+                Primitive::Callback(cb) => {
+                    if let Some(crate::gl::Clear(color)) = cb.callback.downcast_ref() {
+                        let scissor = scissor(px, pixels_per_point, p.clip_rect.intersect(cb.rect));
+                        if scissor[2] > 0 && scissor[3] > 0 {
+                            self.draws.push(Draw::Clear {
+                                scissor,
+                                color: *color,
+                            });
+                        }
+                        continue;
+                    }
                     self.draws.push(Draw::Callback(p.clone()));
                     continue;
                 }
