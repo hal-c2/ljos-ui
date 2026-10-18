@@ -4124,9 +4124,9 @@ module QtQuick.Controls.Fusion
 	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Fusion/TextField.qml
-	ToolBar QtQuick/Controls/Basic/ToolBar.qml
-	ToolButton QtQuick/Controls/Basic/ToolButton.qml
-	ToolSeparator QtQuick/Controls/Basic/ToolSeparator.qml
+	ToolBar QtQuick/Controls/Fusion/ToolBar.qml
+	ToolButton QtQuick/Controls/Fusion/ToolButton.qml
+	ToolSeparator QtQuick/Controls/Fusion/ToolSeparator.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
@@ -4165,6 +4165,12 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.Switch named
 	type QtQuick/Controls/Fusion/TextField.qml TextField
 		prototype QtQuick.Templates.TextField named
+	type QtQuick/Controls/Fusion/ToolBar.qml ToolBar
+		prototype QtQuick.Templates.ToolBar named
+	type QtQuick/Controls/Fusion/ToolButton.qml ToolButton
+		prototype QtQuick.Templates.ToolButton named
+	type QtQuick/Controls/Fusion/ToolSeparator.qml ToolSeparator
+		prototype QtQuick.Templates.ToolSeparator named
 
 module QtQuick.Controls.Material
 	AbstractButton QtQuick.Templates.AbstractButton
