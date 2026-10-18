@@ -10,7 +10,7 @@ use std::rc::Rc;
 use common::*;
 use ljos_engine::{Atom, Engine, ModelSignals, ObjectId, QmlListModel, QtObject, Value};
 use ljos_quick::{QuickScene, child_items, update_system_prefs, view_layout_passes};
-use ljos_runtime::Time;
+use ljos_runtime::{Time, VirtualClock};
 
 /// A scene on `root` whose delegates are all made: frames until nothing
 /// is left in the incubator.
@@ -142,11 +142,17 @@ fn the_rows_outside_what_is_shown_are_made_over_later_frames() {
 #[test]
 fn the_rows_made_in_one_frame_are_laid_out_together() {
     let e = engine();
+    // The incubator's budget is read on the engine's clock. On the wall
+    // clock a loaded machine makes fewer rows in a frame and leaves the
+    // rest to the next; this one moves only between frames.
+    let clock = VirtualClock::new();
+    e.set_clock(Rc::new(clock.clone()));
     let root = load(&e, HUNDRED_THOUSAND);
     let mut s = scene(&e, root, 400.0, 400.0);
     let mut t = 0;
     let mut frame = |s: &mut QuickScene| {
         let before = view_layout_passes(&e, root);
+        clock.set(Time::from_millis(t));
         s.frame(&e, Time::from_millis(t));
         t += 16;
         view_layout_passes(&e, root) - before
