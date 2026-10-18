@@ -26,8 +26,10 @@ while IFS=$'\t' read -r id dir entry width height settle _; do
   # Examples built with CMake name their modules there; a qmldir per module
   # lets plain qml6 find them without building anything.
   "$root/corpus/harness/overlay.sh" "$dir" "$overlay"
+  # harness/stubs stands in for an example's own C++ module (after the
+  # overlay, so it comes first).
   # `timeout` also ends the process group's child when it hangs; -k makes sure.
-  if timeout -k 5 60 qml6 -I "$dir" -I "$overlay" "$root/corpus/harness/reference.qml" \
+  if timeout -k 5 60 qml6 -I "$dir" -I "$overlay" -I "$root/corpus/harness/stubs" "$root/corpus/harness/reference.qml" \
       -- "file://$dir/$entry" "$width" "$height" "$settle" "$png" >"$log" 2>&1 && [ -s "$png" ]; then
     made=$((made + 1))
   else

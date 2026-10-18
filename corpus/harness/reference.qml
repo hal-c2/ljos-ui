@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Window
+import "initial.js" as Initial
 
 // Takes one picture of one example, for the gallery (mise run gallery:reference).
 // It is arranged by command line arguments after the file name:
@@ -43,7 +44,7 @@ Window {
             fail(component.errorString())
             return
         }
-        var made = component.createObject(null)
+        var made = component.createObject(null, Initial.of(entry))
         if (!made) {
             fail("cannot create " + entry + ": " + component.errorString())
             return

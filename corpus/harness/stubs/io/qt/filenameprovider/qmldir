@@ -1,0 +1,2 @@
+module io.qt.filenameprovider
+singleton FileNameProvider 1.0 FileNameProvider.qml
