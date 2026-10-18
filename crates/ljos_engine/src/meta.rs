@@ -809,15 +809,22 @@ impl<T> ImplFallback for &Probe<T> {}
 /// compiler and runtime use it for types declared in QML.
 ///
 /// Call order: `native`/`base` first, then members.
+///
+/// Every native type's description is built by a chain of these calls,
+/// once, the first time the type is used. The description is boxed and
+/// the calls are kept out of line so that each of the hundreds of chains
+/// is a list of calls passing one pointer, not a copy of every method's
+/// body and a move of the whole description per call.
 #[derive(Debug)]
 pub struct MetaBuilder {
-    meta: MetaObject,
+    meta: Box<MetaObject>,
 }
 
 impl MetaBuilder {
+    #[inline(never)]
     pub fn new(name: &str) -> Self {
         MetaBuilder {
-            meta: MetaObject {
+            meta: Box::new(MetaObject {
                 name: Atom::intern(name),
                 module: None,
                 base: None,
@@ -838,7 +845,7 @@ impl MetaBuilder {
                 required_at: Vec::new(),
                 plain_object: false,
                 lookup: OnceLock::new(),
-            },
+            }),
         }
     }
 
@@ -849,11 +856,13 @@ impl MetaBuilder {
     }
 
     /// What in QML declares the type.
+    #[inline(never)]
     pub fn declared(mut self, by: Declared) -> Self {
         self.meta.declared = Some(by);
         self
     }
 
+    #[inline(never)]
     pub fn module(mut self, uri: &str) -> Self {
         self.meta.module = Some(Atom::intern(uri));
         self
@@ -861,8 +870,12 @@ impl MetaBuilder {
 
     /// Inherits `base`'s members, which come first in every table, and its
     /// constructor.
-    pub fn base(mut self, base: impl Into<MetaRef>) -> Self {
-        let base = base.into();
+    pub fn base(self, base: impl Into<MetaRef>) -> Self {
+        self.base_ref(base.into())
+    }
+
+    #[inline(never)]
+    fn base_ref(mut self, base: MetaRef) -> Self {
         let m = &mut self.meta;
         m.properties = base.properties.clone();
         m.signals = base.signals.clone();
@@ -926,6 +939,7 @@ impl MetaBuilder {
 
     /// A property stored in a field of the native struct set by
     /// [`MetaBuilder::native`]. `notify` adds a `nameChanged` signal.
+    #[inline(never)]
     pub fn field(
         mut self,
         name: &str,
@@ -956,6 +970,7 @@ impl MetaBuilder {
 
     /// A grouped property: `name` itself plus `name.leaf` for every
     /// property of `group`.
+    #[inline(never)]
     pub fn group(
         mut self,
         name: &str,
@@ -999,6 +1014,7 @@ impl MetaBuilder {
     }
 
     /// A property declared in QML, stored in a dynamic slot.
+    #[inline(never)]
     pub fn property(mut self, name: &str, ty: TypeTag, flags: PropertyFlags, notify: bool) -> Self {
         let slot = self.meta.dynamic_slots;
         self.meta.dynamic_slots += 1;
@@ -1012,6 +1028,7 @@ impl MetaBuilder {
         self
     }
 
+    #[inline(never)]
     pub fn signal(mut self, name: &str, params: Vec<(Atom, TypeTag)>) -> Self {
         self.meta.signals.push(Arc::new(SignalInfo {
             name: Atom::intern(name),
@@ -1021,6 +1038,7 @@ impl MetaBuilder {
         self
     }
 
+    #[inline(never)]
     pub fn method(
         mut self,
         name: &str,
@@ -1038,6 +1056,7 @@ impl MetaBuilder {
     }
 
     /// Routes appends to the property just added through `f`.
+    #[inline(never)]
     pub fn list_append(mut self, f: ListAppend) -> Self {
         if let Some(p) = self.last_property() {
             p.list_append = Some(f);
@@ -1047,6 +1066,7 @@ impl MetaBuilder {
 
     /// Routes inserts before an item of the property just added through
     /// `f` ([`Engine::list_insert`](crate::Engine::list_insert)).
+    #[inline(never)]
     pub fn list_insert(mut self, f: ListInsert) -> Self {
         if let Some(p) = self.last_property() {
             p.list_insert = Some(f);
@@ -1060,6 +1080,7 @@ impl MetaBuilder {
     /// corrects to the value already held, nor one it refuses. QML
     /// assignments, bindings, animation steps and writes from Rust all go
     /// through it; taking the property back with `undefined` does not.
+    #[inline(never)]
     pub fn write(mut self, f: WriteFilter) -> Self {
         if let Some(PropertyAccess::Field { write, .. }) =
             self.last_property().map(|p| &mut p.access)
@@ -1071,6 +1092,7 @@ impl MetaBuilder {
 
     /// Says what class of object the property just added is described as
     /// holding ([`PropertyInfo::holds`]).
+    #[inline(never)]
     pub fn holds(mut self, class: &str) -> Self {
         if let Some(p) = self.last_property() {
             p.holds = Some(Atom::intern(class));
@@ -1079,6 +1101,7 @@ impl MetaBuilder {
     }
 
     /// Says how assigning `undefined` takes the property just added back.
+    #[inline(never)]
     pub fn reset(mut self, reset: Reset) -> Self {
         if let Some(p) = self.last_property() {
             p.reset = Some(reset);
@@ -1089,6 +1112,7 @@ impl MetaBuilder {
     /// Says how assigning `undefined` takes back a property a base
     /// declares and cannot take back itself: an item only stores its
     /// `baselineOffset`, a control works one out.
+    #[inline(never)]
     pub fn reset_inherited(mut self, name: &str, reset: Reset) -> Self {
         if let Some(p) = self.inherited_property(name) {
             p.reset = Some(reset);
@@ -1097,6 +1121,7 @@ impl MetaBuilder {
     }
 
     /// Says where the list property just added keeps its items.
+    #[inline(never)]
     pub fn list_field(mut self, f: ListField) -> Self {
         if let Some(p) = self.last_property() {
             p.list_field = Some(f);
@@ -1106,6 +1131,7 @@ impl MetaBuilder {
 
     /// Marks an inherited property required (`required property` on a name
     /// a base declares).
+    #[inline(never)]
     pub fn require(mut self, name: &str) -> Self {
         if let Some(p) = self.inherited_property(name) {
             p.flags |= PropertyFlags::REQUIRED;
@@ -1115,6 +1141,7 @@ impl MetaBuilder {
 
     /// Notes where the `required property` just added, the last property,
     /// is declared: `at` is `url:line:column: `.
+    #[inline(never)]
     pub fn required_at(mut self, at: Atom) -> Self {
         if let Some(last) = self.meta.properties.len().checked_sub(1) {
             self.meta.required_at.push((PropIndex(last as u32), at));
@@ -1123,6 +1150,7 @@ impl MetaBuilder {
     }
 
     /// Adds an enum.
+    #[inline(never)]
     pub fn enumeration(mut self, name: &str, keys: &[(&str, i64)]) -> Self {
         self.meta.enums.push(EnumInfo {
             name: Atom::intern(name),
@@ -1132,6 +1160,7 @@ impl MetaBuilder {
     }
 
     /// Adds several enums (what `#[qml(enums = f)]` passes).
+    #[inline(never)]
     pub fn enumerations(mut self, enums: Vec<(&'static str, Vec<(&'static str, i64)>)>) -> Self {
         for (name, keys) in enums {
             self = self.enumeration(name, &keys);
@@ -1139,39 +1168,46 @@ impl MetaBuilder {
         self
     }
 
+    #[inline(never)]
     pub fn default_property(mut self, name: &str) -> Self {
         self.meta.default_property = Some(Atom::intern(name));
         self
     }
 
+    #[inline(never)]
     pub fn attached(mut self, f: fn() -> MetaRef) -> Self {
         self.meta.attached = Some(f);
         self
     }
 
+    #[inline(never)]
     pub fn creatable(mut self, f: fn() -> Box<dyn QmlObject>) -> Self {
         self.meta.create = Some(f);
         self
     }
 
     /// Scripts see a plain object, not a QObject.
+    #[inline(never)]
     pub fn plain_object(mut self) -> Self {
         self.meta.plain_object = true;
         self
     }
 
     /// Not creatable from QML, even if a base is.
+    #[inline(never)]
     pub fn uncreatable(mut self) -> Self {
         self.meta.create = None;
         self
     }
 
+    #[inline(never)]
     pub fn on_complete(mut self, f: CompleteThunk) -> Self {
         self.meta.on_complete = Some(f);
         self
     }
 
     /// Adds what `#[qml_impl]` declared.
+    #[inline(never)]
     pub fn impl_info(mut self, info: ImplInfo) -> Self {
         let named = |params: Vec<(&'static str, TypeTag)>| {
             params
@@ -1191,6 +1227,7 @@ impl MetaBuilder {
         self
     }
 
+    #[inline(never)]
     pub fn build(mut self) -> MetaObject {
         // A table copied from the base and then grown keeps up to as much
         // room again as it holds, for every type, for as long as it lives.
@@ -1200,10 +1237,11 @@ impl MetaBuilder {
         m.methods.shrink_to_fit();
         m.enums.shrink_to_fit();
         m.required_at.shrink_to_fit();
-        self.meta
+        *self.meta
     }
 
     /// Builds a reference-counted description (types declared in QML).
+    #[inline(never)]
     pub fn build_shared(self) -> MetaRef {
         MetaRef::Shared(Arc::new(self.build()))
     }
