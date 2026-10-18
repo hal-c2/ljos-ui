@@ -4186,6 +4186,7 @@ dependencies = [
  "ljos_dev",
  "ljos_egui",
  "ljos_engine",
+ "ljos_folderlistmodel",
  "ljos_host",
  "ljos_localstorage",
  "ljos_media",

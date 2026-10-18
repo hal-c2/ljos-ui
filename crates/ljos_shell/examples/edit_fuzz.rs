@@ -40,6 +40,15 @@ struct Args {
     size: (f32, f32),
     /// Only load, and print what the comparison would look at.
     dump: bool,
+    /// Stop after this edit, leave the files as it left them and print
+    /// every difference.
+    stop_at: Option<u32>,
+    /// Save each file's text over the project's file of that path, one
+    /// after the other, and print every difference after the last: edits
+    /// made by hand.
+    save: Vec<(String, PathBuf)>,
+    /// Keep each edit's text here, to be saved again with `--save`.
+    trace: Option<PathBuf>,
 }
 
 fn args() -> anyhow::Result<Args> {
@@ -51,12 +60,22 @@ fn args() -> anyhow::Result<Args> {
         seed: 1,
         size: (800.0, 600.0),
         dump: false,
+        stop_at: None,
+        save: Vec::new(),
+        trace: None,
     };
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--edits" => a.edits = it.next().context("N")?.parse()?,
             "--seed" => a.seed = it.next().context("S")?.parse()?,
             "--dump" => a.dump = true,
+            "--save" => {
+                let rel = it.next().context("REL")?;
+                a.save
+                    .push((rel, PathBuf::from(it.next().context("TEXT")?)));
+            }
+            "--trace" => a.trace = Some(PathBuf::from(it.next().context("DIR")?)),
+            "--stop-at" => a.stop_at = Some(it.next().context("N")?.parse()?),
             "--size" => {
                 let s = it.next().context("WxH")?;
                 let (w, h) = s.split_once('x').context("WxH")?;
@@ -134,6 +153,7 @@ impl App {
             ljos_localstorage::register(setup.engine());
             ljos_localstorage::set_storage(setup.engine(), ljos_localstorage::Storage::Memory);
             ljos_xml::register(setup.engine());
+            ljos_folderlistmodel::register(setup.engine());
             let root = setup.watch(main)?;
             setup.on_reload(move |r| heard.borrow_mut().push(r.clone()));
             Ok(root)
@@ -879,6 +899,36 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if !a.save.is_empty() {
+        let files = qml_files(&dir);
+        let originals: Vec<(PathBuf, String)> = files
+            .iter()
+            .map(|p| Ok((p.clone(), std::fs::read_to_string(p)?)))
+            .collect::<anyhow::Result<_>>()?;
+        let mut live = App::open(&main, a.size)?;
+        live.settle(SETTLE);
+        for (rel, text) in &a.save {
+            write_out(&dir.join(rel), &std::fs::read_to_string(text)?)?;
+            let got = live.await_report(Duration::from_secs(4));
+            println!("{rel}: {got:?}");
+            for l in log.take().lines().filter(|l| l.contains("reload")) {
+                println!("log: {l}");
+            }
+            live.settle(SETTLE);
+        }
+        let l2 = live
+            .root()
+            .map(|r| dump(live.engine(), r))
+            .unwrap_or_default();
+        let (f1, f2, _) = look(&main, a.size)?;
+        for (p, text) in &originals {
+            std::fs::write(p, text)?;
+        }
+        for d in differences(&l2, &f2, &moving(&f1, &f2)) {
+            println!("    {d}");
+        }
+        return Ok(());
+    }
     let files = qml_files(&dir);
     let originals: Vec<(PathBuf, String)> = files
         .iter()
@@ -894,6 +944,23 @@ fn main() -> anyhow::Result<()> {
         Report::Failed { fault, .. } => Some(fault.message.clone()),
         _ => None,
     });
+    // A first load that fails is shown as an empty item and told to no
+    // one, so the files are saved once as they are: the build of that save
+    // fails as the load did.
+    let failed = match failed {
+        Some(why) => Some(why),
+        None => {
+            let text = std::fs::read_to_string(&main)?;
+            write_out(&main, &format!("{text}\n"))?;
+            let got = live.await_report(Duration::from_secs(4));
+            write_out(&main, &text)?;
+            let _ = live.await_report(Duration::from_secs(4));
+            match got {
+                Some(Report::Failed { fault, .. }) => Some(fault.message.clone()),
+                _ => None,
+            }
+        }
+    };
     if let Some(why) = failed {
         writeln!(std::io::stdout(), "== does not load: {why}")?;
         return Ok(());
@@ -932,6 +999,10 @@ fn main() -> anyhow::Result<()> {
             .display()
             .to_string();
         let root_before = live.root();
+        if let Some(t) = &a.trace {
+            std::fs::create_dir_all(t)?;
+            std::fs::write(t.join(format!("{n:02}-{}", file.replace('/', "%"))), &after)?;
+        }
         write_out(path, &after)?;
         let got = live.await_report(Duration::from_secs(4));
         let said = log.take();
@@ -991,9 +1062,19 @@ fn main() -> anyhow::Result<()> {
         // two of them.
         let (g1, _, _) = look(&main, a.size)?;
         let _ = log.take();
+        // The fresh loads are later than the second look at the running
+        // application: what a third look agrees with them on changed in
+        // between (a minute turning over).
+        let root = live.root().context("root")?;
+        let l3 = dump(live.engine(), root);
         let mut skip = moving(&l1, &l2);
         skip.extend(moving(&f1, &f2));
         skip.extend(moving(&f1, &g1));
+        skip.extend(
+            l3.iter()
+                .filter(|&(k, v)| f2.get(k) == Some(v))
+                .map(|(k, _)| k.clone()),
+        );
         let all = differences(&l2, &f2, &skip);
         let (kept, diff): (Vec<String>, Vec<String>) = all.into_iter().partition(|d| {
             let Some((k, _)) = d.split_once(": live ") else {
@@ -1007,6 +1088,12 @@ fn main() -> anyhow::Result<()> {
                 return true;
             }
             let carried = l2.get(k).is_some_and(|v| was_live.get(k) == Some(v));
+            // A difference that was there before the edit, on both sides as
+            // it was, is not the edit's: what follows from state kept by an
+            // earlier one (a colour bound to a value a script wrote).
+            if carried && f2.get(k) == was_fresh.get(k) && was_live.get(k) != was_fresh.get(k) {
+                return true;
+            }
             let written = l2.get(k).is_some_and(|v| v.starts_with('='))
                 && f2.get(k).is_some_and(|v| v.starts_with('='));
             // Built up while it ran, or written by a script that the
@@ -1058,6 +1145,12 @@ fn main() -> anyhow::Result<()> {
         )?;
         for d in kept.iter().take(4) {
             writeln!(stdout, "    kept {d}")?;
+        }
+        if a.stop_at == Some(n) {
+            for d in kept.iter().chain(&diff) {
+                writeln!(stdout, "    {d}")?;
+            }
+            return Ok(());
         }
         if !diff.is_empty() {
             *counts.entry("diverged").or_default() += 1;

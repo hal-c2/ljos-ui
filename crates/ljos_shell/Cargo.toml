@@ -117,6 +117,8 @@ ljos_compiler = { path = "../ljos_compiler" }
 ljos_localstorage = { path = "../ljos_localstorage" }
 # examples/reload_profile.rs: projects that read a feed (rssnews).
 ljos_xml = { path = "../ljos_xml" }
+# examples/edit_fuzz.rs: projects that list a folder (photosurface).
+ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
 anyhow.workspace = true
 png.workspace = true
