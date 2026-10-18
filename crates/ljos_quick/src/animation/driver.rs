@@ -629,6 +629,11 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
     let mut soonest: Option<Time> = None;
     let calm = crate::system_prefs::reduced_motion_now(engine);
     for run in d.runs.borrow().iter() {
+        // A frame is asked for already: what is left is the start of a run
+        // that has none, not two hundred more looks at the engine.
+        if animating && run.last.get().is_some() {
+            continue;
+        }
         if run.paused.get() || engine.is_frozen(run.anim) {
             continue;
         }
