@@ -278,6 +278,17 @@ fn tier1_check_is(w: &mut LjosWorld, on: String) -> StepResult {
     w.each(|b| b.tier1_check(on == "on"))
 }
 
+#[given(regex = r#"^the application uses the key bindings of "(Linux|Windows|macOS)"$"#)]
+fn key_bindings(w: &mut LjosWorld, platform: String) -> StepResult {
+    use ljos_quick::keys::Platform;
+    let platform = match platform.as_str() {
+        "Windows" => Platform::Windows,
+        "macOS" => Platform::MacOs,
+        _ => Platform::Linux,
+    };
+    w.each(|b| b.key_bindings(platform))
+}
+
 #[given("the application uses the fonts installed on the system")]
 fn system_fonts(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.system_fonts())

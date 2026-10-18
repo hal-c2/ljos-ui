@@ -651,6 +651,16 @@ impl Backend for QtBackend {
         Ok(())
     }
 
+    // The oracle runs on Linux and has only that platform's bindings.
+    fn key_bindings(&mut self, platform: ljos_quick::keys::Platform) -> Result<()> {
+        match platform {
+            ljos_quick::keys::Platform::Linux => Ok(()),
+            _ => Err(BackendError::NotImplemented(
+                "another platform's key bindings",
+            )),
+        }
+    }
+
     fn load(&mut self, files: &[QmlFile], entry: &str) -> Result<()> {
         for f in files {
             self.files.insert(f.name.clone(), f.source.clone());

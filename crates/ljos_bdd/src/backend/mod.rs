@@ -427,6 +427,13 @@ pub trait Backend: fmt::Debug {
     fn tier1_check(&mut self, _on: bool) -> Result<()> {
         Err(BackendError::NotImplemented("the tier 1 cross-check"))
     }
+    /// The application takes its standard keys (`StandardKey`, the keys
+    /// of an entry) from `platform`'s key bindings, whatever the machine.
+    fn key_bindings(&mut self, _platform: ljos_quick::keys::Platform) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "another platform's key bindings",
+        ))
+    }
     /// Text is set in the fonts installed on the machine, as a desktop
     /// application's is, instead of only the fonts the toolkit carries.
     /// Given before anything is loaded.

@@ -207,6 +207,8 @@ pub struct LjosBackend {
     wall_clock: Option<f64>,
     /// The tier 1 cross-check the scenario asked for, when it asked.
     tier1_check: Option<bool>,
+    /// The platform whose key bindings the scenario asked for.
+    key_bindings: Option<ljos_quick::keys::Platform>,
     /// The thread's text engine reads the machine's fonts for this scenario.
     system_fonts: bool,
     /// The style the scenario chose, given before anything was loaded.
@@ -1111,6 +1113,9 @@ impl Backend for LjosBackend {
             if let Some(on) = self.tier1_check {
                 live.engine.set_tier1_check(on);
             }
+            if let Some(platform) = self.key_bindings {
+                ljos_quick::keys::set_platform(&live.engine, platform);
+            }
             for (name, tree) in self.lazy_trees.drain(..) {
                 let e = &live.engine;
                 let obj = e
@@ -1404,6 +1409,14 @@ impl Backend for LjosBackend {
         self.tier1_check = Some(on);
         if let Some(live) = &self.live {
             live.engine.set_tier1_check(on);
+        }
+        Ok(())
+    }
+
+    fn key_bindings(&mut self, platform: ljos_quick::keys::Platform) -> Result<()> {
+        self.key_bindings = Some(platform);
+        if let Some(live) = &self.live {
+            ljos_quick::keys::set_platform(&live.engine, platform);
         }
         Ok(())
     }
