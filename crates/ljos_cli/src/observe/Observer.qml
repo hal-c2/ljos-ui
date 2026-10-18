@@ -449,6 +449,10 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.margins: 18
+                // A page is as wide as the window leaves it, not as the
+                // widest page wants: the one shown makes do, each in its
+                // own way, and nothing goes past the window's edge.
+                Layout.minimumWidth: 0
 
                 // ----- Overview ----------------------------------------
                 ColumnLayout {
@@ -1731,9 +1735,11 @@ ApplicationWindow {
                             inspect(true)
                     }
 
-                    // The tree.
+                    // The tree. The properties come first when the
+                    // window is narrow: the tree and the picture give up
+                    // their width before the values do.
                     Rectangle {
-                        Layout.preferredWidth: 300
+                        Layout.preferredWidth: Math.max(160, Math.min(300, objects.width * 0.3))
                         Layout.fillHeight: true
                         radius: 9
                         color: theme.card
@@ -1865,6 +1871,7 @@ ApplicationWindow {
 
                     // The properties of the one picked.
                     Rectangle {
+                        id: propCard
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         radius: 9
@@ -1877,10 +1884,17 @@ ApplicationWindow {
                             anchors.margins: 12
                             spacing: 6
 
-                            RowLayout {
+                            // In a narrow card the buttons go under the
+                            // name; the card is never widened for them.
+                            GridLayout {
+                                id: propHead
+                                readonly property bool narrow: propCard.width < 364
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                columns: narrow ? 2 : 3
                                 Text {
                                     Layout.fillWidth: true
+                                    Layout.columnSpan: propHead.narrow ? 2 : 1
                                     text: objects.picked === "" ? "Pick an object" : objects.head
                                     color: theme.text
                                     font.bold: true
@@ -1893,7 +1907,7 @@ ApplicationWindow {
                                     onClicked: trace.toggle(objects.picked)
                                 }
                                 CheckBox {
-                                    text: "Defaults too"
+                                    text: propHead.narrow ? "Defaults" : "Defaults too"
                                     checked: objects.all
                                     onToggled: {
                                         objects.all = checked
@@ -1904,6 +1918,9 @@ ApplicationWindow {
                             }
                             Text {
                                 visible: objects.picked !== ""
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                elide: Text.ElideRight
                                 text: objects.picked + (objects.where === "" ? "" : "  ·  " + objects.where)
                                       + "  ·  =expression binds"
                                 color: theme.subtle
@@ -1914,6 +1931,7 @@ ApplicationWindow {
 
                             ListView {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 Layout.fillHeight: true
                                 clip: true
                                 model: window.page === 3 ? objects.propRows : 0
@@ -1923,7 +1941,12 @@ ApplicationWindow {
                                     required property int index
                                     readonly property var modelData: objects.props[index] || ({})
                                     width: ListView.view.width
-                                    height: 36
+                                    // The value and its badge share the line
+                                    // while the value has room for a few
+                                    // words; else the badge goes below it,
+                                    // so that neither is drawn over the other.
+                                    readonly property bool stacked: width - valueBox.x - chips.width - 12 < 96
+                                    height: stacked ? 60 : 36
                                     readonly property bool edited: modelData.assigned_by === "devtools"
                                     readonly property bool fixed: modelData.read_only === true
                                     readonly property bool boolean: modelData.type === "bool"
@@ -1938,11 +1961,16 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         color: prop.index % 2 ? theme.cardAlt : "transparent"
                                     }
+                                    Item {
+                                        id: line
+                                        width: parent.width
+                                        height: 36
+                                    }
                                     Text {
                                         id: propName
                                         x: 6
-                                        width: 130
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: Math.max(72, Math.min(130, prop.width * 0.3))
+                                        anchors.verticalCenter: line.verticalCenter
                                         text: prop.modelData.name
                                         color: theme.text
                                         elide: Text.ElideRight
@@ -1950,7 +1978,7 @@ ApplicationWindow {
                                     Text {
                                         id: propType
                                         anchors.left: propName.right
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.verticalCenter: line.verticalCenter
                                         width: 60
                                         text: prop.modelData.type
                                         color: theme.subtle
@@ -1962,11 +1990,14 @@ ApplicationWindow {
                                     Rectangle {
                                         id: valueBox
                                         anchors.left: propType.right
-                                        anchors.right: chips.left
-                                        anchors.rightMargin: 8
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: prop.stacked ? 4 : chips.width + 12
+                                        anchors.verticalCenter: line.verticalCenter
                                         height: 28
                                         radius: 5
+                                        // What does not fit is cut at the frame,
+                                        // never drawn past it.
+                                        clip: true
                                         color: "transparent"
                                         border.color: !prop.editable ? "transparent"
                                             : valueArea.containsMouse ? theme.subtle : theme.rule
@@ -2101,7 +2132,7 @@ ApplicationWindow {
                                         id: chips
                                         anchors.right: parent.right
                                         anchors.rightMargin: 4
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        y: prop.stacked ? line.height : (line.height - height) / 2
                                         spacing: 6
                                         Rectangle {
                                             height: 20
@@ -2170,7 +2201,8 @@ ApplicationWindow {
                     // draws.
                     Rectangle {
                         id: frame
-                        Layout.preferredWidth: 280
+                        Layout.preferredWidth: Math.max(160, Math.min(280, objects.width * 0.25))
+                        visible: objects.width >= 760
                         Layout.fillHeight: true
                         radius: 9
                         color: theme.card
