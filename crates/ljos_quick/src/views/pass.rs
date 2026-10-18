@@ -90,7 +90,10 @@ pub(crate) fn refresh(e: &Engine, view: ObjectId) {
     // or behind the effect that is running) the rows are laid out here.
     let before = st.passes.get();
     bump(e, &st);
-    if st.passes.get() == before {
+    // In a batch the effect runs when the batch ends, before the caller
+    // that began it goes on: laying the rows out here too would do it
+    // twice.
+    if st.passes.get() == before && !e.graph().batching() {
         e.untrack(|| pass(e, view, &st, None));
     }
 }

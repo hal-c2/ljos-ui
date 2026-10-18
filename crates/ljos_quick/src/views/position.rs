@@ -63,6 +63,7 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
     let Some(row) = usize::try_from(index).ok().filter(|r| *r < d.count()) else {
         return;
     };
+    let mut moved = st.passes.get();
     e.untrack(|| {
         let g = pass::read_geo(e, view, &st);
         let dir = flickable::dir(g.main);
@@ -103,6 +104,7 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
         st.follow.set(false);
         st.laid.set(None);
         pass::pass(e, view, &st, Some(to));
+        moved = st.passes.get();
         let laid = st.laid.take();
         e.batch(|| {
             if let Some((origin, length)) = laid {
@@ -118,8 +120,12 @@ fn go(e: &Engine, view: ObjectId, index: i32, mode: i32, edge: Option<bool>) {
             flickable::scroll_to(e, view, g.main, at);
         });
     });
-    // What is shown now has its delegates when this returns.
-    pass::refresh(e, view);
+    // What is shown now has its delegates when this returns. The layout
+    // effect has laid them out again if the view moved; if it did not,
+    // it is run for the delegates the pass made.
+    if state_of(e, view).is_none_or(|st| st.passes.get() == moved) {
+        pass::refresh(e, view);
+    }
 }
 
 /// The row at a point of the content, if one is shown there.

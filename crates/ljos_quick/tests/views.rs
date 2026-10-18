@@ -678,3 +678,33 @@ Item {
     settle(&mut s, &e, 0);
     assert!(num(&e, root, "created") > 30.0);
 }
+
+#[test]
+fn a_row_appended_and_shown_at_the_end_is_laid_out_once_each_way() {
+    let e = engine();
+    let root = load(
+        &e,
+        r##"import QtQuick
+ListView {
+  width: 200; height: 100
+  model: ListModel { id: m }
+  delegate: Item { objectName: "r" + index; width: 200; height: 20 }
+  function add() { m.append({ v: 1 }); positionViewAtEnd() }
+}
+"##,
+    );
+    let mut s = settled(&e, root);
+    for _ in 0..12 {
+        e.invoke_by_name(root, "add", &[]).unwrap();
+    }
+    settle(&mut s, &e, 1000);
+    let before = view_layout_passes(&e, root);
+    e.invoke_by_name(root, "add", &[]).unwrap();
+    // The model's change lays the rows out once, when its batch ends.
+    // Going to the end lays them out where the new row is guessed to be,
+    // which measures it, then where it is; the view moving there runs
+    // the layout effect, which is not run once more after it.
+    assert_eq!(view_layout_passes(&e, root) - before, 4);
+    assert_eq!(num(&e, root, "contentY"), 13.0 * 20.0 - 100.0);
+    assert_eq!(warnings(&e), Vec::<String>::new());
+}
