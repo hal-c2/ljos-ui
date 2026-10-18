@@ -2707,15 +2707,24 @@ impl<V: Clone + 'static> Inner<V> {
                 stack.push((r, first, stamp));
             }
         }
+        // Passed on as it is: every write of a property comes here, most
+        // with one observer, and the stack was taken out and put back
+        // twice for it.
+        self.propagate(&mut stack);
         self.mark_stack = stack;
-        self.propagate_marks();
     }
 
     /// Dirty for direct observers, Check for everything downstream. A node
     /// that was already non-clean has already passed Check on.
     fn propagate_marks(&mut self) {
-        let all = self.options.eager;
         let mut stack = std::mem::take(&mut self.mark_stack);
+        self.propagate(&mut stack);
+        self.mark_stack = stack;
+    }
+
+    /// [`Inner::propagate_marks`] of `stack`, taken out of `mark_stack`.
+    fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>) {
+        let all = self.options.eager;
         while let Some((m, st, from_stamp)) = stack.pop() {
             let Some(node) = self.nodes.get_mut(m) else {
                 continue;
@@ -2788,7 +2797,6 @@ impl<V: Clone + 'static> Inner<V> {
                 );
             }
         }
-        self.mark_stack = stack;
     }
 
     /// Replaces `n`'s sources with this run's reads, touching only edges
