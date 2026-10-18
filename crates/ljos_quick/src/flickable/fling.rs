@@ -178,6 +178,23 @@ pub(crate) fn virtual_position(e: &Engine, f: ObjectId, axis: usize) -> AxisStat
     state
 }
 
+/// Where the wheel's glide in one direction has got to at `now`, a
+/// frame's time. A notch comes before the frame of its time has moved the
+/// content: the next glide starts from here, not from the last frame, or
+/// each notch would lose what that frame was to move.
+pub(crate) fn glide_at(e: &Engine, f: ObjectId, axis: usize, now: Time) -> Option<f64> {
+    let run = state_of(e, f)?.fling.runs.get()[axis]?;
+    if run.kind != Kind::Wheel || run.driven || !matches!(run.seg, Segment::Glide { .. }) {
+        return None;
+    }
+    let k = scroll_physics(e).kinetic().copied()?;
+    let elapsed = match run.start {
+        Start::Called(at) => e.now().saturating_since(at),
+        Start::At(t) => now.saturating_since(t),
+    };
+    Some(run.seg.at(&k, elapsed).0)
+}
+
 /// Puts the content at `at` in one direction, which may be past its
 /// bounds, with the overshoot and velocity that go with it.
 pub(crate) fn place(e: &Engine, f: ObjectId, axis: usize, at: f64, velocity: f64) {

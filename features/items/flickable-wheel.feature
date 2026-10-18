@@ -58,6 +58,15 @@ Feature: Scrolling a Flickable with the wheel
       When 300 milliseconds pass
       Then the property "contentY" of "f" is 72
 
+    Scenario: A notch that comes while it glides goes on from where it has got to
+      When the user turns the wheel 1 notch down at 100, 100
+      And 40 milliseconds pass
+      And the user turns the wheel 1 notch down at 100, 100
+      And 50 milliseconds pass
+      Then the property "contentY" of "f" is within 1 of 92.7
+      When 400 milliseconds pass
+      Then the property "contentY" of "f" is within 1 of 115.4
+
     Scenario: Content a program moves while it glides stops where it is put
       When the user turns the wheel 1 notch down at 100, 100
       And 50 milliseconds pass

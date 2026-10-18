@@ -105,7 +105,10 @@ fn wheel(e: &Engine, f: ObjectId, ev: &WheelEvent, _at: kurbo::Point) -> bool {
         if distance[axis] == 0.0 || !e.untrack(|| can_flick(e, f, axis)) {
             continue;
         }
-        let state = e.untrack(|| bounds(e, f, axis));
+        let mut state = e.untrack(|| bounds(e, f, axis));
+        if let Some(at) = fling::glide_at(e, f, axis, ev.time) {
+            state.position = at;
+        }
         match physics.wheel(&state, distance[axis], by_pixel) {
             Motion::Jump(to) => {
                 stop_fling(e, f, axis);

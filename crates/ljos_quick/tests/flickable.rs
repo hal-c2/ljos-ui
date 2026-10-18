@@ -173,6 +173,35 @@ fn a_wheel_notch_asks_for_frames_until_it_has_glided_there() {
     assert!(!s.frame(&e, ms(500)).changed);
 }
 
+/// A shell hands the scene a notch before the frame of the same time, as
+/// a pointer does: the glide it starts goes on from where the last one
+/// has got to by then, not from where the frame before left it.
+#[test]
+fn a_notch_while_it_glides_loses_nothing_of_the_glide() {
+    let e = engine();
+    let root = load(&e, PLAIN);
+    let f = find(&e, root, "f");
+    let mut s = ready(&e, root);
+    let notch = |t| WheelEvent::notches(100.0, 100.0, 0.0, -1.0, ms(t));
+
+    assert!(s.wheel_event(&e, &notch(0)));
+    for t in [0, 16, 32] {
+        s.frame(&e, ms(t));
+    }
+    let before = num(&e, f, "contentY");
+    assert!(s.wheel_event(&e, &notch(48)));
+    s.frame(&e, ms(48));
+    let after = num(&e, f, "contentY");
+    // out_expo(48 / 300) of a notch.
+    let reached = flickable::WHEEL_NOTCH_PIXELS * (1.0 - 2f64.powf(-10.0 * 48.0 / 300.0));
+    assert!(
+        after >= reached - 0.5 && after > before + 5.0,
+        "{before} {after} {reached}"
+    );
+    s.frame(&e, ms(500));
+    assert!((num(&e, f, "contentY") - (reached + flickable::WHEEL_NOTCH_PIXELS)).abs() < 0.5);
+}
+
 #[test]
 fn a_device_that_ends_its_gesture_ends_the_movement() {
     let e = engine();
