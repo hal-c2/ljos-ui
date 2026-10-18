@@ -2,23 +2,30 @@
 //!
 //! A press is taken on a delegate, or within `dragMargin` of the path. The
 //! pointer is followed by the point of the path nearest it: a move across
-//! the path does nothing. Once the pointer is more than 8 pixels along the
-//! path from where it was pressed the drag begins there, without moving;
-//! from then on each move moves the rows as far as the pointer went along
-//! the path (all of this observed on qml6).
+//! the path does nothing. The first move more than 10 pixels along the
+//! path from where it was pressed begins the drag there, without moving
+//! the rows; from then on each move moves them as far as the pointer went
+//! along the path (all of this observed on qml6, move by move: 10 pixels
+//! is not enough, 11 is, whatever the moves before).
 //!
-//! The speed at the release is measured as a `Flickable`'s is, and what
-//! happens after it is the engine's scroll physics
-//! ([`super::motion::release`]).
+//! The speed at the release is not a `Flickable`'s. qml6 throws the mean
+//! speed of the last three moves after the one that began the drag, less
+//! a fiftieth for each millisecond the pointer rested before it let go:
+//! still for 50 ms, it throws nothing. Slower than a `Flickable` would
+//! fling, it throws nothing either (measured with qmltestrunner at fixed
+//! event times). What happens after it is the
+//! engine's scroll physics ([`super::motion::release`]).
 
 use ljos_engine::{Engine, ObjectId};
 use ljos_render::kurbo;
+use std::time::Duration;
+
 use ljos_runtime::Time;
 
 use super::layout::{contains, frame_of};
 use super::motion::{self, interrupt, show_dragging, show_moving, wrap, write_offset};
 use super::{PathView, State, rd, state_of};
-use crate::flickable::physics::{VelocityTracker, scroll_physics};
+use crate::flickable::physics::scroll_physics;
 use crate::input::{MouseArea, PointerEvent};
 use crate::item::{is_a, scene_transform};
 use crate::pointer_item::PointerItem;
@@ -26,17 +33,59 @@ use crate::pointer_item::PointerItem;
 /// A tree deeper than this is a cycle someone built by hand.
 const DEPTH: usize = 4096;
 
+/// How far along the path the pointer goes before the drag begins. Not
+/// the platform's drag distance: qml6 measured 10 where that was 8.
+const TAKE: f64 = 10.0;
+
+/// How long a pointer rests before it lets go for a release to throw
+/// nothing; a shorter rest takes its share off the speed.
+const REST_FADE: Duration = Duration::from_millis(50);
+/// How many of the last moves' speeds a release averages.
+const KEPT: usize = 3;
+
 /// A press the view holds.
 #[derive(Debug)]
 pub(crate) struct Press {
     /// The length along the path the pointer was last followed from.
     anchor: f64,
-    /// Past the threshold.
+    /// The drag began.
     stolen: bool,
-    /// How far the pointer has gone along the path since the press, and
-    /// when: for the speed at the release.
-    travel: f64,
-    samples: VelocityTracker,
+    /// When, and at which length along the path, the last event was.
+    last: (Time, f64),
+    /// The speeds along the path of the last moves of the drag, newest at
+    /// `next - 1`, in pixels a second.
+    speeds: [f64; KEPT],
+    kept: usize,
+    next: usize,
+}
+
+impl Press {
+    fn new(time: Time, len: f64) -> Self {
+        Press {
+            anchor: len,
+            stolen: false,
+            last: (time, len),
+            speeds: [0.0; KEPT],
+            kept: 0,
+            next: 0,
+        }
+    }
+
+    fn keep(&mut self, speed: f64) {
+        self.speeds[self.next] = speed;
+        self.next = (self.next + 1) % KEPT;
+        self.kept = (self.kept + 1).min(KEPT);
+    }
+
+    /// The speed a release at `now` throws with.
+    fn thrown(&self, now: Time) -> f64 {
+        if self.kept == 0 {
+            return 0.0;
+        }
+        let rest = now.saturating_since(self.last.0).as_secs_f64();
+        let left = (1.0 - rest / REST_FADE.as_secs_f64()).max(0.0);
+        self.speeds[..self.kept].iter().sum::<f64>() / self.kept as f64 * left
+    }
 }
 
 pub(crate) fn hooks() -> PointerItem {
@@ -150,14 +199,7 @@ fn begin(e: &Engine, view: ObjectId, st: &State, ev: &PointerEvent, at: kurbo::P
     if st.motion.get().is_some() {
         interrupt(e, view, st);
     }
-    let mut samples = VelocityTracker::default();
-    samples.push(ev.time, 0.0);
-    *st.press.borrow_mut() = Some(Press {
-        anchor: len,
-        stolen: false,
-        travel: 0.0,
-        samples,
-    });
+    *st.press.borrow_mut() = Some(Press::new(ev.time, len));
     true
 }
 
@@ -176,19 +218,24 @@ fn moved(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     let Some(p) = slot.as_mut() else {
         return;
     };
-    let mut along = len - p.anchor;
-    if f.track.closed && f.track.total > 0.0 {
-        // Round a closed path the short way.
-        let t = f.track.total;
-        along = (along + t / 2.0).rem_euclid(t) - t / 2.0;
-    }
+    // Round a closed path the short way.
+    let short = |d: f64| {
+        if f.track.closed && f.track.total > 0.0 {
+            let t = f.track.total;
+            (d + t / 2.0).rem_euclid(t) - t / 2.0
+        } else {
+            d
+        }
+    };
+    let along = short(len - p.anchor);
+    let (t0, len0) = p.last;
+    let secs = ev.time.saturating_since(t0).as_secs_f64();
+    p.last = (ev.time, len);
+    let speed = (secs > 0.0).then(|| short(len - len0) / secs);
     if !p.stolen {
-        // The pointer went far enough along the path to be a drag.
-        if along.abs() > crate::system_prefs::start_drag_distance(e) {
+        if along.abs() > TAKE {
             p.stolen = true;
             p.anchor = len;
-            p.samples.clear();
-            p.samples.push(ev.time, p.travel);
         }
         return;
     }
@@ -197,8 +244,9 @@ fn moved(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
         share = (share + 0.5).rem_euclid(1.0) - 0.5;
     }
     p.anchor = len;
-    p.travel += along;
-    p.samples.push(ev.time, p.travel);
+    if let Some(speed) = speed {
+        p.keep(speed);
+    }
     drop(slot);
     if share == 0.0 {
         return;
@@ -209,14 +257,14 @@ fn moved(e: &Engine, view: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
     show_dragging(e, view, true);
 }
 
-/// The speed along the path over the last moves, in pixels a second; a
-/// pointer that rested before it let go throws nothing.
+/// The speed along the path a release at `now` throws with, in pixels a
+/// second; a pointer that crept throws nothing.
 fn velocity(e: &Engine, p: &Press, now: Time) -> f64 {
-    let rested = p
-        .samples
-        .last_time()
-        .is_none_or(|t| now.saturating_since(t) > scroll_physics(e).release_rest());
-    if rested { 0.0 } else { p.samples.velocity(now) }
+    let Some(k) = scroll_physics(e).kinetic().copied() else {
+        return 0.0;
+    };
+    let v = p.thrown(now);
+    if v.abs() < k.min_flick { 0.0 } else { v }
 }
 
 fn release(e: &Engine, view: ObjectId, ev: &PointerEvent, _: kurbo::Point) {
@@ -251,5 +299,36 @@ fn cancel(e: &Engine, view: ObjectId) {
         motion::release(e, view, &st, 0.0);
     } else {
         show_moving(e, view, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(ms: u64) -> Time {
+        Time::from_millis(ms)
+    }
+
+    #[test]
+    fn a_release_throws_the_mean_of_the_last_three_speeds() {
+        let mut p = Press::new(at(0), 0.0);
+        assert_eq!(p.thrown(at(0)), 0.0);
+        for speed in [9000.0, 100.0, 200.0, 600.0] {
+            p.keep(speed);
+        }
+        p.last = (at(100), 0.0);
+        assert_eq!(p.thrown(at(100)), 300.0);
+    }
+
+    #[test]
+    fn a_rest_takes_a_fiftieth_a_millisecond_off_the_speed() {
+        let mut p = Press::new(at(0), 0.0);
+        p.keep(600.0);
+        p.last = (at(100), 0.0);
+        assert!((p.thrown(at(125)) - 300.0).abs() < 1e-9);
+        assert!((p.thrown(at(140)) - 120.0).abs() < 1e-9);
+        assert_eq!(p.thrown(at(150)), 0.0);
+        assert_eq!(p.thrown(at(400)), 0.0);
     }
 }

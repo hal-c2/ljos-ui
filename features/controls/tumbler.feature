@@ -292,6 +292,24 @@ Feature: Tumbler
       Then the property "moving" of "t" is true
       And the property "currentIndex" of "t" is 0
 
+    Scenario: A drag of 80 pixels in moves of 8 that rests before letting go goes to row 2
+      When the user presses the pointer at 30, 100
+      And the user moves the pointer to 30, 92
+      And the user moves the pointer to 30, 84
+      And the user moves the pointer to 30, 76
+      And the user moves the pointer to 30, 68
+      And the user moves the pointer to 30, 60
+      And the user moves the pointer to 30, 52
+      And the user moves the pointer to 30, 44
+      And the user moves the pointer to 30, 36
+      And the user moves the pointer to 30, 28
+      And the user moves the pointer to 30, 20
+      Then the property "currentIndex" of "t" is 2
+      When 200 milliseconds pass
+      And the user releases the pointer at 30, 20
+      And 2 seconds pass
+      Then the property "currentIndex" of "t" is 2
+
     Scenario: A tumbler that was let go is moving until it rests
       When the user drags from 30, 150 to 30, 90
       Then the property "moving" of "t" is true
@@ -321,3 +339,64 @@ Feature: Tumbler
       When an assistive technology asks the "spinbutton" named "" to increase
       And 1 second passes
       Then the property "currentIndex" of "t" is 1
+
+  # Thrown, a tumbler goes as far as the speed of the pointer's last three
+  # moves takes it (see views/path-view-throw.feature). The rows need events
+  # at exact times, which only the Ljós runner gives; the rows are
+  # qmltestrunner's, whose 50 and 16 milliseconds are 51 and 17 here.
+  @ljos-only
+  Rule: A tumbler is thrown as fast as the pointer moved
+
+    Scenario: Ten moves of 8 pixels 51 milliseconds apart go to row 2
+      When the user presses the pointer at 30, 100
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 92
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 84
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 76
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 68
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 60
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 52
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 44
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 36
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 28
+      And 51 milliseconds pass
+      And the user moves the pointer to 30, 20
+      And 17 milliseconds pass
+      And the user releases the pointer at 30, 20
+      And 3 seconds pass
+      Then the property "currentIndex" of "t" is 2
+
+    Scenario: Ten moves of 8 pixels 17 milliseconds apart go to row 5
+      When the user presses the pointer at 30, 100
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 92
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 84
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 76
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 68
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 60
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 52
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 44
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 36
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 28
+      And 17 milliseconds pass
+      And the user moves the pointer to 30, 20
+      And 17 milliseconds pass
+      And the user releases the pointer at 30, 20
+      And 3 seconds pass
+      Then the property "currentIndex" of "t" is 5

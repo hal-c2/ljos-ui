@@ -517,12 +517,13 @@ pub(crate) fn release(e: &Engine, view: ObjectId, st: &State, v: f64) {
         // The row nearest a quarter of a place beyond where the rows would
         // stop: 3.24 places rests on 3, 3.26 on 4, going up; going down
         // 6.76 rests on 7 and 6.74 on 6 (qml6).
-        let ahead = if velocity == 0.0 {
-            0.0
+        // Still, a rest halfway between two rows goes to the lower offset,
+        // whichever way the rows were dragged (qml6).
+        end = if velocity == 0.0 {
+            (end - 0.5).ceil()
         } else {
-            0.25 * velocity.signum()
+            (end + 0.25 * velocity.signum()).round()
         };
-        end = (end + ahead).round();
     }
     let one = snap == snap_mode::SNAP_ONE_ITEM;
     if one {
