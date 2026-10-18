@@ -171,23 +171,24 @@ struct TextureEntry {
 /// pixels over a whole screen; the rest is left out and reported.
 const MAX_TILES: usize = 4096;
 
-fn push_rect(mesh: &mut Mesh, r: Rect, u: (f64, f64), v: (f64, f64)) {
+fn push_rect(mesh: &mut Mesh, r: Rect, u: (f64, f64), v: (f64, f64), color: Color32) {
     let p = |x: f64, y: f64| Pos2::new(x as f32, y as f32);
     push_quad(
         mesh,
         [p(r.x0, r.y0), p(r.x1, r.y0), p(r.x1, r.y1), p(r.x0, r.y1)],
         [p(u.0, v.0), p(u.1, v.0), p(u.1, v.1), p(u.0, v.1)],
-        Color32::WHITE,
+        color,
     );
 }
 
-/// Add the quads of `blit` to `clamp` (sampled with clamped edges) or
-/// `repeat` (sampled with a repeating texture). Returns false when the tile
-/// limit cut it short.
+/// Add the quads of `blit`, in `color`, to `clamp` (sampled with clamped
+/// edges) or `repeat` (sampled with a repeating texture). Returns false
+/// when the tile limit cut it short.
 fn blit_quads(
     blit: &ImageBlit,
     size: (u32, u32),
     smooth: bool,
+    color: Color32,
     clamp: &mut Mesh,
     repeat: &mut Mesh,
 ) -> bool {
@@ -217,6 +218,7 @@ fn blit_quads(
             blit.dst,
             (u_at(0.0), u_at(1.0)),
             (v_at(0.0), v_at(1.0)),
+            color,
         );
         return true;
     };
@@ -236,6 +238,7 @@ fn blit_quads(
             cover,
             (u_at(fx(cover.x0)), u_at(fx(cover.x1))),
             (v_at(fy(cover.y0)), v_at(fy(cover.y1))),
+            color,
         );
         return true;
     }
@@ -261,6 +264,7 @@ fn blit_quads(
                 part,
                 (u_at((part.x0 - x0) / tw), u_at((part.x1 - x0) / tw)),
                 (v_at((part.y0 - y0) / th), v_at((part.y1 - y0) / th)),
+                color,
             );
         }
     }
@@ -481,11 +485,16 @@ fn place_glyphs(
 
 fn push_quad(mesh: &mut Mesh, corners: [Pos2; 4], uv: [Pos2; 4], color: Color32) {
     let base = mesh.vertices.len() as u32;
-    for (pos, uv) in corners.into_iter().zip(uv) {
-        mesh.vertices.push(Vertex { pos, uv, color });
-    }
+    // Whole arrays: a particle system pushes hundreds of quads a frame, and
+    // a vertex at a time paid a capacity check for each.
+    let v = |i: usize| Vertex {
+        pos: corners[i],
+        uv: uv[i],
+        color,
+    };
+    mesh.vertices.extend_from_slice(&[v(0), v(1), v(2), v(3)]);
     mesh.indices
-        .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
 fn pos2(p: Point) -> Pos2 {
@@ -1098,7 +1107,8 @@ impl EpaintBackend {
             warnings += 1;
             tracing::debug!("B0: {what}");
         };
-        for op in list.ops() {
+        let ops = list.ops();
+        for (at, op) in ops.iter().enumerate() {
             match op {
                 DrawOp::Rect {
                     rect,
@@ -1248,7 +1258,18 @@ impl EpaintBackend {
                         segs.push(LocalSeg::Mesh(Arc::new(std::mem::take(&mut cur))));
                     }
                     let blit = image_blit(*src, *dst, *tile, *mirror);
-                    if !image_segs(&mut segs, image, &[blit], *smooth, *opacity, *tint) {
+                    // The untiled pictures of this image that follow, a
+                    // particle system's, each one quad of the same mesh.
+                    let run = || {
+                        ops[at..]
+                            .iter()
+                            .take_while(|o| {
+                                matches!(o, DrawOp::Image { image: i, tile: None, smooth: s, .. }
+                                    if i.id() == image.id() && s == smooth)
+                            })
+                            .count()
+                    };
+                    if !image_segs(&mut segs, image, &[blit], *smooth, *opacity, *tint, run) {
                         warn("an image is tiled too finely; some tiles are not drawn");
                     }
                 }
@@ -1265,7 +1286,7 @@ impl EpaintBackend {
                     }
                     let size = (image.width(), image.height());
                     let blits = nine_patch_blits(size, *insets, *dst, *tile, *mirror);
-                    if !image_segs(&mut segs, image, &blits, *smooth, 1.0, None) {
+                    if !image_segs(&mut segs, image, &blits, *smooth, 1.0, None, || 0) {
                         warn("a border image is tiled too finely; some tiles are not drawn");
                     }
                 }
@@ -1404,23 +1425,39 @@ fn map_mesh(m: &Mesh, to_screen: Affine, opacity: f32) -> Mesh {
         vertices: Vec::with_capacity(m.vertices.len()),
         texture_id: m.texture_id,
     };
+    let fade = |c: Color32| {
+        if opacity < 1.0 {
+            c.gamma_multiply(opacity)
+        } else {
+            c
+        }
+    };
+    let [sx, ky, kx, sy, tx, ty] = to_screen.as_coeffs();
+    if ky == 0.0 && kx == 0.0 {
+        // Upright, as nearly every item is: each axis on its own, the same
+        // sums the whole map makes less its terms of nothing.
+        let along = |s: f64, t: f64, p: f32| (s * f64::from(p) + t) as f32;
+        out.vertices.extend(m.vertices.iter().map(|v| Vertex {
+            pos: Pos2::new(along(sx, tx, v.pos.x), along(sy, ty, v.pos.y)),
+            uv: v.uv,
+            color: fade(v.color),
+        }));
+        return out;
+    }
     for v in &m.vertices {
         let p = to_screen * Point::new(f64::from(v.pos.x), f64::from(v.pos.y));
         out.vertices.push(Vertex {
             pos: Pos2::new(p.x as f32, p.y as f32),
             uv: v.uv,
-            color: if opacity < 1.0 {
-                v.color.gamma_multiply(opacity)
-            } else {
-                v.color
-            },
+            color: fade(v.color),
         });
     }
     out
 }
 
 /// Append the quads of `blits`, faded by `opacity`, at most one segment
-/// per sampling mode. Quads of the texture the last segment draws join
+/// per sampling mode. `quads_ahead` says how many quads a new segment is
+/// likely to be given. Quads of the texture the last segment draws join
 /// it, so many pictures of one image (a particle system's) are one mesh.
 /// Returns false when a blit hit the tile limit.
 fn image_segs(
@@ -1430,6 +1467,7 @@ fn image_segs(
     smooth: bool,
     opacity: f32,
     tint: Option<Rgba>,
+    quads_ahead: impl FnOnce() -> usize,
 ) -> bool {
     let size = (image.width(), image.height());
     // egui multiplies the texture by the vertex colour, so a tint costs no
@@ -1438,8 +1476,8 @@ fn image_segs(
         let [r, g, b, _] = t.to_straight_u8();
         Color32::from_rgb(r, g, b)
     });
-    // Every quad is made white: one colour for all, worked out once and
-    // not for each corner of each of a particle system's pictures.
+    // One colour for all the quads, worked out once and not for each corner
+    // of each of a particle system's pictures.
     let tint = if opacity < 1.0 {
         tint.gamma_multiply(opacity)
     } else {
@@ -1454,44 +1492,41 @@ fn image_segs(
     // Clamped quads are made right in the mesh of the segment they would
     // join: a particle system draws each of hundreds of pictures alone,
     // and a mesh of its own for each, appended and freed, was most of
-    // what drawing them cost.
-    let taken = match segs.last_mut() {
-        Some(LocalSeg::Image(last)) if last.key == key(false) => {
-            Arc::get_mut(&mut last.mesh).map(std::mem::take)
+    // what drawing them cost. Taking that mesh out and putting it back
+    // for each picture cost nearly as much as making its quad.
+    let joins = match segs.last_mut() {
+        Some(LocalSeg::Image(last)) => {
+            last.key == key(false) && Arc::get_mut(&mut last.mesh).is_some()
         }
-        _ => None,
+        _ => false,
     };
-    let joined = taken.is_some();
-    let mut clamp = taken.unwrap_or_default();
-    let from = clamp.vertices.len();
-    let mut repeat = Mesh::default();
-    let mut complete = true;
-    for blit in blits {
-        complete &= blit_quads(blit, size, smooth, &mut clamp, &mut repeat);
-    }
-    let colour = |vertices: &mut [Vertex]| {
-        if tint != Color32::WHITE {
-            for v in vertices {
-                v.color = tint;
-            }
-        }
-    };
-    colour(&mut clamp.vertices[from..]);
-    if joined {
-        if let Some(LocalSeg::Image(last)) = segs.last_mut()
-            && let Some(mesh) = Arc::get_mut(&mut last.mesh)
-        {
-            *mesh = clamp;
-        }
-    } else if !clamp.is_empty() {
+    if !joins {
+        // Grown once for the run, not doubled and copied as it goes.
+        let quads = quads_ahead();
+        let mesh = Mesh {
+            vertices: Vec::with_capacity(4 * quads),
+            indices: Vec::with_capacity(6 * quads),
+            ..Mesh::default()
+        };
         segs.push(LocalSeg::Image(ImageSeg {
             key: key(false),
             image: image.downgrade(),
-            mesh: Arc::new(clamp),
+            mesh: Arc::new(mesh),
         }));
     }
+    let Some(LocalSeg::Image(last)) = segs.last_mut() else {
+        unreachable!("an image segment is last")
+    };
+    let clamp = Arc::get_mut(&mut last.mesh).expect("the last mesh is this call's own");
+    let mut repeat = Mesh::default();
+    let mut complete = true;
+    for blit in blits {
+        complete &= blit_quads(blit, size, smooth, tint, clamp, &mut repeat);
+    }
+    if !joins && clamp.is_empty() {
+        segs.pop();
+    }
     if !repeat.is_empty() {
-        colour(&mut repeat.vertices);
         if let Some(LocalSeg::Image(last)) = segs.last_mut()
             && last.key == key(true)
             && let Some(joined) = Arc::get_mut(&mut last.mesh)
