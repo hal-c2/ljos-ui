@@ -6,6 +6,11 @@
 //! view (`ScrollBar.vertical`), where the style declares them, and follow
 //! that Flickable ([`crate::scroll_bar`]).
 //!
+//! A `TextArea` that is the one item of a view fills it: as wide as the
+//! view while it wraps and no narrower while it does not, no lower than
+//! the view, and the view follows its cursor (the TextArea documentation's
+//! "Scrollable TextArea"; `features/controls/text-area-in-scroll-view.feature`).
+//!
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-scrollview.html.
 //! What the documentation leaves open (which keys scroll, what the
 //! content size is when nothing says) was learned by running `qml6`
@@ -17,15 +22,20 @@ use std::rc::Rc;
 use ljos_a11y::accesskit::Role as AkRole;
 use ljos_a11y::{NodeData, Role};
 use ljos_engine::{
-    Cx, Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Value, WriteKind, qml_impl,
+    Cx, Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Rect, Value, WriteKind,
+    qml_impl,
 };
 use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::{AccessibleAction, AccessibleItem, register_accessible_item};
-use ljos_quick::{Flickable, Item, KeyEvent, flickable, is_item, set_parent_item};
+use ljos_quick::{
+    Flickable, Item, KeyEvent, TextEditor, flickable, follows_implicit_size, give_size, is_item,
+    set_parent_item,
+};
 
 use crate::containers::Pane;
 use crate::control::Control;
 use crate::scroll_bar::{scroll_bars, step};
+use crate::text_area::TextArea;
 use crate::util::{flag, is_a, is_unset, num, object};
 
 /// `ScrollView`.
@@ -237,6 +247,13 @@ impl ScrollView {
             move |e| Value::Real(thickness(e, false)),
         )?;
 
+        if let Some(f) = st.made.get()
+            && let [area] = e.untrack(|| items_in(e, obj)).as_slice()
+            && is_a::<TextArea>(e, *area)
+        {
+            fill_with_text_area(e, f, *area)?;
+        }
+
         raise_bars(e, obj)?;
         e.watch(obj, Control::CONTENT_ITEM.index, move |e, _| {
             crate::util::check(e, "the bars of a view", raise_bars(e, obj));
@@ -250,6 +267,93 @@ impl ScrollView {
             }
         })?;
         Ok(())
+    }
+}
+
+/// Sizes a TextArea to the Flickable a view made for it, and keeps its
+/// cursor in view. A size the author gave the area stays theirs.
+fn fill_with_text_area(e: &Engine, f: ObjectId, area: ObjectId) -> Result<(), EngineError> {
+    let follows = [true, false].map(|h| e.untrack(|| follows_implicit_size(e, area, h)));
+    if follows.contains(&true) {
+        // Given a width, a wrapping area wraps to it.
+        give_size(e, area);
+    }
+    if follows[0] {
+        e.bind_computed(area, Item::WIDTH.index, move |e| {
+            let width = num(e, f, Item::WIDTH.index);
+            // A wrapping area asks for the width of its wrapped lines,
+            // which would never let them wrap wider.
+            Value::Real(if num(e, area, TextEditor::WRAP_MODE.index) as i32 == 0 {
+                width.max(num(e, area, Item::IMPLICIT_WIDTH.index))
+            } else {
+                width
+            })
+        })?;
+    }
+    if follows[1] {
+        e.bind_computed(area, Item::HEIGHT.index, move |e| {
+            Value::Real(num(e, f, Item::HEIGHT.index).max(num(
+                e,
+                area,
+                Item::IMPLICIT_HEIGHT.index,
+            )))
+        })?;
+    }
+    // Only the cursor moving scrolls: the user scrolling away from it
+    // does not bring it back.
+    e.effect_in(area, move |e| {
+        let Value::Rect(cursor) = e.read(area, TextEditor::CURSOR_RECTANGLE.index) else {
+            return;
+        };
+        e.untrack(|| follow_cursor(e, f, area, &cursor));
+    })?;
+    Ok(())
+}
+
+/// Scrolls `f` the least that shows `cursor` of `area` with the area's
+/// padding around it, as far as the content goes.
+fn follow_cursor(e: &Engine, f: ObjectId, area: ObjectId, cursor: &Rect) {
+    let axes = [
+        (
+            Item::X.index,
+            Flickable::CONTENT_X.index,
+            Item::WIDTH.index,
+            Flickable::CONTENT_WIDTH.index,
+            TextEditor::LEFT_PADDING.index,
+            TextEditor::RIGHT_PADDING.index,
+            cursor.x,
+            cursor.x + cursor.width,
+        ),
+        (
+            Item::Y.index,
+            Flickable::CONTENT_Y.index,
+            Item::HEIGHT.index,
+            Flickable::CONTENT_HEIGHT.index,
+            TextEditor::TOP_PADDING.index,
+            TextEditor::BOTTOM_PADDING.index,
+            cursor.y,
+            cursor.y + cursor.height,
+        ),
+    ];
+    for (horizontal, (at, position, view, content, before, after, lo, hi)) in
+        [true, false].into_iter().zip(axes)
+    {
+        let offset = num(e, area, at);
+        let lo = offset + lo - num(e, area, before);
+        let hi = offset + hi + num(e, area, after);
+        let (now, view) = (num(e, f, position), num(e, f, view));
+        let wanted = if lo < now {
+            lo
+        } else if hi > now + view {
+            hi - view
+        } else {
+            continue;
+        };
+        let end = (num(e, f, content) - view).max(0.0);
+        let to = wanted.clamp(0.0, end);
+        if to != now {
+            flickable::scroll(e, f, horizontal, to);
+        }
     }
 }
 
