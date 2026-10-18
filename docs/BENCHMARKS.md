@@ -2149,3 +2149,145 @@ At 60 fps the GPU animations frame is now 1.05 M on all threads, against Qt's 0.
 
 **What is left.** In clocks, the timers are 59 k per frame: 710 JS `timeChanged` calls at 47 k
 each. Typed write handles for bindings that write a native property are not done yet.
+
+### Startup and footprint against qml6: the binary, the glyph fallback and the module files (2026-10-18)
+
+**The binary.** Sizes are of the stripped `ljos` command, in bytes as `stat` gives them. "Before" is
+the tree at the start of this work, built the same way into a target directory of its own.
+
+| Build | Before | After |
+|---|---:|---:|
+| release (thin LTO), stripped | 89 356 648 | 83 390 832 (−6.7 %) |
+| release, unstripped | 115 760 032 | 110 529 328 |
+| dist (fat LTO, one codegen unit), stripped | 75 994 760 | 70 674 896 (−7.0 %) |
+
+What is in it (release, rust-lld's link map summed by the crate each input section came from).
+Code is 60.8 MB. The largest crates are `ljos_quick` 4.2 MB, the `ljos` binary 3.8, `ljos_bdd` 2.8,
+`ljos_engine` 2.3, `ljos_controls` 2.2, naga 1.9, SQLite 1.8 and wgpu-core 1.4; drop glue is 2.1 MB
+in 9 600 copies. Read-only data is 12.3 MB: ICU's datetime and collation data (3.4 MB together),
+egui's own fonts (1.4 MB), ljos_text's two Liberation fonts (0.8 MB) and the style pack (0.5 MB).
+The rest is relocations (3.3 MB), unwinding tables (`.eh_frame` 6.3 MB and `.gcc_except_table`
+2.4 MB) and relocated pointers (`.data.rel.ro` 2.5 MB).
+
+What was cut:
+
+- **Packed relocations** (`-z pack-relative-relocs`, from `ljos_cli`'s build script, for Linux and
+  glibc): 140 000 relative relocations of 24 bytes each became a 44 kB bitmap, −2.8 MB. The binary
+  now needs glibc 2.36, and the loader says so by version. This keeps ASLR, which a non-PIE link
+  would have given up.
+- **egui without its own fonts** (`default-features = false`): −1.4 MB. egui draws only the dev
+  overlay and the inspector's text, and the shell now gives it ljos_text's Liberation Sans for both
+  of its families. The overlay's monospace text is Liberation Sans as well.
+- **The developer tools at `opt-level = "s"`** (`[profile.release.package]`): the feature catalogue
+  and its runner (`ljos_bdd`, cucumber, gherkin), the authoring server (`ljos_mcp_author`, rmcp,
+  schemars), the bench, the formatter and the QtTest runner, −1.7 MB together. `[profile.dist]`
+  inherits these overrides: its code fell by 1.6 MB.
+- **Generic code moved out of each copy**: `Graph::untrack` was made 583 times (244 kB) and
+  `Engine::extension` 95 times (120 kB). The frame push and pop, and the lookup by `TypeId`, are
+  each one function now: about −150 kB, across `ljos_quick`, `ljos_controls` and `ljos_engine`.
+
+Kept, each as a DECISION:
+
+- **The duplicate dependency versions.** vello_cpu 0.1/0.3, skrifa, read-fonts, tiny-skia 0.11/0.12,
+  smithay-client-toolkit 0.19/0.20 and fearless_simd ×3 come from egui, hayro (PDF) and winit's
+  client-side decorations against one another. PDF is a feature, and the decorations are what GNOME
+  on Wayland draws with. None of these is in our hands.
+- **Uncompressed fonts and tables.** Compressing them would turn clean file pages, which the kernel
+  shares and drops, into anonymous heap, and would add decompression to startup.
+- **ICU's baked data** (3.5 MB). Qt loads libicu, 39 MB of files.
+- **The unwinding tables.** `panic = "unwind"` is D11: the supervisor recovers from panics.
+
+**Against qml6's footprint** (calqlatr, GPU sandbox, `smaps` 6 s after start). qml6 maps 47 Qt files
+(the libQt6* libraries and the qt6 plugins, 57.8 MB on disk), with 17.5–17.8 MiB of PSS. It also
+maps libicu (3 files, 39 MB) and 116 other system files (430 MB on disk, 62 MiB of PSS, with the
+NVIDIA EGL libraries and LLVM). Ljós maps its own binary, libicu (2 files, 35.3 MB, pulled in by the
+system's libxml2) and 47 other files (247 MB on disk, 20–24 MiB of PSS). In runs alternated two by
+two, the binary's own PSS went from 39.6–40.2 MiB before to 36.2–36.7 MiB after. Its private dirty
+pages stayed at 2.7–2.8 MiB. So Ljós keeps about twice what Qt's own libraries keep, as one file in
+place of 47, and less of the system's.
+
+**The glyph fallback.** The first character the default family lacks ("⅟" in calqlatr) had fontique
+ask fontconfig for the fallback (`FcFontMatch`) and then sort every installed font for that family
+(`FcFontSort` over 2 385 fonts). That took 5–11 ms in the frame that first drew it. fontique is not
+ours, so the sort stays. An engine built with the system fonts now lays out one such character as
+it is built, on the `ljos-fonts` thread that already reads the fonts, and the collection keeps what
+it found. The first symbol drawn then takes 16–23 µs, against 5.3–10.7 ms. The engine's build stayed
+at 28–44 ms, as before. Symbols, arrows and punctuation (the Common script) share the one lookup.
+Another script pays its own on first use: Han 13–15 ms, Arabic 0.5–2 ms, emoji 2–11 ms. They are
+not looked up ahead, because most programs never draw them.
+
+**The QML module files.** DECISION: the files a library ships are not parsed at startup, and there
+is nothing left to precompile. The styles (`ljos_controls`) and the dialogs (`ljos_platform`)
+compile their QML to IR in their build scripts, and the IR is decoded per file when the file is
+first read. Decoding all 99 files of the style pack (523 kB) takes 1.0 ms, about 10 µs a file
+(ComboBox, the largest, 37 µs). An application decodes only the few it uses.
+
+What does parse at startup is `ljos run`'s project, which a shipped application compiles at build
+time. The entry is compiled on the `ljos-compile` thread while the window system and the drivers
+start. Every other file was compiled on the main thread when the engine first made an object of it:
+24 files and 23.4 ms in thermostat, 31 and 29.5 ms in todolist, 9 and 7.4 ms in samegame, 5 and
+2.1 ms in calqlatr. The compile thread now goes on to the files the entry makes objects of, and
+theirs, until the shell's setup asks for the source. What it compiled is held back and told when
+the engine asks for it, so warnings come when they did. The main thread now compiles 4 files
+(1.0 ms) in thermostat, 2 (0.7 ms) in samegame and none in calqlatr. In todolist the compile thread
+gets only to `App` and `HomePage` before setup: opening the project, which scans its tree, takes
+10–29 ms there. The first frame did not move with this (the table below), because those compiles
+already overlapped the drivers' start.
+
+**Re-measured** (interleaved as in the section before: before, after and qml6 in turn over the 11
+apps, three rounds on llvmpipe and three on the GPU, desktop profile, `--settle 1 --idle 10`, load
+1.5–51; each cell is the median of three).
+
+| App | First frame, llvmpipe: before → after | qml6 | First frame, GPU: before → after | qml6 | Idle CPU after / qml6, llvmpipe | GPU |
+|---|---:|---:|---:|---:|---:|---:|
+| animations | 55 → 57 | 117 | 35 → 40 | 72 | 16.25 / 25.07 % | 1.85 / 2.43 % |
+| form | 63 → 66 | 154 | 49 → 51 | 114 | 0 / 0 | 0 / 0 |
+| listview | 61 → 55 | 139 | 42 → 41 | 90 | 21.53 / 23.07 % | **7.27 / 4.31 %** |
+| rectangles | 58 → 66 | 121 | 49 → 50 | 81 | 0 / 0 | 0 / 0 |
+| text | 61 → 63 | 142 | 46 → 49 | 94 | 0 / 0 | 0 / 0 |
+| calqlatr | 64 → 57 | 165 | 51 → 47 | 118 | 0 / 0 | 0 / 0 |
+| samegame | 64 → 58 | 150 | 48 → 50 | 121 | 8.71 / 29.21 % | 1.67 / 3.03 % |
+| clocks | 65 → 53 | 158 | 42 → 45 | 100 | 11.70 / 19.71 % | 1.78 / 1.87 % |
+| thermostat | 103 → 102 | 209 | 88 → 91 | 176 | 0 / 0 | 0 / 0 |
+| todolist | 81 → 79 | 190 | 71 → 70 | 152 | 0 / 0 | 0 / 0 |
+| rssnews | 61 → 57 | 165 | 46 → 43 | 120 | **1.49 / 1.35 %** | **1.29 / 1.08 %** |
+
+The first frames moved by no more than the spread of one binary's rounds: thermostat was 83–105 ms
+before on the GPU and 84–100 after. Startup was not made slower or faster by this work; it was
+already about half of qml6's on every app.
+
+Memory after 10 s idle, median, MiB (anon PSS before / after / qml6; the file-backed PSS of one
+binary moves by up to 30 MiB with what the page cache holds, see the section before):
+
+| App | GPU | llvmpipe |
+|---|---:|---:|
+| animations | 30.3 / 30.6 / 37.2 | 45.8 / 45.9 / 88.1 |
+| form | 37.4 / 37.5 / 50.9 | 59.0 / 59.0 / 105.5 |
+| listview | 30.7 / 30.8 / 43.7 | 46.6 / 46.6 / 91.6 |
+| rectangles | **46.2 / 46.4 / 42.9** | 70.0 / 70.1 / 100.1 |
+| text | 31.6 / 31.7 / 46.3 | 50.0 / 50.0 / 100.2 |
+| calqlatr | 33.2 / 33.3 / 49.8 | 48.6 / 48.5 / 91.9 |
+| samegame | 34.5 / 35.4 / 49.2 | 48.5 / 48.7 / 102.3 |
+| clocks | 29.8 / 30.7 / 46.0 | 46.0 / 46.4 / 95.6 |
+| thermostat | 56.3 / 55.0 / 62.6 | 85.6 / 86.2 / 139.7 |
+| todolist | 42.2 / 42.3 / 55.1 | 56.7 / 56.8 / 104.8 |
+| rssnews | 39.7 / 41.5 / 187.7 | 57.2 / 57.7 / 341.1 |
+
+Anonymous memory did not change: what was cut is file pages, which the binary's own PSS above
+shows.
+
+**Where Ljós still loses to qml6.**
+
+- **Idle CPU of listview on the GPU**: 7.27 % against 4.31 %. On llvmpipe it is below qml6 (21.5
+  against 23.1 %). The cost on the GPU is per frame, not in the scene.
+- **Idle CPU of rssnews**: 1.29 against 1.08 % on the GPU, and 1.49 against 1.35 % on llvmpipe.
+  This is within a run's spread, but it was above qml6 in every round.
+- **Rectangles' memory on the GPU**: 46.4 MiB of anon PSS against 42.9 (49.3 against 46.7 MiB
+  `memory.current` after idle). The node table, as in the section before.
+- **The binary's file pages**: 36 MiB of PSS against Qt's 17.5 MiB for its libraries. The command
+  carries the developer tools, the codecs and the PDF reader, and a shipped application links a
+  smaller set. Anonymous memory is what both pay per process, and there Ljós is lower on every app
+  but rectangles.
+- **Startup of todolist and thermostat** is still 70–100 ms. Neither is bound by compiling any more:
+  opening todolist's project (scanning its tree) takes 10–29 ms on the compile thread, and
+  thermostat's first frame waits on something that is not its compile.
