@@ -120,6 +120,28 @@ pub fn live_cpu_ns(before: &BTreeMap<u32, u64>, after: &BTreeMap<u32, u64>) -> u
         .sum()
 }
 
+/// The CPU time of the threads alive at the end, between two
+/// [`thread_cpu_ns`], in milliseconds by thread name (`names` from
+/// [`thread_switches`]); threads of one name are added up.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn cpu_by_name(
+    before: &BTreeMap<u32, u64>,
+    after: &BTreeMap<u32, u64>,
+    names: &BTreeMap<u32, (String, u64)>,
+) -> BTreeMap<String, f64> {
+    let mut by_name = BTreeMap::new();
+    for (id, n) in after {
+        let used = n.saturating_sub(before.get(id).copied().unwrap_or(0));
+        if used == 0 {
+            continue;
+        }
+        let name = names.get(id).map_or("?", |(name, _)| name.as_str());
+        *by_name.entry(name.to_owned()).or_insert(0.0) += used as f64 / 1e6;
+    }
+    by_name
+}
+
 /// The program a process runs.
 #[must_use]
 pub fn exe(pid: u32) -> Option<PathBuf> {

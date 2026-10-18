@@ -107,6 +107,7 @@ outside a limit.
 | Settled PSS | PSS of all pages |
 | Idle CPU, idle wakeups | CPU use and context switches over `--idle` seconds (10) with no input |
 | Idle CPU of threads that ended | the part of idle CPU no thread alive at the end of the window used: the cgroup's usage less the live threads' `schedstat`. Wakeups are read from live threads, so a short worker shows here and not as wakeups |
+| CPU by thread (`thread_cpu_ms` in report.json) | each window's CPU split by the name of the threads alive at its end, threads of one name added up: whether a runtime's work is on its main thread, a Wayland or clipboard thread, or the rasteriser |
 | Frames while idle | screencopy frames over the idle window whose pixels differ from the one before: non-zero only for apps that animate. A runtime that sends the compositor a frame that shows what the last one did (Qt does, in an animation that moves nothing on screen) is not counted for it; those are reported apart, as frames sent. Counts before 2026-10-18 include them |
 | Frame interval while idle | the 95th percentile time between those frames, and the slowest. A pause in an animation is a long interval in either runtime |
 | Wait before driving | the pointer is put where the gesture starts, then the bench waits until the window's pixels have not changed for 300 ms (at most 5 s), so that the input starts on a settled window in every runtime: what the pointer's entry starts, and a startup animation, are over. Not counted in the load. An animation that never pauses that long is driven at 5 s |
