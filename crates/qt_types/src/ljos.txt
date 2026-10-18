@@ -4346,9 +4346,16 @@ module QtQuick.Controls.Fusion.impl
 		signal litChanged
 		method shade
 	type QtQuick/Controls/Fusion/impl/SliderHandle.qml SliderHandle
-		prototype QtQuick.Controls.Fusion.impl.ButtonPanel named
+		prototype QtQuick.Rectangle named
+		prop control QtQuick.Controls.Basic.Control named pointer
 		prop visualFocus QtQml.bool named
+		prop button QtQuick.color named readonly
+		prop highlight QtQuick.color named readonly
+		signal controlChanged
 		signal visualFocusChanged
+		signal buttonChanged
+		signal highlightChanged
+		method shade
 	type QtQuick/Controls/Fusion/impl/SwitchIndicator.qml SwitchIndicator
 		prototype QtQuick.Controls.Fusion.impl.SliderGroove named
 	type QtQuick/Controls/Fusion/impl/TextFieldBackground.qml TextFieldBackground

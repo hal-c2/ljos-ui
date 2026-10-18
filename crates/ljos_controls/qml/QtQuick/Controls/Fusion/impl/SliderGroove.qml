@@ -1,7 +1,8 @@
 // The sunken groove of Fusion's sliders and switches, a drawing of our own
 // (CLEAN_ROOM.md), filled in the highlight over the share `offset` to
 // `progress` of its length. Its shades are fitted to what qml6 shows for
-// the default palette.
+// the default palette. Its shading runs from top to bottom whichever way
+// it lies, as qml6 shows (fusion-states.feature).
 import QtQuick
 import QtQuick.Templates as T
 
@@ -30,7 +31,6 @@ Rectangle {
     radius: 2
     border.color: Qt.darker(button, 1.4)
     gradient: Gradient {
-        orientation: groove.vertical ? Gradient.Horizontal : Gradient.Vertical
         GradientStop { position: 0; color: groove.shade(groove.window, 0.791) }
         GradientStop { position: 1; color: groove.shade(groove.window, 0.958) }
     }
@@ -46,8 +46,7 @@ Rectangle {
         border.width: groove.control.enabled ? 1 : groove.alwaysHighlighted ? 0 : 1
         border.color: groove.lit ? groove.shade(groove.highlight, 0.728) : groove.shade(groove.button, 0.438)
         gradient: Gradient {
-            orientation: groove.vertical ? Gradient.Horizontal : Gradient.Vertical
-            GradientStop {
+                GradientStop {
                 position: 0
                 color: groove.lit ? groove.highlight : groove.shade(groove.button, 0.607)
             }

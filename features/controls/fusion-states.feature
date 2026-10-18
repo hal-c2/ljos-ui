@@ -11,7 +11,9 @@ Feature: How the Fusion style shows a control's state
   Pressed, a check box or radio button is shaded; one that is not enabled
   is filled with the window's colour and its mark is grey. A switch's or
   slider's filled part is the highlight, and grey when it is not enabled.
-  A slider's handle sits where its value is, across or down. A field that
+  A slider's handle sits where its value is, across or down: a white knob
+  in an outline of the window's colour, darker. A groove is shaded from
+  top to bottom, a vertical one too. A field that
   has the keyboard is outlined in a darker highlight, and so is a spin
   box; a combo box keeps its outline. A spin box's step is shaded while it
   is pressed.
@@ -83,8 +85,14 @@ Feature: How the Fusion style shows a control's state
       | slider        | handle.x                 | 74        |
       | slider        | handle.y                 | 0         |
       | slider        | handle.width             | 13        |
+      | slider        | handle.color             | "#ffffff" |
+      | slider        | handle.border.color      | "#00000000" |
+      | slider        | handle.children.0.border.color | "#ababab" |
       | pressedSlider | handle.x                 | 74        |
       | offSlider     | handle.x                 | 74        |
+      | offSlider     | handle.color             | "#ffffff" |
+      | offSlider     | handle.children.0.border.color | "#ababab" |
+      | offSwitch     | indicator.children.1.color | "#ffffff" |
       | upright       | background.x             | 4         |
       | upright       | background.width         | 5         |
       | upright       | background.height        | 160       |
@@ -121,3 +129,18 @@ Feature: How the Fusion style shows a control's state
       | object | value     |
       | field  | "#26709e" |
       | combo  | "#ababab" |
+
+  Scenario: A vertical slider's groove is shaded from top to bottom
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+      Rectangle {
+        width: 40; height: 170; color: "white"
+        Slider { orientation: Qt.Vertical; value: 0.5 }
+      }
+      """
+    Then the pixel at 6, 8 of the window is within 4 of "#bfbfbf"
+    And the pixel at 6, 64 of the window is within 4 of "#cdcdcd"
+    And the pixel at 6, 100 of the window is within 6 of "#3393d0"
+    And the pixel at 6, 150 of the window is within 6 of "#39a5e9"

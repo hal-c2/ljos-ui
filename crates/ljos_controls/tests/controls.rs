@@ -514,13 +514,14 @@ fn fusion_makes_no_more_objects_than_it_draws() {
     // Every object costs memory and time to make, and Fusion draws in
     // gradients, each of which is three. What it holds back: the stripes
     // of a bar that knows how far it has come, and a path element per
-    // line of an arrow or a tick.
+    // line of an arrow or a tick. A knob's outline is an item of its own,
+    // as on qml6.
     for (control, most) in [
         ("Button", 7),
         ("CheckBox", 13),
         ("RadioButton", 6),
-        ("Switch", 16),
-        ("Slider", 13),
+        ("Switch", 17),
+        ("Slider", 14),
         ("ComboBox", 34),
         ("SpinBox", 21),
         ("TextField", 4),
@@ -528,14 +529,14 @@ fn fusion_makes_no_more_objects_than_it_draws() {
         ("BusyIndicator", 12),
         ("GroupBox", 3),
         ("PageIndicator", 2),
-        ("RangeSlider", 20),
+        ("RangeSlider", 22),
         ("DelayButton", 15),
         ("Dial", 8),
         ("Tumbler", 10),
         ("ItemDelegate", 3),
         ("CheckDelegate", 13),
         ("RadioDelegate", 6),
-        ("SwitchDelegate", 16),
+        ("SwitchDelegate", 17),
     ] {
         let made = objects_of("Fusion", control);
         assert!(
