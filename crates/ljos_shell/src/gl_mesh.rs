@@ -249,6 +249,9 @@ impl Meshes {
         self.vertices.clear();
         self.indices.clear();
         self.draws.clear();
+        // The painter's map hashes with SipHash; meshes in a row mostly
+        // sample one picture (the font atlas), so the last answer is kept.
+        let mut last: Option<(egui::TextureId, glow::Texture)> = None;
         for p in primitives {
             let mesh = match &p.primitive {
                 Primitive::Mesh(m) => m,
@@ -261,8 +264,15 @@ impl Meshes {
             if mesh.indices.is_empty() || scissor[2] == 0 || scissor[3] == 0 {
                 continue;
             }
-            let Some(texture) = painter.texture(mesh.texture_id) else {
-                continue;
+            let texture = match last {
+                Some((id, t)) if id == mesh.texture_id => t,
+                _ => {
+                    let Some(t) = painter.texture(mesh.texture_id) else {
+                        continue;
+                    };
+                    last = Some((mesh.texture_id, t));
+                    t
+                }
             };
             let base = self.vertices.len() as u32;
             let start = self.indices.len();
