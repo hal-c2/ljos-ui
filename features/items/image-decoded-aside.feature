@@ -14,7 +14,9 @@ Feature: A large local picture is decoded away from the user interface
   size the item is drawn, and painted when they come. So the window keeps
   answering while many large pictures load. A smaller picture is decoded
   on the spot. Qt decodes every one on the spot, so the oracle has no
-  frame without the pixels.
+  frame without the pixels. So that a window does not open blank where
+  Qt shows the picture, the frame after such a source is set waits a
+  short, bounded while for the decodes it started, woken as they end.
 
   Background:
     Given a 1024 by 768 image file "big.png" filled with "#2060a0"
@@ -34,6 +36,19 @@ Feature: A large local picture is decoded away from the user interface
     And the property "implicitHeight" of "picture" is 768
     And no picture is kept for "picture" yet
     When 100 milliseconds pass
+    Then the picture of "picture" is kept at 224 by 168 pixels
+    And the pixel at 100, 75 of the window is "#2060a0"
+
+  Scenario: The first frame waits a moment for a large picture
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        width: 200; height: 200
+        Image { objectName: "picture"; width: 200; height: 150; source: "big.png" }
+      }
+      """
+    When the window shows its first frame
     Then the picture of "picture" is kept at 224 by 168 pixels
     And the pixel at 100, 75 of the window is "#2060a0"
 
