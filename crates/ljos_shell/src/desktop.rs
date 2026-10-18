@@ -223,6 +223,8 @@ struct Slot {
     held: Option<Instant>,
     /// The frame part of `held`: what a pass asked for at once waits for.
     paced: Option<Instant>,
+    /// When the next drawn frame is due, a frame after the last one.
+    frame_due: Option<Instant>,
     /// When the earliest repaint the next pass answers was due, for the
     /// inspector.
     #[cfg(feature = "mcp")]
@@ -280,6 +282,7 @@ impl Slot {
             undrawn: 0,
             held: None,
             paced: None,
+            frame_due: None,
             #[cfg(feature = "mcp")]
             asked: None,
         }
@@ -330,6 +333,7 @@ impl Slot {
         self.undrawn = 0;
         self.held = None;
         self.paced = None;
+        self.frame_due = None;
     }
 
     /// A pass changed nothing to draw; the scene wants the next in
@@ -358,11 +362,24 @@ impl Slot {
         self.held = self.paced;
     }
 
-    /// A pass was drawn.
-    fn drawn(&mut self) {
+    /// A pass was drawn. The display holds a drawn frame until it is
+    /// shown, which paces the passes, except where presenting returns at
+    /// once: a software rasteriser on an X server without DRI3 does, and
+    /// an animation there was drawn three times a frame. The next pass
+    /// waits until a frame after the last, so a display that does hold
+    /// it is not waited for twice. A pass that came more than a frame late
+    /// starts the count again.
+    fn drawn(&mut self, now: Instant) {
         self.undrawn = 0;
-        self.held = None;
-        self.paced = None;
+        let frame = self.frame_interval();
+        let due = self
+            .frame_due
+            .map(|d| d + frame)
+            .filter(|d| *d + frame >= now)
+            .unwrap_or(now);
+        self.frame_due = Some(due);
+        self.held = (due > now).then_some(due);
+        self.paced = self.held;
     }
 
     /// How long a frame is shown on the window's display.
@@ -1288,7 +1305,7 @@ impl<M: Send + 'static> Desktop<M> {
             // Only now does the platform say which display it is on.
             *screens_stale = true;
         }
-        slot.drawn();
+        slot.drawn(Instant::now());
         if !std::mem::replace(&mut self.drawn_once, true) {
             self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
         }
@@ -1922,13 +1939,13 @@ mod tests {
         slot.not_drawn(t + ms(21), None);
         assert_eq!(slot.held, Some(t + ms(41)));
         // A drawn pass lets the next one run at once again.
-        slot.drawn();
+        slot.drawn(t + ms(41));
         assert_eq!(slot.held, None);
         slot.not_drawn(t + ms(50), None);
         assert_eq!(slot.held, None);
         // An animation's next frame is when the scene said, not the
         // frame earlier egui made of it.
-        slot.drawn();
+        slot.drawn(t + ms(60));
         slot.not_drawn(t + ms(60), Some(ms(15)));
         assert_eq!(slot.held, Some(t + ms(75)));
     }
@@ -1953,8 +1970,37 @@ mod tests {
         slot.asked_at_once();
         assert_eq!(slot.held, Some(t + ms(21)));
         // A drawn pass holds nothing back.
-        slot.drawn();
+        slot.drawn(t + ms(22));
         slot.asked_at_once();
         assert_eq!(slot.held, None);
+    }
+
+    #[test]
+    fn drawn_passes_are_a_frame_apart_when_the_display_does_not_hold_them() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        slot.drawn(t);
+        assert_eq!(slot.held, None, "the first is drawn when it comes");
+        // Presenting returned at once: the next waits for its frame, and
+        // so does one asked for at once.
+        slot.drawn(t + ms(3));
+        assert_eq!(slot.held, Some(t + ms(20)));
+        slot.asked_at_once();
+        assert_eq!(slot.held, Some(t + ms(20)));
+        slot.drawn(t + ms(23));
+        assert_eq!(slot.held, Some(t + ms(40)));
+        // A display that holds each frame until it is shown is not
+        // waited for again.
+        slot.drawn(t + ms(60));
+        assert_eq!(slot.held, None);
+        slot.drawn(t + ms(81));
+        assert_eq!(slot.held, None);
+        // After a pause the count starts again.
+        slot.drawn(t + ms(500));
+        assert_eq!(slot.held, None);
+        slot.drawn(t + ms(502));
+        assert_eq!(slot.held, Some(t + ms(520)));
     }
 }
