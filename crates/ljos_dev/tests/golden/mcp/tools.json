@@ -282,7 +282,7 @@
     "read_only": true
   },
   {
-    "description": "What does work in the app, like Erlang's observer: OS threads (UI thread, pools, inspector, platform readers) with state, CPU time and wakeups; running Timers and animations; the owners the frame scheduler charges time to. `kind` keeps one kind.",
+    "description": "What does work, like Erlang's observer: threads with state, CPU time and wakeups; Timers, animations, scheduler owners; and the mailboxes reaching the UI thread (depth, capacity, age, sent, refused as busy), shown even when it is stuck. `kind` keeps one; `peek` names front messages' kinds.",
     "input_schema": {
       "$defs": {
         "ProcessKind": {
@@ -306,6 +306,11 @@
               "const": "owner",
               "description": "What the frame scheduler charged time to: the application, error\nboundaries, the inspector.",
               "type": "string"
+            },
+            {
+              "const": "mailbox",
+              "description": "The bounded inboxes threads reach the UI thread through. Read\nwithout the UI thread, so a stuck one still shows its inbox.",
+              "type": "string"
             }
           ]
         }
@@ -321,23 +326,11 @@
               "type": "null"
             }
           ],
-          "description": "List only this kind: `thread`, `timer`, `animation` or `owner`."
-        }
-      },
-      "title": "ProcessesArgs",
-      "type": "object"
-    },
-    "name": "app_processes",
-    "read_only": true
-  },
-  {
-    "description": "The bounded inboxes threads use to reach the UI thread: depth and capacity, oldest message's age, messages sent, refused as busy, replaced and drained since the inspector attached, senders. `peek` lists the kinds of the front messages, never their contents.",
-    "input_schema": {
-      "additionalProperties": false,
-      "properties": {
-        "name": {
+          "description": "List only this kind: `thread`, `timer`, `animation`, `owner` or\n`mailbox`."
+        },
+        "mailbox": {
           "default": null,
-          "description": "List only the inboxes of this name (`application`, `platform`,\n`images`, `inspector`, `reload`).",
+          "description": "List only the mailboxes of this name (`application`, `platform`,\n`images`, `inspector`, `reload`).",
           "type": [
             "string",
             "null"
@@ -345,7 +338,7 @@
         },
         "peek": {
           "default": null,
-          "description": "Name the kinds of this many front messages per inbox (at most 20,\ndefault 0). Never their contents.",
+          "description": "Name the kinds of this many front messages per mailbox (at most 20,\ndefault 0). Never their contents.",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -354,10 +347,10 @@
           ]
         }
       },
-      "title": "MailboxesArgs",
+      "title": "ProcessesArgs",
       "type": "object"
     },
-    "name": "app_mailboxes",
+    "name": "app_processes",
     "read_only": true
   },
   {

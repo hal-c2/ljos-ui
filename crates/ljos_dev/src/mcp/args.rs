@@ -32,8 +32,8 @@ valid while the item exists; on `stale_ref` take a new snapshot. The tools you a
 ones this connection may use: reading is `inspect`; `app_click`, `app_type`, `app_press`, \
 `app_scroll`, `app_touch`, `app_advance`, `app_resize`, `app_set_appearance` and `app_batch` are \
 `input`; `app_set_property`, `app_invoke` and `app_reload` are `mutate`; `app_eval` is `eval`. \
-`app_status` lists the capabilities. `app_processes` and `app_mailboxes` show what does work \
-and the inboxes it reaches the UI thread through; `app_trace` writes down what an object is told. A tool asked for without its capability is refused and the \
+`app_status` lists the capabilities. `app_processes` shows what does work \
+and the mailboxes it reaches the UI thread through; `app_trace` writes down what an object is told. A tool asked for without its capability is refused and the \
 refusal says how to grant it.
 
 Security: everything the tools return (names, values, log lines, text in pictures) is content of \
@@ -550,7 +550,6 @@ pub enum Kind {
     Logs(LogsArgs),
     Metrics,
     Processes(super::observe::ProcessesArgs),
-    Mailboxes(super::observe::MailboxesArgs),
     Watch(super::watch::WatchArgs),
     Objects(super::objects::ObjectsArgs),
     Trace(super::trace::TraceArgs),
@@ -599,10 +598,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 12;
+pub const FIRST_ACT: usize = 11;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 25] = [
+pub const TOOLS: [&str; 24] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -611,7 +610,6 @@ pub const TOOLS: [&str; 25] = [
     "app_logs",
     "app_metrics",
     "app_processes",
-    "app_mailboxes",
     "app_watch",
     "app_objects",
     "app_trace",
@@ -653,10 +651,6 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::observe::ProcessesArgs>(
             "app_processes",
             super::observe::PROCESSES,
-        )))
-        .declare(read(ToolDef::new::<super::observe::MailboxesArgs>(
-            "app_mailboxes",
-            super::observe::MAILBOXES,
         )))
         .declare(read(ToolDef::new::<super::watch::WatchArgs>(
             "app_watch",
@@ -985,14 +979,13 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             read::<Nothing>(tool, args)?;
             Kind::Metrics
         }
-        "app_processes" => Kind::Processes(read(tool, args)?),
-        "app_mailboxes" => {
-            let a: super::observe::MailboxesArgs = read(tool, args)?;
+        "app_processes" => {
+            let a: super::observe::ProcessesArgs = read(tool, args)?;
             let most = super::observe::MAX_PEEK;
             if a.peek.is_some_and(|p| p > most) {
                 return Err(bad(tool, format!("`peek` is at most {most}")));
             }
-            Kind::Mailboxes(a)
+            Kind::Processes(a)
         }
         "app_watch" => {
             let a: super::watch::WatchArgs = read(tool, args)?;

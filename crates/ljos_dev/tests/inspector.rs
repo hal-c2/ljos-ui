@@ -1679,11 +1679,14 @@ fn app_processes_keeps_one_kind() {
 }
 
 #[test]
-fn app_mailboxes_counts_the_inspectors_own_requests_without_waking_the_ui_thread() {
+fn app_processes_counts_the_inspectors_own_requests_without_waking_the_ui_thread() {
     let mut app = app();
     app.call("app_status", json!({}));
     app.call("app_status", json!({}));
-    let reply = app.call("app_mailboxes", json!({ "name": "inspector", "peek": 3 }));
+    let reply = app.call(
+        "app_processes",
+        json!({ "kind": "mailbox", "mailbox": "inspector", "peek": 3 }),
+    );
     assert_eq!(
         app.pumps, 0,
         "the mailboxes are read on the server's thread"
@@ -1702,19 +1705,58 @@ fn app_mailboxes_counts_the_inspectors_own_requests_without_waking_the_ui_thread
     assert_eq!(mine["depth"], 0);
     assert!(mine["peek"].as_array().unwrap().is_empty());
     assert!(
-        reply.text.contains("inspector: 0/16 queued"),
+        reply.text.contains("mailbox inspector: 0/16 queued"),
         "{}",
         reply.text
+    );
+    assert_eq!(reply.structured["processes"], json!([]));
+}
+
+#[test]
+fn app_processes_lists_the_mailboxes_with_what_does_work() {
+    let mut app = app();
+    let reply = app.call("app_processes", json!({}));
+    assert!(app.pumps > 0, "the timers are the UI thread's");
+    let s = &reply.structured;
+    assert!(!s["mailboxes"].as_array().unwrap().is_empty(), "{s}");
+    assert_eq!(s["counted_since"], "inspector attached");
+    let timers = app.call("app_processes", json!({ "kind": "timer" }));
+    assert!(timers.structured.get("mailboxes").is_none());
+}
+
+#[test]
+fn app_processes_shows_the_mailboxes_of_a_ui_thread_that_does_not_answer() {
+    let mut app = app_with(
+        MAIN,
+        InspectorConfig {
+            timeout: Duration::from_millis(60),
+            ..InspectorConfig::default()
+        },
+    );
+    let reply = app
+        .client
+        .call("app_processes", json!({}), &mut || {})
+        .unwrap();
+    assert!(!reply.is_error, "{}", reply.text);
+    let s = &reply.structured;
+    assert!(s["ui_thread"].as_str().unwrap().contains("60 ms"), "{s}");
+    assert!(
+        s["mailboxes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["name"] == "inspector" && m["depth"].as_u64() >= Some(1)),
+        "the request nobody answered waits in the inbox: {s}"
     );
 }
 
 #[test]
-fn app_mailboxes_names_kinds_never_contents() {
+fn app_processes_names_a_mailboxs_kinds_never_contents() {
     let mut app = app();
-    let reply = app.call("app_mailboxes", json!({ "peek": 20 }));
+    let reply = app.call("app_processes", json!({ "kind": "mailbox", "peek": 20 }));
     let text = serde_json::to_string(&reply.structured).unwrap();
     assert!(!text.contains("hunter2"));
-    let (code, message, _) = app.refused("app_mailboxes", json!({ "peek": 21 }));
+    let (code, message, _) = app.refused("app_processes", json!({ "kind": "mailbox", "peek": 21 }));
     assert_eq!(code, "invalid_argument", "{message}");
     assert!(message.contains("at most 20"), "{message}");
 }

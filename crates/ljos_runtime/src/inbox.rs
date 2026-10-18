@@ -583,7 +583,7 @@ impl<M> UiInbox<M> {
 }
 
 impl<M: Send + 'static> UiInbox<M> {
-    /// Names this inbox for an observer (`app_mailboxes`), once; a second
+    /// Names this inbox for an observer (`app_processes`), once; a second
     /// name is ignored. `kind_of` names a message's kind for the counts
     /// by kind and the peek; it must not look further into the payload
     /// than its variant, because what it returns is shown. Costs nothing

@@ -6,8 +6,9 @@
 @ljos-only @headless
 Feature: Processes and mailboxes from the inspector
   Like Erlang's observer, an agent or the `ljos observe` window can see
-  what does work in the application and the bounded mailboxes work
-  reaches the UI thread through, without ever seeing a message's contents.
+  what does work in the application and, with it, the bounded mailboxes
+  work reaches the UI thread through, without ever seeing a message's
+  contents.
 
   Background:
     Given the QML:
@@ -58,19 +59,34 @@ Feature: Processes and mailboxes from the inspector
 
   Rule: A mailbox shows how full it is, never what it holds
 
-    Scenario: The inspector's own inbox is listed with its capacity
-      When the agent calls the tool "app_mailboxes" with:
-        """json
-        {"name": "inspector"}
-        """
-      Then the answer's "/mailboxes/0/name" is "inspector"
-      And the answer's "/mailboxes/0/capacity" is 16
+    # As Erlang's observer shows each process's message queue with it.
+    Scenario: The mailboxes are listed with the processes
+      When the agent calls the tool "app_processes"
+      Then the answer's "/processes/0/kind" is "thread"
+      And the answer's "/mailboxes/0/name" matches "^[a-z]+$"
       And the answer's "/counted_since" is "inspector attached"
 
-    Scenario: A peek past the front twenty messages is refused
-      When the agent calls the tool "app_mailboxes" with:
+    Scenario: The inspector's own inbox is listed with its capacity
+      When the agent calls the tool "app_processes" with:
         """json
-        {"peek": 21}
+        {"kind": "mailbox", "mailbox": "inspector"}
+        """
+      Then the answer's "/mailboxes" has 1 entries
+      And the answer's "/mailboxes/0/name" is "inspector"
+      And the answer's "/mailboxes/0/capacity" is 16
+      And the answer's "/processes" has 0 entries
+
+    Scenario: Another kind lists no mailboxes
+      When the agent calls the tool "app_processes" with:
+        """json
+        {"kind": "timer"}
+        """
+      Then the answer's "/mailboxes" is absent
+
+    Scenario: A peek past the front twenty messages is refused
+      When the agent calls the tool "app_processes" with:
+        """json
+        {"kind": "mailbox", "peek": 21}
         """
       Then the agent is refused with "invalid_argument"
 

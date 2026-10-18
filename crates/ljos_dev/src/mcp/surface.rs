@@ -267,10 +267,15 @@ impl McpSurface for InspectorSurface {
                 d.per_copy_bytes()
             });
             let kind = args::parse(name, args)?;
-            if let Kind::Mailboxes(a) = &kind {
+            if let Kind::Processes(a) = &kind
+                && !a.wants_the_ui_thread()
+            {
                 // Read here, so a UI thread that is stuck still shows its
                 // inbox filling up.
-                return Ok(super::observe::mailboxes(a));
+                return Ok(super::observe::with_mailboxes(
+                    ToolReply::from(json!({})),
+                    a,
+                ));
             }
             if let Kind::Watch(a) = &kind {
                 // Sleeps here until the UI thread has something to tell:
@@ -309,7 +314,25 @@ impl McpSurface for InspectorSurface {
             {
                 waited = Some(self.wait_for_reload(after, a.wait_ms.unwrap_or(0)).await);
             }
-            let mut reply = self.ask(kind, per_copy, ctx.caps).await?;
+            let processes = match &kind {
+                Kind::Processes(a) if a.wants_mailboxes() => Some(a.clone()),
+                _ => None,
+            };
+            let answer = self.ask(kind, per_copy, ctx.caps).await;
+            if let Some(a) = processes {
+                return match answer {
+                    Ok(reply) => Ok(super::observe::with_mailboxes(reply, &a)),
+                    // A UI thread that does not answer is what the
+                    // mailboxes are looked at for: they are still told.
+                    Err(e) if matches!(e.code, ErrorCode::Timeout | ErrorCode::Busy) => {
+                        let reply = ToolReply::from(json!({ "ui_thread": e.message.clone() }))
+                            .with_text(e.message);
+                        Ok(super::observe::with_mailboxes(reply, &a))
+                    }
+                    Err(e) => Err(e),
+                };
+            }
+            let mut reply = answer?;
             if let Some(waited) = waited {
                 reply.structured["reload"]["waited"] = json!(waited);
             }

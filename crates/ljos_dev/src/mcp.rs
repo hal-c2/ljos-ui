@@ -700,7 +700,6 @@ impl Inspector {
                 queued > 0 || ljos_quick::running_animation_count(engine) > 0,
                 args,
             )),
-            (Kind::Mailboxes(args), _) => Ok(observe::mailboxes(args)),
             (Kind::Objects(args), capture) => {
                 let found = match capture {
                     Some(capture) if objects::needs_scene(args) => {
@@ -984,11 +983,7 @@ enum Started {
 /// already taken.
 fn needs_scene(kind: &Kind) -> bool {
     match kind {
-        Kind::Logs(_)
-        | Kind::Metrics
-        | Kind::Processes(_)
-        | Kind::Mailboxes(_)
-        | Kind::Watch(_) => false,
+        Kind::Logs(_) | Kind::Metrics | Kind::Processes(_) | Kind::Watch(_) => false,
         Kind::Objects(args) => objects::needs_scene(args),
         Kind::Trace(args) => trace::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,

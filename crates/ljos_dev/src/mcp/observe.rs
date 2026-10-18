@@ -1,6 +1,6 @@
-//! `app_processes` and `app_mailboxes`: the application as an Erlang
-//! observer sees a node (ARCHITECTURE.md 3.4), what does work and the
-//! mailboxes it is handed through.
+//! `app_processes`: the application as an Erlang observer sees a node
+//! (ARCHITECTURE.md 3.4), what does work and, as the observer shows each
+//! process's message queue with it, the mailboxes it is handed through.
 //!
 //! The threads are read from `/proc/self/task`, which the kernel keeps
 //! anyway, so listing them costs nothing until asked. The UI thread's
@@ -23,16 +23,12 @@ use super::surface::DevReq;
 use crate::top::{FrameStats, owner_name};
 
 pub const PROCESSES: &str = "\
-What does work in the app, like Erlang's observer: OS threads (UI thread, pools, inspector, \
-platform readers) with state, CPU time and wakeups; running Timers and animations; the owners \
-the frame scheduler charges time to. `kind` keeps one kind.";
+What does work, like Erlang's observer: threads with state, CPU time and wakeups; Timers, \
+animations, scheduler owners; and the mailboxes reaching the UI thread (depth, capacity, age, \
+sent, refused as busy), shown even when it is stuck. `kind` keeps one; `peek` names front \
+messages' kinds.";
 
-pub const MAILBOXES: &str = "\
-The bounded inboxes threads use to reach the UI thread: depth and capacity, oldest message's \
-age, messages sent, refused as busy, replaced and drained since the inspector attached, \
-senders. `peek` lists the kinds of the front messages, never their contents.";
-
-/// The most front messages `app_mailboxes` names per inbox.
+/// The most front messages `app_processes` names per inbox.
 pub const MAX_PEEK: usize = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -47,27 +43,38 @@ pub enum ProcessKind {
     /// What the frame scheduler charged time to: the application, error
     /// boundaries, the inspector.
     Owner,
+    /// The bounded inboxes threads reach the UI thread through. Read
+    /// without the UI thread, so a stuck one still shows its inbox.
+    Mailbox,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessesArgs {
-    /// List only this kind: `thread`, `timer`, `animation` or `owner`.
+    /// List only this kind: `thread`, `timer`, `animation`, `owner` or
+    /// `mailbox`.
     #[serde(default)]
     pub kind: Option<ProcessKind>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct MailboxesArgs {
-    /// List only the inboxes of this name (`application`, `platform`,
+    /// List only the mailboxes of this name (`application`, `platform`,
     /// `images`, `inspector`, `reload`).
     #[serde(default)]
-    pub name: Option<String>,
-    /// Name the kinds of this many front messages per inbox (at most 20,
+    pub mailbox: Option<String>,
+    /// Name the kinds of this many front messages per mailbox (at most 20,
     /// default 0). Never their contents.
     #[serde(default)]
     pub peek: Option<usize>,
+}
+
+impl ProcessesArgs {
+    /// Whether the mailboxes are listed.
+    pub(crate) fn wants_mailboxes(&self) -> bool {
+        self.kind.is_none_or(|k| k == ProcessKind::Mailbox)
+    }
+
+    /// Whether anything is asked of the UI thread.
+    pub(crate) fn wants_the_ui_thread(&self) -> bool {
+        self.kind != Some(ProcessKind::Mailbox)
+    }
 }
 
 /// The kind of an inspector request, for its own inbox's counts: the tool
@@ -82,7 +89,6 @@ pub(crate) fn request_kind(req: &DevReq) -> &'static str {
         Kind::Logs(_) => "app_logs",
         Kind::Metrics => "app_metrics",
         Kind::Processes(_) => "app_processes",
-        Kind::Mailboxes(_) => "app_mailboxes",
         Kind::Watch(_) => "app_watch",
         Kind::Objects(_) => "app_objects",
         Kind::Trace(_) => "app_trace",
@@ -114,12 +120,13 @@ fn micros(d: std::time::Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// Answers `app_mailboxes`, on the server's thread.
-pub(crate) fn mailboxes(args: &MailboxesArgs) -> ToolReply {
+/// The mailboxes `args` asks for and their lines, read on the server's
+/// thread.
+fn mailbox_rows(args: &ProcessesArgs) -> (Vec<Value>, String) {
     let peek = args.peek.unwrap_or(0).min(MAX_PEEK);
     let all: Vec<MailboxSample> = observe::mailboxes(peek)
         .into_iter()
-        .filter(|m| args.name.as_deref().is_none_or(|n| n == m.name))
+        .filter(|m| args.mailbox.as_deref().is_none_or(|n| n == m.name))
         .collect();
     let rows: Vec<Value> = all
         .iter()
@@ -147,7 +154,7 @@ pub(crate) fn mailboxes(args: &MailboxesArgs) -> ToolReply {
     for m in &all {
         let _ = write!(
             text,
-            "{}: {}/{} queued, sent {}, refused {}, replaced {}, drained {}, {} senders",
+            "mailbox {}: {}/{} queued, sent {}, refused {}, replaced {}, drained {}, {} senders",
             m.name, m.depth, m.capacity, m.sent, m.refused, m.replaced, m.drained, m.senders
         );
         if m.waiting > 0 {
@@ -165,9 +172,27 @@ pub(crate) fn mailboxes(args: &MailboxesArgs) -> ToolReply {
     if all.is_empty() {
         text.push_str("no mailbox by that name\n");
     }
-    text.push_str("Counts are since the inspector attached.");
-    ToolReply::from(json!({ "mailboxes": rows, "counted_since": "inspector attached" }))
-        .with_text(text)
+    text.push_str("Mailbox counts are since the inspector attached.");
+    (rows, text)
+}
+
+/// Adds the mailboxes `args` asks for to `reply`, the answer of the UI
+/// thread (or, when it gave none, an empty one).
+pub(crate) fn with_mailboxes(mut reply: ToolReply, args: &ProcessesArgs) -> ToolReply {
+    if !args.wants_mailboxes() {
+        return reply;
+    }
+    let (rows, lines) = mailbox_rows(args);
+    if reply.structured.get("processes").is_none() {
+        reply.structured["processes"] = json!([]);
+    }
+    reply.structured["mailboxes"] = Value::Array(rows);
+    reply.structured["counted_since"] = json!("inspector attached");
+    let text = match reply.text.take() {
+        Some(t) if !t.is_empty() => format!("{t}\n{lines}"),
+        _ => lines,
+    };
+    reply.with_text(text)
 }
 
 /// One OS thread as `/proc` shows it.
@@ -503,7 +528,7 @@ pub(crate) fn processes(
             let _ = writeln!(text, "owner {name}, {:.2} ms", time.as_secs_f64() * 1000.0);
         }
     }
-    if rows.is_empty() {
+    if rows.is_empty() && !args.wants_mailboxes() {
         text.push_str("nothing of that kind is running\n");
     }
     let mut value = json!({ "processes": rows });

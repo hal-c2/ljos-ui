@@ -381,7 +381,7 @@ ApplicationWindow {
                         // are answered, so that the depth is not this
                         // window's own questions waiting.
                         if (name !== "mailboxes" && parts.metrics && parts.threads)
-                            window.ask("app_mailboxes", {}, "sample-mailboxes")
+                            window.ask("app_processes", { kind: "mailbox" }, "sample-mailboxes")
                         if (parts.metrics && parts.threads && parts.mailboxes)
                             add(parts.metrics, parts.threads, parts.mailboxes)
                     }
@@ -818,7 +818,7 @@ ApplicationWindow {
                     }
 
                     function load() {
-                        window.ask("app_mailboxes", { peek: 5 }, "mailboxes")
+                        window.ask("app_processes", { kind: "mailbox", peek: 5 }, "mailboxes")
                     }
 
                     RowLayout {
