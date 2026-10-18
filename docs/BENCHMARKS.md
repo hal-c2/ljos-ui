@@ -1088,3 +1088,82 @@ run with a log. photosurface asks for no large picture before its first frame an
 - Only a large local picture loaded on the spot in Qt (no `asynchronous`, no `sourceSize`) is
   waited for. An `asynchronous` or network picture comes later in Qt too.
 
+themselves (clocks' timer, maroon's scene).
+
+### Startup: the first frame, and the first that answers (2026-10-18)
+
+`ljos bench --profile desktop --warm-up --settle 1 --idle 3 --load 0`, in the off-screen sandbox
+(`desktop:cua`: headless sway), with `VK_DRIVER_FILES` naming only the Radeon driver for both
+runtimes. "First frame" is the first frame shown. "Answers" is the first frame drawn after the
+compositor makes the window 64 px larger, the first sign that it takes input. "Before" is the
+`ljos` built from the tree before this work, measured by the same bench (`--ljos`). Before, after
+and qml6 took turns app by app, for six rounds on each device, so that the load, which ran from 2
+to 90 from other builds, fell on all three alike. Each cell is the median of the six, in ms.
+
+llvmpipe (the sandbox's sway on pixman):
+
+| App | First frame: Ljós before → after | qml6 | Answers: Ljós before → after | qml6 | Idle CPU before → after |
+|---|---:|---:|---:|---:|---:|
+| animations | 66 → 63 | 117 | 86 → 84 | 134 | 21.55 % → 18.18 % |
+| form | 85 → 68 | 168 | 102 → 86 | 185 | 0 % → 0 % |
+| listview | 76 → 66 | 144 | 93 → 89 | 161 | 22.85 % → 18.77 % |
+| rectangles | 86 → 68 | 122 | 103 → 85 | 155 | 0 % → 0 % |
+| text | 86 → 68 | 149 | 102 → 85 | 182 | 0 % → 0 % |
+| calqlatr | 94 → 70 | 178 | 110 → 87 | 195 | 0 % → 0 % |
+| samegame | 94 → 67 | 153 | 111 → 84 | 169 | 8.49 % → 7.95 % |
+| clocks | 94 → 64 | 169 | 111 → 81 | 186 | 11.56 % → 9.67 % |
+| thermostat | 153 → 129 | 257 | — | — | 0 % → 0 % |
+| todolist | 105 → 88 | 191 | 122 → 105 | 208 | 0 % → 0 % |
+| rssnews | 99 → 67 | 170 | 116 → 86 | 186 | 9.79 % → 8.31 % |
+
+GPU (the sandbox's sway on the Radeon render node):
+
+| App | First frame: Ljós before → after | qml6 | Answers: Ljós before → after | qml6 | Idle CPU before → after |
+|---|---:|---:|---:|---:|---:|
+| animations | 46 → 50 | 73 | 64 → 67 | 90 | 3.06 % → 4.34 % |
+| form | 68 → 64 | 114 | 86 → 81 | 132 | 0 % → 0 % |
+| listview | 56 → 47 | 95 | 73 → 64 | 112 | 10.31 % → 8.39 % |
+| rectangles | 61 → 51 | 77 | 79 → 68 | 105 | 0 % → 0 % |
+| text | 62 → 53 | 95 | 83 → 79 | 115 | 0 % → 0 % |
+| calqlatr | 73 → 55 | 118 | 91 → 72 | 136 | 0 % → 0 % |
+| samegame | 75 → 49 | 107 | 106 → 81 | 124 | 2.15 % → 1.92 % |
+| clocks | 65 → 43 | 109 | 82 → 60 | 134 | 2.93 % → 1.64 % |
+| thermostat | 123 → 102 | 155 | — | — | 0 % → 0 % |
+| todolist | 102 → 71 | 141 | 119 → 88 | 163 | 0 % → 0 % |
+| rssnews | 68 → 45 | 123 | 101 → 75 | 140 | 9.07 % → 8.10 % |
+
+Thermostat's window does not take the compositor's new size in either runtime, so it has no
+"answers". The apps that idle above 0 % animate themselves. The static ones stay at 0 %. On the
+GPU, animations' two slow runs fell in the rounds where qml6 was slow too; its usual runs are
+about 3 ms behind before, which is within its spread.
+
+What was cut, on the main thread's path to the first frame:
+
+- **System fonts on a thread.** The font database (fontconfig, through fontique) is read on a
+  thread of its own from the start of the process, and the view waits for it only when it first
+  shapes text.
+- **The first layout while the drivers start.** The shell lays the scene out at the window's size
+  while the graphics thread still starts EGL or the wgpu instance. The first frame then only
+  paints. The scene is still polished once.
+- **Compiling while the drivers start.** `ljos run` compiles the project on a thread of its own and
+  joins it only when the engine needs it, so the compile overlaps the display's and the drivers'
+  start. A file that does not compile still fails the same way, with the same message and exit 1.
+
+The bench itself was fixed too. It refused a launch that was not yet inside the limit's cgroup,
+when the child had only forked and not yet run `systemd-run`, because the child still had the
+bench's own executable. The gate is now told apart by its fifo in the arguments as well. A refused
+launch is tried again up to three times, but none was refused in the runs above.
+
+What is left, from per-phase timings on the main thread (quiet machine, release build):
+
+| Phase | llvmpipe | GPU |
+|---|---:|---:|
+| EGL display start (graphics thread) | 37–45 ms | — |
+| Controls types registered | 2–4 ms (15 ms under load) | same |
+| Root object made (`create_from_url`) | ~12 ms | same |
+| First polish | ~15 ms | same |
+
+On llvmpipe the EGL start is now the critical path. The main thread's work overlaps it. On the GPU,
+the critical path is the main thread's own work. Next: register the Controls types only when a
+module imports them, and make the root object in less time. On the font side, fontconfig's own
+scan inside fontique is the rest.
