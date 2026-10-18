@@ -860,6 +860,50 @@ reaches a plateau after about five reloads and does not keep growing. Why the fi
 is the cheapest was not found.
 
 
+### Hot reload: objects added and removed in place (2026-10-18, night)
+
+An object added to one that stays, an object removed, and an edit of properties together with an
+added object now go in place. The new object is made into the parent that is already there, at the
+place the file gives it among its siblings. A removed object hears `Component.onDestruction` and
+is destroyed. Every other object keeps its state. A page that a `StackView` pushed from a file
+grows in place too, as does a `Loader` given a `source`, because it is made once from its file
+like a root. These still take the full path:
+
+- an object moved, reordered or given another type;
+- an id moved to another object;
+- an edit inside a delegate, a `Repeater` row or a `Loader`'s `sourceComponent`;
+- an object placed before a sibling in a list that can only append. `Item.data` can insert, so
+  children and resources can be placed anywhere.
+
+Measured with `reload_profile`, as in the sections before, at load 59–74 (other work on the
+machine). Saves alternate between the edit and the file as it was, so every other row is the
+object removed again.
+
+| App, edit | Path before → now | Shown | Apply |
+|---|---|---:|---:|
+| thermostat, an `Item` added to a `Text` (6 saves) | full → in place | 33.9–37.8 ms | 2.4–2.8 ms |
+| thermostat, the `Text`'s text edited and an `Item` added (4 saves) | full → in place | 34.1–36.6 ms | 2.4–2.6 ms |
+| samegame, an `Item` added to a `Text` in `Main.qml` (6 saves) | full → in place | 22.9–24.8 ms | 2.8–3.7 ms |
+
+Before, the same edits were shown in 201–259 ms on thermostat and 99–127 ms on samegame. Most of
+what is left is the watcher's quiet time (15 ms) and the build (5–19 ms). samegame's resident
+memory stayed at 92–94 MB over the six saves.
+
+**thermostat's first save at 1 028 ms.** The steps of the save from the section before were timed
+again over 24 first saves. The extra time was not the reload's. `reload_profile` wrote the file on
+the thread it applies the reload on. ext4 writes out a file that was truncated and written again
+when it is closed. That `close` returned 46 ms to 2.5 s after the file was whole, and the reload
+waited for it. The watcher's quiet time, the build and the frame after were as for any other save.
+Once in 24 runs, the build took 631 ms at load 40–50. A save from an editor comes from another
+process, so it never waited like this. `reload_profile` now writes from a thread of its own and
+tells the wait between the build and the apply. Over 12 first saves of thermostat's full path at
+load 40, the wait was 0–0.7 ms and the save was shown in 205–555 ms, as the apply (162–468 ms)
+followed the load.
+
+A function a script made before an edit that moved lines (a `connect` callback, a `Qt.binding`)
+now also throws at the line the file gives it now. The places the reload moved are applied to the
+line table of the script loaded for the file before, which those functions still run.
+
 ### A write's cascade, a turning transform and the script crossing (2026-10-18)
 
 Measured as in the section before: callgrind over the egui passes, the 1200-frame run less the
