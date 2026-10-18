@@ -491,3 +491,46 @@ fn controls_with_fonts_made_together_cost_what_each_costs() {
         "twice the controls ran {twice} effects, against {once}"
     );
 }
+
+/// The objects one more `control` of `style` makes: what a file of two
+/// makes less what a file of one does, the root and the rest the same.
+fn objects_of(style: &str, control: &str) -> usize {
+    let e = engine();
+    let made = |n: usize| {
+        let all = format!("{control} {{}} ").repeat(n);
+        let before = e.object_count();
+        load(
+            &e,
+            &format!("import QtQuick\nimport QtQuick.Controls.{style}\nItem {{ {all}}}\n"),
+        );
+        e.object_count() - before
+    };
+    let one = made(1);
+    made(2) - one
+}
+
+#[test]
+fn fusion_makes_no_more_objects_than_it_draws() {
+    // Every object costs memory and time to make, and Fusion draws in
+    // gradients, each of which is three. What it holds back: the stripes
+    // of a bar that knows how far it has come, and a path element per
+    // line of an arrow or a tick.
+    for (control, most) in [
+        ("Button", 7),
+        ("CheckBox", 13),
+        ("RadioButton", 6),
+        ("Switch", 16),
+        ("Slider", 13),
+        ("ComboBox", 34),
+        ("SpinBox", 21),
+        ("TextField", 4),
+        ("ProgressBar", 12),
+        ("BusyIndicator", 12),
+    ] {
+        let made = objects_of("Fusion", control);
+        assert!(
+            made <= most,
+            "a Fusion {control} makes {made} objects, more than {most}"
+        );
+    }
+}

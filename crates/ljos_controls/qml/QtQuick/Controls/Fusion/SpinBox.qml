@@ -58,30 +58,21 @@ T.SpinBox {
             color: host.up.pressed ? Qt.rgba(base.r * 0.86, base.g * 0.86, base.b * 0.86, base.a)
                                    : "transparent"
 
-            Item {
+            // A small filled triangle of our own (CLEAN_ROOM.md), eight wide and
+            // four tall, in the text colour at about 72 % as qml6 shows it;
+            // where the step's down arrow would be turned about its strip.
+            Shape {
                 id: upArrow
                 property color color: host.palette.buttonText
-                width: parent.width
-                height: parent.height
-                rotation: 180
+                x: parent.width - Math.round((parent.width - 8) / 2) - 8
+                y: parent.height - Math.round((parent.height - 4) / 2) - 4
+                width: 8
+                height: 4
                 opacity: parent.enabled ? 1 : 0.5
-
-                // A small filled triangle of our own (CLEAN_ROOM.md), eight wide and
-                // four tall, in the text colour at about 72 % as qml6 shows it.
-                Shape {
-                    x: Math.round((upArrow.width - 8) / 2)
-                    y: Math.round((upArrow.height - 4) / 2)
-                    width: 8
-                    height: 4
-                    ShapePath {
-                        strokeWidth: -1
-                        fillColor: Qt.rgba(upArrow.color.r, upArrow.color.g, upArrow.color.b, upArrow.color.a * 0.72)
-                        startX: 0
-                        startY: 0
-                        PathLine { x: 8; y: 0 }
-                        PathLine { x: 4; y: 4 }
-                        PathLine { x: 0; y: 0 }
-                    }
+                ShapePath {
+                    strokeWidth: -1
+                    fillColor: Qt.rgba(upArrow.color.r, upArrow.color.g, upArrow.color.b, upArrow.color.a * 0.72)
+                    PathSvg { path: "M 0 4 L 8 4 L 4 0 Z" }
                 }
             }
         }
@@ -99,29 +90,18 @@ T.SpinBox {
             color: host.down.pressed ? Qt.rgba(base.r * 0.86, base.g * 0.86, base.b * 0.86, base.a)
                                      : "transparent"
 
-            Item {
+            Shape {
                 id: downArrow
                 property color color: host.palette.buttonText
-                width: parent.width
-                height: parent.height
+                x: Math.round((parent.width - 8) / 2)
+                y: Math.round((parent.height - 4) / 2)
+                width: 8
+                height: 4
                 opacity: parent.enabled ? 1 : 0.5
-
-                // A small filled triangle of our own (CLEAN_ROOM.md), eight wide and
-                // four tall, in the text colour at about 72 % as qml6 shows it.
-                Shape {
-                    x: Math.round((downArrow.width - 8) / 2)
-                    y: Math.round((downArrow.height - 4) / 2)
-                    width: 8
-                    height: 4
-                    ShapePath {
-                        strokeWidth: -1
-                        fillColor: Qt.rgba(downArrow.color.r, downArrow.color.g, downArrow.color.b, downArrow.color.a * 0.72)
-                        startX: 0
-                        startY: 0
-                        PathLine { x: 8; y: 0 }
-                        PathLine { x: 4; y: 4 }
-                        PathLine { x: 0; y: 0 }
-                    }
+                ShapePath {
+                    strokeWidth: -1
+                    fillColor: Qt.rgba(downArrow.color.r, downArrow.color.g, downArrow.color.b, downArrow.color.a * 0.72)
+                    PathSvg { path: "M 0 0 L 8 0 L 4 4 Z" }
                 }
             }
         }

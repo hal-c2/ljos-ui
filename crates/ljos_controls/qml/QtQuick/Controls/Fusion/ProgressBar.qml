@@ -53,8 +53,10 @@ T.ProgressBar {
                     width: parent.width + gap
                     height: parent.height
 
+                    // None are made while the bar knows how far it has
+                    // come, which is most of the time.
                     Repeater {
-                        model: Math.ceil(stripes.width / stripes.gap) + 1
+                        model: control.indeterminate ? Math.ceil(stripes.width / stripes.gap) + 1 : 0
 
                         Rectangle {
                             readonly property color wash: Qt.lighter(control.palette.highlight, 1.2)

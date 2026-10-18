@@ -52,11 +52,7 @@ T.ComboBox {
                 ShapePath {
                     strokeWidth: -1
                     fillColor: Qt.rgba(arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a * 0.72)
-                    startX: 0
-                    startY: 0
-                    PathLine { x: 8; y: 0 }
-                    PathLine { x: 4; y: 4 }
-                    PathLine { x: 0; y: 0 }
+                    PathSvg { path: "M 0 0 L 8 0 L 4 4 Z" }
                 }
             }
         }

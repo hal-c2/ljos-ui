@@ -50,10 +50,7 @@ Rectangle {
             fillColor: "transparent"
             capStyle: ShapePath.FlatCap
             joinStyle: ShapePath.MiterJoin
-            startX: 4.6
-            startY: 7
-            PathLine { x: 6.8; y: 10.6 }
-            PathLine { x: 9.8; y: 3 }
+            PathSvg { path: "M 4.6 7 L 6.8 10.6 L 9.8 3" }
         }
     }
 
