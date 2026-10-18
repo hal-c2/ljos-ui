@@ -281,6 +281,17 @@ impl Engine {
     /// that is already out of its view). Qt evaluates bindings as their
     /// inputs change, so what is still due is settled first.
     pub(crate) fn tell_destruction(&self, obj: ObjectId, outermost: bool) {
+        self.tell_destruction_of(obj, outermost, false);
+    }
+
+    /// [`Engine::tell_destruction`] for an object a reload took out of
+    /// its file: the file lives on, but the object is told as if its
+    /// written place went with it.
+    pub(crate) fn tell_removed(&self, obj: ObjectId) {
+        self.tell_destruction_of(obj, false, true);
+    }
+
+    fn tell_destruction_of(&self, obj: ObjectId, outermost: bool, removed: bool) {
         let (ids, due) = {
             let store = self.inner.store.borrow();
             if store
@@ -323,7 +334,7 @@ impl Engine {
             let _ = self.untrack(|| self.inner.graph.try_get(n));
         }
         if self.inner.destruction_handlers.get() {
-            self.run_destruction_handlers(obj, outermost);
+            self.run_destruction_handlers(obj, outermost, removed);
         }
         let mut store = self.inner.store.borrow_mut();
         for id in ids {
@@ -333,7 +344,7 @@ impl Engine {
         }
     }
 
-    fn run_destruction_handlers(&self, obj: ObjectId, outermost: bool) {
+    fn run_destruction_handlers(&self, obj: ObjectId, outermost: bool, removed: bool) {
         let key = MetaRef::Static(<Component as QmlType>::static_meta()).type_id();
         // (the context it is told with, attached object), children before
         // their owner.
@@ -349,6 +360,9 @@ impl Engine {
             }
             h.flags |= ObjectFlags::DESTRUCTION_TOLD;
             let own = h.ext.as_ref().map_or_else(Vec::new, |e| e.contexts.clone());
+            if removed {
+                rooted.push(h.context);
+            }
             let mut stack = vec![(obj, false)];
             while let Some((id, expanded)) = stack.pop() {
                 let Some(h) = store.objects.get(id) else {

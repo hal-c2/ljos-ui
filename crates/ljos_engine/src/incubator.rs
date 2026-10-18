@@ -187,6 +187,9 @@ struct AllocFrame {
     /// Once every object exists: the instance, and the next object to
     /// note for applying and completion.
     closing: Option<(Rc<Instance>, usize)>,
+    /// A reload in place: the objects that exist already, with what they
+    /// are made of, by index. Those are neither made nor noted again.
+    given: Vec<Option<(ObjectId, Option<Rc<Instance>>)>>,
 }
 
 impl AllocFrame {
@@ -207,6 +210,7 @@ impl AllocFrame {
             objects: Vec::with_capacity(n),
             inner: Vec::with_capacity(n),
             closing: None,
+            given: Vec::new(),
         }
     }
 }
@@ -926,26 +930,29 @@ impl Engine {
                 let i = *next;
                 *next += 1;
                 let id = inst.objects[i];
-                let node = cr.nodes.entry(id).or_default();
-                for at in &od.attached {
-                    if is_component_attached(&at.ty) {
-                        for h in &at.members.handlers {
-                            if h.signal == "completed" {
-                                node.handlers.push((inst.clone(), h.expr));
-                            } else if h.signal == "reloaded" {
-                                node.reloaded.push((inst.clone(), h.expr));
+                // One that exists has been through all of this.
+                if !matches!(f.given.get(i), Some(Some(_))) {
+                    let node = cr.nodes.entry(id).or_default();
+                    for at in &od.attached {
+                        if is_component_attached(&at.ty) {
+                            for h in &at.members.handlers {
+                                if h.signal == "completed" {
+                                    node.handlers.push((inst.clone(), h.expr));
+                                } else if h.signal == "reloaded" {
+                                    node.reloaded.push((inst.clone(), h.expr));
+                                }
                             }
                         }
                     }
+                    if let Some(p) = od.parent {
+                        let parent = inst.objects[p.index()];
+                        cr.nodes.entry(parent).or_default().children.push(id);
+                    }
+                    cr.units.push(Unit {
+                        inst: inst.clone(),
+                        obj: i,
+                    });
                 }
-                if let Some(p) = od.parent {
-                    let parent = inst.objects[p.index()];
-                    cr.nodes.entry(parent).or_default().children.push(id);
-                }
-                cr.units.push(Unit {
-                    inst: inst.clone(),
-                    obj: i,
-                });
                 if *next < def.objects.len() {
                     return Ok(None);
                 }
@@ -965,8 +972,15 @@ impl Engine {
             });
         }
         let i = f.objects.len();
+        if let Some(Some((id, inner))) = f.given.get(i) {
+            f.objects.push(*id);
+            f.inner.push(inner.clone());
+            return Ok(None);
+        }
         let Some(od) = def.objects.get(i) else {
-            if let Some(&root_id) = f.objects.first() {
+            if let Some(&root_id) = f.objects.first()
+                && f.given.is_empty()
+            {
                 self.add_context(root_id, f.ctx);
             }
             let inst = Rc::new(Instance {

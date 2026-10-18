@@ -29,8 +29,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_ir::{
-    CompIdx, CompiledFile, ExprId, Literal, Members, ObjIdx, ObjRef, ObjectDef, ObjectKey,
-    ReloadOp, ReloadPatch, SourceSpan, TypeRef,
+    CompIdx, CompiledFile, ComponentDef, ExprId, Literal, Members, ObjIdx, ObjRef, ObjectDef,
+    ObjectKey, ObjectValue, ReloadOp, ReloadPatch, SourceSpan, TypeRef,
 };
 use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap as HashMap;
@@ -39,8 +39,12 @@ use super::{Phases, ReloadOutcome, resets};
 use crate::WriteKind;
 use crate::engine::Engine;
 use crate::ids::ObjectId;
-use crate::incubator::{Instance, Template, is_component_attached};
+use crate::incubator::{
+    AllocFrame, Allocation, Creation, Instance, RootSpec, Template, is_component_attached,
+};
 use crate::loader::LoadedFile;
+use crate::meta::MetaRef;
+use crate::object::QmlType;
 use crate::qtqml::Component;
 use crate::value::Value;
 
@@ -73,7 +77,9 @@ impl Code {
 /// The members the edit gives an object of a changed file anew.
 struct Edit {
     comp: CompIdx,
+    /// Its index in the new file, and in the old.
     obj: usize,
+    was: usize,
     names: Vec<String>,
     functions: Vec<String>,
 }
@@ -99,6 +105,59 @@ struct Changed {
     /// The places of the old file that moved to where the new file has
     /// them.
     moved: Moves,
+    /// Per component, where the old objects are in the new file.
+    objects: Vec<Objects>,
+}
+
+/// Where the objects of a component of the old file are in the new one.
+/// An object is the same one when the compiler gives it the same key.
+struct Objects {
+    /// Per old object, its index in the new file; `None` when removed.
+    to_new: Vec<Option<usize>>,
+    /// Per new object, its index in the old file; `None` when added.
+    to_old: Vec<Option<usize>>,
+}
+
+impl Objects {
+    fn same(&self) -> bool {
+        self.to_new.len() == self.to_old.len()
+            && self.to_new.iter().enumerate().all(|(i, n)| *n == Some(i))
+    }
+
+    /// The added objects written in one that stays, by new index.
+    fn added_tops<'a>(&'a self, comp: &'a ComponentDef) -> impl Iterator<Item = usize> + 'a {
+        (0..self.to_old.len()).filter(move |&j| {
+            self.to_old[j].is_none()
+                && comp.objects[j]
+                    .parent
+                    .is_some_and(|p| self.to_old[p.index()].is_some())
+        })
+    }
+
+    /// The removed objects that were written in one that stays, by old
+    /// index.
+    fn removed_tops<'a>(&'a self, comp: &'a ComponentDef) -> impl Iterator<Item = usize> + 'a {
+        (0..self.to_new.len()).filter(move |&i| {
+            self.to_new[i].is_none()
+                && comp.objects[i]
+                    .parent
+                    .is_some_and(|p| self.to_new[p.index()].is_some())
+        })
+    }
+}
+
+/// An instance an edit adds objects to or removes them from: made again
+/// around the objects that stay.
+struct Grown {
+    old: Rc<Instance>,
+    new: Rc<Instance>,
+    cr: Creation,
+    /// The added objects written in one that stays, by new index.
+    tops: Vec<usize>,
+    /// The removed objects that were written in one that stays.
+    gone: Vec<ObjectId>,
+    /// An id came or went: what the others bind to may have.
+    ids: bool,
 }
 
 /// (line, column) of the old file to (line, column) of the new.
@@ -107,7 +166,9 @@ type Moves = HashMap<(u32, u32), (u32, u32)>;
 /// An object of a live instance the edit is applied to.
 struct Target<'a> {
     inst: Rc<Instance>,
+    /// Its index in the new file, and in the old.
     obj: usize,
+    was: usize,
     def: &'a ObjectDef,
     names: &'a [String],
     functions: &'a [String],
@@ -228,6 +289,7 @@ impl Engine {
                     let t = Target {
                         inst: inst.clone(),
                         obj: e.obj,
+                        was: e.was,
                         def: &c.new.component(e.comp).objects[e.obj],
                         names: &e.names,
                         functions: &e.functions,
@@ -238,6 +300,26 @@ impl Engine {
                     targets.push(t);
                 }
             }
+        }
+        // The instances objects are added to or removed from, in the order
+        // they were made: one used as the type of an object comes after
+        // the instance of that object.
+        let mut growing: Vec<(Rc<Instance>, usize)> = Vec::new();
+        for inst in &instances {
+            let Some(c) = changed.iter().position(|c| Rc::ptr_eq(&inst.file, &c.old)) else {
+                continue;
+            };
+            if changed[c].objects[inst.comp.index()].same() {
+                continue;
+            }
+            if !self.in_place_grows(inst, roots, &users) {
+                tracing::debug!(
+                    "reload not in place: {} is grown where it is made again",
+                    inst.file.ir.file
+                );
+                return None;
+            }
+            growing.push((inst.clone(), c));
         }
         phases.mark("plan");
 
@@ -268,10 +350,44 @@ impl Engine {
                 }
             }
         }
-        drop(saved);
         phases.mark("loader");
 
         let mut memo: HashMap<*const Instance, Rc<Instance>> = HashMap::default();
+        // Each instance is made again around the objects that stay, the
+        // ones used as types first, so that their users hold them.
+        let mut grown: Vec<Grown> = Vec::new();
+        let errors = self.open_creation();
+        let mut failed = false;
+        for (inst, c) in growing.iter().rev() {
+            let c = &changed[*c];
+            let Some(file) = files.get(&Rc::as_ptr(&c.old)) else {
+                continue;
+            };
+            match self.in_place_grow(inst, file, &c.objects[inst.comp.index()], &files, &mut memo) {
+                Some(g) => grown.push(g),
+                None => {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        self.close_creation(errors);
+        if failed {
+            // What was added goes, and the full reload makes it and
+            // tells what is wrong.
+            for g in &grown {
+                for &o in g.cr.all.iter().rev() {
+                    if self.is_alive(o) {
+                        self.destroy_now(o);
+                    }
+                }
+            }
+            st.epoch.set(st.epoch.get() - 1);
+            self.reload_restore_loader(saved);
+            return None;
+        }
+        drop(saved);
+        phases.mark("grow");
         self.batch(|| {
             for t in &targets {
                 let inst = renew(&t.inst, &files, &mut memo);
@@ -289,6 +405,24 @@ impl Engine {
                     .filter(|f| t.functions.contains(&f.name))
                 {
                     self.install_function(&inst, id, f);
+                }
+            }
+        });
+        for g in &grown {
+            for &o in &g.gone {
+                if self.is_alive(o) {
+                    self.tell_removed(o);
+                    self.destroy_now(o);
+                }
+            }
+        }
+        // A binding that names an id that came or went.
+        self.batch(|| {
+            for g in grown.iter().filter(|g| g.ids) {
+                for &id in &g.new.objects {
+                    if self.is_alive(id) {
+                        self.in_place_refresh(id);
+                    }
                 }
             }
         });
@@ -314,7 +448,11 @@ impl Engine {
             };
             *slot.borrow_mut() = (renew(&inst, &files, &mut memo), *to);
         }
-        self.in_place_relocate(&changed);
+        let added: rustc_hash::FxHashSet<ObjectId> = grown
+            .iter()
+            .flat_map(|g| g.cr.all.iter().copied())
+            .collect();
+        self.in_place_relocate(&changed, &added);
         // A binding that calls an edited function gives what it gives now.
         // Only those of the function's own file are run again.
         let called: Vec<*const LoadedFile> = changed
@@ -368,6 +506,25 @@ impl Engine {
         }
         phases.mark("templates");
 
+        // The added objects complete as made objects do, and are known by
+        // their places from now on.
+        let mut tops: Vec<Rc<Instance>> = Vec::new();
+        for g in &grown {
+            self.in_place_complete(g);
+            let mut top = g.old.clone();
+            while let Some((user, _)) = users.get(&Rc::as_ptr(&top)) {
+                top = user.clone();
+            }
+            let top = renew(&top, &files, &mut memo);
+            if !tops.iter().any(|t| Rc::ptr_eq(t, &top)) {
+                tops.push(top);
+            }
+        }
+        for top in &tops {
+            self.reload_repath(top);
+        }
+        phases.mark("grown");
+
         let under = self.under_roots(roots);
         // Every object went on: each is told so, as a full reload tells
         // the objects it keeps.
@@ -383,7 +540,7 @@ impl Engine {
                         .iter()
                         .filter(|h| h.signal == "reloaded")
                     {
-                        if self.is_alive(id) && under(id) {
+                        if self.is_alive(id) && under(id) && !added.contains(&id) {
                             self.call_expr(inst, h.expr, &[]);
                         }
                     }
@@ -395,7 +552,7 @@ impl Engine {
             .info
             .borrow()
             .keys()
-            .filter(|o| self.is_alive(**o) && under(**o))
+            .filter(|o| self.is_alive(**o) && under(**o) && !added.contains(*o))
             .count();
         st.generation.set(patch.generation);
         *st.last_error.borrow_mut() = None;
@@ -405,7 +562,7 @@ impl Engine {
             generation: patch.generation,
             roots: roots.iter().map(|r| (*r, *r)).collect(),
             kept,
-            fresh: 0,
+            fresh: added.len(),
             remounted: 0,
         })
     }
@@ -425,7 +582,13 @@ impl Engine {
                 ReloadOp::DeclarationChanged { file, object, name } => {
                     (file, object, Edited::Function(name))
                 }
-                _ => return None,
+                // Which objects came and went is read from the files: an
+                // object is the same one when it has the same key.
+                ReloadOp::ObjectAdded { .. } | ReloadOp::ObjectRemoved { .. } => continue,
+                _ => {
+                    tracing::debug!("reload not in place: {op:?}");
+                    return None;
+                }
             };
             by_file
                 .entry(file.as_str())
@@ -460,6 +623,7 @@ impl Engine {
                         edits.push(Edit {
                             comp,
                             obj,
+                            was: obj,
                             names: Vec::new(),
                             functions: Vec::new(),
                         });
@@ -473,7 +637,11 @@ impl Engine {
                     Edited::Handler => {}
                 }
             }
-            let (whole, remap, moved) = same_but_edits(&old.ir, new, &edits)?;
+            let Some((whole, remap, moved, objects)) = same_but_edits(&old.ir, new, &mut edits)
+            else {
+                tracing::debug!("reload not in place: {} changed its shape", new.file);
+                return None;
+            };
             out.push(Changed {
                 old,
                 new: Arc::new(new.clone()),
@@ -481,9 +649,215 @@ impl Engine {
                 whole,
                 remap,
                 moved,
+                objects,
             });
         }
         Some(out)
+    }
+
+    /// Whether objects can be added to `inst` and removed from it where it
+    /// stands: it is of the tree a reload tracks, and not made from a
+    /// `Component` written in a file (a view's rows, a `Loader`'s
+    /// `sourceComponent`), which are made again with all their kind.
+    fn in_place_grows(
+        &self,
+        inst: &Rc<Instance>,
+        roots: &[ObjectId],
+        users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
+    ) -> bool {
+        let mut cur = inst.clone();
+        loop {
+            if cur.outer.is_some() {
+                return false;
+            }
+            match users.get(&Rc::as_ptr(&cur)) {
+                Some((user, _)) => cur = user.clone(),
+                None => break,
+            }
+        }
+        // One made from a file's address (a page a `StackView` pushed) is
+        // made once, as a root is, and the next one is made from the file
+        // as it is now.
+        cur.objects
+            .first()
+            .is_some_and(|r| roots.contains(r) || self.inner.reload.info.borrow().contains_key(r))
+    }
+
+    /// Makes `old` again from `file` around the objects that stay: the
+    /// added ones are made and given what the file writes, under the
+    /// object they are written in. `None`, with nothing made left, when
+    /// one cannot be.
+    fn in_place_grow(
+        &self,
+        old: &Rc<Instance>,
+        file: &Rc<LoadedFile>,
+        m: &Objects,
+        files: &HashMap<*const LoadedFile, Rc<LoadedFile>>,
+        memo: &mut HashMap<*const Instance, Rc<Instance>>,
+    ) -> Option<Grown> {
+        let comp = file.ir.component(old.comp);
+        let was = old.file.ir.component(old.comp);
+        let tops: Vec<usize> = m.added_tops(comp).collect();
+        // One that goes before a sibling needs a list that can put it
+        // there; the others are appended, as a creation does.
+        for &j in &tops {
+            let od = &comp.objects[j];
+            let (Some(p), None) = (od.parent, &od.on) else {
+                continue;
+            };
+            if anchor(comp, m, j).is_none() {
+                continue;
+            }
+            let i = m.to_old[p.index()]?;
+            let takes = self
+                .children_default(file, &comp.objects[p.index()].ty)
+                .is_ok_and(|prop| self.list_takes_insert(old.objects[i], prop));
+            if !takes {
+                tracing::debug!(
+                    "reload not in place: {} puts an object where its parent cannot",
+                    file.ir.file
+                );
+                return None;
+            }
+        }
+        let mut frame = AllocFrame::new(
+            file.clone(),
+            old.comp,
+            RootSpec::Existing(old.objects[0]),
+            old.outer.clone(),
+            old.context,
+        );
+        frame.given = m
+            .to_old
+            .iter()
+            .map(|o| {
+                o.map(|i| {
+                    let inner = old.inner[i].as_ref().map(|x| renew(x, files, memo));
+                    (old.objects[i], inner)
+                })
+            })
+            .collect();
+        let mut a = Allocation { stack: vec![frame] };
+        let mut cr = Creation::default();
+        let undo = |cr: &Creation| {
+            for &o in cr.all.iter().rev() {
+                if self.is_alive(o) {
+                    self.destroy_now(o);
+                }
+            }
+        };
+        let new = loop {
+            match self.allocate_step(&mut cr, &mut a) {
+                Ok(Some(inst)) => break inst,
+                Ok(None) => {}
+                Err(_) => {
+                    undo(&cr);
+                    return None;
+                }
+            }
+        };
+        memo.insert(Rc::as_ptr(old), new.clone());
+        cr.top = Some(new.clone());
+        for j in (0..comp.objects.len()).filter(|&j| m.to_old[j].is_none()) {
+            if let Some(inner) = &new.inner[j] {
+                self.reload_note_instances(inner);
+            }
+        }
+        self.batch(|| {
+            let ((), held) = self.hold_eager(|| {
+                for &j in &tops {
+                    let before = anchor(comp, m, j).map(|k| new.objects[k]);
+                    self.in_place_attach(&new, j, before);
+                }
+                self.apply_aliases(&cr);
+                for i in 0..cr.units.len() {
+                    self.apply_unit(&cr, i);
+                }
+            });
+            cr.held = held;
+            self.run_held(&cr);
+        });
+        self.release_held(&cr);
+        if self
+            .check_required(&cr)
+            .and_then(|()| self.check_assignable())
+            .is_err()
+        {
+            undo(&cr);
+            return None;
+        }
+        let gone: Vec<usize> = m.removed_tops(was).collect();
+        let ids = tops.iter().any(|&j| comp.objects[j].id.is_some())
+            || (0..was.objects.len()).any(|i| m.to_new[i].is_none() && was.objects[i].id.is_some())
+            || (0..comp.objects.len())
+                .any(|j| m.to_old[j].is_none() && comp.objects[j].id.is_some());
+        Some(Grown {
+            old: old.clone(),
+            gone: gone.into_iter().map(|i| old.objects[i]).collect(),
+            new,
+            cr,
+            tops,
+            ids,
+        })
+    }
+
+    /// Puts the added object `j` of `inst` where the file writes it: on
+    /// the default property of the object it is written in, before
+    /// `before` or after what that holds, or on the property it operates
+    /// on.
+    fn in_place_attach(&self, inst: &Rc<Instance>, j: usize, before: Option<ObjectId>) {
+        let comp = inst.file.ir.component(inst.comp);
+        let od = &comp.objects[j];
+        let Some(p) = od.parent else { return };
+        let (parent, child) = (inst.objects[p.index()], inst.objects[j]);
+        if let Some(on) = &od.on {
+            self.apply_value_source(parent, child, on);
+            return;
+        }
+        let ty = &comp.objects[p.index()].ty;
+        let r = self
+            .children_default(&inst.file, ty)
+            .and_then(|prop| match before {
+                Some(a) => self.list_insert(parent, prop, child, a).map(drop),
+                None => self.list_append(parent, prop, child),
+            });
+        if let Err(e) = r {
+            self.warn(format!(
+                "{}Cannot assign to non-existent default property ({e})",
+                self.location_of(child).unwrap_or_default()
+            ));
+        }
+    }
+
+    /// What a creation does last, for the added objects of `g`: their
+    /// types complete, the last made first, and then their
+    /// `Component.onCompleted` runs.
+    fn in_place_complete(&self, g: &Grown) {
+        for &o in g.cr.all.iter().rev() {
+            if self.is_alive(o)
+                && let Err(e) = self.complete(o)
+            {
+                self.warn(e.to_string());
+            }
+        }
+        let mut stack: Vec<ObjectId> = g.tops.iter().rev().map(|&j| g.new.objects[j]).collect();
+        while let Some(o) = stack.pop() {
+            let Some(node) = g.cr.nodes.get(&o) else {
+                continue;
+            };
+            for (inst, expr) in &node.handlers {
+                if self.is_alive(o) {
+                    self.call_expr(inst, *expr, &[]);
+                }
+            }
+            if let Some(att) = self.existing_attached_object(
+                o,
+                &MetaRef::Static(<Component as QmlType>::static_meta()),
+            ) {
+                let _ = self.emit_by_name(att, "completed", &[]);
+            }
+            stack.extend(node.children.iter().copied());
+        }
     }
 
     /// Whether the edit can be applied to `t` as it stands: nothing that
@@ -494,7 +868,7 @@ impl Engine {
         c: &Changed,
         users: &HashMap<*const Instance, (Rc<Instance>, usize)>,
     ) -> bool {
-        let id = t.inst.objects[t.obj];
+        let id = t.inst.objects[t.was];
         if !self.is_alive(id) {
             return true;
         }
@@ -505,7 +879,7 @@ impl Engine {
         }
         let given = self.inner.reload.given.borrow();
         let given = given.get(&id);
-        let old = &c.old.ir.component(t.inst.comp).objects[t.obj];
+        let old = &c.old.ir.component(t.inst.comp).objects[t.was];
         for name in t.names {
             let Ok(target) = self.untrack(|| self.member_target(id, &[], name)) else {
                 return false;
@@ -596,7 +970,7 @@ impl Engine {
 
     /// Tells the objects of the changed files, and their bindings, where
     /// they are now written.
-    fn in_place_relocate(&self, changed: &[Changed]) {
+    fn in_place_relocate(&self, changed: &[Changed], added: &rustc_hash::FxHashSet<ObjectId>) {
         let moved: HashMap<&str, &Moves> = changed
             .iter()
             .filter(|c| !c.moved.is_empty())
@@ -615,7 +989,11 @@ impl Engine {
             }
         };
         let mut store = self.inner.store.borrow_mut();
-        for (_, h) in store.objects.iter_mut() {
+        for (id, h) in store.objects.iter_mut() {
+            // Made where the new file writes it.
+            if added.contains(&id) {
+                continue;
+            }
             let Some(ext) = h.ext.as_deref_mut() else {
                 continue;
             };
@@ -764,16 +1142,21 @@ fn aliased(file: &CompiledFile, comp: CompIdx, obj: usize, name: &str) -> bool {
         .any(|a| a.object == Some(at) && a.path.first().is_some_and(|p| p == name))
 }
 
-/// The aliases of whole edited objects (see [`Changed::whole`]), where
-/// the old expressions are in the new file and the places that moved
-/// (see [`Changed::moved`]), when `new` is `old` but for the edited
-/// members; `None` otherwise.
-#[allow(clippy::type_complexity)]
-fn same_but_edits(
-    old: &CompiledFile,
-    new: &CompiledFile,
-    edits: &[Edit],
-) -> Option<(Vec<(CompIdx, usize, String)>, Vec<Option<ExprId>>, Moves)> {
+/// What [`same_but_edits`] finds: the aliases of whole edited objects
+/// (see [`Changed::whole`]), where the old expressions are in the new
+/// file, the places that moved (see [`Changed::moved`]) and where the
+/// objects are (see [`Changed::objects`]).
+type Same = (
+    Vec<(CompIdx, usize, String)>,
+    Vec<Option<ExprId>>,
+    Moves,
+    Vec<Objects>,
+);
+
+/// [`Same`] when `new` is `old` but for the edited members and for
+/// objects added after the children of one that stays or removed;
+/// `None` otherwise. Sets the old index of each edit.
+fn same_but_edits(old: &CompiledFile, new: &CompiledFile, edits: &mut [Edit]) -> Option<Same> {
     if old.imports != new.imports
         || old.pragmas != new.pragmas
         || old.scripts != new.scripts
@@ -782,26 +1165,44 @@ fn same_but_edits(
     {
         return None;
     }
+    let mut objects = Vec::with_capacity(old.components.len());
+    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
+        if o.name != n.name || o.id != n.id || o.kind != n.kind || o.signature != n.signature {
+            return None;
+        }
+        let m = match_objects(old, new, CompIdx(c as u32))?;
+        if !m.same() && !grows_simply(o, n, &m) {
+            return None;
+        }
+        objects.push(m);
+    }
+    for e in edits.iter_mut() {
+        // An added object is made from the new file as a whole.
+        e.was = objects[e.comp.index()].to_old[e.obj]?;
+    }
     let none: Vec<String> = Vec::new();
     let mut remap = vec![None; old.exprs.len()];
     let mut moved = HashMap::default();
     let (mut was, mut now) = (Vec::new(), Vec::new());
     let (mut here, mut there) = (Vec::new(), Vec::new());
     for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
-        if o.name != n.name
-            || o.id != n.id
-            || o.kind != n.kind
-            || o.signature != n.signature
-            || o.objects.len() != n.objects.len()
-        {
-            return None;
-        }
-        for (i, (oo, no)) in o.objects.iter().zip(&n.objects).enumerate() {
+        let m = &objects[c];
+        for (i, oo) in o.objects.iter().enumerate() {
+            let Some(j) = m.to_new[i] else { continue };
+            let no = &n.objects[j];
             let names = edits
                 .iter()
-                .find(|e| e.comp.index() == c && e.obj == i)
+                .find(|e| e.comp.index() == c && e.obj == j)
                 .map_or(&none, |e| &e.names);
-            if shape(oo, names) != shape(no, names) {
+            let mut a = shape(oo, names);
+            let mut b = shape(no, names);
+            if !m.same() {
+                renumber(&mut a, c, &objects);
+                b.children.retain(
+                    |v| !matches!(v, ObjectValue::Object(k) if m.to_old[k.index()].is_none()),
+                );
+            }
+            if a != b {
                 return None;
             }
             was.clear();
@@ -829,13 +1230,11 @@ fn same_but_edits(
         }
     }
     let mut whole = Vec::new();
-    for e in edits {
-        let o = &old.component(e.comp).objects[e.obj];
+    for e in edits.iter() {
+        let o = &old.component(e.comp).objects[e.was];
         let n = &new.component(e.comp).objects[e.obj];
-        // A model's elements are its data, read once.
-        let model = |od: &ObjectDef| matches!(&od.ty, TypeRef::Native { name, .. } if name == "ListElement" || name == "ListModel");
         let parent = n.parent.map(|p| &new.component(e.comp).objects[p.index()]);
-        if model(n) || parent.is_some_and(model) {
+        if is_model(n) || parent.is_some_and(is_model) {
             return None;
         }
         for name in &e.names {
@@ -880,7 +1279,146 @@ fn same_but_edits(
             }
         }
     }
-    Some((whole, remap, moved))
+    Some((whole, remap, moved, objects))
+}
+
+/// A model's elements are its data, read once.
+fn is_model(od: &ObjectDef) -> bool {
+    matches!(&od.ty, TypeRef::Native { name, .. } if name == "ListElement" || name == "ListModel")
+}
+
+/// Pairs the objects of component `comp` of both files by their keys;
+/// `None` when two objects of a file have one key.
+fn match_objects(old: &CompiledFile, new: &CompiledFile, comp: CompIdx) -> Option<Objects> {
+    let key = |f: &CompiledFile, i: usize| {
+        f.object_key(ObjRef {
+            component: comp,
+            object: ObjIdx(i as u32),
+        })
+    };
+    let (o, n) = (old.component(comp), new.component(comp));
+    let mut at: HashMap<ObjectKey, usize> = HashMap::default();
+    for j in 0..n.objects.len() {
+        if at.insert(key(new, j), j).is_some() {
+            return None;
+        }
+    }
+    let mut to_new = Vec::with_capacity(o.objects.len());
+    let mut to_old = vec![None; n.objects.len()];
+    for i in 0..o.objects.len() {
+        let j = at.remove(&key(old, i));
+        if let Some(j) = j {
+            to_old[j] = Some(i);
+        }
+        to_new.push(j);
+    }
+    // Two old objects of one key: the second finds it taken.
+    if to_new.iter().flatten().count() != to_old.iter().flatten().count() {
+        return None;
+    }
+    Some(Objects { to_new, to_old })
+}
+
+/// Whether the objects of `n` are those of `o` with objects added after
+/// the children of one that stays and objects removed, in the same order
+/// otherwise: what a reload in place can make and destroy.
+/// The object that stays and comes right after the added object `j` among
+/// the children of its parent, which `j` is put before.
+fn anchor(comp: &ComponentDef, m: &Objects, j: usize) -> Option<usize> {
+    let parent = &comp.objects[comp.objects[j].parent?.index()];
+    let at = parent
+        .children
+        .iter()
+        .position(|v| *v == ObjectValue::Object(ObjIdx(j as u32)))?;
+    parent.children[at + 1..].iter().find_map(|v| match v {
+        ObjectValue::Object(k) if m.to_old[k.index()].is_some() => Some(k.index()),
+        _ => None,
+    })
+}
+
+fn grows_simply(o: &ComponentDef, n: &ComponentDef, m: &Objects) -> bool {
+    // The root is the instance's own object.
+    if m.to_new.first() != Some(&Some(0)) {
+        return false;
+    }
+    let kept: Vec<usize> = m.to_new.iter().flatten().copied().collect();
+    if kept.windows(2).any(|w| w[0] > w[1]) {
+        return false;
+    }
+    for j in m.added_tops(n) {
+        let od = &n.objects[j];
+        let Some(p) = od.parent else { return false };
+        let parent = &n.objects[p.index()];
+        if is_model(od) || is_model(parent) {
+            return false;
+        }
+        // A child of the default property, put before the object that
+        // stays after it, if one does. A `Component` written there is not
+        // an object of the instance to put it before.
+        let Some(at) = parent
+            .children
+            .iter()
+            .position(|v| *v == ObjectValue::Object(ObjIdx(j as u32)))
+        else {
+            return false;
+        };
+        if parent.children[at..]
+            .iter()
+            .any(|v| matches!(v, ObjectValue::Component(_)))
+        {
+            return false;
+        }
+    }
+    for i in m.removed_tops(o) {
+        let od = &o.objects[i];
+        if od.parent.is_some_and(|p| is_model(&o.objects[p.index()])) || is_model(od) {
+            return false;
+        }
+    }
+    true
+}
+
+/// `od` of the old file with the indices the new file gives its objects,
+/// and without the children that are removed. One that has none there
+/// (a removed object given to a member) is told apart by an index no
+/// object has.
+fn renumber(od: &mut ObjectDef, comp: usize, objects: &[Objects]) {
+    let to = |c: usize, i: ObjIdx| -> Option<ObjIdx> {
+        objects[c].to_new[i.index()].map(|j| ObjIdx(j as u32))
+    };
+    let gone = ObjIdx(u32::MAX);
+    od.parent = od.parent.map(|p| to(comp, p).unwrap_or(gone));
+    od.children.retain_mut(|v| match v {
+        ObjectValue::Object(i) => match to(comp, *i) {
+            Some(j) => {
+                *i = j;
+                true
+            }
+            None => false,
+        },
+        ObjectValue::Component(_) => true,
+    });
+    let values = |m: &mut Members| {
+        for oa in &mut m.objects {
+            for v in &mut oa.values {
+                if let ObjectValue::Object(i) = v {
+                    *i = to(comp, *i).unwrap_or(gone);
+                }
+            }
+        }
+    };
+    values(&mut od.members);
+    for g in &mut od.grouped {
+        values(&mut g.members);
+    }
+    for a in &mut od.attached {
+        values(&mut a.members);
+    }
+    for p in &mut od.properties {
+        if let Some(r) = p.alias.as_mut().and_then(|a| a.object.as_mut()) {
+            r.object = to(r.component.index(), r.object).unwrap_or(gone);
+        }
+    }
 }
 
 /// The expressions of `od` in the order both files are walked in, but

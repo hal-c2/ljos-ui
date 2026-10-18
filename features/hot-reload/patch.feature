@@ -637,3 +637,361 @@ Feature: What a reload changes
       And the log has no warning matching "Scenario.qml:9:"
       And the property "running" of "slide" is true
       And the property "x" of "box" is at least 40
+
+  Rule: An object added to one that stays, or one removed, leaves every other object where it is
+
+    The added object is made into the object it is written in, at the
+    place the file gives it among its siblings, and runs
+    `Component.onCompleted` as any object made does; a removed one is
+    destroyed. The others go on as they are, an animation half way too.
+
+    Background:
+      Given the file "Badge.qml":
+        """qml
+        import QtQuick
+        Rectangle { property int size: 4; width: size; height: size }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "first"; text: "one" }
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: An added object is there, last among its siblings, and runs onCompleted once
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "first"; text: "one" }
+            Text {
+              objectName: "second"; text: root.word
+              Component.onCompleted: root.made += 1
+            }
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "text" of "second" is "two"
+      And the property "made" of "root" is 1
+      And the property "seen" of "root" is 2
+      And the property "last" of "root" is "second"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+      When the property "word" of "root" is set to "three"
+      Then the property "text" of "second" is "three"
+
+    Scenario: An added object made from a file of the project is there
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "first"; text: "one" }
+            Badge { objectName: "badge"; size: 6 }
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "width" of "badge" is 6
+      And the property "last" of "root" is "badge"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+    Scenario: A removed object is gone
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the object "first" does not exist
+      And the property "seen" of "root" is 0
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+    Scenario: A property edited and an object added in one change
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 30; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "first"; text: second.text + "!" }
+            Text { id: second; objectName: "second"; text: root.word }
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "box" is 30
+      And the property "text" of "first" is "two!"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+      When the property "word" of "root" is set to "three"
+      Then the property "text" of "first" is "three!"
+
+    Scenario: An object added before one that stays comes before it
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Text { objectName: "zero"; text: "zero" }
+            Text { objectName: "first"; text: "one" }
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "seen" of "root" is 2
+      And the property "last" of "root" is "first"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+  Rule: A page a StackView pushed from a file has objects added where it stands
+
+    The page is made once from its file, as a root is, so it grows in
+    place too. Pages made from a `Component` written in another file, and
+    the rows of a view, are made again.
+
+    Background:
+      Given the file "Page.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "page"; width: 10; height: 10
+          property int count: 0
+          property int seen: -1
+          NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          Item { objectName: "a" }
+          function go() { slide.start() }
+          function probe() { seen = children.length }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          objectName: "root"
+          width: 300; height: 200
+          StackView { id: stack; objectName: "stack"; anchors.fill: parent }
+          function openFile() { stack.push("Page.qml") }
+        }
+        """
+      When the method "openFile" of "root" is called
+      And the property "count" of "page" is set to 5
+      And the method "go" of "page" is called
+      And 500 milliseconds pass
+
+    Scenario: An object added to the page is there and the page goes on as it was
+      When the file "Page.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "page"; width: 10; height: 10
+          property int count: 0
+          property int seen: -1
+          NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          Item { objectName: "a" }
+          Text { objectName: "b"; text: "b" + count }
+          function go() { slide.start() }
+          function probe() { seen = children.length }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "page" is called
+      Then the property "seen" of "page" is 2
+      And the property "text" of "b" is "b5"
+      And the property "depth" of "stack" is 1
+      And the property "running" of "slide" is true
+      And the property "x" of "page" is at least 40
+
+  Rule: Other changes to objects make them again, as the file now writes them
+
+    An object moved, given another type or another id, or added in a
+    delegate, a Repeater's or a view's, is there as the file writes it
+    once the reload is through.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property string last: ""
+          property string tag: a.objectName
+          Text { id: a; objectName: "a"; text: "a" }
+          Text { objectName: "b"; text: "b" }
+          Repeater {
+            model: 2
+            Item { objectName: "row" + index }
+          }
+          function probe() { last = children[0].objectName }
+        }
+        """
+
+    Scenario: An object given another type is of that type
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property string last: ""
+          property string tag: a.objectName
+          Text { id: a; objectName: "a"; text: "a" }
+          Rectangle { objectName: "b"; width: 7; height: 7 }
+          Repeater {
+            model: 2
+            Item { objectName: "row" + index }
+          }
+          function probe() { last = children[0].objectName }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "b" is 7
+
+    Scenario: An id given to another object names that object
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property string last: ""
+          property string tag: a.objectName
+          Text { objectName: "a"; text: "a" }
+          Text { id: a; objectName: "b"; text: "b" }
+          Repeater {
+            model: 2
+            Item { objectName: "row" + index }
+          }
+          function probe() { last = children[0].objectName }
+        }
+        """
+      And a reload happens
+      Then the property "tag" of "root" is "b"
+
+    Scenario: An object added in a Repeater's delegate is in every row
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Column {
+          id: root; objectName: "root"
+          property string last: ""
+          property string tag: a.objectName
+          Text { id: a; objectName: "a"; text: "a" }
+          Text { objectName: "b"; text: "b" }
+          Repeater {
+            model: 2
+            Item {
+              objectName: "row" + index
+              Text { objectName: "label" + index; text: "row " + index }
+            }
+          }
+          function probe() { last = children[0].objectName }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "label0" is "row 0"
+      And the property "text" of "label1" is "row 1"

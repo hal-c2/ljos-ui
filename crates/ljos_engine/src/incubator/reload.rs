@@ -1388,6 +1388,48 @@ impl Engine {
         }
     }
 
+    /// Gives the objects of the tree of `top` the paths they now have,
+    /// after a reload in place added objects to it or removed some: the
+    /// next reload finds them by those.
+    pub(super) fn reload_repath(&self, top: &Rc<Instance>) {
+        let st = &self.inner.reload;
+        let Some(root) = top.objects.first() else {
+            return;
+        };
+        let Some((prefix, tree)) = st.info.borrow().get(root).map(|i| (i.path.clone(), i.tree))
+        else {
+            return;
+        };
+        let mut walk = Walk::default();
+        walk.instance(top, &prefix, true);
+        let mut info = st.info.borrow_mut();
+        let mut by_path = st.by_path.borrow_mut();
+        for id in &walk.order {
+            let Some(path) = walk.path.remove(id) else {
+                continue;
+            };
+            let print = walk.print.remove(id).unwrap_or_default();
+            if let Some(i) = info.get(id) {
+                if *i.path == *path && *i.print == *print {
+                    continue;
+                }
+                if by_path.get(&i.path) == Some(id) {
+                    by_path.remove(&i.path);
+                }
+            }
+            let path: Rc<str> = Rc::from(path);
+            by_path.insert(path.clone(), *id);
+            info.insert(
+                *id,
+                Info {
+                    path,
+                    print: Rc::from(print),
+                    tree,
+                },
+            );
+        }
+    }
+
     /// Gives the objects of a creation their paths, once they exist and
     /// before anything of them runs, and says which of them go on for an
     /// object of the old tree.
