@@ -1456,6 +1456,9 @@ ApplicationWindow {
                         } else {
                             for (var i = 0; i < s.entries.length; ++i)
                                 put(s.entries[i])
+                            // Once for the lot: at each line, the view
+                            // would make the new row and drop the top one.
+                            logView.positionViewAtEnd()
                         }
                         if (window.page !== 4)
                             unread += s.entries.length
@@ -1487,6 +1490,7 @@ ApplicationWindow {
                         shownLines.clear()
                         for (var i = 0; i < entries.length; ++i)
                             put(entries[i])
+                        logView.positionViewAtEnd()
                     }
 
                     onFilterChanged: show()
@@ -1549,7 +1553,6 @@ ApplicationWindow {
                             clip: true
                             model: shownLines
                             ScrollBar.vertical: ScrollBar {}
-                            onCountChanged: positionViewAtEnd()
                             delegate: Item {
                                 id: entry
                                 required property int index
