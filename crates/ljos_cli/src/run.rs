@@ -9,6 +9,10 @@ use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -403,17 +407,21 @@ impl Run {
             // The project compiles while the window system and the drivers
             // start. It still stops the run before a window opens: windows
             // open after `setup`, which waits for it.
+            let stop = Arc::new(AtomicBool::new(false));
             let compiling = {
                 let (dir, key, example) = (dir.clone(), key.clone(), example.clone());
+                let stop = Arc::clone(&stop);
                 std::thread::Builder::new()
                     .name("ljos-compile".into())
                     .spawn(move || {
-                        compile(
+                        let source = compile(
                             &dir,
                             &key,
                             example.as_deref(),
                             Box::new(crate::stderr::line),
-                        )
+                        )?;
+                        source.compile_ahead(&key, &stop);
+                        Ok(source)
                     })
                     .context("a thread to compile on")?
             };
@@ -421,6 +429,7 @@ impl Run {
             let failed = Rc::new(RefCell::new(None));
             let (waiting, failing) = (Rc::clone(&compiling), Rc::clone(&failed));
             let ran = ljos_shell::run::<()>(config, move |setup| {
+                stop.store(true, Ordering::Relaxed);
                 let source = match waiting.borrow_mut().take().map(compiled) {
                     Some(Ok(source)) => source,
                     Some(Err(error)) => {
@@ -710,6 +719,57 @@ mod tests {
         assert!(told("pages/Page.qml: 4:"), "{said:?}");
         assert!(!told("stray/") && !told("Broken"), "{said:?}");
         assert_eq!(said.len(), 2, "{said:?}");
+    }
+
+    #[test]
+    fn what_is_compiled_ahead_is_told_when_the_engine_asks_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &[
+                ("Main.qml", "import QtQuick\nItem {\n  Card { }\n}\n"),
+                (
+                    "Card.qml",
+                    "import QtQuick\nItem {\n  property var v: cardUnknown\n  Badge { }\n}\n",
+                ),
+                (
+                    "Badge.qml",
+                    "import QtQuick\nItem {\n  property var v: badgeUnknown\n}\n",
+                ),
+                // Beside them, and nothing makes one.
+                (
+                    "Spare.qml",
+                    "import QtQuick\nItem {\n  property var v: spareUnknown\n}\n",
+                ),
+            ],
+        );
+        let stopped = compile(dir.path(), "Main", None, quiet()).unwrap();
+        stopped.compile_ahead("Main", &AtomicBool::new(true));
+        assert!(stopped.ahead().is_empty());
+
+        let said = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let to = said.clone();
+        let source = compile(
+            dir.path(),
+            "Main",
+            None,
+            Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
+        )
+        .unwrap();
+        source.compile_ahead("Main", &AtomicBool::new(false));
+        assert_eq!(source.ahead(), ["Badge", "Card"]);
+        assert!(said.lock().unwrap().is_empty(), "{said:?}");
+
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        let source = std::rc::Rc::new(source);
+        engine.set_component_source(Shared(source.clone()));
+        engine.create_from_url("Main", None, Vec::new()).unwrap();
+        assert!(source.ahead().is_empty());
+        let said = said.lock().unwrap();
+        let told = |file: &str| said.iter().any(|line| line.starts_with(file));
+        assert!(told("Card.qml: 3:") && told("Badge.qml: 3:"), "{said:?}");
+        assert!(!told("Spare"), "{said:?}");
     }
 
     /// The source as the engine has it, still in the test's hands.

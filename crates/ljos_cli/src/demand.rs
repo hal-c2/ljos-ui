@@ -9,13 +9,26 @@
 //! walk, with no second one over the compiled files. Files are read the
 //! same way: a directory when a file reached is in it or imports it
 //! ([`Project::reach`]).
+//!
+//! Until the engine first asks, the thread that compiled the entry goes on
+//! to the files the entry makes objects of ([`OnDemand::compile_ahead`]), as
+//! the window system and the drivers start. What it compiled is kept back
+//! and told when the engine asks for it, as if compiled then.
 
-use std::{cell::RefCell, collections::HashSet, path::Path, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet, VecDeque},
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use anyhow::Context as _;
-use ljos_compiler::{Compiled, Project, Severity, compile_file, failure_reason};
+use ljos_compiler::{Compiled, Diagnostic, Project, Severity, compile_file, failure_reason};
 use ljos_engine::{ComponentSource, MapSource};
-use ljos_ir::CompiledFile;
+use ljos_ir::{CompiledFile, TypeRef};
 use qml_front::TypeOracle;
 
 /// What a file the program reached has to say: one line per warning.
@@ -29,6 +42,8 @@ pub(crate) struct OnDemand<O> {
     /// What was compiled, or why it did not compile, with the URLs.
     done: RefCell<MapSource>,
     asked: RefCell<HashSet<String>>,
+    /// Compiled ahead of the engine's asking, and not yet told.
+    ahead: RefCell<HashMap<String, Result<Compiled, Vec<Diagnostic>>>>,
     say: Say,
 }
 
@@ -48,6 +63,7 @@ impl<O: TypeOracle> OnDemand<O> {
             project: RefCell::new(project),
             done: RefCell::new(MapSource::new().with_base_url(base)),
             asked: RefCell::new(HashSet::new()),
+            ahead: RefCell::new(HashMap::new()),
             say,
         };
         source
@@ -62,14 +78,10 @@ impl<O: TypeOracle> OnDemand<O> {
         if !self.asked.borrow_mut().insert(key.to_owned()) {
             return Ok(());
         }
-        // What another file reaches only when the program runs: a
-        // `Loader` or `Qt.createComponent` of its URL.
-        self.project.borrow_mut().reach(key);
-        let project = self.project.borrow();
-        if project.source(key).is_none() {
+        let ahead = self.ahead.borrow_mut().remove(key);
+        let Some(result) = ahead.or_else(|| self.compile(key)) else {
             return Ok(());
-        }
-        let result = compile_file(&project, key);
+        };
         let mut done = self.done.borrow_mut();
         match result {
             Ok(c) if !c.has_errors() => {
@@ -89,6 +101,59 @@ impl<O: TypeOracle> OnDemand<O> {
             }
         }
     }
+
+    /// Compiles `key` as the engine asking for it would, telling nothing;
+    /// `None` for a key that is no file of the project.
+    fn compile(&self, key: &str) -> Option<Result<Compiled, Vec<Diagnostic>>> {
+        // What another file reaches only when the program runs: a
+        // `Loader` or `Qt.createComponent` of its URL.
+        self.project.borrow_mut().reach(key);
+        let project = self.project.borrow();
+        project.source(key)?;
+        Some(compile_file(&project, key))
+    }
+
+    /// Compiles the files `entry` makes objects of, and theirs, in the order
+    /// they are written, until `stop` is set; the file being compiled then
+    /// is finished. A file this does not get to is compiled when the engine
+    /// asks for it.
+    pub(crate) fn compile_ahead(&self, entry: &str, stop: &AtomicBool) {
+        let Some(first) = self.done.borrow().load(entry) else {
+            return;
+        };
+        let mut queue: VecDeque<String> = uses(&first).collect();
+        let mut seen = HashSet::new();
+        while let Some(key) = queue.pop_front() {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            if !seen.insert(key.clone()) || self.asked.borrow().contains(&key) {
+                continue;
+            }
+            let Some(result) = self.compile(&key) else {
+                continue;
+            };
+            if let Ok(c) = &result {
+                queue.extend(uses(&c.file));
+            }
+            self.ahead.borrow_mut().insert(key, result);
+        }
+    }
+}
+
+/// The other files of the project `file` makes objects of or calls a
+/// singleton of, in the order it names them.
+fn uses(file: &CompiledFile) -> impl Iterator<Item = String> + '_ {
+    let objects = file
+        .components
+        .iter()
+        .flat_map(|c| c.objects.iter().map(|o| &o.ty));
+    objects
+        .chain(file.invocable.iter().map(|i| &i.ty))
+        .filter_map(move |ty| match ty {
+            TypeRef::Component { file: key, .. } if *key != file.file => Some(key.clone()),
+            _ => None,
+        })
 }
 
 impl<O: TypeOracle> OnDemand<O> {
@@ -104,6 +169,13 @@ impl<O: TypeOracle> OnDemand<O> {
     /// The files read so far.
     pub(crate) fn read(&self) -> Vec<String> {
         self.project.borrow().files().map(str::to_owned).collect()
+    }
+
+    /// The files compiled ahead and not yet asked for, sorted.
+    pub(crate) fn ahead(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.ahead.borrow().keys().cloned().collect();
+        keys.sort();
+        keys
     }
 }
 
