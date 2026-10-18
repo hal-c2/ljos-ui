@@ -1125,6 +1125,32 @@ impl Engine {
         Ok(())
     }
 
+    /// Gives `obj` the type `meta`, laid out as the one it has but for the
+    /// names of its own properties: a reload renamed one. What it holds
+    /// stays in place. False when the layouts differ.
+    pub(crate) fn rename_meta(&self, obj: ObjectId, meta: MetaRef) -> bool {
+        {
+            let mut store = self.inner.store.borrow_mut();
+            let Some(h) = store.objects.get_mut(obj) else {
+                return false;
+            };
+            if h.meta.properties.len() != meta.properties.len()
+                || h.meta.signals.len() != meta.signals.len()
+                || h.meta.methods.len() != meta.methods.len()
+                || h.meta.dynamic_slots != meta.dynamic_slots
+            {
+                return false;
+            }
+            h.meta = meta;
+        }
+        // As with a type extended: the wrapper knows the old names.
+        let js = self.inner.js.borrow().clone();
+        if let Some(js) = js {
+            js.host.drop_wrapper(crate::js::obj_to_u64(obj));
+        }
+        true
+    }
+
     /// Makes the row object a delegate sees row `row` of `model` through,
     /// owned by `owner`. `shape` is the model's; a row that is an object
     /// gets the shape of that object instead.

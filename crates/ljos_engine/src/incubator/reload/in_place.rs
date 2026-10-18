@@ -14,8 +14,11 @@
 //! is the edit alone. A member no longer given goes back to what a new
 //! object of its type has. A `ListElement` added, removed, moved or given
 //! other values is the model's own insert, remove, move or set, so a view
-//! keeps the delegates of the rows that stay. Anything else (a
-//! declaration, a signal) is made again by [`Engine::reload`].
+//! keeps the delegates of the rows that stay. A declared property
+//! renamed, when no other file reads or sets it by either name, gives its
+//! object the new file's type, laid out as the old, and starts as a fresh
+//! one does. Anything else (a declaration, a signal) is made again by
+//! [`Engine::reload`].
 //!
 //! The objects keep the bindings they have. The edited members and
 //! functions are installed from the new file, and so are the `Component`s,
@@ -33,8 +36,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_ir::{
-    CompIdx, CompiledFile, ComponentDef, ExprId, Literal, Members, ObjIdx, ObjRef, ObjectDef,
-    ObjectKey, ObjectValue, ReloadOp, ReloadPatch, Resolved, SourceSpan, TypeRef,
+    CompIdx, CompiledFile, ComponentDef, ComponentKind, ComponentSignature, ExprId, Literal,
+    Members, ObjIdx, ObjRef, ObjectDef, ObjectKey, ObjectValue, PropertyDecl, ReloadOp,
+    ReloadPatch, Resolved, SourceSpan, TypeRef,
 };
 use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap as HashMap;
@@ -113,6 +117,8 @@ struct Edit {
     was: usize,
     names: Vec<String>,
     functions: Vec<String>,
+    /// (old name, new name): a declared property the edit renamed.
+    renamed: Vec<(String, String)>,
 }
 
 /// What an op edits of an object.
@@ -213,6 +219,7 @@ struct Target<'a> {
     old: &'a ObjectDef,
     names: Vec<String>,
     functions: Vec<String>,
+    renamed: Vec<(String, String)>,
 }
 
 impl Engine {
@@ -338,6 +345,7 @@ impl Engine {
                         old: &c.old.ir.component(e.comp).objects[e.was],
                         names: e.names.clone(),
                         functions: e.functions.clone(),
+                        renamed: e.renamed.clone(),
                     };
                     if let Err(why) = self.in_place_applies(&mut t, c, &users) {
                         return not_here(why);
@@ -374,16 +382,21 @@ impl Engine {
                 Ok(new) => {
                     // The declarations are the same: so are their types,
                     // at the places the objects now have.
-                    *new.metas.borrow_mut() = c
-                        .old
-                        .metas
-                        .borrow()
-                        .iter()
-                        .filter_map(|(&(comp, obj), meta)| {
-                            let to = c.objects.get(comp as usize)?.to_new.get(obj as usize)?;
-                            Some(((comp, (*to)? as u32), meta.clone()))
-                        })
-                        .collect();
+                    *new.metas.borrow_mut() =
+                        c.old
+                            .metas
+                            .borrow()
+                            .iter()
+                            .filter_map(|(&(comp, obj), meta)| {
+                                let to = c.objects.get(comp as usize)?.to_new.get(obj as usize)?;
+                                let to = (*to)?;
+                                // One with a property renamed has the new names.
+                                let renamed = c.edits.iter().any(|e| {
+                                    e.comp.0 == comp && e.obj == to && !e.renamed.is_empty()
+                                });
+                                (!renamed).then(|| ((comp, to as u32), meta.clone()))
+                            })
+                            .collect();
                     // A handler warned of once is not warned of again.
                     let warned = c.old.injected_warned.borrow();
                     new.injected_warned.borrow_mut().extend(
@@ -442,6 +455,21 @@ impl Engine {
         }
         drop(saved);
         phases.mark("grow");
+        // An object with a property renamed takes the type the new file
+        // gives it, laid out as its own: what it holds stays in place.
+        for t in targets.iter().filter(|t| !t.renamed.is_empty()) {
+            let inst = renew(&t.inst, &files, &mut memo);
+            let id = inst.objects[t.obj];
+            if !self.is_alive(id) {
+                continue;
+            }
+            let renamed = self
+                .object_meta(&inst.file, inst.comp, t.obj)
+                .is_ok_and(|meta| self.rename_meta(id, meta));
+            if !renamed {
+                tracing::warn!("a renamed property's object keeps its old names");
+            }
+        }
         self.batch(|| {
             for t in &targets {
                 let inst = renew(&t.inst, &files, &mut memo);
@@ -450,6 +478,14 @@ impl Engine {
                     continue;
                 }
                 for name in &t.names {
+                    if gives(t.def, name) {
+                        self.in_place_set(&inst, id, t.def, name);
+                    } else {
+                        let _ = self.in_place_unset(&inst, t.obj, t.old, t.def, name, true);
+                    }
+                }
+                // Each renamed property starts as a fresh one does.
+                for (_, name) in &t.renamed {
                     if gives(t.def, name) {
                         self.in_place_set(&inst, id, t.def, name);
                     } else {
@@ -705,6 +741,9 @@ impl Engine {
                 ReloadOp::ObjectAdded { .. }
                 | ReloadOp::ObjectRemoved { .. }
                 | ReloadOp::TypeChanged { .. } => continue,
+                // Read from the files too: one that only renamed
+                // properties is let through.
+                ReloadOp::SignatureChanged { .. } => continue,
                 _ => {
                     tracing::debug!("reload not in place: {op:?}");
                     return None;
@@ -752,6 +791,7 @@ impl Engine {
                             was: obj,
                             names: Vec::new(),
                             functions: Vec::new(),
+                            renamed: Vec::new(),
                         });
                         edits.len() - 1
                     }
@@ -772,6 +812,9 @@ impl Engine {
                 tracing::debug!("reload not in place: {} changed its shape", new.file);
                 return None;
             };
+            if let Some(why) = self.renamed_elsewhere(&old, &edits) {
+                return not_here(why);
+            }
             out.push(Changed {
                 old,
                 new: Arc::new(new.clone()),
@@ -784,6 +827,71 @@ impl Engine {
             });
         }
         Some(out)
+    }
+
+    /// Why a property `edits` rename cannot be renamed where it stands:
+    /// another file may read or set it by either name, or its type has a
+    /// member of one. `None` when it can.
+    fn renamed_elsewhere(&self, file: &Rc<LoadedFile>, edits: &[Edit]) -> Option<String> {
+        let loader = self.inner.loader.borrow();
+        for e in edits {
+            let od = &file.ir.component(e.comp).objects[e.was];
+            let base = self.type_meta(file, &od.ty).ok();
+            for (from, to) in &e.renamed {
+                let words = [
+                    from.clone(),
+                    to.clone(),
+                    format!("{from}Changed"),
+                    format!("{to}Changed"),
+                    format!("on{}Changed", capitalized(from)),
+                    format!("on{}Changed", capitalized(to)),
+                ];
+                let why = |other: &str| {
+                    Some(format!(
+                        "the property {from} of {} renamed to {to} is read or set in {other}",
+                        file.key
+                    ))
+                };
+                if let Some(base) = &base
+                    && [from, to].iter().any(|n| {
+                        base.property_index(n).is_some()
+                            || base.signal_index(n).is_some()
+                            || base.method_index(n).is_some()
+                    })
+                {
+                    return Some(format!(
+                        "the property {from} of {} renamed to {to} names a member of its type",
+                        file.key
+                    ));
+                }
+                // A script reaches it through an object it is handed.
+                if file
+                    .ir
+                    .scripts
+                    .iter()
+                    .any(|s| words.iter().any(|w| mentions(&s.source, w)))
+                {
+                    return why("a script of its own file");
+                }
+                for other in loader.files.values().filter(|f| f.key != file.key) {
+                    let ir = &other.ir;
+                    let read = std::iter::once(ir.js.source.as_str())
+                        .chain(ir.scripts.iter().map(|s| s.source.as_str()))
+                        .any(|text| words.iter().any(|w| mentions(text, w)));
+                    let set = || {
+                        ir.components
+                            .iter()
+                            .flat_map(|c| &c.objects)
+                            .flat_map(written_names)
+                            .any(|n| words.iter().any(|w| w == n))
+                    };
+                    if read || set() {
+                        return why(&other.key);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Whether objects can be added to `inst` and removed from it where it
@@ -1058,6 +1166,13 @@ impl Engine {
         let given = self.inner.reload.given.borrow();
         let given = given.get(&id);
         let old = &c.old.ir.component(t.inst.comp).objects[t.was];
+        if given.is_some_and(|g| {
+            t.renamed
+                .iter()
+                .any(|(a, b)| g.iter().any(|n| n == a || n == b))
+        }) {
+            return Err("a renamed property is given where the object is made");
+        }
         for name in &t.names {
             if !gives(t.def, name) {
                 self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
@@ -1710,10 +1825,34 @@ fn same_but_edits(
     {
         return not_here("its imports, pragmas, scripts or components changed");
     }
+    let inline: Vec<String> = new
+        .components
+        .iter()
+        .filter(|c| c.kind == ComponentKind::Inline)
+        .map(|c| c.name.clone())
+        .collect();
     let mut objects = Vec::with_capacity(old.components.len());
     for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
-        if o.name != n.name || o.id != n.id || o.kind != n.kind || o.signature != n.signature {
-            return not_here("a component's name, id, kind or signature changed");
+        if o.name != n.name || o.id != n.id || o.kind != n.kind {
+            return not_here("a component's name, id or kind changed");
+        }
+        // A signature that differs by renamed properties alone: the
+        // properties are told apart below.
+        if o.signature != n.signature {
+            let mut root = o.root().clone();
+            let renames = renamed(&root, n.root());
+            if renames.is_empty() || o.kind == ComponentKind::Inline {
+                return not_here("a component's signature changed");
+            }
+            for p in &mut root.properties {
+                if let Some((_, to)) = renames.iter().find(|(from, _)| *from == p.name) {
+                    p.name.clone_from(to);
+                }
+            }
+            let names: &[String] = if c == 0 { &inline } else { &[] };
+            if ComponentSignature::of(&root, names) != n.signature {
+                return not_here("a component's signature changed");
+            }
         }
         let m = match_objects(old, new, CompIdx(c as u32), moves)?;
         if !m.same() && !grows_simply(n, &m) {
@@ -1750,6 +1889,43 @@ fn same_but_edits(
         }
     }
     edits.retain(|e| !is_element(&new.component(e.comp).objects[e.obj]));
+    // A declared property renamed: the object keeps it, by its new name.
+    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
+        let m = &objects[c];
+        for (i, oo) in o.objects.iter().enumerate() {
+            let Some(j) = m.to_new[i] else { continue };
+            let renames = renamed(oo, &n.objects[j]);
+            if renames.is_empty() {
+                continue;
+            }
+            if j == 0 && n.kind == ComponentKind::Inline {
+                return not_here("a property of an inline component's root was renamed");
+            }
+            let comp = CompIdx(c as u32);
+            let e = match edits.iter().position(|e| e.comp == comp && e.obj == j) {
+                Some(k) => &mut edits[k],
+                None => {
+                    edits.push(Edit {
+                        comp,
+                        obj: j,
+                        was: i,
+                        names: Vec::new(),
+                        functions: Vec::new(),
+                        renamed: Vec::new(),
+                    });
+                    edits.last_mut()?
+                }
+            };
+            for (a, b) in &renames {
+                for name in [a, b] {
+                    if !e.names.contains(name) {
+                        e.names.push(name.clone());
+                    }
+                }
+            }
+            e.renamed = renames;
+        }
+    }
     for e in edits.iter_mut() {
         e.was = objects[e.comp.index()].to_old[e.obj]?;
         // A list of objects in both: what it holds is matched as objects
@@ -1785,6 +1961,20 @@ fn same_but_edits(
                 .map_or(&none, |e| &e.names);
             let mut a = shape(oo, names);
             let mut b = shape(no, names);
+            // Under its new names, the old object is the new one.
+            let renames = edits
+                .iter()
+                .find(|e| e.comp.index() == c && e.obj == j)
+                .map_or(&[][..], |e| &e.renamed[..]);
+            for (from, to) in renames {
+                for p in a.properties.iter_mut().filter(|p| p.name == *from) {
+                    p.name.clone_from(to);
+                }
+                let (was, now) = (format!("{from}Changed"), format!("{to}Changed"));
+                for h in a.members.handlers.iter_mut().filter(|h| h.signal == was) {
+                    h.signal.clone_from(&now);
+                }
+            }
             if !m.same() {
                 renumber(&mut a, c, &objects);
                 let added = |v: &ObjectValue| matches!(v, ObjectValue::Object(k) if m.to_old[k.index()].is_none());
@@ -1819,6 +2009,13 @@ fn same_but_edits(
                 }
             }
         }
+    }
+    // A renamed property is given its value by its new name alone, once
+    // the object has its new type.
+    for e in edits.iter_mut().filter(|e| !e.renamed.is_empty()) {
+        let renamed = &e.renamed;
+        e.names
+            .retain(|n| !renamed.iter().any(|(a, b)| n == a || n == b));
     }
     let mut whole = Vec::new();
     for e in edits.iter() {
@@ -1875,6 +2072,71 @@ fn same_but_edits(
         }
     }
     Some((whole, remap, moved, objects, models))
+}
+
+/// (old name, new name): the declared properties of `old` that `new`
+/// declares by another name, alike but for it, at the same place among
+/// the others. Empty when the declarations differ otherwise, which the
+/// shapes tell, or when a name went to another of them.
+fn renamed(old: &ObjectDef, new: &ObjectDef) -> Vec<(String, String)> {
+    if old.properties.len() != new.properties.len() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (a, b) in old.properties.iter().zip(&new.properties) {
+        if a.name == b.name {
+            continue;
+        }
+        let alike = PropertyDecl {
+            name: b.name.clone(),
+            span: b.span,
+            ..a.clone()
+        };
+        if alike != *b || a.alias.is_some() || a.is_required {
+            return Vec::new();
+        }
+        out.push((a.name.clone(), b.name.clone()));
+    }
+    let had = |od: &ObjectDef, name: &str| od.properties.iter().any(|p| p.name == name);
+    if out.iter().any(|(a, b)| had(old, b) || had(new, a)) {
+        return Vec::new();
+    }
+    out
+}
+
+fn capitalized(name: &str) -> String {
+    let mut c = name.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
+}
+
+/// Whether `word` is in `text` as a name of its own.
+fn mentions(text: &str, word: &str) -> bool {
+    let part = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    text.match_indices(word).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(part)
+            && !text[at + word.len()..].chars().next().is_some_and(part)
+    })
+}
+
+/// The names `od` gives members, handlers and groups by.
+fn written_names(od: &ObjectDef) -> impl Iterator<Item = &str> {
+    fn of(m: &Members) -> impl Iterator<Item = &str> {
+        m.assignments
+            .iter()
+            .map(|a| a.name.as_str())
+            .chain(m.bindings.iter().map(|b| b.name.as_str()))
+            .chain(m.handlers.iter().map(|h| h.signal.as_str()))
+            .chain(m.objects.iter().map(|o| o.name.as_str()))
+    }
+    of(&od.members)
+        .chain(
+            od.grouped
+                .iter()
+                .flat_map(|g| g.path.iter().map(String::as_str).chain(of(&g.members))),
+        )
+        .chain(od.attached.iter().flat_map(|a| of(&a.members)))
 }
 
 /// None, telling why at debug level: the reload does not go in place.

@@ -2901,3 +2901,86 @@ Feature: What a reload changes
       Then the property "rows" of "root" is "a1,b5,c3"
       And the property "taps" of "row-b" is 4
       And the property "x" of "box" is at least 40
+
+  Rule: A property renamed goes in place when no other file reads or sets either name
+
+    The property is given what the file now gives it, as a new object
+    would be. When another file uses the name, the roots are made again.
+
+    Background:
+      Given the file "Pill.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; property real seen: parent ? parent.shade : 0 }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int count: 3
+          property real shade: 1
+          property string shown: "n" + count
+          property int heard: 0
+          onCountChanged: heard++
+          Pill { objectName: "pill" }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function bump() { count++ }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A property renamed with its uses in the file goes in place
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int total: 3
+          property real shade: 1
+          property string shown: "n" + total
+          property int heard: 0
+          onTotalChanged: heard++
+          Pill { objectName: "pill" }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function bump() { total++ }
+        }
+        """
+      And a reload happens
+      Then the property "total" of "root" is 3
+      And the property "shown" of "root" is "n3"
+      And the property "x" of "box" is at least 40
+      When the method "bump" of "root" is called
+      Then the property "shown" of "root" is "n4"
+      And the property "heard" of "root" is 1
+
+    Scenario: A property another file reads is renamed by making the roots again
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int count: 3
+          property real tint: 1
+          property string shown: "n" + count
+          property int heard: 0
+          onCountChanged: heard++
+          Pill { objectName: "pill" }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+          function bump() { count++ }
+        }
+        """
+      And a reload happens
+      Then the property "tint" of "root" is 1
+      And the property "seen" of "pill" is 0
+      And the property "x" of "box" is at most 20
