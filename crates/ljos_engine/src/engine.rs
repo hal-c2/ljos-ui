@@ -617,6 +617,18 @@ impl Engine {
         Some(self.inner.store.borrow().objects.get(obj)?.meta.clone())
     }
 
+    /// Whether `obj` is alive and of the type `ty` or one derived from it:
+    /// [`MetaObject::inherits`] of its [`meta_of`](Self::meta_of), with
+    /// the description looked at where it is rather than shared out.
+    pub fn inherits(&self, obj: ObjectId, ty: &MetaObject) -> bool {
+        self.inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .is_some_and(|h| h.meta.inherits(ty))
+    }
+
     /// Gives `obj` the type `meta`, which must derive from the type it
     /// has: for an object whose properties are only known at run time
     /// (the names the `PathAttribute`s of a path give `PathView`'s

@@ -989,9 +989,7 @@ pub fn is_item(engine: &Engine, obj: ObjectId) -> bool {
 
 /// Whether the object's type derives from `T`.
 pub(crate) fn is_a<T: QmlType>(engine: &Engine, obj: ObjectId) -> bool {
-    engine
-        .meta_of(obj)
-        .is_some_and(|m| m.inherits(T::static_meta()))
+    engine.inherits(obj, T::static_meta())
 }
 
 /// Sets an item's static accessibility data.
