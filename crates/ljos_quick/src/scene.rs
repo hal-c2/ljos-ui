@@ -264,8 +264,11 @@ struct Shared {
     geom: FxHashMap<ObjectId, Geom>,
     place: FxHashMap<ObjectId, Place>,
     /// Items whose place may have changed, read at the frame: the place
-    /// effect is told rather than run (see [`QuickScene::adopt`]).
-    placed: FxHashSet<ObjectId>,
+    /// effect is told rather than run (see [`QuickScene::adopt`]). An item
+    /// is here once for each flush that told it, read once
+    /// ([`Entry::place_read`]): a set cost each item that moved a hash
+    /// insert every frame.
+    placed: Vec<ObjectId>,
     /// The map of a `transform` list, from [`list_effect`].
     list: FxHashMap<ObjectId, crate::transform::Projective>,
     content: FxHashMap<ObjectId, Paint>,
@@ -350,6 +353,8 @@ struct Entry {
     /// it: made only for an item whose list has entries.
     list: crate::transform::Projective,
     list_effect: Option<GraphNode>,
+    /// The [`QuickScene::places_read`] that last read its place.
+    place_read: u64,
 }
 
 /// Where an item is in its parent: `x` and `y`, and whether it is drawn
@@ -394,7 +399,9 @@ pub struct QuickScene {
     entries: FxHashMap<ObjectId, Entry>,
     by_node: SecondaryMap<NodeId, ObjectId>,
     /// `Shared::placed` of the last frame, kept for its capacity.
-    placed: FxHashSet<ObjectId>,
+    placed: Vec<ObjectId>,
+    /// How many frames read places.
+    places_read: u64,
     /// The items whose place was read this frame, kept for its capacity.
     told_moved: Vec<ObjectId>,
     paint: FxHashMap<ObjectId, Paint>,
@@ -500,7 +507,8 @@ impl QuickScene {
             log: QuickLog::default(),
             entries: FxHashMap::default(),
             by_node: SecondaryMap::new(),
-            placed: FxHashSet::default(),
+            placed: Vec::new(),
+            places_read: 0,
             told_moved: Vec::new(),
             paint: FxHashMap::default(),
             effect_base: HashMap::new(),
@@ -1153,6 +1161,7 @@ impl QuickScene {
                 place: (0.0, 0.0, false),
                 list: crate::transform::Projective::IDENTITY,
                 list_effect: None,
+                place_read: 0,
             },
         );
         self.by_node.insert(node, obj);
@@ -1177,7 +1186,7 @@ impl QuickScene {
             move |e| place_effect(e, obj, &place, &shared),
             move || {
                 mark(&told, |s| {
-                    s.placed.insert(obj);
+                    s.placed.push(obj);
                 })
             },
         )?);
@@ -1261,7 +1270,7 @@ impl QuickScene {
         let mut s = self.shared.borrow_mut();
         s.geom.remove(&obj);
         s.place.remove(&obj);
-        s.placed.remove(&obj);
+        // Its entry is gone, so a place told is not read.
         s.list.remove(&obj);
         s.content.remove(&obj);
         s.structure.remove(&obj);
@@ -1356,12 +1365,16 @@ impl QuickScene {
             return;
         }
         let shown = crate::animation::shown::shown(engine);
+        self.places_read += 1;
         // Set on the entry as it is read: by way of `Shared::place` each
         // moved item cost an insert, a drain and a look more, every frame.
-        for obj in self.placed.drain() {
+        for obj in self.placed.drain(..) {
             let Some(e) = self.entries.get_mut(&obj) else {
                 continue;
             };
+            if std::mem::replace(&mut e.place_read, self.places_read) == self.places_read {
+                continue;
+            }
             if engine.is_alive(obj) {
                 e.place = (
                     shown_num(engine, &shown, obj, Item::X.index),
