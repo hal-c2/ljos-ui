@@ -847,7 +847,40 @@ impl ImageStore {
 
     /// As [`ImageStore::cached`], with the size the picture reports.
     pub(crate) fn cached_picture(&self, key: &ImageKey) -> Option<Picture> {
-        self.state.borrow_mut().cache.get(key).cloned()
+        let hit = self.state.borrow_mut().cache.get(key).cloned();
+        hit.or_else(|| self.derived(key))
+    }
+
+    /// A raster picture asked for at a size or in part, made from all of
+    /// its pixels when they are cached: cut and scaled from them, not read
+    /// and decoded again (the frames of a sprite sheet, say). It is kept
+    /// as a decode of it would be.
+    fn derived(&self, key: &ImageKey) -> Option<Picture> {
+        let r = key.request;
+        if r.animated || (r.width == 0 && r.height == 0 && r.clip.is_none()) {
+            return None;
+        }
+        if self.is_vector(&key.url) {
+            return None;
+        }
+        let whole = {
+            let s = self.state.borrow();
+            s.cache
+                .keys_by_age()
+                .filter(|k| {
+                    k.url == key.url
+                        && k.request.width == 0
+                        && k.request.height == 0
+                        && k.request.clip.is_none()
+                        && !k.request.animated
+                })
+                .filter_map(|k| s.cache.peek(k))
+                .find(|p| (p.image.width(), p.image.height()) == p.natural)
+                .map(|p| p.image.clone())?
+        };
+        let picture = Picture::of(&decode::derive(&key.url, whole, r).ok()?);
+        self.keep(key, &picture);
+        Some(picture)
     }
 
     /// The picture of `key` or, when there is none, the same picture kept
@@ -856,10 +889,10 @@ impl ImageStore {
     /// more. The item that takes it makes it smaller or sharper as it is
     /// drawn, without fetching or decoding it again for that.
     pub(crate) fn cached_like(&self, key: &ImageKey) -> Option<(ImageKey, Picture)> {
-        let mut s = self.state.borrow_mut();
-        if let Some(picture) = s.cache.get(key) {
-            return Some((key.clone(), picture.clone()));
+        if let Some(picture) = self.cached_picture(key) {
+            return Some((key.clone(), picture));
         }
+        let mut s = self.state.borrow_mut();
         if key.request.animated {
             return None;
         }

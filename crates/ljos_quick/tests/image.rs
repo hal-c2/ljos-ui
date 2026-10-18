@@ -577,8 +577,64 @@ Item {
     let part = find(&e, root, "part");
     assert_eq!(implicit(&e, part), (20.0, 12.0));
     assert_eq!(source_size(&e, part).0, 20.0);
-    // Four requests, four pictures: sizes do not share pixels.
-    assert_eq!((store.decodes(), store.len()), (4, 4));
+    // Four requests, four pictures: sizes do not share pixels. The one
+    // asked for after the whole picture came is made from its pixels.
+    assert_eq!((store.decodes(), store.len()), (3, 4));
+}
+
+/// A PNG whose every pixel says where it is.
+fn gradient_png(width: u32, height: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, width, height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        let data: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).flat_map(move |x| [x as u8 * 4, y as u8 * 4, 90, 255]))
+            .collect();
+        w.write_image_data(&data).unwrap();
+    }
+    out
+}
+
+#[test]
+fn a_part_or_size_of_a_cached_picture_is_cut_from_it_as_decoding_would() {
+    let shown = |whole_first: bool| {
+        let e = engine();
+        let store = ImageStore::of(&e);
+        store.register_resource("file:///sheet.png", gradient_png(60, 40));
+        if whole_first {
+            load(
+                &e,
+                "import QtQuick\nImage { source: \"file:///sheet.png\" }\n",
+            );
+        }
+        let root = load(
+            &e,
+            r#"
+import QtQuick
+Item {
+    width: 200; height: 200
+    Image { objectName: "part"; source: "file:///sheet.png"; sourceClipRect: Qt.rect(13, 7, 20, 12) }
+    Image { objectName: "half"; y: 50; source: "file:///sheet.png"; sourceSize.width: 30 }
+}
+"#,
+        );
+        let mut s = scene(&e, root, 200.0, 200.0);
+        frame(&mut s, &e);
+        let data = |name| {
+            let image = painted(&s, find(&e, root, name)).expect(name);
+            (image.width(), image.height(), image.data().to_vec())
+        };
+        (data("part"), data("half"), store.decodes())
+    };
+    let (part, half, decodes) = shown(false);
+    let (cut_part, cut_half, cut_decodes) = shown(true);
+    assert_eq!((decodes, cut_decodes), (2, 1));
+    assert_eq!((part.0, part.1), (20, 12));
+    assert_eq!(cut_part, part);
+    assert_eq!(cut_half, half);
 }
 
 #[test]

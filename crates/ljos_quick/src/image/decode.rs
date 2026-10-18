@@ -418,7 +418,13 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
             frames: None,
         });
     }
-    let image = fitted(url, raw.reduced(0, url)?, request)?;
+    derive(url, raw.reduced(0, url)?, request)
+}
+
+/// What decoding a raster picture for `request` gives, made from all its
+/// pixels (`whole`, premultiplied) instead.
+pub(crate) fn derive(url: &str, whole: ImageHandle, request: Request) -> Result<Loaded, LoadError> {
+    let image = fitted(url, whole, request)?;
     let natural = (image.width(), image.height());
     let kept = kept_size(natural, request.limit);
     let image = if kept == natural {
