@@ -28,11 +28,17 @@
 //!      of the range; Ljós uses slope $k = 1 + \text{contrast}$ for
 //!      $\text{contrast} \le 0$ and $k = 1 / (1 - \text{contrast})$ above.
 //!    - `saturation` (`[-1, \infty)`, `-1` = "totally desaturated"): chroma
-//!      scaling around Rec. 709 luma $Y = 0.2126 r + 0.7152 g + 0.0722 b$,
+//!      scaling around Rec. 601 luma $Y = 0.299 r + 0.587 g + 0.114 b$ of the
+//!      sRGB channels,
 //!      $c' = \text{clamp}(Y + (c - Y)(1 + \text{saturation}), 0, 1)$.
 //!    - `colorization` (`[0, 1]`) and `colorizationColor` (documented as an
-//!      RGBA colour): linear blend towards `colorizationColor.rgb` weighted by
-//!      $t = \text{clamp}(\text{colorization}, 0, 1) \cdot \text{colorizationColor}.a$.
+//!      RGBA colour): linear blend towards `colorizationColor.rgb` scaled by
+//!      the same luma, weighted by
+//!      $t = \text{clamp}(\text{colorization}, 0, 1) \cdot \text{colorizationColor}.a$:
+//!      a white icon takes the colour, a black one stays black.
+//!
+//!    The luma, and colorization's scaling by it, are measured on qml6 drawing
+//!    with OpenGL (`features/items/multi-effect.feature`).
 //!
 //!    Re-premultiply by the masked alpha.
 //! 3. Compute the padded canvas (`itemRect`): when `autoPaddingEnabled` is
@@ -769,28 +775,34 @@ impl ColourAdjust {
         }
 
         // 3. Saturation: #saturation-prop gives -1 as "totally desaturated"
-        //    and no upper bound; chroma scaling around Rec. 709 luma is the
-        //    standard formulation (not Qt 5 Desaturate's plain RGB average).
+        //    and no upper bound; qml6 scales chroma around Rec. 601 luma.
         if self.saturation != 0.0 {
-            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let luma = luma(r, g, b);
             let s = (1.0 + self.saturation).max(0.0);
             r = (luma + (r - luma) * s).clamp(0.0, 1.0);
             g = (luma + (g - luma) * s).clamp(0.0, 1.0);
             b = (luma + (b - luma) * s).clamp(0.0, 1.0);
         }
 
-        // 4. Colorization: linear blend towards colorizationColor weighted by
-        //    colorization * colorizationColor.a (#colorization-prop gives the
-        //    0..1 range, #colorizationColor-prop calls it an RGBA colour).
+        // 4. Colorization: as qml6 draws it, a blend towards colorizationColor
+        //    times the luma, weighted by colorization * colorizationColor.a.
         let t = self.colorization.clamp(0.0, 1.0) * self.colorization_color[3].clamp(0.0, 1.0);
         if t > 0.0 {
-            r = (r + (self.colorization_color[0] - r) * t).clamp(0.0, 1.0);
-            g = (g + (self.colorization_color[1] - g) * t).clamp(0.0, 1.0);
-            b = (b + (self.colorization_color[2] - b) * t).clamp(0.0, 1.0);
+            let y = luma(r, g, b);
+            let [cr, cg, cb, _] = self.colorization_color;
+            r = (r + (cr * y - r) * t).clamp(0.0, 1.0);
+            g = (g + (cg * y - g) * t).clamp(0.0, 1.0);
+            b = (b + (cb * y - b) * t).clamp(0.0, 1.0);
         }
 
         (r, g, b)
     }
+}
+
+/// Rec. 601 luma of sRGB channels, which `saturation` and `colorization`
+/// work from on qml6.
+fn luma(r: f64, g: f64, b: f64) -> f64 {
+    0.299 * r + 0.587 * g + 0.114 * b
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1217,7 +1229,7 @@ mod tests {
         .unwrap();
         assert_eq!(low_c.pixel(0, 0), [191, 64, 64, 255]);
 
-        // Saturation -1.0 -> Rec. 709 luma of red (0.2126 * 255 = 54) -> #363636
+        // Saturation -1.0 -> Rec. 601 luma of red (0.299 * 255 = 76) -> #4c4c4c
         let desat = mask_and_adjust(
             &red,
             None,
@@ -1228,9 +1240,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(desat.pixel(0, 0), [54, 54, 54, 255]);
+        assert_eq!(desat.pixel(0, 0), [76, 76, 76, 255]);
 
-        // Colorization 0.5 towards blue (0, 0, 1, 1) -> #800080
+        // Colorization 0.5 towards blue (0, 0, 1, 1) times red's luma -> #800026
         let col = mask_and_adjust(
             &red,
             None,
@@ -1242,7 +1254,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(col.pixel(0, 0), [128, 0, 128, 255]);
+        assert_eq!(col.pixel(0, 0), [128, 0, 38, 255]);
     }
 
     #[test]

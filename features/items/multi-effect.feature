@@ -7,8 +7,10 @@
 # on Ljós only, from the mask model the documentation describes.
 # The documentation gives ranges, defaults and padding rules but describes
 # the colour adjustments, blur and shadow qualitatively; the exact numbers
-# below follow the standard formulations named in
-# crates/ljos_quick/src/effects.rs, worked by hand in each comment.
+# below follow the formulations named in crates/ljos_quick/src/effects.rs,
+# worked by hand in each comment. Saturation's and colorization's were
+# measured on qml6 drawing with OpenGL in the desktop:cua sandbox (a
+# grabToImage of colour swatches).
 
 Feature: MultiEffect
   A MultiEffect draws its source item with post-processing applied:
@@ -239,58 +241,61 @@ Feature: MultiEffect
       Then the pixel at 20, 20 of the window is "#bf0000"
 
     # Formula (documented: -1 is "totally desaturated", no upper bound;
-    # chroma scaling around Rec. 709 luma chosen):
-    #   Y  = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    # measured on qml6 drawing with OpenGL, under desktop:cua: chroma
+    # scaling around the Rec. 601 luma of the sRGB channels):
+    #   Y  = 0.299 * r + 0.587 * g + 0.114 * b
     #   c' = clamp(Y + (c - Y) * (1 + saturation), 0, 1)
-    # Source #ff0000 = (1, 0, 0) -> Y = 0.2126:
+    # Source #ff0000 = (1, 0, 0) -> Y = 0.299:
     #   saturation = -1.0 (full desaturation):
-    #     r' = g' = b' = 0.2126 -> round(0.2126 * 255) = round(54.213) = 54 = 0x36
-    #     -> #363636
+    #     r' = g' = b' = 0.299 -> round(76.245) = 76 = 0x4c -> #4c4c4c
     #   saturation = -0.5:
-    #     r' = 0.2126 + (1 - 0.2126)*0.5 = 0.6063 -> round(154.6065) = 155 = 0x9b
-    #     g' = b' = 0.2126 * 0.5 = 0.1063 -> round(27.1065) = 27 = 0x1b
-    #     -> #9b1b1b
+    #     r' = 0.299 + (1 - 0.299)*0.5 = 0.6495 -> round(165.62) = 166 = 0xa6
+    #     g' = b' = 0.299 * 0.5 = 0.1495 -> round(38.12) = 38 = 0x26
+    #     -> #a62626
     #   brightness = 0.2 then saturation = 1.0 (factor = 2):
     #     after brightness: (r, g, b) = (1.0, 0.2, 0.2)
-    #     Y = 0.2126*1.0 + 0.7152*0.2 + 0.0722*0.2 = 0.37008
-    #     g' = b' = 0.37008 + (0.2 - 0.37008)*2 = 0.02992 -> round(7.63) = 8 = 0x08
-    #     r' = clamp(0.37008 + (1.0 - 0.37008)*2, 0, 1) = 1.0 -> 255 = 0xff
-    #     -> #ff0808
-    Scenario: Saturation scales chroma around Rec. 709 luminance
+    #     Y = 0.299*1.0 + 0.587*0.2 + 0.114*0.2 = 0.4392
+    #     g' = b' = clamp(0.4392 + (0.2 - 0.4392)*2, 0, 1) = 0 -> 0x00
+    #     r' = clamp(0.4392 + (1.0 - 0.4392)*2, 0, 1) = 1.0 -> 0xff
+    #     -> #ff0000 (#ff3333 had saturation come first)
+    Scenario: Saturation scales chroma around Rec. 601 luma
       When 200 milliseconds pass
       And the property "saturation" of "fx" is set to -1
-      Then the pixel at 20, 20 of the window is "#363636"
+      Then the pixel at 20, 20 of the window is "#4c4c4c"
       When the property "saturation" of "fx" is set to -0.5
-      Then the pixel at 20, 20 of the window is "#9b1b1b"
+      Then the pixel at 20, 20 of the window is "#a62626"
       When the property "brightness" of "fx" is set to 0.2
       And the property "saturation" of "fx" is set to 1
-      Then the pixel at 20, 20 of the window is "#ff0808"
+      Then the pixel at 20, 20 of the window is "#ff0000"
 
-    # Formula (documented range [0, 1] towards an RGBA colour; linear
-    # blend weighted by the colour's alpha chosen):
+    # Formula (documented range [0, 1] towards an RGBA colour; measured on
+    # qml6 drawing with OpenGL: the colour is scaled by the source's Rec. 601
+    # luma, so white takes it and black stays black):
     #   t  = clamp(colorization, 0, 1) * colorizationColor.a
-    #   c' = c + (colorizationColor.c - c) * t
-    # Source #ff0000 = (1, 0, 0):
+    #   Y  = 0.299 * r + 0.587 * g + 0.114 * b
+    #   c' = c + (colorizationColor.c * Y - c) * t
+    # Source #ff0000 = (1, 0, 0) -> Y = 0.299:
     #   colorization = 0.5, colorizationColor = "#0000ff" (0, 0, 1, 1):
     #     r' = 1 + (0 - 1)*0.5 = 0.5 -> 128 = 0x80
     #     g' = 0
-    #     b' = 0 + (1 - 0)*0.5 = 0.5 -> 128 = 0x80
-    #     -> #800080
+    #     b' = 0 + (0.299 - 0)*0.5 = 0.1495 -> 38 = 0x26
+    #     -> #800026
     #   colorization = 1.0, colorizationColor = "#00ff00" (0, 1, 0, 1):
-    #     (r', g', b') = (0, 1, 0) -> #00ff00
-    #   On `maskedHalf` (alpha = 128/255):
-    #     colorization = 1.0, colorizationColor = "#00ff00" -> premultiplied #008000.
-    Scenario: Colorization blends towards colorizationColor and preserves mask alpha
+    #     (r', g', b') = (0, 0.299, 0) -> #004c00
+    #   On `maskedHalf` (alpha = 128/255), over the black root:
+    #     colorization = 1.0, colorizationColor = "#00ff00"
+    #     -> 76 * 128/255 = 38.15 -> #002600.
+    Scenario: Colorization scales colorizationColor by the source's luma and preserves mask alpha
       When 200 milliseconds pass
       And the property "colorizationColor" of "fx" is set to "#0000ff"
       And the property "colorization" of "fx" is set to 0.5
-      Then the pixel at 20, 20 of the window is "#800080"
+      Then the pixel at 20, 20 of the window is "#800026"
       When the property "colorizationColor" of "fx" is set to "#00ff00"
       And the property "colorization" of "fx" is set to 1
-      Then the pixel at 20, 20 of the window is "#00ff00"
+      Then the pixel at 20, 20 of the window is "#004c00"
       When the property "colorizationColor" of "maskedHalf" is set to "#00ff00"
       And the property "colorization" of "maskedHalf" is set to 1
-      Then the pixel at 70, 20 of the window is "#008000"
+      Then the pixel at 70, 20 of the window is "#002600"
 
     # Separable 1D Gaussian blur on a 5x5 #ff0000 source at (40..45, 40..45),
     # centre at (42, 42):
