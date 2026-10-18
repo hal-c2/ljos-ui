@@ -327,8 +327,18 @@ impl Engine {
         for c in &changed {
             match self.load_file(&c.old.key) {
                 Ok(new) => {
-                    // The declarations are the same: so are their types.
-                    *new.metas.borrow_mut() = c.old.metas.borrow().clone();
+                    // The declarations are the same: so are their types,
+                    // at the places the objects now have.
+                    *new.metas.borrow_mut() = c
+                        .old
+                        .metas
+                        .borrow()
+                        .iter()
+                        .filter_map(|(&(comp, obj), meta)| {
+                            let to = c.objects.get(comp as usize)?.to_new.get(obj as usize)?;
+                            Some(((comp, (*to)? as u32), meta.clone()))
+                        })
+                        .collect();
                     // A handler warned of once is not warned of again.
                     let warned = c.old.injected_warned.borrow();
                     new.injected_warned.borrow_mut().extend(

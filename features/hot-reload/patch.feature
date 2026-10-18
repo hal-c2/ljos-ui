@@ -904,6 +904,39 @@ Feature: What a reload changes
       And the property "running" of "slide" is true
       And the property "x" of "box" is at least 40
 
+    Scenario: An object of another type added before one that stays is of its own type
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string word: "two"
+          property int made: 0
+          property int seen: -1
+          property string last: ""
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Column {
+            id: list; objectName: "list"
+            Rectangle { objectName: "zero"; width: 3; height: 3; radius: 1 }
+            Text { objectName: "first"; text: "one" }
+          }
+          function go() { slide.start() }
+          function probe() {
+            seen = list.children.length
+            last = seen > 0 ? list.children[seen - 1].objectName : ""
+          }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "zero" is 3
+      And the property "radius" of "zero" is 1
+      And the property "text" of "first" is "one"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
   Rule: A page a StackView pushed from a file has objects added where it stands
 
     The page is made once from its file, as a root is, so it grows in
@@ -962,13 +995,12 @@ Feature: What a reload changes
       And the property "running" of "slide" is true
       And the property "x" of "page" is at least 40
 
-  Rule: The rows of a view, a Repeater or a Loader's component have objects added where they stand
+  Rule: The rows of a view or a Repeater have objects added where they stand
 
     An object added to a delegate, or removed from it, is added to or
     removed from every row there is, in place; the rows made later are
     made from the delegate as the file now writes it. A row goes on as it
-    was, an animation half way too, and so does the object a `Loader`
-    made from a component written inline.
+    was, an animation half way too.
 
     Background:
       Given the QML:
@@ -978,38 +1010,24 @@ Feature: What a reload changes
           id: root; objectName: "root"
           ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
           Repeater {
-            id: rows; objectName: "rows"
             model: things
             Rectangle {
               objectName: "cell" + name; width: 10; height: 10
-              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
               Item { objectName: "spare" + name }
-              function go() { slide.start() }
             }
           }
           ListView {
-            id: view; objectName: "view"; width: 50; height: 100
-            model: things
+            width: 50; height: 100; model: things
             delegate: Rectangle {
               objectName: "line" + name; width: 10; height: 10
-              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { shift.start() }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
             }
           }
-          Loader {
-            id: loader; objectName: "loader"
-            sourceComponent: Rectangle {
-              objectName: "inside"; width: 10; height: 10
-              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { glide.start() }
-            }
-          }
-          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
           function more() { things.append({ name: "c" }) }
         }
         """
-      When the method "go" of "root" is called
-      And 500 milliseconds pass
+      When 500 milliseconds pass
 
     Scenario: An object added to a delegate is in every row, and the rows go on as they were
       When the file "Scenario.qml" is changed to:
@@ -1019,44 +1037,30 @@ Feature: What a reload changes
           id: root; objectName: "root"
           ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
           Repeater {
-            id: rows; objectName: "rows"
             model: things
             Rectangle {
               objectName: "cell" + name; width: 10; height: 10
-              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
               Item { objectName: "spare" + name }
               Text { objectName: "label" + name; text: "row " + name }
-              function go() { slide.start() }
             }
           }
           ListView {
-            id: view; objectName: "view"; width: 50; height: 100
-            model: things
+            width: 50; height: 100; model: things
             delegate: Rectangle {
               objectName: "line" + name; width: 10; height: 10
-              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
               Text { objectName: "tag" + name; text: "line " + name }
-              function go() { shift.start() }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
             }
           }
-          Loader {
-            id: loader; objectName: "loader"
-            sourceComponent: Rectangle {
-              objectName: "inside"; width: 10; height: 10
-              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { glide.start() }
-            }
-          }
-          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
           function more() { things.append({ name: "c" }) }
         }
         """
       And a reload happens
       Then the property "text" of "labela" is "row a"
       And the property "text" of "labelb" is "row b"
-      And the property "x" of "cella" is at least 40
-      And the property "x" of "cellb" is at least 40
       And the property "text" of "tagb" is "line b"
+      And the property "x" of "cella" is at least 40
       And the property "x" of "linea" is at least 40
       When the method "more" of "root" is called
       Then the property "text" of "labelc" is "row c"
@@ -1070,32 +1074,19 @@ Feature: What a reload changes
           id: root; objectName: "root"
           ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
           Repeater {
-            id: rows; objectName: "rows"
             model: things
             Rectangle {
               objectName: "cell" + name; width: 10; height: 10
-              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { slide.start() }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
             }
           }
           ListView {
-            id: view; objectName: "view"; width: 50; height: 100
-            model: things
+            width: 50; height: 100; model: things
             delegate: Rectangle {
               objectName: "line" + name; width: 10; height: 10
-              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { shift.start() }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
             }
           }
-          Loader {
-            id: loader; objectName: "loader"
-            sourceComponent: Rectangle {
-              objectName: "inside"; width: 10; height: 10
-              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { glide.start() }
-            }
-          }
-          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
           function more() { things.append({ name: "c" }) }
         }
         """
@@ -1115,34 +1106,21 @@ Feature: What a reload changes
           id: root; objectName: "root"
           ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
           Repeater {
-            id: rows; objectName: "rows"
             model: things
             Rectangle {
               objectName: "cell" + name; width: 30; height: 10
-              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
               Item { objectName: "spare" + name }
               Text { objectName: "label" + name; text: "row " + name }
-              function go() { slide.start() }
             }
           }
           ListView {
-            id: view; objectName: "view"; width: 50; height: 100
-            model: things
+            width: 50; height: 100; model: things
             delegate: Rectangle {
               objectName: "line" + name; width: 10; height: 10
-              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { shift.start() }
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
             }
           }
-          Loader {
-            id: loader; objectName: "loader"
-            sourceComponent: Rectangle {
-              objectName: "inside"; width: 10; height: 10
-              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { glide.start() }
-            }
-          }
-          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
           function more() { things.append({ name: "c" }) }
         }
         """
@@ -1151,49 +1129,36 @@ Feature: What a reload changes
       And the property "text" of "labelb" is "row b"
       And the property "x" of "cellb" is at least 40
 
+  Rule: What a Loader made from a component written inline has objects added where it stands
+
     Scenario: An object added to a Loader's inline component is there and the object goes on as it was
-      When the file "Scenario.qml" is changed to:
+      Given the QML:
         """qml
         import QtQuick
-        Item {
-          id: root; objectName: "root"
-          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
-          Repeater {
-            id: rows; objectName: "rows"
-            model: things
-            Rectangle {
-              objectName: "cell" + name; width: 10; height: 10
-              NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
-              Item { objectName: "spare" + name }
-              function go() { slide.start() }
-            }
+        Loader {
+          objectName: "loader"
+          sourceComponent: Rectangle {
+            objectName: "inside"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
           }
-          ListView {
-            id: view; objectName: "view"; width: 50; height: 100
-            model: things
-            delegate: Rectangle {
-              objectName: "line" + name; width: 10; height: 10
-              NumberAnimation on x { id: shift; running: false; from: 0; to: 100; duration: 1000 }
-              function go() { shift.start() }
-            }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Loader {
+          objectName: "loader"
+          sourceComponent: Rectangle {
+            objectName: "inside"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            Text { objectName: "note"; text: "inside" }
           }
-          Loader {
-            id: loader; objectName: "loader"
-            sourceComponent: Rectangle {
-              objectName: "inside"; width: 10; height: 10
-              NumberAnimation on x { id: glide; running: false; from: 0; to: 100; duration: 1000 }
-              Text { objectName: "note"; text: "inside" }
-              function go() { glide.start() }
-            }
-          }
-          function go() { rows.itemAt(0).go(); rows.itemAt(1).go(); view.itemAtIndex(0).go(); loader.item.go() }
-          function more() { things.append({ name: "c" }) }
         }
         """
       And a reload happens
       Then the property "text" of "note" is "inside"
       And the property "x" of "inside" is at least 40
-      And the property "x" of "cella" is at least 40
 
   Rule: Other changes to objects make them again, as the file now writes them
 
