@@ -3285,3 +3285,70 @@ Feature: What a reload changes
       And a reload happens
       Then the property "looked" of "pill" is 1
       And the property "mine" of "pill" is 2
+
+  Rule: An edit to a singleton's file goes in place
+
+    The singleton is the object it was, with the edit applied, as any
+    other object a reload keeps is; what the files around it read of it
+    is what it now gives.
+
+    Background:
+      Given the file "qmldir":
+        """
+        singleton Look Look.qml
+        """
+      And the file "Look.qml":
+        """qml
+        pragma Singleton
+        import QtQuick
+        QtObject {
+          property string tone: "red"
+          property int bumps: 0
+          function bump() { bumps++ }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string shade: Look.tone
+          property int heard: Look.bumps
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start(); Look.bump() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A value of a singleton edited is read where it is used, and the singleton goes on
+      When the file "Look.qml" is changed to:
+        """qml
+        pragma Singleton
+        import QtQuick
+        QtObject {
+          property string tone: "blue"
+          property int bumps: 0
+          function bump() { bumps++ }
+        }
+        """
+      And a reload happens
+      Then the property "shade" of "root" is "blue"
+      And the property "heard" of "root" is 1
+      And the property "x" of "box" is at least 40
+      When the file "Look.qml" is changed to:
+        """qml
+        pragma Singleton
+        import QtQuick
+        QtObject {
+          property string tone: "green"
+          property int bumps: 0
+          function bump() { bumps += 2 }
+        }
+        """
+      And a reload happens
+      And the method "go" of "root" is called
+      Then the property "shade" of "root" is "green"
+      And the property "heard" of "root" is 3

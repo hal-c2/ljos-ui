@@ -445,6 +445,28 @@ impl Engine {
         all.sources.set(all.sources.get() + 1);
     }
 
+    /// The singletons made from a file a reload edited in place are made
+    /// of its new form: `now` gives it for the old one.
+    pub(crate) fn singletons_edited(
+        &self,
+        now: impl Fn(&Rc<LoadedFile>) -> Option<Rc<LoadedFile>>,
+    ) {
+        let all = self.extension::<Singletons>();
+        let sources = all.sources.get();
+        for e in all.entries.borrow_mut().iter_mut() {
+            if let State::Made {
+                file: Some(file),
+                seen,
+                ..
+            } = &mut e.state
+                && let Some(new) = now(file)
+            {
+                *file = new;
+                *seen = sources;
+            }
+        }
+    }
+
     /// What stands for the singleton `ty`, read by a script of `ctx`, in
     /// that script: the number `__ljos_single` is called with.
     pub(crate) fn singleton_handle(&self, ty: &TypeRef, ctx: Option<ContextId>) -> usize {

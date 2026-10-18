@@ -511,6 +511,9 @@ impl Engine {
             return not_here("what is added cannot be made");
         }
         drop(saved);
+        // A singleton of an edited file is the one it was, with the edit,
+        // before anything reads it.
+        self.singletons_edited(|f| files.get(&Rc::as_ptr(f)).map(|r| r.file.clone()));
         // An id the file no longer writes names what a fresh load finds
         // for it: an object further out, or nothing.
         for g in &grown {
@@ -845,9 +848,6 @@ impl Engine {
             }
             if resets(new) {
                 return not_here(format_args!("{} asks for a reset", new.file));
-            }
-            if new.pragmas.iter().any(|p| p.name == "Singleton") {
-                return not_here(format_args!("{} is a singleton", new.file));
             }
             let old = self.inner.loader.borrow().files.get(&new.file).cloned();
             // Nothing is made of it.
