@@ -16,7 +16,8 @@
 //! in `Component.onCompleted`; the first paint's region is the whole
 //! canvas; a resize keeps the pixels that still fit and paints again with
 //! the new size as the region; `getContext("2d")` is always the same
-//! object, and `context` is it. `loadImage` reads the image on the compute
+//! object, and `context` is it. `context` is `undefined` until then, or
+//! until the canvas becomes available when `contextType` is `"2d"`. `loadImage` reads the image on the compute
 //! pool and `imageLoaded` comes once it is there or has failed.
 
 mod context;
@@ -165,7 +166,8 @@ pub struct Canvas {
     /// Kept; the canvas is one tile.
     #[qml(notify)]
     pub tile_size: Size,
-    /// The context `getContext` made, or nothing.
+    /// The context `getContext` made, or the one `contextType: "2d"` asks
+    /// for once the canvas is available; `undefined` until then.
     #[qml(notify, readonly)]
     pub context: Value,
     #[qml(notify)]
@@ -188,7 +190,7 @@ impl Default for Canvas {
             canvas_size: Size::default(),
             canvas_window: Rect::default(),
             tile_size: Size::default(),
-            context: Value::Null,
+            context: Value::Undefined,
             context_type: String::new(),
             render_target: render_target::IMAGE,
             render_strategy: render_strategy::IMMEDIATE,
@@ -218,6 +220,14 @@ impl Canvas {
             }))
         };
         e.bind_initial(me, Self::CANVAS_SIZE.index, size)?;
+        // A canvas told its kind of context after it became available has
+        // the context at once; before, it waits for that.
+        e.watch(me, Self::CONTEXT_TYPE.index, move |e, ty| {
+            let available = e.untrack(|| e.read(me, Canvas::AVAILABLE.index).to_boolean());
+            if available && matches!(ty, Value::String(t) if t.as_str() == "2d") {
+                context_or_new(e, me);
+            }
+        })?;
         e.bind_initial(me, Self::TILE_SIZE.index, size)?;
         e.bind_initial(me, Self::CANVAS_WINDOW.index, move |e| {
             Value::Rect(Arc::new(Rect {
@@ -607,6 +617,12 @@ pub(crate) fn polish(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     };
     if !e.untrack(|| e.read(me, Canvas::AVAILABLE.index).to_boolean()) {
         write_computed(e, me, Canvas::AVAILABLE.index, Value::Bool(true))?;
+        // After `availableChanged`, as on qml6: its handler still reads no
+        // context.
+        let ty = e.untrack(|| e.read(me, Canvas::CONTEXT_TYPE.index));
+        if matches!(&ty, Value::String(t) if t.as_str() == "2d") {
+            context_or_new(e, me);
+        }
     }
     let frames = std::mem::take(&mut run.borrow_mut().frames);
     if !frames.is_empty() {

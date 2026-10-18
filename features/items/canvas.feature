@@ -47,6 +47,67 @@ Feature: Canvas
     And the property "canvasLink" of "root" is true
     And the property "contextType" of "canvas" is "2d"
 
+  @api-QtQuick.Canvas.contextType @api-QtQuick.Canvas.context
+  Scenario: A canvas whose contextType is "2d" has its context from when it is available
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        width: 100; height: 100
+        property string atStart: ""
+        property string whenAvailable: ""
+        property bool paintHasIt: false
+        Canvas {
+          width: 20; height: 20
+          contextType: "2d"
+          Component.onCompleted: root.atStart = typeof context
+          onAvailableChanged: root.whenAvailable = typeof context
+          onPaint: {
+            root.paintHasIt = context !== undefined && context === getContext("2d")
+            context.fillRect(0, 0, 5, 5)
+          }
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the property "atStart" of "root" is "undefined"
+    And the property "whenAvailable" of "root" is "undefined"
+    And the property "paintHasIt" of "root" is true
+
+  @api-QtQuick.Canvas.contextType @api-QtQuick.Canvas.context
+  Scenario: A canvas with no contextType, or another, has no context until it is "2d"
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        width: 100; height: 100
+        property string plain: ""
+        property string other: ""
+        property bool laterHasIt: later.context !== undefined
+        Canvas {
+          id: later
+          objectName: "later"
+          width: 20; height: 20
+          onPaint: root.plain = typeof context
+        }
+        Canvas {
+          width: 20; height: 20
+          contextType: "3d"
+          onPaint: root.other = typeof context
+        }
+      }
+      """
+    When 200 milliseconds pass
+    Then the property "plain" of "root" is "undefined"
+    And the property "other" of "root" is "undefined"
+    And the property "laterHasIt" of "root" is false
+    When the property "contextType" of "later" is set to "2d"
+    Then the property "laterHasIt" of "root" is true
+
   Scenario: An idle canvas paints no more; requestPaint asks for one more paint
     Given the QML:
       """qml
