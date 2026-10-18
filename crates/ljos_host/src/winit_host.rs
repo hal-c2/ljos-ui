@@ -133,6 +133,66 @@ struct State {
     app_state: Option<AppState>,
     /// Where the pointer was last seen in each window.
     pointer: HashMap<WindowId, [f64; 2]>,
+    keyboardless: Keyboardless,
+}
+
+/// Which window is active on a seat that has no keyboard.
+///
+/// winit hears of focus only from the keyboard (on Wayland, `wl_keyboard`
+/// enter and leave; the toplevel's `activated` state is not passed on), so
+/// on a seat with only a pointer or a touch screen no window would ever be
+/// active, and no field could take the focus. Until a keyboard is heard
+/// of, a press on a window that is not active makes it the active one, as
+/// the compositor would; after that, winit's word is the only one.
+#[derive(Default)]
+struct Keyboardless {
+    keyboard_seen: bool,
+}
+
+/// What a platform event says of the seat's keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeatHint {
+    /// The seat has a keyboard: it gave a window the focus, or a key.
+    Keyboard,
+    /// A pointer button or a finger went down.
+    Press,
+    Other,
+}
+
+fn seat_hint(raw: &Raw) -> SeatHint {
+    match raw {
+        Raw::Focused(_) | Raw::KeyboardInput { .. } | Raw::ModifiersChanged(_) | Raw::Ime(_) => {
+            SeatHint::Keyboard
+        }
+        Raw::MouseInput {
+            state: ElementState::Pressed,
+            ..
+        } => SeatHint::Press,
+        Raw::Touch(t) if t.phase == WinitTouchPhase::Started => SeatHint::Press,
+        _ => SeatHint::Other,
+    }
+}
+
+impl Keyboardless {
+    /// The windows to take the focus from, then the one to give it to,
+    /// before `hint` on window `id` is handled.
+    fn activate(
+        &mut self,
+        hint: SeatHint,
+        id: WindowId,
+        focused: &BTreeSet<WindowId>,
+    ) -> Option<(Vec<WindowId>, WindowId)> {
+        match hint {
+            SeatHint::Keyboard => {
+                self.keyboard_seen = true;
+                None
+            }
+            SeatHint::Press if !self.keyboard_seen && !focused.contains(&id) => {
+                Some((focused.iter().copied().collect(), id))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// What the application holds while it handles an event.
@@ -378,6 +438,38 @@ where
             self.deliver(event_loop, Event::AppState(state));
         }
     }
+
+    /// Hands one platform event for window `id` to the application.
+    fn handle(&mut self, event_loop: &ActiveEventLoop, id: WindowId, raw: Raw) {
+        let Some(window) = self.state.windows.get(&id).cloned() else {
+            return;
+        };
+        match &raw {
+            Raw::Focused(true) => {
+                self.state.focused.insert(id);
+            }
+            Raw::Focused(false) => {
+                self.state.focused.remove(&id);
+            }
+            Raw::CursorMoved { position, .. } => {
+                self.state.pointer.insert(id, [position.x, position.y]);
+            }
+            _ => {}
+        }
+        let pointer = self.state.pointer.get(&id).copied();
+        let event = translate(&raw, &window, pointer);
+        if matches!(raw, Raw::CursorLeft { .. }) {
+            self.state.pointer.remove(&id);
+        }
+        self.deliver(
+            event_loop,
+            Event::Window {
+                id,
+                event,
+                raw: Some(&raw),
+            },
+        );
+    }
 }
 
 impl<A, U> ApplicationHandler<U> for Runner<A, U>
@@ -418,34 +510,21 @@ where
         let Some(&id) = self.state.ids.get(&window_id) else {
             return;
         };
-        let Some(window) = self.state.windows.get(&id).cloned() else {
+        if !self.state.windows.contains_key(&id) {
             return;
-        };
-        match &raw {
-            Raw::Focused(true) => {
-                self.state.focused.insert(id);
-            }
-            Raw::Focused(false) => {
-                self.state.focused.remove(&id);
-            }
-            Raw::CursorMoved { position, .. } => {
-                self.state.pointer.insert(id, [position.x, position.y]);
-            }
-            _ => {}
         }
-        let pointer = self.state.pointer.get(&id).copied();
-        let event = translate(&raw, &window, pointer);
-        if matches!(raw, Raw::CursorLeft { .. }) {
-            self.state.pointer.remove(&id);
+        let hint = seat_hint(&raw);
+        if let Some((lose, gain)) = self
+            .state
+            .keyboardless
+            .activate(hint, id, &self.state.focused)
+        {
+            for other in lose {
+                self.handle(event_loop, other, Raw::Focused(false));
+            }
+            self.handle(event_loop, gain, Raw::Focused(true));
         }
-        self.deliver(
-            event_loop,
-            Event::Window {
-                id,
-                event,
-                raw: Some(&raw),
-            },
-        );
+        self.handle(event_loop, id, raw);
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -987,6 +1066,31 @@ mod tests {
         assert!(!c.window_position);
         assert!(!c.window_kinds);
         assert!(c.multi_window && c.ime);
+    }
+
+    #[test]
+    fn a_press_activates_a_window_until_a_keyboard_is_heard_of() {
+        let (a, b) = (WindowId(1), WindowId(2));
+        let mut k = Keyboardless::default();
+        let mut focused = BTreeSet::new();
+        assert_eq!(k.activate(SeatHint::Press, a, &focused), Some((vec![], a)));
+        focused.insert(a);
+        assert_eq!(k.activate(SeatHint::Press, a, &focused), None);
+        assert_eq!(k.activate(SeatHint::Press, b, &focused), Some((vec![a], b)));
+        assert_eq!(k.activate(SeatHint::Other, b, &focused), None);
+        assert_eq!(k.activate(SeatHint::Keyboard, b, &focused), None);
+        focused.clear();
+        assert_eq!(k.activate(SeatHint::Press, a, &focused), None);
+    }
+
+    #[test]
+    fn focus_and_keys_say_the_seat_has_a_keyboard() {
+        assert_eq!(seat_hint(&Raw::Focused(false)), SeatHint::Keyboard);
+        assert_eq!(
+            seat_hint(&Raw::ModifiersChanged(Default::default())),
+            SeatHint::Keyboard
+        );
+        assert_eq!(seat_hint(&Raw::RedrawRequested), SeatHint::Other);
     }
 
     #[test]
