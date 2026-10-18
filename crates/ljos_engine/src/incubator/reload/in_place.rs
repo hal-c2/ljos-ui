@@ -121,6 +121,9 @@ struct Edit {
     functions: Vec<String>,
     /// (old name, new name): a declared property the edit renamed.
     renamed: Vec<(String, String)>,
+    /// Edited members whose binding reads an id that is gone: they start
+    /// as a fresh load starts them, before the binding is run.
+    fresh: Vec<String>,
 }
 
 /// What an op edits of an object.
@@ -263,6 +266,7 @@ struct Target<'a> {
     names: Vec<String>,
     functions: Vec<String>,
     renamed: Vec<(String, String)>,
+    fresh: Vec<String>,
 }
 
 impl Engine {
@@ -389,6 +393,7 @@ impl Engine {
                         names: e.names.clone(),
                         functions: e.functions.clone(),
                         renamed: e.renamed.clone(),
+                        fresh: e.fresh.clone(),
                     };
                     if let Err(why) = self.in_place_applies(&mut t, c, &users) {
                         return not_here(why);
@@ -546,6 +551,11 @@ impl Engine {
                 }
                 for name in &t.names {
                     if gives(t.def, name) {
+                        // A fresh load's binding that fails leaves the
+                        // member as it starts.
+                        if t.fresh.contains(name) {
+                            let _ = self.in_place_unset(&inst, t.obj, t.old, t.def, name, true);
+                        }
                         self.in_place_set(&inst, id, t.def, name);
                     } else {
                         let _ = self.in_place_unset(&inst, t.obj, t.old, t.def, name, true);
@@ -880,6 +890,7 @@ impl Engine {
                             names: Vec::new(),
                             functions: Vec::new(),
                             renamed: Vec::new(),
+                            fresh: Vec::new(),
                         });
                         edits.len() - 1
                     }
@@ -1278,6 +1289,9 @@ impl Engine {
             })
         {
             return Err("a renamed property's object has members its user declares");
+        }
+        for name in &t.fresh {
+            self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
         }
         for name in &t.names {
             if !gives(t.def, name) {
@@ -2049,6 +2063,7 @@ fn same_but_edits(
                         names: Vec::new(),
                         functions: Vec::new(),
                         renamed: Vec::new(),
+                        fresh: Vec::new(),
                     });
                     edits.last_mut()?
                 }
@@ -2160,9 +2175,10 @@ fn same_but_edits(
             .retain(|n| !renamed.iter().any(|(a, b)| n == a || n == b));
     }
     let mut whole = Vec::new();
-    for e in edits.iter() {
+    for e in edits.iter_mut() {
         let o = &old.component(e.comp).objects[e.was];
         let n = &new.component(to_new(e.comp)).objects[e.obj];
+        let mut fresh = Vec::new();
         for name in &e.names {
             let written = |od: &ObjectDef| {
                 held_in(od, name).is_some_and(|(m, leaf)| m.objects.iter().any(|a| a.name == leaf))
@@ -2174,7 +2190,7 @@ fn same_but_edits(
                 return not_here("an aliased member changed");
             }
             // A binding that fails keeps the value it had, where a fresh
-            // load leaves the property as it starts.
+            // load leaves the property as it starts: it starts so first.
             let reads_gone = held_in(n, name)
                 .and_then(|(m, leaf)| m.bindings.iter().find(|b| b.name == leaf))
                 .is_some_and(|b| {
@@ -2183,9 +2199,10 @@ fn same_but_edits(
                     })
                 });
             if reads_gone {
-                return not_here("an edited binding reads an id that is gone");
+                fresh.push(name.clone());
             }
         }
+        e.fresh = fresh;
         // A function edited in body alone: the object's method stays.
         for name in &e.functions {
             let args = |od: &ObjectDef, f: &CompiledFile| {
