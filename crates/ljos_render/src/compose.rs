@@ -73,6 +73,19 @@ pub fn is_axis_aligned(a: Affine) -> bool {
     c[1] == 0.0 && c[2] == 0.0
 }
 
+/// `a.transform_rect_bbox(r)`, without the four corners when `a` only
+/// scales and moves: what nearly every node in a scene is.
+#[inline]
+pub(crate) fn bbox_of(a: Affine, r: Rect) -> Rect {
+    let [sx, ky, kx, sy, tx, ty] = a.as_coeffs();
+    if ky != 0.0 || kx != 0.0 {
+        return a.transform_rect_bbox(r);
+    }
+    let (x0, x1) = (sx * r.x0 + tx, sx * r.x1 + tx);
+    let (y0, y1) = (sy * r.y0 + ty, sy * r.y1 + ty);
+    Rect::new(x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1))
+}
+
 fn overlaps(a: Rect, b: Rect) -> bool {
     a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1
 }
@@ -107,6 +120,9 @@ pub struct ComposeStats {
     pub culled: u32,
     /// Nodes whose world transform and effective opacity were recomputed.
     pub world_recomputed: u32,
+    /// Subtrees copied from the previous snapshot because nothing in them
+    /// changed. Their nodes count as visited, pruned or culled as before.
+    pub reused: u32,
 }
 
 /// Immutable output of steps 8-9. The seam where a render thread would attach.
@@ -182,16 +198,39 @@ pub fn hit_test(snapshot: &FrameSnapshot, point: Point) -> impl Iterator<Item = 
 /// Cached output of the last compose.
 #[derive(Debug)]
 pub(crate) struct CachedSnapshot {
-    epoch: u64,
+    pub(crate) epoch: u64,
     viewport: Rect,
     snapshot: Arc<FrameSnapshot>,
 }
 
-struct Walk {
+struct Walk<'a> {
     items: Vec<PaintItem>,
     clips: Vec<ClipEntry>,
     stats: ComposeStats,
     frame: u64,
+    /// The previous snapshot and the epoch it was composed at.
+    old: Option<(&'a FrameSnapshot, u64)>,
+    epoch: u64,
+}
+
+/// Where a node's subtree sat in a snapshot, and what it was composed
+/// against there. A subtree with no change since, under the same world,
+/// clip and `drawn`, is the same run of items, so it is copied.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Span {
+    /// The epoch of the compose that wrote it, 0 for never.
+    epoch: u64,
+    items: u32,
+    items_len: u32,
+    clips: u32,
+    clips_len: u32,
+    /// The clip the subtree sat in.
+    outer: Option<ClipId>,
+    clip_bbox: Rect,
+    drawn: bool,
+    visited: u32,
+    pruned: u32,
+    culled: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -228,8 +267,8 @@ impl RenderTree {
         self.refresh_bounds(root);
         // About as many as last time: a frame that moves every node pays
         // for its list once, not for each doubling on the way to it.
-        let (items, clips) = self
-            .cache
+        let prev = self.cache.take();
+        let (items, clips) = prev
             .as_ref()
             .map_or((0, 0), |c| (c.snapshot.items.len(), c.snapshot.clips.len()));
         let mut walk = Walk {
@@ -237,6 +276,8 @@ impl RenderTree {
             clips: Vec::with_capacity(clips),
             stats: ComposeStats::default(),
             frame,
+            old: prev.as_ref().map(|c| (&*c.snapshot, c.epoch)),
+            epoch: self.epoch,
         };
         let top = Parent {
             world: Affine::IDENTITY,
@@ -246,7 +287,7 @@ impl RenderTree {
             clip: None,
             clip_bbox: viewport,
         };
-        self.compose_node(root, top, &mut walk);
+        self.compose_node(root, &top, &mut walk);
         let snapshot = Arc::new(FrameSnapshot {
             frame,
             viewport,
@@ -275,6 +316,8 @@ impl RenderTree {
             clips: Vec::new(),
             stats: ComposeStats::default(),
             frame: 0,
+            old: None,
+            epoch: 0,
         };
         let top = Parent {
             world: Affine::IDENTITY,
@@ -312,7 +355,7 @@ impl RenderTree {
             clip_bbox: parent.clip_bbox,
         };
         if let Some(spec) = n.clip {
-            let wb = world.transform_rect_bbox(spec.rect);
+            let wb = bbox_of(world, spec.rect);
             let inter = Rect::new(
                 wb.x0.max(parent.clip_bbox.x0),
                 wb.y0.max(parent.clip_bbox.y0),
@@ -356,12 +399,90 @@ impl RenderTree {
         }
     }
 
-    fn compose_node(&mut self, id: NodeId, parent: Parent, walk: &mut Walk) {
-        if self.nodes[id].is_pruned() {
+    fn compose_node(&mut self, id: NodeId, parent: &Parent, walk: &mut Walk) {
+        let n = &self.nodes[id];
+        if n.is_pruned() {
             walk.stats.pruned += 1;
             return;
         }
+        let span = n.span;
+        if let Some((old, at)) = walk.old
+            && span.epoch == at
+            && n.changed <= at
+            && n.parent_stamp == parent.stamp
+            && span.drawn == parent.drawn
+            && span.outer.is_some() == parent.clip.is_some()
+            && span.clip_bbox == parent.clip_bbox
+        {
+            self.reuse(id, old, span, parent, walk);
+            return;
+        }
+        let (items, clips) = (walk.items.len(), walk.clips.len());
+        let before = walk.stats;
+        self.compose_fresh(id, parent, walk);
+        self.nodes[id].span = Span {
+            epoch: walk.epoch,
+            items: items as u32,
+            items_len: (walk.items.len() - items) as u32,
+            clips: clips as u32,
+            clips_len: (walk.clips.len() - clips) as u32,
+            outer: parent.clip,
+            clip_bbox: parent.clip_bbox,
+            drawn: parent.drawn,
+            visited: walk.stats.visited - before.visited,
+            pruned: walk.stats.pruned - before.pruned,
+            culled: walk.stats.culled - before.culled,
+        };
+    }
 
+    /// Copy `id`'s subtree from the previous snapshot, its clips renumbered.
+    fn reuse(
+        &mut self,
+        id: NodeId,
+        old: &FrameSnapshot,
+        span: Span,
+        parent: &Parent,
+        walk: &mut Walk,
+    ) {
+        let (from, len) = (span.clips, span.clips_len);
+        let to = walk.clips.len() as u32;
+        // A clip inside the run moves with it; any other is the one the
+        // subtree sits in.
+        let clip = |c: Option<ClipId>| match c {
+            Some(ClipId(i)) if i.wrapping_sub(from) < len => Some(ClipId(i - from + to)),
+            _ => parent.clip,
+        };
+        let items = span.items as usize..(span.items + span.items_len) as usize;
+        let at = walk.items.len() as u32;
+        for item in &old.items[items] {
+            if let Some(n) = self.nodes.get_mut(item.node) {
+                n.last_visible_frame = walk.frame;
+            }
+            walk.items.push(PaintItem {
+                clip: clip(item.clip),
+                ..item.clone()
+            });
+        }
+        for c in &old.clips[from as usize..(from + len) as usize] {
+            walk.clips.push(ClipEntry {
+                parent: clip(c.parent),
+                ..*c
+            });
+        }
+        walk.stats.visited += span.visited;
+        walk.stats.pruned += span.pruned;
+        walk.stats.culled += span.culled;
+        walk.stats.reused += 1;
+        self.nodes[id].span = Span {
+            epoch: walk.epoch,
+            items: at,
+            clips: to,
+            outer: parent.clip,
+            ..span
+        };
+    }
+
+    fn compose_fresh(&mut self, id: NodeId, parent: &Parent, walk: &mut Walk) {
         // Reuse the cached world data unless this node or an ancestor changed.
         let n = &self.nodes[id];
         let needs = n.dirty.intersects(Dirty::TRANSFORM | Dirty::OPACITY)
@@ -385,7 +506,7 @@ impl RenderTree {
         let stamp = n.stamp;
 
         // Container-level cull: the subtree box must touch the viewport and every clip.
-        let bbox = world.transform_rect_bbox(n.subtree_bounds);
+        let bbox = bbox_of(world, n.subtree_bounds);
         if !overlaps(bbox, parent.clip_bbox) {
             walk.stats.culled += 1;
             return;
@@ -401,7 +522,7 @@ impl RenderTree {
         };
         if let Some(spec) = n.clip {
             let aligned = is_axis_aligned(world);
-            let wb = world.transform_rect_bbox(spec.rect);
+            let wb = bbox_of(world, spec.rect);
             let inter = Rect::new(
                 wb.x0.max(parent.clip_bbox.x0),
                 wb.y0.max(parent.clip_bbox.y0),
@@ -435,7 +556,7 @@ impl RenderTree {
         let order = std::mem::take(&mut self.nodes[id].paint_order);
         let neg = self.nodes[id].neg_count;
         for c in &order[..neg] {
-            self.compose_node(*c, here, walk);
+            self.compose_node(*c, &here, walk);
         }
         let n = &self.nodes[id];
         walk.items.push(PaintItem {
@@ -448,8 +569,109 @@ impl RenderTree {
             hit_testable: n.hit_testable,
         });
         for c in &order[neg..] {
-            self.compose_node(*c, here, walk);
+            self.compose_node(*c, &here, walk);
         }
         self.nodes[id].paint_order = order;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ClipSpec, DisplayListBuilder, Rgba};
+
+    /// Two trees take the same changes; one composes from its previous
+    /// snapshot, the other from nothing. They must agree item for item.
+    #[test]
+    fn a_snapshot_made_from_the_last_is_the_one_made_from_nothing() {
+        let mut seed = 0x2545_f491_u64;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut trees = [RenderTree::new(), RenderTree::new()];
+        let mut ids = vec![trees[0].root()];
+        for i in 0..40 {
+            let parent = ids[next(ids.len() as u64) as usize];
+            for t in &mut trees {
+                let n = t.add_child(parent);
+                t.set_pos(n, (i % 7) as f64 * 9.0, (i % 5) as f64 * 11.0);
+                t.set_size(n, Size::new(20.0, 15.0));
+            }
+            ids.push(
+                trees[1]
+                    .node(parent)
+                    .unwrap()
+                    .children()
+                    .last()
+                    .copied()
+                    .unwrap(),
+            );
+        }
+        let list = {
+            let mut b = DisplayListBuilder::new();
+            b.fill_rect(Rect::new(0.0, 0.0, 8.0, 8.0), Rgba::BLACK);
+            b.finish_arc()
+        };
+        let mut reused = 0;
+        for frame in 1..400 {
+            let changes = 1 + next(3);
+            for _ in 0..changes {
+                let id = ids[1 + next(ids.len() as u64 - 1) as usize];
+                let (k, v) = (next(9), next(100) as f64);
+                for t in &mut trees {
+                    match k {
+                        0 => t.set_pos(id, v, v / 2.0),
+                        1 => t.set_opacity(id, (v / 50.0) as f32),
+                        2 => t.set_visible(id, v > 20.0),
+                        3 => t.set_clip(
+                            id,
+                            (v > 50.0).then(|| ClipSpec::rect(Rect::new(0.0, 0.0, v, v))),
+                        ),
+                        4 => t.set_z(id, (v as f32 - 50.0) / 25.0),
+                        5 => t.set_drawn(id, v > 30.0),
+                        6 => t.set_content(id, (v > 40.0).then(|| Arc::clone(&list))),
+                        7 => t.set_local(
+                            id,
+                            Affine::rotate(v / 30.0).then_translate((v, 3.0).into()),
+                        ),
+                        _ => t.set_hit_testable(id, v > 50.0),
+                    }
+                }
+            }
+            let vp = if frame % 50 < 45 {
+                Rect::new(0.0, 0.0, 100.0, 80.0)
+            } else {
+                Rect::new(5.0, 0.0, 90.0, 90.0)
+            };
+            trees[1].cache = None;
+            let a = trees[0].compose(vp, frame);
+            let b = trees[1].compose(vp, frame);
+            reused += a.stats.reused;
+            assert_eq!(a.items.len(), b.items.len(), "frame {frame}");
+            for (x, y) in a.items.iter().zip(&b.items) {
+                assert_eq!(
+                    (x.node, x.world, x.opacity, x.size, x.clip, x.hit_testable),
+                    (y.node, y.world, y.opacity, y.size, y.clip, y.hit_testable),
+                    "frame {frame}"
+                );
+                assert_eq!(
+                    x.list.as_ref().map(Arc::as_ptr),
+                    y.list.as_ref().map(Arc::as_ptr)
+                );
+            }
+            assert_eq!(a.clips, b.clips, "frame {frame}");
+            let s = |s: ComposeStats| (s.visited, s.pruned, s.culled);
+            assert_eq!(s(a.stats), s(b.stats), "frame {frame}");
+            for id in &ids {
+                assert_eq!(
+                    trees[0].node(*id).unwrap().last_visible_frame(),
+                    trees[1].node(*id).unwrap().last_visible_frame()
+                );
+            }
+        }
+        assert!(reused > 1000, "{reused} subtrees reused");
     }
 }

@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 use thiserror::Error;
 use vello_cpu::kurbo::{Affine, Rect, Size};
 
-use crate::compose::CachedSnapshot;
+use crate::compose::{CachedSnapshot, Span};
 use crate::display_list::{DisplayList, DisplayListBuilder, PaintCx};
 
 slotmap::new_key_type! {
@@ -150,6 +150,10 @@ pub struct RenderNode {
     /// reuse their cached world transform and effective opacity.
     pub(crate) stamp: u64,
     pub(crate) parent_stamp: u64,
+    /// The epoch of the last change to this node or to one below it.
+    pub(crate) changed: u64,
+    /// Where this node's subtree sat in the snapshot that last composed it.
+    pub(crate) span: Span,
 }
 
 impl RenderNode {
@@ -178,6 +182,8 @@ impl RenderNode {
             last_visible_frame: 0,
             stamp: 0,
             parent_stamp: 0,
+            changed: 0,
+            span: Span::default(),
         }
     }
 
@@ -317,8 +323,24 @@ impl RenderTree {
         self.content_rebuilds
     }
 
-    fn touch(&mut self) {
+    /// A change at `id`: a new epoch, and `id` and its ancestors remember it
+    /// so that compose walks down to it and copies what did not change.
+    fn touch(&mut self, id: NodeId) {
         self.epoch += 1;
+        // Marks made since the last compose reach the root, so the first
+        // node found marked has marked ancestors.
+        let since = self.cache.as_ref().map_or(0, |c| c.epoch);
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let Some(n) = self.nodes.get_mut(c) else {
+                return;
+            };
+            if n.changed > since {
+                return;
+            }
+            n.changed = self.epoch;
+            cur = n.parent;
+        }
     }
 
     /// Mark `BOUNDS` on `id` and its ancestors. Invariant: a node with `BOUNDS`
@@ -366,7 +388,7 @@ impl RenderTree {
         p.children.insert(at, id);
         p.dirty.insert(Dirty::ORDER | Dirty::A11Y);
         self.mark_bounds_from(parent);
-        self.touch();
+        self.touch(parent);
         id
     }
 
@@ -393,7 +415,11 @@ impl RenderTree {
                 stack.extend(node.children);
             }
         }
-        self.touch();
+        if let Some(p) = parent {
+            self.touch(p);
+        } else {
+            self.epoch += 1;
+        }
         Ok(count)
     }
 
@@ -433,7 +459,13 @@ impl RenderTree {
             .dirty
             .insert(Dirty::TRANSFORM | Dirty::OPACITY);
         self.mark_bounds_from(new_parent);
-        self.touch();
+        if let Some(op) = old_parent {
+            self.touch(op);
+        }
+        // From the new parent: the node may be marked already, its new
+        // ancestors not.
+        self.touch(new_parent);
+        self.nodes[id].changed = self.epoch;
         Ok(())
     }
 
@@ -442,7 +474,7 @@ impl RenderTree {
     fn with_node(&mut self, id: NodeId, f: impl FnOnce(&mut RenderNode) -> bool) -> bool {
         let changed = self.nodes.get_mut(id).is_some_and(f);
         if changed {
-            self.touch();
+            self.touch(id);
         }
         changed
     }
@@ -576,7 +608,7 @@ impl RenderTree {
         if let Some(n) = self.nodes.get_mut(id) {
             n.hit_testable = hit_testable;
             // Hit testing reads the snapshot, so it must be rebuilt.
-            self.epoch += 1;
+            self.touch(id);
         }
     }
 
@@ -624,7 +656,7 @@ impl RenderTree {
         n.dirty.remove(Dirty::CONTENT);
         self.content_rebuilds += 1;
         self.mark_bounds_from(id);
-        self.touch();
+        self.touch(id);
     }
 
     /// Sync step 8: for every `CONTENT`-dirty node call `paint` and install the
@@ -720,10 +752,6 @@ impl RenderTree {
         }
         // By index: a copy of the children was an allocation per dirty
         // node with more than four, in every frame that moves something.
-        for i in 0..self.nodes[id].children.len() {
-            let c = self.nodes[id].children[i];
-            self.refresh_bounds(c);
-        }
         let n = &self.nodes[id];
         // The hit rectangle is always part of the bounds, so a content-less node
         // still culls correctly.
@@ -733,13 +761,19 @@ impl RenderTree {
         {
             b = b.union(content.bounds());
         }
-        for c in &n.children {
-            let cn = &self.nodes[*c];
+        for i in 0..self.nodes[id].children.len() {
+            let c = self.nodes[id].children[i];
+            // Checked here: most children of a node that moved one did not.
+            if self.nodes[c].dirty.contains(Dirty::BOUNDS) {
+                self.refresh_bounds(c);
+            }
+            let cn = &self.nodes[c];
             if cn.is_pruned() {
                 continue;
             }
-            b = b.union(cn.local.transform_rect_bbox(cn.subtree_bounds));
+            b = b.union(crate::compose::bbox_of(cn.local, cn.subtree_bounds));
         }
+        let n = &self.nodes[id];
         if let Some(clip) = &n.clip {
             let r = b.intersect(clip.rect);
             // `intersect` of disjoint rects is inverted; make it empty at the origin.
