@@ -10,8 +10,9 @@ use super::base::{SharedState, TextEditor};
 use super::layout::position_at;
 use super::ops;
 use super::{cursor_position, selection_mode};
+use crate::flickable;
 use crate::focus::{self, FocusReason};
-use crate::input::{Modifiers, MouseButtons, PointerEvent};
+use crate::input::{Modifiers, MouseButtons, PointerEvent, PointerId};
 use crate::item::Item;
 use crate::scene::{DOUBLE_CLICK_INTERVAL, DRAG_THRESHOLD};
 
@@ -89,6 +90,14 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, at: kurbo
             words: by_words || double,
         };
     });
+    // A TextEdit that selects keeps the mouse's press, so a Flickable
+    // round it never takes a drag up or down the lines. A TextInput has
+    // one line: a drag across it selects before the Flickable's threshold
+    // is passed sideways, and a drag up or down flicks, as in Qt. A touch
+    // still flicks.
+    if selects && st.borrow().multi && ev.id == PointerId::default() {
+        flickable::keep_pointer_grab(engine, obj, true);
+    }
     true
 }
 
@@ -134,6 +143,7 @@ pub(super) fn release(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, at: ku
 }
 
 pub(super) fn cancel(engine: &Engine, obj: ObjectId) {
+    flickable::keep_pointer_grab(engine, obj, false);
     if let Some(st) = super::base::state_of(engine, obj) {
         let mut s = st.borrow_mut();
         s.pointer.anchor = None;
