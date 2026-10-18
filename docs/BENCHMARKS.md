@@ -2691,3 +2691,47 @@ both.
   changed nothing needs egui to say what it would have drawn, which is a change to how the shell
   paces egui and not something to fold into a benchmark batch. The bench now reports each window's
   CPU by thread name, so the next change can be measured on the main thread alone.
+
+### The first frame of a scroll, scrolling against qml6, and an Image's completion (2026-10-18)
+
+**The first frame of a scroll.** A list of 200 delegates on llvmpipe, scrolled once with the
+wheel. The copies a scroll makes (the clip kept, the framebuffer it is moved through) are now
+made once while the window is idle, not in the first frame of the scroll.
+
+| First scroll, llvmpipe | Before | After |
+|---|---:|---:|
+| the clip kept, first copy | 13.1 ms | 0.15 ms |
+| the clip moved back, first time | 15.8 ms | 0.8 ms |
+| its two passes | 14.7 / 16.3 ms | 1.4 / 1.3 ms |
+
+The copies cost about 44 ms once, at idle after the first frames. The scroll copy still moves
+clips: on llvmpipe in 95 of 108 moving passes of photosurface and 139 of 161 of the list, and on
+the GPU in 85 of 97 of photosurface. On the GPU the list moves none, because the whole run of
+frames starts first, but each whole frame there costs 0.61 ms (median) and 1.25 ms (95th
+percentile).
+
+**Scrolling against qml6.** `mise run bench rssnews listview photosurface --profile desktop
+--settle 3 --idle 3 --load 5 --gesture scroll`, `--warm-up --repeat 3`, medians, Ljós / Qt.
+
+| | llvmpipe | GPU |
+|---|---:|---:|
+| rssnews, frames that changed a second | 62.0 / 61.0 | 61.6 / 60.6 |
+| rssnews, slowest frame interval | 16.2 / 48.3 ms | 16.3 / 32.5 ms |
+| rssnews, CPU while scrolled | 18.8 / 64.6 % | 6.47 / 5.91 % |
+| listview, frames that changed a second | 62 / 62 | 61.9 / 61.8 |
+| listview, CPU while scrolled | 31.7 / 23.1 % | 10.2 / 6.03 % |
+| photosurface, frames that changed a second | | 55.2 / 57.5 |
+
+- **photosurface on the GPU** had 300–880 ms frames in a first run and none in Qt's. The
+  welcome slides turn a PDF page every 5 s, but a page draws in 1–3 ms. Run on its own,
+  scrolled as the bench scrolls it, no frame went over budget (longest 14.6 ms). A second run at
+  a load average of 72–124 on 32 cores stalled in one of three runs of each runtime (Ljós 350 ms,
+  Qt 278 ms). The stalls are the machine's load.
+
+**An Image's completion** (samegame's blocks): 41.7 k instructions before, 29.3 k after (57.9 k
+and 45.9 k with its effect). A plain file name beside a plain document is joined as it is
+(resolving the URL: 7.4 k to 2.7 k). A small picture of an item not yet painted is kept whole,
+without first working out a size limit for it.
+
+**What is left.** On the GPU, Ljós spends more CPU a frame than Qt (listview ×1.69). The cost is
+per frame, not in the scene, as in the sections before.
