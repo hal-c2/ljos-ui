@@ -12,7 +12,7 @@ through cua-driver on a grid instead. What each click did (the outline's changes
 inspector refused it) and what the app logged go in <out>/<id>/report.txt, with screenshots;
 <out>/summary.txt lists, per example, whether it started, what its clicks did and the distinct
 lines it logged."""
-import base64, glob, json, os, re, shutil, signal, subprocess, sys, time, urllib.error, urllib.request
+import base64, glob, json, os, re, shutil, signal, struct, subprocess, sys, time, urllib.error, urllib.request, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
@@ -21,6 +21,10 @@ SANDBOX = os.path.join(ROOT, "scripts", "cua-sandbox.sh")
 # The sandbox's config, data and state directories; cua-sandbox.sh makes them again, with the
 # user's fonts, for each command it runs.
 XDG = os.path.join(os.environ.get("LJOS_CUA_HOME") or os.path.join(TARGET, "cua"), "xdg")
+# A pictures folder as a person has one: an app that opens it (photosurface) has something to
+# show. Made here, the same on every machine, and never the user's own photos.
+PICTURES = os.path.join(XDG, "user", "pictures")
+PHOTOS = 12
 ROLES = r"button|checkbox|switch|radio|radiobutton|tab|menuitem|link|combobox|spinbox|slider"
 # An outline line of a control: its role, its name if it has one, what else is shown before its
 # reference (a slider's value), the reference and its states.
@@ -117,6 +121,37 @@ class Inspector:
         return [l for l in text.splitlines() if l.strip() and "since:" not in l and "no log lines" not in l]
 
 
+def photo(n):
+    """A PNG of a landscape photo's size: a sky over ground, in colours that differ by `n`."""
+    w, h = 480 + 40 * (n % 4), 320 + 40 * (n % 3)
+    sky = (60 + 15 * n % 120, 120 + 7 * n % 100, 200)
+    ground = (40 + 11 * n % 150, 110 + 13 * n % 120, 50)
+    rows = []
+    for y in range(h):
+        top = y < h * (0.45 + 0.03 * (n % 5))
+        r, g, b = sky if top else ground
+        shade = y * 60 // h
+        line = bytes((max(r - shade, 0), max(g - shade, 0), max(b - shade, 0))) * w
+        rows.append(b"\0" + line)
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    header = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"".join(rows), 6))
+            + chunk(b"IEND", b""))
+
+
+_photos = []
+
+
+def seed_pictures():
+    if not _photos:
+        _photos.extend(photo(n) for n in range(PHOTOS))
+    os.makedirs(PICTURES, exist_ok=True)
+    for n, data in enumerate(_photos):
+        with open(os.path.join(PICTURES, f"photo-{n:02}.png"), "wb") as f:
+            f.write(data)
+
+
 def cua(tool, args):
     r = subprocess.run([SANDBOX, "call", tool, json.dumps(args)], capture_output=True, text=True, timeout=60)
     try:
@@ -187,6 +222,7 @@ def drive(out, eid):
     before = set(glob.glob(TARGET + "/ljos/mcp-*.json"))
     # What the last run saved (Settings, LocalStorage) would start this one somewhere else.
     shutil.rmtree(XDG, ignore_errors=True)
+    seed_pictures()
     log = open(os.path.join(d, "stderr.log"), "w")
     p = subprocess.Popen([SANDBOX, "exec", "mise", "run", "gallery:run", eid, "--mcp=inspect,input"],
                          cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
