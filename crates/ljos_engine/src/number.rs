@@ -180,6 +180,12 @@ fn parse_radix(digits: &str, radix: u32) -> f64 {
 /// `ToInt32` (ECMA-262 §7.1.6): truncate, then wrap modulo 2^32. NaN and
 /// infinities are 0. QML `int` properties store this.
 pub fn to_int32(x: f64) -> i32 {
+    // Nearly every number a script gives an int is one already: the
+    // remainder below costs a call of `fmod`.
+    #[allow(clippy::float_cmp)]
+    if x == f64::from(x as i32) {
+        return x as i32;
+    }
     if !x.is_finite() {
         return 0;
     }
