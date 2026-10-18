@@ -459,6 +459,8 @@ struct GlyphSeg {
 struct GlyphMesh {
     generation: u64,
     clip: ERect,
+    /// No glyph was left out for being far from the clip rectangle.
+    whole: bool,
     mesh: Arc<Mesh>,
 }
 
@@ -542,6 +544,91 @@ fn place_glyphs(
     }
 }
 
+/// Whether [`place_glyphs`] visits every glyph of `seg` in `clip`: upright
+/// text that is all near the clip rectangle. The same arithmetic, without
+/// the keys.
+fn places_all(seg: &GlyphSeg, ppp: f32, clip: ERect) -> bool {
+    let run = &*seg.cmd.run;
+    let origin = seg.cmd.origin;
+    let screen_bounds = erect(seg.to_screen.transform_rect_bbox(run.bounds + origin));
+    if !screen_bounds.intersects(clip) {
+        return false;
+    }
+    let ppp = f64::from(ppp);
+    let to_device = Affine::scale(ppp) * seg.to_screen;
+    let [a, _, _, d, e, ty] = to_device.as_coeffs();
+    if !(is_upright(to_device) && (a - d).abs() < 1e-6 * a.abs().max(1.0)) {
+        return false;
+    }
+    let size = f64::from(run.font_size) * a;
+    let dy = baseline_snap(to_device, f64::from(run.baseline) + origin.y);
+    let reach = size * 2.0 + 2.0;
+    let (cx0, cx1) = (f64::from(clip.min.x) * ppp, f64::from(clip.max.x) * ppp);
+    let (cy0, cy1) = (f64::from(clip.min.y) * ppp, f64::from(clip.max.y) * ppp);
+    run.glyphs.iter().all(|g| {
+        let x = a * (f64::from(g.x) + origin.x) + e;
+        let y = (d * (f64::from(g.y) + origin.y) + ty + dy).round();
+        !(x + reach < cx0 || x - reach > cx1 || y + reach < cy0 || y - reach > cy1)
+    })
+}
+
+/// How far, in points, every glyph of `new` is placed from where it is in
+/// `old`, the same run under another transform: `None` unless that is whole
+/// device pixels for each glyph, so each keeps its atlas key and bin.
+fn glyph_shift(old: &GlyphSeg, new: &GlyphSeg, ppp: f32) -> Option<egui::Vec2> {
+    if new.cmd.decorations.bars().next().is_some() {
+        return None;
+    }
+    let ppp = f64::from(ppp);
+    let from = Affine::scale(ppp) * old.to_screen;
+    let to = Affine::scale(ppp) * new.to_screen;
+    let [a, b, c, d, e0, f0] = from.as_coeffs();
+    let [a1, b1, c1, d1, e1, f1] = to.as_coeffs();
+    if [a, b, c, d] != [a1, b1, c1, d1]
+        || !is_upright(from)
+        || (a - d).abs() >= 1e-6 * a.abs().max(1.0)
+    {
+        return None;
+    }
+    let dx = e1 - e0;
+    if dx != dx.round() {
+        return None;
+    }
+    // Each glyph is rounded from the snapped baseline: a move of it is a
+    // move of every glyph.
+    let baseline = d * (f64::from(new.cmd.run.baseline) + new.cmd.origin.y);
+    let dy = (baseline + f1).round() - (baseline + f0).round();
+    Some(egui::vec2((dx / ppp) as f32, (dy / ppp) as f32))
+}
+
+/// A node drawn again under a transform that only moved it: a run whose
+/// glyphs all keep their keys keeps its quads, moved, and asks the atlas
+/// for none of them. `old` and `new` are the segments of the same list.
+fn carry_glyphs(old: &[WorldSeg], new: &mut [WorldSeg], clip: ERect, ppp: f32) {
+    for (o, n) in old.iter().zip(new) {
+        let (WorldSeg::Glyphs(o), WorldSeg::Glyphs(n)) = (o, n) else {
+            continue;
+        };
+        let Some(m) = o.mesh.as_ref().filter(|m| m.whole) else {
+            continue;
+        };
+        let Some(by) = glyph_shift(o, n, ppp) else {
+            continue;
+        };
+        if !places_all(n, ppp, clip) {
+            continue;
+        }
+        let mut mesh = Mesh::clone(&m.mesh);
+        mesh.translate(by);
+        n.mesh = Some(GlyphMesh {
+            generation: m.generation,
+            clip,
+            whole: true,
+            mesh: Arc::new(mesh),
+        });
+    }
+}
+
 fn push_quad(mesh: &mut Mesh, corners: [Pos2; 4], uv: [Pos2; 4], color: Color32) {
     let base = mesh.vertices.len() as u32;
     // Whole arrays: a particle system pushes hundreds of quads a frame, and
@@ -567,6 +654,9 @@ fn glyph_mesh(seg: &GlyphSeg, atlas: &GlyphAtlas, ppp: f32, clip: ERect) -> Mesh
         return mesh;
     };
     mesh.texture_id = texture;
+    let quads = seg.cmd.run.glyphs.len() + 2;
+    mesh.vertices.reserve(quads * 4);
+    mesh.indices.reserve(quads * 6);
     let color = color32(seg.cmd.color.with_opacity(seg.opacity));
     let side = atlas.side() as f32;
     let inv_ppp = 1.0 / f64::from(ppp);
@@ -752,6 +842,7 @@ pub struct EpaintBackend {
     encoded: u64,
     tessellations: u64,
     world_rebuilds: u64,
+    glyph_meshes_built: u64,
     atlas: GlyphAtlas,
     textures: FxHashMap<TextureKey, TextureEntry>,
     /// The shared pages small pictures are put on.
@@ -1080,6 +1171,7 @@ impl EpaintBackend {
             encoded: 0,
             tessellations: 0,
             world_rebuilds: 0,
+            glyph_meshes_built: 0,
             atlas: GlyphAtlas::default(),
             textures: FxHashMap::default(),
             pages: ImageAtlas::default(),
@@ -1169,6 +1261,11 @@ impl EpaintBackend {
     /// How many per-node world meshes were re-mapped so far.
     pub fn world_rebuilds(&self) -> u64 {
         self.world_rebuilds
+    }
+
+    /// Glyph runs whose quads were built from the atlas, not moved.
+    pub fn glyph_meshes_built(&self) -> u64 {
+        self.glyph_meshes_built
     }
 
     fn set_ppp(&mut self, ppp: f32) {
@@ -1774,6 +1871,9 @@ impl RenderBackend for EpaintBackend {
                 let mut segs = Self::world_segs(&local, to_screen, item.opacity);
                 if let Some(old) = self.nodes.get_mut(item.node) {
                     hand_over(&mut self.shapes, &mut old.segs, &mut segs);
+                    if old.sig.list == sig.list && old.sig.opacity == sig.opacity {
+                        carry_glyphs(&old.segs, &mut segs, clip, self.ppp);
+                    }
                 }
                 self.world_rebuilds += 1;
                 self.nodes.insert(
@@ -1923,9 +2023,11 @@ impl RenderBackend for EpaintBackend {
                         }
                         let generation = self.atlas.generation();
                         if g.mesh_for(generation, clip).is_none() {
+                            self.glyph_meshes_built += 1;
                             g.mesh = Some(GlyphMesh {
                                 generation,
                                 clip,
+                                whole: places_all(g, self.ppp, clip),
                                 mesh: Arc::new(glyph_mesh(g, &self.atlas, self.ppp, clip)),
                             });
                         }

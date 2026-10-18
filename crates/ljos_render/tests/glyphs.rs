@@ -507,6 +507,43 @@ mod b0 {
         }
     }
 
+    /// Text that only moved keeps its quads, moved: what a backend that
+    /// never saw it draws, without a look in the atlas for each glyph.
+    #[test]
+    fn b0_moves_the_quads_of_text_that_only_moved() {
+        for scale in [1.0, 1.25, 2.0] {
+            let mut s = Scene::new(200.0, 400.0);
+            let n = s.node(None, 0.0, 10.0, 150.0, 30.0);
+            s.paint(n, |b| {
+                let run = Arc::new(run("Hello, Ljós!", 20.0, 0.0));
+                b.glyphs(
+                    run,
+                    Vec2::new(6.3, 21.0),
+                    Rgba::BLACK,
+                    Decorations::default(),
+                );
+            });
+            let ctx = Context::default();
+            let mut be = EpaintBackend::new();
+            frame(&mut s, &mut be, &ctx, scale);
+            let built = be.glyph_meshes_built();
+            for y in [10.4, 11.0, 13.75, 40.2, 97.5] {
+                s.tree.set_pos(n, 0.0, y);
+                let (moved, _) = frame(&mut s, &mut be, &ctx, scale);
+                let mut fresh = EpaintBackend::new();
+                let (again, _) = frame(&mut s, &mut fresh, &ctx, scale);
+                let (w, h) = ((200.0 * scale) as u32, (400.0 * scale) as u32);
+                let (a, b) = (
+                    blit(&moved, &be, w, h, scale),
+                    blit(&again, &fresh, w, h, scale),
+                );
+                assert_eq!(difference(&a, &b).0, 0, "scale {scale}, y {y}");
+                assert!(total_ink(&a) > 0);
+            }
+            assert_eq!(be.glyph_meshes_built(), built, "scale {scale}");
+        }
+    }
+
     #[test]
     fn b0_fills_each_glyph_once() {
         let mut s = line();
