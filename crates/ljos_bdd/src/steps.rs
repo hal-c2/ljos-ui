@@ -253,6 +253,13 @@ fn wall_clock_reads(w: &mut LjosWorld, time: String) -> StepResult {
     w.each(|b| b.wall_clock(ms))
 }
 
+// On in a debug build already, unless `LJOS_TIER1_CHECK` says otherwise:
+// the step makes a scenario that is about the check not depend on either.
+#[given(regex = r"^the tier 1 cross-check is (on|off)$")]
+fn tier1_check_is(w: &mut LjosWorld, on: String) -> StepResult {
+    w.each(|b| b.tier1_check(on == "on"))
+}
+
 #[given("the application uses the fonts installed on the system")]
 fn system_fonts(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.system_fonts())

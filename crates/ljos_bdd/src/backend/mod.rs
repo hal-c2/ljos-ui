@@ -403,6 +403,11 @@ pub trait Backend: fmt::Debug {
     fn wall_clock(&mut self, _epoch_ms: f64) -> Result<()> {
         Err(BackendError::NotImplemented("a pinned wall clock"))
     }
+    /// Every binding tier 1 runs is run in tier 2 as well and the two
+    /// compared, a difference being a warning; or not (`on` false).
+    fn tier1_check(&mut self, _on: bool) -> Result<()> {
+        Err(BackendError::NotImplemented("the tier 1 cross-check"))
+    }
     /// Text is set in the fonts installed on the machine, as a desktop
     /// application's is, instead of only the fonts the toolkit carries.
     /// Given before anything is loaded.

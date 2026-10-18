@@ -204,6 +204,8 @@ pub struct LjosBackend {
     /// The wall clock the scenario pinned, in milliseconds since the UNIX
     /// epoch; given before anything was loaded.
     wall_clock: Option<f64>,
+    /// The tier 1 cross-check the scenario asked for, when it asked.
+    tier1_check: Option<bool>,
     /// The thread's text engine reads the machine's fonts for this scenario.
     system_fonts: bool,
     /// The style the scenario chose, given before anything was loaded.
@@ -1063,6 +1065,9 @@ impl Backend for LjosBackend {
             }
             self.platform.install(&live.engine)?;
             live.engine.set_wall_clock_origin(self.wall_clock);
+            if let Some(on) = self.tier1_check {
+                live.engine.set_tier1_check(on);
+            }
             for (name, tree) in self.lazy_trees.drain(..) {
                 let e = &live.engine;
                 let obj = e
@@ -1348,6 +1353,14 @@ impl Backend for LjosBackend {
         if !self.system_fonts {
             self.system_fonts = true;
             ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+        }
+        Ok(())
+    }
+
+    fn tier1_check(&mut self, on: bool) -> Result<()> {
+        self.tier1_check = Some(on);
+        if let Some(live) = &self.live {
+            live.engine.set_tier1_check(on);
         }
         Ok(())
     }
