@@ -25,8 +25,19 @@ use crate::value::Value;
 /// It holds the list in the form a read of the property gives
 /// ([`Value::List`]), so that reading it is not a copy, and so that the
 /// engine can append to it without one.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct QmlList(Arc<Vec<Value>>);
+
+impl Default for QmlList {
+    /// One empty list shared by all: an item has half a dozen list
+    /// properties and most stay empty. The first write makes its own.
+    fn default() -> Self {
+        thread_local! {
+            static EMPTY: Arc<Vec<Value>> = Arc::new(Vec::new());
+        }
+        QmlList(EMPTY.with(Arc::clone))
+    }
+}
 
 impl QmlList {
     pub fn new() -> Self {
@@ -398,7 +409,7 @@ impl ListSlot<'_> {
     fn edit(self, apply: &dyn Fn(&mut Value)) {
         match self {
             ListSlot::Field(list) => {
-                let mut v = Value::List(std::mem::take(&mut list.0));
+                let mut v = Value::List(std::mem::take(list).0);
                 apply(&mut v);
                 if let Value::List(l) = v {
                     list.0 = l;
@@ -435,5 +446,33 @@ fn list_slot(h: &mut ObjectHeader, prop: PropIndex) -> Option<ListSlot<'_>> {
             h.dynamic.get_mut(slot as usize).map(ListSlot::Dynamic)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An item's half-dozen list properties start empty without a list
+    /// made for each.
+    #[test]
+    fn empty_lists_share_one_allocation_until_written() {
+        let (Value::List(a), Value::List(b)) =
+            (QmlList::new().to_value(), QmlList::default().to_value())
+        else {
+            panic!("a list reads as a list");
+        };
+        assert!(Arc::ptr_eq(&a, &b));
+        let mut c = QmlList::new();
+        ListSlot::Field(&mut c).edit(&|v| {
+            if let Value::List(l) = v {
+                Arc::make_mut(l).push(Value::Int(1));
+            }
+        });
+        assert_eq!(c.len(), 1);
+        assert!(
+            QmlList::new().is_empty(),
+            "the shared empty list stays empty"
+        );
     }
 }
