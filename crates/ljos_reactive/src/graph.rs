@@ -1323,6 +1323,12 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(())
     }
 
+    /// Whether a [`Graph::batch`] is open: effects wait for its end, so a
+    /// batch inside it would change nothing.
+    pub fn batching(&self) -> bool {
+        self.inner.borrow().batch_depth > 0
+    }
+
     /// Defers the effect flush until `f` returns (Qt's property update
     /// group). Nested batches flush once, at the outermost end. Reads
     /// inside the batch pull current values.

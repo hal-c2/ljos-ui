@@ -178,3 +178,45 @@ fn work_an_interceptor_puts_off_runs_when_the_binding_has_its_value() {
     e.after_binding(move |_| *r.borrow_mut() = true);
     assert!(*ran.borrow());
 }
+
+/// An animation step to a number property, every frame for each
+/// animated property, goes the shortest way there is; what reads the
+/// property sees it as it would any other write.
+#[test]
+fn an_animation_step_reaches_what_reads_the_property() {
+    let h = engine();
+    let e = &h.engine;
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    property real r: 0
+    property int n: 0
+    property real twice: r * 2
+    property int heard: 0
+    onRChanged: heard++
+    Item { objectName: "child"; width: r + 1 }
+}"#,
+    );
+    let child = h.find(root, "child");
+    assert_eq!(h.num(root, "twice"), 0.0);
+    assert_eq!(h.num(child, "width"), 1.0);
+    let r = e.property_index(root, "r").unwrap();
+    let n = e.property_index(root, "n").unwrap();
+
+    e.write_internal(root, r, Value::Real(2.5), WriteKind::Animation)
+        .unwrap();
+    assert_eq!(h.num(root, "r"), 2.5);
+    assert_eq!(h.num(root, "twice"), 5.0);
+    assert_eq!(h.num(root, "heard"), 1.0);
+    assert_eq!(h.num(child, "width"), 3.5);
+    assert_eq!(e.with::<Item, _>(child, |i| i.width).unwrap(), 3.5);
+
+    // A native field, and a number of another kind, which is converted.
+    let w = Item::WIDTH.index;
+    e.write_internal(child, w, Value::Real(9.0), WriteKind::Animation)
+        .unwrap();
+    assert_eq!(e.with::<Item, _>(child, |i| i.width).unwrap(), 9.0);
+    e.write_internal(root, n, Value::Real(3.75), WriteKind::Animation)
+        .unwrap();
+    assert_eq!(h.get(root, "n"), Value::Int(3));
+}

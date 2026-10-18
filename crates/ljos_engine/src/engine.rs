@@ -1452,6 +1452,15 @@ impl Engine {
         how: WriteKind,
         internal: bool,
     ) -> Result<(), EngineError> {
+        // An animation step, every frame for each animated property: a
+        // number to a number property with a node and no setter of its
+        // own. One look says so, and nothing between would change it.
+        if internal
+            && matches!(how, WriteKind::Animation)
+            && let Some(n) = self.plain_number_node(obj, prop, &v)
+        {
+            return self.write_node(obj, prop, n, v, how);
+        }
         // Nearly every write is to a property that is no alias and has
         // nothing still to be made: one look says so.
         let (obj, prop) = match self.write_look(obj, prop) {
@@ -1546,15 +1555,56 @@ impl Engine {
                 return Ok(());
             }
         };
+        self.write_node(obj, prop, n, v, how)
+    }
+
+    /// The node of `prop` when a write of `v` to it needs no conversion,
+    /// alias, setter or value still to be made: `v` goes to the node as
+    /// it is.
+    fn plain_number_node(&self, obj: ObjectId, prop: PropIndex, v: &Value) -> Option<NodeId> {
+        let store = self.inner.store.borrow();
+        let h = store.objects.get(obj)?;
+        let p = h.meta.property(prop)?;
+        let same = matches!(
+            (&p.ty, v),
+            (TypeTag::Real, Value::Real(_)) | (TypeTag::Int, Value::Int(_))
+        );
+        let unfiltered = matches!(
+            p.access,
+            PropertyAccess::Field { write: None, .. } | PropertyAccess::Dynamic { .. }
+        );
+        if !same || !unfiltered || p.is_alias() || p.flags.contains(PropertyFlags::GROUP) {
+            return None;
+        }
+        if h.makes_on_read(prop) {
+            return None;
+        }
+        h.node(prop)
+    }
+
+    fn write_node(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        n: NodeId,
+        v: Value,
+        how: WriteKind,
+    ) -> Result<(), EngineError> {
         let g = &self.inner.graph;
-        // Batched so effects run after the field cache is updated.
-        g.batch(|| {
+        let write = || {
             g.write(n, v, how)?;
             if let Some(cur) = g.settled(n) {
                 self.store_value(obj, prop, &cur);
             }
             Ok(())
-        })
+        };
+        // Batched so effects run after the field cache is updated; in an
+        // open batch they wait already.
+        if g.batching() {
+            write()
+        } else {
+            g.batch(write)
+        }
     }
 
     /// Runs a setter that gets a [`Cx`], with no store borrow held, so it
