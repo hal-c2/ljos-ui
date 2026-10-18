@@ -3302,3 +3302,45 @@ Each cell is the range of three runs.
 **What is left.** todolist's pop waits about 59 ms for its first frame, on the engine side.
 Ljós's CPU outside llvmpipe (about 130 ms for the push and pop) is still above Qt's total. Qt
 gets there by showing about half the frames.
+
+### calqlatr's press, fifth pass, and clocks again (2026-10-19)
+
+The bench copies and runs of the third and fourth passes above. The base is the "after" of the
+fourth pass (716c34e6). Ir is from callgrind on a release build, per calqlatr press (140 presses) and per
+clocks `timeChanged` (700 calls). Wall time alternates Ljós and `qml6` 6.11.2, five runs each:
+calqlatr per press over 2 800 presses, clocks for 140 000 calls. The load average was 12–35.
+
+| | qml6 | Ljós base | Ljós after |
+|---|---:|---:|---:|
+| calqlatr, Ir per press | | 1.481 M | 1.410 M |
+| calqlatr, wall per press | 0.101–0.105 ms | 0.120–0.124 ms | 0.114–0.118 ms |
+| clocks, Ir per `timeChanged` | | 12.8 k | 12.9 k |
+| clocks, wall for 140 000 calls | 94–103 ms | | 97–103 ms |
+
+calqlatr is about 12 % above qml6. Clocks is within the noise, about 3 % above at the fastest
+runs. The cuts, in order:
+- `positionViewAtEnd` on a view already at its end lays the rows out once, not twice. The view
+  keeps the items it read the lengths of; a pass that leaves the same ones, at the same place,
+  needs no second run (`going_where_the_view_already_is_lays_the_rows_out_once`):
+  1.481 M → 1.439 M.
+- A Behavior's animation is built anew at each value it hears. The build asks the provenance of
+  `target`, `targets`, `property`, `properties`, `from`, `to`, the easing leaves and `loops`,
+  and takes the type's default for one never given a value: 1.439 M → 1.410 M.
+  `features/animation/behavior-no-change.feature` (@qt-parity) pins what a Behavior does with
+  a value that changes nothing.
+
+What is left of a press, about 1.41 M Ir:
+- 50 bindings run a press: 34 are the buttons' colours, about 6 k each with the flush, and 16
+  are a new row's delegate. Of the colours, 23 give back the colour they had. The colour has to
+  be worked out to know that, and qml6 works it out too.
+- 11 Behavior starts, about 13 k each with the intercept. Most are a restart towards the colour
+  the text still shows, since no frame runs between presses. It runs its whole duration, as on
+  qml6, so the run, its curve and its slots are built all the same.
+- A delegate made for `append` is about 167 k, and `clear` about 810 k for a round's rows.
+- The script itself, about 0.13 M in the interpreter.
+
+DECISIONs:
+- The first step of a Behavior's run still writes the value it starts from. Skipping that write
+  would leave the property unassigned until the first frame.
+- `empty_row` still runs a removed row's bindings that are out of date. Qt has them evaluated
+  already.
