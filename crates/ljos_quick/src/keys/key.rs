@@ -131,6 +131,20 @@ pub fn from_char(c: char) -> Option<i32> {
         .filter(|n| !(0x7f..0xa0).contains(n))
 }
 
+/// The control character a key types, as a Qt key event's `text` carries
+/// it (qml6 on X11, with or without Shift or Ctrl held for Return); `""`
+/// for a key that types none. Editors take it as a command, not as text.
+pub fn control_text(key: i32) -> &'static str {
+    match key {
+        RETURN | ENTER => "\r",
+        TAB => "\t",
+        BACKSPACE => "\u{8}",
+        ESCAPE => "\u{1b}",
+        DELETE => "\u{7f}",
+        _ => "",
+    }
+}
+
 /// The keys with a name in a key sequence, with the name Qt writes first
 /// and the others it reads.
 const NAMED: &[(i32, &[&str])] = &[
@@ -248,6 +262,14 @@ mod tests {
         assert_eq!(from_char('*'), Some(ASTERISK));
         assert_eq!(from_char('\u{1}'), None);
         assert_eq!(from_char('λ'), None);
+    }
+
+    #[test]
+    fn return_types_a_carriage_return_and_an_arrow_nothing() {
+        assert_eq!(control_text(RETURN), "\r");
+        assert_eq!(control_text(ESCAPE), "\u{1b}");
+        assert_eq!(control_text(LEFT), "");
+        assert_eq!(control_text(A), "");
     }
 
     #[test]

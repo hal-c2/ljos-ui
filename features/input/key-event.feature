@@ -18,6 +18,7 @@ Feature: KeyEvent
         focus: true
         property int key: 0
         property string text: "?"
+        property int code: -2
         property int modifiers: -1
         property int count: 0
         property bool copy: false
@@ -26,6 +27,7 @@ Feature: KeyEvent
         property int releases: 0
         Keys.onPressed: (event) => {
           key = event.key; text = event.text; modifiers = event.modifiers
+          code = text.length ? text.charCodeAt(0) : -1
           count = event.count; copy = event.matches(StandardKey.Copy)
           presses++
           if (event.isAutoRepeat) repeats++
@@ -99,17 +101,34 @@ Feature: KeyEvent
       | Shift+A | A    |
       | 7       | 7    |
 
-  # The oracle's input platform reports a NUL character for these keys.
+  # The oracle's input platform reports a NUL character for these keys;
+  # qml6 on X11 (xcb) gives none, as here.
   @ljos-only
   Scenario Outline: A key that types nothing has no text
     When the user presses "<chord>"
     Then the property "text" of "root" is ""
 
     Examples:
-      | chord  |
-      | Escape |
-      | Left   |
-      | F1     |
+      | chord |
+      | Left  |
+      | F1    |
+
+  # Measured on qml6 on X11 (xcb), with or without Shift or Ctrl held for
+  # Return; the oracle's input platform reports a NUL character for some.
+  @ljos-only
+  Scenario Outline: A key that types a control character carries it
+    When the user presses "<chord>"
+    Then the property "code" of "root" is <code>
+
+    Examples:
+      | chord        | code |
+      | Return       | 13   |
+      | Shift+Return | 13   |
+      | Ctrl+Return  | 13   |
+      | Tab          | 9    |
+      | Backspace    | 8    |
+      | Escape       | 27   |
+      | Delete       | 127  |
 
   @qt-parity
   Scenario: A modifier key is a press of its own

@@ -135,13 +135,14 @@ impl Chord {
         let commands = Modifiers::CONTROL | Modifiers::ALT | Modifiers::META;
         let mut chars = name.chars();
         let typed = match (chars.next(), chars.next()) {
-            _ if modifiers.intersects(commands) => String::new(),
+            (Some(_), None) if modifiers.intersects(commands) => String::new(),
+            _ if modifiers.intersects(commands) => key::control_text(code).to_owned(),
             (Some(c), None) if shift => c.to_uppercase().collect(),
             (Some(c), None) => c.to_lowercase().collect(),
             _ if code == key::SPACE => " ".to_owned(),
-            // A Qt key event for Tab carries the tab; a `TextEdit` types it.
-            _ if code == key::TAB && !shift => "\t".to_owned(),
-            _ => String::new(),
+            // A Qt key event carries the control character its key types:
+            // Tab's, which a `TextEdit` types, and Return's.
+            _ => key::control_text(code).to_owned(),
         };
         Ok(Self {
             modifiers,

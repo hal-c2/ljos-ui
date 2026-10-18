@@ -180,9 +180,12 @@ impl KeyTrack {
                 } => {
                     let (text, text_at) = match events.get(i + 1) {
                         Some(Event::Text(t)) => (t.as_str(), Some(i + 1)),
-                        // egui keeps the tab character to itself; a Qt
-                        // key event carries it, and a `TextEdit` types it.
-                        _ if *k == Key::Tab && !modifiers.any() => ("\t", None),
+                        // egui keeps control characters to itself; a Qt
+                        // key event carries the one its key types (a
+                        // `TextEdit` types the tab).
+                        _ if !(*k == Key::Tab && modifiers.shift) => {
+                            (key::control_text(map_key(*k, os)), None)
+                        }
                         _ => ("", None),
                     };
                     // The character says more than egui's key does: it
@@ -339,6 +342,20 @@ mod tests {
     fn mac_swaps_the_command_and_control_keys() {
         assert_eq!(map_key(Key::SuperLeft, MAC), key::CONTROL);
         assert_eq!(map_key(Key::ControlLeft, MAC), key::META);
+    }
+
+    #[test]
+    fn return_carries_the_carriage_return_egui_keeps_to_itself() {
+        let mut track = KeyTrack::default();
+        let out = track.translate(
+            &[
+                down(Key::Enter, egui::Modifiers::CTRL),
+                up(Key::Enter, egui::Modifiers::CTRL),
+            ],
+            NIX,
+        );
+        assert_eq!(out[0].event.text, "\r");
+        assert_eq!(out[1].event.text, "\r");
     }
 
     #[test]
