@@ -11,8 +11,9 @@
 //! [--eval EXPR]…`
 //!
 //! `--start` runs `EXPR` in the root after the warm frames and prints how
-//! long it took, to time one handler (a game's start, a page's build) on
-//! its own. `--slow` prints each frame that took longer than `MS`.
+//! long it took and how much of the graph it ran, to time one handler (a
+//! game's start, a page's build) on its own. `--slow` prints each frame
+//! that took longer than `MS`.
 //!
 //! `--eval` prints what a script in the root makes of `EXPR` at the end,
 //! to see that the run reached the state meant (a game started, a page
@@ -146,6 +147,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(root) = root.get() {
                 for e in &a.start {
                     let t = Instant::now();
+                    let s0 = app.engine().graph().stats();
                     let said = app.engine().eval_js_in(
                         Some(root),
                         e,
@@ -153,10 +155,18 @@ fn main() -> anyhow::Result<()> {
                         [4, 32, 200, 1000, 4000],
                     );
                     let took = t.elapsed();
+                    let s1 = app.engine().graph().stats();
                     match said {
                         Ok(v) => println!("{e}: {v} in {took:.2?}"),
                         Err(err) => println!("{e}: {err} in {took:.2?}"),
                     }
+                    println!(
+                        "  {} evaluations, {} effect runs, {} propagations, {} flushes",
+                        s1.evaluations - s0.evaluations,
+                        s1.effect_runs - s0.effect_runs,
+                        s1.propagations - s0.propagations,
+                        s1.flushes - s0.flushes,
+                    );
                 }
             }
             before = Some(app.engine().graph().stats());
