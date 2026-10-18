@@ -590,6 +590,21 @@ impl Seen {
     }
 
     /// # Errors
+    /// The agent has not asked anything, or the text of the answer does
+    /// not hold `text`.
+    pub fn answer_text_has(&self, text: &str) -> Result<(), String> {
+        let answer = self
+            .answer
+            .as_ref()
+            .ok_or("the agent has not asked anything yet")?;
+        if answer.text.contains(text) {
+            Ok(())
+        } else {
+            Err(format!("{text:?} is not in the answer:\n{}", answer.text))
+        }
+    }
+
+    /// # Errors
     /// `text` is somewhere in what the agent was told.
     pub fn answer_lacks(&self, text: &str) -> Result<(), String> {
         // A refusal is an answer too, and its message must not leak either.

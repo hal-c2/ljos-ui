@@ -88,3 +88,13 @@ pub(crate) fn shown(engine: &Engine, v: &QmlValue) -> Shown {
         }
     }
 }
+
+/// A number as JSON, with the digits a script prints it with, which is how
+/// a property's value is shown: `736.0003` stays `736.0003` and a whole
+/// number is an integer. What JSON has no number for (`NaN`, `Infinity`)
+/// is its text.
+pub(crate) fn number(engine: &Engine, n: f64) -> Value {
+    let text = engine.to_js_string(&QmlValue::Real(n));
+    text.parse::<serde_json::Number>()
+        .map_or_else(|_| json!(text.to_string()), Value::Number)
+}

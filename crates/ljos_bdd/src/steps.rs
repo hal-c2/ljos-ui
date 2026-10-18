@@ -2321,6 +2321,11 @@ fn answer_at_most(w: &mut LjosWorld, most: usize) -> StepResult {
     inspector_seen(w, |s| s.answer_at_most(most))
 }
 
+#[then(regex = r#"^the answer's text contains "(.*)"$"#)]
+fn answer_text_has(w: &mut LjosWorld, text: String) -> StepResult {
+    inspector_seen(w, |s| s.answer_text_has(&unquoted(&text)))
+}
+
 #[then(regex = r#"^the answer does not contain "(.*)"$"#)]
 fn answer_lacks(w: &mut LjosWorld, text: String) -> StepResult {
     inspector_seen(w, |s| s.answer_lacks(&unquoted(&text)))

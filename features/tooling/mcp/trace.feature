@@ -25,6 +25,7 @@ Feature: Tracing what happens to an object over time
         objectName: "root"
         width: 200; height: 100
         property int count: 0
+        property real level: 0
         property bool open: true
         signal poked(int times)
         function poke() { count += 1; poked(count) }
@@ -106,6 +107,19 @@ Feature: Tracing what happens to an object over time
       And the answer's "/events/0/value" is null
       And the answer's "/events/1/kind" is "destroyed"
       And the answer's "/tracing" has 0 entries
+
+    # A number is written down with the digits a script prints it with,
+    # which is how app_inspect shows a property's value.
+    Scenario: A changed number keeps every digit it has
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root"}
+        """
+      And the property "level" of "root" is set to 736.0003
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events/0/name" is "level"
+      And the answer's "/events/0/value" is 736.0003
+      And the answer's text contains "= 736.0003"
 
   Rule: The list is read from where the last answer ended
 

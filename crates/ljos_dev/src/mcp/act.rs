@@ -35,6 +35,7 @@ use super::capture::{self, Capture, REDACTED};
 use super::edits::{Edit, Edits};
 use super::surface::Answer;
 use super::tools::{Look, TYPED, Target, clip, flag, num, visible_to_the_top, window_box};
+use super::values::number;
 use super::{Inspector, MAX_DELTA_LINES, View};
 
 /// Frames one settle runs before it gives up and says so.
@@ -277,14 +278,17 @@ pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
         QmlValue::Undefined | QmlValue::Null => Value::Null,
         QmlValue::Bool(b) => json!(b),
         QmlValue::Int(i) => json!(i),
-        QmlValue::Real(r) => num(*r),
+        QmlValue::Real(r) => number(engine, *r),
         QmlValue::String(s) | QmlValue::Url(s) => json!(s.to_string()),
         QmlValue::Color(c) => json!(c.to_string()),
         QmlValue::Enum(e) => json!(e.value),
-        QmlValue::Point(p) => json!({ "x": num(p.x), "y": num(p.y) }),
-        QmlValue::Size(s) => json!({ "width": num(s.width), "height": num(s.height) }),
+        QmlValue::Point(p) => json!({ "x": number(engine, p.x), "y": number(engine, p.y) }),
+        QmlValue::Size(s) => {
+            json!({ "width": number(engine, s.width), "height": number(engine, s.height) })
+        }
         QmlValue::Rect(r) => json!({
-            "x": num(r.x), "y": num(r.y), "width": num(r.width), "height": num(r.height)
+            "x": number(engine, r.x), "y": number(engine, r.y),
+            "width": number(engine, r.width), "height": number(engine, r.height)
         }),
         QmlValue::List(items) if depth < 4 => Value::Array(
             items

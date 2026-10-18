@@ -57,6 +57,19 @@ ApplicationWindow {
         readonly property string mono: "monospace"
     }
 
+    // A value as the inspector gives it, with every digit it has: an edit
+    // of 736.0003 must not read 736. The Objects and Trace pages both
+    // show values through this.
+    function shown(v) {
+        if (v === null || v === undefined)
+            return ""
+        if (typeof v === "string")
+            return v
+        if (typeof v === "number" || typeof v === "boolean")
+            return String(v)
+        return JSON.stringify(v)
+    }
+
     // ----- Asking -----------------------------------------------------
 
     // What each answer still awaited is for, by serial: the name of a
@@ -1268,12 +1281,7 @@ ApplicationWindow {
                     // A value as a field shows it: a real to as many
                     // places as can be told apart on screen.
                     function valueText(v) {
-                        if (v === null || v === undefined)
-                            return ""
-                        var t = String(v)
-                        if (/^-?[0-9]+\.[0-9]{5,}$/.test(t))
-                            return String(Math.round(Number(t) * 10000) / 10000)
-                        return t
+                        return window.shown(v)
                     }
 
                     // The text of a field as the JSON the property takes.
@@ -2057,8 +2065,13 @@ ApplicationWindow {
                     }
 
                     function put(e) {
-                        var what = e.kind === "change" ? JSON.stringify(e.value)
-                                 : e.kind === "signal" ? "(" + e.args.map(function(a) { return JSON.stringify(a) }).join(", ") + ")"
+                        // A string is quoted, so that "" and a number
+                        // held as text read as what they are.
+                        function said(v) {
+                            return typeof v === "string" ? JSON.stringify(v) : window.shown(v)
+                        }
+                        var what = e.kind === "change" ? (e.key ? e.key + " (" + e.value + ")" : said(e.value))
+                                 : e.kind === "signal" ? "(" + e.args.map(said).join(", ") + ")"
                                  : ""
                         traceLines.append({
                             seq: e.seq,
