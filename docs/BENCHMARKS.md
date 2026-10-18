@@ -1088,8 +1088,9 @@ settled memory both went down. Time to first frame moved within the noise of the
   pictures and its shapes. egui's atlas was cut in the run before. What is left there is set by
   the window size and the driver, not by Ljós's choices.
 - **The NVIDIA user-space libraries** hold about 4.4 MiB anon in each app on this machine, which
-  has no NVIDIA GPU. glvnd loads them. This is the machine, not Ljós: Qt's GL goes through glvnd
-  too (not measured here).
+  has no NVIDIA GPU. glvnd loads them. (Measured since: Qt on X11 uses GLX and maps none of them,
+  and on Wayland it maps them too. Ljós now leaves NVIDIA's EGL vendor out when NVIDIA's driver is
+  not loaded; see "Rows measured one by one, a smaller node table, and EGL vendors" below.)
 - **The reactive graph** (1.2 MiB, sized at start) and **the type oracle read for `--example`**
   (0.9 MiB) are now the largest Rust items. A shipped application never reads the oracle.
 
