@@ -1128,6 +1128,9 @@ ApplicationWindow {
                                 color: objects.picked === modelData.handle ? theme.accentSoft
                                      : nodeHover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
                                      : "transparent"
+                                // Text, not Label, as in the property table:
+                                // rows are made as a tree of thousands is
+                                // scrolled, and a Text is cheaper to make.
                                 Row {
                                     x: 10 + (objects.filter === "" ? node.modelData.depth * 14 : 0)
                                     height: parent.height
@@ -1138,13 +1141,13 @@ ApplicationWindow {
                                         color: !node.modelData.item ? theme.violet
                                              : node.modelData.visible === false ? theme.subtle : theme.accent
                                     }
-                                    Label {
+                                    Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: node.modelData.type
                                         color: node.modelData.visible === false ? theme.subtle : theme.text
                                         font.bold: objects.picked === node.modelData.handle
                                     }
-                                    Label {
+                                    Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: text !== ""
                                         text: node.modelData.id ? "#" + node.modelData.id
@@ -1153,14 +1156,14 @@ ApplicationWindow {
                                     }
                                     // Without an id or a name, the handle tells
                                     // one Timer from the next.
-                                    Label {
+                                    Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: !node.modelData.id && !node.modelData.object_name
                                         text: node.modelData.handle
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }
-                                    Label {
+                                    Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: node.modelData.hidden !== undefined
                                         text: "+" + node.modelData.hidden
