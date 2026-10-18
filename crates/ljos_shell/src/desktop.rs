@@ -1283,7 +1283,15 @@ impl<M: Send + 'static> Desktop<M> {
         surface.info.events.clear();
 
         // egui's tree first, then the scene's, which hangs in it (§14).
-        if let Some(root) = platform_output.accesskit_update.take() {
+        if let Some(mut root) = platform_output.accesskit_update.take() {
+            // A screen reader says which window it is in by the title.
+            let title = slot.applied.as_ref().map(|s| s.title.as_str());
+            let id = egui::accesskit_root_id().accesskit_id();
+            if let Some(title) = title.filter(|t| !t.is_empty())
+                && let Some((_, node)) = root.nodes.iter_mut().find(|(n, _)| *n == id)
+            {
+                node.set_label(title);
+            }
             let view = match slot.view.as_mut() {
                 Some(view) => view,
                 None => app.view_mut(),

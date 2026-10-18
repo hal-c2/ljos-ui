@@ -1002,8 +1002,17 @@ impl Live {
             tree.children(key).iter().filter_map(node).collect()
         }
         let focus = self.scene.accessible_focus_node();
+        // The window is named by its title, as the shell tells it.
+        let sys = ljos_controls::WindowSystem::of(&self.engine);
+        let name = self
+            .roots
+            .iter()
+            .find_map(|r| sys.spec(&self.engine, *r))
+            .map(|s| s.title)
+            .unwrap_or_default();
         A11yNode {
             role: "window".into(),
+            name,
             // With no node to name, the window is what has the keyboard.
             focused: focus.is_none(),
             children: below(self.scene.accessibility_tree(), NodeKey::ROOT, focus),
