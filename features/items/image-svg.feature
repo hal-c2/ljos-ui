@@ -218,6 +218,24 @@ Feature: SVG pictures in an Image
     Then the property "status" of "picture" is 3
     And the log has a warning matching "Error decoding: file:///.*letter\.svg: Unsupported image format$"
 
+  Scenario: A picture the SVG file embeds is drawn with it
+    Given the text file "logo.svg":
+      """xml
+      <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="40" height="20">
+        <image width="40" height="20" preserveAspectRatio="none" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR42mNQSFgARwzEcQDMQxIBWLUzWAAAAABJRU5ErkJggg=="/>
+      </svg>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        width: 40; height: 20
+        Image { source: "logo.svg" }
+      }
+      """
+    Then the pixel at 20, 10 of the window is "#2060a0"
+    And the log has no warnings
+
   Rule: A source without a suffix is looked for with the suffix of each picture format
 
     Scenario: A name without a suffix finds the SVG file

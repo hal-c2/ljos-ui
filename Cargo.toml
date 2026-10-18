@@ -66,8 +66,10 @@ zune-jpeg = "0.5.15"
 # held. Without rayon: decodes already run on the ComputePool.
 jpeg-decoder = { version = "0.3.1", default-features = false }
 # SVG: parsed by usvg and drawn by resvg (linebender), pure Rust. Without
-# text, so it brings no second font stack, and without its own raster decoders.
-resvg = { version = "0.48.1", default-features = false, features = ["svgz"] }
+# text, so it brings no second font stack. With the decoders for pictures an
+# SVG embeds (a logo exported as a PNG inside one): about 300 KB of binary,
+# sharing gif and zune-jpeg with ours and image-webp with the clipboard's.
+resvg = { version = "0.48.1", default-features = false, features = ["svgz", "raster-images"] }
 # Test fixtures only: nothing shipped encodes JPEG.
 jpeg-encoder = "0.7.1"
 
@@ -180,7 +182,7 @@ blake3 = "1.8"
 png = "0.18"
 # GIF, still and animated (Image shows the first frame, AnimatedImage
 # plays them all); the encoder is only for test fixtures.
-gif = { version = "0.13.1", default-features = false, features = ["std"] }
+gif = { version = "0.14.1", default-features = false, features = ["std"] }
 toml = "1.1"
 regex = "1.13"
 globset = "0.4.20"
