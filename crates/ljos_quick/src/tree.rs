@@ -112,20 +112,35 @@ pub fn set_parent_item_before(
         return Ok(true);
     }
     outside_of(engine, child, parent)?;
+    // `children` has items only: before one that is not, an item goes
+    // before the first item after it in `data`.
+    let item_anchor = engine.untrack(|| {
+        list(engine, parent, Item::DATA.index)
+            .into_iter()
+            .skip_while(|o| *o != anchor)
+            .find(|o| is_item(engine, *o))
+    });
     engine.batch(|| {
         if let Some(o) = old.filter(|o| engine.is_alive(*o) && is_item(engine, *o)) {
             engine.list_remove(o, Item::CHILDREN.index, child)?;
             engine.list_remove(o, Item::DATA.index, child)?;
         }
-        for p in [Item::CHILDREN.index, Item::DATA.index] {
-            if !engine.list_insert_before(parent, p, child, anchor)? {
+        for (p, a) in [
+            (Item::CHILDREN.index, item_anchor),
+            (Item::DATA.index, Some(anchor)),
+        ] {
+            let placed = match a {
+                Some(a) => engine.list_insert_before(parent, p, child, a)?,
+                None => false,
+            };
+            if !placed {
                 engine.list_push(parent, p, child)?;
             }
         }
         // The lists are in step already, which is what this records: the
         // reparent below then has nothing to append.
         engine.with_mut(child, |i: &mut Item| i.synced_parent = Some(parent))?;
-        engine.set_visual_parent(child, Some(parent))?;
+        engine.set_visual_parent_before(child, parent, item_anchor.unwrap_or(anchor))?;
         sync_parent(engine, child, Some(parent))
     })?;
     Ok(true)

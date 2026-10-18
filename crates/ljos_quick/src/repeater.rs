@@ -163,6 +163,9 @@ fn place_before(
     for p in [Item::CHILDREN.index, Item::DATA.index] {
         reorder(e, parent, p, items, anchor)?;
     }
+    for &item in items {
+        e.set_visual_parent_before(item, parent, anchor)?;
+    }
     Ok(())
 }
 

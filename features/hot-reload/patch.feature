@@ -1259,6 +1259,53 @@ Feature: What a reload changes
       And the property "text" of "one" is "one"
       And the property "x" of "box" is at least 40
 
+    Scenario: An item moved before an object that is not an item is first among the children
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string order: ""
+          ListModel { id: model; ListElement { n: 1 } }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "two"; text: "two" }
+          Text { id: one; objectName: "one"; text: "one" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < children.length; i++) r.push(children[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When 500 milliseconds pass
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string order: ""
+          Text { id: one; objectName: "one"; text: "one" }
+          ListModel { id: model; ListElement { n: 1 } }
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "two"; text: "two" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < children.length; i++) r.push(children[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "one,box,two"
+      And the property "x" of "box" is at least 40
+
     Scenario: An object given another type is of that type, and its id names it
       When the file "Scenario.qml" is changed to:
         """qml

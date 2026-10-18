@@ -990,6 +990,29 @@ impl Engine {
         obj: ObjectId,
         parent: Option<ObjectId>,
     ) -> Result<(), EngineError> {
+        self.set_visual_parent_at(obj, parent, None)
+    }
+
+    /// [`Engine::set_visual_parent`], `obj` going right before `anchor`
+    /// among `parent`'s [visual children](Engine::visual_children), as it
+    /// does in the item's own lists; at their end when `anchor` is not
+    /// among them. A child of `parent` already only moves among its
+    /// siblings, and nobody hears of it.
+    pub fn set_visual_parent_before(
+        &self,
+        obj: ObjectId,
+        parent: ObjectId,
+        anchor: ObjectId,
+    ) -> Result<(), EngineError> {
+        self.set_visual_parent_at(obj, Some(parent), Some(anchor))
+    }
+
+    fn set_visual_parent_at(
+        &self,
+        obj: ObjectId,
+        parent: Option<ObjectId>,
+        anchor: Option<ObjectId>,
+    ) -> Result<(), EngineError> {
         {
             let mut store = self.inner.store.borrow_mut();
             if !store.objects.contains_key(obj) {
@@ -1001,14 +1024,22 @@ impl Engine {
                 return Err(EngineError::DeadObject(p));
             }
             let old = std::mem::replace(&mut store.objects[obj].visual_parent, parent);
-            if old == parent {
+            if old == parent && anchor.is_none() {
                 return Ok(());
             }
             if let Some(h) = old.and_then(|o| store.objects.get_mut(o)) {
                 h.visual_children.retain(|c| *c != obj);
             }
             if let Some(p) = parent {
-                store.objects[p].visual_children.push(obj);
+                let kids = &mut store.objects[p].visual_children;
+                match anchor.and_then(|a| kids.iter().rposition(|c| *c == a)) {
+                    Some(at) => kids.insert(at, obj),
+                    None => kids.push(obj),
+                }
+            }
+            // Only its place among its siblings changed.
+            if old == parent {
+                return Ok(());
             }
         }
         self.inner.graph.batch(|| self.parent_changed(obj, parent));

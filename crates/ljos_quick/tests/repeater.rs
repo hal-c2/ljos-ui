@@ -92,11 +92,16 @@ fn items_sit_before_the_repeater_in_model_order() {
     assert_eq!(get(&e, a, "parent"), Value::Object(root));
     assert!(e.children(rep).contains(&a));
 
+    // The engine's own order, which tells which of two items asking for
+    // the focus comes first, is the same.
+    assert_eq!(names(&e, &e.visual_children(root)), "head a b c rep tail");
+
     call(&e, root, "add", &[Value::Int(1), Value::from("z")]);
     assert_eq!(
         names(&e, &list(&e, root, "children")),
         "head a z b c rep tail"
     );
+    assert_eq!(names(&e, &e.visual_children(root)), "head a z b c rep tail");
     frame(&mut s, &e);
     assert_eq!(xs(&e), [0.0, 5.0, 15.0, 25.0, 35.0, 45.0]);
 
@@ -114,6 +119,7 @@ fn items_sit_before_the_repeater_in_model_order() {
         names(&e, &list(&e, root, "data")),
         "lm head b c a z rep tail"
     );
+    assert_eq!(names(&e, &e.visual_children(root)), "head b c a z rep tail");
 
     call(&e, lm, "remove", &[Value::Int(1), Value::Int(2)]);
     assert_eq!(names(&e, &list(&e, root, "children")), "head b z rep tail");
