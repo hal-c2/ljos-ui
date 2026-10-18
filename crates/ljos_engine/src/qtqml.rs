@@ -626,6 +626,12 @@ pub(crate) struct TimerState {
     fired: FxHashMap<ObjectId, u64>,
     /// `Qt.callLater` queue: one entry per function, with its last args.
     calls: Vec<(JsRef, Vec<JsValue>)>,
+    /// When the queue may next run: `None` at once. A call queued while
+    /// the queue drains waits a frame, as Qt's waits for the next pass of
+    /// the event loop, so a function that queues itself lets frames end.
+    calls_due: Option<Time>,
+    /// While the queue drains, when it began to.
+    draining: Option<Time>,
     quit: bool,
     wake: Option<Rc<dyn Fn()>>,
     /// The pinned wall clock: a UNIX epoch in milliseconds and the value
@@ -645,6 +651,8 @@ impl Default for TimerState {
             parked: FxHashMap::default(),
             fired: FxHashMap::default(),
             calls: Vec::new(),
+            calls_due: None,
+            draining: None,
             quit: false,
             wake: None,
             wall: None,
@@ -858,13 +866,26 @@ impl Engine {
     /// is scheduled (sleep until input).
     pub fn next_timer_deadline(&self) -> Option<Time> {
         let st = self.inner.timers.borrow();
-        // A queued `Qt.callLater` is due at once, and only until it ran: a
-        // mark on the scheduler would stay, since nothing here starts its
-        // frames, and the host would never sleep again.
+        // A queued `Qt.callLater` is due when the queue may next run, and
+        // only until it ran: a mark on the scheduler would stay, since
+        // nothing here starts its frames, and the host would never sleep
+        // again.
+        let wake = st.sched.next_wake();
         if !st.calls.is_empty() {
-            return Some(Time::ZERO);
+            let due = st.calls_due.unwrap_or(Time::ZERO);
+            return Some(wake.map_or(due, |w| w.min(due)));
         }
-        st.sched.next_wake()
+        wake
+    }
+
+    /// The display's refresh period (60 Hz until told): how long a
+    /// `Qt.callLater` queued while the queue drains waits.
+    pub fn set_frame_period(&self, period: Duration) {
+        self.inner
+            .timers
+            .borrow_mut()
+            .sched
+            .set_frame_period(period);
     }
 
     /// Whether `Qt.quit()` was called, or [`request_quit`](Self::request_quit).
@@ -922,24 +943,37 @@ impl Engine {
         self.process_deferred_deletes();
     }
 
-    /// Runs the `Qt.callLater` queue.
+    /// Runs the `Qt.callLater` queue if it is due. What the calls queue
+    /// runs on the next frame, not in this drain.
     pub fn run_pending_calls(&self) {
-        loop {
-            let calls = std::mem::take(&mut self.inner.timers.borrow_mut().calls);
-            if calls.is_empty() {
-                break;
+        let now = self.now();
+        let calls = {
+            let mut st = self.inner.timers.borrow_mut();
+            if st.draining.is_some() || st.calls_due.is_some_and(|due| due > now) {
+                return;
             }
-            for (f, args) in calls {
-                self.run_js("Qt.callLater", |s| {
-                    s.call_ref(&f, &JsValue::Undefined, &args)
-                });
-            }
+            st.calls_due = None;
+            st.draining = Some(now);
+            std::mem::take(&mut st.calls)
+        };
+        for (f, args) in calls {
+            self.run_js("Qt.callLater", |s| {
+                s.call_ref(&f, &JsValue::Undefined, &args)
+            });
         }
+        self.inner.timers.borrow_mut().draining = None;
     }
 
-    /// Whether `Qt.callLater` work is queued.
+    /// Whether `Qt.callLater` work is queued, due or not.
     pub fn has_pending_calls(&self) -> bool {
         !self.inner.timers.borrow().calls.is_empty()
+    }
+
+    /// Whether queued `Qt.callLater` work may run now.
+    pub fn has_due_calls(&self) -> bool {
+        let now = self.now();
+        let st = self.inner.timers.borrow();
+        !st.calls.is_empty() && st.draining.is_none() && st.calls_due.is_none_or(|due| due <= now)
     }
 
     pub(crate) fn call_later(&self, scope: &Scope<'_>, f: JsRef, args: Vec<JsValue>) {
@@ -949,6 +983,7 @@ impl Engine {
                 Some(entry) => entry.1 = args,
                 None => st.calls.push((f, args)),
             }
+            st.calls_due = st.draining.map(|at| at + st.sched.frame_period());
         }
         self.wake_host();
     }

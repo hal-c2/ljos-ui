@@ -93,9 +93,11 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
 }
 
 /// Tells the animations the display's refresh period (60 Hz until told):
-/// a visible animation asks for one frame per period.
+/// a visible animation asks for one frame per period, and a `Qt.callLater`
+/// queued while the queue runs waits one.
 pub fn set_animation_frame_period(engine: &Engine, period: Duration) {
     driver::set_frame_period(engine, period);
+    engine.set_frame_period(period);
 }
 
 /// The display's refresh period, as [`set_animation_frame_period`] gave it.

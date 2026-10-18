@@ -217,6 +217,33 @@ Item {
 }
 
 #[test]
+fn a_call_queued_while_the_queue_runs_waits_a_frame() {
+    let h = engine();
+    let root = h.load(
+        r#"import QtQuick
+Item {
+  property int runs: 0
+  function again() { runs++; if (runs < 1000) Qt.callLater(again) }
+  Component.onCompleted: Qt.callLater(again)
+}
+"#,
+    );
+    h.engine.run_pending_calls();
+    assert_eq!(h.num(root, "runs"), 1.0);
+    // Queued again, for the next frame: not due yet, and the host is
+    // woken for it, not polled.
+    assert!(h.engine.has_pending_calls());
+    assert!(!h.engine.has_due_calls());
+    h.engine.run_pending_calls();
+    assert_eq!(h.num(root, "runs"), 1.0);
+    let due = h.engine.next_timer_deadline().expect("a deadline");
+    assert!(due > h.engine.now());
+    h.pass_ms(100);
+    let runs = h.num(root, "runs");
+    assert!((6.0..=7.0).contains(&runs), "ran {runs} times in 100 ms");
+}
+
+#[test]
 fn qt_object_holds_properties_and_object_name() {
     let h = engine();
     let root = h.load(

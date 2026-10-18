@@ -915,7 +915,7 @@ impl QuickScene {
             changed,
             next_wake: if pending
                 || incubating
-                || engine.has_pending_calls()
+                || engine.has_due_calls()
                 || engine.has_pending_faults()
                 || crate::focus::tree::pending(engine)
             {

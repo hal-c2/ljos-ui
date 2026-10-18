@@ -187,7 +187,7 @@ impl Host {
     /// deletes, what `Qt.callLater` put off.
     pub(crate) fn settle(&self, engine: &Engine) -> Result<(), EngineError> {
         for _ in 0..MAX_SETTLE_FRAMES {
-            if engine.has_pending_calls() {
+            if engine.has_due_calls() {
                 engine.run_pending_calls();
             }
             let idle = self.with_rig(|rig| {
@@ -202,7 +202,7 @@ impl Host {
                 }
                 idle
             })?;
-            if idle && !engine.has_pending_calls() {
+            if idle && !engine.has_due_calls() {
                 return Ok(());
             }
         }
