@@ -8,7 +8,7 @@
 //!
 //! `cargo run --release -p ljos_shell --example frame_profile -- DIR ENTRY
 //! [--frames N] [--size WxH] [--click] [--warm N] [--slow MS] [--start EXPR]…
-//! [--eval EXPR]…`
+//! [--eval EXPR]… [--wall]`
 //!
 //! `--start` runs `EXPR` in the root after the warm frames and prints how
 //! long it took and how much of the graph it ran, to time one handler (a
@@ -41,6 +41,7 @@ struct Args {
     eval: Vec<String>,
     start: Vec<String>,
     slow: Option<Duration>,
+    wall: bool,
 }
 
 fn args() -> anyhow::Result<Args> {
@@ -57,12 +58,14 @@ fn args() -> anyhow::Result<Args> {
         eval: Vec::new(),
         start: Vec::new(),
         slow: None,
+        wall: false,
     };
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--frames" => a.frames = it.next().context("N")?.parse()?,
             "--warm" => a.warm = it.next().context("N")?.parse()?,
             "--click" => a.click = true,
+            "--wall" => a.wall = true,
             "--slow" => {
                 let ms: f64 = it.next().context("MS")?.parse()?;
                 a.slow = Some(Duration::from_secs_f64(ms / 1000.0));
@@ -106,7 +109,10 @@ fn main() -> anyhow::Result<()> {
         // Timers and `Date` move with the frames, as they would in real
         // time, so a Timer fires and a clock's second ticks within the run.
         engine.set_clock(std::rc::Rc::new(clock.clone()));
-        engine.set_wall_clock_origin(Some(WALL_ORIGIN_MS));
+        // `--wall` leaves `Date` on the machine's clock, as an app's is.
+        if !a.wall {
+            engine.set_wall_clock_origin(Some(WALL_ORIGIN_MS));
+        }
         ljos_localstorage::register(engine);
         ljos_localstorage::set_storage(engine, ljos_localstorage::Storage::Memory);
         engine.set_component_source(source);
