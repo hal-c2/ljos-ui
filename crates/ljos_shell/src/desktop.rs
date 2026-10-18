@@ -1117,21 +1117,50 @@ impl<M: Send + 'static> Desktop<M> {
     fn pass(&mut self, host: &mut Control<'_>, i: usize, paint: bool) {
         if paint {
             let engine = Rc::clone(self.app.engine());
-            let wait = if self.drawn_once {
-                ljos_quick::ImageStore::LATER_FRAME_WAIT
-            } else {
-                ljos_quick::ImageStore::FIRST_FRAME_WAIT
-            };
             let images = ljos_quick::ImageStore::of(&engine);
             if images.has_deferred() {
                 // Laid out first, so that they decode at the size drawn.
                 self.app.view_mut().scene_mut().lay_out(&engine);
             }
-            images.wait_for_frame(&engine, wait);
+            if self.drawn_once {
+                let moving = self.moving(i);
+                images.wait_for_later_frame(&engine, moving);
+            } else {
+                images.wait_for_frame(&engine, ljos_quick::ImageStore::FIRST_FRAME_WAIT);
+            }
         }
         self.run_pass(host, i, paint);
         let engine = self.app.engine();
         ljos_quick::ImageStore::of(engine).frame_drawn(engine);
+    }
+
+    /// Whether what slot `i` shows changes frame after frame: the pointer
+    /// is held or wheeled, a finger is down, or the scene asks for the
+    /// next frame within one, as a flick or an animation does.
+    fn moving(&mut self, i: usize) -> bool {
+        let Self { app, slots, .. } = self;
+        let slot = &mut slots[i];
+        if slot.ctx.input(|input| input.pointer.any_down()) {
+            return true;
+        }
+        let input = slot.surface.as_mut().is_some_and(|surface| {
+            surface.state.egui_input_mut().events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::MouseWheel { .. }
+                        | egui::Event::Touch { .. }
+                        | egui::Event::Zoom(_)
+                        | egui::Event::Rotate(_)
+                )
+            })
+        });
+        let period =
+            Duration::from_secs_f64(1.0 / slot.refresh.filter(|hz| *hz > 0.0).unwrap_or(60.0));
+        let view = match slot.view.as_ref() {
+            Some(view) => view,
+            None => app.view(),
+        };
+        input || view.wakes_in().is_some_and(|wake| wake <= period)
     }
 
     fn run_pass(&mut self, host: &mut Control<'_>, i: usize, paint: bool) {

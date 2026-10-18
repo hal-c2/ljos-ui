@@ -1319,3 +1319,53 @@ completion.
 - **Drawing as pictures arrive.** At most about 10 frames a second while pictures stream in, and
   a static `ShaderEffect` kept as a texture between frames, would bring Ljós's CPU near Qt's on a
   software renderer. Pacing picture arrivals belongs to the image store (`ljos_quick/src/image`).
+
+### Lag from the frame wait while flicking (2026-10-18)
+
+Two files show a folder of 472 generated JPEGs, each 2000 × 1500 (128 MB together), in a
+1024 × 600 window. `surface` is photosurface's surface without its welcome slides: a ScrollView
+1.5 times the window, with a Repeater of rotated, scaled frames, each with a DragHandler. `grid` is
+a GridView of 128 × 96 cells with `cacheBuffer: 0`, so that scrolling makes new delegates. `ljos
+bench` now also reports input-to-frame latency: from each input it sends to the first frame shown
+after it, both on the compositor's `CLOCK_MONOTONIC`. The profile is `desktop` with `--repeat 3
+--settle 1 --idle 2 --load 8`; each cell is the median of 3 runs. The build is release (lto thin)
+on 6678afb: with the 50 ms wait ("wait"), with no later wait ("none"), and with the wait gated as
+below ("gated"). Qt is 6.11.2 with `QT_QUICK_CONTROLS_STYLE=Basic`. The machine's load average was
+35 to 48, from other work, while they ran.
+
+| surface, `--gesture drag` | wait | none | gated | Qt |
+|---|---:|---:|---:|---:|
+| Frames shown (per second) | 4.99 | 61.0 | 61.0 | 0.50 |
+| Median frame interval (ms) | 32.3 | 16.1 | 16.0 | 16.2 |
+| 95th percentile frame interval (ms) | 49.2 | 16.1 | 16.1 | 32.4 |
+| Median input-to-frame (ms) | 28.3 | 8.89 | 9.48 | 297 |
+| 95th percentile input-to-frame (ms) | 64.1 | 15.4 | 15.4 | 608 |
+
+| surface, `--gesture scroll` | wait | none | gated | Qt |
+|---|---:|---:|---:|---:|
+| Frames shown (per second) | 30.7 | 37.6 | 39.1 | 45.0 |
+| Median frame interval (ms) | 33.8 | 32.3 | 32.2 | 16.3 |
+| Median input-to-frame (ms) | 14.5 | 10.8 | 10.7 | 11.7 |
+| 95th percentile input-to-frame (ms) | 30.6 | 31.0 | 26.6 | 31.5 |
+
+`grid` showed 60 frames a second with a 16.2 ms median interval and 8–9 ms median latency in
+every build, and in Qt: drag and wheel on it showed no difference the wait made.
+
+- **No wait while moving.** A later frame does not wait while the pointer is held or wheeled, a
+  finger is down, or the scene's next wake is within a frame (a flick, an animation). In the
+  "wait" build, a drag held the frame up to 50 ms whenever a picture came into view.
+- **An allowance per second.** Later frames wait no more than 100 ms in all in any second
+  (`ImageStore::LATER_WAIT_PER_SECOND`), so a view that keeps starting decodes without input
+  (a slideshow, a model filling in) does not stall frame after frame. The first frame still
+  waits up to 150 ms. Tests in `ljos_quick/src/image/store.rs`.
+
+**DECISIONs.**
+- 100 ms a second: two full later waits, a source set by a click and one more. Qt decodes every
+  such picture on the UI thread, so it stalls longer than this.
+- A click is not "moving": the frame after a click that sets a source still waits, as Qt shows
+  the picture in that frame.
+
+**What is left.**
+- **Scrolling `surface` shows 30–39 frames a second**, at 32 ms intervals, where Qt shows 45 at
+  16 ms. That is the same with or without the wait, so it is the cost of a frame of 472 rotated
+  pictures, not the wait. It was not looked into here.

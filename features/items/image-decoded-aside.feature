@@ -17,6 +17,9 @@ Feature: A large local picture is decoded away from the user interface
   frame without the pixels. So that a window does not open blank where
   Qt shows the picture, the frame after such a source is set waits a
   short, bounded while for the decodes it started, woken as they end.
+  A later frame does not wait while something moves on its own or under
+  the user's hand, and waits little in all in any second, so that a view
+  that keeps starting decodes as it scrolls does not lag.
 
   Background:
     Given a 1024 by 768 image file "big.png" filled with "#2060a0"

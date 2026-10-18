@@ -303,6 +303,8 @@ struct State {
     /// Decodes started since the last [`ImageStore::wait_for_frame`] for
     /// pictures Qt would have decoded on the spot.
     fresh: HashSet<ImageKey>,
+    /// What later frames have waited for pictures lately.
+    later_waits: WaitAllowance,
     /// Large local pictures whose decode waits for the frame to be about
     /// to be drawn, so that it is at the size the item is laid out at.
     deferred: Vec<(ObjectId, u64)>,
@@ -386,6 +388,7 @@ impl Default for ImageStore {
                 held: false,
                 after_frame: false,
                 fresh: HashSet::new(),
+                later_waits: WaitAllowance::default(),
                 deferred: Vec::new(),
                 vectors: HashSet::new(),
                 scales: HashMap::new(),
@@ -714,6 +717,30 @@ impl ImageStore {
     /// How long a later frame waits for the pictures a source change
     /// started, less than the first: the window is up and answering.
     pub const LATER_FRAME_WAIT: Duration = Duration::from_millis(50);
+
+    /// The most later frames wait for pictures in all within any second,
+    /// so that a view that keeps starting decodes, as a grid of photos
+    /// scrolled by, does not stall frame after frame.
+    pub const LATER_WAIT_PER_SECOND: Duration = Duration::from_millis(100);
+
+    /// As [`ImageStore::wait_for_frame`] for a frame after the first,
+    /// which waits at most [`ImageStore::LATER_FRAME_WAIT`] and no longer
+    /// than [`ImageStore::LATER_WAIT_PER_SECOND`] leaves. It does not wait
+    /// at all while something `moving` (a flick, a drag, an animation)
+    /// changes the picture frame after frame: there a stalled frame is
+    /// lag, and the picture filling in a frame later is not noticed.
+    pub fn wait_for_later_frame(&self, engine: &Engine, moving: bool) -> usize {
+        let now = Instant::now();
+        let budget = if moving {
+            Duration::ZERO
+        } else {
+            Self::LATER_FRAME_WAIT.min(self.state.borrow().later_waits.left(now))
+        };
+        let delivered = self.wait_for_frame(engine, budget);
+        let spent = now.elapsed().min(budget);
+        self.state.borrow_mut().later_waits.spend(now, spent);
+        delivered
+    }
 
     /// Waits at most `budget` for the decodes started since the last call
     /// for pictures Qt decodes on the spot, delivering each as it
@@ -1421,6 +1448,42 @@ fn largest_scale(scales: &HashMap<u64, f32>) -> f32 {
     scales.values().copied().fold(1.0, f32::max)
 }
 
+/// How much of [`ImageStore::LATER_WAIT_PER_SECOND`] is spent, counted
+/// from the first wait of a one-second window.
+#[derive(Debug, Default)]
+struct WaitAllowance {
+    since: Option<Instant>,
+    spent: Duration,
+}
+
+impl WaitAllowance {
+    const WINDOW: Duration = Duration::from_secs(1);
+
+    fn current(&self, now: Instant) -> bool {
+        self.since
+            .is_some_and(|since| now.saturating_duration_since(since) < Self::WINDOW)
+    }
+
+    fn left(&self, now: Instant) -> Duration {
+        if self.current(now) {
+            ImageStore::LATER_WAIT_PER_SECOND.saturating_sub(self.spent)
+        } else {
+            ImageStore::LATER_WAIT_PER_SECOND
+        }
+    }
+
+    fn spend(&mut self, now: Instant, spent: Duration) {
+        if spent.is_zero() {
+            return;
+        }
+        if !self.current(now) {
+            self.since = Some(now);
+            self.spent = Duration::ZERO;
+        }
+        self.spent += spent;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1436,6 +1499,40 @@ mod tests {
             let _ = tx.send(());
         });
         rx.recv_timeout(Duration::from_secs(30)).is_ok()
+    }
+
+    #[test]
+    fn later_frames_wait_no_more_than_their_allowance_a_second() {
+        let ms = Duration::from_millis;
+        let t = Instant::now();
+        let mut waits = WaitAllowance::default();
+        assert_eq!(waits.left(t), ImageStore::LATER_WAIT_PER_SECOND);
+        waits.spend(t, ms(50));
+        waits.spend(t + ms(100), ms(30));
+        assert_eq!(waits.left(t + ms(200)), ms(20));
+        waits.spend(t + ms(300), ms(40));
+        assert_eq!(waits.left(t + ms(400)), Duration::ZERO);
+        // A second after the first wait, the allowance is whole again.
+        assert_eq!(waits.left(t + ms(1000)), ImageStore::LATER_WAIT_PER_SECOND);
+        waits.spend(t + ms(1000), ms(10));
+        assert_eq!(waits.left(t + ms(1100)), ms(90));
+    }
+
+    #[test]
+    fn a_frame_while_something_moves_does_not_wait() {
+        let engine = Engine::new();
+        let store = ImageStore::default();
+        let key = ImageKey {
+            url: "file:///never.png".to_owned(),
+            request: Request::default(),
+        };
+        store.state.borrow_mut().fresh.insert(key.clone());
+        store.state.borrow_mut().jobs.insert(key, Vec::new());
+        let t = Instant::now();
+        store.wait_for_later_frame(&engine, true);
+        assert!(t.elapsed() < ImageStore::LATER_FRAME_WAIT);
+        // Still, nothing is left waiting for the next frame.
+        assert!(store.state.borrow().fresh.is_empty());
     }
 
     #[test]
