@@ -111,6 +111,77 @@ pub fn not_an_image() -> Vec<u8> {
     b"This file is text, whatever its name says.\n".to_vec()
 }
 
+/// A PDF document with a page of each size, in points, each painted with
+/// a rectangle of `colour` (`#rrggbb`) over its middle half and nothing
+/// around it, so that what is around a page shows through.
+///
+/// # Errors
+/// The colour is not one, there is no page, or a side is not positive.
+pub fn pdf(pages: &[(f64, f64)], colour: &str) -> Result<Vec<u8>, String> {
+    use std::fmt::Write as _;
+    let [_, r, g, b] = parse_colour(colour)?;
+    if pages.is_empty() {
+        return Err("a PDF has at least one page".to_owned());
+    }
+    if let Some((w, h)) = pages.iter().find(|(w, h)| !(*w > 0.0 && *h > 0.0)) {
+        return Err(format!(
+            "a page is larger than 0 by 0 points, not {w} by {h}"
+        ));
+    }
+    let unit = |c: u8| f64::from(c) / 255.0;
+    // Objects 1 and 2 are the catalogue and the page tree; each page is a
+    // page and its contents.
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        String::new(),
+    ];
+    let mut kids = String::new();
+    for (i, (w, h)) in pages.iter().enumerate() {
+        let page = 3 + 2 * i;
+        let _ = write!(kids, "{page} 0 R ");
+        objects.push(format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {} 0 R >>",
+            page + 1
+        ));
+        let paint = format!(
+            "{} {} {} rg {} {} {} {} re f",
+            unit(r),
+            unit(g),
+            unit(b),
+            w / 4.0,
+            h / 4.0,
+            w / 2.0,
+            h / 2.0
+        );
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{paint}\nendstream",
+            paint.len()
+        ));
+    }
+    objects[1] = format!(
+        "<< /Type /Pages /Kids [{}] /Count {} >>",
+        kids.trim_end(),
+        pages.len()
+    );
+    let mut out = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        let _ = write!(out, "{} 0 obj\n{body}\nendobj\n", i + 1);
+    }
+    let xref = out.len();
+    let _ = write!(out, "xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
+    for at in offsets {
+        let _ = writeln!(out, "{at:010} 00000 n ");
+    }
+    let _ = write!(
+        out,
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    );
+    Ok(out.into_bytes())
+}
+
 fn parse_colour(text: &str) -> Result<[u8; 4], String> {
     let hex = text
         .strip_prefix('#')
@@ -183,6 +254,19 @@ mod tests {
     fn a_jpeg_starts_with_the_jpeg_marker() {
         let bytes = image_file("a.JPG", 8, 8, "#0000ff").unwrap();
         assert_eq!(&bytes[..3], [0xff, 0xd8, 0xff]);
+    }
+
+    #[test]
+    fn a_pdf_has_a_page_of_each_size_and_a_cross_reference_table() {
+        let bytes = pdf(&[(300.0, 200.0), (150.5, 400.0)], "#ff0000").unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("%PDF-1.4"));
+        assert!(text.contains("/Count 2"));
+        assert!(text.contains("/MediaBox [0 0 150.5 400]"));
+        let xref: usize = text.lines().rev().nth(1).unwrap().parse().unwrap();
+        assert!(text[xref..].starts_with("xref"));
+        assert!(pdf(&[], "#ff0000").is_err());
+        assert!(pdf(&[(0.0, 1.0)], "#ff0000").is_err());
     }
 
     #[test]

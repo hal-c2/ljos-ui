@@ -105,6 +105,24 @@ fn an_image_file(
     w.each(|b| b.resource(&name, &bytes))
 }
 
+// A PDF document beside the QML, with a page of each size in points
+// ("300 by 200, 150 by 400"), each painted in its middle half.
+#[given(regex = r#"^a PDF file "([^"]+)" of pages "([^"]+)" painted "(#[0-9a-fA-F]+)"$"#)]
+fn a_pdf_file(w: &mut LjosWorld, name: String, pages: String, colour: String) -> StepResult {
+    let pages = pages
+        .split(',')
+        .map(|page| {
+            let (w, h) = page
+                .split_once(" by ")
+                .ok_or_else(|| format!("a page is \"W by H\", not {page:?}"))?;
+            let side = |n: &str| n.trim().parse::<f64>().map_err(|e| format!("{n:?}: {e}"));
+            Ok((side(w)?, side(h)?))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let bytes = fixture::pdf(&pages, &colour)?;
+    w.each(|b| b.resource(&name, &bytes))
+}
+
 // An animated GIF beside the QML, one colour a frame, each frame shown
 // for the same time; the colours are a list ("#ff0000, #00ff00").
 #[given(
