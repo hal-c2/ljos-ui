@@ -488,10 +488,18 @@
     "read_only": true
   },
   {
-    "description": "Every object below `root` (a target; default the scene's root), items or not: Timers, models, animations, items without a role. Each has a `@handle` any tool takes as its target, its type, id, objectName and depth. `depth` limits how far down; `hidden` counts what it left out.",
+    "description": "Every object below `root` (a target; default the scene's root), items or not: Timers, models, animations. Each has a `@handle` any tool takes, type, id, objectName and depth. `depth` limits how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as `cursor`, lists the rest.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "cursor": {
+          "default": null,
+          "description": "The `next_cursor` of a cut answer: the objects after it, below the\nsame root and to the same depth. Not given with `root` or `depth`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "depth": {
           "default": null,
           "description": "How many levels below the root to list (0 is the root alone).",

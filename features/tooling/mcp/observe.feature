@@ -140,6 +140,39 @@ Feature: Processes and mailboxes from the inspector
       And the answer's "/objects/3/type" is "Rectangle"
       And the answer's "/objects/3/hidden" is 1
 
+    Scenario: A tree longer than one answer is cut where the next answer goes on
+      When the agent calls the tool "app_objects" with:
+        """json
+        {"root": "id=top", "max": 3}
+        """
+      Then the answer's "/objects" has 3 entries
+      And the answer's "/truncated" is true
+      And the answer's "/next_cursor" matches "^@[0-9.]+>@[0-9.]+$"
+
+    Scenario: The next part of a tree goes on at the cursor, at the depth it has
+      When the agent calls the tool "app_objects" with:
+        """json
+        {"root": "id=top", "max": 3}
+        """
+      And the agent calls the tool "app_objects" with the answer's "/next_cursor" as "cursor"
+      Then the answer's "/objects" has 2 entries
+      And the answer's "/objects/0/type" is "Rectangle"
+      And the answer's "/objects/0/depth" is 1
+      And the answer's "/objects/1/type" is "NumberAnimation"
+      And the answer's "/truncated" is false
+      And the answer's "/next_cursor" is absent
+
+    Scenario: A cursor given with another root is refused
+      When the agent calls the tool "app_objects" with:
+        """json
+        {"root": "id=top", "max": 3}
+        """
+      And the agent calls the tool "app_objects" with:
+        """json
+        {"root": "id=top", "cursor": "@1.1>@2.1"}
+        """
+      Then the agent is refused with "invalid_argument"
+
     Scenario: A handle that is not one is refused
       When the agent calls the tool "app_inspect" with:
         """json

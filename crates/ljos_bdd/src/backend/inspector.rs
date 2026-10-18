@@ -70,6 +70,13 @@ pub enum Ask {
     },
     /// `app_snapshot` with the cursor of the last cut snapshot.
     NextPart,
+    /// A tool with what the last answer has at `pointer` as its `field`,
+    /// as an agent passes a cursor or a handle on.
+    CallWithAnswer {
+        tool: String,
+        pointer: String,
+        field: String,
+    },
     /// `app_snapshot` for what changed since the last snapshot.
     ChangedSince,
     /// `app_inspect` of the reference the agent was last given for the

@@ -23,8 +23,9 @@ use super::tools::{flag, text_property};
 
 pub const OBJECTS: &str = "\
 Every object below `root` (a target; default the scene's root), items or not: Timers, models, \
-animations, items without a role. Each has a `@handle` any tool takes as its target, its type, \
-id, objectName and depth. `depth` limits how far down; `hidden` counts what it left out.";
+animations. Each has a `@handle` any tool takes, type, id, objectName and depth. `depth` limits \
+how far down, `hidden` counts what it left out; a cut answer's `next_cursor`, as `cursor`, lists \
+the rest.";
 
 /// The most objects one answer lists unless told otherwise, and at all.
 const DEFAULT_MAX: usize = 500;
@@ -43,6 +44,48 @@ pub struct ObjectsArgs {
     /// The most objects to list (default 500, at most 5000).
     #[serde(default)]
     pub max: Option<usize>,
+    /// The `next_cursor` of a cut answer: the objects after it, below the
+    /// same root and to the same depth. Not given with `root` or `depth`.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+/// Where a cut answer goes on: its root, the first object it left out
+/// and its depth limit. A handle stays the same while its object lives,
+/// so the walk made again from the root comes to the same place.
+struct Cursor {
+    root: ObjectId,
+    next: ObjectId,
+    depth: Option<u32>,
+}
+
+impl Cursor {
+    fn write(&self) -> String {
+        let mut out = format!("{}>{}", handle(self.root), handle(self.next));
+        if let Some(d) = self.depth {
+            let _ = write!(out, "/{d}");
+        }
+        out
+    }
+
+    fn read(engine: &Engine, cursor: &str) -> Result<Cursor, SurfaceError> {
+        let bad = || {
+            SurfaceError::invalid_argument(format!(
+                "`app_objects`: `{cursor}` is not a cursor; pass on an answer's `next_cursor` as it is"
+            ))
+        };
+        let (root, rest) = cursor.split_once('>').ok_or_else(bad)?;
+        let (next, depth) = match rest.split_once('/') {
+            Some((next, d)) => (next, Some(d.parse::<u32>().map_err(|_| bad())?)),
+            None => (rest, None),
+        };
+        let object = |h: &str| parse_handle(engine, h).ok_or_else(bad)?;
+        Ok(Cursor {
+            root: object(root)?,
+            next: object(next)?,
+            depth,
+        })
+    }
 }
 
 /// The handle of `obj`: `@12.3` is the object in place 12, of the third
@@ -109,7 +152,13 @@ pub(crate) fn objects(
     found: Option<ObjectId>,
     per_copy: usize,
 ) -> Result<ToolReply, SurfaceError> {
+    let cursor = args
+        .cursor
+        .as_deref()
+        .map(|c| Cursor::read(engine, c))
+        .transpose()?;
     let root = match (found, &args.root) {
+        _ if let Some(c) = &cursor => c.root,
         (Some(obj), _) => obj,
         (None, Some(what)) => match parse_handle(engine, what) {
             Some(found) => found?,
@@ -131,18 +180,24 @@ pub(crate) fn objects(
         },
     };
     let max = args.max.unwrap_or(DEFAULT_MAX).clamp(1, MAX_OBJECTS);
-    let depth_limit = args.depth.unwrap_or(u32::MAX);
-    let (mut walked, truncated) = engine.untrack(|| {
+    let depth = cursor.as_ref().map_or(args.depth, |c| c.depth);
+    let depth_limit = depth.unwrap_or(u32::MAX);
+    // Listing waits for the cursor's object, if there is one.
+    let mut from = cursor.as_ref().map(|c| c.next);
+    let (mut walked, left_out) = engine.untrack(|| {
         let mut seen = HashSet::new();
         let mut out: Vec<(ObjectId, u32, usize, usize)> = Vec::new();
         let mut stack = vec![(root, 0u32)];
-        let mut truncated = false;
+        let mut left_out = None;
         while let Some((obj, depth)) = stack.pop() {
             if !seen.insert(obj) || !engine.is_alive(obj) {
                 continue;
             }
-            if out.len() == max {
-                truncated = true;
+            if from == Some(obj) {
+                from = None;
+            }
+            if from.is_none() && out.len() == max {
+                left_out = Some(obj);
                 break;
             }
             let kids: Vec<ObjectId> = below(engine, obj)
@@ -150,13 +205,20 @@ pub(crate) fn objects(
                 .filter(|c| !seen.contains(c))
                 .collect();
             let hidden = if depth >= depth_limit { kids.len() } else { 0 };
-            out.push((obj, depth, kids.len(), hidden));
+            if from.is_none() {
+                out.push((obj, depth, kids.len(), hidden));
+            }
             if depth < depth_limit {
                 stack.extend(kids.into_iter().rev().map(|c| (c, depth + 1)));
             }
         }
-        (out, truncated)
+        (out, left_out)
     });
+    if from.is_some() {
+        return Err(SurfaceError::invalid_argument(
+            "`app_objects`: the cursor's object is no longer below its root; ask again without it",
+        ));
+    }
     let objs: Vec<ObjectId> = walked.iter().map(|w| w.0).collect();
     let ids = engine.inspect_ids(&objs);
     let rows: Vec<(Value, String)> = engine.untrack(|| {
@@ -202,20 +264,23 @@ pub(crate) fn objects(
     });
     let mut keep = rows.len();
     loop {
-        let cut = keep < rows.len();
-        let value = json!({
+        let next = objs.get(keep).copied().or(left_out);
+        let mut value = json!({
             "objects": rows[..keep].iter().map(|(v, _)| v.clone()).collect::<Vec<_>>(),
-            "truncated": truncated || cut,
+            "truncated": next.is_some(),
         });
+        if let Some(next) = next {
+            value["next_cursor"] = json!(Cursor { root, next, depth }.write());
+        }
         let mut text: String = rows[..keep]
             .iter()
             .map(|(_, l)| l.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        if truncated || cut {
+        if next.is_some() {
             let _ = write!(
                 text,
-                "\n(more objects than fit: give a `root` lower down, or a `depth`)"
+                "\n(more objects than fit: `next_cursor` as `cursor` lists the rest)"
             );
         }
         if keep <= 1 || (text.len() <= per_copy && value.to_string().len() <= per_copy) {

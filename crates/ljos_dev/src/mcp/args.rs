@@ -1004,6 +1004,13 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             if a.max == Some(0) {
                 return Err(bad(tool, "`max` is at least 1"));
             }
+            if a.cursor.is_some() && (a.root.is_some() || a.depth.is_some()) {
+                return Err(bad(
+                    tool,
+                    "`cursor` goes on below the root and to the depth it was cut at; \
+                     give it without `root` or `depth`",
+                ));
+            }
             Kind::Objects(a)
         }
         "app_trace" => {

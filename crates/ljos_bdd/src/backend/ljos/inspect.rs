@@ -666,6 +666,21 @@ impl Rig {
                 })?;
                 self.call(live, "app_snapshot", json!({ "cursor": cursor }))
             }
+            Ask::CallWithAnswer {
+                tool,
+                pointer,
+                field,
+            } => {
+                let value = self
+                    .seen
+                    .answer
+                    .as_ref()
+                    .and_then(|a| a.structured.pointer(pointer))
+                    .filter(|v| !v.is_null())
+                    .cloned()
+                    .ok_or_else(|| failed(format!("the last answer has no \"{pointer}\"")))?;
+                self.call(live, tool, json!({ field.as_str(): value }))
+            }
             Ask::ChangedSince => {
                 let since = self
                     .epoch

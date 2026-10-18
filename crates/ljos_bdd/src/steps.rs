@@ -2085,6 +2085,23 @@ fn agent_calls_with(w: &mut LjosWorld, tool: String, step: &Step) -> StepResult 
     inspector_call(w, &tool, args)
 }
 
+#[when(regex = r#"^the agent calls the tool "([^"]+)" with the answer's "(/[^"]*)" as "([^"]+)"$"#)]
+fn agent_calls_with_the_answer(
+    w: &mut LjosWorld,
+    tool: String,
+    pointer: String,
+    field: String,
+) -> StepResult {
+    inspector_ask(
+        w,
+        Ask::CallWithAnswer {
+            tool,
+            pointer,
+            field,
+        },
+    )
+}
+
 // One line, whatever its length: the feature lint reads attributes line by line.
 #[rustfmt::skip]
 #[when(regex = r#"^the agent calls the tool "([^"]+)" on the reference of the "([^"]+)" named "([^"]*)"$"#)]
