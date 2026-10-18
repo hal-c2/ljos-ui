@@ -691,10 +691,37 @@ fn answered(
 /// Runs one application on one runtime under one profile.
 ///
 /// # Errors
-/// The application was not inside the limit ([`Error::Refused`]), or could
-/// not be started.
-#[allow(clippy::too_many_lines)]
+/// The application was not inside the limit ([`Error::Refused`]) at any of
+/// [`LAUNCHES`] launches, or could not be started.
 pub fn run(
+    setup: &Setup,
+    app: &str,
+    runtime: &Runtime,
+    profile: &Profile,
+    phases: Phases,
+    drive: bool,
+) -> Result<Run, Error> {
+    let mut launch = 1;
+    loop {
+        match run_once(setup, app, runtime, profile, phases, drive) {
+            // A refused application was stopped before its gate opened, so
+            // it ran nothing and another launch measures as the first would.
+            Err(Error::Refused(why)) if launch < LAUNCHES => {
+                eprintln!("ljos bench: launching again: {why}");
+                launch += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// How many times a launch that was not isolated is tried. On a busy
+/// machine a launch now and then came out of the launcher in the bench's
+/// cgroup; a launcher that never isolates is refused each time.
+pub const LAUNCHES: u32 = 3;
+
+#[allow(clippy::too_many_lines)]
+fn run_once(
     setup: &Setup,
     app: &str,
     runtime: &Runtime,
@@ -745,7 +772,8 @@ pub fn run(
 
     // Not one instruction of the application runs until its cgroup is the
     // one asked for.
-    let deadline = Instant::now() + setup.isolation_timeout;
+    let launched = Instant::now();
+    let deadline = launched + setup.isolation_timeout;
     let cg = loop {
         if let Ok(Some(status)) = child.try_wait() {
             let said = std::fs::read_to_string(&log_path).unwrap_or_default();
@@ -767,8 +795,10 @@ pub fn run(
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(Error::Refused(format!(
-                    "{what} is not inside the limit of {}: {reason}",
-                    profile.name
+                    "{what} is not inside the limit of {} {} ms after its launch{}: {reason}",
+                    profile.name,
+                    launched.elapsed().as_millis(),
+                    if handed { ", in the gate" } else { "" },
                 )));
             }
             Err(_) => thread::sleep(Duration::from_millis(5)),
