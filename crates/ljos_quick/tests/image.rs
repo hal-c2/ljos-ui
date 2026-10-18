@@ -1647,13 +1647,11 @@ Item {
     assert_eq!(painted(&s, picture).unwrap().width(), 224);
     // Four times as wide on screen needs four times the pixels.
     set(&e, picture, "scale", Value::from(4.0));
-    for _ in 0..50 {
-        frame(&mut s, &e);
-        if painted(&s, picture).is_some_and(|i| i.width() > 224) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    frame(&mut s, &e);
+    // A picture decoded aside is sharpened aside too: wait for it rather
+    // than for a time a slow machine may not keep to.
+    store.finish(&e);
+    frame(&mut s, &e);
     let image = painted(&s, picture).unwrap();
     assert_eq!((image.width(), image.height()), (896, 448));
     assert_eq!(implicit(&e, picture), (2048.0, 1024.0));
