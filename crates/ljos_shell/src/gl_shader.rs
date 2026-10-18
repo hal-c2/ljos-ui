@@ -2,13 +2,13 @@
 //! section 7.1, "As built: shader effects").
 //!
 //! B0 hands the effect over as a paint callback holding a [`ShaderPaint`];
-//! [`programs`] turns each into the egui_glow callback that draws it. The
+//! [`programs`] turns each into the [`Shaded`] callback that draws it. The
 //! programs are linked the first time one is drawn and kept, with their
 //! grid, while the op that holds them lives; the uniform buffer is written
 //! at each draw, since `qt_Matrix` depends on the viewport egui gives it.
 //!
-//! egui_glow sets its own state again after a callback, but not the
-//! sampler objects, the uniform buffer binding or culling, which this
+//! The mesh painter sets its own state again after a callback, but not
+//! the sampler objects, the uniform buffer binding or culling, which this
 //! leaves as it found them.
 //!
 //! An effect drawn a second time with nothing changed (the same
@@ -112,6 +112,25 @@ impl Programs {
     }
 }
 
+/// A callback the mesh painter runs itself, in the scissor of its clip and
+/// the viewport of its rectangle. egui_glow's own sets up the whole of its
+/// state before and again after one, on top of the painter's.
+pub(crate) struct Shaded {
+    programs: Programs,
+    paint: Arc<ShaderPaint>,
+}
+
+impl Shaded {
+    pub(crate) fn call(&self, info: &PaintCallbackInfo, painter: &egui_glow::Painter) {
+        let mut cache = self
+            .programs
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        draw(&mut cache, &self.paint, info, painter);
+    }
+}
+
 /// Turns every shader callback of `shapes` into one the GL painter runs.
 pub(crate) fn programs(programs: &Programs, shapes: &mut [ClippedShape]) {
     for shape in shapes {
@@ -121,11 +140,10 @@ pub(crate) fn programs(programs: &Programs, shapes: &mut [ClippedShape]) {
         let Ok(paint) = Arc::clone(&cb.callback).downcast::<ShaderPaint>() else {
             continue;
         };
-        let cache = programs.clone();
-        cb.callback = Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
-            let mut cache = cache.0.lock().unwrap_or_else(PoisonError::into_inner);
-            draw(&mut cache, &paint, &info, painter);
-        }));
+        cb.callback = Arc::new(Shaded {
+            programs: programs.clone(),
+            paint,
+        });
     }
 }
 

@@ -6,13 +6,19 @@
 //! the driver's flush of them the largest cost of a frame that moves a few
 //! clock hands. Here the frame's vertices and indices go up once, and each
 //! mesh is a draw of its range; consecutive meshes with one picture and one
-//! clip are one draw. The shader is egui's: the same colours, in gamma,
-//! with the same dithering. Textures stay egui_glow's, and so do paint
-//! callbacks, which it draws between, but for the clears of
-//! [`crate::gl::fill_rects`]: egui_glow sets its whole state up before and
-//! after each callback, which cost a list as much as a draw a row.
+//! clip are one draw. A mesh of flat colour samples only egui's white texel,
+//! so it is drawn without a picture and joins the draw before or after it
+//! whatever that one samples: a row's background and its text, one after
+//! the other down a list, were a draw each. The shader is otherwise
+//! egui's: the same colours, in gamma, with the same dithering.
+//!
+//! Textures stay egui_glow's. egui_glow sets its whole state up before and
+//! after each paint callback, which cost a list as much as a draw a row,
+//! so the callbacks of Ljós (the clears of [`crate::gl::fill_rects`] and
+//! the shader effects of [`crate::gl_shader`]) are run here, and only
+//! another one goes through egui_glow.
 
-use egui::epaint::{Primitive, Vertex};
+use egui::epaint::{Primitive, Vertex, WHITE_UV};
 use egui::{ClippedPrimitive, Rect};
 use glow::HasContext;
 
@@ -65,7 +71,8 @@ varying vec4 v_rgba;
 varying vec2 v_tc;
 #endif
 void main() {
-    vec4 c = v_rgba * texture2D(u_sampler, v_tc);
+    // A flat colour has no picture to sample (`FLAT`).
+    vec4 c = v_tc.x < 0.0 ? v_rgba : v_rgba * texture2D(u_sampler, v_tc);
     // Interleaved gradient noise of a level, so that a gradient does not
     // band when it is cut to eight bits.
     float f = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
@@ -80,6 +87,10 @@ void main() {
 const POS: u32 = 0;
 const TC: u32 = 1;
 const SRGBA: u32 = 2;
+
+/// The texture coordinates of a vertex of flat colour, which the shader
+/// does not sample at: egui's white texel would give the same colour.
+const FLAT: egui::Pos2 = egui::pos2(-1.0, -1.0);
 
 pub(crate) struct Meshes {
     program: glow::Program,
@@ -97,7 +108,8 @@ pub(crate) struct Meshes {
 enum Draw {
     Mesh {
         scissor: [i32; 4],
-        texture: glow::Texture,
+        /// None while every mesh of it is of flat colour.
+        texture: Option<glow::Texture>,
         /// Into the frame's indices.
         start: usize,
         count: usize,
@@ -212,9 +224,11 @@ impl Meshes {
                             gl.scissor(s[0], s[1], s[2], s[3]);
                             scissor = Some(*s);
                         }
-                        if texture != Some(*t) {
-                            gl.bind_texture(glow::TEXTURE_2D, Some(*t));
-                            texture = Some(*t);
+                        if let Some(t) = *t
+                            && texture != Some(t)
+                        {
+                            gl.bind_texture(glow::TEXTURE_2D, Some(t));
+                            texture = Some(t);
                         }
                         gl.draw_elements(
                             glow::TRIANGLES,
@@ -232,7 +246,7 @@ impl Meshes {
                         gl.clear(glow::COLOR_BUFFER_BIT);
                     }
                     Draw::Callback(p) => {
-                        painter.paint_primitives(px, pixels_per_point, std::slice::from_ref(p));
+                        self.call(painter, px, pixels_per_point, p);
                         self.prepare(&gl, px, pixels_per_point);
                         (scissor, texture) = (None, None);
                     }
@@ -250,6 +264,42 @@ impl Meshes {
             gl.disable(glow::SCISSOR_TEST);
         }
         self.draws.clear();
+    }
+
+    /// Runs the callback of `p`: one of ours in its scissor and viewport,
+    /// any other through egui_glow, which sets its whole state for it.
+    fn call(
+        &self,
+        painter: &mut egui_glow::Painter,
+        px: [u32; 2],
+        pixels_per_point: f32,
+        p: &ClippedPrimitive,
+    ) {
+        let Primitive::Callback(cb) = &p.primitive else {
+            return;
+        };
+        let Some(shaded) = cb.callback.downcast_ref::<crate::gl_shader::Shaded>() else {
+            painter.paint_primitives(px, pixels_per_point, std::slice::from_ref(p));
+            return;
+        };
+        if !cb.rect.is_positive() {
+            return;
+        }
+        let info = egui::PaintCallbackInfo {
+            viewport: cb.rect,
+            clip_rect: p.clip_rect,
+            pixels_per_point,
+            screen_size_px: px,
+        };
+        let gl = painter.gl();
+        let s = scissor(px, pixels_per_point, p.clip_rect);
+        let v = info.viewport_in_pixels();
+        // SAFETY: the caller made the painter's context current.
+        unsafe {
+            gl.scissor(s[0], s[1], s[2], s[3]);
+            gl.viewport(v.left_px, v.from_bottom_px, v.width_px, v.height_px);
+        }
+        shaded.call(&info, painter);
     }
 
     /// The frame's vertices, indices and draws.
@@ -288,19 +338,27 @@ impl Meshes {
             if mesh.indices.is_empty() || scissor[2] == 0 || scissor[3] == 0 {
                 continue;
             }
+            let flat = mesh.texture_id == egui::TextureId::default()
+                && mesh.vertices.iter().all(|v| v.uv == WHITE_UV);
             let texture = match last {
-                Some((id, t)) if id == mesh.texture_id => t,
+                _ if flat => None,
+                Some((id, t)) if id == mesh.texture_id => Some(t),
                 _ => {
                     let Some(t) = painter.texture(mesh.texture_id) else {
                         continue;
                     };
                     last = Some((mesh.texture_id, t));
-                    t
+                    Some(t)
                 }
             };
             let base = self.vertices.len() as u32;
             let start = self.indices.len();
-            self.vertices.extend_from_slice(&mesh.vertices);
+            if flat {
+                self.vertices
+                    .extend(mesh.vertices.iter().map(|v| Vertex { uv: FLAT, ..*v }));
+            } else {
+                self.vertices.extend_from_slice(&mesh.vertices);
+            }
             self.indices.extend(mesh.indices.iter().map(|i| i + base));
             match self.draws.last_mut() {
                 Some(Draw::Mesh {
@@ -308,7 +366,10 @@ impl Meshes {
                     texture: t,
                     count,
                     ..
-                }) if *s == scissor && *t == texture => *count += mesh.indices.len(),
+                }) if *s == scissor && (t.is_none() || texture.is_none() || *t == texture) => {
+                    *t = t.or(texture);
+                    *count += mesh.indices.len();
+                }
                 _ => self.draws.push(Draw::Mesh {
                     scissor,
                     texture,
