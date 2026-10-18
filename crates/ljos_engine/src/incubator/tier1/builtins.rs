@@ -147,6 +147,8 @@ pub(super) fn call(e: &Engine, f: Builtin, args: &[Value]) -> Option<Value> {
             let [scalar, x, y, z] = singles(args)?;
             Some(Value::quaternion(scalar, x, y, z))
         }
+        Builtin::QtLighter => shade(args, 1.5, lighter),
+        Builtin::QtDarker => shade(args, 2.0, darker),
         Builtin::QsTr => {
             // The first register is the file's translation context.
             let (context, args) = args.split_first()?;
@@ -435,6 +437,124 @@ fn ch(v: f64) -> f64 {
 }
 
 /// The host's colour maker: sixteen bits of each channel.
+/// `Qt.lighter` and `Qt.darker` as the colour script (`value_faces.rs`)
+/// has them, step for step: of a colour, by a factor that is a number or
+/// none. Anything else that would be a colour is the script's to read.
+fn shade(args: &[Value], usual: f64, by: fn(Color, f64) -> Color) -> Option<Value> {
+    if !(1..=2).contains(&args.len()) {
+        return None;
+    }
+    let c = match &args[0] {
+        Value::Color(c) => *c,
+        Value::Undefined | Value::Null | Value::Bool(_) | Value::Real(_) => {
+            return Some(Value::Null);
+        }
+        _ => return None,
+    };
+    let factor = match args.get(1) {
+        None | Some(Value::Undefined) => usual,
+        Some(Value::Real(n)) => *n,
+        Some(_) => return None,
+    };
+    let percent = (factor * 100.0).trunc();
+    // What an infinite factor makes of a channel is the script's.
+    if percent.is_infinite() {
+        return None;
+    }
+    Some(Value::Color(by(c, percent)))
+}
+
+const U16: f64 = 65535.0;
+
+/// To single precision and back, as `Math.fround`.
+fn single(x: f64) -> f64 {
+    f64::from(x as f32)
+}
+
+/// The hue, saturation and value of `c` as the colour's members have them,
+/// then in hundredths of a degree and 16 bits.
+fn hsv16(c: Color) -> [f64; 3] {
+    let [r, g, b] = [c.r, c.g, c.b].map(f64::from);
+    let max = r.max(g).max(b);
+    let delta = max - r.min(g).min(b);
+    let (h, s) = if delta == 0.0 {
+        (-1.0, 0.0)
+    } else {
+        let mut h = if r == max {
+            (g - b) / delta
+        } else if g == max {
+            2.0 + (b - r) / delta
+        } else {
+            4.0 + (r - g) / delta
+        };
+        h *= 60.0;
+        if h < 0.0 {
+            h += 360.0;
+        }
+        let h = single((round(h * 100.0) % 36000.0) / 36000.0);
+        (h, single(round(delta / max * U16) / U16))
+    };
+    let v = single(max / U16);
+    [
+        if h < 0.0 { 0.0 } else { round(h * 36000.0) },
+        round(s * U16),
+        round(v * U16),
+    ]
+}
+
+fn from_hsv16(hue: f64, sat: f64, val: f64, c: Color) -> Color {
+    let h = single(hue / 6000.0);
+    let i = h.floor();
+    let f = single(h - i);
+    let s = single(sat / U16);
+    let v = single(val / U16);
+    let ch = |x: f64| round(single(single(v * x) * U16));
+    let p = ch(single(1.0 - s));
+    let q = ch(single(1.0 - single(s * f)));
+    let t = ch(single(1.0 - single(s * single(1.0 - f))));
+    let a = round(single(f64::from(c.a) / U16) * U16);
+    let (r, g, b) = match i as i64 {
+        0 => (val, t, p),
+        1 => (q, val, p),
+        2 => (p, val, t),
+        3 => (p, q, val),
+        4 => (t, p, val),
+        _ => (val, p, q),
+    };
+    let c16 = |n: f64| n.clamp(0.0, U16) as u16;
+    Color::rgba16(c16(r), c16(g), c16(b), c16(a))
+}
+
+fn lighter(c: Color, by: f64) -> Color {
+    // A NaN is no factor either.
+    if by.is_nan() || by <= 0.0 || !c.is_valid() {
+        return c;
+    }
+    if by < 100.0 {
+        return darker(c, (10000.0 / by).trunc());
+    }
+    let [h, mut s, mut v] = hsv16(c);
+    v = (v * by / 100.0).trunc();
+    if v > U16 {
+        // What does not fit in the value comes off the saturation.
+        s = (s - (v - U16)).max(0.0);
+        v = U16;
+    }
+    from_hsv16(h, s, v, c)
+}
+
+fn darker(c: Color, by: f64) -> Color {
+    // A NaN is no factor either.
+    if by.is_nan() || by <= 0.0 || !c.is_valid() {
+        return c;
+    }
+    if by < 100.0 {
+        return lighter(c, (10000.0 / by).trunc());
+    }
+    let [h, s, v] = hsv16(c);
+    from_hsv16(h, s, (v * 100.0 / by).trunc(), c)
+}
+
 fn color(r: f64, g: f64, b: f64, a: f64) -> Value {
     let c = |n: f64| n.clamp(0.0, 65535.0) as u16;
     Value::Color(Color::rgba16(c(r), c(g), c(b), c(a)))

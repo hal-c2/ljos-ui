@@ -2040,6 +2040,8 @@ fn qt(name: &str) -> Option<Builtin> {
         "vector3d" => Builtin::QtVector3d,
         "vector4d" => Builtin::QtVector4d,
         "quaternion" => Builtin::QtQuaternion,
+        "lighter" => Builtin::QtLighter,
+        "darker" => Builtin::QtDarker,
         _ => return None,
     })
 }

@@ -354,4 +354,8 @@ pub enum Builtin {
     ToLowerCase,
     /// `String.prototype.trim`.
     Trim,
+    /// `Qt.lighter(color, factor)`.
+    QtLighter,
+    /// `Qt.darker(color, factor)`.
+    QtDarker,
 }

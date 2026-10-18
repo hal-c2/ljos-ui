@@ -763,6 +763,29 @@ fn conversions_and_methods_of_primitives() {
     ]);
 }
 
+/// `Qt.lighter` and `Qt.darker` cut and round in many places: tier 1 gives
+/// the colour the script does over a spread of colours and factors.
+#[test]
+fn lighter_and_darker_agree_with_the_script() {
+    let channels = ["0", "0.07", "0.33", "0.5", "0.81", "1"];
+    let mut expressions = Vec::new();
+    for (n, r) in channels.iter().enumerate() {
+        for g in &channels {
+            let b = channels[(n * 7 + g.len()) % channels.len()];
+            for (f, by) in ["1.1", "1.5", "2", "3.7", "0.6"].iter().enumerate() {
+                let which = if (n + f) % 2 == 0 {
+                    "lighter"
+                } else {
+                    "darker"
+                };
+                expressions.push(format!("Qt.{which}(Qt.rgba({r}, {g}, {b}, 0.6), {by})"));
+            }
+        }
+    }
+    let expressions: Vec<&str> = expressions.iter().map(String::as_str).collect();
+    exact(&expressions);
+}
+
 #[test]
 fn the_qt_object_makes_values() {
     exact(&[
@@ -808,6 +831,30 @@ fn the_qt_object_makes_values() {
         "Qt.platform.os",
         "Qt.point(other, 1)",
         "Qt.lighter(color)",
+        "Qt.darker(s)",
+        "Qt.darker(color, s)",
+        "Qt.darker(color, 1, 2)",
+        "Qt.lighter(color, 1 / 0)",
+        "Qt.lighter(other)",
+        "Qt.lighter(color, 1.2).hsvHue",
+    ]);
+    exact(&[
+        "Qt.darker(color)",
+        "Qt.darker(Qt.rgba(0.2, 0.4, 0.6, 1), 3)",
+        "Qt.darker(Qt.rgba(0.5, 0.5, 0.5, 0.3), 1.25)",
+        "Qt.darker(Qt.rgba(0.3, 0.6, 0.9, 1), 0)",
+        "Qt.darker(Qt.rgba(1, 0, 0, 1), -1)",
+        "Qt.darker(Qt.rgba(0.9, 0.1, 0.4, 1), 0.5)",
+        "Qt.darker(Qt.rgba(0.1, 0.8, 0.3, 1), zero / zero)",
+        "Qt.darker(Qt.rgba(0.7, 0.2, 0.9, 1), undef)",
+        "Qt.lighter(Qt.rgba(0.9, 0.5, 0.1, 0.5))",
+        "Qt.lighter(Qt.rgba(0.6, 0.7, 0.8, 1), 1.9)",
+        "Qt.lighter(Qt.rgba(0, 0, 0, 1), 2)",
+        "Qt.lighter(Qt.rgba(0.2, 0.3, 0.25, 1), 0.7)",
+        "Qt.lighter(Qt.rgba(0.95, 0.94, 0.2, 1), 3)",
+        "Qt.darker(nothing)",
+        "Qt.lighter(i)",
+        "Qt.darker(color).r + Qt.lighter(color, 1.2).g",
     ]);
 }
 
