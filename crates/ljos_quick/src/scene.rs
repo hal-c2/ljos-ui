@@ -1570,7 +1570,7 @@ impl QuickScene {
             let picture = crate::effects::picture_at(&snap, self.scale_factor);
             let same = seen.as_ref().is_some_and(|s| match (&s.image, &picture) {
                 (Some(a), Some(b)) => {
-                    a.width() == b.width() && a.height() == b.height() && a.data() == b.data()
+                    a.width() == b.width() && a.height() == b.height() && *a.data() == *b.data()
                 }
                 (None, None) => true,
                 _ => false,

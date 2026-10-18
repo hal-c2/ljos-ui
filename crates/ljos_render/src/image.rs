@@ -10,9 +10,14 @@
 //! here turn [`DrawOp::Image`](crate::DrawOp::Image) and
 //! [`DrawOp::NinePatch`](crate::DrawOp::NinePatch) into blits, so R and B0
 //! cannot disagree on where a tile or a border part goes.
+//!
+//! Pixels that can be made again ([`ImageHandle::make_again_with`]) are
+//! let go once they are a texture ([`ImageHandle::let_go_after_upload`]),
+//! so a picture is not held twice. Whatever reads them after that has them
+//! made again, once, and they stay.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use thiserror::Error;
 use vello_cpu::kurbo::{Rect, Size};
@@ -48,9 +53,95 @@ struct Pixels {
     id: u64,
     width: u32,
     height: u32,
-    /// Premultiplied RGBA8, row-major, top row first.
-    data: Vec<u8>,
+    /// Premultiplied RGBA8, row-major, top row first. None once let go
+    /// after an upload, until something reads them.
+    data: Mutex<Option<Arc<Vec<u8>>>>,
     opaque: bool,
+    /// How to make `data` again once it is let go.
+    again: OnceLock<MakeAgain>,
+    /// Something other than an upload read the pixels after they were let
+    /// go: it may again, so they are not let go twice.
+    read_back: AtomicBool,
+}
+
+/// How the premultiplied RGBA8 pixels of an image are made again, as they
+/// were: from the bytes the image was decoded from.
+#[derive(Clone)]
+pub struct MakeAgain {
+    /// The bytes `make` keeps alive to do it (0 for a file read again).
+    /// Pixels fewer than these are not let go.
+    pub holds: usize,
+    /// The pixels made again; None when they cannot be.
+    pub make: Arc<dyn Fn() -> Option<Vec<u8>> + Send + Sync>,
+}
+
+impl std::fmt::Debug for MakeAgain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MakeAgain")
+            .field("holds", &self.holds)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The pixels of an image, held while this lives. Reads as `&[u8]`.
+#[derive(Clone)]
+pub struct PixelData(Arc<Vec<u8>>);
+
+impl std::ops::Deref for PixelData {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for PixelData {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for PixelData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl PartialEq for PixelData {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for PixelData {}
+
+impl PartialEq<[u8]> for PixelData {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.0.as_slice() == other
+    }
+}
+
+impl PartialEq<&[u8]> for PixelData {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.0.as_slice() == *other
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for PixelData {
+    fn eq(&self, other: &&[u8; N]) -> bool {
+        self.0.as_slice() == other.as_slice()
+    }
+}
+
+impl<const N: usize> PartialEq<[u8; N]> for PixelData {
+    fn eq(&self, other: &[u8; N]) -> bool {
+        self.0.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<Vec<u8>> for PixelData {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        *self.0 == *other
+    }
 }
 
 /// Shared, immutable, premultiplied RGBA8 pixels.
@@ -124,8 +215,10 @@ impl ImageHandle {
             id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
             width,
             height,
-            data,
+            data: Mutex::new(Some(Arc::new(data))),
             opaque,
+            again: OnceLock::new(),
+            read_back: AtomicBool::new(false),
         })))
     }
 
@@ -169,9 +262,84 @@ impl ImageHandle {
         self.0.height
     }
 
-    /// Premultiplied RGBA8, row-major, top row first.
-    pub fn data(&self) -> &[u8] {
-        &self.0.data
+    /// Premultiplied RGBA8, row-major, top row first. Made again if they
+    /// were let go after an upload; from then on they are kept.
+    pub fn data(&self) -> PixelData {
+        self.pixels(true)
+    }
+
+    /// The pixels for a backend to upload: as [`ImageHandle::data`], but
+    /// an upload does not count as a reader that keeps them.
+    pub fn data_to_upload(&self) -> PixelData {
+        self.pixels(false)
+    }
+
+    fn pixels(&self, reader: bool) -> PixelData {
+        let mut data = self.0.data.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(d) = &*data {
+            return PixelData(Arc::clone(d));
+        }
+        if reader {
+            self.0.read_back.store(true, Ordering::Relaxed);
+        }
+        let len = self.byte_len();
+        let made = self
+            .0
+            .again
+            .get()
+            .and_then(|again| (again.make)())
+            .filter(|d| d.len() == len)
+            // What the pixels were made from is gone or changed: the
+            // image reads as transparent rather than as something else.
+            .unwrap_or_else(|| vec![0; len]);
+        let made = Arc::new(made);
+        *data = Some(Arc::clone(&made));
+        PixelData(made)
+    }
+
+    /// Says how to make these pixels again from what they were decoded
+    /// from, which lets them go once they are uploaded if that holds fewer
+    /// bytes than they are. The first one said counts. Only for a way that
+    /// costs no network.
+    pub fn make_again_with(&self, again: MakeAgain) {
+        let _ = self.0.again.set(again);
+    }
+
+    /// The pixels, without a copy when this is their only handle.
+    pub fn into_data(self) -> Vec<u8> {
+        let data = self.data();
+        drop(self);
+        Arc::try_unwrap(data.0).unwrap_or_else(|d| d.as_ref().clone())
+    }
+
+    /// How these pixels are made again, if anyone said.
+    pub fn made_again_by(&self) -> Option<MakeAgain> {
+        self.0.again.get().cloned()
+    }
+
+    /// Lets the pixels go after a backend uploaded them, when they can be
+    /// made again from fewer bytes than they are, no other reader read them
+    /// back before and nothing holds them right now. Whether they went.
+    pub fn let_go_after_upload(&self) -> bool {
+        let worth = |a: &MakeAgain| a.holds < self.byte_len();
+        if !self.0.again.get().is_some_and(worth) || self.0.read_back.load(Ordering::Relaxed) {
+            return false;
+        }
+        let mut data = self.0.data.lock().unwrap_or_else(PoisonError::into_inner);
+        if data.as_ref().is_some_and(|d| Arc::strong_count(d) == 1) {
+            *data = None;
+            return true;
+        }
+        false
+    }
+
+    /// Whether the pixels are held in memory now.
+    pub fn is_resident(&self) -> bool {
+        self.0
+            .data
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
     }
 
     /// True when every pixel is fully opaque.
@@ -179,9 +347,10 @@ impl ImageHandle {
         self.0.opaque
     }
 
-    /// Bytes of pixel data held.
+    /// Bytes of pixel data, whether they are held now or not
+    /// ([`ImageHandle::is_resident`]).
     pub fn byte_len(&self) -> usize {
-        self.0.data.len()
+        self.0.width as usize * self.0.height as usize * 4
     }
 
     /// How many handles share these pixels. An image cache uses it to tell
@@ -204,12 +373,8 @@ impl ImageHandle {
     pub fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         assert!(x < self.0.width && y < self.0.height, "pixel out of range");
         let i = (y as usize * self.0.width as usize + x as usize) * 4;
-        [
-            self.0.data[i],
-            self.0.data[i + 1],
-            self.0.data[i + 2],
-            self.0.data[i + 3],
-        ]
+        let data = self.data();
+        [data[i], data[i + 1], data[i + 2], data[i + 3]]
     }
 
     /// A copy of the rectangle at `(x, y)` of size `width` by `height`,
@@ -222,10 +387,11 @@ impl ImageHandle {
         }
         let (w, h) = ((x1 - x) as usize, (y1 - y) as usize);
         let stride = self.0.width as usize * 4;
+        let pixels = self.data();
         let mut data = Vec::with_capacity(w * h * 4);
         for row in y as usize..y as usize + h {
             let start = row * stride + x as usize * 4;
-            data.extend_from_slice(&self.0.data[start..start + w * 4]);
+            data.extend_from_slice(&pixels[start..start + w * 4]);
         }
         Self::from_premultiplied(w as u32, h as u32, data).ok()
     }
@@ -237,10 +403,11 @@ impl ImageHandle {
             return self.clone();
         }
         let (w, h) = (self.0.width as usize, self.0.height as usize);
+        let pixels = self.data();
         let mut data = Vec::with_capacity(w * h * 4);
         for y in 0..h {
             let row = if down { h - 1 - y } else { y };
-            let row = &self.0.data[row * w * 4..(row + 1) * w * 4];
+            let row = &pixels[row * w * 4..(row + 1) * w * 4];
             if across {
                 for px in row.as_chunks::<4>().0.iter().rev() {
                     data.extend_from_slice(px);
@@ -268,8 +435,9 @@ impl ImageHandle {
         // Two passes: rows first, into floats, then columns.
         let xs = Taps::new(sw, dw);
         let mut mid = vec![0.0f32; dw * sh * 4];
+        let pixels = self.data();
         for y in 0..sh {
-            let row = &self.0.data[y * sw * 4..(y + 1) * sw * 4];
+            let row = &pixels[y * sw * 4..(y + 1) * sw * 4];
             for x in 0..dw {
                 let mut acc = [0.0f32; 4];
                 for (sx, wgt) in xs.of(x) {

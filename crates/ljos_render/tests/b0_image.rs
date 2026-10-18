@@ -4,13 +4,16 @@
 //! `ljos_egui` renders one image through egui_kittest).
 #![cfg(feature = "b0")]
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use egui::epaint::{ClippedShape, Mesh, Shape};
 use egui::{Context, Pos2, TextureId};
 use ljos_render::b0::{EguiSink, EpaintBackend};
 use ljos_render::kurbo::{Rect, Size};
 use ljos_render::{
-    DisplayListBuilder, DrawOp, EncodeStats, FrameView, ImageHandle, Insets, MemoryPressure,
-    NodeId, RenderBackend, RenderTree, Rgba, TileMode,
+    DisplayListBuilder, DrawOp, EncodeStats, FrameView, ImageHandle, Insets, MakeAgain,
+    MemoryPressure, NodeId, RenderBackend, RenderTree, Rgba, TileMode,
 };
 
 struct Scene {
@@ -352,6 +355,89 @@ fn a_critical_trim_drops_textures_and_the_next_frame_uploads_again() {
     let (meshes, _) = s.run(&mut be, Some(&ctx));
     assert_eq!(meshes.len(), 1);
     assert_eq!((be.image_textures(), be.texture_uploads()), (1, 2));
+}
+
+/// `picture`, which says it is made again as it was, counting each time.
+fn made_again(w: u32, h: u32) -> (ImageHandle, Arc<AtomicUsize>) {
+    let image = picture(w, h);
+    let made = Arc::new(AtomicUsize::new(0));
+    let (count, pixels) = (Arc::clone(&made), image.data().to_vec());
+    image.make_again_with(MakeAgain {
+        holds: 0,
+        make: Arc::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            Some(pixels.clone())
+        }),
+    });
+    (image, made)
+}
+
+#[test]
+fn pixels_that_can_be_made_again_are_let_go_once_uploaded() {
+    let ctx = Context::default();
+    let (image, made) = made_again(16, 8);
+    let kept = picture(16, 8);
+    let before = image.data().to_vec();
+    let mut s = Scene::new(100.0, 100.0);
+    let a = s.node(0.0, 0.0, 16.0, 8.0);
+    let b = s.node(0.0, 50.0, 16.0, 8.0);
+    s.op(a, whole(&image, Rect::new(0.0, 0.0, 16.0, 8.0), true));
+    s.op(b, whole(&kept, Rect::new(0.0, 0.0, 16.0, 8.0), true));
+    let mut be = EpaintBackend::new();
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.texture_uploads(), 2);
+    assert!(!image.is_resident(), "the texture has them");
+    assert!(kept.is_resident(), "nothing says how to make these again");
+    assert_eq!(image.byte_len(), 16 * 8 * 4, "the size is still known");
+    for _ in 0..5 {
+        s.run(&mut be, Some(&ctx));
+    }
+    assert_eq!(made.load(Ordering::SeqCst), 0, "drawing needs no pixels");
+
+    // A reader has them made again, once, and they stay.
+    assert_eq!(image.data().to_vec(), before);
+    assert_eq!(image.pixel(3, 3), kept.pixel(3, 3));
+    assert_eq!(made.load(Ordering::SeqCst), 1);
+    assert!(image.is_resident());
+    be.trim(MemoryPressure::Critical);
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.texture_uploads(), 4);
+    assert!(image.is_resident(), "read back once, so read back again");
+    assert_eq!(made.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_texture_that_is_all_there_is_of_a_picture_outlives_a_stretch_unseen() {
+    let ctx = Context::default();
+    let (image, made) = made_again(8, 8);
+    let kept = picture(8, 8);
+    let mut s = Scene::new(100.0, 100.0);
+    let a = s.node(0.0, 0.0, 8.0, 8.0);
+    let b = s.node(50.0, 0.0, 8.0, 8.0);
+    s.op(a, whole(&image, Rect::new(0.0, 0.0, 8.0, 8.0), true));
+    s.op(b, whole(&kept, Rect::new(0.0, 0.0, 8.0, 8.0), true));
+    let mut be = EpaintBackend::new();
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.image_textures(), 2);
+    // Both alive and unseen for long: only the one with its pixels at
+    // hand gives up its texture.
+    s.tree.set_content(a, None);
+    s.tree.set_content(b, None);
+    // A frame that changes nothing is the last one again; these change.
+    for i in 0..130 {
+        s.tree.set_pos(b, f64::from(i % 2), 0.0);
+        s.run(&mut be, Some(&ctx));
+    }
+    assert_eq!(be.image_textures(), 1);
+    s.op(a, whole(&image, Rect::new(0.0, 0.0, 8.0, 8.0), true));
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.texture_uploads(), 2, "seen again without an upload");
+    assert_eq!(made.load(Ordering::SeqCst), 0);
+    // Under pressure it goes all the same, and comes back made again.
+    be.trim(MemoryPressure::Critical);
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(made.load(Ordering::SeqCst), 1);
+    assert!(!image.is_resident(), "an upload is not a reader");
 }
 
 /// The host tells egui a small limit, which is also the width of egui's

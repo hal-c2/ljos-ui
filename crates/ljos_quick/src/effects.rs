@@ -836,7 +836,7 @@ fn mask_and_adjust(
     for y in 0..h {
         for x in 0..w {
             let mask_f = match mask_pair {
-                Some((msk, mw, mh, m)) => {
+                Some((ref msk, mw, mh, m)) => {
                     let mx = x * mw / w;
                     let my = y * mh / h;
                     let a =

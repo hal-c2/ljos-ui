@@ -163,7 +163,55 @@ pub(crate) fn locate(url: &str, registered: Option<Arc<[u8]>>) -> Result<Origin,
 
 /// Reads and decodes `url`, then scales and clips it to `request`.
 pub(crate) fn load(url: &str, origin: &Origin, request: Request) -> Result<Loaded, LoadError> {
-    load_bytes(url, &read(url, origin)?, request)
+    let bytes = read(url, origin)?;
+    let loaded = load_bytes(url, &bytes, request)?;
+    match origin {
+        Origin::File(path) => made_again_from_file(&loaded, url, path, request),
+        Origin::Bytes(bytes) => made_again_from_bytes(&loaded, url, bytes, request),
+        Origin::Remote => {}
+    }
+    Ok(loaded)
+}
+
+/// Says how the pixels of `loaded` are made again once they are let go
+/// after their upload: by reading the file again. Not for an animation,
+/// whose frames are their item's alone.
+pub(crate) fn made_again_from_file(
+    loaded: &Loaded,
+    url: &str,
+    path: &std::path::Path,
+    request: Request,
+) {
+    if loaded.frames.is_some() {
+        return;
+    }
+    let (url, path) = (url.to_owned(), path.to_owned());
+    loaded.image.make_again_with(ljos_render::MakeAgain {
+        holds: 0,
+        make: Arc::new(move || {
+            let bytes = read_file(&path)?;
+            Some(load_bytes(&url, &bytes, request).ok()?.image.into_data())
+        }),
+    });
+}
+
+/// As [`made_again_from_file`], from `bytes` it was decoded from (fetched,
+/// registered or inline) when they are fewer than the pixels; otherwise
+/// the pixels stay.
+pub(crate) fn made_again_from_bytes(
+    loaded: &Loaded,
+    url: &str,
+    bytes: &Arc<[u8]>,
+    request: Request,
+) {
+    if loaded.frames.is_some() || bytes.len() >= loaded.image.byte_len() {
+        return;
+    }
+    let (url, bytes) = (url.to_owned(), Arc::clone(bytes));
+    loaded.image.make_again_with(ljos_render::MakeAgain {
+        holds: bytes.len(),
+        make: Arc::new(move || Some(load_bytes(&url, &bytes, request).ok()?.image.into_data())),
+    });
 }
 
 /// The bytes `origin` holds or names.
@@ -376,7 +424,7 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
     let image = if kept == natural {
         image
     } else {
-        Raw::of(&image).shrunk_to(kept, url)?
+        Raw::of(&image, &image.data()).shrunk_to(kept, url)?
     };
     Ok(Loaded {
         image,
@@ -491,13 +539,14 @@ impl<'a> Raw<'a> {
         shrink.finish()
     }
 
-    pub(crate) fn of(image: &'a ImageHandle) -> Self {
+    /// The pixels of `image`, which are `data` (its [`ImageHandle::data`]).
+    pub(crate) fn of(image: &ImageHandle, data: &'a [u8]) -> Self {
         Raw {
             width: image.width(),
             height: image.height(),
             channels: 4,
             premultiplied: true,
-            data: std::borrow::Cow::Borrowed(image.data()),
+            data: std::borrow::Cow::Borrowed(data),
         }
     }
 
@@ -1522,10 +1571,14 @@ mod tests {
         let all = load("file:///a.gif", &origin, request).unwrap();
         let frames = all.frames.expect("every frame");
         assert_eq!(frames.delays, [200, 200, 200]);
-        let firsts: Vec<&[u8]> = frames.images.iter().map(|i| &i.data()[..4]).collect();
+        let firsts: Vec<Vec<u8>> = frames
+            .images
+            .iter()
+            .map(|i| i.data()[..4].to_vec())
+            .collect();
         assert_eq!(
             firsts,
-            [&[255, 0, 0, 255][..], &[0, 255, 0, 255], &[0, 0, 255, 255]]
+            [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]
         );
     }
 

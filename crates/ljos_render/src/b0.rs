@@ -40,7 +40,8 @@
 //! image becomes a texture in egui's texture manager the first time it is
 //! drawn, one per sampling mode it is used with. The backend holds the image
 //! only weakly: the texture goes when the image does, or when it has not been
-//! drawn for a while.
+//! drawn for a while. Once uploaded, pixels that can be made again are let
+//! go ([`ImageHandle::let_go_after_upload`]).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -267,6 +268,14 @@ fn blit_quads(
     true
 }
 
+impl TextureEntry {
+    /// Whether the image's pixels were let go after the upload, so that
+    /// this texture is the only copy of them.
+    fn only_copy(&self) -> bool {
+        self.owner.upgrade().is_some_and(|i| !i.is_resident())
+    }
+}
+
 /// The texture for `key`, uploading the image the first time.
 fn texture_for(
     textures: &mut HashMap<TextureKey, TextureEntry>,
@@ -285,8 +294,12 @@ fn texture_for(
     let fitted = fit_texture(&image, max_side)?;
     let pixels = ColorImage::from_rgba_premultiplied(
         [fitted.width() as usize, fitted.height() as usize],
-        fitted.data(),
+        &fitted.data_to_upload(),
     );
+    // The texture has them now. A picture that can be made again is not
+    // held twice; what reads it later has it made again.
+    drop(fitted);
+    image.let_go_after_upload();
     let filter = if key.smooth {
         TextureFilter::Linear
     } else {
@@ -1466,9 +1479,12 @@ impl RenderBackend for EpaintBackend {
         self.lists
             .retain(|_, e| e.owner.strong_count() > 0 && e.last_used >= keep_after);
         self.retain_nodes(keep_after);
-        // A texture outlives neither its image nor a long stretch unseen.
+        // A texture outlives neither its image nor a long stretch unseen,
+        // unless it is all there is of the pixels: dropping it would cost
+        // a decode when the picture is seen again. Pressure drops it all
+        // the same.
         self.textures
-            .retain(|_, t| t.owner.is_alive() && t.last_used >= keep_after);
+            .retain(|_, t| t.owner.is_alive() && (t.last_used >= keep_after || t.only_copy()));
     }
 
     fn encode(&mut self, view: &FrameView<'_>, sink: &mut EguiSink<'_>) -> EncodeStats {

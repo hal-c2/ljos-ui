@@ -959,10 +959,24 @@ fn shrink_kept(
     if kept.0 >= source.width() || kept.1 >= source.height() {
         return source;
     }
-    let image = match decode::Raw::of(&source).shrunk_to(kept, &key.url) {
+    let image = match decode::Raw::of(&source, &source.data()).shrunk_to(kept, &key.url) {
         Ok(image) => image,
         Err(_) => return source,
     };
+    // Made again as it was made: its source made again, then shrunk.
+    if let Some(again) = source.made_again_by() {
+        let (size, url) = ((source.width(), source.height()), key.url.clone());
+        image.make_again_with(ljos_render::MakeAgain {
+            holds: again.holds,
+            make: std::sync::Arc::new(move || {
+                let from = ImageHandle::from_premultiplied(size.0, size.1, (again.make)()?).ok()?;
+                let smaller = decode::Raw::of(&from, &from.data())
+                    .shrunk_to(kept, &url)
+                    .ok()?;
+                Some(smaller.into_data())
+            }),
+        });
+    }
     let smaller = ImageKey {
         request: Request {
             limit,
