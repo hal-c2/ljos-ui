@@ -1934,11 +1934,16 @@ Item {
 #[test]
 fn a_picture_whose_bytes_outweigh_its_pixels_is_not_let_go() {
     let (e, store) = pictures();
-    // A noisy picture kept small: its bytes are more than what is kept.
+    // A picture noisy in one quarter, kept small: its bytes are fewer
+    // than its pixels and more than what is kept.
     let noise: Vec<u8> = (0..512u32 * 512)
         .flat_map(|i| {
             let n = i.wrapping_mul(2_654_435_761);
-            [(n >> 8) as u8, (n >> 16) as u8, (n >> 24) as u8, 255]
+            if i % 512 < 256 && i / 512 < 256 {
+                [(n >> 8) as u8, (n >> 16) as u8, (n >> 24) as u8, 255]
+            } else {
+                [32, 96, 160, 255]
+            }
         })
         .collect();
     let mut bytes = Vec::new();
@@ -1951,6 +1956,8 @@ fn a_picture_whose_bytes_outweigh_its_pixels_is_not_let_go() {
             .write_image_data(&noise)
             .unwrap();
     }
+    let encoded = bytes.len();
+    assert!(encoded < 512 * 512 * 4 && encoded > 56 * 56 * 4);
     store.register_resource("file:///noise.png", bytes);
     let root = load(
         &e,
@@ -1970,4 +1977,6 @@ Item {
     assert!(image.byte_len() < 512 * 512 * 4);
     assert!(!image.let_go_after_upload());
     assert!(image.is_resident());
+    // Nor does it hold the bytes it was read from, which it never needs.
+    assert!(image.made_again_by().is_none());
 }

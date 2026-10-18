@@ -964,7 +964,12 @@ fn shrink_kept(
         Err(_) => return source,
     };
     // Made again as it was made: its source made again, then shrunk.
-    if let Some(again) = source.made_again_by() {
+    // Not when what that holds outweighs the smaller pixels: they could
+    // never be let go, and holding it would keep the bytes for nothing.
+    if let Some(again) = source
+        .made_again_by()
+        .filter(|again| again.holds < image.byte_len())
+    {
         let (size, url) = ((source.width(), source.height()), key.url.clone());
         image.make_again_with(ljos_render::MakeAgain {
             holds: again.holds,
