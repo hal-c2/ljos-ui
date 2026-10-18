@@ -16,7 +16,9 @@ Feature: PDF documents in an Image
   at the size "sourceSize" asks, over nothing, so that what is behind the
   Image shows around what the page paints. This needs the "pdf" feature,
   which the ljos runner has: without it a PDF is an unsupported format,
-  as in a Qt without its PDF plugin.
+  as in a Qt without its PDF plugin, and so is a file that is no PDF
+  document with it: the Image is an error with a warning and draws
+  nothing.
 
   Background:
     Given a PDF file "pages.pdf" of pages "300 by 200, 150 by 400, 100.6 by 50.4" painted "#ff0000"
@@ -121,3 +123,19 @@ Feature: PDF documents in an Image
     And the property "implicitHeight" of "picture" is 400
     And the property "sourceSize.width" of "picture" is 600
     And the property "sourceSize.height" of "picture" is 0
+
+  Scenario: A file that is no PDF document is an error, and nothing is drawn
+    Given a file "letter.pdf" that is not an image
+    And the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 100; height: 100; color: "#0000ff"
+        Image { objectName: "picture"; source: "letter.pdf" }
+      }
+      """
+    Then the property "status" of "picture" is 3
+    And the property "frameCount" of "picture" is 1
+    And the property "implicitWidth" of "picture" is 0
+    And the pixel at 10, 10 of the window is "#0000ff"
+    And the log has a warning matching "QML Image: Error decoding: file:///.*letter\.pdf: Unsupported image format$"
