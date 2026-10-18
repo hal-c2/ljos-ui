@@ -1044,6 +1044,7 @@ Source: 05 §3.1.
   - `LJOS_SCREEN_READER=on|off` overrides both. cua-driver sets `ScreenReaderEnabled` and `IsEnabled` as Orca does, so nothing on the bus tells it from a screen reader; the sandbox (`scripts/cua-sandbox.sh`, `mise run bench`) passes `off` unless told otherwise, so its numbers are what a user without one gets.
   - What Qt does, observed as a black box with `qml6` 6.11.2 on X11 in the sandbox: it registers with the AT-SPI registry when either `IsEnabled` or `ScreenReaderEnabled` turns true, at start or later, stays registered when they turn false again, and is forced on by `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` (its documentation). It keeps no extra rows for either. So Qt's switch is the two properties, not a listener.
   - Gap: accesskit_unix 0.21 activates on `ScreenReaderEnabled` only, so an app is not exposed to a client that sets only `IsEnabled`, as Qt would be.
+  - Gap: AccessKit's AT-SPI layer registers no `EditableText` interface, so a client can read, select in and move the caret of an entry but not type into it or set its text; Ljós already takes the requests it would send. What upstream would need: `docs/upstream/accesskit-editable-text.md`.
 - **As built: live regions (M2).** A text whose role is a status bar, a notification or an alert tells an assistive technology each new thing it says, a status politely and an alert at once, and so does `Accessible.announce`. A control that is partly checked reports a mixed state.
 
 ---
