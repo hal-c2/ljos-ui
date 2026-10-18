@@ -3430,3 +3430,50 @@ Feature: What a reload changes
       And a reload happens
       Then the property "move" of "col" is null
       And the property "x" of "box" is at least 40
+
+  Rule: An alias of an object moved among its siblings goes in place
+
+    An object moved among its siblings is made again; an alias of it, or
+    of a member of it, stands for the new one, as in a fresh load, and
+    what reads through the alias reads that.
+
+    Scenario: A user reads through aliases of an object moved before its sibling
+      Given the file "Viewer.qml":
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          property alias words: shown.text
+          Text { id: shown; objectName: "first"; text: "a" }
+          Item { }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Viewer { id: viewer }
+          property string seen: viewer.current.objectName + "/" + viewer.words
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "seen" of "root" is "first/a"
+      When the file "Viewer.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          property alias current: shown
+          property alias words: shown.text
+          Item { }
+          Text { id: shown; objectName: "second"; text: "b" }
+        }
+        """
+      And a reload happens
+      Then the property "seen" of "root" is "second/b"
+      And the property "x" of "box" is at least 40

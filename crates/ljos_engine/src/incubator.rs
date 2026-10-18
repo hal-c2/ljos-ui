@@ -26,7 +26,8 @@ use std::rc::{Rc, Weak};
 
 use ljos_ir::{
     Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, FunctionDecl, ImportSource, Literal,
-    Members, ObjRef, ObjectValue, PropertyBinding, SourceSpan, TranslationKind, TypeRef,
+    Members, ObjRef, ObjectValue, PropertyBinding, PropertyDecl, SourceSpan, TranslationKind,
+    TypeRef,
 };
 use ljos_js::{JsValue, Scope};
 use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
@@ -1237,46 +1238,52 @@ impl Engine {
             let od = &u.inst.file.ir.component(u.inst.comp).objects[u.obj];
             let id = u.inst.objects[u.obj];
             for p in &od.properties {
-                let Some(alias) = &p.alias else { continue };
-                let Some(target) = alias.object.and_then(|r| u.inst.resolve(r)) else {
-                    self.warn(format!(
-                        "{}:{}:{}: Invalid alias reference. Unable to find id \"{}\"",
-                        u.inst.url(),
-                        p.span.line,
-                        p.span.column,
-                        alias.id
-                    ));
-                    continue;
-                };
-                let Ok(me) = self.property_index(id, &p.name) else {
-                    continue;
-                };
-                let r = match alias.path.split_last() {
-                    None => self.set_alias(id, me, target, None),
-                    Some((name, through)) => match self.member_target(target, through, name) {
-                        Ok(t) => self.set_alias(id, me, t.obj, Some(t.prop)),
-                        // `label.font.family`: a member of a value.
-                        Err(e) => match self.value_target(target, through) {
-                            Some((t, ty))
-                                if Value::Undefined
-                                    .with_member(&ty, name, &Value::Undefined)
-                                    .is_some() =>
-                            {
-                                self.set_member_alias(id, me, t.obj, t.prop, name)
-                            }
-                            _ => Err(e),
-                        },
-                    },
-                };
-                if let Err(e) = r {
-                    self.warn(format!(
-                        "{}:{}:{}: Invalid alias target location: {e}",
-                        u.inst.url(),
-                        p.span.line,
-                        p.span.column
-                    ));
-                }
+                self.wire_alias(&u.inst, id, p);
             }
+        }
+    }
+
+    /// Points the alias `p` of `id`, an object of `inst`, at what it
+    /// stands for; nothing when `p` is no alias.
+    pub(super) fn wire_alias(&self, inst: &Rc<Instance>, id: ObjectId, p: &PropertyDecl) {
+        let Some(alias) = &p.alias else { return };
+        let Some(target) = alias.object.and_then(|r| inst.resolve(r)) else {
+            self.warn(format!(
+                "{}:{}:{}: Invalid alias reference. Unable to find id \"{}\"",
+                inst.url(),
+                p.span.line,
+                p.span.column,
+                alias.id
+            ));
+            return;
+        };
+        let Ok(me) = self.property_index(id, &p.name) else {
+            return;
+        };
+        let r = match alias.path.split_last() {
+            None => self.set_alias(id, me, target, None),
+            Some((name, through)) => match self.member_target(target, through, name) {
+                Ok(t) => self.set_alias(id, me, t.obj, Some(t.prop)),
+                // `label.font.family`: a member of a value.
+                Err(e) => match self.value_target(target, through) {
+                    Some((t, ty))
+                        if Value::Undefined
+                            .with_member(&ty, name, &Value::Undefined)
+                            .is_some() =>
+                    {
+                        self.set_member_alias(id, me, t.obj, t.prop, name)
+                    }
+                    _ => Err(e),
+                },
+            },
+        };
+        if let Err(e) = r {
+            self.warn(format!(
+                "{}:{}:{}: Invalid alias target location: {e}",
+                inst.url(),
+                p.span.line,
+                p.span.column
+            ));
         }
     }
 

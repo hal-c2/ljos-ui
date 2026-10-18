@@ -156,6 +156,9 @@ struct Changed {
     /// (component, old index, new index): a `ListModel` whose elements
     /// the edit added, removed, moved or gave other values.
     models: Vec<(CompIdx, usize, usize)>,
+    /// (component, new index, alias name): an alias of an object that
+    /// stays, whose object is made again; it is pointed at the new one.
+    realias: Vec<(CompIdx, usize, String)>,
 }
 
 /// Where the objects of a component of the old file are in the new one.
@@ -596,6 +599,28 @@ impl Engine {
                 }
             }
         }
+        // An alias whose object was made again stands for the new one,
+        // and what reads through it reads that.
+        let mut realiased: Vec<Rc<Instance>> = Vec::new();
+        for c in changed.iter().filter(|c| !c.realias.is_empty()) {
+            for inst in instances.iter().filter(|i| Rc::ptr_eq(&i.file, &c.old)) {
+                let now = renew(inst, &files, &mut memo);
+                let mut any = false;
+                for (_, j, name) in c.realias.iter().filter(|r| r.0 == inst.comp) {
+                    let id = now.objects[*j];
+                    let od = &now.file.ir.component(now.comp).objects[*j];
+                    if let Some(p) = od.properties.iter().find(|p| p.name == *name)
+                        && self.is_alive(id)
+                    {
+                        self.wire_alias(&now, id, p);
+                        any = true;
+                    }
+                }
+                if any {
+                    realiased.push(inst.clone());
+                }
+            }
+        }
         let assigned = self.in_place_carry(&grown);
         for g in &grown {
             for &o in &g.gone {
@@ -671,6 +696,28 @@ impl Engine {
             let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
             self.batch(|| {
                 for inst in instances.iter().filter(|i| sees(i)) {
+                    for &id in &inst.objects {
+                        if self.is_alive(id) {
+                            self.in_place_refresh(id);
+                        }
+                    }
+                }
+            });
+        }
+        if !realiased.is_empty() {
+            let mut readers: Vec<Rc<Instance>> = Vec::new();
+            for inst in &realiased {
+                let mut cur = inst.clone();
+                while let Some((user, _)) = users.get(&Rc::as_ptr(&cur)) {
+                    let now = renew(user, &files, &mut memo);
+                    if !readers.iter().any(|r| Rc::ptr_eq(r, &now)) {
+                        readers.push(now);
+                    }
+                    cur = user.clone();
+                }
+            }
+            self.batch(|| {
+                for inst in &readers {
                     for &id in &inst.objects {
                         if self.is_alive(id) {
                             self.in_place_refresh(id);
@@ -902,7 +949,7 @@ impl Engine {
                     Edited::Handler => {}
                 }
             }
-            let Some((whole, remap, moved, objects, models)) = same_but_edits(
+            let Some((whole, remap, moved, objects, models, realias)) = same_but_edits(
                 &old.ir,
                 new,
                 &comps,
@@ -925,6 +972,7 @@ impl Engine {
                 comps: comps.into(),
                 objects,
                 models,
+                realias,
             });
         }
         Some(out)
@@ -1936,6 +1984,7 @@ type Same = (
     Moves,
     Vec<Objects>,
     Vec<(CompIdx, usize, usize)>,
+    Vec<(CompIdx, usize, String)>,
 );
 
 /// [`Same`] when `new` is `old` but for the edited members and for
@@ -2100,6 +2149,7 @@ fn same_but_edits(
     let (mut was, mut now) = (Vec::new(), Vec::new());
     let (mut here, mut there) = (Vec::new(), Vec::new());
     let mut unset = Vec::new();
+    let mut realias = Vec::new();
     for (c, o, n) in pairs() {
         let m = &objects[c];
         for (i, oo) in o.objects.iter().enumerate() {
@@ -2139,6 +2189,23 @@ fn same_but_edits(
                 b.children.retain(|v| !added(v));
                 for oa in b.members.objects.iter_mut().filter(|oa| oa.is_list) {
                     oa.values.retain(|v| !added(v));
+                }
+                // An alias of an object made again stands for the new one.
+                for (p, q) in a.properties.iter_mut().zip(&b.properties) {
+                    let (Some(pa), Some(qa)) = (p.alias.as_mut(), q.alias.as_ref()) else {
+                        continue;
+                    };
+                    let (Some(r), Some(to)) = (pa.object, qa.object) else {
+                        continue;
+                    };
+                    let made = comps
+                        .iter()
+                        .position(|n| *n == Some(to.component))
+                        .is_some_and(|k| objects[k].to_old[to.object.index()].is_none());
+                    if r.object == ObjIdx(u32::MAX) && made && p.name == q.name {
+                        pa.object = Some(to);
+                        realias.push((CompIdx(c as u32), j, q.name.clone()));
+                    }
                 }
                 let names = unassigned(&mut a, &b);
                 if !names.is_empty() {
@@ -2260,7 +2327,7 @@ fn same_but_edits(
             }),
         }
     }
-    Some((whole, remap, moved, objects, models))
+    Some((whole, remap, moved, objects, models, realias))
 }
 
 /// Takes out of `a`, an old object renumbered, the members given an
