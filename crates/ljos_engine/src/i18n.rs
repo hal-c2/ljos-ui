@@ -700,9 +700,43 @@ const PRELUDE: &str = r##"
     define(o, "dateTimeFormat", (f) => localeFormat(name, BOTH, width(f)));
     define(o, "formattedDataSize", (bytes, precision, format) => formatDataSize(name, Number(bytes),
       precision === undefined ? 2 : Number(precision), format === undefined ? 0 : Number(format)));
+    define(o, "toString", function toString(value, format, precision) {
+      return localeToString(name, this, arguments.length, value, format, precision);
+    });
     define(o, LOCALE, name);
     return Object.freeze(o);
   });
+
+  // Locale.toString: a whole number in int's range as an int, any other
+  // number as a double ('g', six digits), a date in a format of the locale
+  // or a format string. A format that is not one of the letters is 'f'.
+  const INT_MIN = -2147483648, INT_MAX = 2147483647;
+  const localeToString = (name, self, count, value, format, precision) => {
+    // Without anything to write it is the object's own text.
+    if (count === 0 || value === undefined) return Object.prototype.toString.call(self);
+    if (count > 3) throw new Error("Locale: toString(): Expected 1-3 arguments, but received " + count);
+    if (value instanceof Date) {
+      if (count > 2)
+        throw new Error("Locale: the toString() overload that takes a Date as its first argument "
+          + "expects 1 or 2 arguments, but received " + count);
+      if (format === undefined) format = LONG;
+      if (typeof format !== "string" && typeof format !== "number")
+        throw new Error("Locale: the second argument to the toString overloads whose first argument "
+          + "is a Date should be a string or FormatType");
+      if (isNaN(value.getTime())) return "";
+      const pattern = typeof format === "string" ? format : localeFormat(name, BOTH, format);
+      return write(value, name, pattern, BOTH);
+    }
+    if (typeof value === "boolean") value = value ? 1 : 0;
+    if (typeof value !== "number")
+      throw new Error("Locale: toString() expects either an int, double, or Date as its first argument");
+    if (format === undefined && Number.isInteger(value) && value >= INT_MIN && value <= INT_MAX)
+      return formatNumber(name, value === 0 ? 0 : value, "f", 0);
+    if (format === "") return "";
+    const letter = format === undefined ? "g"
+      : typeof format === "string" && format.length === 1 && "eEfgG".includes(format) ? format : "f";
+    return formatNumber(name, value, letter, precision === undefined ? 6 : Number(precision));
+  };
 
   const write = (d, name, pattern, part) => formatDate(name, pattern, part,
     d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(),
