@@ -361,7 +361,7 @@
     "read_only": true
   },
   {
-    "description": "Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads. Give the `counts` of the last answer as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst into one answer. Wakes nothing in the app.",
+    "description": "Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads, `traces`. Give the `counts` of the last answer as `since`; it answers when a `topics` count differs, else after `wait_ms`. `settle_ms` gathers a burst into one answer. Wakes nothing in the app.",
     "input_schema": {
       "$defs": {
         "Since": {
@@ -403,6 +403,15 @@
                 "integer",
                 "null"
               ]
+            },
+            "traces": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "type": "object"
@@ -428,6 +437,11 @@
             {
               "const": "reloads",
               "description": "Reloads, applied or failed.",
+              "type": "string"
+            },
+            {
+              "const": "traces",
+              "description": "Events `app_trace` wrote down.",
               "type": "string"
             }
           ]
@@ -457,7 +471,7 @@
           "description": "The `counts` of the last answer. Without them the counts are\nanswered at once."
         },
         "topics": {
-          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`. All by\ndefault.",
+          "description": "Wait for these only: `frames`, `paints`, `logs`, `reloads`,\n`traces`. All by default.",
           "items": {
             "$ref": "#/$defs/Topic"
           },
@@ -518,6 +532,51 @@
       "type": "object"
     },
     "name": "app_objects",
+    "read_only": true
+  },
+  {
+    "description": "Trace objects over time, like Erlang's observer: `target` (a ref, locator or @handle) starts one; from then its signals, property changes with new values and its end are written down with the app's time. `since` takes an answer's `next_since`; `stop` ends one or all.",
+    "input_schema": {
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "default": null,
+          "description": "The most events to list, oldest first (default 100, at most 500).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "description": "The `next_since` of an earlier answer: only what came after it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stop": {
+          "default": false,
+          "description": "Stop tracing `target`, or every object without one. What was\nwritten down stays.",
+          "type": "boolean"
+        },
+        "target": {
+          "default": null,
+          "description": "Start tracing this object (a reference, locator or `@handle`), or\nwith `stop`, stop tracing it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "TraceArgs",
+      "type": "object"
+    },
+    "name": "app_trace",
     "read_only": true
   },
   {

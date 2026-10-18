@@ -279,6 +279,7 @@ impl Engine {
         if let Some(prop) = notify_of {
             return self.notify(obj, prop);
         }
+        self.tell_trace(obj, signal, &args);
         let ids: SmallVec<[ConnectionId; 4]> = {
             let signals = self.inner.signals.borrow();
             match signals.by_object.get(obj) {

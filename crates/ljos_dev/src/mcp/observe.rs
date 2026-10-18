@@ -85,6 +85,7 @@ pub(crate) fn request_kind(req: &DevReq) -> &'static str {
         Kind::Mailboxes(_) => "app_mailboxes",
         Kind::Watch(_) => "app_watch",
         Kind::Objects(_) => "app_objects",
+        Kind::Trace(_) => "app_trace",
         Kind::Resource(r) => match r {
             Resource::Tree => "resource tree",
             Resource::Logs => "resource logs",
@@ -318,7 +319,7 @@ fn threads() -> Vec<Thread> {
 
 /// `Timer#tick`, `NumberAnimation "fade"`, `Timer (Clock.qml:42)`: what
 /// to call an object, and a target any tool takes for it.
-fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) {
+pub(crate) fn label(engine: &Engine, obj: ObjectId) -> (String, Option<String>) {
     let report = engine.inspect_object(obj);
     let ty = report
         .as_ref()

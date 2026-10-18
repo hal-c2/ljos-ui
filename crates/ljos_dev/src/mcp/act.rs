@@ -242,7 +242,7 @@ fn to_qml(engine: &Engine, v: &Value) -> Result<QmlValue, SurfaceError> {
 
 /// An engine value as JSON: what a script's `JSON.stringify` would show for
 /// the plain kinds, and the text JS gives for the rest.
-fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
+pub(crate) fn to_json(engine: &Engine, v: &QmlValue, depth: u8) -> Value {
     match v {
         QmlValue::Undefined | QmlValue::Null => Value::Null,
         QmlValue::Bool(b) => json!(b),

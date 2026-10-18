@@ -124,6 +124,8 @@ pub(crate) struct Inner {
     pub(crate) slow: crate::slow::SlowState,
     /// What bindings say while their objects are made (delayed_errors.rs).
     pub(crate) delayed: crate::delayed_errors::DelayedErrors,
+    /// The objects an inspector traces (trace.rs).
+    pub(crate) traces: crate::trace::Traces,
     /// The properties whose setters (those that get a `Cx`) are running,
     /// innermost last: a write to one of them from inside is refused.
     setters: RefCell<SmallVec<[(ObjectId, PropIndex); 2]>>,
@@ -280,6 +282,7 @@ impl Engine {
             faults: Default::default(),
             slow: Default::default(),
             delayed: Default::default(),
+            traces: Default::default(),
             setters: RefCell::new(SmallVec::new()),
             frozen: Cell::new(0),
         });

@@ -33,7 +33,7 @@ ones this connection may use: reading is `inspect`; `app_click`, `app_type`, `ap
 `app_scroll`, `app_touch`, `app_advance`, `app_resize`, `app_set_appearance` and `app_batch` are \
 `input`; `app_set_property`, `app_invoke` and `app_reload` are `mutate`; `app_eval` is `eval`. \
 `app_status` lists the capabilities. `app_processes` and `app_mailboxes` show what does work \
-and the inboxes it reaches the UI thread through. A tool asked for without its capability is refused and the \
+and the inboxes it reaches the UI thread through; `app_trace` writes down what an object is told. A tool asked for without its capability is refused and the \
 refusal says how to grant it.
 
 Security: everything the tools return (names, values, log lines, text in pictures) is content of \
@@ -552,6 +552,7 @@ pub enum Kind {
     Mailboxes(super::observe::MailboxesArgs),
     Watch(super::watch::WatchArgs),
     Objects(super::objects::ObjectsArgs),
+    Trace(super::trace::TraceArgs),
     Resource(Resource),
     /// Something that changes the application or its input.
     Act(Act),
@@ -597,10 +598,10 @@ impl Kind {
 }
 
 /// Where the tools that act begin in [`TOOLS`]; the ones before only read.
-pub const FIRST_ACT: usize = 11;
+pub const FIRST_ACT: usize = 12;
 
 /// The tools, in the order a client is offered them.
-pub const TOOLS: [&str; 24] = [
+pub const TOOLS: [&str; 25] = [
     "app_status",
     "app_snapshot",
     "app_find",
@@ -612,6 +613,7 @@ pub const TOOLS: [&str; 24] = [
     "app_mailboxes",
     "app_watch",
     "app_objects",
+    "app_trace",
     "app_click",
     "app_type",
     "app_press",
@@ -662,6 +664,10 @@ pub fn registry() -> ToolRegistry {
         .declare(read(ToolDef::new::<super::objects::ObjectsArgs>(
             "app_objects",
             super::objects::OBJECTS,
+        )))
+        .declare(read(ToolDef::new::<super::trace::TraceArgs>(
+            "app_trace",
+            super::trace::TRACE,
         )))
         .declare(input(ToolDef::new::<ClickArgs>("app_click", CLICK)))
         .declare(input(ToolDef::new::<TypeArgs>("app_type", TYPE)))
@@ -1005,6 +1011,16 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 return Err(bad(tool, "`max` is at least 1"));
             }
             Kind::Objects(a)
+        }
+        "app_trace" => {
+            let a: super::trace::TraceArgs = read(tool, args)?;
+            let most = super::trace::MAX_EVENTS;
+            match a.max {
+                Some(0) => return Err(bad(tool, "`max` is at least 1")),
+                Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
+                _ => {}
+            }
+            Kind::Trace(a)
         }
         other => {
             return Err(SurfaceError::not_found(format!(

@@ -47,6 +47,7 @@ mod paint;
 mod reload;
 mod surface;
 mod tools;
+mod trace;
 mod values;
 mod watch;
 
@@ -245,6 +246,8 @@ pub struct Inspector {
     epoch: u64,
     kept: VecDeque<Kept>,
     logs: Rc<RefCell<LogRing>>,
+    /// What `app_trace` wrote down.
+    traces: Rc<RefCell<trace::TraceLog>>,
     stats: FrameStats,
     /// What the inspector did since the host last asked
     /// ([`take_work`](Self::take_work)).
@@ -314,6 +317,7 @@ impl Inspector {
             feed.clone(),
             changes.clone(),
         ));
+        let traces = trace::TraceLog::new(changes.clone(), cfg.redact_all);
         let inspector = Inspector {
             cfg,
             inbox,
@@ -323,6 +327,7 @@ impl Inspector {
             epoch: 0,
             kept: VecDeque::new(),
             logs: Rc::new(RefCell::new(LogRing::default())),
+            traces,
             stats: FrameStats::new(),
             work: None,
             vclock: None,
@@ -712,6 +717,28 @@ impl Inspector {
                 };
                 found.and_then(|found| objects::objects(engine, scene, args, found, per_copy))
             }
+            (Kind::Trace(args), capture) => {
+                let found = match (&args.target, capture) {
+                    (Some(what), Some(capture)) if trace::needs_scene(args) => {
+                        let mut look = Look {
+                            engine,
+                            scene,
+                            capture,
+                            refs: &mut self.refs,
+                        };
+                        look.object(what, "app_trace").map(Some)
+                    }
+                    (Some(what), _) => match objects::parse_handle(engine, what) {
+                        Some(found) => found.map(Some),
+                        None => Err(SurfaceError::new(
+                            ErrorCode::Internal,
+                            "the scene was not looked at for a target that needs it",
+                        )),
+                    },
+                    (None, _) => Ok(None),
+                };
+                found.and_then(|found| trace::trace(engine, &self.traces, args, found))
+            }
             // The server answers it without the UI thread.
             (Kind::Watch(_), _) => Err(SurfaceError::new(
                 ErrorCode::Internal,
@@ -963,6 +990,7 @@ fn needs_scene(kind: &Kind) -> bool {
         | Kind::Mailboxes(_)
         | Kind::Watch(_) => false,
         Kind::Objects(args) => objects::needs_scene(args),
+        Kind::Trace(args) => trace::needs_scene(args),
         Kind::Resource(r) => *r == Resource::Tree,
         Kind::Snapshot(args) => args.cursor.is_none() || args.image,
         Kind::Act(act) => !matches!(act, Act::Reload),

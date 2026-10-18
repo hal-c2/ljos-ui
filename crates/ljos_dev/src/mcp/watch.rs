@@ -19,7 +19,7 @@ use serde_json::json;
 use tokio::sync::watch;
 
 pub const WATCH: &str = "\
-Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads. Give the \
+Wait until the app changes: frames run, passes drawn (`paints`), log lines, reloads, `traces`. Give the \
 `counts` of the last answer as `since`; it answers when a `topics` count differs, else after \
 `wait_ms`. `settle_ms` gathers a burst into one answer. Wakes nothing in the app.";
 
@@ -43,10 +43,18 @@ pub enum Topic {
     Logs,
     /// Reloads, applied or failed.
     Reloads,
+    /// Events `app_trace` wrote down.
+    Traces,
 }
 
 impl Topic {
-    const ALL: [Topic; 4] = [Topic::Frames, Topic::Paints, Topic::Logs, Topic::Reloads];
+    const ALL: [Topic; 5] = [
+        Topic::Frames,
+        Topic::Paints,
+        Topic::Logs,
+        Topic::Reloads,
+        Topic::Traces,
+    ];
 
     fn name(self) -> &'static str {
         match self {
@@ -54,6 +62,7 @@ impl Topic {
             Topic::Paints => "paints",
             Topic::Logs => "logs",
             Topic::Reloads => "reloads",
+            Topic::Traces => "traces",
         }
     }
 }
@@ -70,6 +79,8 @@ pub struct Since {
     pub logs: Option<u64>,
     #[serde(default)]
     pub reloads: Option<u64>,
+    #[serde(default)]
+    pub traces: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
@@ -79,8 +90,8 @@ pub struct WatchArgs {
     /// answered at once.
     #[serde(default)]
     pub since: Option<Since>,
-    /// Wait for these only: `frames`, `paints`, `logs`, `reloads`. All by
-    /// default.
+    /// Wait for these only: `frames`, `paints`, `logs`, `reloads`,
+    /// `traces`. All by default.
     #[serde(default)]
     pub topics: Vec<Topic>,
     /// How long to wait at most, in milliseconds (default 10000, at most
@@ -100,6 +111,7 @@ pub(crate) struct Counts {
     pub(crate) paints: u64,
     pub(crate) logs: u64,
     pub(crate) reloads: u64,
+    pub(crate) traces: u64,
 }
 
 impl Counts {
@@ -109,6 +121,7 @@ impl Counts {
             Topic::Paints => self.paints,
             Topic::Logs => self.logs,
             Topic::Reloads => self.reloads,
+            Topic::Traces => self.traces,
         }
     }
 }
@@ -120,6 +133,7 @@ impl Since {
             Topic::Paints => self.paints,
             Topic::Logs => self.logs,
             Topic::Reloads => self.reloads,
+            Topic::Traces => self.traces,
         }
     }
 }
@@ -151,6 +165,10 @@ impl ChangeFeed {
 
     pub(crate) fn reload(&self) {
         self.tx.send_modify(|c| c.reloads += 1);
+    }
+
+    pub(crate) fn trace(&self) {
+        self.tx.send_modify(|c| c.traces += 1);
     }
 
     #[cfg(test)]
@@ -213,8 +231,8 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     };
     let names: Vec<&str> = moved.iter().map(|t| t.name()).collect();
     let mut text = format!(
-        "frames {}, paints {}, logs {}, reloads {}",
-        now.frames, now.paints, now.logs, now.reloads
+        "frames {}, paints {}, logs {}, reloads {}, traces {}",
+        now.frames, now.paints, now.logs, now.reloads, now.traces
     );
     if args.since.is_none() {
         text.push_str(" (the counts to give as `since`)");
@@ -229,6 +247,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
             "paints": now.paints,
             "logs": now.logs,
             "reloads": now.reloads,
+            "traces": now.traces,
         },
         "changed": names,
         "waited": waited,

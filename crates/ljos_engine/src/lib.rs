@@ -91,6 +91,7 @@ mod slow;
 mod sort_filter;
 mod synchronizer;
 mod table_model;
+mod trace;
 mod tree;
 mod tree_model;
 mod types;
@@ -155,6 +156,7 @@ pub use sort_filter::{
     FilterBase, RoleFilter, RoleSorter, SortFilterProxyModel, SorterBase, StringSorter, ValueFilter,
 };
 pub use table_model::TableModel;
+pub use trace::{TraceSink, Traced};
 pub use tree::{ItemTree, TreeChange, TreeListener, TreeListeners, tree_model};
 pub use tree_model::{TableModelColumn, TreeModel};
 pub use types::{ConvertError, QmlValue, TypeTag, Url};
