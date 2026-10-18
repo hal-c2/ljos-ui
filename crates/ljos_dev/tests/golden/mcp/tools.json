@@ -314,7 +314,7 @@
             },
             {
               "const": "supervisor",
-              "description": "The supervision tree: the standard supervisors and each boundary\nthat has had a fault, under the one around it.",
+              "description": "The supervision tree: the standard supervisors and every live\nboundary, under the one around it.",
               "type": "string"
             },
             {
@@ -580,10 +580,15 @@
     "read_only": true
   },
   {
-    "description": "Trace objects over time, like Erlang's observer: `target` (a ref, locator or @handle) starts one; from then its signals, property changes with new values and its end are written down with the app's time. `since` takes an answer's `next_since`; `stop` ends one or all.",
+    "description": "Trace objects over time, like Erlang's observer: `target` (a ref, locator or @handle) starts one; from then its signals, property changes and end are written down with the app's time, and with `bindings` each binding run, its cause and cost. `since` takes `next_since`; `stop` ends one or all.",
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "bindings": {
+          "default": false,
+          "description": "With `target`: also write down each time a binding of the object\nruns again, with what it read that changed, how long it took and\nwhether it gave the value it had.",
+          "type": "boolean"
+        },
         "holder": {
           "default": null,
           "description": "A name for the client: the trace ends once no `app_watch` with\nthis `holder` has waited for a while. With `stop` and no\n`target`, stops the traces of this holder only.",

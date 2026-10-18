@@ -2314,79 +2314,98 @@ impl Engine {
             if engine.destruction_told(obj) {
                 return last.clone();
             }
-            let unseen = free != Free::Never;
-            if free == Free::First {
-                free = Free::Never;
-            }
-            let v = {
-                let _t = Tracking::enter(&engine.inner.tracking);
-                f(&engine)
+            // While a trace follows bindings each run is told: what it
+            // read that changed, how long it took and what it gave.
+            // Otherwise this is one look at a flag.
+            let followed = if engine.inner.traces.follows_bindings() {
+                engine
+                    .binding_runs(obj, prop)
+                    .map(|run| (run, last.clone()))
+            } else {
+                None
             };
-            let Some(v) = v else {
-                return last.clone();
-            };
-            // A binding that yields `undefined` takes the property back
-            // and stays: its next value is given as any other.
-            let v = match reset {
-                Some(reset) if reset.takes_back(&v) => {
+            let mut run = || -> Value {
+                let unseen = free != Free::Never;
+                if free == Free::First {
+                    free = Free::Never;
+                }
+                let v = {
                     let _t = Tracking::enter(&engine.inner.tracking);
-                    engine.reset_value(obj, prop, reset)
+                    f(&engine)
+                };
+                let Some(v) = v else {
+                    return last.clone();
+                };
+                // A binding that yields `undefined` takes the property back
+                // and stays: its next value is given as any other.
+                let v = match reset {
+                    Some(reset) if reset.takes_back(&v) => {
+                        let _t = Tracking::enter(&engine.inner.tracking);
+                        engine.reset_value(obj, prop, reset)
+                    }
+                    _ => v,
+                };
+                if !sought {
+                    sought = true;
+                    slot = engine.number_slot(obj, prop);
                 }
-                _ => v,
-            };
-            if !sought {
-                sought = true;
-                slot = engine.number_slot(obj, prop);
-            }
-            // A number needs none of the conversions and has no filter.
-            if let Some(s) = slot
-                && let Some(n) = s.number(&v)
-            {
-                last = n;
-                if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
-                    return shown;
+                // A number needs none of the conversions and has no filter.
+                if let Some(s) = slot
+                    && let Some(n) = s.number(&v)
+                {
+                    last = n;
+                    if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
+                        return shown;
+                    }
+                    if !engine.store_number(&s, &last) {
+                        slot = None;
+                        sought = false;
+                        engine.store_value(obj, prop, &last);
+                    }
+                    return last.clone();
                 }
-                if !engine.store_number(&s, &last) {
-                    slot = None;
-                    sought = false;
-                    engine.store_value(obj, prop, &last);
-                }
-                return last.clone();
-            }
-            let v = engine.for_slot(obj, prop, v);
-            let coerced = {
-                let store = engine.inner.store.borrow();
-                coerce_for(&store, Some(obj), &ty, &v).and_then(|v| match store.objects.get(obj) {
-                    Some(h) => Ok(filter_in(h, prop, v)?),
-                    None => Ok(Filtered::Done(Some(v))),
-                })
-            };
-            let coerced = match coerced {
-                Ok(Filtered::Done(v)) => Ok(v),
-                Ok(setter) => engine.finish_filter(obj, prop, setter),
-                Err(e) => Err(e),
-            };
-            match coerced {
-                // The type refused it: the property keeps what it holds.
-                Ok(None) => {}
-                Ok(Some(v)) => last = v,
-                Err(e) => {
-                    // Qt's message is the binding's place and the error; a
-                    // binding made at run time has no place to give.
-                    match engine.binding_place(obj, prop) {
-                        Some(at) => engine.warn(format!("{at}: {e}")),
-                        None => {
-                            let (t, p) = engine.describe(obj, prop);
-                            engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                let v = engine.for_slot(obj, prop, v);
+                let coerced = {
+                    let store = engine.inner.store.borrow();
+                    coerce_for(&store, Some(obj), &ty, &v).and_then(|v| {
+                        match store.objects.get(obj) {
+                            Some(h) => Ok(filter_in(h, prop, v)?),
+                            None => Ok(Filtered::Done(Some(v))),
+                        }
+                    })
+                };
+                let coerced = match coerced {
+                    Ok(Filtered::Done(v)) => Ok(v),
+                    Ok(setter) => engine.finish_filter(obj, prop, setter),
+                    Err(e) => Err(e),
+                };
+                match coerced {
+                    // The type refused it: the property keeps what it holds.
+                    Ok(None) => {}
+                    Ok(Some(v)) => last = v,
+                    Err(e) => {
+                        // Qt's message is the binding's place and the error; a
+                        // binding made at run time has no place to give.
+                        match engine.binding_place(obj, prop) {
+                            Some(at) => engine.warn(format!("{at}: {e}")),
+                            None => {
+                                let (t, p) = engine.describe(obj, prop);
+                                engine.warn(format!("QML {t}: {e} (property \"{p}\")"));
+                            }
                         }
                     }
                 }
+                if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
+                    return shown;
+                }
+                engine.store_value(obj, prop, &last);
+                last.clone()
+            };
+            let v = run();
+            if let Some((run, before)) = followed {
+                engine.binding_ran(run, &before, &v);
             }
-            if !unseen && let Some(shown) = engine.intercept_binding(obj, prop, &last) {
-                return shown;
-            }
-            engine.store_value(obj, prop, &last);
-            last.clone()
+            v
         }
     }
 

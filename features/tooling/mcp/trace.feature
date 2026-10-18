@@ -13,6 +13,9 @@ Feature: Tracing what happens to an object over time
   properties changing, so an agent can trace an object and read, in the
   order they happened and with the application's time, the signals it
   emitted, the properties that changed with their new values, and its end.
+  Asked to, it also writes down each time a binding of the object ran
+  again: what it read that changed, how long it took, and whether it gave
+  the value it had, which is work done for nothing.
   Nothing is written down for an object that is not traced, and the list
   is bounded: the oldest give way and are counted.
 
@@ -31,6 +34,8 @@ Feature: Tracing what happens to an object over time
         function poke() { count += 1; poked(count) }
         function many() { for (var i = 0; i < 1100; ++i) count += 1 }
         Item { objectName: "other"; property int n: 0 }
+        Item { objectName: "gauge"; property int doubled: top.count * 2 }
+        Item { objectName: "sign"; property bool positive: top.count > 0 }
         Rectangle { objectName: "box"; width: 10; height: 10; border.color: top.open ? "red" : "blue" }
         TextInput { objectName: "secret"; width: 100; height: 20; echoMode: TextInput.Password }
         Loader {
@@ -51,6 +56,7 @@ Feature: Tracing what happens to an object over time
       Then the answer's "/tracing" has 1 entries
       And the answer's "/tracing/0/handle" matches "^@[0-9]+\.[0-9]+$"
       And the answer's "/tracing/0/name" is "Scenario \"root\""
+      And the answer's "/tracing/0/bindings" is false
       And the answer's "/events" has 0 entries
 
     Scenario: A change and then a signal are written down as they happened
@@ -134,6 +140,72 @@ Feature: Tracing what happens to an object over time
       Then the answer's "/events/0/name" is "border.color"
       And the answer's "/events/0/value" is "#0000ff"
       And the answer's "/events" has 1 entries
+
+  Rule: A traced object's bindings are written down as they run again, when asked
+
+    Scenario: A binding that runs again says what it read that changed
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#gauge", "bindings": true}
+        """
+      And the property "count" of "root" is set to 2
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 2 entries
+      And the answer's "/events/0/kind" is "binding"
+      And the answer's "/events/0/name" is "doubled"
+      And the answer's "/events/0/cause/0/object" is "Scenario \"root\""
+      And the answer's "/events/0/cause/0/property" is "count"
+      And the answer's "/events/0/same" is false
+      And the answer's "/events/0/us" is at least 0
+      And the answer's "/events/1/kind" is "change"
+      And the answer's "/events/1/value" is 4
+      And the answer's text contains "binding doubled ← Scenario \"root\".count"
+
+    Scenario: A binding that gives the value it had is work for nothing
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#sign", "bindings": true}
+        """
+      And the property "count" of "root" is set to 2
+      And the property "count" of "root" is set to 3
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 3 entries
+      And the answer's "/events/1/kind" is "change"
+      And the answer's "/events/2/kind" is "binding"
+      And the answer's "/events/2/name" is "positive"
+      And the answer's "/events/2/same" is true
+      And the answer's text contains "gave the value it had"
+
+    Scenario: A trace not asked for bindings writes down only what changed
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#gauge"}
+        """
+      And the property "count" of "root" is set to 2
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 1 entries
+      And the answer's "/events/0/kind" is "change"
+
+    Scenario: Tracing again without bindings stops writing them down
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#gauge", "bindings": true}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#gauge"}
+        """
+      And the property "count" of "root" is set to 2
+      And the agent calls the tool "app_trace"
+      Then the answer's "/events" has 1 entries
+      And the answer's "/tracing/0/bindings" is false
+
+    Scenario: Bindings without an object to trace are refused
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"bindings": true}
+        """
+      Then the agent is refused with "invalid_argument"
 
   Rule: The list is read from where the last answer ended
 

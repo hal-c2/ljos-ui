@@ -14,9 +14,19 @@
 //! A leaf of a group (`border.color`) has no change signal of its own; it
 //! is watched in the graph instead. The group is a field of the object, so
 //! watching its leaves makes nothing that was not there.
+//!
+//! A trace can also follow the object's bindings: each time one runs
+//! again it is told what the binding read that changed, how long it took
+//! and whether it gave the value it had. The graph does not keep why a
+//! node is dirty, so the trace keeps what each binding read, with the
+//! values, when it last ran; what reads differ from that is the cause. A
+//! read the graph gave a node only when it changed (`FieldReads`) is new
+//! among the reads, which makes it a cause too. While no trace follows
+//! bindings a binding's run pays one look at a flag.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Instant;
 
 use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap;
@@ -38,25 +48,56 @@ pub enum Traced<'a> {
     },
     /// A property changed to `value`.
     Change { prop: PropIndex, value: &'a Value },
+    /// A binding of `prop` ran again, for `us` microseconds. `cause` is
+    /// what it read that changed since it last ran, as far as the trace
+    /// saw; `same` says it gave the value it had, which is work for
+    /// nothing.
+    Binding {
+        prop: PropIndex,
+        cause: &'a [(ObjectId, PropIndex)],
+        us: u64,
+        same: bool,
+    },
     /// The object is being destroyed. It is traced no longer.
     Destroyed,
 }
+
+/// The most reads of one binding a trace keeps to compare the next run
+/// with: a binding that reads more is told the causes among these.
+const MAX_READS: usize = 32;
 
 /// Told what happens to the objects it traces. It runs where the signal is
 /// emitted or the change is told, untracked; it must not write.
 pub type TraceSink = Rc<dyn Fn(&Engine, ObjectId, Traced<'_>)>;
 
+/// What each binding read when it last ran, with the values then.
+type Reads = FxHashMap<PropIndex, Vec<(NodeId, Value)>>;
+
 struct Trace {
     sink: TraceSink,
     conns: Vec<ConnectionId>,
     watches: Vec<NodeId>,
+    /// `Some` while the trace follows the object's bindings.
+    reads: Option<Reads>,
 }
 
 #[derive(Default)]
 pub(crate) struct Traces {
     /// Whether any object is traced: the one look an emission pays.
     on: Cell<bool>,
+    /// Whether any trace follows bindings: the one look a binding's run
+    /// pays.
+    bindings: Cell<bool>,
     by_object: RefCell<FxHashMap<ObjectId, Trace>>,
+}
+
+/// A run of a followed binding, from before it until after it.
+pub(crate) struct BindingRun {
+    obj: ObjectId,
+    prop: PropIndex,
+    node: NodeId,
+    cause: Vec<(ObjectId, PropIndex)>,
+    started: Instant,
 }
 
 impl Engine {
@@ -135,10 +176,143 @@ impl Engine {
                 sink,
                 conns,
                 watches,
+                reads: None,
             },
         );
         traces.on.set(true);
         Ok(())
+    }
+
+    /// Whether the trace of `obj` follows its bindings from now on: each
+    /// time one runs again the sink is told ([`Traced::Binding`]). False if
+    /// `obj` is not traced. Tracing it again stops it.
+    pub fn trace_bindings(&self, obj: ObjectId, follow: bool) -> bool {
+        let traces = &self.inner.traces;
+        if !traces.by_object.borrow().contains_key(&obj) {
+            return false;
+        }
+        let reads = follow.then(|| {
+            // What each binding read is kept now, so that its first run
+            // after this has something to be compared with.
+            let nodes: Vec<(PropIndex, NodeId)> = {
+                let store = self.inner.store.borrow();
+                store.objects.get(obj).map_or_else(Vec::new, |h| {
+                    (0..h.meta.properties.len())
+                        .filter_map(|i| {
+                            let p = PropIndex(i as u32);
+                            Some((p, h.node(p)?))
+                        })
+                        .collect()
+                })
+            };
+            nodes
+                .into_iter()
+                .filter(|(_, n)| self.inner.graph.is_bound(*n))
+                .map(|(p, n)| (p, self.reads_now(n)))
+                .collect()
+        });
+        if let Some(t) = traces.by_object.borrow_mut().get_mut(&obj) {
+            t.reads = reads;
+        }
+        traces.recount();
+        true
+    }
+
+    /// Whether the trace of `obj` follows its bindings.
+    pub fn traces_bindings(&self, obj: ObjectId) -> bool {
+        self.inner
+            .traces
+            .by_object
+            .borrow()
+            .get(&obj)
+            .is_some_and(|t| t.reads.is_some())
+    }
+
+    /// What `n` read when it last ran, with the values they have now.
+    fn reads_now(&self, n: NodeId) -> Vec<(NodeId, Value)> {
+        let g = &self.inner.graph;
+        g.sources(n)
+            .into_iter()
+            .take(MAX_READS)
+            .filter_map(|s| Some((s, g.peek(s)?)))
+            .collect()
+    }
+
+    /// The start of a run of the binding of `prop`, if a trace follows
+    /// the bindings of `obj`: what it read that changed since its last run.
+    pub(crate) fn binding_runs(&self, obj: ObjectId, prop: PropIndex) -> Option<BindingRun> {
+        let kept = {
+            let by_object = self.inner.traces.by_object.borrow();
+            let reads = by_object.get(&obj)?.reads.as_ref()?;
+            reads.get(&prop).cloned().unwrap_or_default()
+        };
+        let node = self.inner.store.borrow().objects.get(obj)?.node(prop)?;
+        let g = &self.inner.graph;
+        let changed: Vec<NodeId> = g
+            .sources(node)
+            .into_iter()
+            .take(MAX_READS)
+            .filter(|s| match kept.iter().find(|(k, _)| k == s) {
+                Some((_, was)) => g.peek(*s).is_some_and(|now| now != *was),
+                // The graph gives a read a node when what it read changed.
+                None => true,
+            })
+            .collect();
+        let cause = {
+            let store = self.inner.store.borrow();
+            changed
+                .into_iter()
+                .filter_map(|s| store.node_keys.get(s).map(|k| (k.object, k.prop)))
+                .collect()
+        };
+        Some(BindingRun {
+            obj,
+            prop,
+            node,
+            cause,
+            started: Instant::now(),
+        })
+    }
+
+    /// The end of a run [`Engine::binding_runs`] began: tells the trace,
+    /// and keeps what the binding read once the graph has its reads.
+    pub(crate) fn binding_ran(&self, run: BindingRun, before: &Value, gave: &Value) {
+        let us = run.started.elapsed().as_micros() as u64;
+        let sink = self
+            .inner
+            .traces
+            .by_object
+            .borrow()
+            .get(&run.obj)
+            .map(|t| t.sink.clone());
+        if let Some(sink) = sink {
+            let what = Traced::Binding {
+                prop: run.prop,
+                cause: &run.cause,
+                us,
+                same: before == gave,
+            };
+            self.untrack(|| sink(self, run.obj, what));
+        }
+        let weak = Rc::downgrade(&self.inner);
+        let (obj, prop, node) = (run.obj, run.prop, run.node);
+        self.inner.graph.after_evaluation(move || {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let engine = Engine::from_inner(inner);
+            let reads = engine.reads_now(node);
+            if let Some(Some(kept)) = engine
+                .inner
+                .traces
+                .by_object
+                .borrow_mut()
+                .get_mut(&obj)
+                .map(|t| t.reads.as_mut())
+            {
+                kept.insert(prop, reads);
+            }
+        });
     }
 
     /// Stops tracing `obj`. False if it was not traced.
@@ -188,9 +362,21 @@ impl Engine {
 
 impl Traces {
     fn forget(&self, obj: ObjectId) -> Option<Trace> {
-        let mut by_object = self.by_object.borrow_mut();
-        let trace = by_object.remove(&obj);
-        self.on.set(!by_object.is_empty());
+        let trace = self.by_object.borrow_mut().remove(&obj);
+        self.recount();
         trace
+    }
+
+    fn recount(&self) {
+        let by_object = self.by_object.borrow();
+        self.on.set(!by_object.is_empty());
+        self.bindings
+            .set(by_object.values().any(|t| t.reads.is_some()));
+    }
+
+    /// Whether any trace follows bindings.
+    #[inline]
+    pub(crate) fn follows_bindings(&self) -> bool {
+        self.bindings.get()
     }
 }

@@ -7,6 +7,10 @@
 //! JSON, so an event holds no object or script value alive. The list is a
 //! ring: the oldest give way and are counted. Nothing is written down for
 //! an object that is not traced, and while nothing is, nothing here runs.
+//!
+//! Asked with `bindings`, a trace also writes down each time a binding of
+//! the object runs again, with what it read that changed and whether it
+//! gave the value it had: why the object is busy, not only what changed.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -26,8 +30,8 @@ use super::watch::ChangeFeed;
 
 pub const TRACE: &str = "\
 Trace objects over time, like Erlang's observer: `target` (a ref, locator or @handle) starts one; \
-from then its signals, property changes with new values and its end are written down with the \
-app's time. `since` takes an answer's `next_since`; `stop` ends one or all.";
+from then its signals, property changes and end are written down with the app's time, and with \
+`bindings` each binding run, its cause and cost. `since` takes `next_since`; `stop` ends one or all.";
 
 /// The most events kept; older ones give way and are counted.
 pub const MAX_KEPT: usize = 1_000;
@@ -48,6 +52,11 @@ pub struct TraceArgs {
     /// written down stays.
     #[serde(default)]
     pub stop: bool,
+    /// With `target`: also write down each time a binding of the object
+    /// runs again, with what it read that changed, how long it took and
+    /// whether it gave the value it had.
+    #[serde(default)]
+    pub bindings: bool,
     /// The `next_since` of an earlier answer: only what came after it.
     #[serde(default)]
     pub since: Option<u64>,
@@ -72,6 +81,15 @@ struct Event {
     values: Vec<Value>,
     /// The new value of an enum as QML writes it: `Text.AlignRight`.
     key: Option<String>,
+    /// What a binding read that changed, how long it ran and whether it
+    /// gave the value it had.
+    run: Option<Run>,
+}
+
+struct Run {
+    cause: Vec<(ObjectId, String, String)>,
+    us: u64,
+    same: bool,
 }
 
 /// What was written down, shared by every sink the inspector made.
@@ -119,6 +137,12 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
         };
         let meta = engine.meta_of(obj);
         let mut key = None;
+        let mut run = None;
+        let prop_name = |prop: ljos_engine::PropIndex| {
+            meta.as_ref()
+                .and_then(|m| m.property(prop))
+                .map_or_else(|| format!("#{}", prop.0), |p| p.name.to_string())
+        };
         let (kind, name, values): (_, String, Vec<Value>) = match what {
             Traced::Signal { signal, args } => (
                 "signal",
@@ -133,11 +157,28 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
                 key = engine.key_text(obj, prop, value);
                 (
                     "change",
-                    meta.as_ref()
-                        .and_then(|m| m.property(prop))
-                        .map_or_else(|| format!("#{}", prop.0), |p| p.name.to_string()),
+                    prop_name(prop),
                     vec![super::act::to_json(engine, value, 0)],
                 )
+            }
+            Traced::Binding {
+                prop,
+                cause,
+                us,
+                same,
+            } => {
+                let cause = cause
+                    .iter()
+                    .map(|(o, p)| {
+                        let name = engine
+                            .meta_of(*o)
+                            .and_then(|m| m.property(*p).map(|p| p.name.to_string()))
+                            .unwrap_or_else(|| format!("#{}", p.0));
+                        (*o, super::observe::label(engine, *o).0, name)
+                    })
+                    .collect();
+                run = Some(Run { cause, us, same });
+                ("binding", prop_name(prop), Vec::new())
             }
             Traced::Destroyed => ("destroyed", String::new(), Vec::new()),
         };
@@ -160,6 +201,7 @@ fn sink(log: &Rc<RefCell<TraceLog>>) -> TraceSink {
             name,
             values,
             key: key.filter(|_| !masked),
+            run,
         };
         log.push(event);
     })
@@ -184,6 +226,11 @@ pub(crate) fn trace(
     args: &TraceArgs,
     target: Option<ObjectId>,
 ) -> Result<ToolReply, SurfaceError> {
+    if args.bindings && (target.is_none() || args.stop) {
+        return Err(SurfaceError::invalid_argument(
+            "`app_trace`: `bindings` goes with a `target` to start tracing",
+        ));
+    }
     let traced = engine.traced();
     // An object that ended is traced no longer, whoever held it.
     log.borrow_mut().held.retain(|o, _| traced.contains(o));
@@ -197,6 +244,7 @@ pub(crate) fn trace(
             engine
                 .trace(obj, sink(log))
                 .map_err(|e| SurfaceError::invalid_argument(format!("`app_trace`: {e}")))?;
+            engine.trace_bindings(obj, args.bindings);
             let mut log = log.borrow_mut();
             match &args.holder {
                 Some(h) => log.held.insert(obj, h.clone()),
@@ -239,6 +287,7 @@ pub(crate) fn trace(
         .into_iter()
         .map(|o| (o, super::observe::label(engine, o).0))
         .collect();
+    let follows = |o: ObjectId| engine.traces_bindings(o);
     tracing.sort_by(|a, b| a.1.cmp(&b.1));
     let log = log.borrow();
     let since = args.since.unwrap_or(0);
@@ -248,8 +297,9 @@ pub(crate) fn trace(
     let more = after.len() > shown.len();
     let next_since = shown.last().map_or(log.next - 1, |e| e.seq);
     let mut text = String::new();
-    for (_, label) in &tracing {
-        let _ = writeln!(text, "tracing {label}");
+    for (o, label) in &tracing {
+        let too = if follows(*o) { ", bindings too" } else { "" };
+        let _ = writeln!(text, "tracing {label}{too}");
     }
     let events: Vec<Value> = shown
         .iter()
@@ -277,6 +327,44 @@ pub(crate) fn trace(
                         text,
                         "{:>4} {ms:>10.1} ms  {} .{} = {shown}",
                         e.seq, e.label, e.name
+                    );
+                }
+                "binding" => {
+                    let Some(run) = &e.run else {
+                        return v;
+                    };
+                    v["name"] = json!(e.name);
+                    v["cause"] = run
+                        .cause
+                        .iter()
+                        .map(|(o, label, p)| {
+                            json!({ "handle": handle(*o), "object": label, "property": p })
+                        })
+                        .collect();
+                    v["us"] = json!(run.us);
+                    v["same"] = json!(run.same);
+                    let cause: Vec<String> = run
+                        .cause
+                        .iter()
+                        .map(|(_, l, p)| format!("{l}.{p}"))
+                        .collect();
+                    let _ = writeln!(
+                        text,
+                        "{:>4} {ms:>10.1} ms  {} binding {} ← {} ({} µs){}",
+                        e.seq,
+                        e.label,
+                        e.name,
+                        if cause.is_empty() {
+                            "?".to_string()
+                        } else {
+                            cause.join(", ")
+                        },
+                        run.us,
+                        if run.same {
+                            ", gave the value it had"
+                        } else {
+                            ""
+                        }
                     );
                 }
                 "signal" => {
@@ -308,7 +396,9 @@ pub(crate) fn trace(
     let value = json!({
         "tracing": tracing
             .iter()
-            .map(|(o, label)| json!({ "handle": handle(*o), "name": label }))
+            .map(|(o, label)| {
+                json!({ "handle": handle(*o), "name": label, "bindings": follows(*o) })
+            })
             .collect::<Vec<_>>(),
         "events": events,
         "next_since": next_since,
