@@ -119,13 +119,14 @@ impl<'a> EguiSink<'a> {
     }
 
     /// Hand the shapes to egui on the painter's layer, intersecting each clip
-    /// rectangle with the painter's own.
-    pub fn paint(&self, painter: &egui::Painter) {
+    /// rectangle with the painter's own. They are moved, not copied: the
+    /// sink is left without shapes.
+    pub fn paint(&mut self, painter: &egui::Painter) {
         let outer = painter.clip_rect();
         painter.ctx().graphics_mut(|g| {
             let list = g.entry(painter.layer_id());
-            for cs in &self.shapes {
-                list.add(cs.clip_rect.intersect(outer), cs.shape.clone());
+            for cs in self.shapes.drain(..) {
+                list.add(cs.clip_rect.intersect(outer), cs.shape);
             }
         });
     }

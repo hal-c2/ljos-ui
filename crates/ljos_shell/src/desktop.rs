@@ -1401,7 +1401,7 @@ impl<M: Send + 'static> Desktop<M> {
             present::clip_to(&mut shapes, areas, pixels_per_point);
         }
         painter.prepare(&mut shapes, pixels_per_point);
-        let primitives = slot.ctx.tessellate(shapes, pixels_per_point);
+        let primitives = present::tessellate(&slot.ctx, shapes, pixels_per_point);
         #[cfg(feature = "mcp")]
         if let Some(meter) = meter.as_mut() {
             meter.built();

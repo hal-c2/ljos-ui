@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use egui::Rect;
-use egui::epaint::{ClippedShape, CornerRadius, Shape};
+use egui::epaint::{ClippedPrimitive, ClippedShape, CornerRadius, Mesh, Primitive, Shape};
 use ljos_render::b0::ShaderPaint;
 
 /// What a window last showed.
@@ -560,6 +560,73 @@ pub(crate) fn clip_to(shapes: &mut Vec<ClippedShape>, areas: &[Rect], pixels_per
             });
         }
     }
+}
+
+/// The primitives of `shapes`, as [`egui::Context::tessellate`] makes
+/// them, but with a mesh handed over as it is: the tessellator walks every
+/// vertex of one for its bounds and then copies it, and nearly all of a
+/// scene's shapes are meshes (two hundred bars are made one, each image is
+/// one). Meshes one after another in one clip rectangle and texture are
+/// still one primitive; the other shapes go to egui in runs.
+pub(crate) fn tessellate(
+    ctx: &egui::Context,
+    shapes: Vec<ClippedShape>,
+    pixels_per_point: f32,
+) -> Vec<ClippedPrimitive> {
+    let mut out = Vec::with_capacity(shapes.len());
+    // At most one of the two holds anything.
+    let mut rest = Vec::new();
+    let mut run: Vec<Arc<Mesh>> = Vec::new();
+    let mut run_clip = Rect::NOTHING;
+    for ClippedShape { clip_rect, shape } in shapes {
+        let Shape::Mesh(mesh) = shape else {
+            end_run(&mut out, &mut run, run_clip);
+            rest.push(ClippedShape { clip_rect, shape });
+            continue;
+        };
+        if !clip_rect.is_positive() || mesh.is_empty() {
+            continue;
+        }
+        if !rest.is_empty() {
+            out.extend(ctx.tessellate(std::mem::take(&mut rest), pixels_per_point));
+        }
+        if run
+            .first()
+            .is_some_and(|m| run_clip != clip_rect || m.texture_id != mesh.texture_id)
+        {
+            end_run(&mut out, &mut run, run_clip);
+        }
+        run_clip = clip_rect;
+        run.push(mesh);
+    }
+    end_run(&mut out, &mut run, run_clip);
+    if !rest.is_empty() {
+        out.extend(ctx.tessellate(rest, pixels_per_point));
+    }
+    out
+}
+
+/// Makes the meshes of `run` one primitive, and leaves `run` empty. One
+/// mesh nothing else holds is moved, not copied.
+fn end_run(out: &mut Vec<ClippedPrimitive>, run: &mut Vec<Arc<Mesh>>, clip_rect: Rect) {
+    let mesh = match run.len() {
+        0 => return,
+        1 => Arc::unwrap_or_clone(run.pop().expect("one mesh")),
+        _ => {
+            let mut mesh = Mesh::with_texture(run[0].texture_id);
+            mesh.reserve_vertices(run.iter().map(|m| m.vertices.len()).sum());
+            mesh.indices
+                .reserve(run.iter().map(|m| m.indices.len()).sum());
+            for m in run.drain(..) {
+                mesh.append_ref(&m);
+            }
+            mesh
+        }
+    };
+    out.push(ClippedPrimitive {
+        clip_rect,
+        primitive: Primitive::Mesh(mesh),
+    });
 }
 
 #[cfg(test)]
