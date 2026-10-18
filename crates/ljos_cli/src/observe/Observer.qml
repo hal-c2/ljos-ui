@@ -685,11 +685,20 @@ ApplicationWindow {
                 ColumnLayout {
                     id: processes
                     spacing: 10
-                    property var rows: []
-                    // The view is given the number of rows, not the rows:
-                    // a view given a new array makes every row again, and
-                    // a busy application is shown anew each second.
-                    property int count: 0
+                    // A busy application is shown anew each second. The
+                    // view's rows are a ListModel set row by row from the
+                    // answer (`held` is what it holds): a row whose values
+                    // are the same is left alone, and a count that changes
+                    // adds or takes rows at the end, never all of them.
+                    ListModel { id: procRows }
+                    property var held: []
+                    // A row made costs a delegate, so rows are set a piece
+                    // at a time, as long as `applyMs` allows a frame:
+                    // `incoming` from `at` on is still to come.
+                    property var incoming: []
+                    property int at: 0
+                    readonly property int applyMs: 2
+                    Timer { id: applying; interval: 1; repeat: true; onTriggered: processes.step() }
                     property var process: null
                     property string kind: ""
                     // Kind, name, state, work, wakeups, detail: the heads
@@ -702,10 +711,69 @@ ApplicationWindow {
                     }
 
                     function show(s) {
-                        rows = s.processes
-                        count = rows.length
+                        incoming = s.processes
+                        at = 0
                         if (s.process)
                             process = s.process
+                        step()
+                    }
+
+                    function step() {
+                        var rows = incoming
+                        var h = held
+                        var began = Date.now()
+                        var i = at
+                        for (; i < rows.length; ++i) {
+                            if (Date.now() - began >= applyMs)
+                                break
+                            var row = flat(rows[i])
+                            if (i >= h.length) {
+                                procRows.append(row)
+                                h.push(row)
+                            } else if (differs(h[i], row)) {
+                                procRows.set(i, row)
+                                h[i] = row
+                            }
+                        }
+                        at = i
+                        held = h
+                        if (i < rows.length) {
+                            if (!applying.running)
+                                applying.start()
+                            return
+                        }
+                        applying.stop()
+                        if (h.length > rows.length) {
+                            procRows.remove(rows.length, h.length - rows.length)
+                            h.splice(rows.length, h.length - rows.length)
+                        }
+                    }
+
+                    // A row as the view's model holds it: what the
+                    // columns show, worked out once.
+                    function flat(r) {
+                        return {
+                            what: r.role ? r.kind + " · " + r.role : r.kind || "",
+                            name: r.name || "",
+                            truncated: r.truncated === true,
+                            status: r.state || "",
+                            hasStatus: r.state !== undefined,
+                            work: window.ms(r.work_us),
+                            wakeups: r.wakeups === undefined ? "" : String(r.wakeups),
+                            detail: r.kind === "timer"
+                                    ? "every " + r.interval_ms + " ms" + (r.repeat ? ", repeats" : "")
+                                    : r.locator || r.thread_name || "",
+                            handle: r.handle === undefined ? "" : r.handle,
+                            pickable: r.handle !== undefined
+                        }
+                    }
+
+                    function differs(a, b) {
+                        for (var k in b) {
+                            if (a[k] !== b[k])
+                                return true
+                        }
+                        return false
                     }
 
                     function nameWidth(total) {
@@ -780,49 +848,57 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.topMargin: 33
                             clip: true
-                            model: processes.count
+                            model: procRows
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: prow
                                 required property int index
-                                readonly property var modelData: processes.rows[index] || ({})
+                                required property string what
+                                required property string name
+                                required property bool truncated
+                                required property string status
+                                required property bool hasStatus
+                                required property string work
+                                required property string wakeups
+                                required property string detail
+                                required property string handle
+                                required property bool pickable
                                 width: ListView.view.width
                                 height: 32
                                 color: rowHover.containsMouse ? theme.accentSoft
                                      : index % 2 ? theme.cardAlt : "transparent"
-                                readonly property bool pickable: modelData.handle !== undefined
                                 Row {
                                     x: 8
                                     height: parent.height
                                     Label {
                                         width: processes.widths[0]; height: parent.height
                                         verticalAlignment: Text.AlignVCenter
-                                        text: prow.modelData.role ? prow.modelData.kind + " · " + prow.modelData.role : prow.modelData.kind
+                                        text: prow.what
                                         color: theme.subtle
                                         elide: Text.ElideRight
                                     }
                                     Label {
                                         width: processes.nameWidth(prow.width); height: parent.height
                                         verticalAlignment: Text.AlignVCenter
-                                        text: prow.modelData.name + (prow.modelData.truncated ? "…" : "")
+                                        text: prow.name + (prow.truncated ? "…" : "")
                                         color: prow.pickable ? theme.accent : theme.text
                                         elide: Text.ElideMiddle
-                                        font.bold: prow.modelData.name === "UI thread"
+                                        font.bold: prow.name === "UI thread"
                                     }
                                     Item {
                                         width: processes.widths[2]; height: parent.height
                                         Rectangle {
                                             id: dot
-                                            visible: prow.modelData.state !== undefined
+                                            visible: prow.hasStatus
                                             width: 8; height: 8; radius: 4
                                             anchors.verticalCenter: parent.verticalCenter
-                                            color: window.stateColor(prow.modelData.state)
+                                            color: window.stateColor(prow.status)
                                         }
                                         Label {
                                             anchors.left: dot.right
                                             anchors.leftMargin: 7
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: prow.modelData.state || ""
+                                            text: prow.status
                                             color: theme.text
                                         }
                                     }
@@ -831,7 +907,7 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
-                                        text: window.ms(prow.modelData.work_us)
+                                        text: prow.work
                                         color: theme.text
                                         font.family: theme.mono
                                     }
@@ -840,7 +916,7 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         horizontalAlignment: Text.AlignRight
                                         rightPadding: 12
-                                        text: prow.modelData.wakeups === undefined ? "" : prow.modelData.wakeups
+                                        text: prow.wakeups
                                         color: theme.text
                                         font.family: theme.mono
                                     }
@@ -849,9 +925,7 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideRight
                                         color: theme.subtle
-                                        text: prow.modelData.kind === "timer"
-                                              ? "every " + prow.modelData.interval_ms + " ms" + (prow.modelData.repeat ? ", repeats" : "")
-                                              : prow.modelData.locator || prow.modelData.thread_name || ""
+                                        text: prow.detail
                                     }
                                 }
                                 MouseArea {
@@ -860,11 +934,11 @@ ApplicationWindow {
                                     hoverEnabled: prow.pickable
                                     enabled: prow.pickable
                                     Accessible.role: Accessible.ListItem
-                                    Accessible.name: prow.modelData.name || ""
+                                    Accessible.name: prow.name
                                     onClicked: {
                                         window.page = 3
                                         objects.load(true)
-                                        objects.pick(prow.modelData.handle, prow.modelData.name)
+                                        objects.pick(prow.handle, prow.name)
                                     }
                                 }
                             }
@@ -992,12 +1066,38 @@ ApplicationWindow {
                     id: objects
                     spacing: 12
                     property var tree: []
-                    // The tree as shown: the parts of a tree are put
-                    // together in `tree` and shown once all have come,
-                    // since every new list of rows makes the view's rows
-                    // again.
-                    property var shownTree: []
+                    // The parts of a tree are put together in `tree` and
+                    // shown once all have come. The view's rows are a
+                    // ListModel brought to the rows wanted a piece at a
+                    // time (`sync`): a row kept is not made again, and no
+                    // frame does a whole tree of thousands.
+                    property int treeCount: 0
+                    property int shownCount: 0
                     property string filter: ""
+                    onFilterChanged: show()
+                    ListModel { id: treeRows }
+                    // What `treeRows` holds and what it is to hold, where
+                    // each wanted row is, how far down the tree the filter
+                    // has looked for them, and how many rows from the top
+                    // the two are already the same.
+                    property var have: []
+                    property var want: []
+                    property var wantAt: ({})
+                    property int scanned: 0
+                    property int same: 0
+                    // Rows to the piece, where the view shows them and
+                    // elsewhere, and time to the frame that `sync` takes,
+                    // well inside the dispatch's budget.
+                    readonly property int near: 4
+                    readonly property int piece: 200
+                    readonly property int syncMs: 2
+                    readonly property int rowHeight: 26
+                    Timer {
+                        id: syncing
+                        interval: 1
+                        repeat: true
+                        onTriggered: objects.sync()
+                    }
                     property bool truncated: false
                     // The tree comes in parts, each as much as one
                     // answer holds; a part of a tree asked before the
@@ -1165,7 +1265,7 @@ ApplicationWindow {
                         row.hidden = row.children
                         tree = tree.slice(0, i).concat([row], tree.slice(end))
                         truncated = false
-                        shownTree = tree
+                        show()
                     }
 
                     function openNext() {
@@ -1189,7 +1289,7 @@ ApplicationWindow {
                             askPart()
                             return
                         }
-                        shownTree = tree
+                        show()
                     }
 
                     function showTree(ok, s, r, asked, more) {
@@ -1251,26 +1351,124 @@ ApplicationWindow {
                         goOn()
                     }
 
-                    function shown(row) {
-                        if (filter === "")
-                            return true
-                        var f = filter.toLowerCase()
-                        return row.type.toLowerCase().indexOf(f) >= 0
-                            || (row.id || "").toLowerCase().indexOf(f) >= 0
-                            || (row.object_name || "").toLowerCase().indexOf(f) >= 0
+                    // The view is to show the rows of the tree the filter
+                    // lets through; `sync` looks for them.
+                    function show() {
+                        want = []
+                        wantAt = {}
+                        scanned = 0
+                        same = 0
+                        treeCount = tree.length
+                        if (!syncing.running)
+                            syncing.start()
                     }
 
-                    readonly property var rows: {
-                        var out = []
-                        for (var i = 0; i < shownTree.length; ++i)
-                            if (shown(shownTree[i]))
-                                out.push(shownTree[i])
-                        return out
+                    // What the filter looks in, in lower case, worked out
+                    // once a row.
+                    function key(row) {
+                        if (row.key === undefined)
+                            row.key = (row.type + "\n" + (row.id || "") + "\n"
+                                       + (row.object_name || "")).toLowerCase()
+                        return row.key
                     }
-                    // The view's model is the number of rows, not the
-                    // rows: a tree asked again with as many rows keeps
-                    // the view's rows and changes what they say.
-                    readonly property int rowCount: rows.length
+
+                    // A row as the view's model holds it.
+                    function flat(row) {
+                        return {
+                            handle: row.handle,
+                            kind: row.type,
+                            ident: row.id || "",
+                            oname: row.object_name || "",
+                            depth: row.depth || 0,
+                            isItem: row.item === true,
+                            dim: row.visible === false,
+                            hidden: row.hidden === undefined ? -1 : row.hidden
+                        }
+                    }
+
+                    function differs(held, row) {
+                        return held.kind !== row.type || held.ident !== (row.id || "")
+                            || held.oname !== (row.object_name || "")
+                            || held.depth !== (row.depth || 0)
+                            || held.isItem !== (row.item === true)
+                            || held.dim !== (row.visible === false)
+                            || held.hidden !== (row.hidden === undefined ? -1 : row.hidden)
+                    }
+
+                    // Brings the view's rows a piece nearer the rows
+                    // wanted, from the top: a row that is the same stays,
+                    // one changed is set, rows no longer wanted go and
+                    // rows new come in, a piece at a time.
+                    function sync() {
+                        var h = have
+                        var w = want
+                        var at = wantAt
+                        var began = Date.now()
+                        var t = tree
+                        var f = filter.toLowerCase()
+                        var i = scanned
+                        for (; i < t.length; ++i) {
+                            if (i % 16 === 15 && Date.now() - began >= syncMs)
+                                break
+                            if (f !== "" && key(t[i]).indexOf(f) < 0)
+                                continue
+                            at[t[i].handle] = w.length
+                            w.push(t[i])
+                        }
+                        scanned = i
+                        if (i < t.length)
+                            return
+                        shownCount = w.length
+                        // Rows that come or go where the view shows them
+                        // have their delegates made then and there, so
+                        // there they change a few at a time.
+                        var shownTo = Math.ceil((treeView.contentY - treeView.originY
+                                                 + treeView.height) / rowHeight)
+                        var p = same
+                        var done = false
+                        while (Date.now() - began < syncMs) {
+                            var most = p <= shownTo ? near : piece
+                            if (p >= w.length) {
+                                if (h.length > p) {
+                                    treeRows.remove(p, h.length - p)
+                                    h.splice(p, h.length - p)
+                                }
+                                done = true
+                                break
+                            }
+                            var j = p < h.length ? at[h[p].handle] : w.length
+                            if (j === p) {
+                                if (differs(h[p], w[p])) {
+                                    h[p] = flat(w[p])
+                                    treeRows.set(p, h[p])
+                                }
+                                ++p
+                            } else if (j === undefined || j < p) {
+                                // Gone, or already come in above.
+                                var end = p + 1
+                                while (end < h.length && end - p < most) {
+                                    var k = at[h[end].handle]
+                                    if (k !== undefined && k >= p)
+                                        break
+                                    ++end
+                                }
+                                treeRows.remove(p, end - p)
+                                h.splice(p, end - p)
+                            } else {
+                                var rows = []
+                                var stop = Math.min(j, p + most)
+                                for (var n = p; n < stop; ++n)
+                                    rows.push(flat(w[n]))
+                                treeRows.insert(p, rows)
+                                Array.prototype.splice.apply(h, [p, 0].concat(rows))
+                                p = stop
+                            }
+                        }
+                        same = p
+                        have = h
+                        if (done)
+                            syncing.stop()
+                    }
 
                     function pick(handle, name) {
                         editing = ""
@@ -1395,7 +1593,7 @@ ApplicationWindow {
                             anchors.topMargin: 6
                             color: theme.subtle
                             font.pixelSize: 11
-                            text: objects.rows.length + " of " + objects.shownTree.length + " objects"
+                            text: objects.shownCount + " of " + objects.treeCount + " objects"
                                   + (objects.treeComing || objects.partCursor !== "" ? ", more coming"
                                      : objects.truncated ? ", the most shown"
                                      : objects.treeDepth > 0 ? " (" + objects.treeObjects + " in all; + opens a row)"
@@ -1406,41 +1604,47 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.topMargin: treeFilter.height + 34
                             clip: true
-                            model: objects.rowCount
+                            model: treeRows
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: node
-                                required property int index
-                                readonly property var modelData: objects.rows[index] || ({})
+                                required property string handle
+                                required property string kind
+                                required property string ident
+                                required property string oname
+                                required property int depth
+                                required property bool isItem
+                                required property bool dim
+                                required property int hidden
                                 width: ListView.view.width
-                                height: 26
-                                color: objects.picked === modelData.handle ? theme.accentSoft
+                                height: objects.rowHeight
+                                color: objects.picked === node.handle ? theme.accentSoft
                                      : nodeHover.containsMouse ? Qt.rgba(theme.text.r, theme.text.g, theme.text.b, 0.05)
                                      : "transparent"
                                 // Text, not Label, as in the property table:
                                 // rows are made as a tree of thousands is
                                 // scrolled, and a Text is cheaper to make.
                                 Row {
-                                    x: 10 + (objects.filter === "" ? node.modelData.depth * 14 : 0)
+                                    x: 10 + (objects.filter === "" ? node.depth * 14 : 0)
                                     height: parent.height
                                     spacing: 6
                                     Rectangle {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        width: 6; height: 6; radius: node.modelData.item ? 1 : 3
-                                        color: !node.modelData.item ? theme.violet
-                                             : node.modelData.visible === false ? theme.subtle : theme.accent
+                                        width: 6; height: 6; radius: node.isItem ? 1 : 3
+                                        color: !node.isItem ? theme.violet
+                                             : node.dim ? theme.subtle : theme.accent
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: node.modelData.type
-                                        color: node.modelData.visible === false ? theme.subtle : theme.text
-                                        font.bold: objects.picked === node.modelData.handle
+                                        text: node.kind
+                                        color: node.dim ? theme.subtle : theme.text
+                                        font.bold: objects.picked === node.handle
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: text !== ""
-                                        text: node.modelData.id ? "#" + node.modelData.id
-                                            : node.modelData.object_name ? "\"" + node.modelData.object_name + "\"" : ""
+                                        text: node.ident ? "#" + node.ident
+                                            : node.oname ? "\"" + node.oname + "\"" : ""
                                         color: theme.accent
                                     }
                                     // Without an id or a name, the handle tells
@@ -1449,8 +1653,8 @@ ApplicationWindow {
                                     // may have the id of their component.
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
-                                        visible: objects.filter !== "" || !node.modelData.id && !node.modelData.object_name
-                                        text: node.modelData.handle
+                                        visible: objects.filter !== "" || !node.ident && !node.oname
+                                        text: node.handle
                                         color: theme.subtle
                                         font.pixelSize: 11
                                     }
@@ -1460,8 +1664,8 @@ ApplicationWindow {
                                         id: disclosure
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: text !== ""
-                                        text: node.modelData.hidden !== undefined ? "+" + node.modelData.hidden
-                                            : objects.opened.indexOf(node.modelData.handle) >= 0 ? "−" : ""
+                                        text: node.hidden >= 0 ? "+" + node.hidden
+                                            : objects.opened.indexOf(node.handle) >= 0 ? "−" : ""
                                         color: discloseHover.containsMouse ? theme.accent : theme.subtle
                                         font.bold: discloseHover.containsMouse
                                     }
@@ -1471,9 +1675,9 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     Accessible.role: Accessible.ListItem
-                                    Accessible.name: node.modelData.type + (node.modelData.id ? "#" + node.modelData.id : "")
-                                    onClicked: objects.pick(node.modelData.handle,
-                                                            node.modelData.type + (node.modelData.id ? "#" + node.modelData.id : ""))
+                                    Accessible.name: node.kind + (node.ident ? "#" + node.ident : "")
+                                    onClicked: objects.pick(node.handle,
+                                                            node.kind + (node.ident ? "#" + node.ident : ""))
                                 }
                                 MouseArea {
                                     id: discloseHover
@@ -1483,12 +1687,12 @@ ApplicationWindow {
                                     height: parent.height
                                     hoverEnabled: true
                                     Accessible.role: Accessible.Button
-                                    Accessible.name: node.modelData.hidden !== undefined ? "Open" : "Close"
+                                    Accessible.name: node.hidden >= 0 ? "Open" : "Close"
                                     onClicked: {
-                                        if (node.modelData.hidden !== undefined)
-                                            objects.open(node.modelData.handle)
+                                        if (node.hidden >= 0)
+                                            objects.open(node.handle)
                                         else
-                                            objects.close(node.modelData.handle)
+                                            objects.close(node.handle)
                                     }
                                 }
                             }
