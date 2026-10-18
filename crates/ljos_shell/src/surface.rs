@@ -181,7 +181,11 @@ impl Painter {
     }
 
     /// The shapes as this painter draws them best.
-    pub(crate) fn prepare(&self, shapes: &mut [egui::epaint::ClippedShape], pixels_per_point: f32) {
+    pub(crate) fn prepare(
+        &self,
+        shapes: &mut Vec<egui::epaint::ClippedShape>,
+        pixels_per_point: f32,
+    ) {
         match self {
             // Shader callbacks never reach it (`draws_shaders`).
             Painter::Wgpu(_) => {}

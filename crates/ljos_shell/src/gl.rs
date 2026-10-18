@@ -1032,19 +1032,22 @@ fn count_compared() {
 /// the shapes next to it, and quads one after another are one mesh. Done to the shapes about to be drawn, after they
 /// were compared with the last picture (a callback is never the same as
 /// another).
-pub(crate) fn fill_rects(shapes: &mut [ClippedShape], pixels_per_point: f32) {
+pub(crate) fn fill_rects(shapes: &mut Vec<ClippedShape>, pixels_per_point: f32) {
     // The quads since something else came between them, all in the same
     // clip rectangle: they become one mesh, made at its size once the run
     // ends (grown a quad at a time, two hundred bars were a hundred
     // reallocations a frame), in the first one's place.
-    let mut run: Vec<(usize, egui::Rect, egui::Color32)> = Vec::new();
+    // Room for every shape once: grown as runs lengthened, it was seven
+    // allocations a frame.
+    let mut run: Vec<(usize, egui::Rect, egui::Color32)> = Vec::with_capacity(shapes.len());
+    let mut joined = false;
     for i in 0..shapes.len() {
         let fill = match &shapes[i].shape {
             Shape::Rect(rect) => clearable(rect, pixels_per_point).map(|color| (rect.rect, color)),
             _ => None,
         };
         let Some((r, color)) = fill else {
-            quads_into_mesh(shapes, &mut run);
+            joined |= quads_into_mesh(shapes, &mut run);
             continue;
         };
         if r.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
@@ -1052,12 +1055,12 @@ pub(crate) fn fill_rects(shapes: &mut [ClippedShape], pixels_per_point: f32) {
                 .first()
                 .is_some_and(|&(j, ..)| shapes[j].clip_rect != shapes[i].clip_rect)
             {
-                quads_into_mesh(shapes, &mut run);
+                joined |= quads_into_mesh(shapes, &mut run);
             }
             run.push((i, r, color));
             continue;
         }
-        quads_into_mesh(shapes, &mut run);
+        joined |= quads_into_mesh(shapes, &mut run);
         let color = color.to_normalized_gamma_f32();
         let clear = egui_glow::CallbackFn::new(move |info, painter| {
             clear_in(&info, painter.gl(), color);
@@ -1067,14 +1070,23 @@ pub(crate) fn fill_rects(shapes: &mut [ClippedShape], pixels_per_point: f32) {
             callback: Arc::new(clear),
         });
     }
-    quads_into_mesh(shapes, &mut run);
+    joined |= quads_into_mesh(shapes, &mut run);
+    // The places the others of each run were in: the tessellator costs
+    // each shape a few hundred instructions even when it draws nothing,
+    // and two hundred bars left a hundred and ninety-nine of them.
+    if joined {
+        shapes.retain(|s| !matches!(s.shape, Shape::Noop));
+    }
 }
 
 /// Makes the quads of `run` one mesh in the first one's place, and leaves
-/// `run` empty.
-fn quads_into_mesh(shapes: &mut [ClippedShape], run: &mut Vec<(usize, egui::Rect, egui::Color32)>) {
+/// `run` empty. Says whether that left places of others empty.
+fn quads_into_mesh(
+    shapes: &mut [ClippedShape],
+    run: &mut Vec<(usize, egui::Rect, egui::Color32)>,
+) -> bool {
     let Some(&(first, ..)) = run.first() else {
-        return;
+        return false;
     };
     let mut mesh = egui::Mesh::default();
     mesh.reserve_vertices(4 * run.len());
@@ -1084,7 +1096,9 @@ fn quads_into_mesh(shapes: &mut [ClippedShape], run: &mut Vec<(usize, egui::Rect
         shapes[i].shape = Shape::Noop;
     }
     shapes[first].shape = Shape::mesh(mesh);
+    let joined = run.len() > 1;
     run.clear();
+    joined
 }
 
 /// The colour of `rect` when a clear draws the same pixels it does.
@@ -1391,12 +1405,11 @@ mod tests {
             .iter()
             .map(|s| match &s.shape {
                 Shape::Mesh(m) => Some(m.vertices.len()),
-                Shape::Noop => None,
                 Shape::Rect(_) => Some(0),
                 other => panic!("{other:?}"),
             })
             .collect();
-        assert_eq!(vertices, [Some(8), None, Some(0), Some(4), Some(4)]);
+        assert_eq!(vertices, [Some(8), Some(0), Some(4), Some(4)]);
     }
 
     #[test]
@@ -1410,12 +1423,11 @@ mod tests {
             })
             .collect();
         fill_rects(&mut shapes, 1.0);
-        assert_eq!(cleared(&shapes), [false; 200]);
-        let meshes: Vec<_> = shapes
-            .iter()
-            .filter(|s| matches!(s.shape, Shape::Mesh(_)))
-            .collect();
-        assert_eq!(meshes.len(), 1, "one mesh made for the run, not one a bar");
+        assert_eq!(
+            shapes.len(),
+            1,
+            "one mesh made for the run, not one a bar, and no place left for the others"
+        );
         let Shape::Mesh(quads) = &shapes[0].shape else {
             panic!("the quads: {:?}", shapes[0].shape);
         };
