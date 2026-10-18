@@ -234,3 +234,13 @@ ecolor.opt-level = 3
 [profile.release]
 panic = "unwind" # the supervisor recovers from panics (D11)
 lto = "thin"
+
+# What is handed out: one LLVM module, so code that is generic over the
+# same types is made once and what is never called is dropped. The binary
+# is 15 % smaller and the pages of it a running app has in memory 12 MiB
+# fewer, at no cost in speed; the build takes 15 minutes, so the release
+# the benchmarks and the gallery rebuild stays thin (docs/BENCHMARKS.md).
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

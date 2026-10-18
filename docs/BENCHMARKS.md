@@ -1554,3 +1554,44 @@ In the X11 sandbox (`desktop:cua`, llvmpipe), clocks's EGL display started in 22
 13–14 ms after, and the wgpu instance in 181–191 ms before and 22–23 ms after (one run of 212 ms
 under load). No NVIDIA library is mapped on either painter after (47 mappings before), and anon PSS
 falls from 53.9 to 47.4 MiB (GL) and from 56.4 to 49.5 MiB (wgpu).
+
+### The binary's size and the file pages it keeps in memory (2026-10-18)
+
+The `ljos` command is the development tool: the runner, the inspector and authoring servers, the
+QML front end, the feature catalogue, the test runner, the bench, the formatter and every codec and
+document format an `Image` or `MediaPlayer` reads. Shipped applications do not link most of that.
+Release (thin LTO) makes it 115 MB, 89.7 MB stripped, of which 60.7 MB is code, 12.7 MB read-only
+data and 8.7 MB unwinding tables (`panic = "unwind"`, D11). No single thing is large. `nm` puts the
+code at 7.2 MB in `core`, 3.5 MB in `alloc`, 2.6 MB in `ljos_quick`, 2.2 MB in `ljos_engine`,
+1.9 MB in naga, and under 1.3 MB in each other crate. 4.3 MB of it is drop glue in 22 500 copies.
+The biggest data are symphonia's FFT tables (256 kB) and a few codec and TLS tables. The style
+pack, the dialogs, the type tables and the two fonts are each well under a megabyte. Each feature
+the command turns on is something it does, so none was turned off.
+
+What the pages cost is shown by `smaps` for `ljos run` in the X11 sandbox (clocks, 5 s after
+start). The binary has 27.5 MiB of its code and 8.5 MiB of its read-only data in memory, all clean
+file pages. Its 2.5 MiB of relocated pointers are private and count as anonymous. Qt's libraries
+keep a similar share of themselves in memory (libQt6Quick 2.7 of about 6.5 MiB): this kernel maps
+file pages in large folios, and transparent huge pages are `always`. So on this machine a
+binary's file PSS follows its size.
+
+`[profile.dist]` builds it as one LLVM module (`lto = "fat"`, `codegen-units = 1`). Stripped, the
+binary is 75.9 MB (−15 %): 53.2 MB of code, 11.7 MB of read-only data and 5.5 MB of unwinding
+tables. The build takes 884 s, against a few minutes to relink release, so release, which the
+bench and the gallery rebuild, stays thin. Build what is handed out with
+`cargo build --profile dist -p ljos_cli`.
+
+The bench ran `--profile desktop --warm-up --repeat 3 --settle 1 --idle 2 --load 0` with `--ljos`
+set to each binary in turn. It used the off-screen sway on the Radeon render node, under a load of
+10–17 from another lane's runs, and each cell is a median. The Qt column is from the same day's
+run, with the same flags.
+
+| App | Settled PSS, release → dist (MiB) | Anon PSS, release → dist | First frame, release → dist (ms) | Qt PSS / anon |
+|---|---:|---:|---:|---:|
+| calqlatr | 119 → 104 | 51.8 → 51.2 | 65 → 65 | 143 / 93.0 |
+| clocks | 124 → 107 | 48.9 → 48.2 | 57 → 55 | 147 / 101 |
+
+In the X11 sandbox, run in pairs for two rounds, the binary's own PSS fell from 53–56 to 41–42 MiB
+and the process's PSS from 110–117 to 101–108 MiB. The release figures are higher here than in the
+table's first runs that day (113 and 114 MiB): how much of a file the kernel maps depends on what
+the page cache holds, so only paired runs are compared.
