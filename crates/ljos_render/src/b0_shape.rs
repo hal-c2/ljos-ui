@@ -21,7 +21,7 @@
 //!
 //! Neither is built before the shape is first inside its clip rectangle.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
@@ -292,7 +292,7 @@ pub(crate) struct ShapeCache {
 impl Default for ShapeCache {
     fn default() -> Self {
         Self {
-            geoms: HashMap::new(),
+            geoms: HashMap::default(),
             raster: None,
             resources: Resources::new(),
             tessellated: 0,
@@ -763,7 +763,7 @@ fn feather(src: &VertexBuffers<[f32; 2], u32>) -> Feathered {
     // per edge: its two ends in order, the triangle's third corner, and how
     // many triangles use it.
     let mut edges: HashMap<(u32, u32), (u32, u32, u32, u8)> =
-        HashMap::with_capacity(src.indices.len());
+        HashMap::with_capacity_and_hasher(src.indices.len(), Default::default());
     for t in src.indices.as_chunks::<3>().0 {
         for k in 0..3 {
             let (a, b, c) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);

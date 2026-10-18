@@ -43,7 +43,6 @@
 //! drawn for a while. Once uploaded, pixels that can be made again are let
 //! go ([`ImageHandle::let_go`]).
 
-use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 
 use egui::epaint::{
@@ -54,7 +53,7 @@ use egui::{
     Color32, ColorImage, Context, FontId, Pos2, Rect as ERect, TextureFilter, TextureHandle,
     TextureId, TextureOptions, TextureWrapMode,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::SecondaryMap;
 use vello_cpu::kurbo::{Affine, PathEl, Point, Rect, Vec2};
 
@@ -278,7 +277,7 @@ impl TextureEntry {
 
 /// The texture for `key`, uploading the image the first time.
 fn texture_for(
-    textures: &mut HashMap<TextureKey, TextureEntry>,
+    textures: &mut FxHashMap<TextureKey, TextureEntry>,
     uploads: &mut u64,
     frame: u64,
     ctx: &Context,
@@ -686,12 +685,12 @@ pub struct EpaintBackend {
     tessellations: u64,
     world_rebuilds: u64,
     atlas: GlyphAtlas,
-    textures: HashMap<TextureKey, TextureEntry>,
+    textures: FxHashMap<TextureKey, TextureEntry>,
     texture_uploads: u64,
     shapes: ShapeCache,
     /// The nodes that hold a shape texture, so the ones that left the frame
     /// are found without walking every node.
-    textured: HashSet<NodeId>,
+    textured: FxHashSet<NodeId>,
 }
 
 /// What the glyph atlas holds, for tests and diagnostics.
@@ -955,10 +954,10 @@ impl EpaintBackend {
             tessellations: 0,
             world_rebuilds: 0,
             atlas: GlyphAtlas::default(),
-            textures: HashMap::new(),
+            textures: FxHashMap::default(),
             texture_uploads: 0,
             shapes: ShapeCache::default(),
-            textured: HashSet::new(),
+            textured: FxHashSet::default(),
         }
     }
 
@@ -1494,7 +1493,7 @@ impl RenderBackend for EpaintBackend {
         self.encoded = snap.frame;
         self.shapes.begin_frame();
         let mut stats = EncodeStats::default();
-        let mut warned_clips = HashSet::new();
+        let mut warned_clips = FxHashSet::default();
         let shift = Affine::translate((
             f64::from(sink.origin.x) - snap.viewport.x0,
             f64::from(sink.origin.y) - snap.viewport.y0,

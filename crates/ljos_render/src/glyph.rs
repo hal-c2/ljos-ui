@@ -5,7 +5,7 @@
 //! the same synthetic bold and slant, and the same baseline rounded to a whole
 //! device pixel.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
 use skrifa::instance::{LocationRef, NormalizedCoord, Size};
@@ -269,7 +269,7 @@ pub fn font_tables(font: &FontData) -> Option<FontTables> {
 /// Outlines are read each time: this is for measuring a text once, not for
 /// drawing, which goes through the backends' caches.
 pub fn glyph_ink_bounds(run: &GlyphRun) -> Vec<Option<Rect>> {
-    let mut seen: HashMap<u32, Option<Rect>> = HashMap::new();
+    let mut seen: HashMap<u32, Option<Rect>> = HashMap::default();
     let size = f64::from(run.font_size);
     run.glyphs
         .iter()
