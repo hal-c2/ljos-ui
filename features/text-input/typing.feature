@@ -85,12 +85,42 @@ Feature: Typing into a TextInput
         | Shift+Backspace | 17   | "hello brave worl"  | 16     |
         | Delete          | 0    | "ello brave world"  | 0      |
         | Delete          | 17   | "hello brave world" | 17     |
-        | Ctrl+D          | 0    | "ello brave world"  | 0      |
         | Ctrl+Backspace  | 17   | "hello brave "      | 12     |
         | Ctrl+Backspace  | 8    | "hello ave world"   | 6      |
         | Ctrl+Delete     | 0    | "brave world"       | 0      |
-        | Ctrl+K          | 5    | "hello"             | 5      |
-        | Ctrl+U          | 5    | ""                  | 0      |
+
+    # The oracle's qml6 has Windows's key bindings, where these keys delete
+    # nothing; on Linux they do (qml6 on xcb, checked with qmltestrunner).
+    Scenario Outline: <key> deletes nothing under Windows's key bindings
+      Given the application uses the key bindings of "Windows"
+      When the user types "hello brave world"
+      And the property "cursorPosition" of "input" is set to <from>
+      And the user presses "<key>"
+      Then the property "text" of "input" is "hello brave world"
+      And the property "cursorPosition" of "input" is <from>
+
+      Examples:
+        | key    | from |
+        | Ctrl+D | 0    |
+        | Ctrl+K | 5    |
+        | Ctrl+U | 5    |
+
+    @ljos-only
+    Scenario Outline: <key> at position <from> under <platform>'s key bindings
+      Given the application uses the key bindings of "<platform>"
+      When the user types "hello brave world"
+      And the property "cursorPosition" of "input" is set to <from>
+      And the user presses "<key>"
+      Then the property "text" of "input" is <text>
+      And the property "cursorPosition" of "input" is <cursor>
+
+      Examples:
+        | platform   | key    | from | text               | cursor |
+        | Linux      | Ctrl+D | 0    | "ello brave world" | 0      |
+        | Linux      | Ctrl+K | 5    | "hello"            | 5      |
+        | Linux      | Ctrl+U | 5    | ""                 | 0      |
+        | GNOME      | Ctrl+K | 5    | "hello"            | 5      |
+        | KDE Plasma | Ctrl+U | 5    | ""                 | 0      |
 
     Scenario: Backspace removes the selection
       When the user types "hello brave world"

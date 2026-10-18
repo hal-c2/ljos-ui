@@ -48,8 +48,8 @@ Feature: Editing a TextEdit with the keyboard
         | Shift+Return |
 
     # Each platform's InsertLineSeparator and InsertParagraphSeparator
-    # (qkeysequence.html#standard-shortcuts); the oracle runs on Linux and
-    # has only Linux's key bindings.
+    # (qkeysequence.html#standard-shortcuts); the oracle has only Windows's
+    # key bindings.
     @ljos-only
     Scenario Outline: <key> breaks the line under <platform>'s key bindings
       Given the application uses the key bindings of "<platform>"
@@ -120,10 +120,27 @@ Feature: Editing a TextEdit with the keyboard
       Then the property "cursorPosition" of "edit" is 13
       And the property "selectedText" of "edit" is "ello brave\nw"
 
-    Scenario: Ctrl+K deletes to the end of the line
+    # Ctrl+K is DeleteEndOfLine on Linux only (qml6 on xcb deletes, checked
+    # with qmltestrunner); the oracle's qml6 has Windows's key bindings.
+    Scenario: Ctrl+K deletes nothing under Windows's key bindings
+      Given the application uses the key bindings of "Windows"
+      When the property "cursorPosition" of "edit" is set to 1
+      And the user presses "Ctrl+K"
+      Then the property "text" of "edit" is "hello brave\nworld\nlast line here"
+      And the property "cursorPosition" of "edit" is 1
+
+    @ljos-only
+    Scenario Outline: Ctrl+K deletes to the end of the line under <platform>'s key bindings
+      Given the application uses the key bindings of "<platform>"
       When the property "cursorPosition" of "edit" is set to 1
       And the user presses "Ctrl+K"
       Then the property "text" of "edit" is "h\nworld\nlast line here"
+
+      Examples:
+        | platform   |
+        | Linux      |
+        | GNOME      |
+        | KDE Plasma |
 
   Rule: A key the TextEdit does not use goes on to its parents
 

@@ -41,7 +41,6 @@ Feature: Moving and selecting in a TextInput with the keyboard
         | Right      | 5    | 6  |
         | Home       | 5    | 0  |
         | End        | 5    | 22 |
-        | Ctrl+E     | 5    | 22 |
         | Ctrl+Right | 0    | 5  |
         | Ctrl+Right | 5    | 7  |
         | Ctrl+Right | 7    | 12 |
@@ -55,6 +54,29 @@ Feature: Moving and selecting in a TextInput with the keyboard
         | Ctrl+Left  | 7    | 5  |
         | Ctrl+Left  | 5    | 0  |
         | Ctrl+Left  | 9    | 7  |
+
+    # The oracle's qml6 has Windows's key bindings, where Ctrl+E is not
+    # MoveToEndOfLine; on Linux it is (qml6 on xcb, checked with qmltestrunner).
+    Scenario: Ctrl+E is passed on under Windows's key bindings
+      Given the application uses the key bindings of "Windows"
+      When the property "cursorPosition" of "input" is set to 5
+      And the user presses "Ctrl+E"
+      Then the property "keys" of "root" is "45 "
+      And the property "cursorPosition" of "input" is 5
+
+    @ljos-only
+    Scenario Outline: Ctrl+E moves to the end under <platform>'s key bindings
+      Given the application uses the key bindings of "<platform>"
+      When the property "cursorPosition" of "input" is set to 5
+      And the user presses "Ctrl+E"
+      Then the property "cursorPosition" of "input" is 22
+      And the property "keys" of "root" is ""
+
+      Examples:
+        | platform   |
+        | Linux      |
+        | GNOME      |
+        | KDE Plasma |
 
   Rule: Shift selects
 

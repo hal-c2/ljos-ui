@@ -278,10 +278,14 @@ fn tier1_check_is(w: &mut LjosWorld, on: String) -> StepResult {
     w.each(|b| b.tier1_check(on == "on"))
 }
 
-#[given(regex = r#"^the application uses the key bindings of "(Linux|Windows|macOS)"$"#)]
+#[given(
+    regex = r#"^the application uses the key bindings of "(Linux|GNOME|KDE Plasma|Windows|macOS)"$"#
+)]
 fn key_bindings(w: &mut LjosWorld, platform: String) -> StepResult {
     use ljos_quick::keys::Platform;
     let platform = match platform.as_str() {
+        "GNOME" => Platform::Gnome,
+        "KDE Plasma" => Platform::Kde,
         "Windows" => Platform::Windows,
         "macOS" => Platform::MacOs,
         _ => Platform::Linux,

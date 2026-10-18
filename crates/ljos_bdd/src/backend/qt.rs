@@ -651,10 +651,12 @@ impl Backend for QtBackend {
         Ok(())
     }
 
-    // The oracle runs on Linux and has only that platform's bindings.
+    // qml6 takes its key bindings from the desktop, and its `offscreen` and
+    // `vnc` platforms ask none: they have the Windows column, whatever the
+    // machine (Ctrl+K deletes nothing there, as on Windows).
     fn key_bindings(&mut self, platform: ljos_quick::keys::Platform) -> Result<()> {
         match platform {
-            ljos_quick::keys::Platform::Linux => Ok(()),
+            ljos_quick::keys::Platform::Windows => Ok(()),
             _ => Err(BackendError::NotImplemented(
                 "another platform's key bindings",
             )),

@@ -1113,9 +1113,16 @@ impl Backend for LjosBackend {
             if let Some(on) = self.tier1_check {
                 live.engine.set_tier1_check(on);
             }
-            if let Some(platform) = self.key_bindings {
-                ljos_quick::keys::set_platform(&live.engine, platform);
-            }
+            // A scenario is not told which desktop ran it: with none asked
+            // for, the build's platform, and on Linux no desktop's own keys.
+            let platform = self.key_bindings.unwrap_or_else(|| {
+                use ljos_quick::keys::Platform;
+                match Platform::current() {
+                    Platform::Gnome | Platform::Kde => Platform::Linux,
+                    p => p,
+                }
+            });
+            ljos_quick::keys::set_platform(&live.engine, platform);
             for (name, tree) in self.lazy_trees.drain(..) {
                 let e = &live.engine;
                 let obj = e

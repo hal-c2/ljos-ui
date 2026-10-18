@@ -29,8 +29,8 @@ Feature: KeyEvent
           key = event.key; text = event.text; modifiers = event.modifiers
           code = text.length ? text.charCodeAt(0) : -1
           count = event.count; copy = event.matches(StandardKey.Copy)
-          standard = [[StandardKey.Backspace, "Backspace"], [StandardKey.InsertParagraphSeparator, "InsertParagraphSeparator"],
-            [StandardKey.InsertLineSeparator, "InsertLineSeparator"]].filter(k => event.matches(k[0])).map(k => k[1]).join(" ")
+          standard = ["Backspace", "InsertParagraphSeparator", "InsertLineSeparator", "DeleteEndOfLine", "Replace", "Refresh",
+            "FullScreen", "AddTab", "Undo", "Redo"].filter(k => event.matches(StandardKey[k])).join(" ")
           presses++; if (event.isAutoRepeat) repeats++
         }
         Keys.onReleased: releases++
@@ -163,9 +163,29 @@ Feature: KeyEvent
       | Shift+Return | InsertLineSeparator      |
       | Shift+Enter  | InsertLineSeparator      |
 
+  # The oracle's qml6 has Windows's key bindings, whatever the machine.
+  @qt-parity
+  Scenario Outline: <chord> is the standard keys "<keys>" under Windows's key bindings
+    Given the application uses the key bindings of "Windows"
+    When the user presses "<chord>"
+    Then the property "standard" of "root" is "<keys>"
+
+    Examples:
+      | chord         | keys                |
+      | Backspace     |                     |
+      | Shift+Enter   | InsertLineSeparator |
+      | Ctrl+K        |                     |
+      | Ctrl+H        | Replace             |
+      | Ctrl+R        |                     |
+      | F11           | FullScreen          |
+      | Alt+Backspace | Undo                |
+      | Ctrl+Y        | Redo                |
+
   # Each platform's column of qkeysequence.html#standard-shortcuts, where
   # Apple's "Delete" is the key Qt calls Backspace; Shift+Return and
-  # Shift+Enter break a line on macOS as well. The oracle runs on Linux.
+  # Shift+Enter break a line on macOS as well. Linux, GNOME and KDE Plasma
+  # are what qml6 does on xcb on those desktops, checked with qmltestrunner;
+  # GNOME's FullScreen is F11, not the documentation's Ctrl+F11.
   @ljos-only
   Scenario Outline: <chord> is the standard keys "<keys>" under <platform>'s key bindings
     Given the application uses the key bindings of "<platform>"
@@ -173,11 +193,25 @@ Feature: KeyEvent
     Then the property "standard" of "root" is "<keys>"
 
     Examples:
-      | platform | chord        | keys                     |
-      | Linux    | Backspace    |                          |
-      | Linux    | Shift+Return | InsertLineSeparator      |
-      | Windows  | Backspace    |                          |
-      | Windows  | Shift+Enter  | InsertLineSeparator      |
+      | platform   | chord          | keys                     |
+      | Linux      | Backspace      |                          |
+      | Linux      | Shift+Return   | InsertLineSeparator      |
+      | Linux      | Ctrl+K         | DeleteEndOfLine          |
+      | Linux      | Ctrl+H         |                          |
+      | Linux      | Ctrl+R         |                          |
+      | Linux      | F11            |                          |
+      | Linux      | Alt+Backspace  |                          |
+      | Linux      | Ctrl+Y         |                          |
+      | GNOME      | Ctrl+K         | DeleteEndOfLine          |
+      | GNOME      | Ctrl+H         | Replace                  |
+      | GNOME      | Ctrl+R         | Refresh                  |
+      | GNOME      | F11            | FullScreen               |
+      | GNOME      | Ctrl+F11       |                          |
+      | KDE Plasma | Ctrl+K         | DeleteEndOfLine          |
+      | KDE Plasma | Ctrl+H         |                          |
+      | KDE Plasma | Ctrl+R         | Replace                  |
+      | KDE Plasma | Ctrl+Shift+F   | FullScreen               |
+      | KDE Plasma | Ctrl+Shift+N   | AddTab                   |
       | macOS    | Backspace    | Backspace                |
       | macOS    | Meta+H       | Backspace                |
       | macOS    | Return       | InsertParagraphSeparator |
