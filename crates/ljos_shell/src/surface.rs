@@ -23,6 +23,13 @@ use ljos_host::{WindowId, WindowState};
 #[cfg(gl_painter)]
 use crate::gl::{Gl, GlPainter};
 
+/// Whether the painters add egui's noise to colours as they cut them to
+/// eight bits. They do not: the noise is by place on screen, so the pixels
+/// of a scrolled clip that are moved rather than drawn again would keep the
+/// noise of where they were and differ from a clip drawn there by one or
+/// two levels; Qt Quick does not dither either.
+pub(crate) const DITHER: bool = false;
+
 /// What the windows are drawn with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Choice {
@@ -558,6 +565,7 @@ fn wgpu_painter(
     let options = RendererOptions {
         // B0 antialiases its own edges (feathering).
         msaa_samples: 1,
+        dithering: DITHER,
         ..RendererOptions::default()
     };
     // A surface that can be seen through, for every window: whether a

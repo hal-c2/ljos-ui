@@ -252,10 +252,14 @@ impl GlPainter {
         if !gl.make_current(None) {
             return Err("the GL context cannot be made current".into());
         }
-        let painter = egui_glow::Painter::new(Arc::clone(&gl.glow), "", None, true)
-            .map_err(|e| e.to_string())?;
+        let painter =
+            egui_glow::Painter::new(Arc::clone(&gl.glow), "", None, crate::surface::DITHER)
+                .map_err(|e| e.to_string())?;
         let meshes = crate::gl_mesh::Meshes::new(&gl.glow)?;
-        let blits = gl.glow.version().major >= 3;
+        // `LJOS_SCROLL_COPIES=off` draws a scrolled clip again instead of
+        // moving its pixels, so the two can be compared.
+        let blits = gl.glow.version().major >= 3
+            && std::env::var_os("LJOS_SCROLL_COPIES").is_none_or(|v| v != "off");
         Ok(Self {
             gl,
             painter,

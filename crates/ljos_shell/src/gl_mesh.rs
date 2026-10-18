@@ -10,7 +10,8 @@
 //! so it is drawn without a picture and joins the draw before or after it
 //! whatever that one samples: a row's background and its text, one after
 //! the other down a list, were a draw each. The shader is otherwise
-//! egui's: the same colours, in gamma, with the same dithering.
+//! egui's: the same colours, in gamma, without its dithering
+//! ([`crate::surface::DITHER`]).
 //!
 //! Textures stay egui_glow's. egui_glow sets its whole state up before and
 //! after each paint callback, which cost a list as much as a draw a row,
@@ -72,12 +73,7 @@ varying vec2 v_tc;
 #endif
 void main() {
     // A flat colour has no picture to sample (`FLAT`).
-    vec4 c = v_tc.x < 0.0 ? v_rgba : v_rgba * texture2D(u_sampler, v_tc);
-    // Interleaved gradient noise of a level, so that a gradient does not
-    // band when it is cut to eight bits.
-    float f = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
-    c.rgb += (f - 0.5) * 0.95 / 255.0;
-    gl_FragColor = c;
+    gl_FragColor = v_tc.x < 0.0 ? v_rgba : v_rgba * texture2D(u_sampler, v_tc);
 }
 ";
 
