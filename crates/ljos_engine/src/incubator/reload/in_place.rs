@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use ljos_ir::{
     CompIdx, CompiledFile, ComponentDef, ExprId, Literal, Members, ObjIdx, ObjRef, ObjectDef,
-    ObjectKey, ObjectValue, ReloadOp, ReloadPatch, SourceSpan, TypeRef,
+    ObjectKey, ObjectValue, ReloadOp, ReloadPatch, Resolved, SourceSpan, TypeRef,
 };
 use ljos_reactive::NodeId;
 use rustc_hash::FxHashMap as HashMap;
@@ -1426,6 +1426,14 @@ fn given_names(od: &ObjectDef) -> impl Iterator<Item = String> + '_ {
         )
 }
 
+/// Whether an object of `file` has the id `name`.
+fn names_an_object(file: &CompiledFile, name: &str) -> bool {
+    file.components
+        .iter()
+        .flat_map(|c| &c.objects)
+        .any(|o| o.id.as_deref() == Some(name))
+}
+
 /// The members of `od` the member `name` is written among, and its name
 /// there: `pixelSize` of the group `font`, `fillWidth` of `Layout`.
 fn held_in<'d, 'n>(od: &'d ObjectDef, name: &'n str) -> Option<(&'d Members, &'n str)> {
@@ -1606,6 +1614,18 @@ fn same_but_edits(
             }
             if aliased(new, e.comp, e.obj, name) {
                 return not_here("an aliased member changed");
+            }
+            // A binding that fails keeps the value it had, where a fresh
+            // load leaves the property as it starts.
+            let reads_gone = held_in(n, name)
+                .and_then(|(m, leaf)| m.bindings.iter().find(|b| b.name == leaf))
+                .is_some_and(|b| {
+                    new.expr(b.expr).refs.iter().any(|r| {
+                        matches!(r.resolved, Resolved::Unknown) && names_an_object(old, &r.name)
+                    })
+                });
+            if reads_gone {
+                return not_here("an edited binding reads an id that is gone");
             }
         }
         // A function edited in body alone: the object's method stays.

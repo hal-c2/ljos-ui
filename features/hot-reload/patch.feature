@@ -2460,3 +2460,28 @@ Feature: What a reload changes
       And a reload happens
       Then the property "font.pixelSize" of "big" is 30
       And the property "font.pixelSize" of "plain" is 20
+
+  Rule: A binding that reads an id no longer there starts as a fresh load starts it
+
+    It cannot be worked out, so it is not kept from before: the property
+    has the value it has when the file is loaded afresh.
+
+    Scenario: A label bound to a removed object's visibility shows again
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          Item { id: panel; visible: false }
+          Text { objectName: "hint"; text: "a"; visible: panel.visible }
+        }
+        """
+      Then the property "visible" of "hint" is false
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          Text { objectName: "hint"; text: "a"; visible: panel.visible }
+        }
+        """
+      And a reload happens
+      Then the property "visible" of "hint" is true
