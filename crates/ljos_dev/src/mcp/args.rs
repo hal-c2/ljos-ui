@@ -717,6 +717,22 @@ fn read<T: serde::de::DeserializeOwned>(tool: &str, args: Value) -> Result<T, Su
     })
 }
 
+/// The longest a holder's name may be.
+const MOST_HOLDER: usize = 64;
+
+/// A holder's name is a key the server keeps while the client watches:
+/// it has to say something and stay short.
+fn holder(tool: &str, name: Option<&str>) -> Result<(), SurfaceError> {
+    match name {
+        Some(n) if n.trim().is_empty() => Err(bad(tool, "`holder` is empty")),
+        Some(n) if n.len() > MOST_HOLDER => Err(bad(
+            tool,
+            format!("`holder` is at most {MOST_HOLDER} bytes"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn bad(tool: &str, why: impl std::fmt::Display) -> SurfaceError {
     SurfaceError::invalid_argument(format!("`{tool}`: {why}"))
 }
@@ -997,6 +1013,7 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
             if a.settle_ms.is_some_and(|w| w > most) {
                 return Err(bad(tool, format!("`settle_ms` is at most {most}")));
             }
+            holder(tool, a.holder.as_deref())?;
             Kind::Watch(a)
         }
         "app_objects" => {
@@ -1021,6 +1038,7 @@ pub fn parse(tool: &str, args: Value) -> Result<Kind, SurfaceError> {
                 Some(m) if m > most => return Err(bad(tool, format!("`max` is at most {most}"))),
                 _ => {}
             }
+            holder(tool, a.holder.as_deref())?;
             Kind::Trace(a)
         }
         other => {

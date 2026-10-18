@@ -40,6 +40,7 @@ mod args;
 mod capture;
 mod edits;
 mod frames;
+mod holders;
 mod logs;
 mod objects;
 mod observe;

@@ -230,6 +230,66 @@ Feature: Tracing what happens to an object over time
         """
       Then the agent is refused with "invalid_argument"
 
+  Rule: A trace a client holds ends when that client is gone
+
+    # Each call is answered on its own, so a client is known to be there
+    # only while it waits for the application with `app_watch`. A client
+    # that follows the application asks again as soon as it is answered;
+    # one that has not asked again within the time its last watch said it
+    # would wait, and at least a second, is gone, and so are its traces.
+    Scenario: A held trace lasts while its holder watches the application
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "observer"}
+        """
+      And the agent calls the tool "app_watch" with:
+        """json
+        {"since": {"traces": 0}, "topics": ["traces"], "wait_ms": 50, "holder": "observer"}
+        """
+      And the agent calls the tool "app_trace"
+      Then the answer's "/tracing" has 1 entries
+
+    Scenario: A held trace ends once its holder stops watching
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "observer"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#other"}
+        """
+      And the agent calls the tool "app_watch" with:
+        """json
+        {"since": {"traces": 0}, "topics": ["traces"], "wait_ms": 50, "holder": "observer"}
+        """
+      And the agent calls the tool "app_watch" with:
+        """json
+        {"since": {"traces": 0}, "topics": ["traces"], "wait_ms": 1500}
+        """
+      And the agent calls the tool "app_trace"
+      Then the answer's "/tracing" has 1 entries
+      And the answer's "/tracing/0/name" is "Item \"other\""
+
+    Scenario: The traces of one holder are stopped together
+      When the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#root", "holder": "observer"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#secret", "holder": "observer"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"target": "#other"}
+        """
+      And the agent calls the tool "app_trace" with:
+        """json
+        {"stop": true, "holder": "observer"}
+        """
+      Then the answer's "/tracing" has 1 entries
+      And the answer's "/tracing/0/name" is "Item \"other\""
+
   Rule: What a field hides is not told by its trace
 
     # Its length is told, as the field shows as many dots.

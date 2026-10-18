@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
 use super::args::{self, Act, INSTRUCTIONS, Kind, Resource, SERVER_NAME};
+use super::holders::Holders;
 use super::reload::{ReloadFeed, ReloadState};
 use super::watch::ChangeFeed;
 
@@ -90,6 +91,7 @@ pub struct InspectorSurface {
     timeout: Duration,
     feed: Arc<ReloadFeed>,
     changes: Arc<ChangeFeed>,
+    holders: Arc<Holders>,
 }
 
 impl fmt::Debug for InspectorSurface {
@@ -145,6 +147,33 @@ impl InspectorSurface {
         feed: Arc<ReloadFeed>,
         changes: Arc<ChangeFeed>,
     ) -> Self {
+        let release = handle.clone();
+        let holders = Holders::new(move |holder| {
+            // Whoever held the traces is gone, so the answer is awaited
+            // here: the UI thread skips a request nobody waits for. A
+            // full inbox drops it; the traces then stay until stopped, as
+            // ones without a holder do.
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                return;
+            };
+            let (reply, answer) = oneshot::channel();
+            runtime.spawn(async move {
+                let _ = answer.await;
+            });
+            let stop = super::trace::TraceArgs {
+                stop: true,
+                holder: Some(holder),
+                ..Default::default()
+            };
+            let _ = release.send(DevReq {
+                kind: Kind::Trace(stop),
+                reply,
+                deadline: Instant::now() + timeout,
+                slot: None,
+                per_copy: ljos_mcp_core::DEFAULT_RESULT_BYTES / 2,
+                caps: CapSet::of([Cap::Inspect]),
+            });
+        });
         InspectorSurface {
             registry: args::registry(),
             handle,
@@ -152,6 +181,7 @@ impl InspectorSurface {
             timeout,
             feed,
             changes,
+            holders,
         }
     }
 
@@ -278,9 +308,18 @@ impl McpSurface for InspectorSurface {
                 ));
             }
             if let Kind::Watch(a) = &kind {
+                let wait = a.wait_ms.unwrap_or(super::watch::DEFAULT_WAIT_MS);
+                let holding = a
+                    .holder
+                    .as_deref()
+                    .map(|h| self.holders.watching(h, Duration::from_millis(wait)));
                 // Sleeps here until the UI thread has something to tell:
                 // a watch never wakes it.
-                return Ok(super::watch::watch(&self.changes, a).await);
+                let reply = super::watch::watch(&self.changes, a).await;
+                if let Some(holding) = holding {
+                    holding.answered();
+                }
+                return Ok(reply);
             }
             match &kind {
                 Kind::Act(Act::Batch(steps)) => {
@@ -318,6 +357,10 @@ impl McpSurface for InspectorSurface {
                 Kind::Processes(a) if a.wants_mailboxes() => Some(a.clone()),
                 _ => None,
             };
+            let holds = match &kind {
+                Kind::Trace(a) if a.target.is_some() && !a.stop => a.holder.clone(),
+                _ => None,
+            };
             let answer = self.ask(kind, per_copy, ctx.caps).await;
             if let Some(a) = processes {
                 return match answer {
@@ -333,6 +376,9 @@ impl McpSurface for InspectorSurface {
                 };
             }
             let mut reply = answer?;
+            if let Some(holder) = holds {
+                self.holders.holds(&holder);
+            }
             if let Some(waited) = waited {
                 reply.structured["reload"]["waited"] = json!(waited);
             }

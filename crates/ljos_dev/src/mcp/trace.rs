@@ -9,7 +9,7 @@
 //! an object that is not traced, and while nothing is, nothing here runs.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -54,6 +54,11 @@ pub struct TraceArgs {
     /// The most events to list, oldest first (default 100, at most 500).
     #[serde(default)]
     pub max: Option<usize>,
+    /// A name for the client: the trace ends once no `app_watch` with
+    /// this `holder` has waited for a while. With `stop` and no
+    /// `target`, stops the traces of this holder only.
+    #[serde(default)]
+    pub holder: Option<String>,
 }
 
 struct Event {
@@ -78,6 +83,8 @@ pub(crate) struct TraceLog {
     changes: Arc<ChangeFeed>,
     /// Every string of every event is masked (`--mcp-redact`).
     redact_all: bool,
+    /// The client each object's trace is held by, if one is.
+    held: HashMap<ObjectId, String>,
 }
 
 impl TraceLog {
@@ -88,6 +95,7 @@ impl TraceLog {
             dropped: 0,
             changes,
             redact_all,
+            held: HashMap::new(),
         }))
     }
 
@@ -176,9 +184,11 @@ pub(crate) fn trace(
     args: &TraceArgs,
     target: Option<ObjectId>,
 ) -> Result<ToolReply, SurfaceError> {
+    let traced = engine.traced();
+    // An object that ended is traced no longer, whoever held it.
+    log.borrow_mut().held.retain(|o, _| traced.contains(o));
     match (target, args.stop) {
         (Some(obj), false) => {
-            let traced = engine.traced();
             if !traced.contains(&obj) && traced.len() >= MAX_TRACED {
                 return Err(SurfaceError::invalid_argument(format!(
                     "`app_trace`: {MAX_TRACED} objects are traced already; stop one first"
@@ -187,12 +197,38 @@ pub(crate) fn trace(
             engine
                 .trace(obj, sink(log))
                 .map_err(|e| SurfaceError::invalid_argument(format!("`app_trace`: {e}")))?;
+            let mut log = log.borrow_mut();
+            match &args.holder {
+                Some(h) => log.held.insert(obj, h.clone()),
+                None => log.held.remove(&obj),
+            };
         }
         (Some(obj), true) => {
             engine.untrace(obj);
+            log.borrow_mut().held.remove(&obj);
         }
         (None, true) => {
-            for obj in engine.traced() {
+            let stop: Vec<ObjectId> = {
+                let held = &mut log.borrow_mut().held;
+                match &args.holder {
+                    Some(h) => {
+                        let by_h: Vec<ObjectId> = held
+                            .iter()
+                            .filter(|(_, by)| *by == h)
+                            .map(|(o, _)| *o)
+                            .collect();
+                        for o in &by_h {
+                            held.remove(o);
+                        }
+                        by_h
+                    }
+                    None => {
+                        held.clear();
+                        traced
+                    }
+                }
+            };
+            for obj in stop {
                 engine.untrace(obj);
             }
         }

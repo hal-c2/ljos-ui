@@ -27,7 +27,7 @@ Wait until the app changes: frames run, passes drawn (`paints`), log lines, relo
 pub const MAX_WAIT_MS: u64 = 30_000;
 /// The longest a watch gathers a burst.
 pub const MAX_SETTLE_MS: u64 = 5_000;
-const DEFAULT_WAIT_MS: u64 = 10_000;
+pub(crate) const DEFAULT_WAIT_MS: u64 = 10_000;
 
 /// What a watch can wait for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -102,6 +102,10 @@ pub struct WatchArgs {
     /// one answer (at most 5000).
     #[serde(default)]
     pub settle_ms: Option<u64>,
+    /// The name this client gave its traces (`app_trace`'s `holder`):
+    /// they last while it watches.
+    #[serde(default)]
+    pub holder: Option<String>,
 }
 
 /// How many of each thing happened since the inspector attached.

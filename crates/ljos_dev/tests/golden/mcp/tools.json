@@ -442,6 +442,14 @@
       },
       "additionalProperties": false,
       "properties": {
+        "holder": {
+          "default": null,
+          "description": "The name this client gave its traces (`app_trace`'s `holder`):\nthey last while it watches.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "settle_ms": {
           "default": null,
           "description": "After the first change, wait this much longer so that a burst is\none answer (at most 5000).",
@@ -540,6 +548,14 @@
     "input_schema": {
       "additionalProperties": false,
       "properties": {
+        "holder": {
+          "default": null,
+          "description": "A name for the client: the trace ends once no `app_watch` with\nthis `holder` has waited for a while. With `stop` and no\n`target`, stops the traces of this holder only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max": {
           "default": null,
           "description": "The most events to list, oldest first (default 100, at most 500).",
