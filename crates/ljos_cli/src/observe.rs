@@ -21,7 +21,8 @@ use clap::Args;
 use ljos::prelude::*;
 use ljos_compiler::{Project, compile_file};
 use ljos_engine::MapSource;
-use ljos_shell::ShellConfig;
+use ljos_mcp_core::CapSet;
+use ljos_shell::{InspectorAccess, InspectorOptions, ShellConfig};
 use serde_json::{Value as Json, json};
 
 use crate::inspector::{self, Answer, find_token_file, read_token_file};
@@ -44,6 +45,18 @@ pub struct Observe {
     /// The window's size in logical pixels.
     #[arg(long, value_parser = crate::run::parse_size, default_value = "1200x760", value_name = "WxH")]
     size: (f32, f32),
+    /// Serves an inspector on the observer's own window, as `ljos run
+    /// --mcp` does for an application: what the observer costs is asked
+    /// of it with the same tools.
+    #[arg(
+        long,
+        value_name = "CAPS",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "inspect",
+        value_parser = crate::run::parse_caps
+    )]
+    mcp: Option<CapSet>,
 }
 
 impl Observe {
@@ -58,9 +71,26 @@ impl Observe {
         ));
         let config = ShellConfig::new(format!("{KEY}.qml")).with_size(self.size.0, self.size.1);
         let file = token_file.display().to_string();
+        let mcp = self.mcp;
         ljos_shell::run::<()>(config, move |setup| {
+            // The inspector prints the log as it keeps it.
+            if let Some(caps) = mcp {
+                let options = InspectorOptions::below(std::env::current_dir()?);
+                let access = InspectorAccess {
+                    caps,
+                    clean_up_on_signals: true,
+                    ..InspectorAccess::default()
+                };
+                let at = setup.serve_inspector_as(options, access, crate::run::print_log)?;
+                crate::stderr::line(&format!(
+                    "ljos: the observer's inspector at {}, token in {}",
+                    at.url,
+                    at.token_file.display()
+                ));
+            } else {
+                setup.engine().set_log_handler(crate::run::print_log);
+            }
             let engine = setup.engine();
-            engine.set_log_handler(crate::run::print_log);
             register(engine);
             engine.set_component_source(compile(engine).map_err(|e| e.to_string())?);
             Ok(engine

@@ -120,7 +120,7 @@ pub(crate) fn program() -> String {
 /// (`ljos mcp`), not to a running application, so they are refused here
 /// and not silently left out. `inspect` has to be named with anything
 /// else: the references every other tool takes come from it.
-fn parse_caps(text: &str) -> Result<CapSet, String> {
+pub(crate) fn parse_caps(text: &str) -> Result<CapSet, String> {
     let caps = CapSet::parse_list(text).map_err(|e| e.to_string())?;
     let apart: Vec<String> = caps
         .iter()
