@@ -131,6 +131,7 @@ fn paint_json(p: &PaintReport) -> Value {
         "upload_us": p.upload.map(us),
         "draw_us": p.draw.map(us),
         "present_us": p.present.map(us),
+        "moved": p.moved,
     })
 }
 

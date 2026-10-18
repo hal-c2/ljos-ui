@@ -1044,6 +1044,7 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
         uploads: 0,
         upload_bytes: 0,
         since_asked: Some(ms(5)),
+        moved: true,
         ..PaintReport::default()
     });
     inspector.record_paint(&PaintReport {
@@ -1059,6 +1060,7 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
     let p = &reply.structured["paint"];
     assert_eq!(p["presented"], 2);
     assert_eq!(p["presented_in_part"], 1);
+    assert_eq!(p["moved"], 1);
     assert_eq!(p["unchanged"], 1);
     assert_eq!(p["build_us"]["last"], 1000);
     assert_eq!(p["build_us"]["max"], 2000);
@@ -1071,7 +1073,9 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
     assert!(
         reply
             .text
-            .contains("2 passes presented (1 in part), 1 unchanged and not presented"),
+            .contains(
+                "2 passes presented (1 in part, 1 moving a scrolled clip), 1 unchanged and not presented"
+            ),
         "{}",
         reply.text
     );

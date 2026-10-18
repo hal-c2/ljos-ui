@@ -562,6 +562,7 @@ impl Meter {
             upload: steps.upload,
             draw: steps.draw,
             present: steps.present,
+            moved: steps.moved,
         }
     }
 }

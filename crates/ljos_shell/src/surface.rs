@@ -264,6 +264,7 @@ impl Painter {
                     upload,
                     draw: Some(all - waited),
                     present: Some(waited),
+                    moved: false,
                 }
             }
             #[cfg(gl_painter)]

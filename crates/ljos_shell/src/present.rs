@@ -424,6 +424,9 @@ pub(crate) struct Steps {
     pub(crate) upload: Option<std::time::Duration>,
     pub(crate) draw: Option<std::time::Duration>,
     pub(crate) present: Option<std::time::Duration>,
+    /// Whether the pass moved the pixels of a scrolled clip rather than
+    /// drawing them.
+    pub(crate) moved: bool,
 }
 
 /// What a painter draws of a picture.

@@ -579,6 +579,7 @@ impl GlPainter {
             upload,
             draw: Some(drawn - uploaded),
             present: Some(drawn.elapsed()),
+            moved: moved.is_some(),
         }
     }
 

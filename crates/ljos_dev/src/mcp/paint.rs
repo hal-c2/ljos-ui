@@ -92,6 +92,9 @@ pub struct PaintReport {
     /// Since the first repaint request the pass answered, when the host
     /// knows it.
     pub since_asked: Option<Duration>,
+    /// The pass moved the pixels of a scrolled clip on screen and drew
+    /// only what came into view.
+    pub moved: bool,
 }
 
 /// One step of the start-up, timed from when the host started.
@@ -197,6 +200,7 @@ impl Cost {
 pub(crate) struct PaintStats {
     presented: u64,
     in_part: u64,
+    moved: u64,
     unchanged: u64,
     build: Cost,
     paint: Cost,
@@ -216,6 +220,9 @@ impl PaintStats {
             self.presented += 1;
             if report.drawn == Drawn::Part {
                 self.in_part += 1;
+            }
+            if report.moved {
+                self.moved += 1;
             }
             self.build.add(report.build);
             self.paint.add(report.paint);
@@ -241,6 +248,7 @@ impl PaintStats {
         json!({
             "presented": self.presented,
             "presented_in_part": self.in_part,
+            "moved": self.moved,
             "unchanged": self.unchanged,
             "build_us": self.build.json(),
             "paint_us": self.paint.json(),
@@ -260,11 +268,12 @@ impl PaintStats {
         }
         let ms = |d: Duration| format!("{:.2} ms", d.as_secs_f64() * 1000.0);
         let mut text = format!(
-            "\npaint: {} passes presented ({} in part), {} unchanged and not presented\n\
+            "\npaint: {} passes presented ({} in part, {} moving a scrolled clip), {} unchanged and not presented\n\
              building last {}, longest {}; uploading, drawing and presenting last {}, longest {}\n\
              {} pictures uploaded, {} bytes",
             self.presented,
             self.in_part,
+            self.moved,
             self.unchanged,
             ms(self.build.last),
             ms(self.build.max),
