@@ -8,6 +8,9 @@
 //! run. Those still held once the creation's `onCompleted` handlers have
 //! run are logged. A creation made inside another one hands what it holds
 //! to the outer one; a creation in slices holds across its slices.
+//!
+//! What would be done again for each object made, and only needs doing
+//! once they all are, waits the same way ([`Engine::after_creation`]).
 
 use std::cell::{Cell, RefCell};
 
@@ -22,7 +25,11 @@ pub(crate) struct DelayedErrors {
     /// Where warnings go instead of the log while a held binding runs.
     capture: RefCell<Option<Vec<String>>>,
     held: RefCell<Vec<Held>>,
+    /// What runs once no creation is running.
+    after: RefCell<Vec<AfterCreation>>,
 }
+
+type AfterCreation = Box<dyn FnOnce(&Engine)>;
 
 struct Held {
     creation: u64,
@@ -73,16 +80,48 @@ impl Engine {
 
     /// The slice of a creation in slices ends; what it holds stays held.
     pub(crate) fn pause_creation(&self, c: CreationErrors) {
+        self.leave_creation(c);
+        self.run_after_creation();
+    }
+
+    fn leave_creation(&self, c: CreationErrors) {
         let mut open = self.inner.delayed.open.borrow_mut();
         if let Some(i) = open.iter().rposition(|&o| o == c.0) {
             open.remove(i);
         }
     }
 
+    /// Runs `f` once no creation is running: at once when none is, else
+    /// when the outermost one is complete or its slice ends. For what
+    /// each object made would set off again for every object made before
+    /// it, so that a creation of many costs one run, not one per object.
+    pub fn after_creation(&self, f: impl FnOnce(&Engine) + 'static) {
+        if self.inner.delayed.open.borrow().is_empty() {
+            f(self);
+        } else {
+            self.inner.delayed.after.borrow_mut().push(Box::new(f));
+        }
+    }
+
+    fn run_after_creation(&self) {
+        let d = &self.inner.delayed;
+        // What runs may make objects in creations of its own, and those
+        // may put off more.
+        while d.open.borrow().is_empty() {
+            let due = std::mem::take(&mut *d.after.borrow_mut());
+            if due.is_empty() {
+                break;
+            }
+            for f in due {
+                f(self);
+            }
+        }
+    }
+
     /// The creation is complete: what its bindings still say is logged,
     /// or held by the creation around it.
     pub(crate) fn close_creation(&self, c: CreationErrors) {
-        self.pause_creation(c);
+        self.leave_creation(c);
         let d = &self.inner.delayed;
         let outer = d.open.borrow().last().copied();
         let said: Vec<String> = {
@@ -102,6 +141,7 @@ impl Engine {
         for msg in said {
             self.warn(msg);
         }
+        self.run_after_creation();
     }
 
     /// Runs the binding on `prop` of `obj`, holding what it says while a
