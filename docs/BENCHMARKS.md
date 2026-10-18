@@ -799,3 +799,69 @@ As before, PSS and peak follow the page cache.
 - **Why rssnews lets rows go before their pictures come** was not looked into. Qt asks for 7
   pictures where Ljós asks for 9.
 - **Memory outside Rust** (llvmpipe, Mesa) and **the binary's resident text** are as above.
+
+### photosurface on a folder of 472 large pictures (2026-10-18)
+
+photosurface is given a folder, after `--`, of 472 generated PNGs (seed 15): 64 to 3440 px a side,
+mostly 0.3 to 3.5 MPx, flat colour with noisy strips. The files take 134 MB, and their pixels
+1.8 GiB as RGBA. The folder is generated so that no one's own pictures are measured. Ljós runs
+`--project <dir> --example photosurface` and Qt runs `qml6 -- <folder>`, in a 1024 × 600 window
+with the gallery's `qmldir` overlay. The profile is `desktop`; the build is release (lto thin) on
+e68954b with what is below; Qt is 6.11.2 with `QT_QUICK_CONTROLS_STYLE=Basic`. The welcome
+slides set the folder when they end, so the pictures load a while after the first frame. Ljós
+starts loading about 5 s after the first frame, and Qt about 20 s after. Settled memory is read
+40 s after the first frame (15 s for "before", which Ljós had loaded by then).
+
+| | Ljós before | Ljós after | Qt |
+|---|---:|---:|---:|
+| First frame (ms) | 366 | 282 | 387 |
+| CPU to first frame (ms) | 833 | 834 | 267 |
+| Peak while starting (MiB) | | 73.7 | 127 |
+| Settled (MiB, cgroup) | 2060 | 250 | 3920 |
+| Settled anon PSS (MiB) | 2042 | 241 | 3897 |
+| Settled PSS (MiB) | | 314 | 3981 |
+| Idle CPU (% of one core) | | 0 | 0.01 |
+
+**While the pictures load.** The bench drove each app for 8 s from the moment it starts loading:
+Ljós with `--settle 4 --idle 1 --load 8`, Qt with `--settle 19 --idle 1 --load 8`.
+
+| While loading | Ljós | Qt |
+|---|---:|---:|
+| Frames shown (per second) | 10.8 | 2.55 |
+| Median frame interval (ms) | 36.0 | 360 |
+| 95th percentile frame interval (ms) | 363 | 366 |
+| CPU (% of one core) | 438 | 156 |
+
+Sampling `/proc/<pid>/task/*/stat` each second shows how the work was split. Qt's main thread
+spent 1.75 s of CPU over 3 s, 1.08 s of it in one second, while its other threads were idle. Its
+RSS went from 189 MiB to 3994 MiB in those 3 s. In Ljós the main thread spent 0.2–0.5 s per second
+for 5 s, while the pool threads decoded at 5–9 cores; RSS peaked at 404 MB.
+
+- **Decoded away from the user interface.** `asynchronous` is false by default, so Qt decodes a
+  local file on the UI thread when its source is set. Ljós does the same for a small picture.
+  For a still picture over 512 × 512 with no `sourceSize`, Ljós reads only the header; the
+  Image is Ready with its size at once, as in Qt. The pixels are decoded on the pool and painted
+  when they come. A broken body turns the Image to Error when its decode comes back.
+  `features/items/image-decoded-aside.feature`, and a test in `ljos_quick/tests/image.rs`.
+- **Decoded at the drawn size.** The decode asks for the size the item is drawn at, the limit
+  "Pictures kept at the size they are drawn" uses, so the whole picture is not kept, not even for
+  a moment. photosurface draws each picture inside a frame scaled down to about 200 px, so the drawn
+  size now counts the `scale` of the item's parents as well as its own. Before, a picture loaded
+  this way was kept at the view's size, up to 1024 px.
+
+**DECISIONs.**
+
+- Only local still pictures with a plain request take this path. Readers other than the screen,
+  such as Canvas `drawImage` and effects, still decode on the spot, because they need the pixels
+  in the same frame.
+- The first frame of a large picture may lack its pixels; in Qt it never does. Two scenarios now
+  wait 100 ms before reading pixels (`image-kept-size.feature`, `image-large.feature`).
+
+**What is left.**
+
+- **Ljós's welcome ends about 15 s before Qt's.** Each slide lasts 5 s, so Ljós seems to show one
+  slide of `welcome.pdf` where Qt shows four. The reason was not looked into.
+- **CPU while loading** is higher in Ljós (438 % against 156 %) because it decodes on many
+  threads at once and keeps drawing frames. Qt blocks instead.
+- **CPU to first frame** is unchanged by this work; it is the compile from source, as in the
+  sections above.
