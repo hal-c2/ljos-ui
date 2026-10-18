@@ -191,6 +191,10 @@ struct Run {
     natural: (u32, u32),
     /// The `sourceSize` the author set, if it asks for anything.
     requested: Option<(f64, f64)>,
+    /// The author set `sourceSize`, even to a size that asks for nothing
+    /// (a side bound to a width still negative): it then reads as set and
+    /// never as the picture's size, as in Qt, so its binding stays.
+    authored: bool,
     /// The `sourceSize` this item wrote itself, to tell its own report
     /// from the author's request when the property changes.
     reported: Option<Size>,
@@ -242,6 +246,7 @@ impl ImageBase {
             let asked = asks(size);
             with_run(e, me, |r| {
                 r.requested = asked;
+                r.authored = authored(size);
                 r.reported = None;
             });
             reload(e, me);
@@ -252,13 +257,14 @@ impl ImageBase {
             Some(scope) => Some(e.graph().property(scope, Value::Int(0))?),
             None => None,
         };
-        let asked = match e.untrack(|| e.read(me, ImageBase::SOURCE_SIZE.index)) {
-            Value::Size(size) => asks(&size),
-            _ => None,
+        let (asked, set) = match e.untrack(|| e.read(me, ImageBase::SOURCE_SIZE.index)) {
+            Value::Size(size) => (asks(&size), authored(&size)),
+            _ => (None, false),
         };
         with_run(e, me, |r| {
             r.epoch = epoch;
             r.requested = asked;
+            r.authored = set;
             r.completed = true;
         });
         reload(e, me);
@@ -355,6 +361,11 @@ impl Image {
 
 fn with_run<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&mut Run) -> R) -> Option<R> {
     e.with_mut(me, |b: &mut ImageBase| f(&mut b.run)).ok()
+}
+
+/// Whether a `sourceSize` is one the author set: anything but none.
+fn authored(size: &Size) -> bool {
+    size.width != 0.0 || size.height != 0.0
 }
 
 /// Whether a `sourceSize` asks for anything: a side that is not positive
@@ -661,7 +672,7 @@ fn finish(
         r.lost = false;
         r.sharp = None;
         r.sharpening = None;
-        r.requested.is_some()
+        r.authored
     }) == Some(true);
     announce(e, me, natural, asked, pages);
     // After the batch: the item's size may follow the picture's.
@@ -718,7 +729,7 @@ fn decode_aside(e: &Engine, me: ObjectId, key: ImageKey, natural: (u32, u32), ge
         r.sharp = None;
         r.sharpening = None;
         r.aside = true;
-        r.requested.is_some()
+        r.authored
     }) == Some(true);
     announce(e, me, natural, asked, 1);
     let store = ImageStore::of(e);
@@ -793,7 +804,7 @@ fn unload(e: &Engine, me: ObjectId, status: i32) {
         r.frames = None;
         r.frame = 0;
         r.pages = 0;
-        r.requested.is_some()
+        r.authored
     }) == Some(true);
     e.batch(|| {
         bump(e, me);
