@@ -298,6 +298,25 @@ fn members_order(inst: &Rc<Instance>, m: &Members, out: &mut Vec<(usize, u32)>) 
     }
 }
 
+/// Where the handler of expression `expr` is written: at its name.
+fn handler_place(file: &ljos_ir::CompiledFile, expr: ExprId) -> SourceSpan {
+    let at = |m: &ljos_ir::Members| {
+        m.handlers
+            .iter()
+            .find(|h| h.expr == expr)
+            .map(|h| h.name_span)
+    };
+    file.components
+        .iter()
+        .flat_map(|c| &c.objects)
+        .find_map(|od| {
+            at(&od.members)
+                .or_else(|| od.grouped.iter().find_map(|g| at(&g.members)))
+                .or_else(|| od.attached.iter().find_map(|a| at(&a.members)))
+        })
+        .unwrap_or(file.expr(expr).span)
+}
+
 /// Where Qt says a binding is: at its name. IR built by hand may leave
 /// the name's place out; the expression's is the next best.
 fn name_place(pb: &PropertyBinding, expr: SourceSpan) -> SourceSpan {
@@ -1394,12 +1413,14 @@ impl Engine {
             return;
         };
         let noted = tier1::Noted::of(inst, f.expr);
-        let inst = inst.clone();
-        let expr = f.expr;
+        let code = self.reload_code(inst, f.expr);
         let _ = self.set_script_method(
             id,
             m,
-            Rc::new(move |e, _obj, args| Ok(e.call_function(&inst, expr, args))),
+            Rc::new(move |e, _obj, args| {
+                let (i, expr) = code.get();
+                Ok(e.call_function(&i, expr, args))
+            }),
         );
         self.tier1_note_method(id, m, noted);
     }
@@ -1683,7 +1704,7 @@ impl Engine {
         let mut first: Option<&PropertyBinding> = None;
         for pb in &m.bindings {
             if base.with_member(&ty, &pb.name, &Value::Undefined).is_some() {
-                bound.push((pb.name.clone(), pb.expr));
+                bound.push((pb.name.clone(), self.reload_code(inst, pb.expr)));
                 first.get_or_insert(pb);
             } else {
                 let b = inst.file.ir.expr(pb.expr);
@@ -1716,11 +1737,11 @@ impl Engine {
         }
         let Some(first) = first else { return true };
         let expr_at = inst.file.ir.expr(first.expr).span;
-        let i = inst.clone();
         let r = self.bind_fallible(obj, prop, move |e| {
             let mut v = base.clone();
-            for (member, expr) in &bound {
-                let mv = e.eval_expr(&i, *expr, &TypeTag::Var, &[])?;
+            for (member, code) in &bound {
+                let (i, expr) = code.get();
+                let mv = e.eval_expr(&i, expr, &TypeTag::Var, &[])?;
                 v = v.with_member(&ty, member, &mv)?;
             }
             Some(v)
@@ -1841,10 +1862,11 @@ impl Engine {
         }
         let expr = pb.expr;
         let span = name_place(pb, inst.file.ir.expr(expr).span);
-        let i = inst.clone();
+        let code = self.reload_code(inst, expr);
         let value = ForeignValue::Binding(Rc::new(move |e, hint| {
             // A `var` holds the array the expression gives, not a copy.
             let kept = matches!(hint, TypeTag::Var);
+            let (i, expr) = code.get();
             e.eval_expr_as(&i, expr, hint, &[], false, kept)
         }));
         self.keep_foreign(inst, obj, (path, &pb.name), span, value, attached)
@@ -2057,8 +2079,7 @@ impl Engine {
         h: &ljos_ir::Handler,
         scope: ObjectId,
     ) {
-        let (expr, at) = (h.expr, h.name_span);
-        let i = inst.clone();
+        let expr = h.expr;
         // The first of the signal's parameters the handler uses without
         // declaring them, which Qt has deprecated.
         let injected = inst
@@ -2069,26 +2090,18 @@ impl Engine {
             .iter()
             .find(|r| matches!(r.resolved, ljos_ir::Resolved::Local))
             .map(|r| Atom::new(&r.name));
-        let slot = self.reload_note_handler(inst, expr);
+        let code = self.reload_code(inst, expr);
         let handler: crate::Handler = Rc::new(move |e: &Engine, args: &[Value]| {
             // Dev reload: the tree being replaced, or the one being
             // made, is not to act on what the other does.
             if e.reload_muted(scope) {
                 return;
             }
+            let (i, expr) = code.get();
             if let Some(name) = &injected {
-                e.warn_injected(&i, expr, at, name);
+                e.warn_injected(&i, expr, name);
             }
-            match &slot {
-                Some(s) => {
-                    // Not borrowed while it runs: it may reload.
-                    let (i, expr) = s.borrow().clone();
-                    e.call_expr(&i, expr, args);
-                }
-                None => {
-                    e.call_expr(&i, expr, args);
-                }
-            }
+            e.call_expr(&i, expr, args);
         });
         match self.signal_index(obj, signal) {
             Ok(s) => {
@@ -2121,10 +2134,11 @@ impl Engine {
 
     /// Once for each handler of a file, the first time it runs: it uses
     /// the signal's parameter `name` without declaring it.
-    fn warn_injected(&self, inst: &Instance, expr: ExprId, at: ljos_ir::SourceSpan, name: &str) {
+    fn warn_injected(&self, inst: &Instance, expr: ExprId, name: &str) {
         if !inst.file.injected_warned.borrow_mut().insert(expr.0) {
             return;
         }
+        let at = handler_place(&inst.file.ir, expr);
         self.log(
             crate::LogLevel::Warning,
             "qt.qml.context",
@@ -2214,16 +2228,17 @@ impl Engine {
             .meta_of(t.obj)
             .and_then(|m| m.property(t.prop).map(|p| p.ty.clone()))
             .unwrap_or(TypeTag::Var);
-        let i = inst.clone();
         if matches!(hint, TypeTag::Group(_)) && self.copy_group(inst, t, expr) {
             return;
         }
+        let code = self.reload_code(inst, expr);
         if self.is_script_property(t.obj, t.prop) {
             // A statement to run when asked, not a value to keep current.
             self.set_script(
                 t.obj,
                 t.prop,
                 Rc::new(move |e| {
+                    let (i, expr) = code.get();
                     e.call_expr(&i, expr, &[]);
                 }),
             );
@@ -2233,6 +2248,7 @@ impl Engine {
         let kept = matches!(hint, TypeTag::Var);
         let (obj, prop) = (t.obj, t.prop);
         let r = self.bind_fallible(t.obj, t.prop, move |e| {
+            let (i, expr) = code.get();
             e.run_binding(obj, prop, || {
                 e.eval_expr_as(&i, expr, &hint, &[], false, kept)
             })

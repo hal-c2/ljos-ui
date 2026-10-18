@@ -10,18 +10,19 @@
 //! `HandlerChanged`, or a `DeclarationChanged` of a function that takes
 //! the same arguments; and the changed files are the old ones but for
 //! those members: the same imports, pragmas, scripts, components,
-//! objects, declarations and lines. Then what is in effect is the edit
-//! alone. Anything else (an object added, a group's member, a property no
+//! objects and declarations, wherever they now are. Then what is in effect
+//! is the edit alone. Anything else (an object added, a group's member, a property no
 //! longer given, a signal) is made again by [`Engine::reload`].
 //!
-//! The objects keep the bindings they have, which run the old file's
-//! code: that code is the same. The edited members and functions are
-//! installed from the new file, and so are the `Component`s, so that a
-//! delegate made later is made from the new file. A handler connected
-//! while tracking runs through a [`HandlerSlot`], which is pointed at the
-//! new file: an edited body runs on the next signal. A value made a
+//! The objects keep the bindings they have. The edited members and
+//! functions are installed from the new file, and so are the `Component`s,
+//! so that a delegate made later is made from the new file. A binding,
+//! handler or method made while tracking runs through a [`CodeSlot`],
+//! which is pointed at the new file: an edited body runs on the next
+//! signal, and what fails is told at the line it is now on. A value made a
 //! binding moves the expressions after it, so an old expression is found
-//! in the new file by its place.
+//! in the new file by its place among the object's; and the objects and
+//! bindings are told where they now are written.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -46,8 +47,28 @@ use crate::value::Value;
 /// Where the dead instances and components are first swept out.
 const FIRST_SWEEP: usize = 1024;
 
-/// The code a handler connected while tracking runs.
-pub(crate) type HandlerSlot = RefCell<(Rc<Instance>, ExprId)>;
+/// The code a binding, handler or method made while tracking runs.
+pub(crate) type CodeSlot = RefCell<(Rc<Instance>, ExprId)>;
+
+/// What a closure the incubator installs runs: an expression of an
+/// instance, through a slot a reload in place points at the new file
+/// while tracking.
+#[derive(Clone)]
+pub(crate) enum Code {
+    Fixed(Rc<Instance>, ExprId),
+    Slot(Rc<CodeSlot>),
+}
+
+impl Code {
+    /// The instance and expression to run now. Not borrowed while it
+    /// runs: a handler may reload.
+    pub(crate) fn get(&self) -> (Rc<Instance>, ExprId) {
+        match self {
+            Code::Fixed(i, e) => (i.clone(), *e),
+            Code::Slot(s) => s.borrow().clone(),
+        }
+    }
+}
 
 /// The members the edit gives an object of a changed file anew.
 struct Edit {
@@ -75,7 +96,13 @@ struct Changed {
     whole: Vec<(CompIdx, usize, String)>,
     /// Per expression of the old file, the one at its place in the new.
     remap: Vec<Option<ExprId>>,
+    /// The places of the old file that moved to where the new file has
+    /// them.
+    moved: Moves,
 }
+
+/// (line, column) of the old file to (line, column) of the new.
+type Moves = HashMap<(u32, u32), (u32, u32)>;
 
 /// An object of a live instance the edit is applied to.
 struct Target<'a> {
@@ -117,25 +144,22 @@ impl Engine {
         }
     }
 
-    /// The slot a handler made now runs through; `None` when not tracking.
-    pub(crate) fn reload_note_handler(
-        &self,
-        inst: &Rc<Instance>,
-        expr: ExprId,
-    ) -> Option<Rc<HandlerSlot>> {
+    /// What a binding, handler or method made now runs: through a slot
+    /// while tracking.
+    pub(crate) fn reload_code(&self, inst: &Rc<Instance>, expr: ExprId) -> Code {
         let st = &self.inner.reload;
         if !st.tracking.get() {
-            return None;
+            return Code::Fixed(inst.clone(), expr);
         }
         let slot = Rc::new(RefCell::new((inst.clone(), expr)));
-        let mut all = st.handlers.borrow_mut();
+        let mut all = st.slots.borrow_mut();
         all.push(Rc::downgrade(&slot));
         let due = all.len() >= st.sweep_at.get().max(FIRST_SWEEP);
         drop(all);
         if due {
             self.reload_sweep();
         }
-        Some(slot)
+        Code::Slot(slot)
     }
 
     pub(crate) fn reload_note_given(&self, root: ObjectId, props: &[(String, Value)]) {
@@ -161,9 +185,9 @@ impl Engine {
         all.retain(|i| i.objects.first().is_some_and(|o| self.is_alive(*o)));
         let mut templates = st.templates.borrow_mut();
         templates.retain(|c| self.is_alive(*c));
-        let mut handlers = st.handlers.borrow_mut();
-        handlers.retain(|h| h.strong_count() > 0);
-        let most = all.len().max(templates.len()).max(handlers.len());
+        let mut slots = st.slots.borrow_mut();
+        slots.retain(|h| h.strong_count() > 0);
+        let most = all.len().max(templates.len()).max(slots.len());
         st.sweep_at.set((2 * most).max(FIRST_SWEEP));
     }
 
@@ -182,6 +206,10 @@ impl Engine {
         let changed = self.in_place_files(patch)?;
         self.reload_sweep();
         let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
+        // A file that asks for a reset starts afresh at every reload.
+        if instances.iter().any(|i| resets(&i.file.ir)) {
+            return None;
+        }
         // An instance used as the type of an object (`Foo {}`), to that
         // object's instance and index: what the user writes there
         // outranks the file.
@@ -221,6 +249,15 @@ impl Engine {
                 Ok(new) => {
                     // The declarations are the same: so are their types.
                     *new.metas.borrow_mut() = c.old.metas.borrow().clone();
+                    // A handler warned of once is not warned of again.
+                    let warned = c.old.injected_warned.borrow();
+                    new.injected_warned.borrow_mut().extend(
+                        warned
+                            .iter()
+                            .filter_map(|e| c.remap.get(*e as usize).copied().flatten())
+                            .map(|e| e.0),
+                    );
+                    drop(warned);
                     files.insert(Rc::as_ptr(&c.old), new);
                 }
                 Err(_) => {
@@ -261,17 +298,13 @@ impl Engine {
         for inst in st.instances.borrow_mut().iter_mut() {
             *inst = renew(inst, &files, &mut memo);
         }
-        // And what is run: every handler of an instance of a changed file.
+        // And what is run: every binding, handler and method of an
+        // instance of a changed file.
         let remaps: HashMap<*const LoadedFile, &[Option<ExprId>]> = changed
             .iter()
             .map(|c| (Rc::as_ptr(&c.old), c.remap.as_slice()))
             .collect();
-        for slot in st
-            .handlers
-            .borrow()
-            .iter()
-            .filter_map(std::rc::Weak::upgrade)
-        {
+        for slot in st.slots.borrow().iter().filter_map(std::rc::Weak::upgrade) {
             let (inst, expr) = slot.borrow().clone();
             let Some(Some(to)) = remaps
                 .get(&Rc::as_ptr(&inst.file))
@@ -281,6 +314,7 @@ impl Engine {
             };
             *slot.borrow_mut() = (renew(&inst, &files, &mut memo), *to);
         }
+        self.in_place_relocate(&changed);
         // A binding that calls an edited function gives what it gives now.
         // Only those of the function's own file are run again.
         let called: Vec<*const LoadedFile> = changed
@@ -439,13 +473,14 @@ impl Engine {
                     Edited::Handler => {}
                 }
             }
-            let (whole, remap) = same_but_edits(&old.ir, new, &edits)?;
+            let (whole, remap, moved) = same_but_edits(&old.ir, new, &edits)?;
             out.push(Changed {
                 old,
                 new: Arc::new(new.clone()),
                 edits,
                 whole,
                 remap,
+                moved,
             });
         }
         Some(out)
@@ -470,8 +505,15 @@ impl Engine {
         }
         let given = self.inner.reload.given.borrow();
         let given = given.get(&id);
+        let old = &c.old.ir.component(t.inst.comp).objects[t.obj];
         for name in t.names {
-            if self.untrack(|| self.member_target(id, &[], name)).is_err() {
+            let Ok(target) = self.untrack(|| self.member_target(id, &[], name)) else {
+                return false;
+            };
+            // A member the file did not give may be held by what took it
+            // over (a view sizes a page that has no size of its own),
+            // which decides again when the object is made again.
+            if !sets(old, name) && self.overridden(target.obj, target.prop) {
                 return false;
             }
             if given.is_some_and(|g| g.iter().any(|n| is_or_under(n, name))) {
@@ -514,6 +556,18 @@ impl Engine {
         true
     }
 
+    fn overridden(&self, obj: ObjectId, prop: crate::PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .and_then(|h| h.node(prop));
+        node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
+    }
+
     /// Gives `obj` the member `name` as the new file writes it.
     fn in_place_set(&self, inst: &Rc<Instance>, obj: ObjectId, od: &ObjectDef, name: &str) {
         let Ok(t) = self.untrack(|| self.member_target(obj, &[], name)) else {
@@ -537,6 +591,40 @@ impl Engine {
         let (o, p) = self.redirect(t.obj, t.prop);
         if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
             props.retain(|q| *q != p);
+        }
+    }
+
+    /// Tells the objects of the changed files, and their bindings, where
+    /// they are now written.
+    fn in_place_relocate(&self, changed: &[Changed]) {
+        let moved: HashMap<&str, &Moves> = changed
+            .iter()
+            .filter(|c| !c.moved.is_empty())
+            .map(|c| (c.old.url.as_str(), &c.moved))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        let shift = |l: &mut crate::object::Location| {
+            if let Some(&(line, column)) = moved
+                .get(l.url.as_str())
+                .and_then(|m| m.get(&(l.line, l.column)))
+            {
+                l.line = line;
+                l.column = column;
+            }
+        };
+        let mut store = self.inner.store.borrow_mut();
+        for (_, h) in store.objects.iter_mut() {
+            let Some(ext) = h.ext.as_deref_mut() else {
+                continue;
+            };
+            if let Some(l) = &mut ext.location {
+                shift(l);
+            }
+            for b in &mut ext.binding_locs {
+                shift(&mut b.at);
+            }
         }
     }
 
@@ -676,15 +764,16 @@ fn aliased(file: &CompiledFile, comp: CompIdx, obj: usize, name: &str) -> bool {
         .any(|a| a.object == Some(at) && a.path.first().is_some_and(|p| p == name))
 }
 
-/// The aliases of whole edited objects (see [`Changed::whole`]) and where
-/// the old expressions are in the new file, when `new` is `old` but for
-/// the edited members; `None` otherwise.
+/// The aliases of whole edited objects (see [`Changed::whole`]), where
+/// the old expressions are in the new file and the places that moved
+/// (see [`Changed::moved`]), when `new` is `old` but for the edited
+/// members; `None` otherwise.
 #[allow(clippy::type_complexity)]
 fn same_but_edits(
     old: &CompiledFile,
     new: &CompiledFile,
     edits: &[Edit],
-) -> Option<(Vec<(CompIdx, usize, String)>, Vec<Option<ExprId>>)> {
+) -> Option<(Vec<(CompIdx, usize, String)>, Vec<Option<ExprId>>, Moves)> {
     if old.imports != new.imports
         || old.pragmas != new.pragmas
         || old.scripts != new.scripts
@@ -695,7 +784,9 @@ fn same_but_edits(
     }
     let none: Vec<String> = Vec::new();
     let mut remap = vec![None; old.exprs.len()];
+    let mut moved = HashMap::default();
     let (mut was, mut now) = (Vec::new(), Vec::new());
+    let (mut here, mut there) = (Vec::new(), Vec::new());
     for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
         if o.name != n.name
             || o.id != n.id
@@ -722,6 +813,18 @@ fn same_but_edits(
             }
             for (w, n) in was.iter().zip(&now) {
                 *remap.get_mut(w.index())? = Some(*n);
+                here.push(old.expr(*w).span);
+                there.push(new.expr(*n).span);
+            }
+            places(oo, names, &mut here);
+            places(no, names, &mut there);
+            if here.len() != there.len() {
+                return None;
+            }
+            for (h, t) in here.drain(..).zip(there.drain(..)) {
+                if (h.line, h.column) != (t.line, t.column) {
+                    moved.insert((h.line, h.column), (t.line, t.column));
+                }
             }
         }
     }
@@ -777,7 +880,7 @@ fn same_but_edits(
             }
         }
     }
-    Some((whole, remap))
+    Some((whole, remap, moved))
 }
 
 /// The expressions of `od` in the order both files are walked in, but
@@ -802,10 +905,38 @@ fn exprs_of(od: &ObjectDef, names: &[String], out: &mut Vec<ExprId>) {
     out.extend(od.functions.iter().map(|f| f.expr));
 }
 
-/// `od` without the members `names`, with its places told by line alone
-/// (an edit moves what follows it on its line) and with no expressions
-/// (a value made a binding moves those after it; the patch tells which
-/// changed).
+/// The places `od` writes its object and members at, but for the edited
+/// `names`, in the order both files are walked in.
+fn places(od: &ObjectDef, names: &[String], out: &mut Vec<SourceSpan>) {
+    fn members(m: &Members, skip: &[String], out: &mut Vec<SourceSpan>) {
+        out.extend(
+            m.assignments
+                .iter()
+                .filter(|a| !skip.contains(&a.name))
+                .map(|a| a.span),
+        );
+        out.extend(
+            m.bindings
+                .iter()
+                .filter(|b| !skip.contains(&b.name))
+                .map(|b| b.name_span),
+        );
+        out.extend(m.handlers.iter().map(|h| h.name_span));
+    }
+    out.push(od.span);
+    out.extend(od.properties.iter().map(|p| p.span));
+    members(&od.members, names, out);
+    for g in &od.grouped {
+        members(&g.members, &[], out);
+    }
+    for a in &od.attached {
+        members(&a.members, &[], out);
+    }
+}
+
+/// `od` without the members `names`, with no places (the objects are
+/// told where they now are) and with no expressions (a value made a
+/// binding moves those after it; the patch tells which changed).
 fn shape(od: &ObjectDef, names: &[String]) -> ObjectDef {
     let mut o = od.clone();
     o.members.assignments.retain(|a| !names.contains(&a.name));
@@ -842,8 +973,5 @@ fn flatten_members(m: &mut Members) {
 }
 
 fn flatten(s: &mut SourceSpan) {
-    *s = SourceSpan {
-        line: s.line,
-        ..SourceSpan::default()
-    };
+    *s = SourceSpan::default();
 }

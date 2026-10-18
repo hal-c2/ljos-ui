@@ -89,10 +89,10 @@ impl Rig {
     }
 }
 
-/// `src` with every line one further down: an edit that leaves no object
-/// where it stood, so the file is made again rather than edited in place.
-fn moved(src: &str) -> String {
-    format!("\n{src}")
+/// `src` with one more signal on its root: an edit of no value, binding
+/// or body, so the file is made again rather than edited in place.
+fn remade(src: &str) -> String {
+    src.replacen("{\n", "{\n  signal remade\n", 1)
 }
 
 const COUNTER: &str = r#"import QtQuick
@@ -116,9 +116,9 @@ fn an_object_with_an_id_keeps_what_a_script_assigned() {
     r.call("box", "tap");
     r.call("box", "tap");
     let before = r.find("box");
-    // A line moved: the file is made again, not edited in place.
+    // A signal added: the file is made again, not edited in place.
     let done = r
-        .edit("Main", &moved(&COUNTER.replace("width: 10", "width: 30")))
+        .edit("Main", &remade(&COUNTER.replace("width: 10", "width: 30")))
         .unwrap();
     assert_eq!(done.generation, 1);
     assert_eq!(r.h.engine.reload_generation(), 1);
@@ -411,6 +411,49 @@ fn handlers_edited_in_place_run_their_new_body_after_the_expressions_moved() {
     assert_eq!(r.num("box", "width"), 10.0);
 }
 
+const PLACED: &str = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  property var thing: ({ name: "a" })
+  Item {
+    id: label
+    objectName: "label"
+    property string text: root.thing.name
+  }
+}
+"#;
+
+#[test]
+fn objects_and_bindings_kept_over_moved_lines_are_told_where_they_now_are() {
+    let mut r = rig(&[("Main", PLACED)]);
+    let (root, label) = (r.root, r.find("label"));
+    let done = r
+        .edit(
+            "Main",
+            &PLACED.replace("  property var", "  // A line more.\n  property var"),
+        )
+        .unwrap();
+    assert_eq!(done.roots, vec![(root, root)], "in place");
+    assert_eq!(r.find("label"), label);
+    let o = r.h.engine.inspect_object(label).unwrap();
+    assert_eq!(o.declared_at.map(|p| p.line), Some(7));
+    assert_eq!(o.id.as_deref(), Some("label"));
+    let text =
+        r.h.engine
+            .inspect_properties(label)
+            .into_iter()
+            .find(|p| p.name == "text")
+            .unwrap();
+    assert_eq!(text.written_at.map(|p| p.line), Some(10));
+    // What the binding throws is told at its line too.
+    r.h.set(root, "thing", Value::Null);
+    r.h.get(label, "text");
+    let said = r.h.warnings().join("\n");
+    assert!(said.contains("Main.qml:10:"), "{said}");
+    assert!(!said.contains("Main.qml:9:"), "{said}");
+}
+
 #[test]
 fn a_function_given_other_parameters_is_made_again() {
     let mut r = rig(&[("Main", COUNTER)]);
@@ -482,9 +525,9 @@ fn reload_needs_tracking_and_a_root_it_made() {
 #[test]
 fn the_host_swaps_the_roots_before_the_old_ones_go() {
     let mut r = rig(&[("Main", COUNTER)]);
-    // A line moved, so the roots are made again.
+    // A signal added, so the roots are made again.
     r.session
-        .set_file("Main", moved(&COUNTER.replace("width: 10", "width: 30")));
+        .set_file("Main", remade(&COUNTER.replace("width: 10", "width: 30")));
     let patch = r.session.build().unwrap().unwrap();
     let old = r.root;
     let mut seen = Vec::new();
@@ -693,7 +736,10 @@ Item {
     r.call("one", "bump");
     r.h.set(r.root, "taps", Value::Int(5));
     let done = r
-        .edit("Main", &main.replace("taps: 0", "taps: 0\n  width: 2"))
+        .edit(
+            "Main",
+            &remade(&main.replace("taps: 0", "taps: 0\n  width: 2")),
+        )
         .unwrap();
     assert_eq!(r.num("one", "count"), 0.0);
     assert_eq!(r.num("root", "taps"), 5.0);
@@ -826,8 +872,11 @@ fn rows_made_again_while_the_first_ones_go_are_carried() {
             .unwrap();
     }
     let done = r
-        // A line moved, so the rows are made again on the full path.
-        .edit("Main", &moved(&REMADE_ROWS.replace("size: 10", "size: 20")))
+        // A signal added, so the rows are made again on the full path.
+        .edit(
+            "Main",
+            &remade(&REMADE_ROWS.replace("size: 10", "size: 20")),
+        )
         .unwrap();
     assert_eq!(
         r.call("root", "taps").to_js_string().as_str(),
@@ -850,7 +899,7 @@ fn every_object_made_from_qml_has_a_path_that_outlives_it() {
     let was = r.find("two");
     r.edit(
         "Main",
-        &moved(&USES_COUNTER.replace("Counter { id: two", "Counter { width: 3; id: two")),
+        &remade(&USES_COUNTER.replace("Counter { id: two", "Counter { width: 3; id: two")),
     )
     .unwrap();
     let e = &r.h.engine;
@@ -912,9 +961,9 @@ Item {
     r.h.engine
         .with_mut::<Tally, _>(r.find("tally"), |t| t.marks = vec![1, 2])
         .unwrap();
-    // Lines moved, then moved back: each time the objects are made again
-    // and the state migrates.
-    r.edit("Main", &moved(&src.replace("width: 1", "width: 2")))
+    // A signal added, then taken away: each time the objects are made
+    // again and the state migrates.
+    r.edit("Main", &remade(&src.replace("width: 1", "width: 2")))
         .unwrap();
     assert_eq!(marks(&r), vec![1, 2]);
     assert_eq!(r.num("tally", "width"), 2.0);
@@ -1028,10 +1077,10 @@ fn reloads_leave_no_script_types_behind() {
 #[test]
 fn reloads_forget_the_replaced_objects_no_script_holds() {
     let mut r = rig(&[("Main", COUNTER)]);
-    // A line moved and back: the file is made again each time.
+    // A signal added and taken away: the file is made again each time.
     let edit = |r: &mut Rig, i: u32| {
         let text = if i.is_multiple_of(2) {
-            moved(&COUNTER.replace("width: 10", "width: 30"))
+            remade(&COUNTER.replace("width: 10", "width: 30"))
         } else {
             COUNTER.to_string()
         };
@@ -1075,7 +1124,7 @@ fn a_component_and_list_elements_made_again_are_not_new() {
     let done = r
         .edit(
             "Main",
-            &moved(&WITH_TEMPLATES.replace("width: 10", "width: 30")),
+            &remade(&WITH_TEMPLATES.replace("width: 10", "width: 30")),
         )
         .unwrap();
     assert_ne!(done.roots[0].0, done.roots[0].1, "made again");

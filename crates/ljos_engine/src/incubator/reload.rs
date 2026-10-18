@@ -378,10 +378,10 @@ pub(crate) struct ReloadState {
     instances: RefCell<Vec<Rc<Instance>>>,
     /// `Component` objects given a template while tracking.
     templates: RefCell<Vec<ObjectId>>,
-    /// The code of every handler connected while tracking, which a reload
-    /// in place points at the file as it is now.
-    handlers: RefCell<Vec<Weak<in_place::HandlerSlot>>>,
-    /// The length of `instances`, `templates` and `handlers` at which the dead ones
+    /// The code of every binding, handler and method made while tracking,
+    /// which a reload in place points at the file as it is now.
+    slots: RefCell<Vec<Weak<in_place::CodeSlot>>>,
+    /// The length of `instances`, `templates` and `slots` at which the dead ones
     /// are swept out next.
     sweep_at: Cell<usize>,
     /// The properties whoever made a root gave it, which outrank what its

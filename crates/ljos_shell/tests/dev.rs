@@ -151,8 +151,12 @@ fn a_save_is_applied_to_the_window_with_its_state_kept() {
         .write_by_name(root, "taps", Value::Int(3))
         .unwrap();
 
-    // Every line one further down: a new root is made and shown.
-    w.save(&format!("\n{MAIN}").replace("width: 10;", "width: 5 * 10;"));
+    // A signal more on the root: a new root is made and shown.
+    w.save(
+        &MAIN
+            .replacen("{\n", "{\n  signal remade\n", 1)
+            .replace("width: 10;", "width: 5 * 10;"),
+    );
     w.until(|app| app.reloads() == Some(1));
 
     assert_eq!(w.num("box", "width"), 50.0);

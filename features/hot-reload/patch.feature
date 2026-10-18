@@ -566,3 +566,74 @@ Feature: What a reload changes
       Then the property "height" of "box" is 4
       And the property "running" of "slide" is true
       And the property "x" of "box" is at least 40
+
+  Rule: A change that moves lines leaves every object where it is
+
+    A line added above an object moves it and all that follows. The
+    objects go on as they are, and what they run is told by the line the
+    file now gives it.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var thing: ({ name: "a" })
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: root.thing.name }
+          function go() { slide.start() }
+          function drop() { thing = null }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A member added on a line of its own
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var thing: ({ name: "a" })
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            opacity: 0.5
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: root.thing.name }
+          function go() { slide.start() }
+          function drop() { thing = null }
+        }
+        """
+      And a reload happens
+      Then the property "opacity" of "box" is 0.5
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+    Scenario: A binding that fails after a line was added above it is told at its new line
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var thing: ({ name: "a" })
+          // A line added above the objects.
+          Rectangle {
+            objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: root.thing.name }
+          function go() { slide.start() }
+          function drop() { thing = null }
+        }
+        """
+      And a reload happens
+      And the method "drop" of "root" is called
+      Then the log has a warning matching "Scenario.qml:10:"
+      And the log has no warning matching "Scenario.qml:9:"
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40

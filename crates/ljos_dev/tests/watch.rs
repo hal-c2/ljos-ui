@@ -194,8 +194,8 @@ fn a_save_changes_the_scene_and_keeps_its_state() {
     app.call("box", "tap");
     let before = app.scene.root();
 
-    // Every line one further down: the objects are made again.
-    let moved = format!("\n{MAIN}");
+    // A signal more on the root: the objects are made again.
+    let moved = MAIN.replacen("{\n", "{\n  signal remade\n", 1);
     app.save("Main.qml", &moved.replace("width: 10;", "width: 3 * 10;"));
     let reports = app.wait();
     let stats = reloaded(&reports);
