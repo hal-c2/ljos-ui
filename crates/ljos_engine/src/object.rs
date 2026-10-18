@@ -146,108 +146,145 @@ pub struct ObjectHeader {
 /// and disposed with the object. The property gets its node, read by
 /// exactly the runs that read it, when it next changes
 /// ([`Engine::ensure_node`]).
+///
+/// One entry per run, with a bit per property it read: a run reads many
+/// properties of one object one after another (a text's forty inputs),
+/// and each read after the first is a bit set in the entry it is
+/// already on.
 pub(crate) struct FieldReads {
-    /// A bit per property with an entry.
+    /// Words of bits per run.
+    words: usize,
+    /// A bit per property some run read, or a run that has since taken
+    /// another's entry: a quick no, not a yes.
     props: Box<[u64]>,
-    entries: Vec<(PropIndex, Reader)>,
-    /// Where the entries of each property and reader are: a reader keeps
-    /// one or two of each, and an object read by many would otherwise be
-    /// looked through whole at every run's read.
-    at: FxHashMap<(PropIndex, NodeId), SmallVec<[u32; 2]>>,
-    /// Length past which entries of finished runs are swept out.
+    runs: Vec<Reader>,
+    /// `words` words per run, in the order of `runs`.
+    bits: Vec<u64>,
+    /// Where each reader's runs are: a reader keeps one or two, and an
+    /// object read by many would otherwise be looked through whole at
+    /// every run's first read.
+    at: FxHashMap<NodeId, SmallVec<[u32; 2]>>,
+    /// Length past which runs that stopped counting are swept out.
     sweep_at: usize,
-    /// The run that read last, and a bit per property it read: a run
-    /// that reads a property again adds nothing.
-    last: Option<Reader>,
-    last_props: Box<[u64]>,
+    /// The entry of the run that read last.
+    last: usize,
 }
 
 impl FieldReads {
     /// For an object with `len` properties.
     pub(crate) fn new(len: usize) -> Self {
-        let words = len.div_ceil(64);
+        let words = len.div_ceil(64).max(1);
         FieldReads {
+            words,
             props: vec![0; words].into_boxed_slice(),
-            entries: Vec::new(),
+            runs: Vec::new(),
+            bits: Vec::new(),
             at: FxHashMap::default(),
             sweep_at: 0,
-            last: None,
-            last_props: vec![0; words].into_boxed_slice(),
+            last: usize::MAX,
         }
     }
 
     pub(crate) fn has(&self, prop: PropIndex) -> bool {
-        has_bit(&self.props, prop)
+        has_bit(&self.props, prop) && self.readers(prop).next().is_some()
+    }
+
+    fn row(&mut self, i: usize) -> &mut [u64] {
+        &mut self.bits[i * self.words..(i + 1) * self.words]
     }
 
     /// Adds a read, unless the run already made it. `current` tells
-    /// whether an entry still counts, for the sweep.
+    /// whether an entry still counts.
     pub(crate) fn add(&mut self, prop: PropIndex, r: Reader, current: impl Fn(Reader) -> bool) {
-        if self.last == Some(r) {
-            if has_bit(&self.last_props, prop) {
-                return;
-            }
-        } else {
-            self.last = Some(r);
-            self.last_props.iter_mut().for_each(|w| *w = 0);
-        }
-        set_bit(&mut self.last_props, prop);
-        // An effect that runs every frame (an item's geometry under an
-        // animation) reads the same properties each time: its new run
-        // takes the entry of a run before its last, which stopped
-        // counting when the last finished, so the list does not grow to
-        // be swept. The last run's entry stays: should this one not
-        // finish, the effect still hears of a change, as by its edges.
-        if has_bit(&self.props, prop)
-            && let Some(at) = self.at.get(&(prop, r.node))
-            && let Some(&i) = at.iter().find(|&&i| !current(self.entries[i as usize].1))
-        {
-            self.entries[i as usize].1 = r;
+        if self.runs.get(self.last) == Some(&r) {
+            let last = self.last;
+            set_bit(self.row(last), prop);
+            set_bit(&mut self.props, prop);
             return;
         }
-        if self.entries.len() >= self.sweep_at {
-            self.entries.retain(|(_, e)| current(*e));
-            self.reindex();
-            self.sweep_at = (self.entries.len() * 2).max(32);
-        }
+        let mine = self.at.get(&r.node).map_or(&[][..], |a| a.as_slice());
+        let at = match mine.iter().find(|&&i| self.runs[i as usize] == r) {
+            Some(&i) => i as usize,
+            // An effect that runs every frame (an item's geometry under an
+            // animation) reads the same properties each time: its new run
+            // takes the entry of a run before its last, which stopped
+            // counting when the last finished, so the list does not grow
+            // to be swept. The last run's entry stays: should this one not
+            // finish, the effect still hears of a change, as by its edges.
+            None => match mine.iter().find(|&&i| !current(self.runs[i as usize])) {
+                Some(&i) => {
+                    let i = i as usize;
+                    self.runs[i] = r;
+                    self.row(i).fill(0);
+                    i
+                }
+                None => {
+                    if self.runs.len() >= self.sweep_at {
+                        self.keep(|e, _| current(e));
+                        self.sweep_at = (self.runs.len() * 2).max(16);
+                    }
+                    let i = self.runs.len();
+                    self.at.entry(r.node).or_default().push(i as u32);
+                    self.runs.push(r);
+                    self.bits.resize(self.bits.len() + self.words, 0);
+                    self.runs.len() - 1
+                }
+            },
+        };
+        self.last = at;
+        set_bit(self.row(at), prop);
+        // After the sweep, which counts the bits again.
         set_bit(&mut self.props, prop);
-        self.at
-            .entry((prop, r.node))
-            .or_default()
-            .push(self.entries.len() as u32);
-        self.entries.push((prop, r));
     }
 
-    /// The bits and places of the entries, after some went.
-    fn reindex(&mut self) {
-        self.props.iter_mut().for_each(|w| *w = 0);
+    /// Keeps the runs `f` keeps, in their order, and the bits of what
+    /// they read.
+    fn keep(&mut self, mut f: impl FnMut(Reader, &[u64]) -> bool) {
+        let w = self.words;
+        let mut kept = 0;
+        for i in 0..self.runs.len() {
+            if f(self.runs[i], &self.bits[i * w..(i + 1) * w]) {
+                self.runs[kept] = self.runs[i];
+                self.bits.copy_within(i * w..(i + 1) * w, kept * w);
+                kept += 1;
+            }
+        }
+        self.runs.truncate(kept);
+        self.bits.truncate(kept * w);
+        self.last = usize::MAX;
         self.at.clear();
-        for (i, (p, r)) in self.entries.iter().enumerate() {
-            set_bit(&mut self.props, *p);
-            self.at.entry((*p, r.node)).or_default().push(i as u32);
+        for (i, r) in self.runs.iter().enumerate() {
+            self.at.entry(r.node).or_default().push(i as u32);
+        }
+        self.props.fill(0);
+        for row in self.bits.chunks_exact(w) {
+            for (p, b) in self.props.iter_mut().zip(row) {
+                *p |= b;
+            }
         }
     }
 
     /// Takes the readers of `prop` out.
     pub(crate) fn take(&mut self, prop: PropIndex) -> SmallVec<[Reader; 4]> {
-        if !self.has(prop) {
-            return SmallVec::new();
-        }
         let mut out = SmallVec::new();
-        self.entries.retain(|(p, r)| {
-            let mine = *p == prop;
-            if mine {
-                out.push(*r);
+        if !self.has(prop) {
+            return out;
+        }
+        let (word, bit) = (prop.0 as usize / 64, 1u64 << (prop.0 % 64));
+        for i in 0..self.runs.len() {
+            let w = &mut self.bits[i * self.words + word];
+            if *w & bit != 0 {
+                *w &= !bit;
+                out.push(self.runs[i]);
             }
-            !mine
-        });
-        self.reindex();
+        }
+        self.keep(|_, row| row.iter().any(|w| *w != 0));
         out
     }
 
-    /// Every reader of every property.
+    /// Every run that read a property.
     pub(crate) fn all(&self) -> impl Iterator<Item = Reader> + '_ {
-        self.entries.iter().map(|(_, r)| *r)
+        self.runs.iter().copied()
     }
 
     /// What the runs of `reader` read, each with the run that read it.
@@ -255,17 +292,29 @@ impl FieldReads {
         &self,
         reader: NodeId,
     ) -> impl Iterator<Item = (PropIndex, Reader)> + '_ {
-        self.entries
-            .iter()
-            .filter(move |(_, r)| r.node == reader)
-            .copied()
+        let w = self.words;
+        let mine = self.at.get(&reader).map_or(&[][..], |a| a.as_slice());
+        mine.iter()
+            .map(move |&i| (i as usize, &self.runs[i as usize]))
+            .flat_map(move |(i, r)| {
+                self.bits[i * w..(i + 1) * w]
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(k, &word)| {
+                        (0..64)
+                            .filter(move |b| word & (1 << b) != 0)
+                            .map(move |b| (PropIndex((k * 64 + b) as u32), *r))
+                    })
+            })
     }
 
     /// The readers of `prop`, left in place.
     pub(crate) fn readers(&self, prop: PropIndex) -> impl Iterator<Item = Reader> + '_ {
-        self.entries
+        let w = self.words;
+        self.runs
             .iter()
-            .filter(move |(p, _)| *p == prop)
+            .enumerate()
+            .filter(move |(i, _)| has_bit(&self.bits[i * w..(i + 1) * w], prop))
             .map(|(_, r)| *r)
     }
 }
@@ -536,14 +585,35 @@ mod tests {
             reads.add(x, Reader { node, run }, current);
             reads.add(y, Reader { node, run }, current);
         }
-        assert_eq!(reads.entries.len(), 4);
+        assert_eq!(reads.runs.len(), 2);
         // Run 999 stopped part way: 998 still hears of a change.
         let runs: Vec<u64> = reads.take(x).iter().map(|r| r.run).collect();
         assert!(runs.contains(&998) && runs.contains(&999), "{runs:?}");
     }
 
     #[test]
-    fn many_readers_of_one_property_each_keep_their_two_entries() {
+    fn every_property_a_run_read_is_kept_once_for_it() {
+        let node = NodeId::from(KeyData::from_ffi(1));
+        let mut reads = FieldReads::new(70);
+        let r = Reader { node, run: 1 };
+        let props = [PropIndex(0), PropIndex(3), PropIndex(69)];
+        for p in props.iter().chain(&props) {
+            reads.add(*p, r, |_| true);
+        }
+        assert_eq!(reads.runs.len(), 1);
+        for p in props {
+            assert!(reads.has(p), "{p:?}");
+        }
+        assert!(!reads.has(PropIndex(1)));
+        let mut read: Vec<_> = reads.readers_of(node).map(|(p, _)| p.0).collect();
+        read.sort_unstable();
+        assert_eq!(read, [0, 3, 69]);
+        assert_eq!(reads.take(PropIndex(3)).as_slice(), [r]);
+        assert!(!reads.has(PropIndex(3)) && reads.has(PropIndex(69)));
+    }
+
+    #[test]
+    fn many_readers_of_one_property_each_keep_their_two_runs() {
         let mut reads = FieldReads::new(1);
         let x = PropIndex(0);
         let nodes: Vec<NodeId> = (1..=40)
@@ -555,8 +625,8 @@ mod tests {
                 reads.add(x, Reader { node, run }, current);
             }
         }
-        assert_eq!(reads.entries.len(), 80);
-        // Each reader's entries are found where the index says they are.
+        assert_eq!(reads.runs.len(), 80);
+        // Each reader's runs are found where the index says they are.
         for &node in &nodes {
             let mut runs: Vec<u64> = reads.readers_of(node).map(|(_, r)| r.run).collect();
             runs.sort_unstable();
