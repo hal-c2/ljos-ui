@@ -219,3 +219,53 @@ fn only_objects_are_kept_in_a_native_list() {
     e.write(parent, p, mixed, WriteKind::Imperative).unwrap();
     assert_eq!(field(&h, parent), [a]);
 }
+
+#[test]
+fn a_script_s_loop_over_a_native_list_makes_one_array_of_it() {
+    let h = engine();
+    let e = &h.engine;
+    let root = h.load(
+        r#"import QtQuick
+Item {
+    id: grid
+    Item {} Item {} Item {} Item {} Item {} Item {} Item {} Item {}
+    property int shown: { let n = 0; for (let i = 0; i < grid.children.length; i++) n++; return n }
+    function byId() {
+        let n = 0
+        for (let i = 0; i < grid.children.length; i++) n += grid.children[i] ? 1 : 0
+        return n
+    }
+    function names() {
+        let n = 0
+        for (let i = 0; i < children.length; i++) if (children[i].parent === this) n++
+        return n
+    }
+    function own() {
+        const a = children, b = children
+        a.push(null)
+        return (a !== b) + "," + b.length + "," + children.length
+    }
+}"#,
+    );
+    let before = e.native_list_arrays();
+    assert_eq!(e.invoke_by_name(root, "names", &[]).unwrap(), Value::Int(8));
+    assert_eq!(e.invoke_by_name(root, "names", &[]).unwrap(), Value::Int(8));
+    assert_eq!(e.invoke_by_name(root, "byId", &[]).unwrap(), Value::Int(8));
+    assert_eq!(h.num(root, "shown"), 8.0);
+    // Seventeen reads of the list in each loop, by its own name and by the
+    // object's, and the list never changed.
+    assert_eq!(e.native_list_arrays() - before, 1);
+
+    // Each read is still an array of the script's own.
+    assert_eq!(
+        e.invoke_by_name(root, "own", &[]).unwrap(),
+        Value::from("true,8,8")
+    );
+
+    // A changed list is made again, once.
+    e.list_push(root, Item::CHILDREN.index, item(&h)).unwrap();
+    assert_eq!(e.invoke_by_name(root, "names", &[]).unwrap(), Value::Int(8));
+    assert_eq!(e.invoke_by_name(root, "byId", &[]).unwrap(), Value::Int(9));
+    assert_eq!(h.num(root, "shown"), 9.0);
+    assert_eq!(e.native_list_arrays() - before, 2);
+}

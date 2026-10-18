@@ -518,6 +518,12 @@ impl HostObjects for EngineHost {
                 .list_face(scope, &js, owner, list)
                 .map_err(HostError::from);
         }
+        if let Ok(v @ Value::List(_)) = &read
+            && let Some(js) = engine.inner.js.borrow().clone()
+            && let Some(made) = engine.native_list(scope, &js, id, p, v)
+        {
+            return made.map_err(HostError::from);
+        }
         match read {
             Ok(v) => Ok(engine.to_js(&v)),
             Err(EngineError::DeadObject(_)) => Ok(JsValue::Undefined),

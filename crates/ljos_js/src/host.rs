@@ -490,6 +490,38 @@ impl<'js> Scope<'js> {
         key
     }
 
+    /// A new array of the entries `r`, an array, holds now: made whole, where
+    /// `slice` defines its entries one by one. `None` when `r` is not an
+    /// array.
+    pub fn copy_array(&self, r: &JsRef) -> rquickjs::Result<Option<JsRef>> {
+        let Some(from) = self.restore(r)?.into_array() else {
+            return Ok(None);
+        };
+        let ctx = self.ctx.as_raw().as_ptr();
+        let entries = from
+            .iter::<Value<'js>>()
+            .collect::<rquickjs::Result<Vec<_>>>()?
+            .iter()
+            // SAFETY: a reference for the new array to own, of each entry.
+            .map(|v| unsafe { rquickjs::qjs::JS_DupValue(ctx, v.as_raw()) })
+            .collect::<Vec<_>>();
+        let Ok(count) = i32::try_from(entries.len()) else {
+            return Err(Exception::throw_range(&self.ctx, "array too long"));
+        };
+        // SAFETY: the context is alive for the call, and the entries are
+        // owned references the new array takes over (or frees, on failure).
+        let made = unsafe {
+            Value::from_raw(
+                self.ctx.clone(),
+                rquickjs::qjs::JS_NewArrayFrom(ctx, count, entries.as_ptr()),
+            )
+        };
+        if made.is_exception() {
+            return Err(rquickjs::Error::Exception);
+        }
+        Ok(Some(self.keep(made)))
+    }
+
     /// Keeps a JS value alive for Rust. An object that is held already
     /// gives the reference it has.
     pub fn keep(&self, v: Value<'js>) -> JsRef {
