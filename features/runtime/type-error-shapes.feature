@@ -34,9 +34,8 @@ Feature: A TypeError names what a chain, a call and a deleted object were
         function readsGoneName() { return made.objectName }
         function callsGone() { made.f() }
         function writesGone() { made.v = 3 }
-        property string seen: ""
+        property string seen: ""; property string run: ""
         function looksAtGone() { seen = typeof made + " " + (made === null) }
-        property string run: ""
         onRunChanged: root[run]()
         Component.onCompleted: { made = comp.createObject(root); made.destroy() }
       }
