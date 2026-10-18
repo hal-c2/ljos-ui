@@ -2121,7 +2121,10 @@ fn renamed(old: &ObjectDef, new: &ObjectDef) -> Vec<(String, String)> {
             span: b.span,
             ..a.clone()
         };
-        if alike != *b || a.alias.is_some() || a.is_required {
+        // A view's rows are made with their required properties set,
+        // and a fresh load of a renamed one makes none; the rows kept
+        // here would not show that.
+        if alike != *b || a.is_required {
             return Vec::new();
         }
         out.push((a.name.clone(), b.name.clone()));

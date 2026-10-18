@@ -3102,6 +3102,33 @@ Feature: What a reload changes
       Then the property "looked" of "pill" is 1
       And the property "x" of "box" is at least 40
 
+    Scenario: An alias of a component file renamed goes in place for its users
+      When the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; property alias label: t.text
+          Text { id: t; text: "a" }
+          Text { objectName: "echo"; text: label + "!" }
+        }
+        """
+      And a reload happens
+      And the method "go" of "root" is called
+      And 500 milliseconds pass
+      And the file "Pill.qml" is changed to:
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; property alias caption: t.text
+          Text { id: t; text: "a" }
+          Text { objectName: "echo"; text: caption + "!" }
+        }
+        """
+      And a reload happens
+      Then the property "caption" of "pill" is "a"
+      And the property "text" of "echo" is "a!"
+      And the property "x" of "box" is at least 40
+      When the property "caption" of "pill" is set to "b"
+      Then the property "text" of "echo" is "b!"
+
     Scenario: A property renamed under members a user declares makes the roots again
       When the file "Scenario.qml" is changed to:
         """qml
