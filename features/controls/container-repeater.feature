@@ -17,29 +17,20 @@ Feature: A repeater in a container
       import QtQuick.Controls.Basic
       Item {
         id: root; objectName: "root"; width: 200; height: 200
-        property int made: 0
-        property int gone: 0
+        property int made: 0; property int gone: 0
         SwipeView {
           id: view; objectName: "view"; anchors.fill: parent
           Repeater {
-            id: rep
-            model: 3
-            Item {
-              Component.onCompleted: root.made++
-              Component.onDestruction: root.gone++
-            }
+            id: rep; model: 3
+            Item { Component.onCompleted: root.made++; Component.onDestruction: root.gone++ }
           }
         }
         Item { id: other }
         Item {
           id: plain
           Repeater {
-            id: loose
-            model: 2
-            Item {
-              Component.onCompleted: root.made++
-              Component.onDestruction: root.gone++
-            }
+            id: loose; model: 2
+            Item { Component.onCompleted: root.made++; Component.onDestruction: root.gone++ }
           }
         }
         function move() { made = 0; gone = 0; loose.parent = other }
