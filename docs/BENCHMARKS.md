@@ -27,7 +27,10 @@ mise run bench:cross                    # can ljos be built for a small aarch64 
 - the corpus examples that rendered in the last `mise run gallery` (all runnable ones if there was
   no gallery run).
 
-Examples get the same project directory, `qmldir` overlays and window size as in the gallery.
+Examples get the same project directory and `qmldir` overlays as in the gallery. Both runtimes open
+them at the root's own size, as qml6 does, not at the gallery's capture size: until 2026-10-18 Ljós
+was given the capture size and Qt was not, so clocks, rssnews and samegame drew bigger windows on
+Ljós (samegame 800×600, a bigger board, against Qt's 320×480).
 
 **Defaults.** The defaults are `--warm-up --repeat 3 --bisect pi-zero`:
 

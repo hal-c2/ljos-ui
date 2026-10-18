@@ -38,7 +38,8 @@ pub struct App {
     /// Import directories, for Qt's `-I` (Ljós finds modules beside the file).
     #[serde(default)]
     pub imports: Vec<PathBuf>,
-    /// The window size Ljós is asked for, `WxH`; Qt takes the root's own.
+    /// The window size Ljós is asked for, `WxH`; Qt always takes the
+    /// root's own, so give one only where it is the root's.
     #[serde(default)]
     pub size: Option<String>,
     #[serde(default)]

@@ -73,7 +73,9 @@ for line in os.environ["ROWS"].splitlines():
         "id": cid,
         "file": os.path.join(d, entry),
         "imports": [d, os.path.join(overlays, cid)],
-        "size": f"{width}x{height}",
+        # No size: Ljós takes the root's own, as qml6 does. The gallery's
+        # capture size is not the root's for every example, and a window
+        # of another size is another amount of work to compare.
         # The example's directory is its project, as for the gallery.
         "ljos_args": ["--project", d, "--example", cid],
     })
