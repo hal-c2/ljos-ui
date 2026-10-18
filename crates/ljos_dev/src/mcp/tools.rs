@@ -865,6 +865,7 @@ impl Look<'_> {
         window.insert("focus".into(), focus.clone());
         let clock = if virtual_clock { "virtual" } else { "system" };
         let nodes = self.capture.tree.len();
+        let animations = ljos_quick::running_animation_count(engine);
         let mut value = json!({
             "windows": [Value::Object(window)],
             "window_count": windows,
@@ -873,6 +874,7 @@ impl Look<'_> {
             "reload_generation": engine.reload_generation(),
             "objects": engine.object_count(),
             "outline_nodes": nodes,
+            "animations": animations,
             "capabilities": caps.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
             "reload": reload,
         });
@@ -911,6 +913,15 @@ impl Look<'_> {
                 f["ref"].as_str().unwrap_or_default()
             ),
         };
+        let _ = writeln!(
+            text,
+            "{}",
+            match animations {
+                0 => "no animation under way".to_string(),
+                1 => "1 animation under way".to_string(),
+                n => format!("{n} animations under way"),
+            }
+        );
         let _ = write!(
             text,
             "{nodes} items in the outline, {} objects, {clock} clock, reload generation {}\n\

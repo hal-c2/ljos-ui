@@ -1331,7 +1331,7 @@ Static resources carry long `ttlMs` values.
 
 | Tool | Does | Cap |
 |---|---|---|
-| `app_status` | Windows, size, scale, appearance, focus, visibility state, clock (real or virtual), capabilities | inspect |
+| `app_status` | Windows, size, scale, appearance, focus, visibility state, clock (real or virtual), animations under way, capabilities | inspect |
 | `app_snapshot` | Accessibility-tree outline with refs; `root`, `depth`, `include`, `max_nodes`, `cursor`, `since` (delta), optional image | inspect |
 | `app_find` | Nodes by role, name (exact, substring or regex), `objectName`, text or state. Cheaper than a snapshot | inspect |
 | `app_inspect` | One node in depth: type, `ObjectKey`, source location, properties with **provenance** (assigned, bound at tier 0, 1 or JS, animated, default), geometry, lattice state | inspect |

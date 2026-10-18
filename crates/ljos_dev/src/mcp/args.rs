@@ -63,9 +63,9 @@ headless). Scaled down so the longest side is at most `max_size` (default and li
 Prefer `app_snapshot` for reading text and state: it is smaller and exact.";
 
 pub const STATUS: &str = "\
-What is running: windows (how many; only the primary is inspected), size, scale, colour scheme, \
-keyboard focus, clock, reload generation and last reload, and the capabilities of this \
-connection. `after_reload` with `wait_ms` waits for a reload.";
+What is running: windows (only the primary is inspected), size, scale, colour scheme, focus, \
+clock, reload generation and last reload, animations under way (wait for them after a click), \
+and this connection's capabilities. `after_reload` with `wait_ms` waits for a reload.";
 
 pub const LOGS: &str = "\
 Recent log lines of the app (`console.log`, warnings, JS errors) with QML file and line when \

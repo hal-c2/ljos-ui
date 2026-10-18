@@ -19,7 +19,9 @@ Feature: Status, log, measurements and pictures from the inspector
         color: "#ff0000"
         function shout() { console.log("hello from shout") }
         function slip() { console.warn("careful") }
+        NumberAnimation { objectName: "fade"; target: field; property: "opacity"; to: 0.5; duration: 1000 }
         TextInput {
+          id: field
           objectName: "field"
           width: 100; height: 20
           focus: true
@@ -61,6 +63,18 @@ Feature: Status, log, measurements and pictures from the inspector
       When the agent calls the tool "app_status"
       Then the answer's "/reload/generation" is 0
       And the answer's "/reload/watched" is false
+
+    # An agent that clicked something waits for what the click set moving
+    # (a page sliding in) before it looks again.
+    Scenario: The animations under way are counted
+      When the agent calls the tool "app_status"
+      Then the answer's "/animations" is 0
+      When the property "running" of "fade" is set to true
+      And the agent calls the tool "app_status"
+      Then the answer's "/animations" is 1
+      When 1 second passes
+      And the agent calls the tool "app_status"
+      Then the answer's "/animations" is 0
 
     Scenario: The item with the keyboard is named
       When the agent calls the tool "app_status"
