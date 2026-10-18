@@ -183,20 +183,22 @@ impl Painter {
     /// The shapes as this painter draws them best.
     pub(crate) fn prepare(
         &self,
-        shapes: &mut Vec<egui::epaint::ClippedShape>,
+        shapes: &[egui::epaint::ClippedShape],
         pixels_per_point: f32,
-    ) {
+    ) -> Vec<egui::epaint::ClippedShape> {
         match self {
             // Shader callbacks never reach it (`draws_shaders`).
-            Painter::Wgpu(_) => {}
+            Painter::Wgpu(_) => {
+                let _ = pixels_per_point;
+                shapes.to_vec()
+            }
             #[cfg(gl_painter)]
             Painter::Gl(painter) => {
-                crate::gl_shader::programs(painter.programs(), shapes);
-                crate::gl::fill_rects(shapes, pixels_per_point);
+                let mut shapes = crate::gl::fill_rects(shapes, pixels_per_point);
+                crate::gl_shader::programs(painter.programs(), &mut shapes);
+                shapes
             }
         }
-        #[cfg(not(gl_painter))]
-        let _ = (shapes, pixels_per_point);
     }
 
     /// Readies, while the window is idle, what drawing it may soon need.

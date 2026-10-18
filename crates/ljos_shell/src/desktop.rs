@@ -1395,12 +1395,14 @@ impl<M: Send + 'static> Desktop<M> {
             }
             return;
         }
-        slot.shown.keep(&shapes, pixels_per_point, clear);
-        let mut shapes = shapes;
-        if let Frame::Part(areas) = &frame {
-            present::clip_to(&mut shapes, areas, pixels_per_point);
-        }
-        painter.prepare(&mut shapes, pixels_per_point);
+        let kept = slot.shown.keep(shapes, pixels_per_point, clear);
+        let shapes = if let Frame::Part(areas) = &frame {
+            let mut part = kept.to_vec();
+            present::clip_to(&mut part, areas, pixels_per_point);
+            painter.prepare(&part, pixels_per_point)
+        } else {
+            painter.prepare(kept, pixels_per_point)
+        };
         let primitives = present::tessellate(&slot.ctx, shapes, pixels_per_point);
         #[cfg(feature = "mcp")]
         if let Some(meter) = meter.as_mut() {

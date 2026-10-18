@@ -119,29 +119,23 @@ impl LastPicture {
         if same { Change::None } else { Change::All }
     }
 
-    /// The window now shows `shapes`.
+    /// The window now shows `shapes`, which are kept as they are and lent
+    /// back to be drawn: copied, they were a clone and a drop of every
+    /// shape in every drawn frame.
     pub(crate) fn keep(
         &mut self,
-        shapes: &[ClippedShape],
+        shapes: Vec<ClippedShape>,
         pixels_per_point: f32,
         clear: egui::Color32,
-    ) {
-        match &mut self.shown {
-            // Into the same allocation: this runs in every drawn frame.
-            Some(shown) => {
-                shown.shapes.clear();
-                shown.shapes.extend_from_slice(shapes);
-                shown.pixels_per_point = pixels_per_point;
-                shown.clear = clear;
-            }
-            None => {
-                self.shown = Some(Shown {
-                    shapes: shapes.to_vec(),
-                    pixels_per_point,
-                    clear,
-                });
-            }
-        }
+    ) -> &[ClippedShape] {
+        &self
+            .shown
+            .insert(Shown {
+                shapes,
+                pixels_per_point,
+                clear,
+            })
+            .shapes
     }
 
     /// What the window shows is not known: the next pass draws.
@@ -698,7 +692,7 @@ mod tests {
         for shapes in passes {
             if last.change(shapes, 1.0, Color32::WHITE) != Change::None {
                 frames += 1;
-                last.keep(shapes, 1.0, Color32::WHITE);
+                last.keep(shapes.to_vec(), 1.0, Color32::WHITE);
             }
         }
         frames
@@ -785,7 +779,7 @@ mod tests {
 
     fn change(before: &[ClippedShape], now: &[ClippedShape]) -> Change {
         let mut last = LastPicture::default();
-        last.keep(before, 1.0, Color32::WHITE);
+        last.keep(before.to_vec(), 1.0, Color32::WHITE);
         last.change(now, 1.0, Color32::WHITE)
     }
 
@@ -805,7 +799,7 @@ mod tests {
         let before = [rect(0.0), rect(20.0)];
         let mut last = LastPicture::default();
         assert_eq!(last.differs(&before, 1.0, Color32::WHITE), Change::All);
-        last.keep(&before, 1.0, Color32::WHITE);
+        last.keep(before.to_vec(), 1.0, Color32::WHITE);
         assert_eq!(last.differs(&before, 1.0, Color32::WHITE), Change::None);
         for now in [&[rect(0.0), rect(25.0)][..], &[rect(0.0)], &before[..]] {
             let whole = if now == &before[..] {
@@ -840,7 +834,7 @@ mod tests {
     fn another_scale_background_or_first_picture_changes_everything() {
         let mut last = LastPicture::default();
         assert_eq!(last.change(&[rect(0.0)], 1.0, Color32::WHITE), Change::All);
-        last.keep(&[rect(0.0)], 1.0, Color32::WHITE);
+        last.keep(vec![rect(0.0)], 1.0, Color32::WHITE);
         assert_eq!(last.change(&[rect(0.0)], 2.0, Color32::WHITE), Change::All);
         assert_eq!(last.change(&[rect(0.0)], 1.0, Color32::BLACK), Change::All);
     }
@@ -1045,7 +1039,7 @@ mod tests {
     #[test]
     fn a_forgotten_picture_is_drawn_again() {
         let mut last = LastPicture::default();
-        last.keep(&[], 1.0, Color32::WHITE);
+        last.keep(Vec::new(), 1.0, Color32::WHITE);
         assert_eq!(last.change(&[], 1.0, Color32::WHITE), Change::None);
         last.forget();
         assert_eq!(last.change(&[], 1.0, Color32::WHITE), Change::All);

@@ -1060,12 +1060,12 @@ fn count_compared() {
 /// the shapes next to it, and quads one after another are one mesh. Done to the shapes about to be drawn, after they
 /// were compared with the last picture (a callback is never the same as
 /// another).
-pub(crate) fn fill_rects(shapes: &mut Vec<ClippedShape>, pixels_per_point: f32) {
-    // Made again in order rather than changed in place: a quad's place
-    // set to nothing and then taken out was a drop and a move more for
-    // each of two hundred bars.
-    let all = std::mem::take(shapes);
-    shapes.reserve(all.len());
+pub(crate) fn fill_rects(all: &[ClippedShape], pixels_per_point: f32) -> Vec<ClippedShape> {
+    // Made anew from what the window keeps (`LastPicture::keep`) rather
+    // than from a copy of it: a rectangle that becomes a quad or a clear
+    // is only read, and two hundred bars were two hundred clones and
+    // drops a frame.
+    let mut shapes = Vec::with_capacity(all.len());
     // The quads since something else came between them, all in the same
     // clip rectangle: they become one mesh, made at its size once the run
     // ends (grown a quad at a time, two hundred bars were a hundred
@@ -1080,19 +1080,19 @@ pub(crate) fn fill_rects(shapes: &mut Vec<ClippedShape>, pixels_per_point: f32) 
             _ => None,
         };
         let Some((r, color)) = fill else {
-            quads_into_mesh(shapes, &mut run, run_clip);
-            shapes.push(cs);
+            quads_into_mesh(&mut shapes, &mut run, run_clip);
+            shapes.push(cs.clone());
             continue;
         };
         if r.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
             if !run.is_empty() && run_clip != cs.clip_rect {
-                quads_into_mesh(shapes, &mut run, run_clip);
+                quads_into_mesh(&mut shapes, &mut run, run_clip);
             }
             run_clip = cs.clip_rect;
             run.push((r, color));
             continue;
         }
-        quads_into_mesh(shapes, &mut run, run_clip);
+        quads_into_mesh(&mut shapes, &mut run, run_clip);
         let color = color.to_normalized_gamma_f32();
         let clear = egui_glow::CallbackFn::new(move |info, painter| {
             clear_in(&info, painter.gl(), color);
@@ -1105,7 +1105,8 @@ pub(crate) fn fill_rects(shapes: &mut Vec<ClippedShape>, pixels_per_point: f32) 
             }),
         });
     }
-    quads_into_mesh(shapes, &mut run, run_clip);
+    quads_into_mesh(&mut shapes, &mut run, run_clip);
+    shapes
 }
 
 /// Adds the quads of `run`, all in `clip_rect`, to `shapes` as one mesh,
@@ -1333,11 +1334,11 @@ mod tests {
 
     #[test]
     fn opaque_rectangles_on_whole_pixels_are_cleared() {
-        let mut shapes = vec![
+        let shapes = vec![
             rect([0.0, 0.0], [400.0, 40.0], Color32::WHITE),
             rect([0.0, 40.0], [400.0, 80.0], Color32::from_gray(0xee)),
         ];
-        fill_rects(&mut shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0);
         assert_eq!(cleared(&shapes), [true, true]);
     }
 
@@ -1351,7 +1352,7 @@ mod tests {
         if let Shape::Rect(r) = &mut bordered.shape {
             r.stroke = Stroke::new(1.0, Color32::BLACK);
         }
-        let mut shapes = vec![
+        let shapes = vec![
             // Between pixels: its edges are blended.
             rect([0.5, 0.0], [100.0, 100.0], Color32::RED),
             // Seen through.
@@ -1361,7 +1362,7 @@ mod tests {
             // No area.
             rect([5.0, 0.0], [5.0, 100.0], Color32::RED),
         ];
-        fill_rects(&mut shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0);
         assert!(shapes.iter().all(|s| matches!(s.shape, Shape::Rect(_))));
     }
 
@@ -1405,11 +1406,11 @@ mod tests {
     #[test]
     fn whole_pixels_are_the_device_s() {
         // 0.5 points at a scale of 2 is a whole pixel.
-        let mut shapes = vec![rect([0.5, 0.5], [100.0, 100.0], Color32::RED)];
-        fill_rects(&mut shapes, 2.0);
+        let shapes = vec![rect([0.5, 0.5], [100.0, 100.0], Color32::RED)];
+        let shapes = fill_rects(&shapes, 2.0);
         assert_eq!(cleared(&shapes), [true]);
-        let mut shapes = vec![rect([0.5, 0.5], [100.0, 100.0], Color32::RED)];
-        fill_rects(&mut shapes, 1.0);
+        let shapes = vec![rect([0.5, 0.5], [100.0, 100.0], Color32::RED)];
+        let shapes = fill_rects(&shapes, 1.0);
         assert_eq!(cleared(&shapes), [false]);
     }
 
@@ -1421,7 +1422,7 @@ mod tests {
         }
         let mut clipped = rect([0.0, 20.0], [10.0, 30.0], Color32::RED);
         clipped.clip_rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(50.0, 50.0));
-        let mut shapes = vec![
+        let shapes = vec![
             rect([0.0, 0.0], [10.0, 10.0], Color32::RED),
             rect([0.0, 10.0], [10.0, 20.0], Color32::RED),
             // Drawn over the first two and under the next: it keeps them apart.
@@ -1430,7 +1431,7 @@ mod tests {
             // Cut by a clip of its own.
             clipped,
         ];
-        fill_rects(&mut shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0);
         let vertices: Vec<_> = shapes
             .iter()
             .map(|s| match &s.shape {
@@ -1446,13 +1447,13 @@ mod tests {
     fn small_rectangles_are_quads_drawn_with_the_rest() {
         // Two hundred bars of 12 × 3 pixels: one mesh, one draw, not two
         // hundred clears.
-        let mut shapes: Vec<_> = (0..200)
+        let shapes: Vec<_> = (0..200)
             .map(|i| {
                 let y = i as f32 * 3.0;
                 rect([0.0, y], [12.0, y + 3.0], Color32::RED)
             })
             .collect();
-        fill_rects(&mut shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0);
         assert_eq!(
             shapes.len(),
             1,
@@ -1475,11 +1476,11 @@ mod tests {
         .tessellate_shapes(shapes);
         assert_eq!(primitives.len(), 1, "drawn together");
         // At a scale of 2 a rectangle of 32 × 32 points is 64 × 64 pixels.
-        let mut shapes = vec![
+        let shapes = vec![
             rect([0.0, 0.0], [32.0, 32.0], Color32::RED),
             rect([0.0, 0.0], [32.0, 31.0], Color32::RED),
         ];
-        fill_rects(&mut shapes, 2.0);
+        let shapes = fill_rects(&shapes, 2.0);
         assert_eq!(cleared(&shapes), [true, false]);
     }
 }
