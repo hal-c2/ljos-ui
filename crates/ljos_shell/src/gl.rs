@@ -273,6 +273,11 @@ impl GlPainter {
     }
 
     /// The `ShaderEffect` programs this painter links.
+    /// Whether the context draws on the CPU.
+    pub(crate) fn software(&self) -> bool {
+        self.gl.software
+    }
+
     pub(crate) fn programs(&self) -> &crate::gl_shader::Programs {
         &self.programs
     }
@@ -1174,9 +1179,17 @@ fn count_compared() {
 /// does not touch, which leaves the same pixels: a list's rows, each a
 /// clear and a text, were a draw a row, and llvmpipe spends about 60 000
 /// instructions on the drawing thread for each; their texts are now one
-/// draw. Done to the shapes about to be drawn, after they were compared
-/// with the last picture (a callback is never the same as another).
-pub(crate) fn fill_rects(all: &[ClippedShape], pixels_per_point: f32) -> Vec<ClippedShape> {
+/// draw. A device fills pixels for next to nothing, and each clear ends
+/// the draw and sets up egui's GL state twice around it: on one, every
+/// rectangle is a quad (the sixteen rows of a scrolled list were sixteen
+/// clears and half the driver's work a frame). Done to the shapes about to
+/// be drawn, after they were compared with the last picture (a callback is
+/// never the same as another).
+pub(crate) fn fill_rects(
+    all: &[ClippedShape],
+    pixels_per_point: f32,
+    software: bool,
+) -> Vec<ClippedShape> {
     // Made anew from what the window keeps (`LastPicture::keep`) rather
     // than from a copy of it: a rectangle that becomes a quad or a clear
     // is only read, and two hundred bars were two hundred clones and
@@ -1198,7 +1211,7 @@ pub(crate) fn fill_rects(all: &[ClippedShape], pixels_per_point: f32) -> Vec<Cli
             continue;
         }
         fills.push(
-            if shown.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
+            if !software || shown.area() * pixels_per_point * pixels_per_point < CLEARED as f32 {
                 Fill::Quad(shown, color)
             } else {
                 Fill::Clear(cs.clip_rect, r, color.to_normalized_gamma_f32())
@@ -1517,7 +1530,7 @@ mod tests {
             rect([0.0, 0.0], [400.0, 40.0], Color32::WHITE),
             rect([0.0, 40.0], [400.0, 80.0], Color32::from_gray(0xee)),
         ];
-        let shapes = fill_rects(&shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0, true);
         assert_eq!(cleared(&shapes), [true, true]);
     }
 
@@ -1558,7 +1571,7 @@ mod tests {
             before.push(rect([0.0, y], [400.0, y + 40.0], Color32::WHITE));
             before.push(label([12.0, y + 10.0], [80.0, y + 30.0]));
         }
-        let shapes = fill_rects(&before, 1.0);
+        let shapes = fill_rects(&before, 1.0, true);
         assert_eq!(
             order(&shapes, &before),
             [
@@ -1595,7 +1608,7 @@ mod tests {
             label([0.0, 300.0], [50.0, 399.5]),
             rect([0.0, 400.0], [400.0, 480.0], Color32::WHITE),
         ];
-        let shapes = fill_rects(&before, 1.0);
+        let shapes = fill_rects(&before, 1.0, true);
         assert_eq!(
             order(&shapes, &before),
             [
@@ -1608,6 +1621,22 @@ mod tests {
                 ('c', 6)
             ]
         );
+    }
+
+    #[test]
+    fn a_device_draws_large_rectangles_with_the_mesh() {
+        let shapes: Vec<_> = (0..16)
+            .map(|i| {
+                let y = i as f32 * 40.0;
+                rect([0.0, y], [400.0, y + 40.0], Color32::WHITE)
+            })
+            .collect();
+        let shapes = fill_rects(&shapes, 1.0, false);
+        assert_eq!(shapes.len(), 1, "one mesh, no clears");
+        let Shape::Mesh(quads) = &shapes[0].shape else {
+            panic!("the quads: {:?}", shapes[0].shape);
+        };
+        assert_eq!(quads.vertices.len(), 4 * 16);
     }
 
     #[test]
@@ -1630,7 +1659,7 @@ mod tests {
             // No area.
             rect([5.0, 0.0], [5.0, 100.0], Color32::RED),
         ];
-        let shapes = fill_rects(&shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0, true);
         assert!(shapes.iter().all(|s| matches!(s.shape, Shape::Rect(_))));
     }
 
@@ -1675,10 +1704,10 @@ mod tests {
     fn whole_pixels_are_the_device_s() {
         // 0.5 points at a scale of 2 is a whole pixel.
         let shapes = vec![rect([0.5, 0.5], [100.0, 100.0], Color32::RED)];
-        let shapes = fill_rects(&shapes, 2.0);
+        let shapes = fill_rects(&shapes, 2.0, true);
         assert_eq!(cleared(&shapes), [true]);
         let shapes = vec![rect([0.5, 0.5], [100.0, 100.0], Color32::RED)];
-        let shapes = fill_rects(&shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0, true);
         assert_eq!(cleared(&shapes), [false]);
     }
 
@@ -1699,7 +1728,7 @@ mod tests {
             // Cut to a clip of its own already: it joins the one before.
             clipped,
         ];
-        let shapes = fill_rects(&shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0, true);
         let vertices: Vec<_> = shapes
             .iter()
             .map(|s| match &s.shape {
@@ -1720,7 +1749,7 @@ mod tests {
         row.clip_rect = Rect::from_min_max(pos2(10.6, 10.2), pos2(66.4, 23.0));
         let mut gone = rect([0.0, 40.0], [400.0, 80.0], Color32::RED);
         gone.clip_rect = row.clip_rect;
-        let shapes = fill_rects(&[row, gone], 1.0);
+        let shapes = fill_rects(&[row, gone], 1.0, true);
         assert_eq!(shapes.len(), 1);
         let Shape::Mesh(m) = &shapes[0].shape else {
             panic!("{:?}", shapes[0].shape)
@@ -1743,7 +1772,7 @@ mod tests {
                 rect([0.0, y], [12.0, y + 3.0], Color32::RED)
             })
             .collect();
-        let shapes = fill_rects(&shapes, 1.0);
+        let shapes = fill_rects(&shapes, 1.0, true);
         assert_eq!(
             shapes.len(),
             1,
@@ -1770,7 +1799,7 @@ mod tests {
             rect([0.0, 0.0], [32.0, 32.0], Color32::RED),
             rect([0.0, 0.0], [32.0, 31.0], Color32::RED),
         ];
-        let shapes = fill_rects(&shapes, 2.0);
+        let shapes = fill_rects(&shapes, 2.0, true);
         assert_eq!(cleared(&shapes), [true, false]);
     }
 }

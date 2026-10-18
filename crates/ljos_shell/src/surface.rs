@@ -194,7 +194,8 @@ impl Painter {
             }
             #[cfg(gl_painter)]
             Painter::Gl(painter) => {
-                let mut shapes = crate::gl::fill_rects(shapes, pixels_per_point);
+                let mut shapes =
+                    crate::gl::fill_rects(shapes, pixels_per_point, painter.software());
                 crate::gl_shader::programs(painter.programs(), &mut shapes);
                 shapes
             }
