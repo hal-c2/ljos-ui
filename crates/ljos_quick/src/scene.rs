@@ -874,6 +874,7 @@ impl QuickScene {
             .is_some_and(|s| Arc::ptr_eq(s, &snap));
         self.snapshot = Some(Arc::clone(&snap));
         // Last, so the tree describes the items as this frame left them.
+        self.a11y.set_viewport(self.viewport);
         self.a11y.sync(engine, self.root);
         // Layouts no frame asked for lately are dropped here, on a frame
         // that runs anyway; nothing ages while the scene is idle.

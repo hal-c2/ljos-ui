@@ -936,7 +936,7 @@ impl Live {
     /// The tree as steps see it: role words, names and nesting.
     fn a11y(&self) -> A11yNode {
         // In the words of the steps.
-        fn states(d: &ljos_a11y::NodeData) -> Vec<String> {
+        fn states(d: &ljos_a11y::NodeData, off_screen: bool) -> Vec<String> {
             use ljos_a11y::accesskit::Toggled;
             let says = [
                 ("checkable", d.toggled.is_some()),
@@ -955,6 +955,8 @@ impl Live {
                     "assertive",
                     d.politeness() == Some(ljos_a11y::Politeness::Assertive),
                 ),
+                // Wholly outside the window: not read as shown.
+                ("off screen", off_screen),
             ];
             says.iter()
                 .filter(|(_, is)| *is)
@@ -979,7 +981,7 @@ impl Live {
                             t.value.get(a..b).map(str::to_owned)
                         })
                         .unwrap_or_default(),
-                    states: states(d),
+                    states: states(d, tree.off_screen(*k)),
                     set: d.position_in_set.zip(d.size_of_set),
                     range: d
                         .range

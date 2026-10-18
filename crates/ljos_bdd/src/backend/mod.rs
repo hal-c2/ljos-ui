@@ -80,8 +80,9 @@ pub struct A11yNode {
     /// What the node says of itself, in the words of the steps:
     /// "checkable", "checked", "partially checked", "pressed",
     /// "expandable", "expanded", "selectable", "selected", "read-only",
-    /// "disabled", and for a live region "live" (and "assertive" when
-    /// it interrupts).
+    /// "disabled", for a live region "live" (and "assertive" when it
+    /// interrupts), and "off screen" when it lies wholly outside the
+    /// window.
     pub states: Vec<String>,
     /// Its place among the rows it is one of, counted from 1, and how
     /// many there are.

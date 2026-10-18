@@ -181,6 +181,9 @@ pub(crate) fn emit(
             data.apply_relations(node, |k| {
                 tree.contains(k).then(|| node_id(view, k).accesskit_id())
             });
+            if tree.off_screen(key) {
+                node.set_hidden();
+            }
             // Logical points; egui's root node scales to pixels.
             node.set_bounds(accesskit::Rect {
                 x0: f64::from(min.x),

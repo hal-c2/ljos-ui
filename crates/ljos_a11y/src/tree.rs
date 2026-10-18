@@ -90,6 +90,15 @@ pub struct Handled {
     pub show_on_screen: bool,
 }
 
+/// Whether `b` is wholly outside `viewport`. A box of no area says
+/// nothing of where its item is drawn, so it is never outside.
+fn lies_outside(b: Bounds, viewport: Option<Bounds>) -> bool {
+    let Some(v) = viewport else {
+        return false;
+    };
+    b.x1 > b.x0 && b.y1 > b.y0 && (b.x1 <= v.x0 || b.x0 >= v.x1 || b.y1 <= v.y0 || b.y0 >= v.y1)
+}
+
 /// An axis-aligned box in scene coordinates.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Bounds {
@@ -473,6 +482,8 @@ pub struct Tree {
     /// are the last children of the scene, whatever its other children.
     announced: [Option<NodeKey>; 2],
     announcements: u64,
+    /// What of the scene the window shows; nothing until the scene says.
+    viewport: Option<Bounds>,
 }
 
 impl Tree {
@@ -550,6 +561,31 @@ impl Tree {
         self.dirty.insert(key);
         self.stats.node_updates += 1;
         true
+    }
+
+    /// What of the scene the window shows, in the scene's coordinates.
+    /// The nodes that go off screen or come back are told again.
+    pub fn set_viewport(&mut self, viewport: Bounds) -> bool {
+        if self.viewport == Some(viewport) {
+            return false;
+        }
+        let was = self.viewport.replace(viewport);
+        for (key, slot) in &self.slots {
+            if lies_outside(slot.data.bounds, was) != lies_outside(slot.data.bounds, self.viewport)
+            {
+                self.dirty.insert(*key);
+            }
+        }
+        true
+    }
+
+    /// Whether the node lies wholly outside what the window shows. Qt
+    /// lists such an item without the states that say it is shown; an
+    /// AccessKit node says so by being hidden. One partly inside, or
+    /// inside the window but outside the clip of its view, is on screen.
+    pub fn off_screen(&self, key: NodeKey) -> bool {
+        self.get(key)
+            .is_some_and(|d| lies_outside(d.bounds, self.viewport))
     }
 
     /// Moves the node without touching the rest of its data.
@@ -841,6 +877,9 @@ impl Tree {
             let data = self.get(key)?;
             let mut node = Node::new(data.role);
             data.apply(&mut node);
+            if lies_outside(data.bounds, self.viewport) {
+                node.set_hidden();
+            }
             data.apply_relations(&mut node, |k| self.attached(k).then(|| k.node_id()));
             node.set_bounds(accesskit::Rect {
                 x0: data.bounds.x0,
@@ -1269,6 +1308,27 @@ mod tests {
             })
         );
         assert!(t.accesskit_node(D).is_none());
+    }
+
+    #[test]
+    fn a_node_wholly_outside_the_viewport_is_hidden() {
+        let mut t = sample();
+        t.set_bounds(B, Bounds::new(-90.0, 0.0, -10.0, 30.0));
+        t.set_bounds(C, Bounds::new(390.0, 0.0, 470.0, 30.0));
+        // Before the scene says what it shows, everything is on screen.
+        assert!(!t.off_screen(B));
+        t.take_changes();
+        assert!(t.set_viewport(Bounds::new(0.0, 0.0, 400.0, 400.0)));
+        assert!(t.off_screen(B));
+        assert!(!t.off_screen(C), "partly inside");
+        assert_eq!(t.take_changes().changed, vec![B], "only the one that went");
+        assert_eq!(t.accesskit_node(B).map(|n| n.is_hidden()), Some(true));
+        assert_eq!(t.accesskit_node(C).map(|n| n.is_hidden()), Some(false));
+        // Touching the edge is outside; no area is never outside.
+        t.set_bounds(B, Bounds::new(400.0, 0.0, 480.0, 30.0));
+        assert!(t.off_screen(B));
+        t.set_bounds(B, Bounds::new(-10.0, -10.0, -10.0, -10.0));
+        assert!(!t.off_screen(B));
     }
 
     fn applied(data: &NodeData) -> Node {

@@ -1435,7 +1435,7 @@ fn a11y_node<'t>(tree: &'t A11yNode, role: &str, name: &str) -> Result<&'t A11yN
 }
 
 #[rustfmt::skip]
-#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is (not )?(checkable|checked|partially checked|pressed|expandable|expanded|selectable|selected|read-only|disabled|live|assertive)$"#)]
+#[then(regex = r#"^the "([^"]+)" named "([^"]*)" is (not )?(checkable|checked|partially checked|pressed|expandable|expanded|selectable|selected|read-only|disabled|live|assertive|off screen)$"#)]
 fn a11y_state(
     w: &mut LjosWorld,
     role: String,

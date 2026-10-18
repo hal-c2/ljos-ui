@@ -686,6 +686,13 @@ impl A11yPass {
         self.pending.borrow().active
     }
 
+    /// What of the scene the window shows: what lies wholly outside it
+    /// is off screen.
+    pub(crate) fn set_viewport(&mut self, viewport: kurbo::Rect) {
+        let b = Bounds::new(viewport.x0, viewport.y0, viewport.x1, viewport.y1);
+        self.tree.set_viewport(b);
+    }
+
     /// Whether [`A11yPass::sync`] has work.
     pub(crate) fn pending(&self) -> bool {
         !self.pending.borrow().is_empty()
