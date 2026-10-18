@@ -26,6 +26,7 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlList, QmlObject, QtObject,
     Rect, Url, Value, WriteKind, qml_impl,
 };
+use ljos_render::ImageHandle;
 use ljos_runtime::{Time, TimerId};
 
 use crate::image::{Image, ImageBase, ImageKey, ImageStore};
@@ -166,6 +167,8 @@ struct Run {
     jump: Option<(TimerId, Atom)>,
     /// The picture the frames are shown in.
     picture: Option<ObjectId>,
+    /// The sheets taken in when the sequence started, kept while it is.
+    sheets: Vec<ImageHandle>,
     /// What the weights and variations are chosen with.
     rng: u64,
 }
@@ -180,6 +183,7 @@ impl Default for Run {
             next: None,
             jump: None,
             picture: None,
+            sheets: Vec::new(),
             rng: 0x5eed_5eed_5eed_5eed,
         }
     }
@@ -327,6 +331,7 @@ fn start(e: &Engine, me: ObjectId) {
         r.due = now;
     });
     enter(e, me, &all, 0);
+    take_in(e, me, &all);
     if let Some(p) = with_run(e, me, |r| r.picture).flatten() {
         warn(
             e,
@@ -334,6 +339,30 @@ fn start(e: &Engine, me: ObjectId) {
         );
     }
     schedule(e, me, false);
+}
+
+/// As in Qt, a sequence takes in every sprite's sheet when it starts:
+/// those not shown yet decode aside, so the frame a jump goes to one in
+/// does not decode it.
+fn take_in(e: &Engine, me: ObjectId, all: &[ObjectId]) {
+    let store = ImageStore::of(e);
+    let mut seen: Vec<String> = Vec::new();
+    for &sprite in all {
+        let raw = read(e, sprite, Sprite::SOURCE.index).to_js_string();
+        if raw.is_empty() {
+            continue;
+        }
+        let url = e.resolve_url(sprite, raw.as_str());
+        if seen.contains(&url) {
+            continue;
+        }
+        store.load(e, &url, move |e, got| {
+            if let Ok(sheet) = got {
+                with_run(e, me, |r| r.sheets.push(sheet));
+            }
+        });
+        seen.push(url);
+    }
 }
 
 fn jumped(e: &Engine, me: ObjectId) {
