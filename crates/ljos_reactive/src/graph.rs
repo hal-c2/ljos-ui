@@ -981,6 +981,22 @@ impl<V: Clone + 'static> Graph<V> {
         self.read_slow(n)
     }
 
+    /// [`Graph::try_get`] of what `f` makes of the value, which is looked
+    /// at where it is held rather than cloned out: a scene reads two
+    /// numbers of every item that moved, every frame.
+    pub fn try_get_with<R>(&self, n: NodeId, f: impl FnOnce(&V) -> R) -> Option<R> {
+        {
+            let mut g = self.inner.borrow_mut();
+            let node = g.nodes.get(n)?;
+            node.value.as_ref()?;
+            if node.state == NodeState::Clean {
+                g.record_read(n);
+                return g.nodes[n].value.as_ref().map(f);
+            }
+        }
+        self.read_slow(n).as_ref().map(f)
+    }
+
     /// Reads without recording a dependency (still evaluates if dirty).
     pub fn get_untracked(&self, n: NodeId) -> V {
         self.untrack(|| self.get(n))

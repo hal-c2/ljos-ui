@@ -1226,6 +1226,41 @@ impl Engine {
         }
     }
 
+    /// `read(obj, prop).to_number()`, without the value made and dropped
+    /// on the way when the property holds a number: native code reads the
+    /// geometry of every item that moved, every frame.
+    pub fn read_number(&self, obj: ObjectId, prop: PropIndex) -> f64 {
+        let fast = |v: &Value| match v {
+            Value::Real(r) => Some(*r),
+            Value::Int(i) => Some(f64::from(*i)),
+            _ => None,
+        };
+        let got = {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(obj) else {
+                return 0.0;
+            };
+            match h.meta.property(prop) {
+                Some(p) if !p.is_alias() && !h.makes_on_read(prop) => match h.node(prop) {
+                    Some(n) => Ok(n),
+                    None if self.inner.tracking.get() == 0
+                        || p.flags
+                            .intersects(PropertyFlags::CONSTANT | PropertyFlags::GROUP) =>
+                    {
+                        Err(fast(&read_access(&*h.native, &h.dynamic, &p.access)))
+                    }
+                    None => Err(None),
+                },
+                _ => Err(None),
+            }
+        };
+        let v = match got {
+            Ok(n) => self.inner.graph.try_get_with(n, fast).flatten(),
+            Err(v) => v,
+        };
+        v.unwrap_or_else(|| self.read(obj, prop).to_number())
+    }
+
     /// [`Engine::property_index`] for a caller that has no use for why
     /// there is none: no error is built.
     pub fn find_property(&self, obj: ObjectId, name: &str) -> Option<PropIndex> {
