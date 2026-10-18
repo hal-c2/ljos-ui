@@ -28,13 +28,44 @@ Feature: The keys that press a button
     Then the property "said" of "button" is "pressed.released.clicked."
 
     Examples:
-      | control  | key    |
-      | Button   | Space  |
-      | Button   | Return |
-      | Button   | Enter  |
-      | CheckBox | Return |
-      | Switch   | Enter  |
-      | MenuItem | Space  |
+      | control  | key   |
+      | Button   | Space |
+      | CheckBox | Space |
+      | Switch   | Space |
+      | MenuItem | Space |
+
+  # The calqlatr demo types "=" with Return while one of its buttons, the
+  # last one clicked, has the keyboard.
+  @qt-parity
+  Scenario Outline: <key> does not press a button, and goes on to the items it is in
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root
+        objectName: "root"
+        width: 300; height: 200
+        property string said: ""
+        Keys.onPressed: said += "key."
+        <control> {
+          x: 50; y: 50; width: 60; height: 40
+          onClicked: root.said += "clicked."
+        }
+      }
+      """
+    When the user presses the pointer at 80, 70
+    And the user releases the pointer at 80, 70
+    And the user presses "<key>"
+    Then the property "said" of "root" is "clicked.key."
+
+    Examples:
+      | control     | key    |
+      | Button      | Return |
+      | RoundButton | Return |
+      | Button      | Enter  |
+      | CheckBox    | Return |
+      | Switch      | Enter  |
 
   @qt-parity
   Scenario: A key that presses nothing is left to whoever wants it

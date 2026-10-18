@@ -82,8 +82,9 @@ Feature: Keyboard focus of the controls
 
     Examples:
       | key    | clicks |
-      | Return | 1      |
-      | Enter  | 1      |
+      | Space  | 1      |
+      | Return | 0      |
+      | Enter  | 0      |
       | A      | 0      |
 
   Scenario: A policy without Tab takes the control out of the Tab order

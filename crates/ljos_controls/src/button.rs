@@ -7,8 +7,9 @@
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-abstractbutton.html.
 //!
 //! A button has `Qt.StrongFocus`: Tab stops at it, a press brings the
-//! keyboard to it, and Space, Return or Enter presses the one that has the keyboard
-//! (`features/controls/focus.feature`).
+//! keyboard to it, and Space presses the one that has the keyboard
+//! (`features/controls/focus.feature`). Return and Enter are left to whoever
+//! wants them, as qml6 leaves them under every platform theme.
 //!
 //! The `icon` and the `display` of a button are drawn by the `IconLabel`
 //! its style gives as content item ([`crate::icon_label`]).
@@ -785,11 +786,11 @@ fn timer_fired(engine: &Engine, obj: ObjectId) {
 
 // ---------------------------------------------------------- the keyboard
 
-/// Whether the key is one that presses the button: Space, Return and
-/// Enter, as Qt 6.11 does on a desktop. The rows of a menu are picked by
-/// the menu, which has its own way with the keys.
+/// Whether the key is one that presses the button: Space alone, as Qt 6.11
+/// does (features/controls/button-keys.feature). The rows of a menu are
+/// picked by the menu, which has its own way with the keys.
 fn takes_key(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
-    matches!(ev.key, key::SPACE | key::RETURN | key::ENTER) && !in_menu(engine, obj)
+    ev.key == key::SPACE && !in_menu(engine, obj)
 }
 
 /// The menu `obj` is a row of.
