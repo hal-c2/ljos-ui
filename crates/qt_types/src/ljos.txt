@@ -4066,7 +4066,7 @@ module QtQuick.Controls.Fusion
 	Action QtQuick.Templates.Action
 	ActionGroup QtQuick.Templates.ActionGroup
 	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
-	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
+	BusyIndicator QtQuick/Controls/Fusion/BusyIndicator.qml
 	Button QtQuick/Controls/Fusion/Button.qml
 	ButtonGroup QtQuick.Templates.ButtonGroup
 	Calendar QtQuick.Controls.Calendar
@@ -4079,11 +4079,11 @@ module QtQuick.Controls.Fusion
 	DayOfWeekRow QtQuick/Controls/Basic/DayOfWeekRow.qml
 	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dial QtQuick/Controls/Basic/Dial.qml
-	Dialog QtQuick/Controls/Basic/Dialog.qml
-	DialogButtonBox QtQuick/Controls/Basic/DialogButtonBox.qml
+	Dialog QtQuick/Controls/Fusion/Dialog.qml
+	DialogButtonBox QtQuick/Controls/Fusion/DialogButtonBox.qml
 	DoubleSpinBox QtQuick/Controls/Basic/DoubleSpinBox.qml
 	Drawer QtQuick/Controls/Basic/Drawer.qml
-	Frame QtQuick/Controls/Basic/Frame.qml
+	Frame QtQuick/Controls/Fusion/Frame.qml
 	Fusion QtQuick.Controls.Fusion.Fusion
 	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	HorizontalHeaderView QtQuick/Controls/Basic/HorizontalHeaderView.qml
@@ -4100,9 +4100,9 @@ module QtQuick.Controls.Fusion
 	Page QtQuick/Controls/Basic/Page.qml
 	PageIndicator QtQuick/Controls/Basic/PageIndicator.qml
 	Pane QtQuick/Controls/Fusion/Pane.qml
-	Popup QtQuick/Controls/Basic/Popup.qml
-	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
-	RadioButton QtQuick/Controls/Basic/RadioButton.qml
+	Popup QtQuick/Controls/Fusion/Popup.qml
+	ProgressBar QtQuick/Controls/Fusion/ProgressBar.qml
+	RadioButton QtQuick/Controls/Fusion/RadioButton.qml
 	RadioDelegate QtQuick/Controls/Basic/RadioDelegate.qml
 	RangeSlider QtQuick/Controls/Basic/RangeSlider.qml
 	RoundButton QtQuick/Controls/Fusion/RoundButton.qml
@@ -4119,24 +4119,32 @@ module QtQuick.Controls.Fusion
 	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Fusion/Switch.qml
 	SwitchDelegate QtQuick/Controls/Basic/SwitchDelegate.qml
-	TabBar QtQuick/Controls/Basic/TabBar.qml
-	TabButton QtQuick/Controls/Basic/TabButton.qml
+	TabBar QtQuick/Controls/Fusion/TabBar.qml
+	TabButton QtQuick/Controls/Fusion/TabButton.qml
 	TableViewDelegate QtQuick/Controls/Basic/TableViewDelegate.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Fusion/TextField.qml
 	ToolBar QtQuick/Controls/Fusion/ToolBar.qml
 	ToolButton QtQuick/Controls/Fusion/ToolButton.qml
 	ToolSeparator QtQuick/Controls/Fusion/ToolSeparator.qml
-	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+	ToolTip QtQuick/Controls/Fusion/ToolTip.qml
 	TreeViewDelegate QtQuick/Controls/Basic/TreeViewDelegate.qml
 	Tumbler QtQuick/Controls/Basic/Tumbler.qml
 	VerticalHeaderView QtQuick/Controls/Basic/VerticalHeaderView.qml
 	VerticalHeaderViewDelegate QtQuick/Controls/Basic/VerticalHeaderViewDelegate.qml
 	WeekNumberColumn QtQuick/Controls/Basic/WeekNumberColumn.qml
+	type QtQuick/Controls/Fusion/BusyIndicator.qml BusyIndicator
+		prototype QtQuick.Templates.BusyIndicator named
 	type QtQuick/Controls/Fusion/Button.qml Button
 		prototype QtQuick.Templates.Button named
 	type QtQuick/Controls/Fusion/CheckBox.qml CheckBox
 		prototype QtQuick.Templates.CheckBox named
+	type QtQuick/Controls/Fusion/Dialog.qml Dialog
+		prototype QtQuick.Templates.Dialog named
+	type QtQuick/Controls/Fusion/DialogButtonBox.qml DialogButtonBox
+		prototype QtQuick.Templates.DialogButtonBox named
+	type QtQuick/Controls/Fusion/Frame.qml Frame
+		prototype QtQuick.Templates.Frame named
 	type QtQuick.Controls.Fusion.Fusion Fusion
 		prototype QtQml.QtObject named
 		is singleton
@@ -4157,12 +4165,22 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.MenuSeparator named
 	type QtQuick/Controls/Fusion/Pane.qml Pane
 		prototype QtQuick.Templates.Pane named
+	type QtQuick/Controls/Fusion/Popup.qml Popup
+		prototype QtQuick.Templates.Popup named
+	type QtQuick/Controls/Fusion/ProgressBar.qml ProgressBar
+		prototype QtQuick.Templates.ProgressBar named
+	type QtQuick/Controls/Fusion/RadioButton.qml RadioButton
+		prototype QtQuick.Templates.RadioButton named
 	type QtQuick/Controls/Fusion/RoundButton.qml RoundButton
 		prototype QtQuick.Templates.RoundButton named
 	type QtQuick/Controls/Fusion/Slider.qml Slider
 		prototype QtQuick.Templates.Slider named
 	type QtQuick/Controls/Fusion/Switch.qml Switch
 		prototype QtQuick.Templates.Switch named
+	type QtQuick/Controls/Fusion/TabBar.qml TabBar
+		prototype QtQuick.Templates.TabBar named
+	type QtQuick/Controls/Fusion/TabButton.qml TabButton
+		prototype QtQuick.Templates.TabButton named
 	type QtQuick/Controls/Fusion/TextField.qml TextField
 		prototype QtQuick.Templates.TextField named
 	type QtQuick/Controls/Fusion/ToolBar.qml ToolBar
@@ -4171,6 +4189,8 @@ module QtQuick.Controls.Fusion
 		prototype QtQuick.Templates.ToolButton named
 	type QtQuick/Controls/Fusion/ToolSeparator.qml ToolSeparator
 		prototype QtQuick.Templates.ToolSeparator named
+	type QtQuick/Controls/Fusion/ToolTip.qml ToolTip
+		prototype QtQuick.Templates.ToolTip named
 
 module QtQuick.Controls.Material
 	AbstractButton QtQuick.Templates.AbstractButton
