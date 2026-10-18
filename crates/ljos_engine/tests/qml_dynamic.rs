@@ -291,3 +291,75 @@ fn every_text_is_a_module_of_its_own() {
     assert_eq!(h.num(first, "width"), 6.0);
     assert_eq!(h.num(second, "width"), 7.0);
 }
+
+/// A board of `n` pieces a script makes and drops before anything reads
+/// them, and the evaluations the deferred deletes then cost.
+fn evaluations_dropping(n: i32, piece: &str) -> (Harness, ljos_engine::ObjectId, u64) {
+    let h = engine();
+    let root = h.load(&format!(
+        r#"import QtQuick
+Item {{
+    id: root
+    property int size: 4
+    property string seen: ""
+    property int held: data.length
+    property int changes: 0
+    onHeldChanged: changes++
+    Component {{ id: piece; {piece} }}
+    function fill(n) {{
+        var made = []
+        for (var i = 0; i < n; i++) made.push(piece.createObject(root))
+        for (var j = 0; j < made.length; j++) made[j].destroy()
+    }}
+}}
+"#
+    ));
+    h.engine
+        .invoke_by_name(root, "fill", &[Value::Int(n)])
+        .unwrap();
+    let before = h.engine.graph().stats().evaluations;
+    h.engine.process_deferred_deletes();
+    let spent = h.engine.graph().stats().evaluations - before;
+    (h, root, spent)
+}
+
+const PIECE: &str = "Item { width: root.size * 2; height: width + 1; x: width * 3; y: height * 4; opacity: x > 0 ? 1 : 0 }";
+
+#[test]
+fn a_board_dropped_before_it_is_read_works_out_none_of_its_bindings() {
+    // Nothing is told the pieces go, so nothing can read what they owe.
+    let (h, root, few) = evaluations_dropping(10, PIECE);
+    let (_, _, many) = evaluations_dropping(200, PIECE);
+    assert!(
+        many <= few + 2,
+        "{few} evaluations dropping 10, {many} dropping 200"
+    );
+    assert_eq!(
+        h.get(root, "held"),
+        Value::Int(1),
+        "only the Component is left"
+    );
+}
+
+#[test]
+fn a_destruction_handler_still_reads_what_its_object_owed() {
+    let (h, root, _) = evaluations_dropping(
+        3,
+        "Item { width: root.size * 2; Component.onDestruction: root.seen += width + \":\" + root.data.length + \" \" }",
+    );
+    // Each handler sees its own value, and the list without the pieces
+    // already gone.
+    assert_eq!(h.get(root, "seen"), Value::from("8:4 8:3 8:2 "));
+}
+
+#[test]
+fn a_pass_of_deferred_deletes_takes_the_dead_out_of_a_list_once() {
+    // A binding on the parent's list hears once that its pieces went.
+    for n in [10, 200] {
+        let (h, root, _) = evaluations_dropping(n, "Item {}");
+        let made = h.get(root, "changes");
+        assert_eq!(h.get(root, "held"), Value::Int(1));
+        // The pieces came one by one; they go together.
+        assert_eq!(made, Value::Int(n + 2), "{made:?} changes for {n}");
+    }
+}

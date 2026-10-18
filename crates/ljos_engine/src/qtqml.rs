@@ -281,17 +281,26 @@ impl Engine {
     /// that is already out of its view). Qt evaluates bindings as their
     /// inputs change, so what is still due is settled first.
     pub(crate) fn tell_destruction(&self, obj: ObjectId, outermost: bool) {
-        self.tell_destruction_of(obj, outermost, false);
+        self.tell_destruction_of(obj, outermost, false, true);
     }
 
     /// [`Engine::tell_destruction`] for an object a reload took out of
     /// its file: the file lives on, but the object is told as if its
     /// written place went with it.
     pub(crate) fn tell_removed(&self, obj: ObjectId) {
-        self.tell_destruction_of(obj, false, true);
+        self.tell_destruction_of(obj, false, true, true);
     }
 
-    fn tell_destruction_of(&self, obj: ObjectId, outermost: bool, removed: bool) {
+    /// [`Engine::tell_destruction`] for an object destroyed now, which is
+    /// gone before anything else runs: what it still owes is worked out
+    /// only for a handler that is told it goes, as nothing else can read
+    /// it. A board of blocks made and dropped before a frame was every
+    /// binding of every block.
+    pub(crate) fn tell_destruction_going(&self, obj: ObjectId) {
+        self.tell_destruction_of(obj, false, false, false);
+    }
+
+    fn tell_destruction_of(&self, obj: ObjectId, outermost: bool, removed: bool, settle: bool) {
         let (ids, due) = {
             let store = self.inner.store.borrow();
             if store
@@ -312,21 +321,30 @@ impl Engine {
                     continue;
                 }
                 ids.push(id);
-                // An object a reload replaces by one that goes on is not
-                // heard from as it goes, so what it still owes is not
-                // worked out.
-                if self.reload_muted(id) {
-                    stack.extend_from_slice(&h.children);
-                    continue;
-                }
-                due.extend(
-                    h.nodes
-                        .iter()
-                        .flatten()
-                        .flatten()
-                        .filter(|n| g.state(**n).is_some_and(|s| s != NodeState::Clean)),
-                );
                 stack.extend_from_slice(&h.children);
+            }
+            let settle = settle
+                || self.inner.destruction_handlers.get()
+                || self.inner.signals.borrow().any_destroyed_handler(&ids);
+            if settle {
+                for id in &ids {
+                    // An object a reload replaces by one that goes on is
+                    // not heard from as it goes, so what it still owes is
+                    // not worked out.
+                    if self.reload_muted(*id) {
+                        continue;
+                    }
+                    let Some(h) = store.objects.get(*id) else {
+                        continue;
+                    };
+                    due.extend(
+                        h.nodes
+                            .iter()
+                            .flatten()
+                            .flatten()
+                            .filter(|n| g.state(**n).is_some_and(|s| s != NodeState::Clean)),
+                    );
+                }
             }
             (ids, due)
         };
@@ -334,6 +352,7 @@ impl Engine {
             let _ = self.untrack(|| self.inner.graph.try_get(n));
         }
         if self.inner.destruction_handlers.get() {
+            self.forget_held_lists();
             self.run_destruction_handlers(obj, outermost, removed);
         }
         let mut store = self.inner.store.borrow_mut();

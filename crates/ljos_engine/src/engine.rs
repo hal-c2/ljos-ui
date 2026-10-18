@@ -108,6 +108,10 @@ pub(crate) struct Inner {
     /// Set by the first `Component.onDestruction` handler, so destroying
     /// objects costs nothing extra in an engine that has none.
     pub(crate) destruction_handlers: Cell<bool>,
+    /// While a pass of deferred deletes runs, the survivors whose lists may
+    /// hold the dead, cleaned once at the end instead of once for each
+    /// object destroyed (`Engine::forget_in_lists`).
+    pub(crate) list_holders: RefCell<Option<rustc_hash::FxHashSet<ObjectId>>>,
     context_serial: Cell<u64>,
     /// Interceptors, value sources and per-engine extensions.
     pub(crate) hooks: crate::hooks::Hooks,
@@ -278,6 +282,7 @@ impl Engine {
             parent_listeners: RefCell::new(Vec::new()),
             attached_listeners: RefCell::new(Vec::new()),
             destruction_handlers: Cell::new(false),
+            list_holders: RefCell::new(None),
             context_serial: Cell::new(0),
             hooks: crate::hooks::Hooks::default(),
             reload: Default::default(),
@@ -635,15 +640,39 @@ impl Engine {
     /// many scheduled objects were destroyed.
     pub fn process_deferred_deletes(&self) -> usize {
         let mut n = 0;
+        // A pass inside a pass (a handler that processes them) shares it.
+        let outer = self.inner.list_holders.borrow().is_none();
+        if outer {
+            *self.inner.list_holders.borrow_mut() = Some(Default::default());
+        }
         loop {
             let batch = std::mem::take(&mut self.inner.store.borrow_mut().deferred);
             if batch.is_empty() {
-                return n;
+                break;
             }
             for obj in batch {
                 n += usize::from(self.destroy_now(obj));
             }
         }
+        if outer {
+            self.forget_held_lists();
+            *self.inner.list_holders.borrow_mut() = None;
+        }
+        n
+    }
+
+    /// Cleans the lists of the holders a pass of deferred deletes put off,
+    /// before anything that could read them runs.
+    pub(crate) fn forget_held_lists(&self) {
+        let holders = match self.inner.list_holders.borrow_mut().as_mut() {
+            Some(h) if !h.is_empty() => std::mem::take(h),
+            _ => return,
+        };
+        self.inner.graph.batch(|| {
+            for p in holders {
+                self.forget_in_lists(p);
+            }
+        });
     }
 
     /// Runs the `destroyed` handlers of `obj` and what it owns, owners
@@ -662,6 +691,9 @@ impl Engine {
             drop(store);
             self.inner.signals.borrow_mut().take_destroyed(&order)
         };
+        if !handlers.is_empty() {
+            self.forget_held_lists();
+        }
         for (id, handler) in handlers {
             let arg = [Value::Object(id)];
             // A panic ends this handler only (fault.rs).
@@ -679,7 +711,7 @@ impl Engine {
     /// it is destroyed before it deletes its children. Each is handed
     /// the object, still alive, and runs once.
     pub fn destroy_now(&self, obj: ObjectId) -> bool {
-        self.tell_destruction(obj, false);
+        self.tell_destruction_going(obj);
         self.tell_destroyed(obj);
         // Post-order: children before their owner.
         let order = {
@@ -786,8 +818,19 @@ impl Engine {
             for c in &orphans {
                 self.parent_changed(*c, None);
             }
-            for p in &holders {
-                self.forget_in_lists(*p);
+            // In a pass of deferred deletes a holder of many of the dead is
+            // cleaned once, not once for each.
+            let mut held = self.inner.list_holders.borrow_mut();
+            match held.as_mut() {
+                Some(pending) => {
+                    pending.extend(holders);
+                }
+                None => {
+                    drop(held);
+                    for p in &holders {
+                        self.forget_in_lists(*p);
+                    }
+                }
             }
         });
         for h in &headers {

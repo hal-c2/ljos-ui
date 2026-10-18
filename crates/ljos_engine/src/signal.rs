@@ -76,6 +76,19 @@ impl Signals {
 
     /// Takes out the `destroyed` connections of `objects`, in their
     /// order and then in connection order, so that each runs once.
+    /// Whether one of `objects` has a handler for `destroyed`.
+    pub(crate) fn any_destroyed_handler(&self, objects: &[ObjectId]) -> bool {
+        objects.iter().any(|obj| {
+            self.by_object.get(*obj).is_some_and(|ids| {
+                ids.iter().any(|id| {
+                    self.conns
+                        .get(*id)
+                        .is_some_and(|c| c.sender == *obj && c.signal == SignalIndex::DESTROYED)
+                })
+            })
+        })
+    }
+
     pub(crate) fn take_destroyed(&mut self, objects: &[ObjectId]) -> Vec<(ObjectId, Handler)> {
         let mut out = Vec::new();
         for obj in objects {
