@@ -651,6 +651,15 @@ impl QuickScene {
         mark(&self.shared, |_| {});
     }
 
+    /// Lays out what waits for it (text, positioners, layouts) without a
+    /// frame: no time passes and nothing is painted. A host that sizes its
+    /// window from the root calls it first, since a Text knows its implicit
+    /// size only once it is laid out.
+    pub fn lay_out(&mut self, engine: &Engine) {
+        self.follow_text_engine();
+        self.polish(engine);
+    }
+
     /// Lays every Text out again on the next frame, and asks for that frame.
     /// For a host that changed the fonts of the text engine
     /// ([`crate::text_engine`]) while the scene is showing.

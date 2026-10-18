@@ -166,16 +166,6 @@ impl Picture {
     /// `Err` when the scene does not come to rest or cannot be drawn.
     pub fn png(&self, engine: &Engine, root: ObjectId) -> Result<Vec<u8>, String> {
         let (mut width, mut height) = self.size;
-        if self.root_sized {
-            // Before the scene lays the root out at its own size.
-            let side = |name, or| {
-                let n = engine.read_by_name(root, name).to_number();
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                if n >= 1.0 { n.ceil() as u32 } else { or }
-            };
-            width = side("width", width);
-            height = side("height", height);
-        }
         let mut scene = QuickScene::new(kurbo::Size::new(f64::from(width), f64::from(height)));
         if let Some(f) = &self.scene_messages {
             let f = Rc::clone(f);
@@ -184,6 +174,23 @@ impl Picture {
             });
         }
         scene.set_root(engine, root).map_err(|e| e.to_string())?;
+        if self.root_sized {
+            // Laid out first, as a Text knows its implicit size only then.
+            scene.lay_out(engine);
+            let side = |name, or| {
+                let n = engine.read_by_name(root, name).to_number();
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                if n >= 1.0 { n.ceil() as u32 } else { or }
+            };
+            width = side("width", width);
+            height = side("height", height);
+            scene.set_viewport(kurbo::Rect::new(
+                0.0,
+                0.0,
+                f64::from(width),
+                f64::from(height),
+            ));
+        }
         // As the shell gives such a window the size of its platform
         // window: without it its content item is empty, and so is
         // whatever is sized from it (a popup's `parent.width`).

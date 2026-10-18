@@ -701,7 +701,10 @@ impl<M: Send + 'static> Desktop<M> {
             && self.root_size.is_none()
             && let Some(root) = root.filter(|_| root_window.is_none())
         {
-            // Before the view makes the root as large as the window.
+            // Before the view makes the root as large as the window, and
+            // laid out, as a Text knows its implicit size only then: the
+            // first frame is at the root's size, not the default.
+            self.app.view_mut().scene_mut().lay_out(engine);
             let side = |name, or| {
                 let n = engine.read_by_name(root, name).to_number();
                 #[allow(clippy::cast_possible_truncation)]
