@@ -1353,6 +1353,7 @@ impl ItemPaint for Pictures {
                 self.groups.iter().any(|x| **x == **g)
             }
         });
+        out.reserve(mine.clone().map(|(_, at)| at.len()).sum());
         for i in mine.flat_map(|(_, at)| at.iter().copied()) {
             looked += 1;
             let p = &run.particles[i];

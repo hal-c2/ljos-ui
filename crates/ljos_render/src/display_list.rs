@@ -776,6 +776,14 @@ impl DisplayListBuilder {
         Self::default()
     }
 
+    /// Room for `n` more ops, for a painter that knows how many it adds
+    /// (a particle system's hundreds of pictures): an op is large, and
+    /// growing a step at a time copies them all again each step.
+    pub fn reserve(&mut self, n: usize) -> &mut Self {
+        self.ops.reserve(n);
+        self
+    }
+
     /// Append any op.
     pub fn push(&mut self, op: DrawOp) -> &mut Self {
         self.ops.push(op);
