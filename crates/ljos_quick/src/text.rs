@@ -293,7 +293,19 @@ impl Default for Text {
 impl Text {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        init_text(cx.engine, cx.this)
+        init_text(cx.engine, cx.this)?;
+        // Qt's text knows its size by the time `Component.onCompleted`
+        // runs. The layout stays in the engine's cache, so the first
+        // frame's polish finds it there. Text that wraps or elides to a
+        // width waits for that polish: the width it has now may still
+        // change before the first frame, and that would be a second layout.
+        // So does an empty one, which is most often one built in Rust and
+        // given its text after it was completed.
+        let t = cx.engine.untrack(|| TextInputs::read(cx.engine, cx.this));
+        if t.params.width.is_some() || t.text.is_empty() {
+            return Ok(());
+        }
+        write_measured(cx.engine, cx.this, &t, &text_engine())
     }
 
     /// A link was pressed and released. Nothing is opened: what an address
@@ -747,6 +759,16 @@ pub(crate) fn polish(
 ) -> Result<(), EngineError> {
     init_text(engine, obj)?;
     let t = engine.untrack(|| TextInputs::read(engine, obj));
+    write_measured(engine, obj, &t, te)
+}
+
+/// Lays `t` out and writes what it measures on `obj`.
+fn write_measured(
+    engine: &Engine,
+    obj: ObjectId,
+    t: &TextInputs,
+    te: &SharedTextEngine,
+) -> Result<(), EngineError> {
     // Borrowed for the layout only: the writes below run bindings.
     let m = t.measure(&mut te.borrow_mut());
     let [left, top, right, bottom] = t.pad;

@@ -457,3 +457,26 @@ fn the_scene_follows_a_new_text_engine() {
     assert_eq!(runs(&s, t).unwrap().len(), 1);
     assert_eq!(num(&e, t, "implicitWidth"), advance("Hello"));
 }
+
+#[test]
+fn a_text_is_measured_once_by_its_completion_and_first_frame() {
+    let e = engine();
+    let te = set_text_engine(TextEngine::new());
+    let root = load(
+        &e,
+        "import QtQuick\nItem { width: 300; height: 300\n\
+         Text { objectName: \"plain\"; text: \"Hello\" }\n\
+         Text { objectName: \"wrapped\"; width: 40; wrapMode: Text.Wrap; text: \"Hello world\" } }",
+    );
+    let plain = find(&e, root, "plain");
+    // Measured by its completion, before any frame.
+    assert_eq!(te.borrow().stats().layout_misses, 1);
+    let early = num(&e, plain, "implicitWidth");
+    assert!(early > 0.0);
+    let mut s = scene(&e, root, 300.0, 300.0);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, plain, "implicitWidth"), early);
+    // The first frame lays the wrapped one out and finds the plain one in
+    // the cache.
+    assert_eq!(te.borrow().stats().layout_misses, 2);
+}
