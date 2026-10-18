@@ -400,13 +400,7 @@ impl Backend for DesktopBackend {
         let (x, y, extent) = self.at(x, y)?;
         let pointer = self.pointer_device()?;
         let sent = match step {
-            // The pointer goes there first: a button sent with the motion
-            // that brings the pointer onto a window reaches the window it
-            // was on before, which here is none.
-            PointerStep::Press => pointer.move_to(x, y, extent).and_then(|()| {
-                std::thread::sleep(INPUT_SETTLES);
-                pointer.press(x, y, extent)
-            }),
+            PointerStep::Press => pointer.press(x, y, extent),
             PointerStep::Move => pointer.move_to(x, y, extent),
             PointerStep::Release => pointer
                 .move_to(x, y, extent)

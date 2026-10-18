@@ -212,6 +212,10 @@ const METRICS: &[Metric] = &[
         value: |r| r.idle.as_ref()?.frames.as_ref()?.max_ms,
     },
     Metric {
+        title: "Wait before driving until nothing changed for 300 ms (ms)",
+        value: |r| r.quiet_ms,
+    },
+    Metric {
         title: "CPU while driven (% of one core)",
         value: |r| r.load.as_ref().map(|s| s.cpu_percent),
     },

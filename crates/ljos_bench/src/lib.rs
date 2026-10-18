@@ -49,6 +49,11 @@ pub struct App {
     /// Click a grid over it while measuring load.
     #[serde(default = "yes")]
     pub drive: bool,
+    /// Where to click instead of the grid, in order, as fractions of the
+    /// window: the controls a person would use (`mise run gallery:drive`
+    /// finds them), clicked at the same places on every runtime.
+    #[serde(default)]
+    pub clicks: Vec<[f64; 2]>,
 }
 
 fn yes() -> bool {
@@ -76,6 +81,7 @@ impl App {
             ljos_args: Vec::new(),
             qt_args: Vec::new(),
             drive: true,
+            clicks: Vec::new(),
         }
     }
 }
@@ -188,11 +194,19 @@ pub fn run(
                     gesture: measure::Gesture::Click,
                     detail: false,
                 };
-                measure::run(setup, &app.id, &rt, &Profile::desktop(), warm, false)?;
+                measure::run(setup, &app.id, &rt, &Profile::desktop(), warm, false, &[])?;
             }
             for profile in &plan.profiles {
                 for repeat in 0..plan.repeat {
-                    let mut r = measure::run(setup, &app.id, &rt, profile, plan.phases, app.drive)?;
+                    let mut r = measure::run(
+                        setup,
+                        &app.id,
+                        &rt,
+                        profile,
+                        plan.phases,
+                        app.drive,
+                        &app.clicks,
+                    )?;
                     r.repeat = repeat;
                     let line = format!(
                         "{} {} {} #{repeat} (load {}): {:?}, first frame {}, answers {}, peak {}",

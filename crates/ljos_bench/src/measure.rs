@@ -240,6 +240,11 @@ pub struct Run {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idled: Option<Settled>,
     pub load: Option<Span>,
+    /// How long the window took to stop changing once the pointer was on
+    /// it, before it was driven; `None` when it was not driven, or never
+    /// stopped (an animation that runs for ever) within [`QUIET_LIMIT`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet_ms: Option<f64>,
     /// What drove it under load.
     #[serde(default)]
     pub gesture: Gesture,
@@ -468,7 +473,9 @@ fn frames(times: &[u64], start: u64, seconds: f64, inputs: &[u64]) -> Frames {
 }
 
 /// Measures a window of time: CPU, wakeups and, when the compositor can
-/// be asked, frames; `drive` is the window `gesture` drives meanwhile.
+/// be asked, frames; `drive` is the window `gesture` drives meanwhile,
+/// clicked at `points` (fractions of it) instead of a grid when given.
+#[allow(clippy::too_many_arguments)]
 fn span(
     setup: &Setup,
     w: &mut Watch<'_>,
@@ -476,6 +483,7 @@ fn span(
     time: Duration,
     gesture: Gesture,
     drive: Option<(i32, i32, i32, i32)>,
+    points: &[[f64; 2]],
     region: Option<(i32, i32, i32, i32)>,
 ) -> Option<Span> {
     let counter = match (&setup.wayland, region) {
@@ -493,7 +501,7 @@ fn span(
     match (drive, &setup.wayland, &setup.sway) {
         (Some(rect), Some(display), Some(sway)) => {
             let (n, sent) = match gesture {
-                Gesture::Click => click_grid(display, sway, rect, time, w),
+                Gesture::Click => click_grid(display, sway, rect, points, time, w),
                 Gesture::Drag => drag(display, sway, rect, time, w),
                 Gesture::Scroll => scroll(display, sway, rect, time, w),
             };
@@ -539,11 +547,58 @@ fn span(
     })
 }
 
-/// Clicks a 5 × 5 grid over the window, evenly over `time`.
+/// How long a window must show no change to count as settled.
+pub const QUIET_FOR: Duration = Duration::from_millis(300);
+/// How long a window is given to settle before it is driven anyway.
+pub const QUIET_LIMIT: Duration = Duration::from_secs(5);
+
+/// Puts the pointer where `gesture` starts and waits for the window to
+/// settle: what it does when the pointer enters, and an animation that
+/// runs out, are over before anything is timed, on every runtime alike.
+/// Without this the first clicks landed wherever each runtime's startup
+/// animation happened to be, which differed between runtimes. How long
+/// it took; `None` when the window never stopped changing.
+fn quiet(
+    setup: &Setup,
+    rect: (i32, i32, i32, i32),
+    gesture: Gesture,
+    points: &[[f64; 2]],
+) -> Option<Duration> {
+    let (Some(display), Some(sway)) = (&setup.wayland, &setup.sway) else {
+        return None;
+    };
+    let (x, y, width, height) = rect;
+    let (px, py) = match (gesture, points.first()) {
+        (Gesture::Click, Some(&point)) => at(rect, point),
+        (Gesture::Click, None) => (x + width / 10, y + height / 10),
+        (Gesture::Drag | Gesture::Scroll, _) => (x + width / 2, y + height / 2),
+    };
+    let (px, py, extent) = on_layout(sway, rect, px, py)?;
+    let start = Instant::now();
+    Pointer::new(display)
+        .and_then(|mut p| p.move_to(px, py, extent))
+        .ok()?;
+    let at = wayland::quiet(display, rect, QUIET_FOR, start + QUIET_LIMIT).ok()??;
+    Some(at.duration_since(start))
+}
+
+/// The point `(fx, fy)`, fractions of the window `rect`, on the layout.
+#[allow(clippy::cast_possible_truncation)]
+fn at((x, y, width, height): (i32, i32, i32, i32), [fx, fy]: [f64; 2]) -> (i32, i32) {
+    (
+        x + (f64::from(width) * fx).round() as i32,
+        y + (f64::from(height) * fy).round() as i32,
+    )
+}
+
+/// Clicks `points` (fractions of the window) once each in their order,
+/// or a 5 × 5 grid over the window when there are none, evenly over
+/// `time`.
 fn click_grid(
     display: &Path,
     sway: &Sway,
-    (x, y, width, height): (i32, i32, i32, i32),
+    rect @ (x, y, width, height): (i32, i32, i32, i32),
+    points: &[[f64; 2]],
     time: Duration,
     w: &mut Watch<'_>,
 ) -> (u32, Vec<u64>) {
@@ -556,26 +611,35 @@ fn click_grid(
         .ok()
         .flatten()
         .unwrap_or((x + width, y + height));
-    let step = time / 25;
+    let targets: Vec<(i32, i32)> = if points.is_empty() {
+        (0..25)
+            .map(|n| {
+                let (row, col) = (n / 5, n % 5);
+                (
+                    x + width * (2 * col + 1) / 10,
+                    y + height * (2 * row + 1) / 10,
+                )
+            })
+            .collect()
+    } else {
+        points.iter().map(|&point| at(rect, point)).collect()
+    };
+    let step = time / u32::try_from(targets.len()).unwrap_or(u32::MAX).max(1);
     let mut clicks = 0;
-    for row in 0..5 {
-        for col in 0..5 {
-            let px = x + width * (2 * col + 1) / 10;
-            let py = y + height * (2 * row + 1) / 10;
-            let (Ok(px), Ok(py), Ok(ew), Ok(eh)) = (
-                u32::try_from(px),
-                u32::try_from(py),
-                u32::try_from(extent.0),
-                u32::try_from(extent.1),
-            ) else {
-                continue;
-            };
-            if pointer.click(px, py, (ew, eh)).is_ok() {
-                clicks += 1;
-            }
-            if !w.wait(step) {
-                return (clicks, pointer.sent().to_vec());
-            }
+    for (px, py) in targets {
+        let (Ok(px), Ok(py), Ok(ew), Ok(eh)) = (
+            u32::try_from(px),
+            u32::try_from(py),
+            u32::try_from(extent.0),
+            u32::try_from(extent.1),
+        ) else {
+            continue;
+        };
+        if pointer.click(px, py, (ew, eh)).is_ok() {
+            clicks += 1;
+        }
+        if !w.wait(step) {
+            return (clicks, pointer.sent().to_vec());
         }
     }
     (clicks, pointer.sent().to_vec())
@@ -765,10 +829,11 @@ pub fn run(
     profile: &Profile,
     phases: Phases,
     drive: bool,
+    points: &[[f64; 2]],
 ) -> Result<Run, Error> {
     let mut launch = 1;
     loop {
-        match run_once(setup, app, runtime, profile, phases, drive) {
+        match run_once(setup, app, runtime, profile, phases, drive, points) {
             // A refused application was stopped before its gate opened, so
             // it ran nothing and another launch measures as the first would.
             Err(Error::Refused(why)) if launch < LAUNCHES => {
@@ -793,6 +858,7 @@ fn run_once(
     profile: &Profile,
     phases: Phases,
     drive: bool,
+    points: &[[f64; 2]],
 ) -> Result<Run, Error> {
     static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -923,6 +989,7 @@ fn run_once(
         idle: None,
         idled: None,
         load: None,
+        quiet_ms: None,
         gesture: phases.gesture,
         install: None,
         log: log_path.display().to_string(),
@@ -947,12 +1014,26 @@ fn run_once(
             _ => None,
         };
         if !phases.idle.is_zero() {
-            out.idle = span(setup, &mut w, pid, phases.idle, phases.gesture, None, rect);
+            out.idle = span(
+                setup,
+                &mut w,
+                pid,
+                phases.idle,
+                phases.gesture,
+                None,
+                &[],
+                rect,
+            );
             if w.exited.is_none() {
                 out.idled = Some(memory(&w));
             }
         }
         if !phases.load.is_zero() && w.exited.is_none() {
+            if let (true, Some(rect)) = (drive, rect) {
+                out.quiet_ms = quiet(setup, rect, phases.gesture, points)
+                    .map(|took| took.as_secs_f64() * 1000.0);
+                w.sample();
+            }
             out.load = span(
                 setup,
                 &mut w,
@@ -960,6 +1041,7 @@ fn run_once(
                 phases.load,
                 phases.gesture,
                 rect.filter(|_| drive),
+                points,
                 rect,
             );
         }
@@ -1041,6 +1123,7 @@ pub fn min_memory(
             &profile.with_memory_max(mib << 20),
             phases,
             false,
+            &[],
         )?;
         let ok = r.outcome == Outcome::Ok && r.settled.is_some();
         probes.push((mib, ok));
@@ -1105,5 +1188,13 @@ mod tests {
         );
         assert_eq!(f.latency_p50_ms, Some(13.0));
         assert_eq!(f.latency_max_ms, Some(60.0));
+    }
+
+    #[test]
+    fn a_click_point_is_a_fraction_of_the_window_where_it_stands() {
+        // A window at (100, 50), 400 × 300: its middle, and a control
+        // near its top left corner.
+        assert_eq!(at((100, 50, 400, 300), [0.5, 0.5]), (300, 200));
+        assert_eq!(at((100, 50, 400, 300), [0.125, 0.1]), (150, 80));
     }
 }

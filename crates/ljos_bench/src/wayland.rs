@@ -152,7 +152,13 @@ pub struct Pointer {
     pointer: ZwlrVirtualPointerV1,
     started: Instant,
     sent: Vec<u64>,
+    /// Where the last motion put it.
+    at: Option<(u32, u32)>,
 }
+
+/// How long a client takes to hear the pointer entered its window, past
+/// the compositor's round trip.
+const ARRIVE: Duration = Duration::from_millis(30);
 
 impl Pointer {
     /// # Errors
@@ -176,6 +182,7 @@ impl Pointer {
             pointer,
             started: Instant::now(),
             sent: Vec::new(),
+            at: None,
         })
     }
 
@@ -198,15 +205,32 @@ impl Pointer {
         ms
     }
 
+    /// Moves to `(x, y)` and, when that is somewhere else, gives the
+    /// compositor time to tell the window there that the pointer entered:
+    /// a button sent in the same breath as the motion reaches the window
+    /// the pointer was on before, which may be none, and the press is lost.
+    fn arrive(&mut self, x: u32, y: u32, extent: (u32, u32)) -> Result<(), Error> {
+        if self.at == Some((x, y)) {
+            return Ok(());
+        }
+        let p = &self.pointer;
+        p.motion_absolute(self.time(), x, y, extent.0, extent.1);
+        p.frame();
+        self.queue.flush().map_err(protocol)?;
+        self.queue.roundtrip(&mut self.state).map_err(protocol)?;
+        thread::sleep(ARRIVE);
+        self.at = Some((x, y));
+        Ok(())
+    }
+
     /// Moves to `(x, y)` of a layout `extent` pixels large and clicks the
     /// left button there.
     ///
     /// # Errors
     /// The compositor went away.
     pub fn click(&mut self, x: u32, y: u32, extent: (u32, u32)) -> Result<(), Error> {
+        self.arrive(x, y, extent)?;
         let p = &self.pointer;
-        p.motion_absolute(self.time(), x, y, extent.0, extent.1);
-        p.frame();
         p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Pressed);
         p.frame();
         self.queue.flush().map_err(protocol)?;
@@ -224,9 +248,8 @@ impl Pointer {
     /// # Errors
     /// The compositor went away.
     pub fn press(&mut self, x: u32, y: u32, extent: (u32, u32)) -> Result<(), Error> {
+        self.arrive(x, y, extent)?;
         let p = &self.pointer;
-        p.motion_absolute(self.time(), x, y, extent.0, extent.1);
-        p.frame();
         p.button(self.time(), BTN_LEFT, wl_pointer::ButtonState::Pressed);
         p.frame();
         self.queue.flush().map_err(protocol)?;
@@ -239,6 +262,7 @@ impl Pointer {
     /// # Errors
     /// The compositor went away.
     pub fn move_to(&mut self, x: u32, y: u32, extent: (u32, u32)) -> Result<(), Error> {
+        self.at = Some((x, y));
         let p = &self.pointer;
         p.motion_absolute(self.time(), x, y, extent.0, extent.1);
         p.frame();
@@ -264,6 +288,7 @@ impl Pointer {
     /// # Errors
     /// The compositor went away.
     pub fn wheel(&mut self, x: u32, y: u32, extent: (u32, u32), steps: i32) -> Result<(), Error> {
+        self.at = Some((x, y));
         let p = &self.pointer;
         p.motion_absolute(self.time(), x, y, extent.0, extent.1);
         p.frame();
@@ -461,6 +486,39 @@ pub fn first_change(
         }
     }
     Ok(None)
+}
+
+/// When the region `(x, y, w, h)` of the first output has shown no change
+/// for `still`: `None` when it kept changing until `deadline`.
+///
+/// # Errors
+/// The compositor cannot be reached, has no screencopy or failed a copy.
+pub fn quiet(
+    display: &Path,
+    region: (i32, i32, i32, i32),
+    still: Duration,
+    deadline: Instant,
+) -> Result<Option<Instant>, Error> {
+    let mut r = Region::new(display, region)?;
+    let Some(mut was) = r.copy(false, deadline)? else {
+        return Ok(None);
+    };
+    let mut since = Instant::now();
+    loop {
+        let until = since + still;
+        if until > deadline {
+            return Ok(None);
+        }
+        match r.copy(true, until)? {
+            None => return Ok(Some(Instant::now())),
+            // A frame sent again unchanged is not a change.
+            Some(now) if now == was => {}
+            Some(now) => {
+                was = now;
+                since = Instant::now();
+            }
+        }
+    }
 }
 
 fn count(

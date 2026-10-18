@@ -109,7 +109,8 @@ outside a limit.
 | Idle CPU of threads that ended | the part of idle CPU no thread alive at the end of the window used: the cgroup's usage less the live threads' `schedstat`. Wakeups are read from live threads, so a short worker shows here and not as wakeups |
 | Frames while idle | screencopy frames over the idle window whose pixels differ from the one before: non-zero only for apps that animate. A runtime that sends the compositor a frame that shows what the last one did (Qt does, in an animation that moves nothing on screen) is not counted for it; those are reported apart, as frames sent. Counts before 2026-10-18 include them |
 | Frame interval while idle | the 95th percentile time between those frames, and the slowest. A pause in an animation is a long interval in either runtime |
-| CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks a grid over the window, `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up |
+| Wait before driving | the pointer is put where the gesture starts, then the bench waits until the window's pixels have not changed for 300 ms (at most 5 s), so that the input starts on a settled window in every runtime: what the pointer's entry starts, and a startup animation, are over. Not counted in the load. An animation that never pauses that long is driven at 5 s |
+| CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks, evenly over the span, the controls `mise run gallery:drive` clicked in that example, at the same places in every runtime (its `clicks.json`, fractions of the window, used when it found three or more), or else a 5 × 5 grid over the window; `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up |
 | Frame interval while driven | the median, 95th percentile and slowest time between the frames that changed then |
 | Mapped install | the files the app maps: runtime, libraries, plugins, fonts |
 | Least memory | the smallest `MemoryMax`, found by bisection, at which the first frame is shown and the app is still running a second later |
@@ -2596,3 +2597,25 @@ them for an edit to a member of a group or an attached object (`font.pixelSize`,
   `anchors.fill` stops placing, as Qt's does.
 - **Model rows.** The row objects `get()` made (todolist) are a cache, compared through the
   model.
+
+### Clicks on a settled window, and a press that arrives (2026-10-18)
+
+`BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench samegame --profile desktop --settle 3 --idle 4
+--load 5`: the release binary at 1c73e398 with the bench's changes, against `qml6` 6.11.2, at a
+load average of 33–51.
+
+| samegame, driven by the click grid | Before: Ljós | Qt | After: Ljós | Qt |
+|---|---:|---:|---:|---:|
+| 95th percentile input-to-frame latency (ms; each run) | 193 | 15.9 | 15.1, 15.7, 32.1 | 15.8, 15.6, 14.6 |
+| median input-to-frame latency (ms; median of 3) | | | 7.6 | 7.3 |
+| wait before driving (ms; median of 3) | | | 321 | 2 778 |
+| CPU while driven (% of one core; median of 3) | | | 93.4 | 218 |
+
+- **The grid now starts on a settled window.** The pointer is put where the first click goes and
+  the bench waits until the window has not changed for 300 ms. Both runtimes then begin inside the
+  logo's pause, where Ljós (which starts sooner) already is; Qt waits 2.8 s to get there.
+- **A press arrives.** On sway, a button sent with the motion that brings the pointer onto a window
+  goes to the window the pointer left, so the first click on a window could press nothing in either
+  runtime. The bench's pointer now moves first, waits for the compositor, then presses. The same
+  pointer drives the `@desktop` scenarios, and
+  `features/window/activation-without-keyboard.feature` now runs and passes on the desktop sandbox.

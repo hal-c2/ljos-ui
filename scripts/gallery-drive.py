@@ -11,7 +11,9 @@ with almost no controls (a game or a snippet built from MouseAreas) gets real po
 through cua-driver on a grid instead. What each click did (the outline's changes, or why the
 inspector refused it) and what the app logged go in <out>/<id>/report.txt, with screenshots;
 <out>/summary.txt lists, per example, whether it started, what its clicks did and the distinct
-lines it logged."""
+lines it logged. <out>/<id>/clicks.json keeps where each control that took its click was, as a
+fraction of the window, in the order clicked: `mise run bench` clicks the same points on every
+runtime."""
 import base64, glob, json, os, re, shutil, signal, struct, subprocess, sys, time, urllib.error, urllib.request, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,6 +38,8 @@ WINDOW_WAIT = 30
 GRID = 5
 # A control whose name or id says it ends the app.
 ENDS = re.compile(r"exit|quit|close|power|shut ?down", re.I)
+# Where an outline line's item is, with `include: ["bounds"]`, in the window's coordinates.
+BOUNDS = re.compile(r" at=(-?[\d.]+),(-?[\d.]+) size=([\d.]+)x([\d.]+)")
 # How long a click may keep the app moving (a page sliding in) before the driver looks again.
 SETTLE = 3.0
 
@@ -267,9 +271,14 @@ def drive(out, eid):
         app.call("app_screenshot", {}, os.path.join(d, "0-start.png"))
         w("== logged while starting", *app.new_logs())
         seen = set()
+        points = []
         while clicks < MAX_CLICKS:
             todo = []
-            for m in CONTROL.finditer(app.call("app_snapshot")):
+            outline = app.call("app_snapshot", {"include": ["bounds"]})
+            # The first line is the window's.
+            first = BOUNDS.search(outline.split("\n", 1)[0])
+            win = (float(first.group(3)), float(first.group(4))) if first else None
+            for m in CONTROL.finditer(outline):
                 ref, name, states = m.group(3), m.group(2) or "", m.group(4)
                 if (name or ref) in seen:
                     continue
@@ -277,12 +286,12 @@ def drive(out, eid):
                 # later, by another click, and is tried then.
                 if re.search(r"(?:^|\s)disabled(?:\s|$)", states):
                     continue
-                todo.append((ref, name, bool(ENDS.search(name + states))))
+                todo.append((ref, name, bool(ENDS.search(name + states)), BOUNDS.search(states)))
             if not todo:
                 break
             # A control that may end the app goes last, so that it does not cut the drive short.
             todo.sort(key=lambda t: t[2])
-            ref, name, _ = todo[0]
+            ref, name, ends, at = todo[0]
             seen.add(name or ref)
             clicks += 1
             try:
@@ -300,6 +309,13 @@ def drive(out, eid):
                 return {"id": eid, "started": True, "clicks": clicks, "outcomes": outcomes, "said": said,
                         "why": [f"the app ended after clicking {name or ref!r} (exit status {status})"]}
             did = outcome(res, settled)
+            # A click that ends the app, or one the inspector refused, is no point for the
+            # bench; nor is a control outside the window.
+            if win and at and win[0] > 0 and win[1] > 0 and not ends and not did.startswith("refused"):
+                x, y, cw, ch = map(float, at.groups())
+                fx, fy = (x + cw / 2) / win[0], (y + ch / 2) / win[1]
+                if 0 < fx < 1 and 0 < fy < 1:
+                    points.append([round(fx, 4), round(fy, 4)])
             outcomes[did] = outcomes.get(did, 0) + 1
             w(f"== click {name!r} [{ref}]: {did}")
             # The outline's changes go in the report; only what the app logged is counted.
@@ -307,6 +323,8 @@ def drive(out, eid):
                 if not l.startswith("(snapshot"):
                     print("   " + l, file=rep, flush=True)
             w(*logs)
+        with open(os.path.join(d, "clicks.json"), "w") as f:
+            json.dump({"window": list(win) if win else None, "points": points}, f)
         if clicks < 3:
             grid_clicks(app, w, d)
         app.call("app_screenshot", {}, os.path.join(d, "end.png"))

@@ -20,7 +20,9 @@ pub struct Bench {
     /// QML files to measure, each on its own.
     files: Vec<PathBuf>,
     /// A JSON manifest of applications: `{"apps": [{"id", "file",
-    /// "imports", "size", "ljos_args", "qt_args", "drive"}]}`.
+    /// "imports", "size", "ljos_args", "qt_args", "drive", "clicks"}]}`;
+    /// "clicks" are where to click, as fractions of the window, instead of
+    /// the grid.
     #[arg(long)]
     manifest: Option<PathBuf>,
     /// Runtimes, comma separated: `ljos` (`ljos run`) and `qt` (`qml6`).
