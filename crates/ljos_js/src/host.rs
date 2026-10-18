@@ -689,7 +689,9 @@ impl<'js> Scope<'js> {
         if let Some(p) = cached {
             return p.restore(&self.ctx);
         }
-        let w = self.instantiate(obj, None)?;
+        // Its collection is told too: only once the Engine dropped it
+        // ([`JsHost::drop_wrapper`]) and no script held it any more.
+        let w = self.instantiate(obj, Some(self.state.released.clone()))?;
         let obj_handle = w.into_inner();
         self.state
             .wrappers
@@ -1491,7 +1493,8 @@ impl JsHost {
     /// Forgets the cached wrapper of `obj`. JS that still holds it keeps a
     /// dangling wrapper whose accessors fail with "object no longer exists";
     /// the next `wrapper(obj)` makes a fresh one. Call it when the Engine
-    /// destroys the object.
+    /// destroys the object. [`HostObjects::released`] says when the last
+    /// script let go of it.
     pub fn drop_wrapper(&self, obj: u64) -> bool {
         self.state.owned.borrow_mut().remove(&obj);
         self.state.wrappers.borrow_mut().remove(&obj).is_some()

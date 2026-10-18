@@ -966,6 +966,33 @@ impl Engine {
         }
     }
 
+    /// How many replaced objects a script may still hold, each reaching
+    /// the object that went on for it.
+    pub fn reload_forward_count(&self) -> usize {
+        self.inner.reload.forwards.borrow().len()
+    }
+
+    /// Scripts let go of `objs`: a replaced one among them is reached no
+    /// more. Every full reload replaces every object, so the forwards
+    /// would otherwise grow by a tree each time.
+    pub(crate) fn reload_let_go(&self, objs: &[u64]) {
+        let st = &self.inner.reload;
+        let Ok(mut forwards) = st.forwards.try_borrow_mut() else {
+            return;
+        };
+        if forwards.is_empty() {
+            return;
+        }
+        let js = self.inner.js.borrow().clone();
+        for o in objs {
+            let old = crate::js::u64_to_obj(*o);
+            // A wrapper made again for it since still reaches it.
+            if !js.as_ref().is_some_and(|js| js.seen(old)) {
+                forwards.remove(&old);
+            }
+        }
+    }
+
     /// The object that went on for `old`, which a reload replaced, with
     /// the names of `old`'s members; `None` for a live object or while reloads are not
     /// tracked.

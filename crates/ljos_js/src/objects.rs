@@ -161,9 +161,10 @@ pub trait HostObjects {
         false
     }
 
-    /// A JS-owned wrapper (see [`Scope::new_owned`]) was garbage collected.
-    /// Called between runs, never from inside the collector, so the Engine
-    /// may destroy the object here.
+    /// A JS-owned wrapper (see [`Scope::new_owned`]) was garbage collected,
+    /// or the wrapper of an object whose Engine-owned wrapper was dropped
+    /// ([`crate::JsHost::drop_wrapper`]). Called between runs, never from inside
+    /// the collector, so the Engine may destroy the object here.
     fn released(&self, _obj: u64) {}
 
     /// [`HostObjects::released`] for all the wrappers one collection
@@ -180,8 +181,8 @@ pub trait HostObjects {
 /// not allowed, so it only queues the id.
 pub(crate) struct HostWrapper {
     pub(crate) id: u64,
-    /// `Some` for JS-owned wrappers whose collection destroys the Engine
-    /// object; `None` for Engine-owned wrappers kept alive by the cache.
+    /// Where its collection is told. The cache keeps an Engine-owned
+    /// wrapper alive, so it is collected only once the cache dropped it.
     pub(crate) release_queue: Option<Rc<RefCell<Vec<u64>>>>,
 }
 

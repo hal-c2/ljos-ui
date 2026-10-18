@@ -765,6 +765,7 @@ impl HostObjects for EngineHost {
     fn released_many(&self, objs: &[u64]) {
         if let Ok(engine) = self.engine() {
             engine.scripts_let_go(objs);
+            engine.reload_let_go(objs);
         }
     }
 }

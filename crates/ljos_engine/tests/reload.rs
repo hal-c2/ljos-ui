@@ -952,3 +952,27 @@ fn reloads_leave_no_script_types_behind() {
     assert_eq!(before, after);
     assert_eq!(r.num("one", "count"), 21.0);
 }
+
+#[test]
+fn reloads_forget_the_replaced_objects_no_script_holds() {
+    let mut r = rig(&[("Main", COUNTER)]);
+    // A value made a binding and back: the file is made again each time.
+    let edit = |r: &mut Rig, i: u32| {
+        let text = if i.is_multiple_of(2) {
+            COUNTER.replace("width: 10", "width: 3 * 10")
+        } else {
+            COUNTER.to_string()
+        };
+        r.edit("Main", &text).unwrap();
+        r.call("box", "tap");
+        assert!(r.h.engine.collect_garbage());
+    };
+    edit(&mut r, 0);
+    edit(&mut r, 1);
+    let before = r.h.engine.reload_forward_count();
+    for i in 2..12 {
+        edit(&mut r, i);
+    }
+    assert_eq!(r.h.engine.reload_forward_count(), before);
+    assert_eq!(r.num("box", "taps"), 12.0);
+}
