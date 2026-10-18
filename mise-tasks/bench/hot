@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#MISE description="Record which functions of the dist binary QML apps run, into the link order crates/ljos_cli/link/hot.txt: bench:hot [ids…]; ids as for bench (all by default), BENCH_HOT_SECONDS per app (15)"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+# The dist build links the functions named in hot.txt first, next to each
+# other, so the pages an app touches hold little it never runs: the binary
+# is about 50 MB of code and an app runs some 10 MB of it, spread over
+# nearly every page when the linker lays it out by crate. Each app runs
+# under callgrind in the sandbox, which counts every function it enters.
+# The names are mangled with the crates' hashes, which change with the
+# toolchain or dependencies but not with most edits; a name the binary no
+# longer has is skipped by the linker, so a stale file only orders less.
+root="$(pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+out="$target/bench-hot"
+secs="${BENCH_HOT_SECONDS:-15}"
+order="$root/crates/ljos_cli/link/hot.txt"
+
+cargo build --quiet --profile dist -p ljos_cli
+cargo build --quiet -p qml_compare
+bin="$target/dist/ljos"
+
+rm -rf "${out:?}"
+mkdir -p "$out/runs"
+"$root/scripts/bench-manifest.sh" "$out" "$@"
+
+sandbox="$("$root/scripts/cua-sandbox.sh" env)"
+value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
+wayland="$(value WAYLAND_DISPLAY)"
+
+# One line per app: id, file, size and the arguments Ljós is given, as
+# `ljos bench` starts it.
+python3 - "$out/manifest.json" > "$out/apps.tsv" <<'PY'
+import json, sys
+for app in json.load(open(sys.argv[1]))["apps"]:
+    args = ["run", app["file"]] + (["--size", app["size"]] if app.get("size") else []) + app.get("ljos_args", [])
+    print("\t".join([app["id"]] + args))
+PY
+
+while IFS=$'\t' read -r -a row; do
+  id="${row[0]}"
+  echo "$id"
+  env WAYLAND_DISPLAY="$wayland" XDG_RUNTIME_DIR="$(dirname "$wayland")" \
+    XDG_CONFIG_HOME="$(value XDG_CONFIG_HOME)" XDG_DATA_HOME="$(value XDG_DATA_HOME)" \
+    XDG_STATE_HOME="$(value XDG_STATE_HOME)" DBUS_SESSION_BUS_ADDRESS="$(value DBUS_SESSION_BUS_ADDRESS)" \
+    valgrind --tool=callgrind --demangle=no --dump-instr=no --compress-strings=no --compress-pos=no \
+    --callgrind-out-file="$out/runs/$id.%p" "$bin" "${row[@]:1}" < /dev/null > "$out/runs/$id.log" 2>&1 &
+  pid=$!
+  sleep "$secs"
+  # Stopped, callgrind writes what it counted; an app that has already
+  # ended has written it. Not SIGINT: a script's background job ignores it.
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+done < "$out/apps.tsv"
+
+mkdir -p "$(dirname "$order")"
+python3 - "$bin" "$order" "$out"/runs/*.[0-9]* <<'PY'
+import os, subprocess, sys
+binary, order, runs = os.path.realpath(sys.argv[1]), sys.argv[2], sys.argv[3:]
+text = {}
+for line in subprocess.run(["nm", "-S", binary], capture_output=True, text=True, check=True).stdout.splitlines():
+    f = line.split()
+    if len(f) == 4 and f[2] in "tTwW":
+        text[f[3]] = int(f[1], 16)
+ran = set()
+for run in runs:
+    ob = None
+    for line in open(run, errors="replace"):
+        if line.startswith("ob="):
+            ob = os.path.realpath(line[3:].strip())
+        elif line.startswith("fn=") and ob == binary:
+            # Callgrind marks a recursive call's name with 'N.
+            ran.add(line[3:].strip().split("'")[0])
+hot = sorted(s for s in ran if s in text)
+open(order, "w").write("".join(s + "\n" for s in hot))
+print(f"{len(hot)} functions, {sum(text[s] for s in hot) / 2**20:.1f} of {sum(text.values()) / 2**20:.1f} MiB of code, from {len(runs)} runs: {order}")
+PY

@@ -16,6 +16,20 @@ fn main() {
     if os == "linux" && env == "gnu" && is_dist_profile() {
         println!("cargo:rustc-link-arg-bins=-Wl,-z,pack-relative-relocs");
     }
+    // The functions apps run, laid out together (`mise run bench:hot`
+    // writes the list): left in crate order, the 10 MB of code an app runs
+    // is spread over nearly all of the binary's 50 MB, and every page it
+    // touches stays resident. A name no longer in the binary is passed
+    // over, so the list only goes stale, never wrong.
+    let hot = Path::new(env!("CARGO_MANIFEST_DIR")).join("link/hot.txt");
+    println!("cargo:rerun-if-changed={}", hot.display());
+    if os == "linux" && is_dist_profile() && hot.exists() {
+        println!(
+            "cargo:rustc-link-arg-bins=-Wl,--symbol-ordering-file={}",
+            hot.display()
+        );
+        println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
+    }
 }
 
 /// Whether this is the `dist` profile. Cargo tells a build script only the
