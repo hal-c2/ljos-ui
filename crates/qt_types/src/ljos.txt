@@ -4090,11 +4090,11 @@ module QtQuick.Controls.Fusion
 	HorizontalHeaderViewDelegate QtQuick/Controls/Basic/HorizontalHeaderViewDelegate.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Basic/Label.qml
-	Menu QtQuick/Controls/Basic/Menu.qml
-	MenuBar QtQuick/Controls/Basic/MenuBar.qml
-	MenuBarItem QtQuick/Controls/Basic/MenuBarItem.qml
-	MenuItem QtQuick/Controls/Basic/MenuItem.qml
-	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Menu QtQuick/Controls/Fusion/Menu.qml
+	MenuBar QtQuick/Controls/Fusion/MenuBar.qml
+	MenuBarItem QtQuick/Controls/Fusion/MenuBarItem.qml
+	MenuItem QtQuick/Controls/Fusion/MenuItem.qml
+	MenuSeparator QtQuick/Controls/Fusion/MenuSeparator.qml
 	MonthGrid QtQuick/Controls/Basic/MonthGrid.qml
 	Overlay QtQuick.Templates.Overlay
 	Page QtQuick/Controls/Basic/Page.qml
@@ -4145,6 +4145,16 @@ module QtQuick.Controls.Fusion
 		prop darkShade QtQuick.color named readonly
 		prop topShadow QtQuick.color named readonly
 		prop innerContrastLine QtQuick.color named readonly
+	type QtQuick/Controls/Fusion/Menu.qml Menu
+		prototype QtQuick.Templates.Menu named
+	type QtQuick/Controls/Fusion/MenuBar.qml MenuBar
+		prototype QtQuick.Templates.MenuBar named
+	type QtQuick/Controls/Fusion/MenuBarItem.qml MenuBarItem
+		prototype QtQuick.Templates.MenuBarItem named
+	type QtQuick/Controls/Fusion/MenuItem.qml MenuItem
+		prototype QtQuick.Templates.MenuItem named
+	type QtQuick/Controls/Fusion/MenuSeparator.qml MenuSeparator
+		prototype QtQuick.Templates.MenuSeparator named
 	type QtQuick/Controls/Fusion/Pane.qml Pane
 		prototype QtQuick.Templates.Pane named
 	type QtQuick/Controls/Fusion/RoundButton.qml RoundButton
