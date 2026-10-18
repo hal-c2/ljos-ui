@@ -14,10 +14,10 @@
 //! ([`written_out`], made on read by `base::publish`); only while
 //! something observes `text` is it written out at each change.
 //!
-//! What is read-only here: tables are read as their cells' text and are
-//! not written back as tables; block margins and list markers are kept
-//! and written back but not laid out while editing; a background colour is
-//! kept and not painted.
+//! Paragraph margins, indents and list markers are laid out as a rich
+//! `Text` lays them out ([`edit_blocks`]). What is read-only here: tables
+//! are read as their cells' text and are not written back as tables; a
+//! background colour is kept and not painted.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,10 +25,10 @@ use std::sync::Arc;
 use ljos_engine::{Color, Engine, Font, ObjectId, QmlType as _, Value};
 use ljos_render::{ImageHandle, Rgba, kurbo};
 use ljos_text::rich::{
-    CharFormat, DocFont, HAlign, ImageFormat, OBJECT, ParseOptions, RichText, TextFormat,
-    might_be_rich,
+    BlockFormat, CharFormat, DocFont, HAlign, ImageFormat, OBJECT, ParseOptions, RichText,
+    TextFormat, might_be_rich,
 };
-use ljos_text::{BUNDLED_FAMILY, utf16_to_byte};
+use ljos_text::{BUNDLED_FAMILY, EditBlock, utf16_to_byte};
 
 use super::base::{SharedState, State, TextEditor};
 use super::edit::TextEdit;
@@ -618,6 +618,34 @@ pub(crate) fn placed_images(s: &State) -> Vec<(ImageHandle, kurbo::Rect)> {
         }
     }
     out
+}
+
+/// How each paragraph stands apart and in, when one does: its margins,
+/// indents and list marker are laid out as a rich `Text` lays them out.
+pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
+    let blocks = r.doc.blocks();
+    let plain = |b: &BlockFormat| {
+        b.margin_top == 0.0
+            && b.margin_bottom == 0.0
+            && b.indent == 0.0
+            && b.indent_right == 0.0
+            && b.marker.is_none()
+    };
+    if blocks.iter().all(|b| plain(b)) {
+        return None;
+    }
+    Some(
+        blocks
+            .iter()
+            .map(|b| EditBlock {
+                margin_top: f64::from(b.margin_top),
+                margin_bottom: f64::from(b.margin_bottom),
+                indent: f64::from(b.indent),
+                indent_right: f64::from(b.indent_right),
+                marker: b.marker.clone(),
+            })
+            .collect(),
+    )
 }
 
 /// The alignment of each paragraph, for the lines of a `TextEdit`.

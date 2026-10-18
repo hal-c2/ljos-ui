@@ -352,12 +352,21 @@ fn layout_of(st: &SharedState, inputs: &LayoutInputs) -> Rc<EditLayout> {
                     objects: &objects,
                     strut: false,
                 };
-                text_engine().borrow_mut().edit_layout_ranged(
-                    &s.shown.text,
-                    &inputs.style,
-                    &ranged,
-                    &params,
-                )
+                match super::rich::edit_blocks(r) {
+                    Some(blocks) => text_engine().borrow_mut().edit_layout_blocks(
+                        &s.shown.text,
+                        &inputs.style,
+                        &ranged,
+                        &params,
+                        &blocks,
+                    ),
+                    None => text_engine().borrow_mut().edit_layout_ranged(
+                        &s.shown.text,
+                        &inputs.style,
+                        &ranged,
+                        &params,
+                    ),
+                }
             }
             None if !spans.is_empty() => text_engine().borrow_mut().edit_layout_ranged(
                 &s.shown.text,
@@ -447,7 +456,12 @@ pub(crate) fn relayout(
         geo.line_x = layout
             .lines
             .iter()
-            .map(|line| {
+            .enumerate()
+            .map(|(index, line)| {
+                // A paragraph that stands in is aligned in what it leaves.
+                let (indent, inset) = layout
+                    .block_of_line(index)
+                    .map_or((0.0, 0.0), |b| (b.indent, b.indent + b.indent_right));
                 let h_align = match &aligns {
                     Some(aligns) => {
                         let upto = line.range.start.min(shown.len());
@@ -466,7 +480,7 @@ pub(crate) fn relayout(
                     }
                     None => inputs.h_align,
                 };
-                left + horizontal_offset(h_align, avail - line.width)
+                left + indent + horizontal_offset(h_align, avail - inset - line.width)
             })
             .collect();
     } else {
@@ -600,7 +614,23 @@ pub(crate) fn position_at(st: &SharedState, at: kurbo::Point, mode: i32) -> usiz
         if y >= layout.content_height {
             return s.model.len();
         }
-        layout.line_at(y)
+        let index = layout.line_at(y);
+        // Between two paragraphs that stand apart, measured on Qt 6.11: a
+        // pixel under the one is its end, and the rest of the room the
+        // start of the next, wherever across.
+        if let Some(line) = layout.lines.get(index)
+            && let Some(next) = layout.lines.get(index + 1)
+            && !layout.blocks.is_empty()
+            && y >= line.top + line.height
+        {
+            let byte = if y < line.top + line.height + 1.0 {
+                line.end
+            } else {
+                next.range.start
+            };
+            return s.shown.pos_of(byte);
+        }
+        index
     } else {
         0
     };

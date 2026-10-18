@@ -203,6 +203,26 @@ impl EditorPaint {
                 );
             }
         }
+        // A list item's bullet or number, in its indent on its first line.
+        for block in &layout.blocks {
+            let (Some((dx, marker)), Some(line)) =
+                (&block.marker, layout.lines.get(block.first_line))
+            else {
+                continue;
+            };
+            let origin = kurbo::Vec2::new(
+                self.line_x(block.first_line) + dx,
+                top + line.baseline - marker.baseline,
+            );
+            for run in marker.lines.iter().flat_map(|l| &l.runs) {
+                out.glyphs(
+                    Arc::clone(&run.run.glyphs),
+                    origin,
+                    self.color,
+                    run.run.decorations,
+                );
+            }
+        }
         for (image, rect) in &self.images {
             out.image(image.clone(), *rect);
         }

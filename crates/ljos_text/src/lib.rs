@@ -54,7 +54,9 @@ mod style;
 mod substitute;
 
 pub use direction::reads_right_to_left;
-pub use edit::{Caret, CaretCluster, EditLayout, EditLine, EditParams, EditRun};
+pub use edit::{
+    Caret, CaretCluster, EditBlock, EditLayout, EditLine, EditParams, EditRun, PlacedBlock,
+};
 pub use engine::{CacheStats, TextEngine};
 pub use fonts::{BUNDLED_FAMILY, FontError, RegisteredFace, bundled_regular};
 pub use layout::{FontMetrics, Line, LineRun, PlacedBox, TextBounds, TextLayout};

@@ -95,6 +95,34 @@ pub struct Caret {
     pub height: f64,
 }
 
+/// How a paragraph of rich text stands among the others: the room above
+/// and below it, how far it stands in, and its list marker.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditBlock {
+    /// Between two paragraphs the larger of the one's bottom and the
+    /// other's top counts, and at the ends of the text none does, as for a
+    /// rich `Text`.
+    pub margin_top: f64,
+    pub margin_bottom: f64,
+    pub indent: f64,
+    pub indent_right: f64,
+    /// The bullet or number of a list item, drawn in the indent.
+    pub marker: Option<std::sync::Arc<str>>,
+}
+
+/// Where a paragraph of an [`EditLayout`] laid out from [`EditBlock`]s is.
+#[derive(Clone, Debug)]
+pub struct PlacedBlock {
+    /// Its first line.
+    pub first_line: usize,
+    pub indent: f64,
+    pub indent_right: f64,
+    /// The marker, laid out on its own: its left edge from the paragraph's
+    /// text's left edge (so less than nothing), and its layout, whose
+    /// baseline goes on the paragraph's first.
+    pub marker: Option<(f64, std::rc::Rc<EditLayout>)>,
+}
+
 /// A layout with a place for every cursor position.
 #[derive(Clone, Debug)]
 pub struct EditLayout {
@@ -112,6 +140,9 @@ pub struct EditLayout {
     pub rtl: bool,
     /// Length of the text in bytes.
     pub len: usize,
+    /// The paragraphs, when the text was laid out from [`EditBlock`]s;
+    /// empty otherwise.
+    pub blocks: Vec<PlacedBlock>,
 }
 
 impl EditLayout {
@@ -122,6 +153,13 @@ impl EditLayout {
             .iter()
             .rposition(|line| line.range.start <= byte)
             .unwrap_or(0)
+    }
+
+    /// The paragraph line `index` is in, when it was laid out from
+    /// [`EditBlock`]s.
+    pub fn block_of_line(&self, index: usize) -> Option<&PlacedBlock> {
+        let at = self.blocks.partition_point(|b| b.first_line <= index);
+        at.checked_sub(1).map(|i| &self.blocks[i])
     }
 
     /// Where the cursor stands at a position.

@@ -10,7 +10,9 @@ use super::{
     key_hash, reported_width, shape, snapped, snapped_widths,
 };
 use crate::direction::in_right_to_left_block;
-use crate::edit::{CaretCluster, EditLayout, EditLine, EditParams, EditRun};
+use crate::edit::{
+    CaretCluster, EditBlock, EditLayout, EditLine, EditParams, EditRun, PlacedBlock,
+};
 use crate::style::{InlineObject, Ranged, StyleSpan, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
@@ -279,6 +281,34 @@ impl TextEngine {
         ranged: &Ranged<'_>,
         params: &EditParams,
     ) -> EditLayout {
+        self.lay_edit(text, style, ranged, params, None)
+    }
+
+    /// [`Self::edit_layout_ranged`] for rich text whose paragraphs stand
+    /// apart and in as `blocks` say, one for each paragraph ('\n' between
+    /// them): each is laid out in the width its indents leave, and they are
+    /// stacked as a rich `Text` stacks its blocks, so the editor and the
+    /// label of the same document look the same. A paragraph past the end
+    /// of `blocks` takes the last one's room.
+    pub fn edit_layout_blocks(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        params: &EditParams,
+        blocks: &[EditBlock],
+    ) -> EditLayout {
+        self.lay_edit(text, style, ranged, params, Some(blocks))
+    }
+
+    fn lay_edit(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        ranged: &Ranged<'_>,
+        params: &EditParams,
+        blocks: Option<&[EditBlock]>,
+    ) -> EditLayout {
         let metrics = self.style_metrics(style);
         let fallback = Vertical {
             ascent: metrics.font.ascent,
@@ -290,59 +320,113 @@ impl TextEngine {
             None => WrapMode::NoWrap,
         };
         let wraps = wrap != WrapMode::NoWrap;
-        let max_advance = width.filter(|_| wraps).map(|w| w as f32);
+        let plain = EditBlock::default();
+        let block_of = |i: usize| -> &EditBlock {
+            blocks.map_or(&plain, |b| b.get(i).or(b.last()).unwrap_or(&plain))
+        };
+        let inset = |b: &EditBlock| b.indent + b.indent_right;
+        let limit_of = |b: &EditBlock| {
+            width.filter(|_| wraps).map(|w| {
+                if blocks.is_some() {
+                    (w - inset(b)).max(1.0)
+                } else {
+                    w
+                }
+            })
+        };
 
         let class = BreakClass::of(wrap);
-        let (mut raw, natural, rtl): (Vec<(RawLine, LineCarets)>, f32, bool) = if text.is_empty() {
-            (Vec::new(), 0.0, false)
-        } else if let Some(cuts) = paragraphs(text) {
-            // Each paragraph on its own, so a key typed in one lays out that
-            // one again and not the whole document.
-            let mut raw = Vec::new();
-            let mut natural = 0.0_f32;
-            let count = cuts.len();
-            for (i, cut) in cuts.into_iter().enumerate() {
-                let (spans, objects) = within(ranged, cut.clone());
-                let part = Ranged {
-                    spans: &spans,
-                    objects: &objects,
-                    strut: ranged.strut,
-                };
-                let (at, len) = (cut.start, cut.len());
-                let (mut lines, width) =
-                    self.paragraph(&text[cut], style, &part, class, max_advance, fallback);
-                natural = natural.max(width);
-                // The empty line after a paragraph's break is the next
-                // paragraph's first.
-                if i + 1 < count && lines.last().is_some_and(|(l, _)| l.range.start == len) {
-                    lines.pop();
+        // Each raw line with the paragraph it is in, when the paragraphs
+        // stand apart.
+        let mut owner: Vec<usize> = Vec::new();
+        let cuts = match blocks {
+            // Every paragraph is one, an empty last one too.
+            Some(_) => {
+                let mut cuts: Vec<Range<usize>> = Vec::new();
+                let mut start = 0;
+                for (i, _) in text.match_indices('\n') {
+                    cuts.push(start..i + 1);
+                    start = i + 1;
                 }
-                raw.extend(
-                    lines
-                        .into_iter()
-                        .map(|(line, places)| moved(line, places, at)),
-                );
+                cuts.push(start..text.len());
+                Some(cuts)
             }
-            (raw, natural, false)
-        } else {
-            let entry = self.shaped(text, style, ranged, class);
-            // As in `build_layout`: a text that fits as Qt counts it is not
-            // broken because the shaper's advances are a touch wider.
-            let max_advance = max_advance.filter(|w| entry.natural_width > *w);
-            break_lines(&mut entry.shape, max_advance, false);
-            let lines = extract(&entry.shape, fallback, None, ranged.objects);
-            let places = carets(&entry.shape, text);
-            (
-                lines.into_iter().zip(places).collect(),
-                entry.natural_width,
-                entry.rtl,
-            )
+            None if text.is_empty() => None,
+            None => paragraphs(text),
         };
+        let (mut raw, natural, rtl): (Vec<(RawLine, LineCarets)>, f64, bool) =
+            if text.is_empty() && blocks.is_none() {
+                (Vec::new(), 0.0, false)
+            } else if let Some(cuts) = cuts {
+                // Each paragraph on its own, so a key typed in one lays out that
+                // one again and not the whole document.
+                let mut raw = Vec::new();
+                let mut natural = 0.0_f64;
+                let count = cuts.len();
+                for (i, cut) in cuts.into_iter().enumerate() {
+                    let block = block_of(i);
+                    let (at, len) = (cut.start, cut.len());
+                    if len == 0 {
+                        // An empty last paragraph: the cursor's line.
+                        let mut line = RawLine::empty(fallback);
+                        line.range = at..at;
+                        raw.push((
+                            line,
+                            LineCarets {
+                                clusters: Vec::new(),
+                                glyph_bytes: Vec::new(),
+                            },
+                        ));
+                        owner.push(i);
+                        continue;
+                    }
+                    let (spans, objects) = within(ranged, cut.clone());
+                    let part = Ranged {
+                        spans: &spans,
+                        objects: &objects,
+                        strut: ranged.strut,
+                    };
+                    let max_advance = limit_of(block).map(|w| w as f32);
+                    let (mut lines, width) =
+                        self.paragraph(&text[cut], style, &part, class, max_advance, fallback);
+                    let inset = if blocks.is_some() { inset(block) } else { 0.0 };
+                    natural = natural.max(f64::from(width) + inset);
+                    // The empty line after a paragraph's break is the next
+                    // paragraph's first.
+                    if i + 1 < count && lines.last().is_some_and(|(l, _)| l.range.start == len) {
+                        lines.pop();
+                    }
+                    owner.extend(std::iter::repeat_n(i, lines.len()));
+                    raw.extend(
+                        lines
+                            .into_iter()
+                            .map(|(line, places)| moved(line, places, at)),
+                    );
+                }
+                (raw, natural, false)
+            } else {
+                let entry = self.shaped(text, style, ranged, class);
+                // As in `build_layout`: a text that fits as Qt counts it is not
+                // broken because the shaper's advances are a touch wider.
+                let max_advance = width
+                    .filter(|_| wraps)
+                    .map(|w| w as f32)
+                    .filter(|w| entry.natural_width > *w);
+                break_lines(&mut entry.shape, max_advance, false);
+                let lines = extract(&entry.shape, fallback, None, ranged.objects);
+                let places = carets(&entry.shape, text);
+                (
+                    lines.into_iter().zip(places).collect(),
+                    f64::from(entry.natural_width),
+                    entry.rtl,
+                )
+            };
         // The cursor needs a line to stand on after a line break that ends
         // the text, and in an empty text.
-        let needs_last = raw
-            .last()
-            .is_none_or(|(line, _)| text.ends_with('\n') && line.range.start < text.len());
+        let needs_last = blocks.is_none()
+            && raw
+                .last()
+                .is_none_or(|(line, _)| text.ends_with('\n') && line.range.start < text.len());
         if needs_last {
             let mut line = RawLine::empty(fallback);
             line.range = text.len()..text.len();
@@ -355,14 +439,42 @@ impl TextEngine {
             ));
         }
 
-        let limit = width.filter(|_| wraps);
         let count = raw.len();
         let mut lines = Vec::with_capacity(count);
-        let (mut top, mut content_width) = (0.0_f64, 0.0_f64);
+        let mut placed = Vec::new();
+        let (mut top, mut content_width, mut below) = (0.0_f64, 0.0_f64, 0.0_f64);
         for (index, (line, places)) in raw.into_iter().enumerate() {
+            let (block, inset) = match blocks {
+                Some(_) => {
+                    let i = owner.get(index).copied().unwrap_or(0);
+                    let block = block_of(i);
+                    if index == 0 || owner.get(index - 1) != Some(&i) {
+                        // Between two paragraphs the larger margin counts,
+                        // as a rich Text has it.
+                        if index > 0 {
+                            top += below.max(block.margin_top);
+                        }
+                        below = block.margin_bottom;
+                        placed.push(PlacedBlock {
+                            first_line: index,
+                            indent: block.indent,
+                            indent_right: block.indent_right,
+                            marker: block.marker.as_deref().map(|m| {
+                                let marker = self.edit_layout(m, style, &EditParams::default());
+                                // Right-aligned in the indent, a little
+                                // before the text.
+                                let gap = f64::from(style.pixel_size) * 0.4;
+                                (-gap - marker.natural_width, std::rc::Rc::new(marker))
+                            }),
+                        });
+                    }
+                    (block, inset(block))
+                }
+                None => (&plain, 0.0),
+            };
             let height = line.vertical.natural();
-            let width = reported_width(line.width, limit);
-            content_width = content_width.max(width);
+            let width = reported_width(line.width, limit_of(block));
+            content_width = content_width.max(width + inset);
             let range = line.range.clone();
             let own = text.get(range.clone()).unwrap_or("");
             let trimmed = if line.hard_break {
@@ -396,11 +508,12 @@ impl TextEngine {
         EditLayout {
             baseline: lines.first().map_or(0.0, |l| l.baseline),
             lines,
-            natural_width: ceil64(natural),
+            natural_width: ceil64(natural as f32),
             content_width,
             content_height: top,
             rtl,
             len: text.len(),
+            blocks: placed,
         }
     }
 }
@@ -542,5 +655,56 @@ mod tests {
         let l = one_line("ab \ncd");
         assert_eq!(l.content_width, 19.4375);
         assert_eq!(l.caret(3).x, 19.4375);
+    }
+
+    #[test]
+    fn paragraphs_stand_apart_and_in_as_their_blocks_say() {
+        let p = EditBlock {
+            margin_top: 12.0,
+            margin_bottom: 12.0,
+            ..EditBlock::default()
+        };
+        let item = EditBlock {
+            indent: 40.0,
+            marker: Some("\u{2022}".into()),
+            ..EditBlock::default()
+        };
+        let text = "one\ntwo words here\nend";
+        let l = TextEngine::new().edit_layout_blocks(
+            text,
+            &TextStyle::default(),
+            &Ranged::NONE,
+            &EditParams {
+                width: Some(80.0),
+                wrap: WrapMode::WordWrap,
+            },
+            &[p.clone(), item, p],
+        );
+        // The margins between two paragraphs collapse; none at the ends.
+        assert_eq!(l.lines[0].top, 0.0);
+        assert_eq!(l.lines[1].top, 28.0);
+        // The item wraps in the 40 pixels its indent leaves.
+        let item_lines = l
+            .lines
+            .iter()
+            .filter(|line| line.range.start >= 4 && line.range.start < 19)
+            .count();
+        assert!(item_lines > 1, "{:?}", l.lines);
+        let last = l.lines.last().expect("a line");
+        assert_eq!(last.range, 19..22);
+        assert_eq!(last.top, 28.0 + 16.0 * item_lines as f64 + 12.0);
+        assert_eq!(l.content_height, last.top + 16.0);
+        // Every byte is on a line, the breaks too, and the cursor finds
+        // its paragraph.
+        assert_eq!(l.lines[0].range, 0..4);
+        assert_eq!(l.caret(4).line, 1);
+        assert_eq!(l.caret(20).line, l.lines.len() - 1);
+        let block = l.block_of_line(2).expect("the item");
+        assert_eq!(block.first_line, 1);
+        assert_eq!(block.indent, 40.0);
+        // The bullet ends a little before the item's text.
+        let (x, marker) = block.marker.as_ref().expect("a bullet");
+        assert!(*x < 0.0 && *x + marker.natural_width < 0.0 && *x > -40.0);
+        assert!(l.block_of_line(0).expect("first").marker.is_none());
     }
 }
