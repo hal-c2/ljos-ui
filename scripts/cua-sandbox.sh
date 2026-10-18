@@ -184,7 +184,7 @@ start_cua() {
   "${sandbox_env[@]}" setsid cua-driver serve --socket "$run/cua.sock" > "$home/cua.log" 2>&1 &
   track $! cua
   wait_for 20 "cua-driver (see $home/cua.log)" test -S "$run/cua.sock"
-  # Its agent cursor is a window over the whole screen that takes the clicks meant for the app.
+  # Its agent cursor is a window over the whole screen; hidden now, before any app runs (see call).
   "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" set_agent_cursor_enabled \
     "{\"session\":\"$session\",\"enabled\":false}" > /dev/null
 }
@@ -286,9 +286,9 @@ call() {
   app=$(pid_of app) && with pid "$app"
   with delivery_mode '"foreground"'
   focus_target
-  # A pointer tool shows the agent cursor again, and its overlay would take the next click.
-  [[ $tool == *agent_cursor* ]] || "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" \
-    set_agent_cursor_enabled "{\"session\":\"$session\",\"enabled\":false}" > /dev/null
+  # A pointer tool shows the agent cursor again. Its overlay lets clicks through, and hiding it
+  # here would unmap a window: X11 hands the focus away and back, and an app closes its popups
+  # on losing it, so a popup a click opened would be gone by the screenshot after it.
   exec "${sandbox_env[@]}" cua-driver call --socket "$run/cua.sock" "$tool" "$json"
 }
 
