@@ -269,3 +269,25 @@ Feature: FolderListModel
     And 100 milliseconds pass
     Then the property "count" of "m" is 0
     And the property "status" of "m" is 0
+
+  # photosurface's own kind of wait: a view that has made a row for each
+  # file finds the model counting them all.
+  @api-Qt.labs.folderlistmodel.FolderListModel.count
+  Scenario: A view told of its rows finds the model's count already there
+    Given the QML:
+      """qml
+      import QtQuick
+      import Qt.labs.folderlistmodel
+      Item {
+        objectName: "o"
+        property string seen: ""
+        property string statusSeen: ""
+        Repeater {
+          model: FolderListModel { id: m; folder: Qt.resolvedUrl("d") }
+          delegate: Item {}
+          onCountChanged: parent.seen += count + "/" + m.count + "/" + m.status + ";"
+        }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "seen" of "o" is "6/6/2;"

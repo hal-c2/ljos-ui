@@ -492,11 +492,14 @@ fn clear(e: &Engine, me: ObjectId) {
             s.signals.clone()
         }
     };
-    if let Some(signals) = signals {
-        signals.model_reset(e);
-    }
-    // Not batched: Qt says the count before the status.
-    let _ = cx.set(FolderListModel::COUNT, 0);
+    // The count is there before the views are told, as on qml6; the
+    // status follows, not batched: Qt says the count before it.
+    e.batch(|| {
+        let _ = cx.set(FolderListModel::COUNT, 0);
+        if let Some(signals) = signals {
+            signals.model_reset(e);
+        }
+    });
     let _ = cx.set(FolderListModel::STATUS, status::NULL);
 }
 
@@ -693,10 +696,13 @@ fn apply(e: &Engine, me: ObjectId, generation: u64, dir: &Path, found: Vec<Found
         s.rows = rows;
         (s.signals.clone(), s.rows.len() as i32)
     };
-    if let Some(signals) = signals {
-        signals.model_reset(e);
-    }
-    let _ = cx.set(FolderListModel::COUNT, count);
+    // A view told of the rows finds them counted (measured on qml6).
+    e.batch(|| {
+        let _ = cx.set(FolderListModel::COUNT, count);
+        if let Some(signals) = signals {
+            signals.model_reset(e);
+        }
+    });
     let _ = cx.set(FolderListModel::STATUS, status::READY);
     e.request_wake();
 }
