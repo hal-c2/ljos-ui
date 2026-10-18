@@ -256,7 +256,7 @@ impl Default for Platform {
             badge: RefCell::new(Rc::new(RecordedBadge::default())),
             sensors: RefCell::new(Rc::new(NoSensors)),
             badge_number: Cell::new(0),
-            env: RefCell::new(Rc::new(PathEnv::from_process())),
+            env: RefCell::new(Rc::new(PathEnv::for_process())),
             // What a run without a window system is called (Qt.platform).
             plugin_name: RefCell::new(Atom::from("offscreen")),
             application: RefCell::new(None),

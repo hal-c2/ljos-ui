@@ -389,6 +389,7 @@ impl QtBackend {
             Some(style) => command.env("QT_QUICK_CONTROLS_STYLE", style),
             None => command.env_remove("QT_QUICK_CONTROLS_STYLE"),
         };
+        super::own_home(&mut command, driver.parent().unwrap_or(driver))?;
         // The style is the scenario's, never the developer's.
         command
             .env_remove("QT_QUICK_CONTROLS_CONF")

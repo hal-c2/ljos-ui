@@ -73,7 +73,9 @@ pub use network::{
     report_network_status, set_network_monitor,
 };
 pub use open_url::{OpenUrl, OpenUrlService, RecordedUrls};
-pub use paths::{Location, PathEnv, StandardPaths, encoded_url, file_url, url_path};
+pub use paths::{
+    GUARD_HOME_VAR, Location, PathEnv, StandardPaths, encoded_url, file_url, url_path,
+};
 pub use permissions::{
     BluetoothPermission, CalendarPermission, CameraPermission, ContactsPermission, FakePermissions,
     LocationPermission, MicrophonePermission, Permission, PermissionAnswer, PermissionService,

@@ -222,6 +222,7 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         command.arg("--filter").arg(filter);
     }
     command.arg("--json").arg(&json);
+    super::own_home(&mut command, &staged.root)?;
     let out = command
         .env("TZ", run.time_zone())
         .env("LANG", "en_US.UTF-8")
@@ -288,6 +289,7 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         command.arg("-import").arg(staged.suite.join(dir));
     }
     command.args(&run.filters);
+    super::own_home(&mut command, &staged.root)?;
     let out = command
         .env("QT_QPA_PLATFORM", "offscreen")
         .env("QT_QUICK_BACKEND", "software")

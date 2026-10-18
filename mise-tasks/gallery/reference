@@ -12,6 +12,10 @@ refs="$root/corpus/reference"
 mkdir -p "$work" "$refs"
 cargo build --quiet -p qml_compare --manifest-path "$root/Cargo.toml"
 
+# What an example saves must not change the next picture, nor the user's own data.
+. "$root/scripts/own-home.sh"
+own_home "$work/home"
+
 export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 \
   TZ=UTC LANG=en_US.UTF-8 GSETTINGS_BACKEND=memory QML_DISABLE_DISK_CACHE=1
 

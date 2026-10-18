@@ -699,6 +699,60 @@ impl BackendMode {
     }
 }
 
+/// Gives a program the runner starts a home of its own under `dir`: what
+/// it saves (Settings, LocalStorage) stays with the scenario and never
+/// reaches the developer's directories, and a relative XDG variable falls
+/// back inside it. The user's fonts and their configuration come along,
+/// so text measures as it does outside. Ljós is told the real home, which
+/// it then refuses to write in.
+pub(crate) fn own_home(
+    command: &mut std::process::Command,
+    dir: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::path::PathBuf;
+    let real = std::env::var_os("HOME").map(PathBuf::from);
+    let user = |key: &str, fallback: &str| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| real.as_ref().map(|h| h.join(fallback)))
+    };
+    let home = dir.join("home");
+    let (config, data) = (home.join(".config"), home.join(".local/share"));
+    for d in [
+        &config,
+        &data,
+        &home.join(".local/state"),
+        &home.join(".cache"),
+    ] {
+        std::fs::create_dir_all(d)?;
+    }
+    for (from, to) in [
+        (
+            user("XDG_CONFIG_HOME", ".config"),
+            config.join("fontconfig"),
+        ),
+        (user("XDG_DATA_HOME", ".local/share"), data.join("fonts")),
+    ] {
+        let Some(from) = from.map(|f| f.join(to.file_name().unwrap_or_default())) else {
+            continue;
+        };
+        if from.is_dir() && !to.exists() {
+            std::os::unix::fs::symlink(&from, &to)?;
+        }
+    }
+    command
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("XDG_DATA_HOME", &data)
+        .env("XDG_STATE_HOME", home.join(".local/state"))
+        .env("XDG_CACHE_HOME", home.join(".cache"));
+    if let Some(real) = real {
+        command.env(ljos_platform::GUARD_HOME_VAR, real);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

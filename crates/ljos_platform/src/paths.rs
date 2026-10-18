@@ -25,6 +25,11 @@ pub struct PathEnv {
     pub root: Option<PathBuf>,
 }
 
+/// Names the user's real home in a run that moved its directories (a test
+/// harness, an off-screen sandbox): nothing the run does may write in that
+/// home's configuration, data, state or cache directories.
+pub const GUARD_HOME_VAR: &str = "LJOS_GUARD_HOME";
+
 const VARS: [&str; 12] = [
     "XDG_CONFIG_HOME",
     "XDG_CONFIG_DIRS",
@@ -54,6 +59,72 @@ impl PathEnv {
             home,
             vars,
             root: None,
+        }
+    }
+
+    /// What the running process has, kept away from a home it must not
+    /// write in: a test binary's own (one under `target/*/deps`) and the
+    /// one a harness names in [`GUARD_HOME_VAR`].
+    pub fn for_process() -> PathEnv {
+        let guard = std::env::var_os(GUARD_HOME_VAR)
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute());
+        let test_binary = std::env::current_exe().is_ok_and(|exe| {
+            exe.parent()
+                .and_then(Path::file_name)
+                .is_some_and(|d| d == "deps")
+        });
+        PathEnv::from_process().guarded(
+            guard.as_deref(),
+            test_binary,
+            &std::env::temp_dir().join(format!("ljos-{}", std::process::id())),
+        )
+    }
+
+    /// This environment, or a fresh home under `temp` when it would write
+    /// in `guard`'s directories or belongs to a test. Only the
+    /// directories a home falls back to are guarded, so a harness may
+    /// keep its sandbox under the user's home; a relative or empty XDG
+    /// variable, which falls back to them, is what leaked before.
+    fn guarded(self, guard: Option<&Path>, test_binary: bool, temp: &Path) -> PathEnv {
+        let reaches = guard.is_some_and(|home| {
+            let own = [".config", ".local/share", ".local/state", ".cache"].map(|d| home.join(d));
+            [
+                self.config_home(),
+                self.data_home(),
+                self.cache_home(),
+                self.state_home(),
+            ]
+            .iter()
+            .any(|dir| own.iter().any(|o| dir.starts_with(o)))
+        });
+        if !reaches && !test_binary {
+            return self;
+        }
+        if reaches {
+            // Said once, where the harness's log keeps it: the run goes on,
+            // but whatever set its directories left one in the user's home.
+            eprintln!(
+                "ljos: {GUARD_HOME_VAR} is {}, and this run would write there; it writes under {} instead",
+                guard.unwrap_or(Path::new("")).display(),
+                temp.display()
+            );
+        }
+        let kept = [
+            "PATH",
+            "TMPDIR",
+            "XDG_RUNTIME_DIR",
+            "XDG_CONFIG_DIRS",
+            "XDG_DATA_DIRS",
+        ];
+        PathEnv {
+            home: temp.join("ljos-home"),
+            vars: self
+                .vars
+                .into_iter()
+                .filter(|(k, _)| kept.contains(&k.as_str()))
+                .collect(),
+            root: self.root,
         }
     }
 
@@ -502,6 +573,51 @@ mod tests {
             env.real(Path::new("/home/user/.config/a")),
             Path::new("/nowhere/home/user/.config/a")
         );
+    }
+
+    fn process(home: &str, vars: &[(&str, &str)]) -> PathEnv {
+        PathEnv {
+            home: home.into(),
+            vars: vars
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            root: None,
+        }
+    }
+
+    #[test]
+    fn a_test_never_writes_in_the_users_home() {
+        let real = process("/home/user", &[("XDG_DATA_HOME", "/home/user/data")]);
+        let env = real.clone().guarded(None, true, Path::new("/scratch"));
+        assert_eq!(env.home, Path::new("/scratch/ljos-home"));
+        assert_eq!(
+            env.data_home(),
+            Path::new("/scratch/ljos-home/.local/share")
+        );
+        assert!(!env.data_home().starts_with("/home/user"));
+    }
+
+    #[test]
+    fn a_harness_names_the_home_nothing_may_write_in() {
+        let guard = Some(Path::new("/home/user"));
+        let temp = Path::new("/scratch");
+        // The harness moved every directory: nothing changes.
+        let moved = process(
+            "/home/user/dev/target/cua/home",
+            &[("XDG_DATA_HOME", "/home/user/dev/target/cua/data")],
+        );
+        assert_eq!(moved.clone().guarded(guard, false, temp), moved);
+        // A relative variable is ignored, and its fallback is the home's.
+        let leaked = process("/home/user", &[("XDG_DATA_HOME", "xdg/data")]);
+        let env = leaked.guarded(guard, false, temp);
+        assert_eq!(
+            env.data_home(),
+            Path::new("/scratch/ljos-home/.local/share")
+        );
+        // An application run by hand keeps the user's directories.
+        let user = process("/home/user", &[]);
+        assert_eq!(user.clone().guarded(None, false, temp), user);
     }
 
     #[test]

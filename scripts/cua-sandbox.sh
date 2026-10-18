@@ -77,11 +77,13 @@ user_data="${XDG_DATA_HOME:-$HOME/.local/share}"
 user_state="${XDG_STATE_HOME:-$HOME/.local/state}"
 
 # What a driven app saves (Settings, LocalStorage) stays in the sandbox: in the user's own
-# directories it would outlive the run and change what the next run or render shows. The
+# directories it would outlive the run and change what the next run or render shows. HOME
+# moves too, so a variable left relative or empty falls back inside the sandbox, and Ljós is
+# told the real home (LJOS_GUARD_HOME), which it then refuses to write in. The
 # user's fonts and font configuration come along, so text looks as it does outside.
 own_dirs() {
   local xdg="$home/xdg"
-  mkdir -p "$xdg/config" "$xdg/data" "$xdg/state"
+  mkdir -p "$xdg/config" "$xdg/data" "$xdg/state" "$xdg/cache" "$xdg/home"
   if [[ -d $user_config/fontconfig ]]; then ln -sfn "$user_config/fontconfig" "$xdg/config/fontconfig"; fi
   if [[ -d $user_data/fonts ]]; then ln -sfn "$user_data/fonts" "$xdg/data/fonts"; fi
   # The user's own folders stay out too: an app that opens the pictures folder (photosurface)
@@ -103,6 +105,8 @@ load_sandbox() {
   sandbox_env=(env -u WAYLAND_DISPLAY -u SWAYSOCK -u AT_SPI_BUS_ADDRESS -u HYPRLAND_INSTANCE_SIGNATURE
     DISPLAY="$(< "$home/display")" XDG_RUNTIME_DIR="$run" DBUS_SESSION_BUS_ADDRESS="$(< "$home/bus")"
     XDG_CONFIG_HOME="$home/xdg/config" XDG_DATA_HOME="$home/xdg/data" XDG_STATE_HOME="$home/xdg/state"
+    XDG_CACHE_HOME="$home/xdg/cache" HOME="$home/xdg/home" LJOS_GUARD_HOME="${LJOS_GUARD_HOME:-$HOME}"
+    CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
     MISE_CONFIG_DIR="${MISE_CONFIG_DIR:-$user_config/mise}" MISE_DATA_DIR="${MISE_DATA_DIR:-$user_data/mise}"
     MISE_STATE_DIR="${MISE_STATE_DIR:-$user_state/mise}"
     CUA_DRIVER_RS_HOME="$home/cua" CUA_DRIVER_RS_TELEMETRY_ENABLED=0 CUA_DRIVER_RS_UPDATE_CHECK=0
@@ -242,6 +246,7 @@ print_env() {
   printf '%s\n' "WAYLAND_DISPLAY=$wayland" "SWAYSOCK=$sock" "DISPLAY=$(< "$home/display")" \
     "DBUS_SESSION_BUS_ADDRESS=$(< "$home/bus")" "XDG_RUNTIME_DIR=$run" \
     "XDG_CONFIG_HOME=$home/xdg/config" "XDG_DATA_HOME=$home/xdg/data" "XDG_STATE_HOME=$home/xdg/state" \
+    "XDG_CACHE_HOME=$home/xdg/cache" "HOME=$home/xdg/home" "LJOS_GUARD_HOME=${LJOS_GUARD_HOME:-$HOME}" \
     "LJOS_SCREEN_READER=${LJOS_SCREEN_READER:-off}"
 }
 
