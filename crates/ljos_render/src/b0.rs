@@ -930,8 +930,10 @@ fn ceil(v: f32) -> f32 {
 enum Drawn {
     /// A node's shapes, in its clip rectangle.
     Node(NodeId, ERect),
-    /// A rectangle handed over as one ([`EguiSink::solid_rects`]).
-    Solid(ClippedShape),
+    /// A rectangle handed over as one ([`EguiSink::solid_rects`]), in its
+    /// clip rectangle; made a shape only as it is handed over, as the
+    /// shape is four times its size.
+    Solid(ERect, ERect, Color32),
 }
 
 fn erect(r: Rect) -> ERect {
@@ -1731,10 +1733,7 @@ impl RenderBackend for EpaintBackend {
                 && let Some((rect, color, aa)) = solid(list, to_screen, item.opacity)
                 && let Some(rect) = pixels_of(rect, aa, self.ppp)
             {
-                order.push(Drawn::Solid(ClippedShape {
-                    clip_rect: clip,
-                    shape: Shape::Rect(RectShape::filled(rect, CornerRadius::ZERO, color)),
-                }));
+                order.push(Drawn::Solid(clip, rect, color));
                 continue;
             }
             let sig = Sig {
@@ -1791,8 +1790,11 @@ impl RenderBackend for EpaintBackend {
         for drawn in order {
             let (node, clip) = match drawn {
                 Drawn::Node(node, clip) => (node, clip),
-                Drawn::Solid(shape) => {
-                    sink.shapes.push(shape);
+                Drawn::Solid(clip_rect, rect, color) => {
+                    sink.shapes.push(ClippedShape {
+                        clip_rect,
+                        shape: Shape::Rect(RectShape::filled(rect, CornerRadius::ZERO, color)),
+                    });
                     continue;
                 }
             };
