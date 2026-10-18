@@ -7,7 +7,12 @@
 //! the pass split by function.
 //!
 //! `cargo run --release -p ljos_shell --example frame_profile -- DIR ENTRY
-//! [--frames N] [--size WxH] [--click] [--warm N] [--eval EXPR]…`
+//! [--frames N] [--size WxH] [--click] [--warm N] [--slow MS] [--start EXPR]…
+//! [--eval EXPR]…`
+//!
+//! `--start` runs `EXPR` in the root after the warm frames and prints how
+//! long it took, to time one handler (a game's start, a page's build) on
+//! its own. `--slow` prints each frame that took longer than `MS`.
 //!
 //! `--eval` prints what a script in the root makes of `EXPR` at the end,
 //! to see that the run reached the state meant (a game started, a page
@@ -33,6 +38,8 @@ struct Args {
     size: (f32, f32),
     click: bool,
     eval: Vec<String>,
+    start: Vec<String>,
+    slow: Option<Duration>,
 }
 
 fn args() -> anyhow::Result<Args> {
@@ -47,13 +54,20 @@ fn args() -> anyhow::Result<Args> {
         size: (800.0, 600.0),
         click: false,
         eval: Vec::new(),
+        start: Vec::new(),
+        slow: None,
     };
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--frames" => a.frames = it.next().context("N")?.parse()?,
             "--warm" => a.warm = it.next().context("N")?.parse()?,
             "--click" => a.click = true,
+            "--slow" => {
+                let ms: f64 = it.next().context("MS")?.parse()?;
+                a.slow = Some(Duration::from_secs_f64(ms / 1000.0));
+            }
             "--eval" => a.eval.push(it.next().context("EXPR")?),
+            "--start" => a.start.push(it.next().context("EXPR")?),
             "--size" => {
                 let s = it.next().context("WxH")?;
                 let (w, h) = s.split_once('x').context("WxH")?;
@@ -121,7 +135,7 @@ fn main() -> anyhow::Result<()> {
         ))
     };
     let (mut pass, mut tess, mut prims) = (Duration::ZERO, Duration::ZERO, 0usize);
-    let mut worst = Duration::ZERO;
+    let (mut worst, mut worst_at) = (Duration::ZERO, 0);
     // Frames after which the view asked for the next one at once: what a
     // real host would draw; the rest it would skip until a deadline.
     let mut eager = 0u32;
@@ -129,6 +143,22 @@ fn main() -> anyhow::Result<()> {
     let mut before = None;
     for i in 0..total {
         if i == a.warm {
+            if let Some(root) = root.get() {
+                for e in &a.start {
+                    let t = Instant::now();
+                    let said = app.engine().eval_js_in(
+                        Some(root),
+                        e,
+                        Duration::from_secs(600),
+                        [4, 32, 200, 1000, 4000],
+                    );
+                    let took = t.elapsed();
+                    match said {
+                        Ok(v) => println!("{e}: {v} in {took:.2?}"),
+                        Err(err) => println!("{e}: {err} in {took:.2?}"),
+                    }
+                }
+            }
             before = Some(app.engine().graph().stats());
         }
         clock.advance(period);
@@ -159,10 +189,13 @@ fn main() -> anyhow::Result<()> {
             ..Default::default()
         };
         let t0 = Instant::now();
-        let out = ctx.run_ui(input, |ui| {
+        let mut out = ctx.run_ui(input, |ui| {
             app.begin_pass();
             app.show(ui);
         });
+        // There is no painter to take the textures; a debug build of
+        // epaint asserts that a delta is not dropped unapplied.
+        out.textures_delta.clear();
         let t1 = Instant::now();
         let soon = out
             .viewport_output
@@ -173,7 +206,12 @@ fn main() -> anyhow::Result<()> {
         if i >= a.warm {
             pass += t1 - t0;
             tess += t2 - t1;
-            worst = worst.max(t2 - t0);
+            if a.slow.is_some_and(|s| t2 - t0 > s) {
+                println!("frame {}: {:.2?}", i - a.warm, t2 - t0);
+            }
+            if t2 - t0 > worst {
+                (worst, worst_at) = (t2 - t0, i - a.warm);
+            }
             prims += p.len();
             eager += u32::from(soon);
         }
@@ -181,12 +219,13 @@ fn main() -> anyhow::Result<()> {
     let ms = |d: Duration| d.as_secs_f64() * 1000.0 / f64::from(a.frames);
     let stats = app.view().stats();
     println!(
-        "{} frames: pass {:.3} ms, tessellate {:.3} ms, total {:.3} ms/frame (worst {:.2} ms); {} scene frames, {} changed, {} asked for the next; {:.0} primitives/frame",
+        "{} frames: pass {:.3} ms, tessellate {:.3} ms, total {:.3} ms/frame (worst {:.2} ms, frame {}); {} scene frames, {} changed, {} asked for the next; {:.0} primitives/frame",
         a.frames,
         ms(pass),
         ms(tess),
         ms(pass + tess),
         worst.as_secs_f64() * 1000.0,
+        worst_at,
         stats.frames,
         stats.changed,
         eager,
