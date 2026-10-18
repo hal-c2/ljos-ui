@@ -1396,7 +1396,7 @@ without it. Release (lto thin) `ljos` on 8c0e5e1 with and without it:
 - The windowed bench's peak and cgroup figures were not used: the load average went from 22 to
   84 while it ran, and the runs varied from 58 to 147 MiB.
 
-## Per-frame cost against Qt (2026-10-18)
+### Per-frame cost against Qt (2026-10-18)
 
 Callgrind, prof build, GPU sandbox. The figures are main-thread instructions per frame: animations
 over 10 s after 45 s, clocks over 10 s after 30 s. Qt's animations frame is 0.72 M.
