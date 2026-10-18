@@ -718,9 +718,11 @@ impl RenderTree {
         if !self.nodes[id].dirty.contains(Dirty::BOUNDS) {
             return;
         }
-        let children: SmallVec<[NodeId; 4]> = self.nodes[id].children.clone();
-        for c in &children {
-            self.refresh_bounds(*c);
+        // By index: a copy of the children was an allocation per dirty
+        // node with more than four, in every frame that moves something.
+        for i in 0..self.nodes[id].children.len() {
+            let c = self.nodes[id].children[i];
+            self.refresh_bounds(c);
         }
         let n = &self.nodes[id];
         // The hit rectangle is always part of the bounds, so a content-less node
@@ -731,7 +733,7 @@ impl RenderTree {
         {
             b = b.union(content.bounds());
         }
-        for c in &children {
+        for c in &n.children {
             let cn = &self.nodes[*c];
             if cn.is_pruned() {
                 continue;
