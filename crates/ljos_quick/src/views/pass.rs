@@ -1275,6 +1275,17 @@ fn run(e: &Engine, view: ObjectId, st: &ViewState, over: Option<f64>) {
         Some(v) => v,
         None => g.viewport(rd(e, view, dir.position)),
     };
+    if over.is_none() {
+        // What is made for the cacheBuffer is not drawn (`cull`). A row
+        // that touches what is shown is drawn (observed on qml6).
+        let shown = (v_now - g.margin_begin, v_now + g.view_main + g.margin_end);
+        let unshown = items
+            .iter()
+            .filter(|(_, _, pos, size)| pos + size < shown.0 || *pos > shown.1)
+            .map(|(_, o, ..)| *o)
+            .collect();
+        super::cull::set(e, view, unshown);
+    }
 
     // What the next pass starts from.
     // A row with no length yet (none of a view that has no length either

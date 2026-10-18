@@ -399,6 +399,9 @@ pub struct QuickScene {
     /// The source items a `ShaderEffectSource` hides (`hideSource`): not
     /// shown in the tree, whatever `visible` says.
     hidden: FxHashSet<ObjectId>,
+    /// The rows views made and do not show (`views::cull`), and the
+    /// generation of that they were read at.
+    culled: (FxHashSet<ObjectId>, u64),
     root: Option<ObjectId>,
     /// The layer above the root item (`crate::layer`), once one was made.
     layer: Option<ObjectId>,
@@ -490,6 +493,7 @@ impl QuickScene {
             source_base: HashMap::new(),
             layer_base: HashMap::new(),
             hidden: FxHashSet::default(),
+            culled: (FxHashSet::default(), 0),
             root: None,
             layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
@@ -842,6 +846,7 @@ impl QuickScene {
         // 8. Sync.
         self.reconcile(engine);
         self.apply_geometry(engine);
+        self.refresh_culled(engine);
         self.apply_content();
         self.draw_effect_sources(engine);
         // 9. Compose; then pull paint inputs for newly visible items.
@@ -1408,7 +1413,7 @@ impl QuickScene {
             let covered = e.inherit.borrow().visible.is_some();
             self.tree
                 .set_visible(node, (g.visible || covered) && !g.faces_away);
-            self.tree.set_drawn(node, !self.hidden.contains(&obj));
+            self.tree.set_drawn(node, self.drawn(obj));
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
             self.tree.set_z(node, g.z as f32);
@@ -1764,7 +1769,29 @@ impl QuickScene {
         self.hidden = now;
         for obj in changed {
             if let Some(e) = self.entries.get(&obj) {
-                self.tree.set_drawn(e.node, !self.hidden.contains(&obj));
+                self.tree.set_drawn(e.node, self.drawn(obj));
+            }
+        }
+    }
+
+    /// Whether `obj` is painted, `visible` aside.
+    fn drawn(&self, obj: ObjectId) -> bool {
+        !self.hidden.contains(&obj) && !self.culled.0.contains(&obj)
+    }
+
+    /// Stops painting the rows views made and do not show, and paints
+    /// again those they show now.
+    fn refresh_culled(&mut self, engine: &Engine) {
+        let generation = crate::views::cull::generation(engine);
+        if generation == self.culled.1 {
+            return;
+        }
+        let now = crate::views::cull::all(engine);
+        let changed: Vec<ObjectId> = now.symmetric_difference(&self.culled.0).copied().collect();
+        self.culled = (now, generation);
+        for obj in changed {
+            if let Some(e) = self.entries.get(&obj) {
+                self.tree.set_drawn(e.node, self.drawn(obj));
             }
         }
     }
