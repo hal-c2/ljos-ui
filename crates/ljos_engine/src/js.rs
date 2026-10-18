@@ -280,6 +280,8 @@ pub(crate) struct JsState {
     pub(crate) devtools: Cell<bool>,
     /// How many script writes went straight to their node.
     plain_writes: Cell<u64>,
+    /// How many script reads that are not a plain value's went the quick way.
+    quick_reads: Cell<u64>,
 }
 
 impl JsState {
@@ -674,7 +676,10 @@ impl HostObjects for EngineHost {
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError> {
         let engine = self.engine()?;
         // A live object is no reload's to forward.
-        if let Some(v) = engine.plain_script_read(u64_to_obj(obj), PropIndex(prop)) {
+        if let Some(v) = engine.quick_script_read(u64_to_obj(obj), PropIndex(prop), true) {
+            if let Some(js) = &*engine.inner.js.borrow() {
+                js.quick_reads.set(js.quick_reads.get() + 1);
+            }
             return Ok(engine.to_js(&v));
         }
         let (id, prop) = forwarded_prop(&engine, u64_to_obj(obj), prop);
@@ -1224,6 +1229,7 @@ impl Engine {
             lists: crate::list_faces::ListFaces::default(),
             devtools: Cell::new(false),
             plain_writes: Cell::new(0),
+            quick_reads: Cell::new(0),
         });
         *self.inner.js.borrow_mut() = Some(state.clone());
         self.install_globals(&state)?;
@@ -1596,6 +1602,18 @@ impl Engine {
             .borrow()
             .as_ref()
             .map_or(0, |js| js.plain_writes.get())
+    }
+
+    /// How many reads scripts made of an object or a field kept on the
+    /// object went the quick way, with no look for an alias, a group or a
+    /// list.
+    #[doc(hidden)]
+    pub fn quick_script_reads(&self) -> u64 {
+        self.inner
+            .js
+            .borrow()
+            .as_ref()
+            .map_or(0, |js| js.quick_reads.get())
     }
 
     /// Tells the prelude's `Date` whether the wall clock is pinned.

@@ -1395,6 +1395,21 @@ impl Engine {
     /// number, a bool or a text; `None` sends the read the long way, which
     /// sees to aliases, groups, a `list<T>`, makers, lists and objects.
     pub(crate) fn plain_script_read(&self, obj: ObjectId, prop: PropIndex) -> Option<Value> {
+        self.quick_script_read(obj, prop, false)
+    }
+
+    /// As [`plain_script_read`](Self::plain_script_read), and with
+    /// `objects` a reference to an object too, as `try_read` gives it.
+    pub(crate) fn quick_script_read(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        objects: bool,
+    ) -> Option<Value> {
+        let quick = |v: Value| match v {
+            Value::Object(_) if objects => Some(self.live(v)),
+            v => primitive(&v).then_some(v),
+        };
         let n = {
             let store = self.inner.store.borrow();
             let h = store.objects.get(obj)?;
@@ -1413,13 +1428,20 @@ impl Engine {
                     || p.flags.contains(PropertyFlags::CONSTANT) =>
                 {
                     let v = read_access(&*h.native, &h.dynamic, &p.access);
-                    return primitive(&v).then_some(v);
+                    drop(store);
+                    return quick(v);
                 }
-                None => return None,
+                // Kept on the object, as try_read keeps it.
+                None => {
+                    let v = read_access(&*h.native, &h.dynamic, &p.access);
+                    drop(store);
+                    let v = quick(v)?;
+                    self.keep_field_read(obj, prop);
+                    return Some(v);
+                }
             }
         };
-        let v = self.inner.graph.try_get(n)?;
-        primitive(&v).then_some(v)
+        quick(self.inner.graph.try_get(n)?)
     }
 
     fn is_native_field(&self, obj: ObjectId, prop: PropIndex) -> bool {

@@ -598,3 +598,29 @@ Item {
     assert_eq!(h.num(root, "n"), 4.0);
     assert_eq!(h.num(root, "fixed"), 3.0);
 }
+
+#[test]
+fn a_script_s_read_of_an_object_goes_the_quick_way() {
+    let h = engine();
+    let root = h.load(
+        r#"
+import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  width: 3
+  property Item other: kid
+  property real seen
+  Item { id: kid; width: 4 }
+  function read() { seen = kid.parent.width * 10 + root.other.width }
+}
+"#,
+    );
+    let e = &h.engine;
+    let before = e.quick_script_reads();
+    e.invoke_by_name(root, "read", &[]).unwrap();
+    // `other` holds the object; `parent` is the item's to work out, so it
+    // takes the long way.
+    assert_eq!(e.quick_script_reads() - before, 1);
+    assert_eq!(h.num(root, "seen"), 34.0);
+}
