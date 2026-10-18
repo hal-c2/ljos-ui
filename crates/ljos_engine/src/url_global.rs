@@ -156,7 +156,7 @@ pub(crate) fn install(js: &JsState) -> Result<(), EngineError> {
     Ok(())
 }
 
-const PRELUDE: &str = r##"
+pub(crate) const PRELUDE: &str = r##"
 (function () {
   "use strict";
   const g = globalThis;

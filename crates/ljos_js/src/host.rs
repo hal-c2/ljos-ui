@@ -1381,8 +1381,12 @@ impl JsHost {
 
     /// Evaluates a classic script (the Engine's global prelude).
     pub fn eval_script(&self, name: &str, source: &str) -> Result<JsOut, JsFault> {
+        let ahead = crate::ahead::script(name, source);
         self.enter(&format!("eval {name}"), self.cfg.load_slice, |scope| {
-            let v: Value = scope.ctx.eval(source)?;
+            let v: Value = match &ahead {
+                Some(script) => script.eval(&scope.ctx)?,
+                None => scope.ctx.eval(source)?,
+            };
             scope.from_value(&v)
         })
     }

@@ -607,7 +607,7 @@ impl Engine {
 
 /// The JS face of localisation. The argument checks are here because their
 /// messages and error types are part of what a QML author sees.
-const PRELUDE: &str = r##"
+pub(crate) const PRELUDE: &str = r##"
 (function () {
   "use strict";
   const g = globalThis;

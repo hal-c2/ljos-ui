@@ -497,7 +497,7 @@ impl Engine {
 /// is read from it, and a function of `Array.prototype` runs on that array
 /// rather than through the face, so that `push` is one change and `join`
 /// asks the engine once.
-const LISTS: &str = r##"
+pub(crate) const LISTS: &str = r##"
 (function () {
   "use strict";
   const g = globalThis;

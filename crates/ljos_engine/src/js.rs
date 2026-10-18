@@ -1459,14 +1459,7 @@ impl Engine {
         js.host
             .eval_script("types", crate::incubator::types::TYPE_FACES)
             .map_err(err)?;
-        js.host
-            .eval_script(
-                "modules",
-                "globalThis.__ljos_module = (module) => new Proxy({}, {\n\
-                   get: (_, name) => typeof name === 'string' ? __ljos_type(module, name) : undefined\n\
-                 });",
-            )
-            .map_err(err)?;
+        js.host.eval_script("modules", MODULES).map_err(err)?;
         js.host
             .set_global_function("__ljos_wallNow", wall_now)
             .map_err(err)?;
@@ -1509,21 +1502,54 @@ impl Engine {
         crate::url_global::install(js)?;
         // The enums by name first: a key the older tables also have is
         // written again with the same number.
-        let keys: Vec<String> = crate::qt_enums::QT_ENUMS
-            .iter()
-            .flat_map(|e| e.keys.iter())
-            .chain(QT_ENUM_KEYS)
-            .chain(crate::qt_keys::QT_KEY_ENUMS)
-            .map(|(k, v)| format!("{k}:{v}"))
-            .collect();
         js.host
-            .eval_script(
-                "qt-enums",
-                &format!("Object.assign(Qt, {{{}}});", keys.join(",")),
-            )
+            .eval_script("qt-enums", &qt_enums_script())
             .map_err(err)?;
         Ok(())
     }
+}
+
+/// `__ljos_module(module)`: the types of a module a script imports under a
+/// name.
+const MODULES: &str = "globalThis.__ljos_module = (module) => new Proxy({}, {\n\
+                   get: (_, name) => typeof name === 'string' ? __ljos_type(module, name) : undefined\n\
+                 });";
+
+/// The enums by name on `Qt`. The older tables come after: a key they also
+/// have is written again with the same number.
+fn qt_enums_script() -> String {
+    let keys: Vec<String> = crate::qt_enums::QT_ENUMS
+        .iter()
+        .flat_map(|e| e.keys.iter())
+        .chain(QT_ENUM_KEYS)
+        .chain(crate::qt_keys::QT_KEY_ENUMS)
+        .map(|(k, v)| format!("{k}:{v}"))
+        .collect();
+    format!("Object.assign(Qt, {{{}}});", keys.join(","))
+}
+
+/// Starts compiling the scripts [`Engine::install_globals`] runs, once per
+/// process: every script host then reads them instead of parsing them,
+/// which was most of what starting one cost.
+pub(crate) fn compile_globals_ahead() {
+    ljos_js::compile_ahead(|| {
+        [
+            ("error-place", ERROR_PLACE),
+            ("types", crate::incubator::types::TYPE_FACES),
+            ("modules", MODULES),
+            ("value-types", value_faces::FACES),
+            ("prelude", PRELUDE),
+            ("colors", value_faces::COLORS),
+            ("i18n", crate::i18n::PRELUDE),
+            ("dynamic", crate::incubator::dynamic::PRELUDE),
+            ("lists", crate::list_faces::LISTS),
+            ("url", crate::url_global::PRELUDE),
+        ]
+        .into_iter()
+        .map(|(name, source)| (name.to_owned(), source.to_owned()))
+        .chain([("qt-enums".to_owned(), qt_enums_script())])
+        .collect()
+    });
 }
 
 /// The enum keys of the `Qt` namespace this runtime knows.

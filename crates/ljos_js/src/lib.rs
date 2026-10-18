@@ -26,6 +26,7 @@
 //! section 6.1). Only the operations that must own the lock (`pump_jobs`,
 //! collection, memory statistics) refuse to run inside a run.
 
+mod ahead;
 mod bytecode;
 mod color;
 mod config;
@@ -34,6 +35,7 @@ mod host;
 mod objects;
 mod value;
 
+pub use ahead::compile_ahead;
 pub use bytecode::{Bytecode, BytecodeOptions};
 pub use config::{JsConfig, Slice};
 pub use fault::{JsFault, SourceMapper, SourceText};

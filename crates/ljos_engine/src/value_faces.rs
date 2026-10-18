@@ -204,7 +204,7 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
 /// Defines `__ljos_faces` (one `{ make, proto, fields }` per kind, and `qt`:
 /// the constructors that go on `Qt`), `__ljos_vt`, `__ljos_vl`, `__ljos_at`
 /// and `__ljos_vp`.
-const FACES: &str = r##"
+pub(crate) const FACES: &str = r##"
 (function () {
   "use strict";
   const g = globalThis;

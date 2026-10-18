@@ -739,7 +739,7 @@ fn located(url: &str, message: String) -> QmlTextError {
 
 /// The JS face of the makers. The argument checks are here because their
 /// messages are what a QML author sees (Qt 6.11.2, by running qml6).
-const PRELUDE: &str = r##"
+pub(crate) const PRELUDE: &str = r##"
 (function () {
   "use strict";
   const g = globalThis;

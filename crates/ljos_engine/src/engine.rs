@@ -242,6 +242,9 @@ pub(crate) struct Held {
 
 impl Engine {
     pub fn new() -> Self {
+        // Most engines run scripts; the first one in a process has the
+        // scripts every one runs compiled while it is being set up.
+        crate::js::compile_globals_ahead();
         let graph = Graph::with_options(Options {
             equals: Value::change_equals,
             // Qt runs a handler that writes its own property again inside
