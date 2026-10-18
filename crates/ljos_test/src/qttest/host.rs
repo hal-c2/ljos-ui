@@ -51,6 +51,15 @@ impl Rig {
         self.clock.now() + self.lead
     }
 
+    /// The time a mouse event made now carries. qmltestrunner stamps each
+    /// mouse event a millisecond after its delay: moves 16 ms apart are 17
+    /// ms apart to what measures their speed (a fling).
+    pub(crate) fn mouse_time(&mut self) -> Time {
+        let t = self.event_time();
+        self.lead += Duration::from_millis(1);
+        t
+    }
+
     /// The next press is too late to be the second of a double click.
     pub(crate) fn fresh_press(&mut self) {
         self.lead += DOUBLE_CLICK_INTERVAL + Duration::from_millis(1);

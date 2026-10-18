@@ -106,7 +106,7 @@ pub(crate) fn press_at(
             rig.fresh_press();
         }
         rig.held |= button;
-        let mut ev = PointerEvent::press(at.x, at.y, rig.event_time())
+        let mut ev = PointerEvent::press(at.x, at.y, rig.mouse_time())
             .with_button(button)
             .with_modifiers(modifiers);
         ev.buttons = rig.held;
@@ -124,7 +124,7 @@ pub(crate) fn release_at(
 ) -> Result<(), EngineError> {
     let ev = host.with_rig(|rig| {
         rig.held -= button;
-        let mut ev = PointerEvent::release(at.x, at.y, rig.event_time())
+        let mut ev = PointerEvent::release(at.x, at.y, rig.mouse_time())
             .with_button(button)
             .with_modifiers(modifiers);
         ev.buttons = rig.held;
@@ -141,7 +141,7 @@ pub(crate) fn move_to(
     modifiers: Modifiers,
 ) -> Result<(), EngineError> {
     let ev = host.with_rig(|rig| {
-        PointerEvent::moved(at.x, at.y, buttons | rig.held, rig.event_time())
+        PointerEvent::moved(at.x, at.y, buttons | rig.held, rig.mouse_time())
             .with_modifiers(modifiers)
     })?;
     deliver(engine, host, &ev)
