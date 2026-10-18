@@ -1200,6 +1200,134 @@ Feature: What a reload changes
       Then the property "text" of "note" is "inside"
       And the property "x" of "inside" is at least 40
 
+  Rule: An object that holds a delegate written inline goes in place when it is removed or moved
+
+    The delegate goes with the object, as its rows do; one moved is made
+    again where the file now writes it, delegate and rows too. The
+    delegates of the objects that stay keep their rows.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          ListView {
+            objectName: "first"; width: 50; height: 100; model: things
+            delegate: Rectangle { objectName: "one" + name; width: 10; height: 10 }
+          }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      When 500 milliseconds pass
+
+    Scenario: A view whose delegate is written inline is removed, and the view after it keeps its rows
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 20; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the object "onea" does not exist
+      And the property "x" of "linea" is at least 40
+      And the property "width" of "linea" is 20
+      When the method "more" of "root" is called
+      Then the property "width" of "linec" is 20
+
+    Scenario: A view whose delegate is written inline is moved, and is made again there with its rows
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Item {
+            objectName: "box"
+            ListView {
+              objectName: "first"; width: 50; height: 100; model: things
+              delegate: Rectangle { objectName: "one" + name; width: 10; height: 10 }
+            }
+          }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          function more() { things.append({ name: "c" }) }
+        }
+        """
+      And a reload happens
+      Then the object "onea" exists
+      And the property "x" of "linea" is at least 40
+      When the method "more" of "root" is called
+      Then the object "onec" exists
+      And the object "linec" exists
+
+    Scenario: What a script made from a component written inline goes with it
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          Component { id: spare; Rectangle { objectName: "made"; width: 10; height: 10 } }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          function more() { things.append({ name: "c" }) }
+          function make() { spare.createObject(root) }
+        }
+        """
+      And a reload happens
+      And the method "make" of "root" is called
+      And 500 milliseconds pass
+      Then the object "made" exists
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          ListModel { id: things; ListElement { name: "a" } ListElement { name: "b" } }
+          ListView {
+            objectName: "second"; width: 50; height: 100; model: things
+            delegate: Rectangle {
+              objectName: "line" + name; width: 10; height: 10
+              NumberAnimation on x { from: 0; to: 100; duration: 1000 }
+            }
+          }
+          function more() { things.append({ name: "c" }) }
+          function make() { }
+        }
+        """
+      And a reload happens
+      Then the object "made" does not exist
+      And the property "x" of "linea" is at least 40
+
   Rule: An object moved or given another type is made again where the file puts it, and only that object
 
     An object put in another order among its siblings, under another

@@ -9,7 +9,8 @@
 //! name the new file gives as a value or an expression, a
 //! `HandlerChanged`, or a `DeclarationChanged` of a function that takes
 //! the same arguments; and the changed files are the old ones but for
-//! those members: the same imports, pragmas, scripts, components,
+//! those members: the same imports, pragmas, scripts, components (but
+//! for a template that comes or goes with the object it is written in),
 //! objects and declarations, wherever they now are. Then what is in effect
 //! is the edit alone. A member no longer given goes back to what a new
 //! object of its type has. A `ListElement` added, removed, moved or given
@@ -111,6 +112,7 @@ impl Code {
 
 /// The members the edit gives an object of a changed file anew.
 struct Edit {
+    /// Its component in the old file.
     comp: CompIdx,
     /// Its index in the new file, and in the old.
     obj: usize,
@@ -142,6 +144,10 @@ struct Changed {
     /// The places of the old file that moved to where the new file has
     /// them.
     moved: Moves,
+    /// Per component of the old file, the same one in the new: a template
+    /// goes with the object it is written in. The other indices of a
+    /// change are the old file's components.
+    comps: Rc<[Option<CompIdx>]>,
     /// Per component, where the old objects are in the new file.
     objects: Vec<Objects>,
     /// (component, old index, new index): a `ListModel` whose elements
@@ -161,7 +167,23 @@ struct Objects {
     carry: Vec<(usize, usize)>,
 }
 
+impl Changed {
+    /// Component `comp` of the old file in the new; one that stays.
+    fn now(&self, comp: CompIdx) -> CompIdx {
+        self.comps[comp.index()].unwrap_or(comp)
+    }
+}
+
 impl Objects {
+    /// Those of a component the new file no longer has.
+    fn gone(len: usize) -> Self {
+        Objects {
+            to_new: vec![None; len],
+            to_old: Vec::new(),
+            carry: Vec::new(),
+        }
+    }
+
     fn same(&self) -> bool {
         self.to_new.len() == self.to_old.len()
             && self.to_new.iter().enumerate().all(|(i, n)| *n == Some(i))
@@ -206,6 +228,25 @@ struct Grown {
     /// (old, new): a moved object and the one made for it.
     carry: Vec<(ObjectId, ObjectId)>,
 }
+
+/// A changed file as it is loaded now, with per component of the old
+/// file the same one in it.
+struct Renewed {
+    file: Rc<LoadedFile>,
+    comps: Rc<[Option<CompIdx>]>,
+}
+
+impl Renewed {
+    /// The file and component an instance or a template of component
+    /// `comp` is made from now; `None` when the file no longer has it.
+    fn of(&self, comp: CompIdx) -> Option<(Rc<LoadedFile>, CompIdx)> {
+        let to = self.comps.get(comp.index()).copied().flatten()?;
+        Some((self.file.clone(), to))
+    }
+}
+
+/// The changed files, by the old ones.
+type Files = HashMap<*const LoadedFile, Renewed>;
 
 /// (line, column) of the old file to (line, column) of the new.
 type Moves = HashMap<(u32, u32), (u32, u32)>;
@@ -343,7 +384,7 @@ impl Engine {
                         inst: inst.clone(),
                         obj: e.obj,
                         was: e.was,
-                        def: &c.new.component(e.comp).objects[e.obj],
+                        def: &c.new.component(c.now(e.comp)).objects[e.obj],
                         old: &c.old.ir.component(e.comp).objects[e.was],
                         names: e.names.clone(),
                         functions: e.functions.clone(),
@@ -362,7 +403,11 @@ impl Engine {
             let Some(c) = changed.iter().position(|c| Rc::ptr_eq(&inst.file, &c.old)) else {
                 continue;
             };
-            if changed[c].objects[inst.comp.index()].same() {
+            // One of a template that is gone goes with what it is made
+            // in, or the file no longer making it, is let be.
+            if changed[c].objects[inst.comp.index()].same()
+                || changed[c].comps[inst.comp.index()].is_none()
+            {
                 continue;
             }
             if !self.in_place_grows(inst, roots, &users) {
@@ -378,7 +423,7 @@ impl Engine {
 
         let saved = self.reload_patch_loader(patch, false).ok()?;
         st.epoch.set(st.epoch.get() + 1);
-        let mut files: HashMap<*const LoadedFile, Rc<LoadedFile>> = HashMap::default();
+        let mut files: Files = HashMap::default();
         for c in &changed {
             match self.load_file(&c.old.key) {
                 Ok(new) => {
@@ -392,11 +437,12 @@ impl Engine {
                             .filter_map(|(&(comp, obj), meta)| {
                                 let to = c.objects.get(comp as usize)?.to_new.get(obj as usize)?;
                                 let to = (*to)?;
+                                let now = c.comps.get(comp as usize).copied().flatten()?;
                                 // One with a property renamed has the new names.
                                 let renamed = c.edits.iter().any(|e| {
                                     e.comp.0 == comp && e.obj == to && !e.renamed.is_empty()
                                 });
-                                (!renamed).then(|| ((comp, to as u32), meta.clone()))
+                                (!renamed).then(|| ((now.0, to as u32), meta.clone()))
                             })
                             .collect();
                     // A handler warned of once is not warned of again.
@@ -408,7 +454,13 @@ impl Engine {
                             .map(|e| e.0),
                     );
                     drop(warned);
-                    files.insert(Rc::as_ptr(&c.old), new);
+                    files.insert(
+                        Rc::as_ptr(&c.old),
+                        Renewed {
+                            file: new,
+                            comps: c.comps.clone(),
+                        },
+                    );
                 }
                 Err(_) => {
                     // The full reload tells what is wrong.
@@ -432,7 +484,10 @@ impl Engine {
             let Some(file) = files.get(&Rc::as_ptr(&c.old)) else {
                 continue;
             };
-            match self.in_place_grow(inst, file, &c.objects[inst.comp.index()], &files, &mut memo) {
+            let file = file.file.clone();
+            let comp = c.now(inst.comp);
+            let m = &c.objects[inst.comp.index()];
+            match self.in_place_grow(inst, &file, comp, m, &files, &mut memo) {
                 Some(g) => grown.push(g),
                 None => {
                     failed = true;
@@ -521,7 +576,7 @@ impl Engine {
                         continue;
                     }
                     let was = &c.old.ir.component(inst.comp).objects[i];
-                    let is = &now.file.ir.component(inst.comp).objects[j];
+                    let is = &now.file.ir.component(now.comp).objects[j];
                     let old = self.list_element_cells(inst, &was.children);
                     let new = self.list_element_cells(&now, &is.children);
                     crate::listmodel::reload_rows(self, model, old, new);
@@ -535,6 +590,21 @@ impl Engine {
                     self.tell_removed(o);
                     self.destroy_now(o);
                 }
+            }
+        }
+        // What a template that is gone made, and outlived what it was
+        // written in (an object a script made), goes too: a fresh load
+        // has nothing to make it from.
+        for inst in &instances {
+            let Some(c) = changed.iter().find(|c| Rc::ptr_eq(&inst.file, &c.old)) else {
+                continue;
+            };
+            if let Some(&root) = inst.objects.first()
+                && c.comps[inst.comp.index()].is_none()
+                && self.is_alive(root)
+            {
+                self.tell_removed(root);
+                self.destroy_now(root);
             }
         }
         phases.mark("apply");
@@ -606,7 +676,7 @@ impl Engine {
         let called: Vec<*const LoadedFile> = changed
             .iter()
             .filter(|c| c.edits.iter().any(|e| !e.functions.is_empty()))
-            .filter_map(|c| files.get(&Rc::as_ptr(&c.old)).map(Rc::as_ptr))
+            .filter_map(|c| files.get(&Rc::as_ptr(&c.old)).map(|r| Rc::as_ptr(&r.file)))
             .collect();
         if !called.is_empty() {
             let instances: Vec<Rc<Instance>> = st.instances.borrow().clone();
@@ -622,18 +692,19 @@ impl Engine {
             });
         }
         let renew_template = |t: &Rc<Template>, memo: &mut HashMap<_, _>| -> Option<Rc<Template>> {
-            let file = files.get(&Rc::as_ptr(&t.file)).cloned();
+            let now = files.get(&Rc::as_ptr(&t.file)).and_then(|r| r.of(t.comp));
             let outer = t.outer.as_ref().map(|o| renew(o, &files, memo));
             let moved = outer
                 .as_ref()
                 .zip(t.outer.as_ref())
                 .is_some_and(|(n, o)| !Rc::ptr_eq(n, o));
-            if file.is_none() && !moved {
+            if now.is_none() && !moved {
                 return None;
             }
+            let (file, comp) = now.unwrap_or_else(|| (t.file.clone(), t.comp));
             Some(Rc::new(Template {
-                file: file.unwrap_or_else(|| t.file.clone()),
-                comp: t.comp,
+                file,
+                comp,
                 outer,
                 context: t.context,
             }))
@@ -751,8 +822,11 @@ impl Engine {
                 | ReloadOp::ObjectRemoved { .. }
                 | ReloadOp::TypeChanged { .. } => continue,
                 // Read from the files too: one that only renamed
-                // properties is let through.
-                ReloadOp::SignatureChanged { .. } => continue,
+                // properties is let through, and so is a template that
+                // comes or goes with the object it is written in.
+                ReloadOp::SignatureChanged { .. }
+                | ReloadOp::ComponentAdded { .. }
+                | ReloadOp::ComponentRemoved { .. } => continue,
                 _ => {
                     tracing::debug!("reload not in place: {op:?}");
                     return None;
@@ -778,14 +852,19 @@ impl Engine {
             let old = self.inner.loader.borrow().files.get(&new.file).cloned();
             // Nothing is made of it.
             let Some(old) = old else { continue };
+            let Some(comps) = match_components(&old.ir, new) else {
+                tracing::debug!("reload not in place: {} changed its components", new.file);
+                return None;
+            };
             let mut at: HashMap<ObjectKey, (CompIdx, usize)> = HashMap::default();
-            for (c, comp) in new.components.iter().enumerate() {
-                for i in 0..comp.objects.len() {
+            for (c, to) in comps.iter().enumerate() {
+                let Some(to) = *to else { continue };
+                for i in 0..new.component(to).objects.len() {
                     let r = ObjRef {
-                        component: CompIdx(c as u32),
+                        component: to,
                         object: ObjIdx(i as u32),
                     };
-                    at.insert(new.object_key(r), (r.component, i));
+                    at.insert(new.object_key(r), (CompIdx(c as u32), i));
                 }
             }
             let mut edits: Vec<Edit> = Vec::new();
@@ -815,6 +894,7 @@ impl Engine {
             let Some((whole, remap, moved, objects, models)) = same_but_edits(
                 &old.ir,
                 new,
+                &comps,
                 &mut edits,
                 moves.get(new.file.as_str()).unwrap_or(&HashMap::default()),
             ) else {
@@ -831,6 +911,7 @@ impl Engine {
                 whole,
                 remap,
                 moved,
+                comps: comps.into(),
                 objects,
                 models,
             });
@@ -932,11 +1013,12 @@ impl Engine {
         &self,
         old: &Rc<Instance>,
         file: &Rc<LoadedFile>,
+        now: CompIdx,
         m: &Objects,
-        files: &HashMap<*const LoadedFile, Rc<LoadedFile>>,
+        files: &Files,
         memo: &mut HashMap<*const Instance, Rc<Instance>>,
     ) -> Option<Grown> {
-        let comp = file.ir.component(old.comp);
+        let comp = file.ir.component(now);
         let was = old.file.ir.component(old.comp);
         let tops: Vec<usize> = m.added_tops(comp).collect();
         // One that goes before a sibling needs a list that can put it
@@ -966,7 +1048,7 @@ impl Engine {
         }
         let mut frame = AllocFrame::new(
             file.clone(),
-            old.comp,
+            now,
             RootSpec::Existing(old.objects[0]),
             old.outer.as_ref().map(|o| renew(o, files, memo)),
             old.context,
@@ -1687,7 +1769,7 @@ fn grow_order(growing: &[(Rc<Instance>, usize)]) -> Vec<(&Rc<Instance>, usize)> 
 /// inner instances; `inst` itself when none of them changed.
 fn renew(
     inst: &Rc<Instance>,
-    files: &HashMap<*const LoadedFile, Rc<LoadedFile>>,
+    files: &Files,
     memo: &mut HashMap<*const Instance, Rc<Instance>>,
 ) -> Rc<Instance> {
     if let Some(r) = memo.get(&Rc::as_ptr(inst)) {
@@ -1699,21 +1781,26 @@ fn renew(
         .iter()
         .map(|i| i.as_ref().map(|i| renew(i, files, memo)))
         .collect();
-    let file = files.get(&Rc::as_ptr(&inst.file)).cloned();
+    // One of a template the file no longer has keeps the old file: it
+    // goes with what it is made in.
+    let now = files
+        .get(&Rc::as_ptr(&inst.file))
+        .and_then(|r| r.of(inst.comp));
     let same = |a: &Option<Rc<Instance>>, b: &Option<Rc<Instance>>| match (a, b) {
         (Some(a), Some(b)) => Rc::ptr_eq(a, b),
         (None, None) => true,
         _ => false,
     };
-    let unchanged = file.is_none()
+    let unchanged = now.is_none()
         && same(&outer, &inst.outer)
         && inner.iter().zip(&inst.inner).all(|(a, b)| same(a, b));
     let r = if unchanged {
         inst.clone()
     } else {
+        let (file, comp) = now.unwrap_or_else(|| (inst.file.clone(), inst.comp));
         Rc::new(Instance {
-            file: file.unwrap_or_else(|| inst.file.clone()),
-            comp: inst.comp,
+            file,
+            comp,
             objects: inst.objects.clone(),
             inner,
             outer,
@@ -1843,6 +1930,7 @@ type Same = (
 fn same_but_edits(
     old: &CompiledFile,
     new: &CompiledFile,
+    comps: &[Option<CompIdx>],
     edits: &mut Vec<Edit>,
     moves: &HashMap<&ObjectKey, &ObjectKey>,
 ) -> Option<Same> {
@@ -1850,10 +1938,17 @@ fn same_but_edits(
         || old.pragmas != new.pragmas
         || old.scripts != new.scripts
         || old.invocable != new.invocable
-        || old.components.len() != new.components.len()
     {
         return not_here("its imports, pragmas, scripts or components changed");
     }
+    // The components of both, by the old one's index; those that stay.
+    let pairs = || {
+        old.components
+            .iter()
+            .enumerate()
+            .filter_map(|(c, o)| Some((c, o, new.component(comps[c]?))))
+    };
+    let to_new = |c: CompIdx| comps[c.index()].unwrap_or(c);
     let inline: Vec<String> = new
         .components
         .iter()
@@ -1861,8 +1956,21 @@ fn same_but_edits(
         .map(|c| c.name.clone())
         .collect();
     let mut objects = Vec::with_capacity(old.components.len());
-    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
-        if o.name != n.name || o.id != n.id || o.kind != n.kind {
+    for (c, o) in old.components.iter().enumerate() {
+        let Some(nc) = comps[c] else {
+            // What it is written in is gone, which the objects tell.
+            objects.push(Objects::gone(o.objects.len()));
+            continue;
+        };
+        let n = new.component(nc);
+        let kind = match o.kind {
+            ComponentKind::Template { outer, is_delegate } => ComponentKind::Template {
+                outer: to_new(outer),
+                is_delegate,
+            },
+            ref k => k.clone(),
+        };
+        if o.name != n.name || kind != n.kind {
             return not_here("a component's name, id or kind changed");
         }
         // A signature that differs by renamed properties alone: the
@@ -1883,7 +1991,7 @@ fn same_but_edits(
                 return not_here("a component's signature changed");
             }
         }
-        let m = match_objects(old, new, CompIdx(c as u32), moves)?;
+        let m = match_objects(old, new, CompIdx(c as u32), nc, moves)?;
         if !m.same() && !grows_simply(n, &m) {
             return not_here("objects came or went where they cannot be put");
         }
@@ -1894,7 +2002,7 @@ fn same_but_edits(
     // The elements of a model are its rows: what they now declare is told
     // apart from what they did, not set as members.
     let mut models = Vec::new();
-    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
+    for (c, o, n) in pairs() {
         let m = &objects[c];
         let comp = CompIdx(c as u32);
         let added = m.added_tops(n).filter(|&j| is_element(&n.objects[j]));
@@ -1917,9 +2025,9 @@ fn same_but_edits(
             }
         }
     }
-    edits.retain(|e| !is_element(&new.component(e.comp).objects[e.obj]));
+    edits.retain(|e| !is_element(&new.component(to_new(e.comp)).objects[e.obj]));
     // A declared property renamed: the object keeps it, by its new name.
-    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
+    for (c, o, n) in pairs() {
         let m = &objects[c];
         for (i, oo) in o.objects.iter().enumerate() {
             let Some(j) = m.to_new[i] else { continue };
@@ -1967,7 +2075,7 @@ fn same_but_edits(
         };
         let (o, n) = (
             &old.component(e.comp).objects[e.was],
-            &new.component(e.comp).objects[e.obj],
+            &new.component(to_new(e.comp)).objects[e.obj],
         );
         e.names.retain(|name| !(listed(o, name) && listed(n, name)));
     }
@@ -1976,7 +2084,7 @@ fn same_but_edits(
     let mut moved = HashMap::default();
     let (mut was, mut now) = (Vec::new(), Vec::new());
     let (mut here, mut there) = (Vec::new(), Vec::new());
-    for (c, (o, n)) in old.components.iter().zip(&new.components).enumerate() {
+    for (c, o, n) in pairs() {
         let m = &objects[c];
         for (i, oo) in o.objects.iter().enumerate() {
             let Some(j) = m.to_new[i] else { continue };
@@ -2004,8 +2112,13 @@ fn same_but_edits(
                     h.signal.clone_from(&now);
                 }
             }
-            if !m.same() {
-                renumber(&mut a, c, &objects);
+            if !m.same()
+                || comps
+                    .iter()
+                    .enumerate()
+                    .any(|(c, n)| *n != Some(CompIdx(c as u32)))
+            {
+                renumber(&mut a, c, comps, &objects);
                 let added = |v: &ObjectValue| matches!(v, ObjectValue::Object(k) if m.to_old[k.index()].is_none());
                 b.children.retain(|v| !added(v));
                 for oa in b.members.objects.iter_mut().filter(|oa| oa.is_list) {
@@ -2049,7 +2162,7 @@ fn same_but_edits(
     let mut whole = Vec::new();
     for e in edits.iter() {
         let o = &old.component(e.comp).objects[e.was];
-        let n = &new.component(e.comp).objects[e.obj];
+        let n = &new.component(to_new(e.comp)).objects[e.obj];
         for name in &e.names {
             let written = |od: &ObjectDef| {
                 held_in(od, name).is_some_and(|(m, leaf)| m.objects.iter().any(|a| a.name == leaf))
@@ -2057,7 +2170,7 @@ fn same_but_edits(
             if written(n) || written(o) {
                 return not_here("a member given an object changed");
             }
-            if aliased(new, e.comp, e.obj, name) {
+            if aliased(new, to_new(e.comp), e.obj, name) {
                 return not_here("an aliased member changed");
             }
             // A binding that fails keeps the value it had, where a fresh
@@ -2087,11 +2200,11 @@ fn same_but_edits(
             }
         }
         let at = ObjRef {
-            component: e.comp,
+            component: to_new(e.comp),
             object: ObjIdx(e.obj as u32),
         };
         // Users see the aliases of the component's root alone.
-        for p in &new.component(e.comp).objects[0].properties {
+        for p in &new.component(to_new(e.comp)).objects[0].properties {
             if let Some(a) = &p.alias
                 && a.object == Some(at)
                 && a.path.is_empty()
@@ -2101,6 +2214,43 @@ fn same_but_edits(
         }
     }
     Some((whole, remap, moved, objects, models))
+}
+
+/// Per component of `old`, the one of `new` with its id. Only a
+/// template comes or goes, with the object it is written in; `None`
+/// when another component does.
+fn match_components(old: &CompiledFile, new: &CompiledFile) -> Option<Vec<Option<CompIdx>>> {
+    let at: HashMap<&str, usize> = new
+        .components
+        .iter()
+        .enumerate()
+        .map(|(c, n)| (n.id.as_str(), c))
+        .collect();
+    let comps: Vec<Option<CompIdx>> = old
+        .components
+        .iter()
+        .map(|o| at.get(o.id.as_str()).map(|&c| CompIdx(c as u32)))
+        .collect();
+    let template = |c: &ComponentDef| matches!(c.kind, ComponentKind::Template { .. });
+    let kept = comps.iter().flatten().count();
+    let one_each = comps
+        .iter()
+        .flatten()
+        .collect::<rustc_hash::FxHashSet<_>>()
+        .len()
+        == kept;
+    let gone_ok = old
+        .components
+        .iter()
+        .zip(&comps)
+        .all(|(o, n)| n.is_some() || template(o));
+    let came_ok = new
+        .components
+        .iter()
+        .enumerate()
+        .filter(|(c, _)| !comps.contains(&Some(CompIdx(*c as u32))))
+        .all(|(_, n)| template(n));
+    (one_each && gone_ok && came_ok).then_some(comps)
 }
 
 /// (old name, new name): the declared properties of `old` that `new`
@@ -2222,18 +2372,19 @@ fn match_objects(
     old: &CompiledFile,
     new: &CompiledFile,
     comp: CompIdx,
+    now: CompIdx,
     moves: &HashMap<&ObjectKey, &ObjectKey>,
 ) -> Option<Objects> {
-    let key = |f: &CompiledFile, i: usize| {
+    let key = |f: &CompiledFile, c: CompIdx, i: usize| {
         f.object_key(ObjRef {
-            component: comp,
+            component: c,
             object: ObjIdx(i as u32),
         })
     };
-    let (o, n) = (old.component(comp), new.component(comp));
+    let (o, n) = (old.component(comp), new.component(now));
     let mut at: HashMap<ObjectKey, usize> = HashMap::default();
     for j in 0..n.objects.len() {
-        if at.insert(key(new, j), j).is_some() {
+        if at.insert(key(new, now, j), j).is_some() {
             return not_here("two objects have one key");
         }
     }
@@ -2242,7 +2393,7 @@ fn match_objects(
     let mut keyed = Vec::new();
     let mut moved = Vec::new();
     for i in 0..o.objects.len() {
-        let k = key(old, i);
+        let k = key(old, comp, i);
         let j = at.remove(&k);
         keyed.extend(j.map(|j| (i, j)));
         if j.is_none()
@@ -2435,11 +2586,13 @@ fn grows_simply(n: &ComponentDef, m: &Objects) -> bool {
 /// and without the children that are removed. One that has none there
 /// (a removed object given to a member) is told apart by an index no
 /// object has.
-fn renumber(od: &mut ObjectDef, comp: usize, objects: &[Objects]) {
+fn renumber(od: &mut ObjectDef, comp: usize, comps: &[Option<CompIdx>], objects: &[Objects]) {
     let to = |c: usize, i: ObjIdx| -> Option<ObjIdx> {
         objects[c].to_new[i.index()].map(|j| ObjIdx(j as u32))
     };
     let gone = ObjIdx(u32::MAX);
+    // A template that is gone is one no component has.
+    let template = |c: CompIdx| comps[c.index()].unwrap_or(CompIdx(u32::MAX));
     od.parent = od.parent.map(|p| to(comp, p).unwrap_or(gone));
     od.children.retain_mut(|v| match v {
         ObjectValue::Object(i) => match to(comp, *i) {
@@ -2449,13 +2602,17 @@ fn renumber(od: &mut ObjectDef, comp: usize, objects: &[Objects]) {
             }
             None => false,
         },
-        ObjectValue::Component(_) => true,
+        ObjectValue::Component(c) => {
+            *c = template(*c);
+            true
+        }
     });
     let values = |m: &mut Members| {
         for oa in &mut m.objects {
             for v in &mut oa.values {
-                if let ObjectValue::Object(i) = v {
-                    *i = to(comp, *i).unwrap_or(gone);
+                match v {
+                    ObjectValue::Object(i) => *i = to(comp, *i).unwrap_or(gone),
+                    ObjectValue::Component(c) => *c = template(*c),
                 }
             }
             // A list goes on without what was removed from it, as the
@@ -2475,6 +2632,7 @@ fn renumber(od: &mut ObjectDef, comp: usize, objects: &[Objects]) {
     for p in &mut od.properties {
         if let Some(r) = p.alias.as_mut().and_then(|a| a.object.as_mut()) {
             r.object = to(r.component.index(), r.object).unwrap_or(gone);
+            r.component = template(r.component);
         }
     }
 }
