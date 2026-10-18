@@ -242,6 +242,10 @@ struct Held {
     /// The layer on the held handle's position while a slider that is not
     /// live is dragged: the value waits for the release.
     drag: Cell<Option<OverrideId>>,
+    /// The layer a handle that does not snap keeps after the pointer let
+    /// go short of a step: it stays where it was left, as in qml6, until
+    /// its value changes.
+    left: Cell<Option<(usize, OverrideId)>>,
 }
 
 /// The properties of the track, shared by the handles on it.
@@ -412,6 +416,18 @@ impl Span {
         self.from + position * (self.to - self.from)
     }
 
+    /// `valueAt(position)` as qml6 gives it: with a step, the nearest
+    /// whole number of steps from `from`, also past the ends (28 at the
+    /// end of 0 to 30 in steps of 7).
+    pub fn stepped_value_at(self, position: f64, step: f64) -> f64 {
+        let v = self.value_at(position);
+        if step > 0.0 && step.is_finite() {
+            self.from + ((v - self.from) / step).round() * step
+        } else {
+            v
+        }
+    }
+
     /// The nearest position whose value is a whole number of steps from
     /// `from`.
     pub fn snap_position(self, position: f64, step: f64) -> f64 {
@@ -426,6 +442,10 @@ impl Span {
 
 fn span(engine: &Engine, obj: ObjectId, t: Track) -> Span {
     Span::read(engine, obj, t.from, t.to)
+}
+
+fn stepped_value_at(engine: &Engine, obj: ObjectId, t: Track, position: f64) -> f64 {
+    span(engine, obj, t).stepped_value_at(position, num(engine, obj, t.step_size))
 }
 
 fn step_of(engine: &Engine, obj: ObjectId, t: Track) -> f64 {
@@ -522,6 +542,9 @@ fn init(engine: &Engine, obj: ObjectId, kind: Kind) -> Result<(), EngineError> {
     // not the other way round.
     for (at, knob) in kind.knobs.iter().enumerate() {
         engine.watch(obj, knob.value, move |e, v| {
+            if let Some(st) = held_of(e, obj) {
+                pick_up(e, obj, kind, &st, Some(at));
+            }
             let v = v.to_number();
             let k = kept(e, obj, kind, at, v);
             if k != v {
@@ -598,7 +621,7 @@ impl Slider {
     /// `valueAt(position)`: the value at a share of the track.
     #[qml(invokable, name = "valueAt")]
     fn value_at(cx: &Cx, position: f64) -> f64 {
-        span(cx.engine, cx.this, SLIDER_TRACK).value_at(position)
+        stepped_value_at(cx.engine, cx.this, SLIDER_TRACK, position)
     }
 }
 
@@ -671,7 +694,7 @@ impl RangeSlider {
 
     #[qml(invokable, name = "valueAt")]
     fn value_at(cx: &Cx, position: f64) -> f64 {
-        span(cx.engine, cx.this, RANGE_TRACK).value_at(position)
+        stepped_value_at(cx.engine, cx.this, RANGE_TRACK, position)
     }
 }
 
@@ -759,8 +782,15 @@ fn drag_to(engine: &Engine, obj: ObjectId, kind: Kind, st: &Held, p: kurbo::Poin
         free
     };
     let before = engine.untrack(|| num(engine, obj, knob.position));
+    // A slider that does not snap still goes in steps, as its valueAt()
+    // does; only its handle is free (qml6).
+    let value = if snaps(engine, obj, t, snap_mode::NO_SNAP) {
+        s.stepped_value_at(free, step)
+    } else {
+        s.value_at(snapped)
+    };
     if live || release {
-        set_value(engine, obj, kind, at, s.value_at(snapped));
+        set_value(engine, obj, kind, at, value);
     }
     // The handle shows where it is, short of the other one.
     let shown = s.position(kept(engine, obj, kind, at, s.value_at(shown_at)));
@@ -794,6 +824,7 @@ fn press(engine: &Engine, obj: ObjectId, ev: &PointerEvent, p: kurbo::Point) -> 
         return false;
     };
     let at = nearest(engine, obj, kind, p);
+    pick_up(engine, obj, kind, &st, None);
     st.knob.set(Some(at));
     let policy = engine.untrack(|| num(engine, obj, Control::FOCUS_POLICY.index)) as i32;
     if policy & focus_policy::CLICK != 0 {
@@ -821,13 +852,31 @@ fn moved(engine: &Engine, obj: ObjectId, _ev: &PointerEvent, p: kurbo::Point) {
     }
 }
 
+/// Gives a handle left short of a step back to its value: on the next
+/// press, or once the value of that handle (`Some(at)`) changes.
+fn pick_up(engine: &Engine, obj: ObjectId, kind: Kind, st: &Held, at: Option<usize>) {
+    let Some((left, layer)) = st.left.get() else {
+        return;
+    };
+    if at.is_some_and(|at| at != left) {
+        return;
+    }
+    st.left.set(None);
+    let p = kind.knobs[left].position;
+    let _ = engine.remove_override(obj, p, layer, RestoreMode::BindingOrValue);
+}
+
 fn let_go(engine: &Engine, obj: ObjectId, kind: Kind, st: &Held) {
     let Some(at) = st.knob.take() else {
         return;
     };
     if let Some(layer) = st.drag.take() {
-        let p = kind.knobs[at].position;
-        let _ = engine.remove_override(obj, p, layer, RestoreMode::BindingOrValue);
+        if snaps(engine, obj, kind.track, snap_mode::NO_SNAP) {
+            st.left.set(Some((at, layer)));
+        } else {
+            let p = kind.knobs[at].position;
+            let _ = engine.remove_override(obj, p, layer, RestoreMode::BindingOrValue);
+        }
     }
     flickable::keep_pointer_grab(engine, obj, false);
     put(engine, obj, kind.knobs[at].pressed, Value::Bool(false));
@@ -1116,5 +1165,27 @@ mod tests {
             to: 100.0,
         };
         assert!((tens.snap_position(0.33, 10.0) - 0.3).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_stepped_value_counts_steps_from_from_past_the_ends() {
+        let s = Span {
+            from: 0.0,
+            to: 30.0,
+        };
+        assert_eq!(s.stepped_value_at(1.0, 7.0), 28.0);
+        assert_eq!(s.stepped_value_at(-0.5, 7.0), -14.0);
+        assert_eq!(s.stepped_value_at(0.6875, 2.0), 20.0);
+        assert_eq!(s.stepped_value_at(0.6875, 0.0), 20.625);
+        let back = Span {
+            from: 30.0,
+            to: 0.0,
+        };
+        assert_eq!(back.stepped_value_at(0.5, 7.0), 16.0);
+        let half = Span {
+            from: 0.5,
+            to: 30.5,
+        };
+        assert_eq!(half.stepped_value_at(0.6875, 1.0), 21.5);
     }
 }

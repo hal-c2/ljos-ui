@@ -23,6 +23,7 @@ Feature: RangeSlider
           y: 50; from: 0; to: 10; stepSize: 1
           first.value: 2; second.value: 8
           property real half: valueAt(0.5)
+          property real third: valueAt(0.33)
         }
         RangeSlider { objectName: "up"; x: 300; y: 100; orientation: Qt.Vertical }
       }
@@ -59,6 +60,7 @@ Feature: RangeSlider
     Scenario: The values count from the ends given
       Then the property "first.position" of "tens" is 0.2
       And the property "half" of "tens" is 5
+      And the property "third" of "tens" is 3
 
     Scenario: A vertical range slider grows upwards
       Then the property "first.value" of "up" is 0

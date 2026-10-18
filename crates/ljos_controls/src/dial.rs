@@ -277,6 +277,14 @@ fn snaps(e: &Engine, obj: ObjectId, mode: i32) -> bool {
     e.untrack(|| num(e, obj, Dial::SNAP_MODE.index)) as i32 == mode
 }
 
+/// Whether `from`, `to` and a step that is not 0 are all whole numbers.
+fn whole_steps(s: Span, step: f64) -> bool {
+    step != 0.0
+        && [s.from, s.to, step]
+            .iter()
+            .all(|n| n.is_finite() && n.fract() == 0.0)
+}
+
 /// Turns the dial to where the pointer has it; `release` says the pointer
 /// let go there.
 fn turn_to(e: &Engine, obj: ObjectId, st: &Held, p: kurbo::Point, release: bool) {
@@ -320,6 +328,10 @@ fn turn_to(e: &Engine, obj: ObjectId, st: &Held, p: kurbo::Point, release: bool)
     };
     let shown_at = if snap {
         s.snap_position(free, step)
+    } else if whole_steps(s, step) {
+        // A dial whose ends and step are whole numbers is turned in whole
+        // numbers, also when it does not snap (qml6).
+        s.position(s.value_at(free).round())
     } else {
         free
     };
@@ -527,6 +539,19 @@ pub(crate) fn register(engine: &Engine) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_ends_and_a_whole_step_turn_in_whole_numbers() {
+        let s = |from, to| Span { from, to };
+        assert!(whole_steps(s(0.0, 30.0), 1.0));
+        assert!(whole_steps(s(30.0, 0.0), -1.0));
+        assert!(!whole_steps(s(0.0, 30.0), 0.0));
+        assert!(!whole_steps(s(0.5, 30.0), 1.0));
+        assert!(!whole_steps(s(0.0, 20.5), 1.0));
+        assert!(!whole_steps(s(0.0, 30.0), 1.5));
+    }
+
     #[test]
     fn the_angle_is_clockwise_from_twelve() {
         let angle = |dx: f64, dy: f64| dx.atan2(-dy).to_degrees();

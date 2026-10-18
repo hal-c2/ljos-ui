@@ -144,6 +144,30 @@ Feature: Slider
       Then the property "half" of "tens" is 50
       And the property "third" of "s" is 0.33
 
+    @api-QtQuick.Controls.Slider.valueAt
+    Scenario Outline: With a step, valueAt() is the nearest step from "from", past the ends too
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Slider {
+          objectName: "k"
+          from: <from>; to: <to>; stepSize: <step>
+          property real at: valueAt(<position>)
+        }
+        """
+      Then the property "at" of "k" is <value>
+
+      Examples:
+        | from | to   | step | position | value  |
+        | 0    | 30   | 0    | 0.6875   | 20.625 |
+        | 0    | 30   | 2    | 0.6875   | 20     |
+        | 0    | 30   | 1.5  | 0.6875   | 21     |
+        | 0.5  | 30.5 | 1    | 0.6875   | 21.5   |
+        | 0    | 30   | 7    | 1        | 28     |
+        | 0    | 30   | 7    | -0.5     | -14    |
+        | 30   | 0    | 7    | 0.5      | 16     |
+
   @qt-parity
   Rule: The keyboard
 
