@@ -38,6 +38,8 @@ ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # `ljos shaders`: `.ljsh` artifacts made at build time.
 ljos_shader = { path = "../ljos_shader", features = ["compile"] }
 ljos_media = { path = "../ljos_media" }
+# `ljos render --network`: the fetcher a desktop application has.
+ljos_platform = { path = "../ljos_platform", features = ["http"] }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 # `ljos test`: the QtTest runner, the IR it is given, and the type oracle

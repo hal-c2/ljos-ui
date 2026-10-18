@@ -66,6 +66,13 @@ pub struct Render {
     /// fonts.
     #[arg(long)]
     system_fonts: bool,
+    /// Fetches what the project asks the network for (a feed, a remote
+    /// picture), as the program would when run. Without it every fetch
+    /// fails at once as having no network, and the picture is the same
+    /// on every run. `mise run gallery` passes it: qml6 fetches when it
+    /// takes its pictures.
+    #[arg(long)]
+    network: bool,
 }
 
 fn parse_now(text: &str) -> Result<f64, String> {
@@ -176,6 +183,10 @@ impl Render {
         // A picture leaves no file behind: databases stay in memory.
         ljos_localstorage::register(&engine);
         ljos_localstorage::set_storage(&engine, ljos_localstorage::Storage::Memory);
+        if self.network {
+            ljos_platform::Platform::of(&engine)
+                .set_fetcher(std::sync::Arc::new(ljos_platform::HttpFetcher::new()));
+        }
         register_example(&engine, self.example.as_deref());
         // As if the program were started on the entry file, as Qt's
         // launcher is.
@@ -404,10 +415,68 @@ mod tests {
             example: None,
             now: None,
             system_fonts: false,
+            network: false,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
         (result, notes, out)
+    }
+
+    /// Serves `body` once, as `type`, at the URL it returns.
+    fn serve_once(body: &'static str, kind: &'static str) -> String {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/picture.svg", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            // The request's head, so the reply is not written into a
+            // socket the client has not finished with.
+            let mut seen = Vec::new();
+            let mut byte = [0u8; 1];
+            while !seen.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => seen.push(byte[0]),
+                }
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        url
+    }
+
+    #[test]
+    fn with_network_what_the_project_fetches_is_in_the_picture() {
+        let url = serve_once(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"30\"><rect width=\"40\" height=\"30\" fill=\"#0000ff\"/></svg>",
+            "image/svg+xml",
+        );
+        let dir = project(&[(
+            "Main.qml",
+            &format!(
+                "import QtQuick\nRectangle {{ width: 40; height: 30; color: \"red\"\n  Image {{ anchors.fill: parent; source: \"{url}\" }}\n}}\n"
+            ),
+        )]);
+        let out = dir.path().join("out.png");
+        let r = Render {
+            dir: dir.path().to_owned(),
+            entry: "Main.qml".to_owned(),
+            size: Some((40, 30)),
+            settle: 0,
+            out: out.clone(),
+            example: None,
+            now: None,
+            system_fonts: false,
+            network: true,
+        };
+        r.render(&mut Notes::default()).unwrap();
+        let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
+        assert_eq!(&image.data[(15 * 40 + 20) * 4..][..4], [0, 0, 255, 255]);
     }
 
     #[test]
@@ -560,6 +629,7 @@ mod tests {
             example: None,
             now: Some(1_791_741_429_000.0),
             system_fonts: false,
+            network: false,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -583,6 +653,7 @@ mod tests {
             example: Some("no-such-example".to_owned()),
             now: None,
             system_fonts: false,
+            network: false,
         };
         let mut notes = Notes::default();
         r.render(&mut notes).unwrap();

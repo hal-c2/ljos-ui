@@ -3684,6 +3684,7 @@ dependencies = [
  "ljos_mcp_author",
  "ljos_mcp_core",
  "ljos_media",
+ "ljos_platform",
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
