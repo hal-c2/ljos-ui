@@ -5,6 +5,7 @@ use std::any::{Any, TypeId};
 use std::rc::Rc;
 
 use ljos_reactive::{NodeId, Reader, ScopeId};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::atom::Atom;
@@ -139,6 +140,10 @@ pub(crate) struct FieldReads {
     /// A bit per property with an entry.
     props: Box<[u64]>,
     entries: Vec<(PropIndex, Reader)>,
+    /// Where the entries of each property and reader are: a reader keeps
+    /// one or two of each, and an object read by many would otherwise be
+    /// looked through whole at every run's read.
+    at: FxHashMap<(PropIndex, NodeId), SmallVec<[u32; 2]>>,
     /// Length past which entries of finished runs are swept out.
     sweep_at: usize,
     /// The run that read last, and a bit per property it read: a run
@@ -154,6 +159,7 @@ impl FieldReads {
         FieldReads {
             props: vec![0; words].into_boxed_slice(),
             entries: Vec::new(),
+            at: FxHashMap::default(),
             sweep_at: 0,
             last: None,
             last_props: vec![0; words].into_boxed_slice(),
@@ -183,24 +189,33 @@ impl FieldReads {
         // be swept. The last run's entry stays: should this one not
         // finish, the effect still hears of a change, as by its edges.
         if has_bit(&self.props, prop)
-            && let Some(e) = self
-                .entries
-                .iter_mut()
-                .find(|(p, e)| *p == prop && e.node == r.node && !current(*e))
+            && let Some(at) = self.at.get(&(prop, r.node))
+            && let Some(&i) = at.iter().find(|&&i| !current(self.entries[i as usize].1))
         {
-            e.1 = r;
+            self.entries[i as usize].1 = r;
             return;
         }
         if self.entries.len() >= self.sweep_at {
             self.entries.retain(|(_, e)| current(*e));
-            self.props.iter_mut().for_each(|w| *w = 0);
-            for (p, _) in &self.entries {
-                set_bit(&mut self.props, *p);
-            }
+            self.reindex();
             self.sweep_at = (self.entries.len() * 2).max(32);
         }
         set_bit(&mut self.props, prop);
+        self.at
+            .entry((prop, r.node))
+            .or_default()
+            .push(self.entries.len() as u32);
         self.entries.push((prop, r));
+    }
+
+    /// The bits and places of the entries, after some went.
+    fn reindex(&mut self) {
+        self.props.iter_mut().for_each(|w| *w = 0);
+        self.at.clear();
+        for (i, (p, r)) in self.entries.iter().enumerate() {
+            set_bit(&mut self.props, *p);
+            self.at.entry((*p, r.node)).or_default().push(i as u32);
+        }
     }
 
     /// Takes the readers of `prop` out.
@@ -208,8 +223,6 @@ impl FieldReads {
         if !self.has(prop) {
             return SmallVec::new();
         }
-        let (word, bit) = (prop.0 as usize / 64, prop.0 % 64);
-        self.props[word] &= !(1 << bit);
         let mut out = SmallVec::new();
         self.entries.retain(|(p, r)| {
             let mine = *p == prop;
@@ -218,6 +231,7 @@ impl FieldReads {
             }
             !mine
         });
+        self.reindex();
         out
     }
 
@@ -516,5 +530,29 @@ mod tests {
         // Run 999 stopped part way: 998 still hears of a change.
         let runs: Vec<u64> = reads.take(x).iter().map(|r| r.run).collect();
         assert!(runs.contains(&998) && runs.contains(&999), "{runs:?}");
+    }
+
+    #[test]
+    fn many_readers_of_one_property_each_keep_their_two_entries() {
+        let mut reads = FieldReads::new(1);
+        let x = PropIndex(0);
+        let nodes: Vec<NodeId> = (1..=40)
+            .map(|i| NodeId::from(KeyData::from_ffi(i)))
+            .collect();
+        for run in 1..50u64 {
+            let current = |r: Reader| r.run + 1 >= run;
+            for &node in &nodes {
+                reads.add(x, Reader { node, run }, current);
+            }
+        }
+        assert_eq!(reads.entries.len(), 80);
+        // Each reader's entries are found where the index says they are.
+        for &node in &nodes {
+            let mut runs: Vec<u64> = reads.readers_of(node).map(|(_, r)| r.run).collect();
+            runs.sort_unstable();
+            assert_eq!(runs, [48, 49]);
+        }
+        assert_eq!(reads.take(x).len(), 80);
+        assert!(reads.at.is_empty() && !reads.has(x));
     }
 }
