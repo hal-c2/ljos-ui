@@ -51,6 +51,8 @@ pub const STATE_PROPERTIES: &[(&str, &str)] = &[
     ("", "currentIndex"),
     // A popup, dialog or menu the user opened.
     ("Popup", "visible"),
+    // An animation `start()` set going, as a timer's running is kept.
+    ("Animation", "running"),
 ];
 
 /// Turns reload tracking on and names the state a reload carries. Before

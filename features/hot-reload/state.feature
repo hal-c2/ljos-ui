@@ -598,6 +598,47 @@ Feature: What survives a reload
       And 200 milliseconds pass
       Then the property "ticks" of "root" is 2
 
+  Rule: A running animation a script started keeps running
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int ticks: 0
+          SequentialAnimation {
+            id: seq; objectName: "seq"; loops: Animation.Infinite
+            ScriptAction { script: root.ticks += 1 }
+            PauseAnimation { duration: 100 }
+          }
+          function go() { seq.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 250 milliseconds pass
+
+    Scenario: A started animation still runs after a reload that makes objects again
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int ticks: 0
+          property int extra: 1
+          SequentialAnimation {
+            id: seq; objectName: "seq"; loops: Animation.Infinite
+            ScriptAction { script: root.ticks += 10 }
+            PauseAnimation { duration: 100 }
+          }
+          function go() { seq.start() }
+        }
+        """
+      And a reload happens
+      And 250 milliseconds pass
+      Then the property "running" of "seq" is true
+      And the property "ticks" of "root" is at least 13
+
   Rule: The item with the keyboard keeps it
 
     Scenario: Active focus stays on the same item
