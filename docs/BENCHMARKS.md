@@ -1930,3 +1930,69 @@ driven rows again at 77d6a7af.
 **What is left.** samegame's slowest idle frame interval (286 ms against 16 ms) and the 95th
 percentile frame interval while driven in calqlatr and rssnews (48 and 32 ms against 16 ms). rssnews
 idles at 1.45 times Qt's CPU.
+
+### Script-side gaps to qml6: samegame, calqlatr and maroon (2026-10-18)
+
+Copies of the three demos with bench functions added, so that one script runs on qml6 (offscreen)
+and on Ljós (`frame_profile --start`). Wall time is the fastest of 5 runs, alternating the
+builds. Instruction counts (callgrind, release) are the reliable figure; wall time moved by
+about 7 % over the session. The base build is 12ace64e.
+
+**samegame**, at 320x480 on both, because the board's block count follows the canvas size.
+A run at another size than qml6's is what made the gap look like 21.3 against 7.2–7.8 ms.
+
+| 40 games | qml6 | Ljós before | Ljós after |
+|---|---:|---:|---:|
+| `startNewGame` | 8.0 ms each | 287 ms (7.2 each) | 279 ms (7.0 each) |
+| the frame that destroys the old boards | | 290 ms | 190 ms |
+| new game and 20 clicks | 12.8 ms each | 1 050 ms (26 each) | 359 ms (9.0 each) |
+
+A new game, its destroy frame included, comes to about 11.7 ms in Ljós against 11.2 in qml6.
+Clicks alone are about 0.085 ms each, against 0.24 in qml6. Destroyed objects now leave their
+holders' lists in one pass per frame (51278e60): `forget_in_lists` had been looking up each
+holder for each object. A pulse or burst of a particle system no longer asks its other
+emitters (2caf3a91).
+Evaluations in the destroy frame fell from 122 000 to 390. Re-measured at the end on the slower
+machine, base → head: 308 → 300 ms for `startNewGame`, 1 060 → 385 ms for game and clicks.
+
+**calqlatr**, one press = `benchPressOnce`, 14 presses, ×200. Ir is 20 runs of it in callgrind
+less a run with none.
+
+| Build | Ir for 280 presses | Wall, ×200 | Per press |
+|---|---:|---:|---:|
+| base | 779 M | 753 ms | 0.269 ms |
+| + a QML function a script calls runs as a script function | 747 M | | |
+| + also when it passes a script file | 700 M | | |
+| + `Qt.lighter`/`Qt.darker` of a colour in tier 1 | 587 M | 487 ms | 0.174 ms |
+| qml6 | | | 0.111 ms |
+
+Before, every `isButtonDisabled` and `getTextColor` call left the script, went through
+`Engine::invoke`, and came back in: 8 711 and 3 070 calls per run. A QML function that a script
+calls is now a script function bound to its object (`Scope::direct_method`). Its parameters are
+read as the call starts, and it throws and returns what the function does, −0 included as in
+Qt. It is not used while a reload is tracked, before the object completes, for a body that makes
+objects, or for a script file that imports another. `getTextColor`'s `Qt.darker` kept its binding
+in the script; it now runs in the binding VM.
+
+What is left of a press: writes and the graph work they set off (≈ 320 M, `Graph::batch` flushes
+and recomputes), `try_read` 71 M, starting Behavior animations 42 M, and ListModel
+append/clear and `positionViewAtEnd` (≈ 85 M, native model and view work).
+
+**maroon**, three towers and a mob made with `createObject`, then three more and another mob.
+Main thread only. The PNG decodes of the first set (≈ 16 M Ir) run on the image pool.
+
+| | qml6 | Ljós before | Ljós after |
+|---|---:|---:|---:|
+| start (`startGame`), Ir | | 261.5 M | 253.0 M |
+| first set, Ir | | 8.33 M | 5.03 M |
+| second set, Ir | | 4.00 M | 3.90 M |
+| first set, wall | 9–13 ms | 1.7 ms | 1.3 ms |
+| second set, wall | 1–3 ms | 0.6 ms | 0.6 ms |
+
+The spike was a type's first object building its prototype: an accessor for every member of the
+type, inherited ones included. That was about 72 per type, and 1 645 for maroon's 23 types. A
+prototype now inherits its base's, and only what the type adds or overrides is built.
+The first object's extra cost fell from 4.3 M to 1.1 M Ir. Compiling the first function of a
+file is most of what is left. Tested by
+`a_type_s_first_object_builds_only_what_its_type_adds` (ljos_engine). As a side effect,
+`for…in` over an object lists a type's own members before its base's. Qt lists them base first.
