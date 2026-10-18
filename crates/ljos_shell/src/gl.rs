@@ -764,10 +764,7 @@ fn quads_into_mesh(shapes: &mut [ClippedShape], run: &mut Vec<(usize, egui::Rect
 
 /// The colour of `rect` when a clear draws the same pixels it does.
 fn clearable(rect: &RectShape, pixels_per_point: f32) -> Option<egui::Color32> {
-    let whole = |v: f32| {
-        let px = v * pixels_per_point;
-        (px - px.round()).abs() < 1e-3
-    };
+    let whole = |v: f32| ljos_render::b0::near_whole(v * pixels_per_point);
     let r = rect.rect;
     let plain = rect.corner_radius == CornerRadius::ZERO
         && rect.stroke.is_empty()

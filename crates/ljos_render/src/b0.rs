@@ -794,7 +794,7 @@ fn pixels_of(rect: ERect, aa: bool, ppp: f32) -> Option<ERect> {
         rect
     } else {
         // A pixel is in when its centre is: x0 <= i + 0.5 < x1.
-        let edge = |v: f32| ((v * ppp - 0.5).ceil()) / ppp;
+        let edge = |v: f32| ceil(v * ppp - 0.5) / ppp;
         ERect::from_min_max(
             Pos2::new(edge(rect.min.x), edge(rect.min.y)),
             Pos2::new(edge(rect.max.x), edge(rect.max.y)),
@@ -806,15 +806,39 @@ fn pixels_of(rect: ERect, aa: bool, ppp: f32) -> Option<ERect> {
 /// Whether every edge of `rect` (in points) lies on a device pixel's
 /// edge, where a feathered edge and a hard one cover the same pixels.
 fn on_pixels(rect: ERect, ppp: f32) -> bool {
-    let whole = |v: f32| {
-        let px = v * ppp;
-        (px - px.round()).abs() < 1e-3
-    };
+    let whole = |v: f32| near_whole(v * ppp);
     rect.is_positive()
         && whole(rect.min.x)
         && whole(rect.min.y)
         && whole(rect.max.x)
         && whole(rect.max.y)
+}
+
+/// Whether `px` lies within a thousandth of a whole number:
+/// `(px - px.round()).abs() < 1e-3`, without the call to libm that
+/// `round` is where the CPU has no rounding instruction, four times for
+/// each rectangle of every frame.
+pub fn near_whole(px: f32) -> bool {
+    if !px.is_finite() {
+        return false;
+    }
+    // From here on every `f32` is whole.
+    if px.abs() >= 8_388_608.0 {
+        return true;
+    }
+    // The fraction, exactly: a cast is the truncation.
+    let f = (px - (px as i32) as f32).abs();
+    f < 1e-3 || 1.0 - f < 1e-3
+}
+
+/// `v.ceil()` without the call to libm (see [`near_whole`]).
+fn ceil(v: f32) -> f32 {
+    if v.is_nan() || v.abs() >= 8_388_608.0 {
+        return v.ceil();
+    }
+    let t = (v as i32) as f32;
+    // The sign stays, so `-0.3` gives `-0`, as `ceil` does.
+    (if t < v { t + 1.0 } else { t }).copysign(v)
 }
 
 /// What is drawn, in paint order.
@@ -1867,5 +1891,47 @@ impl RenderBackend for EpaintBackend {
     /// (`VelloCpuReference`) or egui_kittest's wgpu renderer.
     fn snapshot_rgba(&mut self, _view: &FrameView<'_>) -> Option<RgbaImage> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ceil, near_whole};
+
+    #[test]
+    fn the_rounding_without_libm_says_what_libm_does() {
+        let mut values = vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            0.0005,
+            0.001,
+            0.999,
+            0.9995,
+            -0.9995,
+            2.9995,
+            8_388_607.5,
+            8_388_608.0,
+            -8_388_609.0,
+            1e30,
+            f32::MAX,
+            f32::MIN_POSITIVE,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ];
+        // Fine steps across a few pixels either side of 0, and small
+        // values near the threshold.
+        values.extend((-40_000..40_000).map(|i| i as f32 / 10_000.0 * 3.7));
+        values.extend((0..2000).map(|i| f32::from_bits(0x3a80_0000 + i * 977)));
+        for v in values {
+            assert_eq!(near_whole(v), (v - v.round()).abs() < 1e-3, "{v}");
+            let (ours, theirs) = (ceil(v), v.ceil());
+            assert!(
+                ours.to_bits() == theirs.to_bits() || (ours.is_nan() && theirs.is_nan()),
+                "{v}: {ours} != {theirs}"
+            );
+        }
     }
 }

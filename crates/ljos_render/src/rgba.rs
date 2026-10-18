@@ -68,15 +68,13 @@ impl Rgba {
 
     /// Premultiplied 8-bit channels, rounded.
     pub fn to_premul_u8(self) -> [u8; 4] {
-        let q = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-        [q(self.r), q(self.g), q(self.b), q(self.a)]
+        [byte(self.r), byte(self.g), byte(self.b), byte(self.a)]
     }
 
     /// Straight 8-bit channels, rounded.
     pub fn to_straight_u8(self) -> [u8; 4] {
         let [r, g, b, a] = self.to_straight();
-        let q = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-        [q(r), q(g), q(b), q(a)]
+        [byte(r), byte(g), byte(b), byte(a)]
     }
 
     /// Linear interpolation of the premultiplied channels.
@@ -92,9 +90,28 @@ impl Rgba {
     }
 }
 
+/// `(c.clamp(0.0, 1.0) * 255.0).round() as u8`, without the call to libm
+/// that `round` is where the CPU has no rounding instruction: each
+/// rectangle's colour in every frame. A half added in `f64` is exact, and
+/// the cast is the floor of what is not below zero.
+fn byte(c: f32) -> u8 {
+    (f64::from(c.clamp(0.0, 1.0) * 255.0) + 0.5) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_channel_rounds_as_round_does() {
+        let q = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let specials = [f32::NAN, f32::INFINITY, -f32::INFINITY, -0.0, 0.5 / 255.0];
+        // Every f32 from 0 to 1 a few thousand apart, and either side.
+        let steps = (0..=0x3f80_0000_u32).step_by(997).map(f32::from_bits);
+        for c in specials.into_iter().chain(steps).chain([-0.25, 1.25]) {
+            assert_eq!(byte(c), q(c), "{c}");
+        }
+    }
 
     #[test]
     fn premultiply_round_trip() {
