@@ -772,17 +772,33 @@ fn solid(list: &DisplayList, to_screen: Affine, opacity: f32) -> Option<(ERect, 
     else {
         return None;
     };
-    let [sx, ky, kx, sy, _, _] = to_screen.as_coeffs();
-    let fill = color.with_opacity(opacity);
+    let [sx, ky, kx, sy, tx, ty] = to_screen.as_coeffs();
     let upright = ky == 0.0 && kx == 0.0 && sx > 0.0 && sy > 0.0;
-    let square = radii.iter().all(|r| *r <= 0.0);
-    (upright && square && Paint::Solid(fill).is_opaque()).then(|| {
-        (
-            erect(to_screen.transform_rect_bbox(*rect)),
-            color32(fill),
-            *aa,
+    if !upright || radii.iter().any(|r| *r > 0.0) {
+        return None;
+    }
+    // Every frame of an animation asks this of each rectangle again.
+    let fill = if opacity >= 1.0 {
+        *color
+    } else {
+        color.with_opacity(opacity)
+    };
+    if !Paint::Solid(fill).is_opaque() {
+        return None;
+    }
+    // Upright and growing on both axes: its corners map to corners, in
+    // order, unless the rectangle is turned inside out.
+    let screen = if rect.x0 <= rect.x1 && rect.y0 <= rect.y1 {
+        Rect::new(
+            sx * rect.x0 + tx,
+            sy * rect.y0 + ty,
+            sx * rect.x1 + tx,
+            sy * rect.y1 + ty,
         )
-    })
+    } else {
+        to_screen.transform_rect_bbox(*rect)
+    };
+    Some((erect(screen), color32(fill), *aa))
 }
 
 /// The pixels a solid rectangle covers, as a rectangle on whole device
@@ -819,16 +835,14 @@ fn on_pixels(rect: ERect, ppp: f32) -> bool {
 /// `round` is where the CPU has no rounding instruction, four times for
 /// each rectangle of every frame.
 pub fn near_whole(px: f32) -> bool {
-    if !px.is_finite() {
-        return false;
+    // Below 2^22, adding 1.5 × 2^23 leaves only whole numbers, so the sum
+    // holds `px` rounded to the nearest, and taking it away again is exact.
+    const ROUND: f32 = 12_582_912.0;
+    if px.abs() < 4_194_304.0 {
+        return (px - ((px + ROUND) - ROUND)).abs() < 1e-3;
     }
-    // From here on every `f32` is whole.
-    if px.abs() >= 8_388_608.0 {
-        return true;
-    }
-    // The fraction, exactly: a cast is the truncation.
-    let f = (px - (px as i32) as f32).abs();
-    f < 1e-3 || 1.0 - f < 1e-3
+    // From 2^23 on every `f32` is whole; below it, halves are not.
+    px.is_finite() && (px.abs() >= 8_388_608.0 || px == (px as i32) as f32)
 }
 
 /// `v.ceil()` without the call to libm (see [`near_whole`]).
@@ -1927,6 +1941,15 @@ mod tests {
         // values near the threshold.
         values.extend((-40_000..40_000).map(|i| i as f32 / 10_000.0 * 3.7));
         values.extend((0..2000).map(|i| f32::from_bits(0x3a80_0000 + i * 977)));
+        // Either side of 2^22 and 2^23, where halves stop and start.
+        values.extend([
+            4_194_303.5,
+            4_194_304.0,
+            4_194_304.5,
+            6_000_000.5,
+            8_388_607.5,
+        ]);
+        values.extend([-4_194_304.5, -6_000_001.5, 8_388_608.0, 8_388_610.0]);
         for v in values {
             assert_eq!(near_whole(v), (v - v.round()).abs() < 1e-3, "{v}");
             let (ours, theirs) = (ceil(v), v.ceil());
