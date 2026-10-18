@@ -1708,3 +1708,32 @@ from the corpus's shader (the corpus has none, so without it qml6 draws no backd
   Rust tests in `ljos_shell` (`gl_shader`) and `ljos_egui` (`tests/image.rs`) cover both.
 
 **What is left.** Not drawing what opaque pictures above hide (Qt's opaque pass does this).
+
+### Why the wheel scrolls the surface at 32 ms a frame (2026-10-18)
+
+`ljos bench` surface, wheel gesture, in the desktop:cua sandbox (sway, llvmpipe, 60 Hz), release
+`ljos`, with a temporary per-pass trace. The host's load was 40–108, so all times are noisy.
+
+| | Median drawn interval | Frames drawn in 8.5 s |
+|---|---:|---:|
+| Before | 34 ms | 212 |
+| Passes not drawn wait for the scene | about 24 ms | 264 |
+| and drawn ones a frame after they began | about 24 ms | about 264 |
+
+- **The scheduler.** A notch turned while a frame is presented runs two passes that draw
+  nothing, because the glide starts where the content is. The second was held a whole frame
+  even though the scene asked for its next one 7–8 ms later, so that frame missed a refresh.
+- **The phase.** Drawn passes were held a frame after a due time chained from earlier ones. That
+  time drifted, so passes started late in the refresh. They are now held a frame after they began.
+- **The frame.** After a drawn frame winit holds RedrawRequested about 16 ms, until sway's frame
+  callback. The frame then costs 13–14 ms: the pass 1, building 0.4, GL calls 4.4, and
+  llvmpipe's raster at present 7–8 ms. Everything moves, so each frame repaints the whole
+  window. Together with sway's own render, that is just over a refresh, and every other one is
+  missed. The bench's composited median stays 32.2 ms. The grid example, which costs little to
+  draw, runs at 16.2 ms in the same sandbox.
+
+**DECISION.** No feature scenario: frame times are not visible from QML. The Rust tests in
+`ljos_shell` (`desktop`) cover the scheduling.
+
+**What is left.** A cheaper frame: scrolling is not partial damage, so the gain is in the raster.
+A 441 ms pass about 8.4 s into one run is not explained yet.
