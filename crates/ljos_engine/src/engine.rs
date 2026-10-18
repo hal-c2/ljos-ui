@@ -1406,14 +1406,20 @@ impl Engine {
             {
                 return None;
             }
-            h.node(prop)?
+            match h.node(prop) {
+                Some(n) => n,
+                // As try_read reads a field nobody follows.
+                None if self.inner.tracking.get() == 0
+                    || p.flags.contains(PropertyFlags::CONSTANT) =>
+                {
+                    let v = read_access(&*h.native, &h.dynamic, &p.access);
+                    return primitive(&v).then_some(v);
+                }
+                None => return None,
+            }
         };
         let v = self.inner.graph.try_get(n)?;
-        matches!(
-            v,
-            Value::Int(_) | Value::Real(_) | Value::Bool(_) | Value::String(_)
-        )
-        .then_some(v)
+        primitive(&v).then_some(v)
     }
 
     fn is_native_field(&self, obj: ObjectId, prop: PropIndex) -> bool {
@@ -1831,6 +1837,7 @@ impl Engine {
                     .intersects(PropertyFlags::GROUP | PropertyFlags::CONSTANT)
                 || h.makes_on_read(prop)
                 || h.ext.as_ref().is_some_and(|x| x.write_hook.is_some())
+                || h.flags.contains(ObjectFlags::INTERCEPTED)
                 || matches!(v, Value::String(s) if s.is_empty())
             {
                 return Ok(false);
@@ -1845,9 +1852,6 @@ impl Engine {
             };
             (node, v)
         };
-        if self.interceptor(obj, prop).is_some() {
-            return Ok(false);
-        }
         match node {
             // The value it was given again: a handler that sets what it
             // set last time changes nothing, and nothing need be flushed.
@@ -3390,4 +3394,13 @@ fn take_out(list: &mut Vec<ObjectId>, id: ObjectId) {
     if let Some(i) = list.iter().position(|c| *c == id) {
         list.remove(i);
     }
+}
+
+/// What a script reads of a property as it is held: no list, record or
+/// object to be made a face of first.
+fn primitive(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Int(_) | Value::Real(_) | Value::Bool(_) | Value::String(_)
+    )
 }

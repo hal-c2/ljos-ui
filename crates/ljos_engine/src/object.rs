@@ -94,6 +94,9 @@ bitflags::bitflags! {
         const DESTROYING = 1 << 5;
         /// `Component.onDestruction` has run for it and what it owns.
         const DESTRUCTION_TOLD = 1 << 6;
+        /// A property of it has an interceptor (hooks.rs): a write looks
+        /// for it only then.
+        const INTERCEPTED = 1 << 7;
     }
 }
 

@@ -26,6 +26,7 @@ use rustc_hash::FxHashMap;
 
 use crate::engine::{Engine, Tracking};
 use crate::ids::{ObjectId, PropIndex};
+use crate::object::ObjectFlags;
 use crate::meta::MetaObject;
 use crate::value::Value;
 
@@ -147,8 +148,13 @@ impl Engine {
         if let Some(f) = f {
             list.push((prop, f));
         }
-        if list.is_empty() {
+        let any = !list.is_empty();
+        if !any {
             all.remove(&obj);
+        }
+        drop(all);
+        if let Some(h) = self.inner.store.borrow_mut().objects.get_mut(obj) {
+            h.flags.set(ObjectFlags::INTERCEPTED, any);
         }
     }
 

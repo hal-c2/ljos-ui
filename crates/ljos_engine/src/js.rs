@@ -673,6 +673,10 @@ impl HostObjects for EngineHost {
 
     fn get<'js>(&self, scope: &Scope<'js>, obj: u64, prop: u32) -> Result<JsValue, HostError> {
         let engine = self.engine()?;
+        // A live object is no reload's to forward.
+        if let Some(v) = engine.plain_script_read(u64_to_obj(obj), PropIndex(prop)) {
+            return Ok(engine.to_js(&v));
+        }
         let (id, prop) = forwarded_prop(&engine, u64_to_obj(obj), prop);
         if prop == PARENT_ID {
             return Ok(match engine.visual_parent(id) {
@@ -681,9 +685,6 @@ impl HostObjects for EngineHost {
             });
         }
         let p = PropIndex(prop);
-        if let Some(v) = engine.plain_script_read(id, p) {
-            return Ok(engine.to_js(&v));
-        }
         // Most properties are neither an alias, a group nor a `list<T>`
         // declared in QML: one look at the property says so.
         let plain = {
@@ -737,8 +738,6 @@ impl HostObjects for EngineHost {
         value: JsValue,
     ) -> Result<(), HostError> {
         let engine = self.engine()?;
-        let (id, prop) = forwarded_prop(&engine, u64_to_obj(obj), prop);
-        let p = PropIndex(prop);
         // Nearly every write a script makes is of a number, a bool or a
         // text to a plain property, which goes straight to its node.
         let plain = match &value {
@@ -747,6 +746,8 @@ impl HostObjects for EngineHost {
             JsValue::String(s) => Some(Value::String(s.as_str().into())),
             _ => None,
         };
+        // A live object is no reload's to forward.
+        let (id, p) = (u64_to_obj(obj), PropIndex(prop));
         if let Some(v) = plain
             && !engine.tier1_spying()
             && engine.plain_script_write(id, p, &v).map_err(host_err)?
@@ -759,6 +760,8 @@ impl HostObjects for EngineHost {
             }
             return Ok(());
         }
+        let (id, prop) = forwarded_prop(&engine, id, prop);
+        let p = PropIndex(prop);
         let ty = {
             let store = engine.inner.store.borrow();
             let h = store
