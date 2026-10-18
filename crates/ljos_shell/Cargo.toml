@@ -122,6 +122,8 @@ png.workspace = true
 tempfile.workspace = true
 # tests/tools.rs reads the inspector's answers.
 serde_json.workspace = true
+# examples/reload_profile.rs tells the steps of a reload under LJOS_LOG.
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

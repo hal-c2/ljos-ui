@@ -12,6 +12,9 @@
 //! settled, before the first save: what puts the application in a state
 //! worth keeping (a game started, a page pushed). Run it on a copy of the
 //! project: the file is left as it was at the start.
+//!
+//! `LJOS_LOG=ljos_engine::incubator::reload=debug` also tells how long
+//! each step of every reload took.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -73,6 +76,15 @@ fn rss_kb() -> u64 {
 
 fn main() -> anyhow::Result<()> {
     let a = args()?;
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+                .with_env_var("LJOS_LOG")
+                .from_env_lossy(),
+        )
+        .init();
     let dir = a.dir.canonicalize()?;
     let main = dir.join(&a.entry);
     let path = dir.join(&a.file);

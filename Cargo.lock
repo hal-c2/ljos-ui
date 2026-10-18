@@ -4074,6 +4074,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tracing-subscriber",
  "windows-sys 0.52.0",
  "zbus",
 ]
