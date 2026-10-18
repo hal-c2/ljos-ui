@@ -95,6 +95,27 @@ pub(crate) fn without_mnemonic(text: &str) -> String {
     out
 }
 
+/// The name an assistive technology is given for a button's `text`. It
+/// reads pairs, not what is drawn: `&&` is one `&`, an `&` before any
+/// other character goes, and a last `&` stays, so `a&&&b` is `a&b` and
+/// `Trail&` is `Trail&` (measured on qml6 through AT-SPI; pinned by
+/// `features/controls/accessibility.feature`).
+pub(crate) fn spoken_without_mnemonic(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            match chars.next() {
+                Some(next) => out.push(next),
+                None => out.push('&'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The mnemonic of `text`: the letter after the first single `&`,
 /// lower-cased, so that Alt+that letter activates the control.
 pub(crate) fn mnemonic_of(text: &str) -> Option<char> {
@@ -148,6 +169,15 @@ mod mnemonic_tests {
         assert_eq!(without_mnemonic("a&&&b"), "a&&b");
         assert_eq!(without_mnemonic("&"), "");
         assert_eq!(without_mnemonic("Save &as"), "Save as");
+    }
+
+    #[test]
+    fn a_spoken_name_reads_the_ampersands_in_pairs() {
+        assert_eq!(spoken_without_mnemonic("&Save"), "Save");
+        assert_eq!(spoken_without_mnemonic("Copy && Paste"), "Copy & Paste");
+        assert_eq!(spoken_without_mnemonic("a&&&b"), "a&b");
+        assert_eq!(spoken_without_mnemonic("Trail&"), "Trail&");
+        assert_eq!(spoken_without_mnemonic(""), "");
     }
 
     #[test]

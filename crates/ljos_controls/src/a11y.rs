@@ -13,14 +13,14 @@
 
 use ljos_a11y::accesskit::Toggled;
 use ljos_a11y::{NodeData, Role};
-use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlType, Value};
+use ljos_engine::{Atom, Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlType, Value};
 use ljos_quick::{
     Accessible, AccessibleAction, AccessibleAttached, AccessibleItem, register_accessible_item,
 };
 
 use crate::button::{AbstractButton, Button, CheckBox, RadioButton, Switch};
 use crate::containers::{Frame, GroupBox, Page, Pane, ToolBar};
-use crate::util::{bind_default, flag, is_a, is_unset};
+use crate::util::{bind_default, flag, is_a, is_unset, spoken_without_mnemonic};
 
 /// `Qt.PartiallyChecked`.
 const PARTIALLY_CHECKED: i32 = 1;
@@ -49,7 +49,9 @@ pub(crate) fn defaults(
     Ok(())
 }
 
-/// A button is named by its text.
+/// A button is named by its text without the marker of its mnemonic.
+/// One that has no text has no name, whatever it shows: Qt names none
+/// by its icon or by the text of what is inside it.
 pub(crate) fn button_defaults(engine: &Engine, obj: ObjectId) -> Result<(), EngineError> {
     let role = if is_a::<crate::menu::MenuItem>(engine, obj)
         || is_a::<crate::menu_bar::MenuBarItem>(engine, obj)
@@ -70,7 +72,17 @@ pub(crate) fn button_defaults(engine: &Engine, obj: ObjectId) -> Result<(), Engi
         // a button is the closest thing to say.
         Role::Button
     };
-    defaults(engine, obj, role, Some(AbstractButton::TEXT.index))
+    defaults(engine, obj, role, None)?;
+    let attacher = MetaRef::Static(Accessible::static_meta());
+    let att = engine.attached_object(obj, &attacher)?;
+    bind_default(engine, att, AccessibleAttached::NAME.index, move |e| {
+        let text = e.read(obj, AbstractButton::TEXT.index).to_js_string();
+        if text.as_str().contains('&') {
+            Value::String(Atom::intern(&spoken_without_mnemonic(text.as_str())))
+        } else {
+            Value::String(text)
+        }
+    })
 }
 
 /// A container is named by its title when it has one.
