@@ -1158,8 +1158,21 @@ impl TextEngine {
     }
 
     fn build(system: bool) -> Self {
+        let fcx = if system {
+            // The platform's rules for families that are not installed are
+            // loaded beside Fontique's own reading of the fonts, not by the
+            // first text that names one: each takes 15-25 ms.
+            std::thread::scope(|s| {
+                let _ = std::thread::Builder::new()
+                    .name("ljos-fontrules".into())
+                    .spawn_scoped(s, substitute::load_rules);
+                fonts::font_context(true)
+            })
+        } else {
+            fonts::font_context(false)
+        };
         Self {
-            fcx: fonts::font_context(system),
+            fcx,
             lcx: LayoutContext::new(),
             families: Families {
                 system,

@@ -17,6 +17,12 @@ pub(crate) fn platform_substitute(family: &str) -> Option<String> {
     (!found.eq_ignore_ascii_case(family)).then_some(found)
 }
 
+/// Loads the platform's rules and its list of fonts now, so that the first
+/// family asked for does not wait for them.
+pub(crate) fn load_rules() {
+    imp::load_rules();
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod imp {
     use std::ffi::{CStr, CString};
@@ -38,6 +44,14 @@ mod imp {
                 unsafe { FcPatternDestroy(self.0) };
             }
         }
+    }
+
+    /// fontconfig's default configuration, which `best_match` asks, is not
+    /// the one Fontique loads for itself, and loads on first use.
+    pub(super) fn load_rules() {
+        // SAFETY: takes nothing and only loads the default configuration;
+        // fontconfig guards its loading against other threads.
+        unsafe { fontconfig_sys::FcInit() };
     }
 
     /// The family of the face `fc-match` would print for `family`.
@@ -76,6 +90,8 @@ mod imp {
 /// Not asked on other platforms yet.
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 mod imp {
+    pub(super) fn load_rules() {}
+
     pub(super) fn best_match(_family: &str) -> Option<String> {
         None
     }
