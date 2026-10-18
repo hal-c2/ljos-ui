@@ -2,9 +2,12 @@
 //! sequences each one is on a platform
 //! (doc.qt.io/qt-6/qkeysequence.html#standard-shortcuts).
 //!
-//! The Linux column is what Qt 6.11 answers there; the Windows and Apple
-//! columns are the documentation's table, with what Qt is seen to do there
-//! besides.
+//! The Linux column is what Qt 6.11 answers there on a desktop that is
+//! neither GNOME nor KDE Plasma, and [`GNOME`] and [`KDE`] what those two
+//! answer otherwise (seen with qml6 on xcb). The Windows and Apple columns
+//! are the documentation's table, with what Qt is seen to do there besides;
+//! the Windows column is also what qml6 answers on its `offscreen` and
+//! `vnc` platforms, which have no desktop to ask.
 
 use std::cell::Cell;
 
@@ -58,14 +61,16 @@ const TABLE: &[Row] = &[
         "Ctrl+Y|Ctrl+Shift+Z|Alt+Shift+Backspace",
         "Ctrl+Shift+Z",
     ),
-    ("Back", "Alt+Left", "Alt+Left|Backspace", "Ctrl+["),
+    // The keyboard's own Back and Forward keys, which the documentation
+    // does not name, are seen to be these on Linux and Windows.
+    ("Back", "Alt+Left|Back", "Alt+Left|Backspace|Back", "Ctrl+["),
     (
         "Forward",
-        "Alt+Right",
-        "Alt+Right|Shift+Backspace",
+        "Alt+Right|Forward",
+        "Alt+Right|Shift+Backspace|Forward",
         "Ctrl+]",
     ),
-    ("Refresh", "Ctrl+R|F5", "F5", "F5"),
+    ("Refresh", "F5", "F5", "F5"),
     ("ZoomIn", "Ctrl++", "Ctrl++", "Ctrl++"),
     ("ZoomOut", "Ctrl+-", "Ctrl+-", "Ctrl+-"),
     ("Print", "Ctrl+P", "Ctrl+P", "Ctrl+P"),
@@ -83,14 +88,14 @@ const TABLE: &[Row] = &[
         "Ctrl+{|Back|Ctrl+Shift+Backtab",
     ),
     ("Find", "Ctrl+F", "Ctrl+F", "Ctrl+F"),
-    ("FindNext", "Ctrl+G|F3", "F3|Ctrl+G", "Ctrl+G"),
+    ("FindNext", "F3", "F3|Ctrl+G", "Ctrl+G"),
     (
         "FindPrevious",
-        "Ctrl+Shift+G|Shift+F3",
+        "Shift+F3",
         "Shift+F3|Ctrl+Shift+G",
         "Ctrl+Shift+G",
     ),
-    ("Replace", "Ctrl+H", "Ctrl+H", ""),
+    ("Replace", "", "Ctrl+H", ""),
     ("SelectAll", "Ctrl+A", "Ctrl+A", "Ctrl+A"),
     ("Bold", "Ctrl+B", "Ctrl+B", "Ctrl+B"),
     ("Italic", "Ctrl+I", "Ctrl+I", "Ctrl+I"),
@@ -225,13 +230,34 @@ const TABLE: &[Row] = &[
     ("SaveAs", "Ctrl+Shift+S", "Ctrl+Shift+S", "Ctrl+Shift+S"),
     ("Preferences", "", "", "Ctrl+,"),
     ("Quit", "Ctrl+Q", "", "Ctrl+Q"),
-    ("FullScreen", "F11", "F11|Alt+Enter", "Ctrl+Meta+F"),
+    ("FullScreen", "", "F11|Alt+Enter", "Ctrl+Meta+F"),
     ("Deselect", "Ctrl+Shift+A", "", ""),
     ("DeleteCompleteLine", "Ctrl+U", "", ""),
     // The Apple column's "Delete" is the key labelled so there, which Qt
     // calls Backspace; "Forward Delete" is Del.
     ("Backspace", "", "", "Backspace|Meta+H"),
     ("Cancel", "Esc", "Esc", "Esc|Ctrl+."),
+];
+
+/// Where GNOME's key bindings are not the Linux column: a standard key and
+/// its sequences there. The documentation's GNOME column has Ctrl+F11 for
+/// FullScreen; qml6 takes F11 and not Ctrl+F11.
+const GNOME: &[(&str, &str)] = &[
+    ("Refresh", "Ctrl+R|F5"),
+    ("FindNext", "Ctrl+G|F3"),
+    ("FindPrevious", "Ctrl+Shift+G|Shift+F3"),
+    ("Replace", "Ctrl+H"),
+    ("FullScreen", "F11"),
+];
+
+/// Where KDE Plasma's key bindings are not the Linux column.
+const KDE: &[(&str, &str)] = &[
+    ("Preferences", "Ctrl+Shift+,"),
+    ("FullScreen", "F11|Ctrl+Shift+F"),
+    ("AddTab", "Ctrl+Shift+N|Ctrl+T"),
+    ("NextChild", "Ctrl+Tab|Forward|Ctrl+,"),
+    ("PreviousChild", "Ctrl+Shift+Backtab|Back|Ctrl+."),
+    ("Replace", "Ctrl+R"),
 ];
 
 pub(crate) fn standard_key_enums() -> EnumTable {
@@ -257,8 +283,15 @@ pub fn standard_key_sequences(key: i32, platform: Platform) -> Vec<KeySequence> 
     let Some(row) = usize::try_from(key).ok().and_then(|i| TABLE.get(i)) else {
         return Vec::new();
     };
+    let desktop = |own: &[(&str, &'static str)]| {
+        own.iter()
+            .find(|(name, _)| *name == row.0)
+            .map_or(row.1, |(_, list)| *list)
+    };
     let list = match platform {
         Platform::Linux => row.1,
+        Platform::Gnome => desktop(GNOME),
+        Platform::Kde => desktop(KDE),
         Platform::Windows => row.2,
         Platform::MacOs => row.3,
     };
@@ -333,9 +366,20 @@ mod tests {
     }
 
     #[test]
+    fn the_desktops_name_only_standard_keys() {
+        for (name, _) in GNOME.iter().chain(KDE) {
+            assert!(standard_key(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
     fn every_sequence_in_the_table_reads() {
         for row in TABLE {
-            for list in [row.1, row.2, row.3] {
+            let own = GNOME.iter().chain(KDE).filter(|(n, _)| *n == row.0);
+            for list in [row.1, row.2, row.3]
+                .into_iter()
+                .chain(own.map(|(_, l)| *l))
+            {
                 for s in list.split('|').filter(|s| !s.is_empty()) {
                     let seq = KeySequence::parse(s);
                     assert!(seq.is_some_and(|q| !q.is_empty()), "{}: {s:?}", row.0);
@@ -361,6 +405,12 @@ mod tests {
         assert_eq!(first("Cancel", Platform::Linux), "Esc");
         assert_eq!(first("InsertLineSeparator", Platform::MacOs), "Meta+Enter");
         assert_eq!(first("Backspace", Platform::MacOs), "Backspace");
+        assert_eq!(first("Replace", Platform::Gnome), "Ctrl+H");
+        assert_eq!(first("Replace", Platform::Kde), "Ctrl+R");
+        assert_eq!(first("Replace", Platform::Linux), "");
+        assert_eq!(first("Refresh", Platform::Gnome), "Ctrl+R");
+        assert_eq!(first("AddTab", Platform::Kde), "Ctrl+Shift+N");
+        assert_eq!(first("Copy", Platform::Kde), "Ctrl+C");
         assert!(standard_key_sequences(999, Platform::Linux).is_empty());
         assert!(standard_key_sequences(-1, Platform::Linux).is_empty());
     }
@@ -402,7 +452,13 @@ mod tests {
     #[test]
     fn shift_return_breaks_a_line_on_every_platform() {
         let line = standard_key("InsertLineSeparator").unwrap();
-        for p in [Platform::Linux, Platform::Windows, Platform::MacOs] {
+        for p in [
+            Platform::Linux,
+            Platform::Gnome,
+            Platform::Kde,
+            Platform::Windows,
+            Platform::MacOs,
+        ] {
             for k in [key::RETURN, key::ENTER] {
                 assert!(matches_standard_key(k, Modifiers::SHIFT, line, p), "{p:?}");
             }

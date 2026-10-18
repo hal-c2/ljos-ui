@@ -7,23 +7,69 @@ use crate::input::Modifiers;
 use crate::keys::key;
 
 /// The platform whose key bindings and key names are used.
+///
+/// On Linux and the BSDs Qt takes the key bindings from the desktop: a
+/// few keys are GNOME's or KDE Plasma's there and on no other desktop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Platform {
-    /// Linux, the BSDs and anything else.
+    /// Linux, the BSDs and anything else, on any desktop but those below.
     Linux,
+    /// Linux or a BSD on GNOME or a desktop Qt treats as GNOME (Unity,
+    /// Xfce, MATE, Cinnamon, LXDE, Pantheon).
+    Gnome,
+    /// Linux or a BSD on KDE Plasma 5 or later.
+    Kde,
     MacOs,
     Windows,
 }
 
 impl Platform {
-    /// The platform the program was built for.
+    /// The platform the program runs on: the one it was built for, and on
+    /// Linux and the BSDs the desktop the session says it is. Read once.
     pub fn current() -> Platform {
-        if cfg!(any(target_os = "macos", target_os = "ios")) {
-            Platform::MacOs
-        } else if cfg!(target_os = "windows") {
-            Platform::Windows
-        } else {
-            Platform::Linux
+        static CURRENT: std::sync::OnceLock<Platform> = std::sync::OnceLock::new();
+        *CURRENT.get_or_init(|| {
+            if cfg!(any(target_os = "macos", target_os = "ios")) {
+                Platform::MacOs
+            } else if cfg!(target_os = "windows") {
+                Platform::Windows
+            } else if cfg!(target_os = "android") {
+                Platform::Linux
+            } else {
+                Platform::of_desktop(|name| std::env::var(name).ok())
+            }
+        })
+    }
+
+    /// Which Linux key bindings a session has, from its environment, as
+    /// qml6 6.11 was seen to choose them on xcb: the first of
+    /// `XDG_CURRENT_DESKTOP`'s names it knows, in any case; with none set,
+    /// `KDE_FULL_SESSION`, then `DESKTOP_SESSION`. KDE counts only from
+    /// `KDE_SESSION_VERSION` 5.
+    pub fn of_desktop(var: impl Fn(&str) -> Option<String>) -> Platform {
+        let plasma = || {
+            var("KDE_SESSION_VERSION")
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .is_some_and(|v| v >= 5)
+        };
+        let desktops = var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        if !desktops.is_empty() {
+            for name in desktops.split(':') {
+                match name.to_ascii_lowercase().as_str() {
+                    "kde" if plasma() => return Platform::Kde,
+                    "gnome" | "x-gnome" | "unity" | "xfce" | "x-cinnamon" | "mate" | "lxde"
+                    | "pantheon" => return Platform::Gnome,
+                    _ => {}
+                }
+            }
+            return Platform::Linux;
+        }
+        if var("KDE_FULL_SESSION").is_some() && plasma() {
+            return Platform::Kde;
+        }
+        match var("DESKTOP_SESSION").as_deref() {
+            Some("gnome" | "xfce") => Platform::Gnome,
+            _ => Platform::Linux,
         }
     }
 }
@@ -265,5 +311,94 @@ mod tests {
         assert_eq!(s.native_text(Platform::Linux), "Ctrl+Shift+Del");
         assert_eq!(s.native_text(Platform::Windows), "Ctrl+Shift+Del");
         assert_eq!(s.native_text(Platform::MacOs), "\u{21e7}\u{2318}\u{2326}");
+    }
+
+    // Each line is a session qml6 was run in on xcb, and the bindings it
+    // was seen to take there.
+    #[test]
+    fn the_desktop_chooses_the_linux_key_bindings() {
+        let of = |vars: &[(&str, &str)]| {
+            Platform::of_desktop(|name| {
+                vars.iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| (*v).to_owned())
+            })
+        };
+        use Platform::{Gnome, Kde, Linux};
+        for (vars, want) in [
+            (&[][..], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "Hyprland")][..], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "sway")], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "")], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "GNOME")], Gnome),
+            (&[("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")], Gnome),
+            (&[("XDG_CURRENT_DESKTOP", "gnome")], Gnome),
+            (&[("XDG_CURRENT_DESKTOP", "X-Cinnamon")], Gnome),
+            (&[("XDG_CURRENT_DESKTOP", "Cinnamon")], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "XFCE")], Gnome),
+            (&[("XDG_CURRENT_DESKTOP", "XFCE4")], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "Budgie")], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "Budgie:GNOME")], Gnome),
+            (&[("XDG_CURRENT_DESKTOP", "KDE")], Linux),
+            (&[("XDG_CURRENT_DESKTOP", "KDE:GNOME")], Gnome),
+            (
+                &[("XDG_CURRENT_DESKTOP", "KDE"), ("KDE_SESSION_VERSION", "6")],
+                Kde,
+            ),
+            (
+                &[("XDG_CURRENT_DESKTOP", "KDE"), ("KDE_SESSION_VERSION", "4")],
+                Linux,
+            ),
+            (
+                &[
+                    ("XDG_CURRENT_DESKTOP", "GNOME:KDE"),
+                    ("KDE_SESSION_VERSION", "6"),
+                ],
+                Gnome,
+            ),
+            (
+                &[
+                    ("XDG_CURRENT_DESKTOP", "KDE:GNOME"),
+                    ("KDE_SESSION_VERSION", "6"),
+                ],
+                Kde,
+            ),
+            (
+                &[
+                    ("XDG_CURRENT_DESKTOP", "Hyprland"),
+                    ("KDE_FULL_SESSION", "true"),
+                    ("KDE_SESSION_VERSION", "6"),
+                ],
+                Linux,
+            ),
+            (
+                &[("KDE_FULL_SESSION", "false"), ("KDE_SESSION_VERSION", "6")],
+                Kde,
+            ),
+            (&[("KDE_FULL_SESSION", "true")], Linux),
+            (&[("DESKTOP_SESSION", "gnome")], Gnome),
+            (&[("DESKTOP_SESSION", "GNOME")], Linux),
+            (
+                &[("DESKTOP_SESSION", "plasma"), ("KDE_SESSION_VERSION", "6")],
+                Linux,
+            ),
+            (
+                &[
+                    ("DESKTOP_SESSION", "gnome"),
+                    ("KDE_FULL_SESSION", "true"),
+                    ("KDE_SESSION_VERSION", "6"),
+                ],
+                Kde,
+            ),
+            (
+                &[
+                    ("XDG_CURRENT_DESKTOP", "Hyprland"),
+                    ("DESKTOP_SESSION", "gnome"),
+                ],
+                Linux,
+            ),
+        ] {
+            assert_eq!(of(vars), want, "{vars:?}");
+        }
     }
 }
