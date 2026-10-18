@@ -60,7 +60,10 @@ done
 **Where it runs.** The task builds the release `ljos` first. Nothing compiles while it measures.
 `BENCH_PROFILE=dist mise run bench …` builds and measures the `dist` profile instead, the binary
 that is handed out (one LLVM module; the build takes about 15 minutes). The report's notes name
-the profile.
+the profile. The `dist` link lays out first the functions named in `crates/ljos_cli/link/hot.txt`,
+the ones the bench apps run; `mise run bench:hot [ids…]` records them again under callgrind (about
+15 minutes), and should after a toolchain or dependency update, since the names carry the crates'
+hashes. A stale list only orders less.
 Apps draw on the headless sway of `scripts/cua-sandbox.sh` as Wayland clients, never on the user's
 display:
 
@@ -2735,3 +2738,77 @@ without first working out a size limit for it.
 
 **What is left.** On the GPU, Ljós spends more CPU a frame than Qt (listview ×1.69). The cost is
 per frame, not in the scene, as in the sections before.
+
+### Where Ljós lost to qml6: listview's idle, the first frame, the binary's pages and rectangles (2026-10-18)
+
+What "Startup and footprint against qml6: the binary, the glyph fallback and the module files"
+left. `LJOS_CUA_GPU=/dev/dri/renderD128 BENCH_PROFILE=dist
+BENCH_DEFAULTS="--warm-up --repeat 3" mise run bench listview rectangles todolist thermostat
+--profile desktop --settle 1 --idle 10`, before (a69b7ff8) and after (9708bc89), each in a target
+directory and sandbox of its own. The machine was shared with other benches and builds: load
+average 10–124, so first frames are rough, and idle CPU moves by a few points between runs of one
+binary. Medians of two rounds of three runs each, qml6 of four. File PSS counts every mapped
+file and moves with the page cache; the binary's own pages are measured on their own below.
+
+| App | First frame, ms: before / after / qml6 | Idle CPU %: before / after / qml6 | Anon PSS, MiB: before / after / qml6 | File PSS, MiB: before / after |
+|---|---:|---:|---:|---:|
+| listview | 44 / 48 / 106 | 10.3 / 10.6 / 6.7 | 30.1 / 30.3 / 43.7 | 46.7 / 37.6 |
+| rectangles | 60 / 50 / 87 | 0 / 0 / 0 | 45.7 / 43.3 / 42.9 | 43.1 / 41.8 |
+| todolist | 72 / 86 / 187 | 0 / 0 / 0 | 41.3 / 40.5 / 55.0 | 63.9 / 54.7 |
+| thermostat | 106 / 93 / 216 | 0 / 0 / 0 | 55.4 / 53.8 / 62.2 | 45.4 / 44.2 |
+
+**listview's idle CPU is not idle.** `bench/listview.qml` scrolls its list with a looping
+animation, so "idle" is 10 s of drawing at 60 frames a second (597 frames in the window, against
+qml6's 615), and the figure is the cost of an animated scroll. Under callgrind the scroll's binding
+churn (a QtTest stand-in that scrolls the same list for 10 s) went from 2 637 M to 2 595 M
+instructions (−1.6 %) with the corners below. What is left is spread over the frame: the reads
+of each delegate's bindings, layout and painting, none of it above a few percent. It stays above
+qml6 on the GPU (10.6 against 6.7 %) (on llvmpipe it was below qml6, 21.5 against 23.1 %). DECISION: not cut
+further here; the frame is the work, not a waste in one place.
+
+**The first frame.** Timed from exec, in a quiet stretch, on the GPU: thermostat registers its
+types by about 18 ms, then waited until 28 for the compile thread, made its objects in 30 ms, laid
+out ahead (9 ms) and had its device at about 79. With `--example`, the compile thread first built a
+full engine of the standard modules and described all its types (13 + 8 ms) to compile against,
+for every example. An example that registers no types of its own (todolist, thermostat, and all
+but six) now compiles against the type table, as any program does: the entry is compiled at about
+9 ms in place of 30, setup no longer waits, and objects are made by 51 ms in thermostat (59.6
+before, best of three) and 42 in todolist. The warnings of the 28 corpus apps with arguments are
+the same before and after. What the first frame still costs: registration (13–18 ms), making the
+objects (25–30 ms: the JS host's first start through `Qt.locale()` 13 M instructions, parsing each
+file's JS module 4 M, fontconfig's substitution 13 M, synchronous picture decodes 20 M in
+thermostat, as Qt's Image is when not `asynchronous`), and the layout ahead (6–10 ms). Through this
+load the bench sees thermostat's median fall from 106 to 93 ms and not todolist's (72 → 86, runs
+of 60–167 ms).
+
+**The binary's file pages.** In the order the linker gets them, crate by crate, the 12.9 MiB of
+code the apps run (12 415 functions) lies over nearly all of the binary's 48.3 MiB, and every 4 kB
+page with one function an app enters stays mapped, with the kernel's read-around. `mise run
+bench:hot` runs the 33 bench apps under callgrind for 15 s each and writes the functions of the dist
+binary they entered to `crates/ljos_cli/link/hot.txt`; the dist link (`--symbol-ordering-file`,
+from `ljos_cli`'s build script) puts them first, together in 13.0 MiB. The binary's own PSS, `dist`,
+GPU sandbox, 6 s after start, two runs each, unordered then ordered:
+
+| App | PSS, MiB: unordered → ordered | Code (r-xp), MiB |
+|---|---:|---:|
+| todolist | 36.7–37.0 → 21.5–22.3 | 29.6–30.0 → 14.4–15.1 |
+| thermostat | 34.5–34.7 → 20.9–21.2 | 27.8–28.1 → 14.0–14.1 |
+| calqlatr | 33.4–33.5 → 20.9 | 27.0 → 13.9–14.0 |
+
+Against Qt's 17.5–17.8 MiB for its 47 library files, Ljós's one file is now 21–22 MiB. Only `dist`
+is ordered: the names are recorded from its binary, and it is the one handed out. An app that runs code no bench app runs pays for those pages as before.
+
+**Rectangles' memory.** A Rectangle bound its four corner radii and its antialiasing to `radius`,
+and every Item its `childrenRect`, as it was made: graph nodes and bindings for values most programs
+never read. They are bound now on the first read or change handler (`bind_on_read` in the engine),
+and until then a read gives what the binding would; `features/items/rectangle-corners.feature`
+holds the behaviour. Rectangles' anon PSS on the GPU went from 45.7 to 43.3 MiB, against qml6's
+42.9.
+
+**Where Ljós still loses to qml6.**
+
+- **An animated scroll** (listview): 10.6 % CPU on the GPU against 6.7 %.
+- **Rectangles' memory**: 43.3 MiB of anon PSS against 42.9, within a run's spread now.
+- **The binary's file pages**: 21–22 MiB against Qt's 17.5.
+- **Startup** is not lost: it is about half of qml6's on these four apps, and todolist and
+  thermostat no longer wait on the compile thread.
