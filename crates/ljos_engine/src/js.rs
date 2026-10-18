@@ -681,6 +681,9 @@ impl HostObjects for EngineHost {
             });
         }
         let p = PropIndex(prop);
+        if let Some(v) = engine.plain_script_read(id, p) {
+            return Ok(engine.to_js(&v));
+        }
         // Most properties are neither an alias, a group nor a `list<T>`
         // declared in QML: one look at the property says so.
         let plain = {

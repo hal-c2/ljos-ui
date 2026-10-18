@@ -1390,6 +1390,32 @@ impl Engine {
         Ok(self.live(v))
     }
 
+    /// What [`try_read`](Self::try_read) gives a script's read of a plain
+    /// property with a node, in one look at the object, when it is a
+    /// number, a bool or a text; `None` sends the read the long way, which
+    /// sees to aliases, groups, a `list<T>`, makers, lists and objects.
+    pub(crate) fn plain_script_read(&self, obj: ObjectId, prop: PropIndex) -> Option<Value> {
+        let n = {
+            let store = self.inner.store.borrow();
+            let h = store.objects.get(obj)?;
+            let p = h.meta.property(prop)?;
+            if p.is_alias()
+                || p.flags.contains(PropertyFlags::GROUP)
+                || matches!(p.ty, TypeTag::List(_))
+                || h.makes_on_read(prop)
+            {
+                return None;
+            }
+            h.node(prop)?
+        };
+        let v = self.inner.graph.try_get(n)?;
+        matches!(
+            v,
+            Value::Int(_) | Value::Real(_) | Value::Bool(_) | Value::String(_)
+        )
+        .then_some(v)
+    }
+
     fn is_native_field(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let store = self.inner.store.borrow();
         store
