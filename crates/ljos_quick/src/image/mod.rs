@@ -1218,6 +1218,11 @@ pub(crate) fn shows(e: &Engine, me: ObjectId, key: &ImageKey) -> bool {
     with_run(e, me, |r| r.key.as_ref() == Some(key)) == Some(true)
 }
 
+/// The pixels of a picture not worth making smaller ahead of a paint:
+/// that saves 16 KiB at most, and a board of game pieces would pay for
+/// finding out with every piece.
+const SMALL_PIXELS: u64 = 64 * 64;
+
 /// Keeps the picture of an item that is made and not painted (a list's
 /// row kept beyond the view, a page not shown) at the size the item
 /// draws it, as its first paint would. Without this it stays at the
@@ -1227,7 +1232,7 @@ pub(crate) fn shows(e: &Engine, me: ObjectId, key: &ImageKey) -> bool {
 /// scene has said how large it is, which is also what the device scale
 /// is known from. Run when the picture arrives and, as the painted size
 /// is kept, whenever the item's size or fill mode changes: a row is
-/// often laid out after its picture is.
+/// often laid out after its picture is. A small picture is left whole.
 fn fit_unpainted(e: &Engine, me: ObjectId) {
     if !is_a::<Image>(e, me) {
         return;
@@ -1244,6 +1249,10 @@ fn fit_unpainted(e: &Engine, me: ObjectId) {
     .flatten() else {
         return;
     };
+    let (kw, kh) = decode::kept_size(natural, key.request.limit);
+    if u64::from(kw) * u64::from(kh) <= SMALL_PIXELS {
+        return;
+    }
     let store = ImageStore::of(e);
     if key.request.animated || store.limit() == 0 || store.is_vector(&key.url) {
         return;

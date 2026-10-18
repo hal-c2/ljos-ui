@@ -57,3 +57,25 @@ Feature: A picture is kept at the size its item draws it
     And 100 milliseconds pass
     Then the picture of "row" is kept at 224 by 112 pixels
     And the pixel at 100, 50 of the window is "#2060a0"
+
+  Scenario: A small picture of an item not painted is kept whole
+    Shrinking a picture of 64 by 64 pixels or less ahead of a paint
+    would save at most 16 KiB, and finding out costs each item that
+    shows it. A paint still draws it from pixels made at its size.
+    Given a 64 by 64 image file "tile.png" filled with "#2060a0"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        width: 400; height: 300
+        Image {
+          objectName: "picture"
+          visible: false
+          width: 8; height: 8
+          source: "tile.png"
+        }
+      }
+      """
+    Then the property "status" of "picture" is 1
+    When 100 milliseconds pass
+    Then the picture of "picture" is kept at 64 by 64 pixels
