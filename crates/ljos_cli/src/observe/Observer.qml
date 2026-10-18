@@ -414,8 +414,10 @@ ApplicationWindow {
                     spacing: 12
 
                     // One point per answer of the watch: what moved since
-                    // the point before.
-                    property var points: []
+                    // the point before, kept as one list per chart so
+                    // that a chart reads its own without going through
+                    // every point.
+                    property var series: ({ frameMs: [], drawn: [], skipped: [], rss: [], wakeups: [], inbox: [] })
                     property int version: 0
                     property var last: null
                     property var parts: ({})
@@ -489,9 +491,14 @@ ApplicationWindow {
                             skipped: here.skipped,
                             painter: p.painter || "",
                         }
-                        var all = points.slice(Math.max(0, points.length - 119))
-                        all.push(point)
-                        points = all
+                        var next = {}
+                        for (var key in point) {
+                            var was = series[key]
+                            var kept = was.slice(Math.max(0, was.length - 119))
+                            kept.push(point[key])
+                            next[key] = kept
+                        }
+                        series = next
                         version += 1
                         // The count comes after the change that made
                         // the objects, and an application at rest tells
@@ -577,14 +584,8 @@ ApplicationWindow {
                                 color: theme.card
                                 border.color: theme.rule
 
-                                function series(key) {
-                                    var out = []
-                                    for (var i = 0; i < overview.points.length; ++i)
-                                        out.push(overview.points[i][key])
-                                    return out
-                                }
-                                readonly property var values: { overview.version; return series(modelData.key) }
-                                readonly property var seconds: { overview.version; return modelData.second ? series(modelData.second) : [] }
+                                readonly property var values: overview.series[modelData.key]
+                                readonly property var seconds: modelData.second ? overview.series[modelData.second] : []
                                 readonly property real now: values.length === 0 ? 0 : values[values.length - 1]
 
                                 Label {
@@ -991,6 +992,11 @@ ApplicationWindow {
                     id: objects
                     spacing: 12
                     property var tree: []
+                    // The tree as shown: the parts of a tree are put
+                    // together in `tree` and shown once all have come,
+                    // since every new list of rows makes the view's rows
+                    // again.
+                    property var shownTree: []
                     property string filter: ""
                     property bool truncated: false
                     // The tree comes in parts, each as much as one
@@ -1159,6 +1165,7 @@ ApplicationWindow {
                         row.hidden = row.children
                         tree = tree.slice(0, i).concat([row], tree.slice(end))
                         truncated = false
+                        shownTree = tree
                     }
 
                     function openNext() {
@@ -1176,12 +1183,13 @@ ApplicationWindow {
                             if (tree.length >= mostObjects) {
                                 truncated = true
                                 toOpen = []
-                                return
+                                break
                             }
                             opening = handle
                             askPart()
                             return
                         }
+                        shownTree = tree
                     }
 
                     function showTree(ok, s, r, asked, more) {
@@ -1254,11 +1262,15 @@ ApplicationWindow {
 
                     readonly property var rows: {
                         var out = []
-                        for (var i = 0; i < tree.length; ++i)
-                            if (shown(tree[i]))
-                                out.push(tree[i])
+                        for (var i = 0; i < shownTree.length; ++i)
+                            if (shown(shownTree[i]))
+                                out.push(shownTree[i])
                         return out
                     }
+                    // The view's model is the number of rows, not the
+                    // rows: a tree asked again with as many rows keeps
+                    // the view's rows and changes what they say.
+                    readonly property int rowCount: rows.length
 
                     function pick(handle, name) {
                         editing = ""
@@ -1381,7 +1393,7 @@ ApplicationWindow {
                             anchors.topMargin: 6
                             color: theme.subtle
                             font.pixelSize: 11
-                            text: objects.rows.length + " of " + objects.tree.length + " objects"
+                            text: objects.rows.length + " of " + objects.shownTree.length + " objects"
                                   + (objects.treeComing || objects.partCursor !== "" ? ", more coming"
                                      : objects.truncated ? ", the most shown"
                                      : objects.treeDepth > 0 ? " (" + objects.treeObjects + " in all; + opens a row)"
@@ -1392,11 +1404,12 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.topMargin: treeFilter.height + 34
                             clip: true
-                            model: objects.rows
+                            model: objects.rowCount
                             ScrollBar.vertical: ScrollBar {}
                             delegate: Rectangle {
                                 id: node
-                                required property var modelData
+                                required property int index
+                                readonly property var modelData: objects.rows[index] || ({})
                                 width: ListView.view.width
                                 height: 26
                                 color: objects.picked === modelData.handle ? theme.accentSoft
