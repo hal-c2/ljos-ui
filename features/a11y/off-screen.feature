@@ -69,3 +69,8 @@ Feature: What lies outside the window is off screen
   Scenario: A row scrolled back into the window is on screen again
     When the property "contentY" of "list" is set to 0
     Then the "listitem" named "row 0" is not off screen
+
+  Scenario: A row scrolled out of the window is off screen
+    When the property "contentY" of "list" is set to 900
+    Then the "listitem" named "row 15" is off screen
+    And the "listitem" named "row 30" is not off screen

@@ -111,3 +111,39 @@ Feature: What an assistive technology asks of an item
         | scroll down        |
         | scroll down a page |
         | show itself        |
+
+  Rule: An item in a view that scrolled
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 300
+          property string log: ""
+          Flickable {
+            objectName: "view"
+            y: 40; width: 200; height: 120; clip: true
+            contentHeight: 600
+            Column {
+              Repeater {
+                model: 20
+                Rectangle {
+                  required property int index
+                  width: 200; height: 30
+                  Accessible.role: Accessible.Button; Accessible.name: "Row " + index
+                  MouseArea { anchors.fill: parent; onClicked: root.log += "row " + index + " " }
+                }
+              }
+            }
+          }
+        }
+        """
+      And an assistive technology is listening
+
+    # The click lands where the row is now, not where it was.
+    Scenario: A press after a scroll clicks the row that was asked
+      When the property "contentY" of "view" is set to 95
+      And an assistive technology asks the "button" named "Row 5" to press
+      Then the property "log" of "root" is "row 5 "

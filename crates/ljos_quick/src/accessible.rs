@@ -601,10 +601,16 @@ struct Pending {
     active: bool,
     /// The latest description of an item; `None`: it is not exposed.
     described: FxHashMap<ObjectId, Option<NodeData>>,
-    bounds: FxHashMap<ObjectId, Bounds>,
+    /// Where an item is: the space it is in (the content item of the
+    /// Flickable it scrolls with, if any) and its box there.
+    bounds: FxHashMap<ObjectId, (Option<ObjectId>, Bounds)>,
     /// Items whose bounds effect was told that something it read changed:
     /// it runs again at the next sync, not once per change in between.
     moved: FxHashSet<ObjectId>,
+    /// Where a space is in the space around it, and the spaces whose
+    /// effect was told that it moved.
+    spaces: FxHashMap<ObjectId, (Option<ObjectId>, kurbo::Affine)>,
+    spaces_moved: FxHashSet<ObjectId>,
     /// Items that got their `Accessible` object after their effect looked
     /// for it.
     late: Vec<ObjectId>,
@@ -619,6 +625,8 @@ impl Pending {
         self.described.is_empty()
             && self.bounds.is_empty()
             && self.moved.is_empty()
+            && self.spaces.is_empty()
+            && self.spaces_moved.is_empty()
             && self.late.is_empty()
             && self.announced.is_empty()
             && self.parts.is_empty()
@@ -661,6 +669,10 @@ pub(crate) struct A11yPass {
     part_owner: FxHashMap<NodeKey, (ObjectId, (f64, f64))>,
     /// How many part nodes were ever made: their keys are never reused.
     next_part: u64,
+    /// The effects that say where each space is: the content items that
+    /// exposed items scroll with. A scroll moves a space, and the items in
+    /// it keep their place there, so none of their effects runs again.
+    spaces: FxHashMap<ObjectId, GraphNode>,
 }
 
 impl A11yPass {
@@ -677,6 +689,7 @@ impl A11yPass {
             top_dirty: false,
             part_owner: FxHashMap::default(),
             next_part: 0,
+            spaces: FxHashMap::default(),
         }
     }
 
@@ -727,10 +740,15 @@ impl A11yPass {
                 st.part_keys.clear();
             }
             self.part_owner.clear();
+            for (_, n) in self.spaces.drain() {
+                let _ = g.dispose(n);
+            }
             let mut p = self.pending.borrow_mut();
             p.described.clear();
             p.bounds.clear();
             p.moved.clear();
+            p.spaces.clear();
+            p.spaces_moved.clear();
             p.late.clear();
             p.announced.clear();
             p.parts.clear();
@@ -808,7 +826,13 @@ impl A11yPass {
         p.described.remove(&obj);
         p.bounds.remove(&obj);
         p.moved.remove(&obj);
+        p.spaces.remove(&obj);
+        p.spaces_moved.remove(&obj);
         drop(p);
+        if let Some(n) = self.spaces.remove(&obj) {
+            let _ = g.dispose(n);
+            self.tree.remove_space(key_of(obj));
+        }
         self.restructure.remove(&obj);
         self.tree.remove(key_of(obj));
     }
@@ -864,7 +888,7 @@ impl A11yPass {
                 if !e.is_alive(obj) {
                     return;
                 }
-                let b = scene_bounds(e, obj);
+                let b = placed_bounds(e, obj);
                 pending.borrow_mut().bounds.insert(obj, b);
                 wake();
             },
@@ -878,6 +902,67 @@ impl A11yPass {
         match effect {
             Ok(n) => st.bounds = Some(n),
             Err(err) => warn(engine, format!("cannot place an item: {err}")),
+        }
+    }
+
+    /// Watches where the space `space` is in the space around it, from
+    /// now on.
+    fn watch_space(&mut self, engine: &Engine, space: ObjectId) {
+        if self.spaces.contains_key(&space) || !engine.is_alive(space) {
+            return;
+        }
+        let pending = Rc::clone(&self.pending);
+        let wake = Rc::clone(&self.wake);
+        let told = Rc::downgrade(&self.pending);
+        let told_wake = Rc::clone(&self.wake);
+        let effect = engine.effect_told_in(
+            space,
+            move |e| {
+                if !e.is_alive(space) {
+                    return;
+                }
+                // Its own place included: that is what a scroll moves.
+                let placed = transform_to_space(e, space);
+                pending.borrow_mut().spaces.insert(space, placed);
+                wake();
+            },
+            move || {
+                if let Some(p) = told.upgrade() {
+                    p.borrow_mut().spaces_moved.insert(space);
+                    told_wake();
+                }
+            },
+        );
+        match effect {
+            Ok(n) => {
+                self.spaces.insert(space, n);
+            }
+            Err(err) => warn(engine, format!("cannot place a scrolling content: {err}")),
+        }
+    }
+
+    /// Tells the tree where the spaces are that moved, and watches the
+    /// spaces newly named, until none is left to tell.
+    fn sync_spaces(&mut self, engine: &Engine) {
+        // Bounded: each round watches only spaces not watched before.
+        for _ in 0..64 {
+            let moved = std::mem::take(&mut self.pending.borrow_mut().spaces_moved);
+            for space in moved {
+                if let Some(n) = self.spaces.get(&space) {
+                    let _ = engine.graph().refresh(*n);
+                }
+            }
+            let spaces: Vec<_> = self.pending.borrow_mut().spaces.drain().collect();
+            if spaces.is_empty() {
+                return;
+            }
+            for (space, (parent, t)) in spaces {
+                if let Some(p) = parent {
+                    self.watch_space(engine, p);
+                }
+                let t = ljos_a11y::accesskit::Affine::new(t.as_coeffs());
+                self.tree.set_space(key_of(space), parent.map(key_of), t);
+            }
         }
     }
 
@@ -1017,10 +1102,17 @@ impl A11yPass {
                 let _ = engine.graph().refresh(n);
             }
         }
-        let bounds: Vec<(ObjectId, Bounds)> = self.pending.borrow_mut().bounds.drain().collect();
-        for (obj, b) in bounds {
-            self.tree.set_bounds(key_of(obj), b);
+        self.sync_spaces(engine);
+        let bounds: Vec<_> = self.pending.borrow_mut().bounds.drain().collect();
+        for (obj, (space, b)) in bounds {
+            if let Some(s) = space {
+                // Watched before the item is placed in it, so that the
+                // tree knows where the space is when it places the item.
+                self.watch_space(engine, s);
+            }
+            self.tree.place(key_of(obj), space.map(key_of), b);
         }
+        self.sync_spaces(engine);
         let announced = std::mem::take(&mut self.pending.borrow_mut().announced);
         for (item, text, politeness) in announced {
             // Every scene of the engine hears of it; the one that shows
@@ -1320,14 +1412,24 @@ fn own_range(e: &Engine, obj: ObjectId) -> Option<Range> {
     })
 }
 
-/// The item's box in scene coordinates: the bounding box of its
-/// rectangle under its own and its ancestors' transforms. Runs inside an
-/// effect, and reads a size only where a rotation or a scale makes the
-/// transform depend on it, so resizing a container does not re-place
-/// everything inside.
-fn scene_bounds(e: &Engine, obj: ObjectId) -> Bounds {
+/// Where the item is: the space it scrolls with, if any, and the
+/// bounding box of its rectangle there under its own and its ancestors'
+/// transforms. The space is the content item of the nearest Flickable
+/// around the item, whose own place is not read: a scroll then moves the
+/// space and not the item. Runs inside an effect, and reads a size only
+/// where a rotation or a scale makes the transform depend on it, so
+/// resizing a container does not re-place everything inside.
+fn placed_bounds(e: &Engine, obj: ObjectId) -> (Option<ObjectId>, Bounds) {
     let w = num(e, obj, Item::WIDTH.index).max(0.0);
     let h = num(e, obj, Item::HEIGHT.index).max(0.0);
+    let (space, t) = transform_to_space(e, obj);
+    let r = t.transform_rect_bbox(kurbo::Rect::new(0.0, 0.0, w, h));
+    (space, Bounds::new(r.x0, r.y0, r.x1, r.y1))
+}
+
+/// The transform from `obj`'s coordinates to those of the nearest space
+/// above it, and that space; the scene's when there is none.
+fn transform_to_space(e: &Engine, obj: ObjectId) -> (Option<ObjectId>, kurbo::Affine) {
     let mut t = kurbo::Affine::IDENTITY;
     let mut cur = Some(obj);
     // Bounded so a corrupt parent cycle cannot hang.
@@ -1335,6 +1437,9 @@ fn scene_bounds(e: &Engine, obj: ObjectId) -> Bounds {
         let Some(o) = cur.filter(|o| e.is_alive(*o) && crate::item::is_item(e, *o)) else {
             break;
         };
+        if o != obj && crate::flickable::is_content_item(e, o) {
+            return (Some(o), t);
+        }
         let x = num(e, o, Item::X.index);
         let y = num(e, o, Item::Y.index);
         let rotation = num(e, o, Item::ROTATION.index);
@@ -1355,8 +1460,7 @@ fn scene_bounds(e: &Engine, obj: ObjectId) -> Bounds {
         t = local * t;
         cur = e.visual_parent(o);
     }
-    let r = t.transform_rect_bbox(kurbo::Rect::new(0.0, 0.0, w, h));
-    Bounds::new(r.x0, r.y0, r.x1, r.y1)
+    (None, t)
 }
 
 impl QuickScene {

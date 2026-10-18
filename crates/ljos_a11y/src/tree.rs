@@ -5,10 +5,17 @@
 //! child lists ([`Tree::set_children`]), and a host turns it into its own
 //! toolkit's nodes. Nothing here walks the whole tree unless a host asks
 //! for all of it.
+//!
+//! Content that scrolls is placed in a space ([`Tree::set_space`],
+//! [`Tree::place`]): its nodes keep their bounds in the content's own
+//! coordinates, and a scroll moves the space, not each node. The tree
+//! works out where they are in the scene, and an AccessKit consumer is
+//! told only of the space's new transform and of the nodes that go off
+//! screen or come back.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use accesskit::{Action, Live, Node, NodeId, Role as AkRole, Toggled, TreeUpdate};
+use accesskit::{Action, Affine, Live, Node, NodeId, Role as AkRole, Toggled, TreeUpdate};
 
 use crate::role::Role;
 use crate::text::TextValue;
@@ -116,6 +123,65 @@ impl Bounds {
     pub fn center(&self) -> (f64, f64) {
         ((self.x0 + self.x1) / 2.0, (self.y0 + self.y1) / 2.0)
     }
+
+    fn rect(self) -> accesskit::Rect {
+        accesskit::Rect {
+            x0: self.x0,
+            y0: self.y0,
+            x1: self.x1,
+            y1: self.y1,
+        }
+    }
+
+    /// The box around this one after `t`.
+    fn mapped(self, t: Affine) -> Bounds {
+        if t == Affine::IDENTITY {
+            return self;
+        }
+        let r = t.transform_rect_bbox(self.rect());
+        Bounds::new(r.x0, r.y0, r.x1, r.y1)
+    }
+}
+
+/// A coordinate space nodes can be placed in: the content of a view that
+/// scrolls. It is named by the owner's key of the item whose coordinates
+/// it is, which need not be a node.
+#[derive(Debug)]
+struct Space {
+    /// The space it lies in; `None` for the scene.
+    parent: Option<NodeKey>,
+    /// From this space to its parent's.
+    transform: Affine,
+    /// From this space to the scene's.
+    scene: Affine,
+    members: HashSet<NodeKey>,
+    inner: Vec<NodeKey>,
+}
+
+/// The ids of the containers that carry a space's transform to an
+/// AccessKit consumer have this bit and not the two above it.
+const CONTAINER_BIT: u64 = 1 << 61;
+
+/// The id of the `nth` container below `host` for children in `space`.
+/// It is the same whenever the tree says the same, so a consumer keeps
+/// the node from one update to the next; the hash leaves the ids of two
+/// containers apart with all but certainty (61 bits).
+fn container_id(host: NodeKey, space: NodeKey, nth: u32) -> NodeId {
+    let mut h = 0x9e37_79b9_7f4a_7c15u64;
+    for v in [host.0, space.0, u64::from(nth)] {
+        h ^= v;
+        h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        h ^= h >> 31;
+    }
+    NodeId((h & (CONTAINER_BIT - 1)) | CONTAINER_BIT)
+}
+
+/// A run of children of one node that are in another space than it is.
+struct Group {
+    id: NodeId,
+    space: Option<NodeKey>,
+    children: Vec<NodeId>,
 }
 
 /// Where a node that stands for a number is between two ends: a scroll
@@ -423,6 +489,10 @@ struct Slot {
     children: Vec<NodeKey>,
     /// The AccessKit ids of the runs of the node's text.
     runs: Vec<NodeId>,
+    /// The space the node is placed in, `None` for the scene's, and its
+    /// bounds there. `data.bounds` are always the scene's.
+    space: Option<NodeKey>,
+    local: Bounds,
 }
 
 /// The ids of text runs are counted up from here. An item's key has this
@@ -484,6 +554,7 @@ pub struct Tree {
     announcements: u64,
     /// What of the scene the window shows; nothing until the scene says.
     viewport: Option<Bounds>,
+    spaces: HashMap<NodeKey, Space>,
 }
 
 impl Tree {
@@ -542,10 +613,19 @@ impl Tree {
             self.focused.remove(&key);
         }
         let runs = data.text.as_ref().map_or(0, |t| t.runs().len());
+        let mut left = None;
         match self.slots.get_mut(&key) {
             Some(slot) if slot.data == data => return false,
-            Some(slot) => slot.data = data,
+            Some(slot) => {
+                if slot.data.bounds != data.bounds {
+                    // New bounds from here are the scene's.
+                    left = slot.space.take().map(|s| (s, slot.parent));
+                    slot.local = data.bounds;
+                }
+                slot.data = data;
+            }
             None => {
+                let local = data.bounds;
                 self.slots.insert(
                     key,
                     Slot {
@@ -553,8 +633,18 @@ impl Tree {
                         parent: None,
                         children: Vec::new(),
                         runs: Vec::new(),
+                        space: None,
+                        local,
                     },
                 );
+            }
+        }
+        if let Some((space, parent)) = left {
+            if let Some(s) = self.spaces.get_mut(&space) {
+                s.members.remove(&key);
+            }
+            if let Some(p) = parent {
+                self.dirty.insert(p);
             }
         }
         self.set_run_count(key, runs);
@@ -596,18 +686,258 @@ impl Tree {
         false
     }
 
-    /// Moves the node without touching the rest of its data.
+    /// Moves the node without touching the rest of its data; `bounds`
+    /// are the scene's.
     pub fn set_bounds(&mut self, key: NodeKey, bounds: Bounds) -> bool {
-        let Some(slot) = self.slots.get_mut(&key) else {
+        self.place(key, None, bounds)
+    }
+
+    /// Puts the node at `local` in `space` (`None` for the scene). A space
+    /// the tree was not told of yet is where the scene is until
+    /// [`Tree::set_space`] says otherwise.
+    pub fn place(&mut self, key: NodeKey, space: Option<NodeKey>, local: Bounds) -> bool {
+        let Some(slot) = self.slots.get(&key) else {
             return false;
         };
-        if slot.data.bounds == bounds {
+        let was = slot.space;
+        let parent = slot.parent;
+        if was == space && slot.local == local {
             return false;
         }
-        slot.data.bounds = bounds;
+        if was != space {
+            if let Some(s) = was.and_then(|s| self.spaces.get_mut(&s)) {
+                s.members.remove(&key);
+            }
+            if let Some(s) = space {
+                self.space_entry(s).members.insert(key);
+            }
+            // The node moves in or out of a container of its parent.
+            if let Some(p) = parent {
+                self.dirty.insert(p);
+            }
+        }
+        let scene = local.mapped(self.scene_of(space));
+        let slot = self.slots.get_mut(&key).expect("checked");
+        slot.space = space;
+        slot.local = local;
+        slot.data.bounds = scene;
         self.dirty.insert(key);
         self.stats.node_updates += 1;
         true
+    }
+
+    fn space_entry(&mut self, space: NodeKey) -> &mut Space {
+        self.spaces.entry(space).or_insert_with(|| Space {
+            parent: None,
+            transform: Affine::IDENTITY,
+            scene: Affine::IDENTITY,
+            members: HashSet::new(),
+            inner: Vec::new(),
+        })
+    }
+
+    /// From `space` to the scene.
+    fn scene_of(&self, space: Option<NodeKey>) -> Affine {
+        space
+            .and_then(|s| self.spaces.get(&s))
+            .map_or(Affine::IDENTITY, |s| s.scene)
+    }
+
+    /// Says where `space` is: `transform` takes its coordinates to those of
+    /// `parent` (`None` for the scene). The nodes in it, and in the spaces
+    /// inside it, keep their place in it. Returns whether anything moved.
+    pub fn set_space(
+        &mut self,
+        space: NodeKey,
+        parent: Option<NodeKey>,
+        transform: Affine,
+    ) -> bool {
+        // A space inside itself would never reach the scene.
+        let parent = parent.filter(|p| !self.space_within(Some(*p), space));
+        let s = self.space_entry(space);
+        if s.parent == parent && s.transform == transform {
+            return false;
+        }
+        let was = s.parent;
+        s.transform = transform;
+        if was != parent {
+            s.parent = parent;
+            if let Some(w) = was.and_then(|w| self.spaces.get_mut(&w)) {
+                w.inner.retain(|i| *i != space);
+            }
+            if let Some(p) = parent {
+                self.space_entry(p).inner.push(space);
+            }
+        }
+        self.rescene(space);
+        true
+    }
+
+    /// Forgets `space`: what was placed in it stays where it is in the
+    /// scene, and the spaces in it lie in the scene.
+    pub fn remove_space(&mut self, space: NodeKey) -> bool {
+        let Some(s) = self.spaces.remove(&space) else {
+            return false;
+        };
+        if let Some(p) = s.parent.and_then(|p| self.spaces.get_mut(&p)) {
+            p.inner.retain(|i| *i != space);
+        }
+        for inner in &s.inner {
+            if let Some(i) = self.spaces.get_mut(inner) {
+                i.parent = None;
+                i.transform = i.scene;
+            }
+        }
+        for m in s.members {
+            if let Some(slot) = self.slots.get_mut(&m) {
+                slot.space = None;
+                slot.local = slot.data.bounds;
+                self.dirty.insert(m);
+                if let Some(p) = slot.parent {
+                    self.dirty.insert(p);
+                }
+            }
+        }
+        true
+    }
+
+    /// The point `at` in `space`, in the scene's coordinates.
+    pub fn to_scene(&self, space: Option<NodeKey>, at: (f64, f64)) -> (f64, f64) {
+        let p = self.scene_of(space) * accesskit::Point::new(at.0, at.1);
+        (p.x, p.y)
+    }
+
+    /// The space the node is placed in and its bounds there.
+    pub fn placement(&self, key: NodeKey) -> Option<(Option<NodeKey>, Bounds)> {
+        self.slots.get(&key).map(|s| (s.space, s.local))
+    }
+
+    /// Whether `space` is `root` or lies inside it.
+    fn space_within(&self, mut space: Option<NodeKey>, root: NodeKey) -> bool {
+        for _ in 0..=self.spaces.len() {
+            match space {
+                Some(s) if s == root => return true,
+                Some(s) => space = self.spaces.get(&s).and_then(|s| s.parent),
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Works out anew where `root`, the spaces inside it and their nodes
+    /// are in the scene. A node is told again only when it goes off screen
+    /// or comes back, and a parent outside `root` when the transform of its
+    /// container changed: the bounds a consumer has are the space's own.
+    fn rescene(&mut self, root: NodeKey) {
+        let mut todo = vec![root];
+        let mut seen = 0;
+        while let Some(space) = todo.pop() {
+            seen += 1;
+            if seen > self.spaces.len() {
+                break;
+            }
+            let Some(s) = self.spaces.get(&space) else {
+                continue;
+            };
+            let up = self.scene_of(s.parent);
+            let scene = up * s.transform;
+            let members: Vec<NodeKey> = s.members.iter().copied().collect();
+            todo.extend(s.inner.iter().copied());
+            self.spaces.get_mut(&space).expect("checked").scene = scene;
+            for m in members {
+                let Some(slot) = self.slots.get(&m) else {
+                    continue;
+                };
+                let host = slot.parent;
+                let bounds = slot.local.mapped(scene);
+                if lies_outside(bounds, self.viewport)
+                    != lies_outside(slot.data.bounds, self.viewport)
+                {
+                    self.dirty.insert(m);
+                }
+                if let Some(h) = host {
+                    let host_space = self.slots.get(&h).and_then(|s| s.space);
+                    if !self.space_within(host_space, root) {
+                        self.dirty.insert(h);
+                    }
+                }
+                self.slots.get_mut(&m).expect("checked").data.bounds = bounds;
+            }
+        }
+    }
+
+    /// The transform of a container below a node in `host` for nodes in
+    /// `space`: from `space` to `host`.
+    fn between(&self, space: Option<NodeKey>, host: Option<NodeKey>) -> Affine {
+        let mut t = Affine::IDENTITY;
+        let mut at = space;
+        for _ in 0..=self.spaces.len() {
+            if at == host {
+                return t;
+            }
+            let Some(s) = at.and_then(|a| self.spaces.get(&a)) else {
+                break;
+            };
+            t = s.transform * t;
+            at = s.parent;
+        }
+        // `host` is not around `space`: go by way of the scene.
+        self.scene_of(host).inverse() * self.scene_of(space)
+    }
+
+    /// The children of `key` in runs of one space, those in another space
+    /// than the node's in a container each.
+    fn groups(&self, key: NodeKey) -> (Vec<NodeId>, Vec<Group>) {
+        let own = self.slots.get(&key).and_then(|s| s.space);
+        let mut list = Vec::new();
+        let mut groups: Vec<Group> = Vec::new();
+        let mut counts: HashMap<NodeKey, u32> = HashMap::new();
+        let mut open = false;
+        for c in self.children(key) {
+            let space = self.slots.get(c).and_then(|s| s.space);
+            if space == own {
+                list.push(c.node_id());
+                open = false;
+                continue;
+            }
+            if open && groups.last().is_some_and(|g| g.space == space) {
+                groups.last_mut().expect("open").children.push(c.node_id());
+                continue;
+            }
+            let s = space.expect("differs from the node's");
+            let nth = counts.entry(s).or_default();
+            let id = container_id(key, s, *nth);
+            *nth += 1;
+            list.push(id);
+            groups.push(Group {
+                id,
+                space,
+                children: vec![c.node_id()],
+            });
+            open = true;
+        }
+        (list, groups)
+    }
+
+    /// The containers below `key` that carry the transforms of the spaces
+    /// its children are in.
+    fn container_nodes(&self, key: NodeKey) -> Vec<(NodeId, Node)> {
+        let own = self.slots.get(&key).and_then(|s| s.space);
+        let (_, groups) = self.groups(key);
+        groups
+            .into_iter()
+            .map(|g| {
+                // A consumer passes over a generic container: it is there
+                // only for its transform.
+                let mut node = Node::new(AkRole::GenericContainer);
+                let t = self.between(g.space, own);
+                if t != Affine::IDENTITY {
+                    node.set_transform(t);
+                }
+                node.set_children(g.children);
+                (g.id, node)
+            })
+            .collect()
     }
 
     /// Takes the node out. Its children take its place in its parent, in
@@ -617,6 +947,9 @@ impl Tree {
         let Some(slot) = self.slots.remove(&key) else {
             return false;
         };
+        if let Some(s) = slot.space.and_then(|s| self.spaces.get_mut(&s)) {
+            s.members.remove(&key);
+        }
         for c in &slot.children {
             if let Some(s) = self.slots.get_mut(c) {
                 s.parent = slot.parent;
@@ -889,12 +1222,10 @@ impl Tree {
                 node.set_hidden();
             }
             data.apply_relations(&mut node, |k| self.attached(k).then(|| k.node_id()));
-            node.set_bounds(accesskit::Rect {
-                x0: data.bounds.x0,
-                y0: data.bounds.y0,
-                x1: data.bounds.x1,
-                y1: data.bounds.y1,
-            });
+            // In the node's own space: the containers above it carry the
+            // transforms of the spaces between it and the scene.
+            let local = self.slots.get(&key).map_or(data.bounds, |s| s.local);
+            node.set_bounds(local.rect());
             node
         };
         // The runs of its text come first: they are what the node says.
@@ -906,12 +1237,8 @@ impl Tree {
                 text.selection(&text.runs(), |i| runs.get(i).copied().unwrap_or(runs[0])),
             );
         }
-        node.set_children(
-            runs.iter()
-                .copied()
-                .chain(self.children(key).iter().map(|c| c.node_id()))
-                .collect::<Vec<_>>(),
-        );
+        let (children, _) = self.groups(key);
+        node.set_children(runs.iter().copied().chain(children).collect::<Vec<_>>());
         Some(node)
     }
 
@@ -921,6 +1248,7 @@ impl Tree {
         let mut nodes = Vec::with_capacity(self.len() + 1);
         if let Some(root) = self.accesskit_node(NodeKey::ROOT) {
             nodes.push((NodeKey::ROOT.node_id(), root));
+            nodes.extend(self.container_nodes(NodeKey::ROOT));
         }
         let mut keys = Vec::with_capacity(self.len());
         self.walk(|key, _, _| keys.push(key));
@@ -928,6 +1256,7 @@ impl Tree {
             if let Some(node) = self.accesskit_node(key) {
                 nodes.push((key.node_id(), node));
                 nodes.extend(self.run_nodes(key));
+                nodes.extend(self.container_nodes(key));
             }
         }
         let _ = self.take_changes();
@@ -963,6 +1292,7 @@ impl Tree {
             if let Some(node) = self.accesskit_node(k) {
                 nodes.push((k.node_id(), node));
                 nodes.extend(self.run_nodes(k));
+                nodes.extend(self.container_nodes(k));
             }
         }
         Some(TreeUpdate {
@@ -1350,6 +1680,138 @@ mod tests {
         assert!(t.off_screen(B));
         t.set_bounds(A, Bounds::new(-100.0, 0.0, 20.0, 30.0));
         assert!(!t.off_screen(B), "the parent is partly inside");
+    }
+
+    /// The content of a view that scrolls.
+    const S: NodeKey = NodeKey(100);
+
+    fn down(y: f64) -> Affine {
+        Affine::translate((0.0, -y))
+    }
+
+    #[test]
+    fn a_node_in_a_space_is_where_the_space_puts_it() {
+        let mut t = sample();
+        t.set_space(S, None, down(100.0));
+        t.place(B, Some(S), Bounds::new(0.0, 150.0, 80.0, 180.0));
+        assert_eq!(
+            t.get(B).map(|d| d.bounds),
+            Some(Bounds::new(0.0, 50.0, 80.0, 80.0))
+        );
+        assert_eq!(t.to_scene(Some(S), (10.0, 160.0)), (10.0, 60.0));
+        t.set_space(S, None, down(120.0));
+        assert_eq!(
+            t.get(B).map(|d| d.bounds),
+            Some(Bounds::new(0.0, 30.0, 80.0, 60.0))
+        );
+        assert_eq!(
+            t.placement(B),
+            Some((Some(S), Bounds::new(0.0, 150.0, 80.0, 180.0)))
+        );
+    }
+
+    #[test]
+    fn a_scroll_tells_the_container_and_not_the_nodes_in_it() {
+        let mut t = sample();
+        t.set_space(S, None, down(0.0));
+        t.place(B, Some(S), Bounds::new(0.0, 10.0, 80.0, 40.0));
+        t.place(C, Some(S), Bounds::new(0.0, 50.0, 80.0, 80.0));
+        let _ = t.full_update();
+        let before = t.stats();
+        assert!(t.set_space(S, None, down(5.0)));
+        assert_eq!(t.take_changes().changed, vec![A], "only the host");
+        assert_eq!(t.stats(), before, "no node was touched");
+        assert!(!t.set_space(S, None, down(5.0)));
+    }
+
+    #[test]
+    fn the_container_carries_the_spaces_transform() {
+        let mut t = sample();
+        t.set_space(S, None, down(100.0));
+        t.place(B, Some(S), Bounds::new(0.0, 150.0, 80.0, 180.0));
+        t.place(C, Some(S), Bounds::new(0.0, 190.0, 80.0, 220.0));
+        let update = t.full_update();
+        let node = |id: NodeId| {
+            update
+                .nodes
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, n)| n.clone())
+                .expect("sent")
+        };
+        let a = node(A.node_id());
+        assert_eq!(a.children().len(), 1, "B and C share a container");
+        let container = node(a.children()[0]);
+        assert_eq!(container.role(), AkRole::GenericContainer);
+        assert_eq!(container.transform(), Some(&down(100.0)));
+        assert_eq!(container.children(), &[B.node_id(), C.node_id()]);
+        assert_eq!(
+            node(B.node_id()).bounds(),
+            Some(accesskit::Rect {
+                x0: 0.0,
+                y0: 150.0,
+                x1: 80.0,
+                y1: 180.0
+            }),
+            "in the space's own coordinates"
+        );
+        // Out of the space again, it is the scene's and has no container.
+        t.set_bounds(B, Bounds::new(0.0, 0.0, 10.0, 10.0));
+        t.set_bounds(C, Bounds::new(0.0, 0.0, 10.0, 10.0));
+        assert_eq!(
+            t.accesskit_node(A).map(|n| n.children().to_vec()),
+            Some(vec![B.node_id(), C.node_id()])
+        );
+    }
+
+    #[test]
+    fn a_scroll_tells_the_nodes_that_go_off_screen() {
+        let mut t = sample();
+        t.set_viewport(Bounds::new(0.0, 0.0, 400.0, 100.0));
+        t.set_space(S, None, down(0.0));
+        t.place(B, Some(S), Bounds::new(0.0, 10.0, 80.0, 40.0));
+        t.place(C, Some(S), Bounds::new(0.0, 150.0, 80.0, 180.0));
+        let _ = t.take_changes();
+        assert!(t.off_screen(C));
+        t.set_space(S, None, down(60.0));
+        assert!(!t.off_screen(C));
+        assert!(t.off_screen(B));
+        assert_eq!(t.take_changes().changed, vec![A, B, C]);
+    }
+
+    #[test]
+    fn a_space_inside_a_space_is_carried_by_both() {
+        let mut t = sample();
+        const INNER: NodeKey = NodeKey(101);
+        t.set_space(S, None, down(100.0));
+        t.set_space(INNER, Some(S), Affine::translate((-30.0, 0.0)));
+        t.place(B, Some(INNER), Bounds::new(40.0, 120.0, 50.0, 130.0));
+        assert_eq!(
+            t.get(B).map(|d| d.bounds),
+            Some(Bounds::new(10.0, 20.0, 20.0, 30.0))
+        );
+        t.set_space(S, None, down(110.0));
+        assert_eq!(
+            t.get(B).map(|d| d.bounds),
+            Some(Bounds::new(10.0, 10.0, 20.0, 20.0))
+        );
+        let a = t.accesskit_node(A).expect("A");
+        let container = t
+            .container_nodes(A)
+            .into_iter()
+            .find(|(id, _)| *id == a.children()[0])
+            .expect("a container")
+            .1;
+        assert_eq!(
+            container.transform(),
+            Some(&(down(110.0) * Affine::translate((-30.0, 0.0))))
+        );
+        // Without its space the node stays where it was in the scene.
+        t.remove_space(INNER);
+        assert_eq!(
+            t.placement(B),
+            Some((None, Bounds::new(10.0, 10.0, 20.0, 20.0)))
+        );
     }
 
     fn applied(data: &NodeData) -> Node {

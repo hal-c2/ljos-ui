@@ -603,6 +603,22 @@ pub(crate) fn content_moving(e: &Engine, item: ObjectId) -> bool {
     st.content_item.get() == Some(item) && flag(e, f, Flickable::MOVING.index)
 }
 
+/// Whether `item` is the content item of a Flickable: what it shows
+/// moves with it when the view scrolls. Read from fields, so nothing is
+/// tracked.
+pub(crate) fn is_content_item(e: &Engine, item: ObjectId) -> bool {
+    let Some(f) = e.with(item, |i: &Item| i.parent).ok().flatten() else {
+        return false;
+    };
+    if !crate::item::is_a::<Flickable>(e, f) {
+        return false;
+    }
+    e.with(f, |fl: &Flickable| {
+        fl.state.content_item.get() == Some(item)
+    })
+    .unwrap_or(false)
+}
+
 /// The item the children of `f` are on, made if it is not there yet.
 fn ensure_content_item(e: &Engine, f: ObjectId) -> Result<ObjectId, EngineError> {
     let st = e.with(f, |fl: &Flickable| fl.state.clone())?;

@@ -415,6 +415,59 @@ fn a_scroll_asked_by_an_assistive_technology_moves_the_content() {
     assert!(!s.accessible_action(&e, rows, AccessibleAction::SetValue(1.0)));
 }
 
+/// Twenty rows that can be pressed, in a view of a hundred that says
+/// nothing of itself.
+const ROWS: &str = r##"import QtQuick
+Item {
+  width: 400; height: 400
+  Flickable {
+    objectName: "f"
+    x: 10; y: 20; width: 150; height: 100; clip: true
+    contentWidth: 150; contentHeight: 400
+    Column {
+      Repeater {
+        model: 20
+        Rectangle {
+          width: 150; height: 20
+          Accessible.role: Accessible.Button
+          Accessible.name: "Row " + index
+        }
+      }
+    }
+  }
+}
+"##;
+
+#[test]
+fn a_scroll_moves_the_rows_without_placing_each_again() {
+    use ljos_a11y::accesskit::Role;
+
+    let e = engine();
+    let root = load(&e, ROWS);
+    let f = find(&e, root, "f");
+    let mut s = scene(&e, root, 400.0, 400.0);
+    s.set_accessibility_active(&e, true);
+    frame(&mut s, &e);
+    let row = s.accessibility_tree().find(Role::Button, "Row 3").unwrap();
+    assert_eq!(s.accessibility_tree().get(row).unwrap().bounds.y0, 80.0);
+    let _ = s.accessibility_tree_mut().take_update();
+    let before = s.accessibility_tree().stats();
+
+    set(&e, f, "contentY", Value::Real(7.0));
+    frame(&mut s, &e);
+    // Where it is in the scene follows the content...
+    let b = s.accessibility_tree().get(row).unwrap().bounds;
+    assert_eq!((b.x0, b.y0, b.y1), (10.0, 73.0, 93.0));
+    // ...but no row was told anew: the scroll is one container's move.
+    assert_eq!(s.accessibility_tree().stats(), before);
+    let update = s.accessibility_tree_mut().take_update().unwrap();
+    assert!(
+        update.nodes.iter().all(|(id, _)| *id != row.node_id()),
+        "a row that only moved is not sent"
+    );
+    assert!(update.nodes.len() <= 3, "{} nodes", update.nodes.len());
+}
+
 #[test]
 fn a_fling_asks_for_frames_until_it_rests_and_then_for_none() {
     let e = engine();
