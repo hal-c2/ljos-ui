@@ -47,7 +47,6 @@ pub use system::{
 
 use crate::containers::{Host, bar_height, host_append, host_complete};
 use crate::inherit::{self, InheritState, Kind};
-use crate::palette::Palette;
 use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{check, flag, is_a, is_unset, num, object, set_computed};
 
@@ -205,8 +204,6 @@ pub struct Window {
     /// `ApplicationWindow` the item between its header and its footer.
     #[qml(notify, readonly)]
     pub content_item: Option<ObjectId>,
-    #[qml(group)]
-    pub palette: Palette,
     #[qml(skip)]
     pub(crate) inherit: Rc<InheritState>,
     #[qml(skip)]
@@ -235,7 +232,6 @@ impl Default for Window {
             screen: None,
             active_focus_item: None,
             content_item: None,
-            palette: Palette::default(),
             inherit: Rc::default(),
             state: Rc::default(),
         }

@@ -12,6 +12,7 @@ use ljos_engine::{
 use ljos_render::kurbo::{self, Affine};
 
 use crate::enums::transform_origin;
+use crate::palette::Palette;
 
 /// `Item` (QtQuick).
 ///
@@ -129,6 +130,9 @@ pub struct Item {
     pub transform: QmlList,
     #[qml(group)]
     pub layer: ItemLayer,
+    /// Made when a colour is first set: most items never set one.
+    #[qml(group, lazy)]
+    pub palette: Option<Box<Palette>>,
     /// Static accessibility data for a later a11y pass (ARCHITECTURE §14).
     #[qml(skip)]
     pub accessible: AccessibleInfo,
@@ -192,6 +196,7 @@ impl Default for Item {
             transitions: QmlList::new(),
             transform: QmlList::new(),
             layer: ItemLayer::default(),
+            palette: None,
             accessible: AccessibleInfo::default(),
             synced_parent: None,
             follows_implicit: [Weak::new(), Weak::new()],
@@ -654,7 +659,11 @@ impl Item {
     /// `childrenRect`, and the implicit-size fallback for `width`/`height`.
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        init_item(cx.engine, cx.this)
+        init_item(cx.engine, cx.this)?;
+        if crate::palette::has_own(cx.engine, cx.this) {
+            crate::palette::item_palette_set(cx.engine, cx.this);
+        }
+        Ok(())
     }
 
     /// `mapToItem(item, x, y)`: a point in this item's coordinates, in

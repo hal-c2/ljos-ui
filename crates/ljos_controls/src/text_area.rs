@@ -14,7 +14,6 @@ use ljos_quick::TextEdit;
 use ljos_quick::focus::FocusReason;
 
 use crate::inherit::{InheritState, Kind};
-use crate::palette::Palette;
 use crate::text_control::{self, FieldState, Props};
 
 /// `TextArea`.
@@ -54,8 +53,6 @@ pub struct TextArea {
     /// `activeFocusOnTab` is true, which reads back as `Qt.TabFocus`.
     #[qml(notify, enumeration = "Qt.FocusPolicy")]
     pub focus_policy: i32,
-    #[qml(group)]
-    pub palette: Palette,
     #[qml(skip)]
     pub(crate) inherit: Rc<InheritState>,
     #[qml(skip)]
@@ -82,7 +79,6 @@ impl Default for TextArea {
             hover_enabled: true,
             focus_reason: FocusReason::Other as i32,
             focus_policy: crate::control::focus_policy::NONE,
-            palette: Palette::default(),
             inherit: Rc::default(),
             state: Rc::default(),
         }

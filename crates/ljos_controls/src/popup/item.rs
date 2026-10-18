@@ -27,8 +27,8 @@ use ljos_render::kurbo;
 use super::{Popup, close_policy, dismiss, popup_of, put};
 use crate::containers::{Page, Pane};
 use crate::control::Control;
-use crate::palette::{ROLE_COUNT, role_props};
 use crate::util::{check, flag};
+use ljos_quick::palette::{ROLE_COUNT, role_props};
 
 /// The item of a popup.
 #[derive(Debug, Default, QmlObject)]

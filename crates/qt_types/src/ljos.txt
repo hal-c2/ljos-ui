@@ -1688,6 +1688,7 @@ module QtQuick
 		prop transitions QtQml.var named list
 		prop transform QtQml.var named list
 		prop layer QtQuick.ItemLayer pointer readonly
+		prop palette QtQuick.Palette pointer readonly
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -3010,7 +3011,6 @@ module QtQuick
 		prop screen QtQml.QtObject named pointer readonly
 		prop activeFocusItem QtQml.QtObject named pointer readonly
 		prop contentItem QtQml.QtObject named pointer readonly
-		prop palette QtQuick.Palette pointer readonly
 		signal titleChanged
 		signal visibleChanged
 		signal xChanged
@@ -3412,6 +3412,50 @@ module QtQuick
 		signal effectChanged
 		signal textureSizeChanged
 		signal sourceRectChanged
+	type QtQuick.Palette Palette
+		is uncreatable
+		prop accent QtQuick.color named reset
+		prop alternateBase QtQuick.color named reset
+		prop base QtQuick.color named reset
+		prop brightText QtQuick.color named reset
+		prop button QtQuick.color named reset
+		prop buttonText QtQuick.color named reset
+		prop dark QtQuick.color named reset
+		prop highlight QtQuick.color named reset
+		prop highlightedText QtQuick.color named reset
+		prop light QtQuick.color named reset
+		prop link QtQuick.color named reset
+		prop linkVisited QtQuick.color named reset
+		prop mid QtQuick.color named reset
+		prop midlight QtQuick.color named reset
+		prop placeholderText QtQuick.color named reset
+		prop shadow QtQuick.color named reset
+		prop text QtQuick.color named reset
+		prop toolTipBase QtQuick.color named reset
+		prop toolTipText QtQuick.color named reset
+		prop window QtQuick.color named reset
+		prop windowText QtQuick.color named reset
+		signal accentChanged
+		signal alternateBaseChanged
+		signal baseChanged
+		signal brightTextChanged
+		signal buttonChanged
+		signal buttonTextChanged
+		signal darkChanged
+		signal highlightChanged
+		signal highlightedTextChanged
+		signal lightChanged
+		signal linkChanged
+		signal linkVisitedChanged
+		signal midChanged
+		signal midlightChanged
+		signal placeholderTextChanged
+		signal shadowChanged
+		signal textChanged
+		signal toolTipBaseChanged
+		signal toolTipTextChanged
+		signal windowChanged
+		signal windowTextChanged
 	type QtQuick.KeyNavigationAttached KeyNavigationAttached
 		is uncreatable
 		enum Priority BeforeItem=0 AfterItem=1
@@ -3705,50 +3749,6 @@ module QtQuick
 		signal widthChanged
 		signal heightChanged
 		signal visibilityChanged
-	type QtQuick.Palette Palette
-		is uncreatable
-		prop accent QtQuick.color named reset
-		prop alternateBase QtQuick.color named reset
-		prop base QtQuick.color named reset
-		prop brightText QtQuick.color named reset
-		prop button QtQuick.color named reset
-		prop buttonText QtQuick.color named reset
-		prop dark QtQuick.color named reset
-		prop highlight QtQuick.color named reset
-		prop highlightedText QtQuick.color named reset
-		prop light QtQuick.color named reset
-		prop link QtQuick.color named reset
-		prop linkVisited QtQuick.color named reset
-		prop mid QtQuick.color named reset
-		prop midlight QtQuick.color named reset
-		prop placeholderText QtQuick.color named reset
-		prop shadow QtQuick.color named reset
-		prop text QtQuick.color named reset
-		prop toolTipBase QtQuick.color named reset
-		prop toolTipText QtQuick.color named reset
-		prop window QtQuick.color named reset
-		prop windowText QtQuick.color named reset
-		signal accentChanged
-		signal alternateBaseChanged
-		signal baseChanged
-		signal brightTextChanged
-		signal buttonChanged
-		signal buttonTextChanged
-		signal darkChanged
-		signal highlightChanged
-		signal highlightedTextChanged
-		signal lightChanged
-		signal linkChanged
-		signal linkVisitedChanged
-		signal midChanged
-		signal midlightChanged
-		signal placeholderTextChanged
-		signal shadowChanged
-		signal textChanged
-		signal toolTipBaseChanged
-		signal toolTipTextChanged
-		signal windowChanged
-		signal windowTextChanged
 	type QtQuick.SafeMargins SafeMargins
 		is uncreatable
 		prop left QtQml.real named readonly
@@ -5426,7 +5426,6 @@ module QtQuick.Templates
 		prop wheelEnabled QtQml.bool named
 		prop mirrored QtQml.bool named readonly
 		prop font QtQuick.font named reset
-		prop palette QtQuick.Templates.Palette pointer readonly
 		prop locale QtQml.var named reset
 		prop focusPolicy Qt::FocusPolicy
 		prop focusReason Qt::FocusReason readonly
@@ -5656,7 +5655,6 @@ module QtQuick.Templates
 		prop implicitBackgroundWidth QtQml.real named readonly
 		prop implicitBackgroundHeight QtQml.real named readonly
 		prop focusPolicy Qt::FocusPolicy
-		prop palette QtQuick.Templates.Palette pointer readonly
 		signal backgroundChanged
 		signal topInsetChanged
 		signal leftInsetChanged
@@ -6257,7 +6255,6 @@ module QtQuick.Templates
 		prop hoverEnabled QtQml.bool named reset
 		prop focusReason Qt::FocusReason readonly
 		prop focusPolicy Qt::FocusPolicy
-		prop palette QtQuick.Templates.Palette pointer readonly
 		signal backgroundChanged
 		signal topInsetChanged
 		signal leftInsetChanged
@@ -6289,7 +6286,6 @@ module QtQuick.Templates
 		prop hoverEnabled QtQml.bool named reset
 		prop focusReason Qt::FocusReason readonly
 		prop focusPolicy Qt::FocusPolicy
-		prop palette QtQuick.Templates.Palette pointer readonly
 		signal backgroundChanged
 		signal topInsetChanged
 		signal leftInsetChanged
@@ -6405,6 +6401,41 @@ module QtQuick.Templates
 		is uncreatable
 		prop group QtQml.QtObject named pointer
 		signal groupChanged
+	type QtQuick.Templates.DialogButtonBoxAttached DialogButtonBoxAttached
+		is uncreatable
+		enum Position Header=0 Footer=1
+		enum ButtonLayout WinLayout=0 MacLayout=1 KdeLayout=2 GnomeLayout=3 AndroidLayout=4
+		enum ButtonRole InvalidRole=-1 AcceptRole=0 RejectRole=1 DestructiveRole=2 ActionRole=3 HelpRole=4 YesRole=5 NoRole=6 ResetRole=7 ApplyRole=8
+		enum StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728
+		prop buttonBox QtQml.QtObject named pointer readonly
+		prop buttonRole ButtonRole
+		signal buttonBoxChanged
+		signal buttonRoleChanged
+	type QtQuick.Templates.SpinButton SpinButton
+		is uncreatable
+		prop pressed QtQml.bool named
+		prop indicator QtQuick.Item named pointer
+		prop hovered QtQml.bool named
+		prop implicitIndicatorWidth QtQml.real named readonly
+		prop implicitIndicatorHeight QtQml.real named readonly
+		signal pressedChanged
+		signal indicatorChanged
+		signal hoveredChanged
+		signal implicitIndicatorWidthChanged
+		signal implicitIndicatorHeightChanged
+	type QtQuick.Templates.HeaderViewBase HeaderViewBase
+		prototype QtQuick.TableView named
+		is uncreatable
+		prop textRole QtQml.string named
+		signal textRoleChanged
+	type QtQuick.Templates.OverlayAttached OverlayAttached
+		is uncreatable
+		prop overlay QtQml.QtObject named pointer readonly
+		prop modal QtQml.Component named pointer
+		prop modeless QtQml.Component named pointer
+		signal overlayChanged
+		signal modalChanged
+		signal modelessChanged
 	type QtQuick.Templates.Palette Palette
 		is uncreatable
 		prop accent QtQuick.color named reset
@@ -6449,41 +6480,6 @@ module QtQuick.Templates
 		signal toolTipTextChanged
 		signal windowChanged
 		signal windowTextChanged
-	type QtQuick.Templates.DialogButtonBoxAttached DialogButtonBoxAttached
-		is uncreatable
-		enum Position Header=0 Footer=1
-		enum ButtonLayout WinLayout=0 MacLayout=1 KdeLayout=2 GnomeLayout=3 AndroidLayout=4
-		enum ButtonRole InvalidRole=-1 AcceptRole=0 RejectRole=1 DestructiveRole=2 ActionRole=3 HelpRole=4 YesRole=5 NoRole=6 ResetRole=7 ApplyRole=8
-		enum StandardButton NoButton=0 Ok=1024 Save=2048 SaveAll=4096 Open=8192 Yes=16384 YesToAll=32768 No=65536 NoToAll=131072 Abort=262144 Retry=524288 Ignore=1048576 Close=2097152 Cancel=4194304 Discard=8388608 Help=16777216 Apply=33554432 Reset=67108864 RestoreDefaults=134217728
-		prop buttonBox QtQml.QtObject named pointer readonly
-		prop buttonRole ButtonRole
-		signal buttonBoxChanged
-		signal buttonRoleChanged
-	type QtQuick.Templates.SpinButton SpinButton
-		is uncreatable
-		prop pressed QtQml.bool named
-		prop indicator QtQuick.Item named pointer
-		prop hovered QtQml.bool named
-		prop implicitIndicatorWidth QtQml.real named readonly
-		prop implicitIndicatorHeight QtQml.real named readonly
-		signal pressedChanged
-		signal indicatorChanged
-		signal hoveredChanged
-		signal implicitIndicatorWidthChanged
-		signal implicitIndicatorHeightChanged
-	type QtQuick.Templates.HeaderViewBase HeaderViewBase
-		prototype QtQuick.TableView named
-		is uncreatable
-		prop textRole QtQml.string named
-		signal textRoleChanged
-	type QtQuick.Templates.OverlayAttached OverlayAttached
-		is uncreatable
-		prop overlay QtQml.QtObject named pointer readonly
-		prop modal QtQml.Component named pointer
-		prop modeless QtQml.Component named pointer
-		signal overlayChanged
-		signal modalChanged
-		signal modelessChanged
 	type QtQuick.Templates.PopupAnchors PopupAnchors
 		is uncreatable
 		prop centerIn QtQml.QtObject named pointer reset

@@ -41,10 +41,10 @@ use ljos_quick::{Item, is_item, set_parent_item};
 
 use crate::containers::{Host, content_size, host_append, host_complete};
 use crate::control::Control;
-use crate::palette::Palette;
 use crate::parts::settle_parts;
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 use crate::window::Window;
+use ljos_quick::Palette;
 
 pub use drawer::Drawer;
 pub(crate) use item::{PopupItem, follow, look_from_above, set_role, take_look_back};

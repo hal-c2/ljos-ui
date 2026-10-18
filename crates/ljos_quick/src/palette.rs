@@ -1,4 +1,5 @@
-//! The `palette` of a control: the colours a style draws with.
+//! The `palette` of an item, a window and a popup: the colours a style
+//! draws with.
 //!
 //! The numbers are the Basic style's palettes as `qml6` prints them for
 //! an enabled and for a disabled control, in a light and in a dark colour
@@ -7,14 +8,78 @@
 //! platform's on Qt and not the style's: the values here are the ones the
 //! offscreen platform gave.
 //!
+//! Every item has the group, and an item that sets none of its colours
+//! has no palette of its own, only a pointer ([`crate::Item::palette`]).
+//! Which colour an item has where nobody set one is the controls' business
+//! (`ljos_controls::inherit`): it says so through [`set_role_reset`] and
+//! [`set_on_item_palette`].
+//!
 //! TODO(palette): the `active`, `inactive` and `disabled` sub-groups and
 //! a whole `Palette {}` assigned at once are not built.
 
-use ljos_engine::{Color, MetaObject, PropIndex, QmlObject};
+use std::cell::Cell;
 
-use crate::inherit::ROLE_RESET;
+use ljos_engine::{
+    Color, Engine, EngineError, MetaObject, ObjectId, PropIndex, QmlObject, Reset, ResetApply,
+    ResetValue, Value,
+};
 
-/// The `palette` group of a control, a label and a window.
+/// `palette.button = undefined`: as the controls say ([`set_role_reset`]),
+/// or the colour a new palette has.
+pub const ROLE_RESET: Reset = Reset::Custom {
+    apply: take_role_back,
+    value: role_from_above,
+};
+
+/// Told of an item that completes with a colour set on its palette.
+pub type OnItemPalette = fn(&Engine, ObjectId);
+
+#[derive(Default)]
+struct Hooks {
+    reset: Cell<Option<(ResetApply, ResetValue)>>,
+    on_item: Cell<Option<OnItemPalette>>,
+}
+
+/// How a colour of a palette is taken back, and what it is then.
+pub fn set_role_reset(engine: &Engine, apply: ResetApply, value: ResetValue) {
+    engine.extension::<Hooks>().reset.set(Some((apply, value)));
+}
+
+/// What is told of an item that completes with a colour of its palette
+/// set, so that the controls inside it can take it.
+pub fn set_on_item_palette(engine: &Engine, hook: OnItemPalette) {
+    engine.extension::<Hooks>().on_item.set(Some(hook));
+}
+
+/// Whether a colour of the item's palette was ever set: it has a palette
+/// of its own.
+pub fn has_own(engine: &Engine, item: ObjectId) -> bool {
+    engine
+        .with(item, |i: &crate::Item| i.palette.is_some())
+        .unwrap_or(false)
+}
+
+pub(crate) fn item_palette_set(engine: &Engine, item: ObjectId) {
+    if let Some(hook) = engine.extension::<Hooks>().on_item.get() {
+        hook(engine, item);
+    }
+}
+
+fn take_role_back(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
+    match engine.extension::<Hooks>().reset.get() {
+        Some((apply, _)) => apply(engine, obj, prop),
+        None => engine.reset_to_default(obj, prop),
+    }
+}
+
+fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
+    match engine.extension::<Hooks>().reset.get() {
+        Some((_, value)) => value(engine, obj, prop),
+        None => engine.default_value(obj, prop),
+    }
+}
+
+/// The `palette` group.
 #[derive(Clone, Debug, QmlObject)]
 #[qml(name = "Palette", uncreatable)]
 pub struct Palette {
@@ -63,11 +128,11 @@ pub struct Palette {
 }
 
 /// How many colour roles a palette has.
-pub(crate) const ROLE_COUNT: usize = 21;
+pub const ROLE_COUNT: usize = 21;
 
 /// One colour role: its QML name and what it is when nobody sets it.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Role {
+pub struct Role {
     pub name: &'static str,
     /// In a light colour scheme.
     pub active: Color,
@@ -80,7 +145,7 @@ pub(crate) struct Role {
 
 impl Role {
     /// The colour of the role where nobody set one.
-    pub(crate) const fn colour(&self, dark: bool, enabled: bool) -> Color {
+    pub const fn colour(&self, dark: bool, enabled: bool) -> Color {
         match (dark, enabled) {
             (false, true) => self.active,
             (false, false) => self.disabled,
@@ -122,7 +187,7 @@ const fn paler(name: &'static str, light: (Color, Color), dark: (Color, Color)) 
 }
 
 /// In the order of [`Palette`]'s fields.
-pub(crate) const ROLES: [Role; ROLE_COUNT] = [
+pub const ROLES: [Role; ROLE_COUNT] = [
     paler(
         "accent",
         (rgb(0x308cc6), rgb(0x919191)),
@@ -205,7 +270,7 @@ impl Default for Palette {
 
 /// The properties of the roles on a type that has a `palette` group, in
 /// [`ROLES`]' order.
-pub(crate) fn role_props(meta: &MetaObject) -> [PropIndex; ROLE_COUNT] {
+pub fn role_props(meta: &MetaObject) -> [PropIndex; ROLE_COUNT] {
     std::array::from_fn(|i| {
         meta.property_index(&format!("palette.{}", ROLES[i].name))
             .expect("the type has a palette group")

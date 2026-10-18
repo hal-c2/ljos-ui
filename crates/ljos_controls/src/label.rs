@@ -16,7 +16,6 @@ use ljos_render::kurbo;
 
 use crate::control::{focus_policy, is_left, takes_input};
 use crate::inherit::{self, InheritState, Kind};
-use crate::palette::Palette;
 use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{num, object};
 
@@ -44,8 +43,6 @@ pub struct Label {
     /// unless it is told to.
     #[qml(notify, enumeration = "Qt.FocusPolicy")]
     pub focus_policy: i32,
-    #[qml(group)]
-    pub palette: Palette,
     #[qml(skip)]
     pub(crate) inherit: Rc<InheritState>,
 }

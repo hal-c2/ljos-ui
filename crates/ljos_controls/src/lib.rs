@@ -40,7 +40,6 @@ mod label;
 mod menu;
 mod menu_bar;
 mod page_indicator;
-mod palette;
 mod parts;
 mod popup;
 mod rows;
@@ -89,10 +88,10 @@ pub use header_view::{
 };
 pub use inherit::{application_font, set_application_font};
 pub use label::Label;
+pub use ljos_quick::Palette;
 pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use menu_bar::{MenuBar, MenuBarItem};
 pub use page_indicator::PageIndicator;
-pub use palette::Palette;
 pub use popup::{Drawer, Overlay, OverlayAttached, Popup, PopupAnchors};
 pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
 pub use scroll_view::ScrollView;
@@ -163,6 +162,7 @@ pub fn register(engine: &Engine) {
     engine.register_import("QtQuick.Window", "QtQuick");
     // The button's hooks after the control's: the later registration is
     // the one a button gets.
+    inherit::register(engine);
     window::register(engine);
     control::register(engine);
     button::register(engine);

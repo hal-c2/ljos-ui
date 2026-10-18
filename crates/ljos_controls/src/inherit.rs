@@ -2,7 +2,10 @@
 //! `palette` and its `locale`.
 //!
 //! A control, a `Label` and a window each have a font and a palette; a
-//! plain `Text` or `Rectangle` has neither and lets them through. An attribute of the font
+//! plain `Text` or `Rectangle` has no font and lets it through, and hands
+//! down the colours of its palette that were set on it. Only a control,
+//! a `Label` or a window finds out which colours it has where nobody set
+//! one: a plain item reads the style's then. An attribute of the font
 //! (or a colour of the palette) that the author set on an object stays;
 //! every other one is the nearest such ancestor's, and follows it. In a
 //! style with a font of its own ([`crate::style_font`]) a control starts
@@ -26,8 +29,8 @@
 //! from the default count as set above, so a style with a font of its own
 //! takes them too.
 //!
-//! Assigning `undefined` hands one back ([`FONT_RESET`], [`ROLE_RESET`],
-//! [`LOCALE_RESET`]): the object has what is above it again and follows
+//! Assigning `undefined` hands one back ([`FONT_RESET`], [`register`]'s
+//! reset of a colour, [`LOCALE_RESET`]): the object has what is above it again and follows
 //! it.
 //!
 //! Behaviour is pinned by `features/controls/control-font.feature`,
@@ -51,12 +54,12 @@ use ljos_quick::{Item, Text, TextEditor};
 
 use crate::control::Control;
 use crate::label::Label;
-use crate::palette::{ROLE_COUNT, ROLES, role_props};
 use crate::style_font::{self, Look, Scope};
 use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::util::{check, warn};
 use crate::window::{ApplicationWindow, Window};
+use ljos_quick::palette::{ROLE_COUNT, ROLES, role_props};
 
 /// Which of the types that have a font or a palette an object is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +72,10 @@ pub(crate) enum Kind {
     /// A palette and no font.
     Window,
     ApplicationWindow,
+    /// Any other item: a palette that hands down what was set on it and
+    /// nothing else (checked on qml6: a `Row` with `palette.button` set
+    /// gives it to the buttons inside it).
+    Item,
 }
 
 /// What an object remembers about its own font and palette. Lives in the
@@ -379,6 +386,8 @@ pub(crate) fn kind_of(engine: &Engine, obj: ObjectId) -> Option<Kind> {
         Some(Kind::ApplicationWindow)
     } else if meta.inherits(Window::static_meta()) {
         Some(Kind::Window)
+    } else if meta.inherits(Item::static_meta()) {
+        Some(Kind::Item)
     } else {
         None
     }
@@ -390,7 +399,7 @@ fn font_prop(kind: Kind) -> Option<PropIndex> {
         Kind::Label => Some(Text::FONT.index),
         Kind::TextField | Kind::TextArea => Some(TextEditor::FONT.index),
         Kind::ApplicationWindow => Some(ApplicationWindow::FONT.index),
-        Kind::Window => None,
+        Kind::Window | Kind::Item => None,
     }
 }
 
@@ -398,7 +407,7 @@ fn locale_prop(kind: Kind) -> Option<PropIndex> {
     match kind {
         Kind::Control => Some(Control::LOCALE.index),
         Kind::ApplicationWindow => Some(ApplicationWindow::LOCALE.index),
-        Kind::Label | Kind::TextField | Kind::TextArea | Kind::Window => None,
+        Kind::Label | Kind::TextField | Kind::TextArea | Kind::Window | Kind::Item => None,
     }
 }
 
@@ -408,12 +417,14 @@ fn roles_of(kind: Kind) -> &'static [PropIndex; ROLE_COUNT] {
     static WINDOW: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     static TEXT_FIELD: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     static TEXT_AREA: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
+    static ITEM: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     match kind {
         Kind::Control => CONTROL.get_or_init(|| role_props(Control::static_meta())),
         Kind::Label => LABEL.get_or_init(|| role_props(Label::static_meta())),
         Kind::TextField => TEXT_FIELD.get_or_init(|| role_props(TextField::static_meta())),
         Kind::TextArea => TEXT_AREA.get_or_init(|| role_props(TextArea::static_meta())),
-        // An ApplicationWindow's palette is its Window part's.
+        Kind::Item => ITEM.get_or_init(|| role_props(Item::static_meta())),
+        // An ApplicationWindow's palette is its Window part's, which is its Item part's.
         Kind::Window | Kind::ApplicationWindow => {
             WINDOW.get_or_init(|| role_props(Window::static_meta()))
         }
@@ -429,6 +440,7 @@ fn state_of(engine: &Engine, obj: ObjectId, kind: Kind) -> Option<Rc<InheritStat
         Kind::Window | Kind::ApplicationWindow => {
             engine.with::<Window, _>(obj, |c| c.inherit.clone())
         }
+        Kind::Item => return None,
     }
     .ok()
 }
@@ -784,7 +796,7 @@ fn resolve_palette(
 ) -> Result<(), EngineError> {
     let in_use = in_use(engine, Which::Palette);
     let enabled = match kind {
-        Kind::Window | Kind::ApplicationWindow => true,
+        Kind::Window | Kind::ApplicationWindow | Kind::Item => true,
         // In a scene this is false inside a disabled item too.
         Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
             engine.read(obj, Item::ENABLED.index).to_boolean()
@@ -812,7 +824,7 @@ fn resolve_palette(
                 ended = true;
                 break;
             }
-            if let Some(k) = kind_of(engine, p) {
+            if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
                 let theirs = roles_of(k);
                 for i in 0..ROLE_COUNT {
                     if !mine[i] && inherited[i].is_none() && author_set(engine, p, theirs[i]) {
@@ -841,12 +853,40 @@ fn resolve_palette(
     Ok(())
 }
 
+/// Whether `obj`, of kind `kind`, may have colours to hand down: a plain
+/// item that never set one has no palette to look in.
+fn hands_down(engine: &Engine, obj: ObjectId, kind: Kind) -> bool {
+    kind != Kind::Item || ljos_quick::palette::has_own(engine, obj)
+}
+
 /// `palette.button = undefined`: the colour is the one from above again,
-/// or the style's.
-pub(crate) const ROLE_RESET: Reset = Reset::Custom {
-    apply: take_role_back,
-    value: role_from_above,
-};
+/// or the style's. A plain item that completes with a colour set tells
+/// the controls inside it.
+pub(crate) fn register(engine: &Engine) {
+    ljos_quick::palette::set_role_reset(engine, take_role_back, role_from_above);
+    ljos_quick::palette::set_on_item_palette(engine, item_palette_set);
+}
+
+/// A plain item completed with colours of its own: the controls inside it
+/// look, now and whenever a colour of it changes.
+fn item_palette_set(engine: &Engine, item: ObjectId) {
+    if kind_of(engine, item) != Some(Kind::Item) {
+        return;
+    }
+    // As for a control: the colours were set before anything completed,
+    // so once something looks, what is made with this item reads them.
+    if !engine.untrack(|| in_use(engine, Which::Palette)) {
+        bump(engine, Which::Palette);
+    }
+    for p in roles_of(Kind::Item).iter().copied() {
+        let watched = engine.watch(item, p, move |e, _| {
+            if author_set(e, item, p) {
+                bump(e, Which::Palette);
+            }
+        });
+        check(engine, "palette", watched.map(|_| ()));
+    }
+}
 
 /// Which role of `obj`'s palette `prop` is.
 fn role_at(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Option<(Kind, usize)> {
@@ -869,7 +909,7 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
             let Some(p) = cur.filter(|p| engine.is_alive(*p)) else {
                 break;
             };
-            if let Some(k) = kind_of(engine, p) {
+            if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
                 let theirs = roles_of(k)[i];
                 if author_set(engine, p, theirs) {
                     return engine.read(p, theirs);
@@ -879,7 +919,7 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
         }
     }
     let enabled = match kind {
-        Kind::Window | Kind::ApplicationWindow => true,
+        Kind::Window | Kind::ApplicationWindow | Kind::Item => true,
         Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
             engine.read(obj, Item::ENABLED.index).to_boolean()
         }

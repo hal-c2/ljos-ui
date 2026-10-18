@@ -16,7 +16,6 @@ use ljos_render::kurbo;
 
 use crate::containers::{Page, Pane, page_bars};
 use crate::inherit::{self, InheritState, Kind};
-use crate::palette::Palette;
 use crate::parts::{PartKind, manage_part, settle_parts};
 use crate::util::{bind_default, check, flag, is_a, num, object, set_computed};
 
@@ -102,8 +101,6 @@ pub struct Control {
     pub mirrored: bool,
     #[qml(notify, reset = inherit::FONT_RESET)]
     pub font: Font,
-    #[qml(group)]
-    pub palette: Palette,
     /// The nearest control's above until it is given (`inherit.rs`).
     /// TODO(i18n): a right-to-left locale should mirror the control.
     #[qml(notify, reset = inherit::LOCALE_RESET)]
@@ -147,7 +144,6 @@ impl Default for Control {
             wheel_enabled: false,
             mirrored: false,
             font: Font::default(),
-            palette: Palette::default(),
             locale: Value::Undefined,
             focus_policy: focus_policy::NONE,
             focus_reason: FocusReason::Other as i32,
