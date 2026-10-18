@@ -1280,15 +1280,25 @@ impl<V: Clone + 'static> Graph<V> {
     /// [`Graph::write`] of an animation's step inside an open batch, then
     /// [`Graph::settled`], in one look at the node: an animation writes
     /// each of its properties every frame and reads back what it holds.
-    /// Outside a batch it is the two calls.
-    pub fn write_animated(&self, n: NodeId, v: V) -> Result<Option<V>, ReactiveError> {
-        let held = {
+    /// `held` is given what the property holds after the write, where it
+    /// holds it when it is up to date (nearly always), so it is not cloned
+    /// out; it must not use the graph. Outside a batch it is the two calls.
+    pub fn write_animated(
+        &self,
+        n: NodeId,
+        v: V,
+        held: impl FnOnce(&V),
+    ) -> Result<(), ReactiveError> {
+        {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             if i.batch_depth == 0 {
                 drop(g);
                 self.write(n, v, WriteKind::Animation)?;
-                return Ok(self.settled(n));
+                if let Some(v) = self.settled(n) {
+                    held(&v);
+                }
+                return Ok(());
             }
             if !i.nodes.contains_key(n) {
                 return Err(ReactiveError::DeadNode(n));
@@ -1313,12 +1323,17 @@ impl<V: Clone + 'static> Graph<V> {
             i.set_value(n, v);
             i.tell_if_set(n, was_unset);
             let node = &i.nodes[n];
-            (node.state == NodeState::Clean).then(|| node.value.clone())
-        };
-        Ok(match held {
-            Some(v) => v,
-            None => self.settled(n),
-        })
+            if node.state == NodeState::Clean {
+                if let Some(v) = &node.value {
+                    held(v);
+                }
+                return Ok(());
+            }
+        }
+        if let Some(v) = self.settled(n) {
+            held(&v);
+        }
+        Ok(())
     }
 
     /// Takes a property back to a value nothing gave it (`x = undefined` on

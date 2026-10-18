@@ -110,13 +110,13 @@ impl Engine {
             }
         }
         // The node is the object's own and alive: the write cannot fail.
-        let Ok(Some(cur)) = g.write_animated(slot.node, v) else {
-            return Ok(());
-        };
-        let mut store = self.inner.store.borrow_mut();
-        if let Some(h) = store.objects.get_mut(slot.obj) {
-            slot.store(h, &cur);
-        }
+        // A setter only sets its field: the graph is not used under it.
+        let _ = g.write_animated(slot.node, v, |cur| {
+            let mut store = self.inner.store.borrow_mut();
+            if let Some(h) = store.objects.get_mut(slot.obj) {
+                slot.store(h, cur);
+            }
+        });
         Ok(())
     }
 
