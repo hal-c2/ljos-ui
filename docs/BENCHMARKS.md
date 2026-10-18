@@ -994,3 +994,53 @@ settled memory both went down. Time to first frame moved within the noise of the
   too (not measured here).
 - **The reactive graph** (1.2 MiB, sized at start) and **the type oracle read for `--example`**
   (0.9 MiB) are now the largest Rust items. A shipped application never reads the oracle.
+
+### An animation's step, a clicked samegame and llvmpipe (2026-10-18)
+
+Measured with callgrind over a 10 s run off-screen, all instructions on the main thread divided
+by the frames drawn (calls to `QuickScene::frame`); "all threads" adds every thread, Mesa's
+included. "Before" is d02fb90. samegame's boards are random, so it is given for each call.
+
+| Instructions | Before | After |
+|---|---:|---:|
+| animations on a GPU: a frame | 1 803 k | 1 489 k |
+| animations on a GPU: the animation tick, a frame | 680 k | 547 k |
+| animations on llvmpipe: a frame, main thread | 3.82 M | 2.95 M |
+| animations on llvmpipe: a frame, all threads | 14.56 M | 9.82 M |
+| animations on llvmpipe: frames drawn under callgrind in 10 s | 309 | 391 |
+| clocks on llvmpipe: a frame, main thread | 1.23 M | 1.22 M |
+| clocks on llvmpipe: a frame, all threads | 3.12 M | 3.16 M |
+| samegame: a picture's quads (`image_segs`) | 786 | 582 |
+| samegame: encoding a picture | 1 217 | 1 009 |
+
+- **An animation's step** to a number property goes straight to the property's node: no coercion
+  through the generic write, no notify list built, and the graph is already batching the tick, so
+  the marks are flushed once. It is taken only for an animation's own write of a number of the
+  property's own kind to a property without a filter that has a node; anything else, an `int`
+  given a real among them, takes the full write. `is_frozen` answers from a count while nothing is
+  frozen, a native field reads a value of its own kind without coercing it, the scene's geometry
+  effects look up `Shown` once, and a running animation's timeline is boxed so the run list moves
+  less.
+- **Pixel snapping and colour bytes** round without calling libm's `round`/`ceil`, which on
+  llvmpipe, where every frame's vertices go through them, showed among the main thread's top calls.
+- **Damage that covers most of the window** (three quarters or more) draws the window whole
+  instead of clearing and scissoring each area. On llvmpipe a scissored clear is a drawn quad with
+  its state swapped, about 48 k instructions each.
+- **A picture's quads** take one colour, worked out once, and stay white when there is no tint or
+  fade.
+- **A particle step** asks each painter whether it draws one of the groups instead of copying its
+  group list.
+
+**What is left.**
+
+- **samegame clicked**: `QuickScene::frame` is about 87 k a frame: the particle emit from the
+  timers 74 M over the run, compose 63 M, the pictures' paint 35 M. Compose is 260–320
+  instructions a node. Batching sprites into one draw op would touch about fifteen places across
+  the crates and was not done.
+- **On llvmpipe through XWayland** the swap's `dri_flush` copies the frame, 150–200 M over a
+  samegame run. That is the driver's.
+- **Clearing in larger areas.** Clearing whole 256 × 256 areas instead of 64 × 64 ones cut the
+  main thread on llvmpipe by a fifth but raised all threads by as much, and fewer frames were
+  drawn. The areas stay 64 × 64.
+- The load average was 69–81 during the GPU runs and 12–20 during the llvmpipe ones. Callgrind
+  counts instructions, so the figures do not follow it.
