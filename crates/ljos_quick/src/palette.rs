@@ -20,8 +20,8 @@
 use std::cell::Cell;
 
 use ljos_engine::{
-    Color, Engine, EngineError, MetaObject, ObjectId, PropIndex, QmlObject, Reset, ResetApply,
-    ResetValue, Value,
+    Color, Cx, Engine, EngineError, MetaObject, ObjectFlags, ObjectId, PropIndex, QmlObject, Reset,
+    ResetApply, ResetValue, Value,
 };
 
 /// `palette.button = undefined`: as the controls say ([`set_role_reset`]),
@@ -31,7 +31,8 @@ pub const ROLE_RESET: Reset = Reset::Custom {
     value: role_from_above,
 };
 
-/// Told of an item that completes with a colour set on its palette.
+/// Told of an item that completes with a colour set on its palette, or
+/// that is given its first colour after it completed.
 pub type OnItemPalette = fn(&Engine, ObjectId);
 
 #[derive(Default)]
@@ -46,7 +47,8 @@ pub fn set_role_reset(engine: &Engine, apply: ResetApply, value: ResetValue) {
 }
 
 /// What is told of an item that completes with a colour of its palette
-/// set, so that the controls inside it can take it.
+/// set, or given its first one after it completed, so that the controls
+/// inside it can take it.
 pub fn set_on_item_palette(engine: &Engine, hook: OnItemPalette) {
     engine.extension::<Hooks>().on_item.set(Some(hook));
 }
@@ -63,6 +65,21 @@ pub(crate) fn item_palette_set(engine: &Engine, item: ObjectId) {
     if let Some(hook) = engine.extension::<Hooks>().on_item.get() {
         hook(engine, item);
     }
+}
+
+/// A colour's setter: an item given its first colour after it completed
+/// tells the controls inside it, as on qml6. One that completes with a
+/// colour is told of at completion ([`crate::Item`]).
+fn role_written(cx: &Cx, c: Color) -> Option<Color> {
+    let (engine, item) = (cx.engine, cx.this);
+    let complete = engine
+        .flags(item)
+        .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+    if complete && !has_own(engine, item) {
+        // What it installs hears this write when it is stored.
+        item_palette_set(engine, item);
+    }
+    Some(c)
 }
 
 fn take_role_back(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
@@ -83,47 +100,47 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
 #[derive(Clone, Debug, QmlObject)]
 #[qml(name = "Palette", uncreatable)]
 pub struct Palette {
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub accent: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub alternate_base: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub base: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub bright_text: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub button: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub button_text: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub dark: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub highlight: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub highlighted_text: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub light: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub link: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub link_visited: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub mid: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub midlight: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub placeholder_text: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub shadow: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub text: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub tool_tip_base: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub tool_tip_text: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub window: Color,
-    #[qml(notify, reset = ROLE_RESET)]
+    #[qml(notify, reset = ROLE_RESET, write = role_written)]
     pub window_text: Color,
 }
 

@@ -3,9 +3,9 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-control.html#palette-prop
 # Verified on Qt 6.11.2 (qml6, offscreen).
 #
-# On qml6 a plain item also reads the colours of the items it is in, and
-# the platform's where nobody set one; Ljós gives a plain item only the
-# colours set on it, and the style's for the others (no scenario).
+# On qml6 a plain item reads the platform's colour where nobody above it
+# set one (#efefef for button under offscreen); Ljós gives it the style's
+# (no scenario: the platform's differ from one system to another).
 
 @qt-parity @api-QtQuick.Item.palette
 Feature: The palette of a plain item
@@ -30,7 +30,12 @@ Feature: The palette of a plain item
           objectName: "outer"
           y: 50
           palette.button: "red"
-          Item { Button { objectName: "deep" } }
+          Item { objectName: "inner"; Button { objectName: "deep" } }
+        }
+        Item {
+          objectName: "late"
+          y: 100
+          Item { Button { objectName: "lateb" } }
         }
         Button { objectName: "free"; y: 150 }
       }
@@ -49,10 +54,23 @@ Feature: The palette of a plain item
       | deep   | palette.button     | #ff0000 |
       | free   | palette.button     | #e0e0e0 |
 
+  # A plain item's colours are found when a control inside it resolves its
+  # own; reading them on the item itself would cost a check on every read.
+  @backlog
+  Scenario: A plain item reads the colours of the items it is in
+    Then the property "palette.button" of "inner" is "#ff0000"
+    When the property "palette.button" of "outer" is set to "#0000ff"
+    Then the property "palette.button" of "inner" is "#0000ff"
+
   Scenario: A later change reaches the controls inside
     When the property "palette.button" of "outer" is set to "#0000ff"
     Then the property "palette.button" of "deep" is "#0000ff"
     And the property "background.color" of "deep" is "#0000ff"
+
+  Scenario: A colour first set after the item completed reaches the controls inside
+    When the property "palette.button" of "late" is set to "#0000ff"
+    Then the property "palette.button" of "lateb" is "#0000ff"
+    And the property "background.color" of "lateb" is "#0000ff"
 
   Scenario: A colour taken back is the style's again inside
     When the method "back" of "row" is called

@@ -860,15 +860,16 @@ fn hands_down(engine: &Engine, obj: ObjectId, kind: Kind) -> bool {
 }
 
 /// `palette.button = undefined`: the colour is the one from above again,
-/// or the style's. A plain item that completes with a colour set tells
-/// the controls inside it.
+/// or the style's. A plain item that completes with a colour set, or is
+/// given its first one later, tells the controls inside it.
 pub(crate) fn register(engine: &Engine) {
     ljos_quick::palette::set_role_reset(engine, take_role_back, role_from_above);
     ljos_quick::palette::set_on_item_palette(engine, item_palette_set);
 }
 
-/// A plain item completed with colours of its own: the controls inside it
-/// look, now and whenever a colour of it changes.
+/// A plain item has colours of its own, from when it completed or from
+/// its first one set since: the controls inside it look, now and whenever
+/// a colour of it changes.
 fn item_palette_set(engine: &Engine, item: ObjectId) {
     if kind_of(engine, item) != Some(Kind::Item) {
         return;
