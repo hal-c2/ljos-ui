@@ -89,6 +89,8 @@ ApplicationWindow {
             objects.edited(ok, r)
         else if (route === "logs" && ok)
             logs.add(s)
+        else if (route === "trace" && ok)
+            trace.add(s)
         else if (route.indexOf("sample-") === 0 && ok)
             overview.part(route.substring(7), s)
     }
@@ -116,7 +118,7 @@ ApplicationWindow {
     }
 
     // The page shown.
-    readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs"]
+    readonly property var pages: ["Overview", "Processes", "Mailboxes", "Objects", "Logs", "Trace"]
     property int page: 0
 
     function refresh(changed) {
@@ -130,6 +132,8 @@ ApplicationWindow {
             objects.load(all || changed.indexOf("reloads") >= 0)
         if (all || changed.indexOf("logs") >= 0)
             logs.load()
+        if (all || changed.indexOf("traces") >= 0)
+            trace.load()
     }
 
     // Follows the application: one `app_watch` waiting at a time, asked
@@ -149,7 +153,8 @@ ApplicationWindow {
                 return
             waiting = true
             var args = counts === null ? {}
-                : { since: { paints: counts.paints, logs: counts.logs, reloads: counts.reloads },
+                : { since: { paints: counts.paints, logs: counts.logs, reloads: counts.reloads,
+                            traces: counts.traces },
                     wait_ms: 30000, settle_ms: 1000 }
             window.ask("app_watch", args, "watch")
         }
@@ -273,8 +278,8 @@ ApplicationWindow {
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: index === 4 && logs.unread > 0
-                            text: logs.unread
+                            visible: (index === 4 && logs.unread > 0) || (index === 5 && trace.unread > 0)
+                            text: index === 4 ? logs.unread : trace.unread
                             color: theme.subtle
                             font.pixelSize: 11
                         }
@@ -1197,6 +1202,11 @@ ApplicationWindow {
                                     font.pixelSize: 15
                                     elide: Text.ElideRight
                                 }
+                                Button {
+                                    visible: objects.picked !== ""
+                                    text: trace.traces(objects.picked) ? "Stop tracing" : "Trace"
+                                    onClicked: trace.toggle(objects.picked)
+                                }
                                 CheckBox {
                                     text: "Defaults too"
                                     checked: objects.all
@@ -1712,6 +1722,248 @@ ApplicationWindow {
                             anchors.centerIn: parent
                             visible: shownLines.count === 0
                             text: logs.entries.length === 0 ? "Nothing logged yet" : "No line matches"
+                            color: theme.subtle
+                        }
+                    }
+                }
+
+                // ----- Trace -------------------------------------------
+                // What the traced objects were told, in order, with the
+                // application's time, as Erlang's observer traces the
+                // messages of a process.
+                ColumnLayout {
+                    id: trace
+                    spacing: 10
+                    property var since: null
+                    property var tracing: []
+                    property int dropped: 0
+                    property int unread: 0
+
+                    function args() {
+                        var a = { max: 500 }
+                        if (since !== null)
+                            a.since = since
+                        return a
+                    }
+
+                    function load() {
+                        window.ask("app_trace", args(), "trace")
+                    }
+
+                    function traces(handle) {
+                        for (var i = 0; i < tracing.length; ++i)
+                            if (tracing[i].handle === handle)
+                                return true
+                        return false
+                    }
+
+                    function toggle(handle) {
+                        var a = args()
+                        if (handle !== undefined) {
+                            a.target = handle
+                            a.stop = traces(handle)
+                        } else
+                            a.stop = true
+                        window.ask("app_trace", a, "trace")
+                    }
+
+                    function add(s) {
+                        tracing = s.tracing
+                        dropped = s.dropped
+                        since = s.next_since
+                        for (var i = 0; i < s.events.length; ++i)
+                            put(s.events[i])
+                        var over = traceLines.count - 2000
+                        if (over > 0)
+                            traceLines.remove(0, over)
+                        if (s.events.length > 0) {
+                            traceView.positionViewAtEnd()
+                            if (window.page !== 5)
+                                unread += s.events.length
+                        }
+                        if (s.more)
+                            load()
+                    }
+
+                    function put(e) {
+                        var what = e.kind === "change" ? JSON.stringify(e.value)
+                                 : e.kind === "signal" ? "(" + e.args.map(function(a) { return JSON.stringify(a) }).join(", ") + ")"
+                                 : ""
+                        traceLines.append({
+                            seq: e.seq,
+                            at: (e.at_us / 1000000).toFixed(3) + " s",
+                            object: e.object,
+                            kind: e.kind,
+                            name: e.name || "",
+                            what: what
+                        })
+                    }
+
+                    function tone(kind) {
+                        return kind === "destroyed" ? theme.bad
+                             : kind === "signal" ? theme.warn : theme.accent
+                    }
+
+                    ListModel { id: traceLines }
+
+                    Connections {
+                        target: window
+                        function onPageChanged() {
+                            if (window.page === 5)
+                                trace.unread = 0
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Label { text: "Trace"; color: theme.text; font.pixelSize: 19; font.bold: true }
+                        Label {
+                            text: traceLines.count + " events"
+                                  + (trace.dropped > 0 ? " · " + trace.dropped + " older gave way" : "")
+                            color: theme.subtle
+                        }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: "Stop all"
+                            enabled: trace.tracing.length > 0
+                            onClicked: trace.toggle()
+                        }
+                        Button {
+                            text: "Clear"
+                            onClicked: traceLines.clear()
+                        }
+                    }
+
+                    // Whom the trace follows: Stop on each.
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Label {
+                            visible: trace.tracing.length === 0
+                            text: "Nothing is traced. Pick an object on the Objects page and press Trace."
+                            color: theme.subtle
+                        }
+                        Repeater {
+                            model: trace.tracing
+                            delegate: Rectangle {
+                                id: chip
+                                required property var modelData
+                                width: chipRow.implicitWidth + 16
+                                height: 28
+                                radius: 14
+                                color: theme.accentSoft
+                                Row {
+                                    id: chipRow
+                                    x: 8
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 6
+                                    Label {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: chip.modelData.name
+                                        color: theme.accent
+                                        font.pixelSize: 12
+                                    }
+                                    Label {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "✕"
+                                        color: theme.subtle
+                                        font.pixelSize: 12
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            anchors.margins: -4
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: "Stop tracing " + chip.modelData.name
+                                            onClicked: trace.toggle(chip.modelData.handle)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 9
+                        color: theme.card
+                        border.color: theme.rule
+                        clip: true
+                        ListView {
+                            id: traceView
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            clip: true
+                            model: traceLines
+                            ScrollBar.vertical: ScrollBar {}
+                            delegate: Item {
+                                id: traceRow
+                                required property int index
+                                required property int seq
+                                required property string at
+                                required property string object
+                                required property string kind
+                                required property string name
+                                required property string what
+                                width: ListView.view.width
+                                height: 24
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: traceRow.index % 2 ? theme.cardAlt : "transparent"
+                                }
+                                Row {
+                                    x: 6
+                                    height: parent.height
+                                    spacing: 10
+                                    Label {
+                                        width: 80
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        horizontalAlignment: Text.AlignRight
+                                        text: traceRow.at
+                                        color: theme.subtle
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                    Label {
+                                        width: 180
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: traceRow.object
+                                        color: theme.text
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 12
+                                    }
+                                    Label {
+                                        width: 70
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: traceRow.kind
+                                        color: trace.tone(traceRow.kind)
+                                        font.pixelSize: 12
+                                    }
+                                    Label {
+                                        width: 150
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: traceRow.name
+                                        color: theme.text
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 12
+                                    }
+                                    Label {
+                                        width: traceRow.width - 80 - 180 - 70 - 150 - 50
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: traceRow.what
+                                        color: theme.text
+                                        elide: Text.ElideRight
+                                        font.family: theme.mono
+                                        font.pixelSize: 12
+                                    }
+                                }
+                            }
+                        }
+                        Label {
+                            anchors.centerIn: parent
+                            visible: traceLines.count === 0
+                            text: "Nothing written down yet"
                             color: theme.subtle
                         }
                     }
