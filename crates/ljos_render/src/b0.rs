@@ -66,6 +66,7 @@ use crate::display_list::{
 use crate::glyph::{baseline_snap, is_upright, snap_bar};
 use crate::glyph_atlas::{BINS, GlyphAtlas, GlyphKey, Slot};
 use crate::image::{ImageBlit, ImageHandle, WeakImage, image_blit, nine_patch_blits};
+use crate::image_atlas::{ImageAtlas, Place};
 use crate::rgba::Rgba;
 use crate::shader::{ShaderOp, Viewport};
 use crate::tree::NodeId;
@@ -148,6 +149,15 @@ struct TextureKey {
     repeat: bool,
     /// With mipmaps, for a shader that samples it smaller than it is.
     mipmap: bool,
+    /// A texture of its own and never a place on a shared page: a shader
+    /// samples it from edge to edge.
+    alone: bool,
+}
+
+impl TextureKey {
+    fn may_share(&self) -> bool {
+        !(self.repeat || self.mipmap || self.alone)
+    }
 }
 
 /// Quads of one image under one sampling mode. The mesh names its texture
@@ -159,12 +169,49 @@ struct ImageSeg {
     /// list draws any more.
     image: WeakImage,
     mesh: Arc<Mesh>,
+    /// Where on a shared page the mesh's coordinates point; `None` while
+    /// they are fractions of the image.
+    placed: Option<ERect>,
 }
 
 struct TextureEntry {
-    handle: TextureHandle,
+    texture: Held,
     owner: WeakImage,
     last_used: u64,
+}
+
+enum Held {
+    Own(TextureHandle),
+    Shared(Place),
+}
+
+/// The texture a picture is sampled from, and where on it the picture is
+/// when that is a shared page.
+type Sampled = (TextureId, Option<ERect>);
+
+impl TextureEntry {
+    fn sampled(&self) -> Sampled {
+        match &self.texture {
+            Held::Own(h) => (h.id(), None),
+            Held::Shared(p) => (p.texture, Some(p.uv)),
+        }
+    }
+}
+
+/// Points the coordinates of `mesh`, laid over the picture as `from` says,
+/// at it where `to` says.
+fn place_uvs(mesh: &mut Mesh, from: Option<ERect>, to: Option<ERect>) {
+    for v in &mut mesh.vertices {
+        let f = from.map_or(v.uv, |r| {
+            Pos2::new(
+                (v.uv.x - r.min.x) / r.width(),
+                (v.uv.y - r.min.y) / r.height(),
+            )
+        });
+        v.uv = to.map_or(f, |r| {
+            Pos2::new(r.min.x + f.x * r.width(), r.min.y + f.y * r.height())
+        });
+    }
 }
 
 /// The most quads one tiled blit becomes. More than this is a tile of a few
@@ -282,15 +329,16 @@ impl TextureEntry {
 /// The texture for `key`, uploading the image the first time.
 fn texture_for(
     textures: &mut FxHashMap<TextureKey, TextureEntry>,
+    pages: &mut ImageAtlas,
     uploads: &mut u64,
     frame: u64,
     ctx: &Context,
     key: TextureKey,
     owner: &WeakImage,
-) -> Option<TextureId> {
+) -> Option<Sampled> {
     if let Some(t) = textures.get_mut(&key) {
         t.last_used = frame;
-        return Some(t.handle.id());
+        return Some(t.sampled());
     }
     let image = owner.upgrade()?;
     let max_side = max_texture_side(ctx);
@@ -318,18 +366,28 @@ fn texture_for(
         },
         mipmap_mode: key.mipmap.then_some(TextureFilter::Linear),
     };
-    let handle = upload(ctx, format!("ljos-image-{}", key.image), pixels, options);
-    let id = handle.id();
+    let shared = key
+        .may_share()
+        .then(|| pages.place(ctx, &pixels, options, max_side))
+        .flatten();
+    let texture = match shared {
+        Some(place) => Held::Shared(place),
+        None => Held::Own(upload(
+            ctx,
+            format!("ljos-image-{}", key.image),
+            pixels,
+            options,
+        )),
+    };
     *uploads += 1;
-    textures.insert(
-        key,
-        TextureEntry {
-            handle,
-            owner: owner.clone(),
-            last_used: frame,
-        },
-    );
-    Some(id)
+    let entry = TextureEntry {
+        texture,
+        owner: owner.clone(),
+        last_used: frame,
+    };
+    let sampled = entry.sampled();
+    textures.insert(key, entry);
+    Some(sampled)
 }
 
 /// The GPU's limit as the host said it ([`set_max_texture_side`]).
@@ -695,6 +753,8 @@ pub struct EpaintBackend {
     world_rebuilds: u64,
     atlas: GlyphAtlas,
     textures: FxHashMap<TextureKey, TextureEntry>,
+    /// The shared pages small pictures are put on.
+    pages: ImageAtlas,
     texture_uploads: u64,
     shapes: ShapeCache,
     /// The nodes that hold a shape texture, so the ones that left the frame
@@ -1002,6 +1062,7 @@ impl EpaintBackend {
             world_rebuilds: 0,
             atlas: GlyphAtlas::default(),
             textures: FxHashMap::default(),
+            pages: ImageAtlas::default(),
             texture_uploads: 0,
             shapes: ShapeCache::default(),
             textured: FxHashSet::default(),
@@ -1051,6 +1112,11 @@ impl EpaintBackend {
     /// How many image textures the backend holds now.
     pub fn image_textures(&self) -> usize {
         self.textures.len()
+    }
+
+    /// How many shared pages small pictures are on.
+    pub fn image_pages(&self) -> usize {
+        self.pages.pages()
     }
 
     /// How many image textures were uploaded so far (tests use it to prove an
@@ -1402,6 +1468,7 @@ impl EpaintBackend {
                     key: seg.key,
                     image: seg.image.clone(),
                     mesh: Arc::new(map_mesh(&seg.mesh, to_screen, opacity)),
+                    placed: None,
                 }),
                 LocalSeg::Shape(cmd) => {
                     WorldSeg::Shape(ShapeSeg::new(cmd.clone(), to_screen, opacity))
@@ -1488,6 +1555,7 @@ fn image_segs(
         smooth,
         repeat,
         mipmap: false,
+        alone: false,
     };
     // Clamped quads are made right in the mesh of the segment they would
     // join: a particle system draws each of hundreds of pictures alone,
@@ -1512,6 +1580,7 @@ fn image_segs(
             key: key(false),
             image: image.downgrade(),
             mesh: Arc::new(mesh),
+            placed: None,
         }));
     }
     let Some(LocalSeg::Image(last)) = segs.last_mut() else {
@@ -1537,6 +1606,7 @@ fn image_segs(
                 key: key(true),
                 image: image.downgrade(),
                 mesh: Arc::new(repeat),
+                placed: None,
             }));
         }
     }
@@ -1586,6 +1656,7 @@ impl RenderBackend for EpaintBackend {
         // the same.
         self.textures
             .retain(|_, t| t.owner.is_alive() && (t.last_used >= keep_after || t.only_copy()));
+        self.pages.sweep();
     }
 
     fn encode(&mut self, view: &FrameView<'_>, sink: &mut EguiSink<'_>) -> EncodeStats {
@@ -1736,8 +1807,9 @@ impl RenderBackend for EpaintBackend {
                             tracing::debug!("B0: an image needs an egui Context; skipped");
                             continue;
                         };
-                        let Some(texture) = texture_for(
+                        let Some((texture, uv)) = texture_for(
                             &mut self.textures,
+                            &mut self.pages,
                             &mut self.texture_uploads,
                             self.frame,
                             ctx,
@@ -1746,8 +1818,11 @@ impl RenderBackend for EpaintBackend {
                         ) else {
                             continue;
                         };
-                        if seg.mesh.texture_id != texture {
-                            Arc::make_mut(&mut seg.mesh).texture_id = texture;
+                        if seg.mesh.texture_id != texture || seg.placed != uv {
+                            let mesh = Arc::make_mut(&mut seg.mesh);
+                            mesh.texture_id = texture;
+                            place_uvs(mesh, seg.placed, uv);
+                            seg.placed = uv;
                         }
                         sink.shapes.push(ClippedShape {
                             clip_rect: clip,
@@ -1789,15 +1864,18 @@ impl RenderBackend for EpaintBackend {
                                     // The painter's sampler wraps.
                                     repeat: false,
                                     mipmap: t.mipmap,
+                                    alone: true,
                                 };
                                 texture_for(
                                     &mut self.textures,
+                                    &mut self.pages,
                                     &mut self.texture_uploads,
                                     self.frame,
                                     ctx,
                                     key,
                                     &image.downgrade(),
                                 )
+                                .map(|(id, _)| id)
                             })
                             .collect();
                         if seg.paint.as_ref().is_none_or(|p| p.textures != textures) {
@@ -1911,6 +1989,7 @@ impl RenderBackend for EpaintBackend {
                 self.shapes.clear();
                 self.atlas.reset();
                 self.textures.clear();
+                self.pages.sweep();
             }
             MemoryPressure::Moderate => {
                 let keep_after = self.frame.saturating_sub(10);
@@ -1934,6 +2013,7 @@ impl RenderBackend for EpaintBackend {
                 self.shapes.retain(|cmd| seen.iter().any(|s| s.same(cmd)));
                 self.textures
                     .retain(|_, t| t.owner.is_alive() && t.last_used >= keep_after);
+                self.pages.sweep();
             }
         }
     }

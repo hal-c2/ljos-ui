@@ -25,6 +25,8 @@ pub mod b0;
 mod b0_shape;
 #[cfg(feature = "b0")]
 mod glyph_atlas;
+#[cfg(feature = "b0")]
+mod image_atlas;
 
 pub use backend::{EncodeStats, FrameView, MemoryPressure, RenderBackend, RenderError, RgbaImage};
 pub use canvas::{CanvasPaint, CanvasPainter, CanvasShadow, DrawState};

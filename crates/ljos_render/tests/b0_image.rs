@@ -83,6 +83,25 @@ fn whole(image: &ImageHandle, dst: Rect, smooth: bool) -> DrawOp {
     }
 }
 
+/// The side of the pages small pictures share.
+const PAGE: f32 = 512.0;
+
+/// `uv`, fractions of the first `w` by `h` picture put on a page, as the
+/// page's: it is a pixel in from the corner, past the edge repeated.
+fn first_on_page(uv: [f32; 4], w: f32, h: f32) -> [f32; 4] {
+    let [x0, y0, x1, y1] = uv;
+    [
+        (1.0 + x0 * w) / PAGE,
+        (1.0 + y0 * h) / PAGE,
+        (1.0 + x1 * w) / PAGE,
+        (1.0 + y1 * h) / PAGE,
+    ]
+}
+
+fn near(a: [f32; 4], b: [f32; 4]) -> bool {
+    a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-6)
+}
+
 /// The corners of what a mesh covers: positions, then texture coordinates.
 fn bounds(m: &Mesh) -> ([f32; 4], [f32; 4]) {
     let fold = |get: fn(&egui::epaint::Vertex) -> Pos2| {
@@ -107,10 +126,12 @@ fn an_image_is_one_textured_quad_where_its_node_is() {
     assert_eq!(stats.warnings, 0);
     let m = &meshes[0];
     assert_eq!((m.vertices.len(), m.indices.len()), (4, 6));
-    assert_ne!(m.texture_id, TextureId::default(), "its own texture");
+    assert_ne!(m.texture_id, TextureId::default(), "a texture");
     let (pos, uv) = bounds(m);
     assert_eq!(pos, [10.0, 20.0, 90.0, 60.0]);
-    assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
+    let whole = first_on_page([0.0, 0.0, 1.0, 1.0], 40.0, 20.0);
+    assert!(near(uv, whole), "{uv:?} {whole:?}");
+    assert_eq!(be.image_pages(), 1, "on a shared page");
     // The texture tints nothing.
     assert!(m.vertices.iter().all(|v| v.color == egui::Color32::WHITE));
 }
@@ -210,14 +231,15 @@ fn a_part_of_the_picture_and_a_flip_are_texture_coordinates() {
     let (meshes, _) = s.run(&mut be, Some(&ctx));
     let m = &meshes[0];
     let (_, uv) = bounds(m);
-    assert_eq!(uv, [0.5, 0.5, 1.0, 1.0]);
+    let part = first_on_page([0.5, 0.5, 1.0, 1.0], 40.0, 20.0);
+    assert!(near(uv, part), "{uv:?} {part:?}");
     // Flipped: the left edge of the quad reads the right edge of the part.
     let left = m
         .vertices
         .iter()
         .find(|v| v.pos.x == 0.0)
         .expect("a left vertex");
-    assert_eq!(left.uv.x, 1.0);
+    assert!((left.uv.x - part[2]).abs() < 1e-6);
 }
 
 #[test]
@@ -238,6 +260,43 @@ fn an_image_is_uploaded_once_however_often_it_is_drawn() {
         s.run(&mut be, Some(&ctx));
     }
     assert_eq!(be.texture_uploads(), 1, "later frames reuse the texture");
+}
+
+#[test]
+fn small_pictures_of_different_images_share_a_texture_and_big_ones_do_not() {
+    let ctx = Context::default();
+    let (dial, hand, wall) = (picture(200, 200), picture(13, 88), picture(300, 40));
+    let mut s = Scene::new(400.0, 300.0);
+    let a = s.node(0.0, 0.0, 200.0, 200.0);
+    let b = s.node(90.0, 10.0, 13.0, 88.0);
+    let c = s.node(0.0, 200.0, 300.0, 40.0);
+    s.op(a, whole(&dial, Rect::new(0.0, 0.0, 200.0, 200.0), true));
+    s.op(b, whole(&hand, Rect::new(0.0, 0.0, 13.0, 88.0), true));
+    s.op(c, whole(&wall, Rect::new(0.0, 0.0, 300.0, 40.0), true));
+    let mut be = EpaintBackend::new();
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes.len(), 3);
+    assert_eq!(meshes[0].texture_id, meshes[1].texture_id, "one draw");
+    assert_ne!(meshes[0].texture_id, meshes[2].texture_id);
+    assert_eq!((be.image_textures(), be.image_pages()), (3, 1));
+    let (_, dial_uv) = bounds(&meshes[0]);
+    let (_, hand_uv) = bounds(&meshes[1]);
+    assert!(
+        dial_uv[2] <= hand_uv[0] || dial_uv[3] <= hand_uv[1],
+        "apart"
+    );
+    let (_, wall_uv) = bounds(&meshes[2]);
+    assert_eq!(wall_uv, [0.0, 0.0, 1.0, 1.0], "a texture of its own");
+    // A moved hand is mapped anew from its picture and lands on its place.
+    s.tree.set_pos(b, 120.0, 10.0);
+    let (moved, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(bounds(&moved[1]).1, hand_uv);
+    // Once its pictures are gone the page goes too.
+    s.tree.set_content(a, None);
+    s.tree.set_content(b, None);
+    drop((dial, hand));
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.image_pages(), 0);
 }
 
 #[test]
@@ -304,7 +363,8 @@ fn a_nine_patch_is_nine_quads_of_one_texture() {
     assert_eq!(meshes[0].vertices.len(), 9 * 4);
     let (pos, uv) = bounds(&meshes[0]);
     assert_eq!(pos, [0.0, 0.0, 100.0, 60.0]);
-    assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
+    let whole = first_on_page([0.0, 0.0, 1.0, 1.0], 30.0, 30.0);
+    assert!(near(uv, whole), "{uv:?} {whole:?}");
     assert_eq!(be.texture_uploads(), 1);
 }
 
