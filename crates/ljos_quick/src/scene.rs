@@ -1387,6 +1387,14 @@ impl QuickScene {
                     shown_num(engine, &shown, obj, Item::Y.index),
                     e.may_scroll && crate::flickable::content_moving(engine, obj),
                 );
+                // Moved here, while the entry is at hand: a new geometry or
+                // transform list this frame sets it again from this place.
+                if let Some(g) = &e.geom {
+                    self.tree.set_local(
+                        e.node,
+                        local_transform(e.place, g, &e.list, self.scale_factor),
+                    );
+                }
                 self.told_moved.push(obj);
             }
         }
@@ -1425,11 +1433,8 @@ impl QuickScene {
                     }
                 }
             }
-            for obj in self.told_moved.drain(..) {
-                if !s.geom.contains_key(&obj) {
-                    moved.push(obj);
-                }
-            }
+            // Each was moved as its place was read.
+            self.told_moved.clear();
             let geoms: Vec<(ObjectId, Geom)> = s.geom.drain().collect();
             (geoms, moved)
         };
