@@ -2360,3 +2360,71 @@ The largest remaining pieces of the main thread are:
 In clocks, the transform-list effect of each hand that springs reruns every frame. Each rerun is
 2.9 k, mostly tracked reads of `Rotation`'s field-backed `origin`, `axis` and `distanceToPlane`,
 about 20 k a frame.
+
+### Script gaps to qml6, second pass: calqlatr, clocks, for…in and samegame (2026-10-18)
+
+The same bench copies, runs and builds as the section above. The base is 1a65e365. Ir is from
+callgrind on a release build. Wall time is the fastest of 5 runs, alternating builds, on a
+machine with a load average of 20–37 from other work, so only Ir is a reliable comparison
+between builds. qml6 was run under the same load.
+
+| | qml6 | Ljós base | Ljós after |
+|---|---:|---:|---:|
+| calqlatr, Ir per press (280 presses) | | 2.127 M | 2.025 M |
+| calqlatr, wall per press (700 presses) | 0.102 ms | 0.176 ms | 0.164 ms |
+| clocks, Ir per `timeChanged` (700 calls) | | 39.8 k | 36.2 k |
+| clocks, wall per `timeChanged` (7 000 calls) | 0.0007 ms | 0.0028 ms | 0.0025 ms |
+| samegame, Ir per board built (2 boards) | | 88.4 M | 81.3 M |
+| samegame, of that the script call | | 71.1 M | 66.3 M |
+| samegame, of that the destroy frame | | 16.9 M | 14.7 M |
+| samegame, wall per new game (40) | 7.6–7.8 ms | 6.9 ms | 6.9 ms |
+| samegame, wall per game and 20 clicks (40) | 12.1–12.3 ms | 9.4 ms | 8.7 ms |
+
+**calqlatr.**
+- A script's write of a number, bool or text to a plain property goes straight to its node
+  (`plain_script_write`), and a script's list face is found by pointer first.
+- A ListModel change, followed by `positionViewAtEnd`, no longer lays the view out twice in a
+  batch. Each append is now one pass each way, down from three
+  (`a_row_appended_and_shown_at_the_end_is_laid_out_once_each_way`).
+- What is left per press: about 200 host property reads (about 680 Ir each, plus conversion);
+  33 writes, each 16–24 k with the bindings they flush; about 11 Behavior starts of about 14 k
+  each; and `grid.children` copied about 96 times (14 %).
+- DECISION: the `children` copies stay. A shared frozen array would change what `push` and
+  `sort` do on it. A live list object is a larger change.
+
+**clocks.**
+- `Date` is a plain wrapper again, not a Proxy, and asks the host only while the clock is
+  pinned.
+- What is left per call: rquickjs's accessor trampolines (about 600 Ir per access),
+  `get_date_fields` (about 840), and the interpreter (about 6.5 k).
+- DECISION: C accessors that skip rquickjs are left out. They would depend on the layout of
+  rquickjs's class opaque, which is not part of its API.
+
+**for…in.**
+- Properties are listed base first, then signals, as qml6 does
+  (`features/language/object-enumeration.feature`, @qt-parity).
+- A type's prototype is given copies of its base's accessors in that order, instead of
+  chaining to the base prototype. maroon's `benchSpike` costs 357.7 M → 360.2 M Ir (+0.7 %):
+  2 858 entries copied over 29 types, about 880 Ir each. About 70 % of the prototype win of the
+  section above is kept.
+- DECISION: methods stay non-enumerable and `Object.keys` stays empty. Qt lists both.
+
+**samegame `benchNew`.** A block is about 20 objects: an Item, three Behaviors with their
+animations, an Image, two emitters with their shapes and directions, and two States. The cuts:
+- A destroyed object is taken out of its owner's and visual parent's child lists by itself.
+  Before, each of the hundreds of blocks in one pass of deferred deletes had the whole list
+  scanned, with a store lookup per sibling.
+- The list properties of a holder are cleaned against a sorted list of the dead, not compared
+  with each of them.
+- An empty list property shares one empty list until it is written. An Item has six. The
+  in-place edit of a list no longer makes an empty one to swap in.
+- Lookups that throw away the reason (`find_property`) build no error text. The place a
+  Behavior is written is formatted only for a warning. A dotted member name is one string, not
+  a join plus a format. Required properties are listed once per type, not found by scanning
+  every property of every object made.
+- Maps keyed by ids hash with Fx: contexts' ids, singleton scopes (looked up for every
+  destroyed object), the registry, and Behavior followers.
+
+What is left of a block is the per-object work of creation: binding setup, property writes,
+completion, `Item` init with its two watches, and about 400 allocations. The Image's completion
+(about 39 k Ir) is the image store's.
