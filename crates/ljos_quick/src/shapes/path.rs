@@ -24,7 +24,7 @@ use crate::enums::EnumTable;
 use crate::item::{is_unset, is_unset_tracked, num};
 
 /// What a `Path` comes to.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct PathGeometry {
     /// The outline, `Path.scale` applied. The same `Arc` for as long as
     /// nothing it was made from changes.
@@ -162,11 +162,20 @@ fn cache_of(engine: &Engine, path: ObjectId) -> Option<ObjectId> {
         let mut revision = 0_i32;
         engine
             .bind_initial(cache, GeometryCache::REVISION.index, move |e| {
-                let built = Rc::new(build(e, path));
-                let _ = e.with_mut(path, |p: &mut Path| p.geometry = Some(built));
-                // Never the same twice, so that everything that read the
-                // geometry reads it again.
-                revision = revision.wrapping_add(1);
+                let built = build(e, path);
+                // Built again for nothing, as when what it read was moved
+                // and came back, or moved along with something it does not
+                // use: the readers keep what they have.
+                let same = e
+                    .with(path, |p: &Path| p.geometry.as_deref() == Some(&built))
+                    .unwrap_or(false);
+                if !same {
+                    let built = Rc::new(built);
+                    let _ = e.with_mut(path, |p: &mut Path| p.geometry = Some(built));
+                    // Never the same twice, so that everything that read
+                    // the geometry reads it again.
+                    revision = revision.wrapping_add(1);
+                }
                 Value::Int(revision)
             })
             .ok()?;

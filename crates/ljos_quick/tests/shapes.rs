@@ -195,6 +195,40 @@ fn writing_the_value_a_point_has_makes_nothing_anew() {
 }
 
 #[test]
+fn a_path_made_again_the_same_makes_nothing_anew() {
+    // The same outline written another way: whoever drew the path keeps
+    // what they drew, and the path has not changed.
+    let rig = Rig::new(
+        r#"
+import QtQuick
+import QtQuick.Shapes
+Item {
+  width: 200; height: 200
+  property int changes: 0
+  Shape {
+    objectName: "shape"
+    ShapePath {
+      strokeColor: "red"; strokeWidth: 4; fillColor: "transparent"
+      onChanged: changes++
+      PathSvg { objectName: "svg"; path: "M 10 10 L 90 10 L 90 90" }
+    }
+  }
+}
+"#,
+    );
+    let shape = rig.content("shape");
+    set(
+        &rig.e,
+        rig.obj("svg"),
+        "path",
+        Value::from("M10,10 L90,10 L90,90"),
+    );
+    assert!(!rig.s.needs_frame());
+    assert!(Arc::ptr_eq(&shape, &rig.content("shape")));
+    assert_eq!(rig.e.read_by_name(rig.root, "changes"), Value::Int(0));
+}
+
+#[test]
 fn a_path_left_of_and_above_its_shape_is_painted() {
     // The Shape has no size and nothing of it lies at or after its origin;
     // the path is in the window all the same.
