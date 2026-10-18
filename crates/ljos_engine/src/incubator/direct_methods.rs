@@ -113,7 +113,7 @@ impl Engine {
                 // bound to its object (`Engine::method_js`).
                 Arg::Property { object, name } => {
                     let o = inst.resolve(*object)?;
-                    self.property_index(o, name).ok()?;
+                    self.find_property(o, name)?;
                     DirectParam::Read(held(o)?, name.clone())
                 }
                 Arg::Namespace {

@@ -330,7 +330,7 @@ impl Engine {
         root: ObjectId,
         name: &str,
     ) -> Option<(ObjectId, PropIndex, Option<String>)> {
-        if let Ok(p) = self.property_index(root, name) {
+        if let Some(p) = self.find_property(root, name) {
             return Some((root, p, None));
         }
         let mut path: Vec<String> = name.split('.').map(str::to_owned).collect();

@@ -622,11 +622,10 @@ impl Engine {
             let Some(meta) = self.meta_of(o) else {
                 continue;
             };
-            for (i, p) in meta.properties.iter().enumerate() {
-                if !p.flags.contains(PropertyFlags::REQUIRED) {
+            for &prop in meta.required() {
+                let Some(p) = meta.property(prop) else {
                     continue;
-                }
-                let prop = PropIndex(i as u32);
+                };
                 let set = self.is_bound(o, prop)
                     || self
                         .provenance(o, prop)
@@ -1361,20 +1360,23 @@ impl Engine {
         let Some((name, path)) = on.split_last() else {
             return;
         };
-        let at = self.location_of(source).unwrap_or_default();
+        // Only a warning names the place.
+        let at = || self.location_of(source).unwrap_or_default();
         match self.member_target(obj, path, name) {
             Ok(t) => {
                 if !self.offer_value_source(source, t.obj, t.prop) {
                     let ty = self.meta_of(source).map(|m| m.name.to_string());
                     self.warn(format!(
-                        "{at}\"{}\" cannot operate on \"{}\"",
+                        "{}\"{}\" cannot operate on \"{}\"",
+                        at(),
                         ty.unwrap_or_default(),
                         on.join(".")
                     ));
                 }
             }
             Err(_) => self.not_assignable(format!(
-                "{at}Cannot assign to non-existent property \"{}\"",
+                "{}Cannot assign to non-existent property \"{}\"",
+                at(),
                 on.join(".")
             )),
         }
@@ -1911,19 +1913,29 @@ impl Engine {
         name: &str,
     ) -> Result<Target, EngineError> {
         if path.is_empty() {
-            return match (self.property_index(obj, name), name.rsplit_once('.')) {
-                (Ok(prop), _) => Ok(Target { obj, prop }),
+            return match self.property_index(obj, name) {
+                Ok(prop) => Ok(Target { obj, prop }),
                 // What is attached is written with its whole path, which
                 // may lead through an object: `ScrollBar.vertical.policy`.
-                (Err(_), Some((through, leaf))) => {
-                    let through: Vec<String> = through.split('.').map(str::to_owned).collect();
-                    self.member_target(obj, &through, leaf)
-                }
-                (Err(e), None) => Err(e),
+                Err(e) => match name.rsplit_once('.') {
+                    Some((through, leaf)) => {
+                        let through: Vec<String> = through.split('.').map(str::to_owned).collect();
+                        self.member_target(obj, &through, leaf)
+                    }
+                    None => Err(e),
+                },
             };
         }
-        let dotted = format!("{}.{name}", path.join("."));
-        if let Ok(prop) = self.property_index(obj, &dotted) {
+        // One string, made as it is looked up: a group leaf is a property
+        // of that dotted name (`anchors.fill`).
+        let mut dotted =
+            String::with_capacity(path.iter().map(|s| s.len() + 1).sum::<usize>() + name.len());
+        for seg in path {
+            dotted.push_str(seg);
+            dotted.push('.');
+        }
+        dotted.push_str(name);
+        if let Some(prop) = self.find_property(obj, &dotted) {
             return Ok(Target { obj, prop });
         }
         // `frame.color` where `frame` is an alias of `box.border`: the
@@ -1955,7 +1967,7 @@ impl Engine {
     /// (`box.border`, `label.font`): that object and the property's name.
     /// None for anything else, an alias of an object or of one member.
     fn aliased_property(&self, obj: ObjectId, name: &str) -> Option<(ObjectId, Atom)> {
-        let prop = self.property_index(obj, name).ok()?;
+        let prop = self.find_property(obj, name)?;
         let t = self.unalias(Target { obj, prop });
         if (t.obj, t.prop) == (obj, prop) {
             return None;
@@ -1989,7 +2001,7 @@ impl Engine {
         self.make_when_reached(obj, path);
         let mut cur = obj;
         for seg in path {
-            let p = self.property_index(cur, seg).ok()?;
+            let p = self.find_property(cur, seg)?;
             let group = self
                 .meta_of(cur)
                 .and_then(|m| {
@@ -2446,7 +2458,7 @@ impl Engine {
                         .unwrap_or(false);
                     if group {
                         let leaf = path.get(i + 1)?;
-                        let p = self.property_index(o, &format!("{name}.{leaf}")).ok()?;
+                        let p = self.find_property(o, &format!("{name}.{leaf}"))?;
                         cur = self.read(o, p);
                         i += 2;
                         continue;
@@ -2553,7 +2565,7 @@ impl Engine {
                 let face = matches!(v, Value::List(_))
                     .then(|| {
                         let o = inst.resolve(*object)?;
-                        let p = self.property_index(o, name).ok()?;
+                        let p = self.find_property(o, name)?;
                         let js = self.inner.js.borrow().clone()?;
                         match self.script_list(o, p) {
                             Some((owner, list)) => self.list_face(s, &js, owner, list).ok(),

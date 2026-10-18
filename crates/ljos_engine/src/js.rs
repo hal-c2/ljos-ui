@@ -974,7 +974,7 @@ fn forwarded_prop(engine: &Engine, id: ObjectId, prop: u32) -> (ObjectId, u32) {
         return (new, prop);
     }
     let name = names.props.get(prop as usize);
-    match name.and_then(|n| engine.property_index(new, n.as_str()).ok()) {
+    match name.and_then(|n| engine.find_property(new, n.as_str())) {
         Some(p) => (new, p.0),
         None => (id, prop),
     }

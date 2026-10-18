@@ -1177,11 +1177,27 @@ impl Engine {
         }
     }
 
+    /// [`Engine::property_index`] for a caller that has no use for why
+    /// there is none: no error is built.
+    pub fn find_property(&self, obj: ObjectId, name: &str) -> Option<PropIndex> {
+        self.inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)?
+            .meta
+            .property_index(name)
+    }
+
     pub fn read_by_name(&self, obj: ObjectId, name: &str) -> Value {
-        match self.property_index(obj, name) {
-            Ok(p) => self.read(obj, p),
-            Err(EngineError::DeadObject(_)) => Value::Null,
-            Err(_) => Value::Undefined,
+        let found = {
+            let store = self.inner.store.borrow();
+            store.objects.get(obj).map(|h| h.meta.property_index(name))
+        };
+        match found {
+            Some(Some(p)) => self.read(obj, p),
+            None => Value::Null,
+            Some(None) => Value::Undefined,
         }
     }
 
@@ -2808,7 +2824,7 @@ impl Engine {
 
     /// The property `name` of a context object; tracked.
     fn context_object_property(&self, obj: ObjectId, name: &str) -> Option<Value> {
-        let p = self.property_index(obj, name).ok()?;
+        let p = self.find_property(obj, name)?;
         self.try_read(obj, p).ok()
     }
 

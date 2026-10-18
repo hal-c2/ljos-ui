@@ -333,6 +333,9 @@ struct Lookup {
     /// [`Reset::FollowFromCreation`], and what gives each its first value.
     /// Empty for nearly every type.
     absent: Vec<(PropIndex, ResetValue)>,
+    /// The `required` properties, inherited ones included. Empty for
+    /// nearly every type.
+    required: Vec<PropIndex>,
 }
 
 /// What in QML declares a type: an object prints by it (`String(item)`).
@@ -406,6 +409,9 @@ impl MetaObject {
             let mut l = Lookup::default();
             for (i, p) in self.properties.iter().enumerate() {
                 l.props.insert(p.name.clone(), PropIndex(i as u32));
+                if p.flags.contains(PropertyFlags::REQUIRED) {
+                    l.required.push(PropIndex(i as u32));
+                }
                 if let Some(
                     Reset::Absent { value, .. }
                     | Reset::FollowFromCreation(value)
@@ -429,6 +435,11 @@ impl MetaObject {
     /// a value ([`Reset::Absent`]), inherited ones included.
     pub(crate) fn absent(&self) -> &[(PropIndex, ResetValue)] {
         &self.lookup().absent
+    }
+
+    /// The `required` properties, inherited ones included.
+    pub(crate) fn required(&self) -> &[PropIndex] {
+        &self.lookup().required
     }
 
     /// A property by name, inherited ones included.
