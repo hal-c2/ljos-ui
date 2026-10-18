@@ -112,7 +112,8 @@ struct KindFace {
     make: Persistent<Function<'static>>,
     /// What tells a value of the kind from any other object.
     proto: Persistent<Object<'static>>,
-    fields: Vec<String>,
+    /// Shared, so that reading a value does not copy the names.
+    fields: Rc<[String]>,
 }
 
 /// The property of a kind's prototype that holds the kind's number. It only
@@ -933,7 +934,7 @@ impl<'js> Scope<'js> {
             return Ok(None);
         }
         let mut fields = Vec::with_capacity(names.len());
-        for name in &names {
+        for name in names.iter() {
             let v: Value<'js> = o.get(name.as_str())?;
             // Script can build an object on the prototype by hand; without
             // the fields it is just an object.
@@ -1042,7 +1043,16 @@ impl<'js> Scope<'js> {
             }
             Type::Object => {
                 let o = v.as_object().expect("object");
-                match Class::<HostWrapper>::from_object(o) {
+                // A point, a colour or an object a script made is a plain
+                // object. Asked whether it is a host object, QuickJS
+                // throws a TypeError and rquickjs catches it, which costs
+                // more than all the rest of reading the value.
+                let host = if is_plain_object(v) {
+                    None
+                } else {
+                    Class::<HostWrapper>::from_object(o)
+                };
+                match host {
                     Some(c) => JsValue::Object(c.borrow().id),
                     None => match self.read_color(o)? {
                         Some(c) => c,
@@ -1080,6 +1090,15 @@ fn object_address(v: &Value<'_>) -> Option<usize> {
     // SAFETY: the value is tagged as an object, so its payload is the
     // pointer to it; the pointer is only compared, never followed.
     Some(unsafe { rquickjs::qjs::JS_VALUE_GET_PTR(v.as_raw()) } as usize)
+}
+
+/// Whether `v` is an ordinary object, of QuickJS's first class
+/// (`JS_CLASS_OBJECT`, which the bindings do not export): never a host
+/// object, whose class is one registered after the built-in ones.
+fn is_plain_object(v: &Value<'_>) -> bool {
+    const JS_CLASS_OBJECT: rquickjs::qjs::JSClassID = 1;
+    // SAFETY: only reads the class of the value, whatever it is tagged as.
+    unsafe { rquickjs::qjs::JS_GetClassID(v.as_raw()) == JS_CLASS_OBJECT }
 }
 
 /// A loaded module and the functions it exports.
@@ -1433,6 +1452,7 @@ impl JsHost {
             let make: Function = face.get("make")?;
             let proto: Object = face.get("proto")?;
             let fields: Vec<String> = face.get("fields")?;
+            let fields: Rc<[String]> = fields.into();
             let index = scope.state.kinds.borrow().len() as u32;
             proto.prop(KIND_MARK, Property::from(index as i32))?;
             scope.state.kinds.borrow_mut().push(KindFace {
