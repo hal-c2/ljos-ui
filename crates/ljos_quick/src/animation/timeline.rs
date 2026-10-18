@@ -479,6 +479,14 @@ fn objects_of(engine: &Engine, list: Value) -> Vec<ObjectId> {
     }
 }
 
+/// What `anim` holds in `p`, or nothing when nothing ever gave it a value
+/// and it holds its type's default. Asking whether it was given one costs
+/// less than the read, and the animation a Behavior starts at every write
+/// sets few of the properties a start goes through.
+fn given(engine: &Engine, anim: ObjectId, p: PropIndex) -> Option<Value> {
+    (!is_unset(engine, anim, p)).then(|| engine.read(anim, p))
+}
+
 fn duration_of(engine: &Engine, anim: ObjectId) -> i64 {
     let ms = if is_a::<PropertyAnimation>(engine, anim) {
         engine.read(anim, PropertyAnimation::DURATION.index)
@@ -547,20 +555,23 @@ fn named(engine: &Engine, anim: ObjectId) -> (Vec<ObjectId>, Vec<String>) {
     let typed = is_a::<PropertyAnimation>(engine, anim);
     let get = |p: PropIndex, name: &str| {
         if typed {
-            engine.read(anim, p)
+            given(engine, anim, p)
         } else {
-            engine.read_by_name(anim, name)
+            Some(engine.read_by_name(anim, name))
         }
     };
-    let mut targets = objects_of(engine, get(PropertyAnimation::TARGETS.index, "targets"));
-    if let Some(t) = get(PropertyAnimation::TARGET.index, "target").as_object()
+    let mut targets = get(PropertyAnimation::TARGETS.index, "targets")
+        .map_or_else(Vec::new, |v| objects_of(engine, v));
+    if let Some(t) = get(PropertyAnimation::TARGET.index, "target").and_then(|v| v.as_object())
         && !targets.contains(&t)
     {
         targets.insert(0, t);
     }
     let mut names: Vec<String> = Vec::new();
-    let one = get(PropertyAnimation::PROPERTY.index, "property").to_js_string();
-    let many = get(PropertyAnimation::PROPERTIES.index, "properties").to_js_string();
+    let text =
+        |p: PropIndex, name: &str| get(p, name).map(|v| v.to_js_string()).unwrap_or_default();
+    let one = text(PropertyAnimation::PROPERTY.index, "property");
+    let many = text(PropertyAnimation::PROPERTIES.index, "properties");
     for n in std::iter::once(&*one).chain(many.split(',')) {
         let n = n.trim();
         if !n.is_empty() && !names.iter().any(|x| x == n) {
@@ -725,17 +736,18 @@ fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
         None
     };
     let read = |leaf: PropIndex, name: &str| match group {
-        Some(g) => engine.read(anim, PropIndex(g.index.0 + 1 + leaf.0)),
-        None => engine.read_by_name(anim, name),
+        Some(g) => given(engine, anim, PropIndex(g.index.0 + 1 + leaf.0)),
+        None => Some(engine.read_by_name(anim, name)),
     };
-    let num = |leaf: PropIndex, name: &str| read(leaf, name).to_number();
-    let ty = num(EasingGroup::TY.index, "easing.type") as i32;
+    let default = Curve::default();
+    let num = |leaf: PropIndex, name: &str, or: f64| read(leaf, name).map_or(or, |v| v.to_number());
+    let ty = num(EasingGroup::TY.index, "easing.type", default.ty.into()) as i32;
     // Only a spline goes by its points, and the list is made anew at
     // each read.
     let bezier = match ty {
         super::easing::BEZIER_SPLINE => {
             match read(EasingGroup::BEZIER_CURVE.index, "easing.bezierCurve") {
-                Value::List(l) => l.iter().map(Value::to_number).collect(),
+                Some(Value::List(l)) => l.iter().map(Value::to_number).collect(),
                 _ => Vec::new(),
             }
         }
@@ -743,9 +755,17 @@ fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
     };
     Curve {
         ty,
-        amplitude: num(EasingGroup::AMPLITUDE.index, "easing.amplitude"),
-        overshoot: num(EasingGroup::OVERSHOOT.index, "easing.overshoot"),
-        period: num(EasingGroup::PERIOD.index, "easing.period"),
+        amplitude: num(
+            EasingGroup::AMPLITUDE.index,
+            "easing.amplitude",
+            default.amplitude,
+        ),
+        overshoot: num(
+            EasingGroup::OVERSHOOT.index,
+            "easing.overshoot",
+            default.overshoot,
+        ),
+        period: num(EasingGroup::PERIOD.index, "easing.period", default.period),
         bezier,
     }
 }
@@ -794,7 +814,7 @@ impl Timed {
         };
         // Only a PropertyAnimation has them, and each write reads them.
         let ends = || {
-            let at = |p: PropIndex| match engine.read(anim, p) {
+            let at = |p: PropIndex| match given(engine, anim, p)? {
                 Value::Undefined => None,
                 v => Some(v),
             };
@@ -968,7 +988,7 @@ impl Timed {
             // An animation type this module does not know stands still.
             (Node::Pause, 0)
         };
-        let loops = engine.read(anim, Animation::LOOPS.index).to_number();
+        let loops = given(engine, anim, Animation::LOOPS.index).map_or(1.0, |v| v.to_number());
         let loops = if loops < 0.0 { FOREVER } else { loops as i64 };
         Timed {
             // Measured on Qt: a SmoothedAnimation and a SpringAnimation
