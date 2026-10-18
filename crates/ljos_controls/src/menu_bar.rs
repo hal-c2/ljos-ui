@@ -64,6 +64,16 @@ pub struct MenuBarItem {
     /// The press that is down, or was last, came from the pointer.
     #[qml(skip)]
     by_pointer: Rc<Cell<bool>>,
+    /// What the item hears its menu's title by, and whether its text is
+    /// the title it took.
+    #[qml(skip)]
+    title: Rc<TitleFollow>,
+}
+
+#[derive(Debug, Default)]
+struct TitleFollow {
+    conn: Cell<Option<(ObjectId, ConnectionId)>>,
+    taken: Cell<bool>,
 }
 
 impl Default for MenuBarItem {
@@ -77,6 +87,7 @@ impl Default for MenuBarItem {
             menu: None,
             highlighted: false,
             by_pointer: Rc::default(),
+            title: Rc::default(),
         }
     }
 }
@@ -111,8 +122,44 @@ impl MenuBarItem {
                 say(e);
             }
         })?;
-        Ok(())
+        e.connect_by_name(item, "menuChanged", move |e, _| {
+            check(e, "menu bar item", follow_title(e, item));
+        })?;
+        follow_title(e, item)
     }
+}
+
+/// The item names its menu, in a bar or not: it takes the menu's title
+/// when the menu becomes its, unless its own text was given, and every
+/// time the title changes after, given or not (as on Qt 6.11.2).
+fn follow_title(e: &Engine, item: ObjectId) -> Result<(), EngineError> {
+    let follow = e.with::<MenuBarItem, _>(item, |i| i.title.clone())?;
+    if let Some((menu, conn)) = follow.conn.take()
+        && e.is_alive(menu)
+    {
+        e.disconnect(conn);
+    }
+    let Some(menu) = menu_of(e, item) else {
+        return Ok(());
+    };
+    let take = move |e: &Engine| -> Result<(), EngineError> {
+        let title = e.untrack(|| e.read(menu, Menu::TITLE.index));
+        set_computed(e, item, AbstractButton::TEXT.index, title)?;
+        follow.taken.set(true);
+        Ok(())
+    };
+    let given = !is_unset(e, item, AbstractButton::TEXT.index);
+    let taken = e.with::<MenuBarItem, _>(item, |i| i.title.taken.get())?;
+    if !given || taken {
+        take.clone()(e)?;
+    }
+    let conn = e.connect_by_name(menu, "titleChanged", move |e, _| {
+        if e.is_alive(item) {
+            check(e, "menu bar item", take(e));
+        }
+    })?;
+    e.with::<MenuBarItem, _>(item, |i| i.title.conn.set(Some((menu, conn))))?;
+    Ok(())
 }
 
 // -------------------------------------------------------------- MenuBar
@@ -451,13 +498,17 @@ fn take_in(e: &Engine, bar: ObjectId, obj: ObjectId, at: Option<usize>) -> Resul
                 WriteKind::Imperative,
             )?;
         }
-        e.bind(item, AbstractButton::TEXT.index, move |e| {
-            if e.is_alive(obj) {
-                e.read(obj, Menu::TITLE.index)
-            } else {
-                e.untrack(|| e.read(item, AbstractButton::TEXT.index))
-            }
-        })?;
+        // A MenuBarItem names its menu itself; another button from the
+        // delegate is bound to the title.
+        if !is_a::<MenuBarItem>(e, item) {
+            e.bind(item, AbstractButton::TEXT.index, move |e| {
+                if e.is_alive(obj) {
+                    e.read(obj, Menu::TITLE.index)
+                } else {
+                    e.untrack(|| e.read(item, AbstractButton::TEXT.index))
+                }
+            })?;
+        }
         return join(e, bar, item, at, true);
     }
     if !is_item(e, obj) && !st.others.borrow().contains(&obj) {
