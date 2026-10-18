@@ -127,6 +127,57 @@ Feature: Button
         | checked     |
         | highlighted |
 
+  @api-QtQuick.Controls.Button.flat
+  Rule: The colour of the text tells the state
+    A flat button's text is in the colour of the window it is drawn on,
+    unless it is held down, checked or highlighted. The icon takes the
+    colour of the text.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 300; height: 200
+          palette.windowText: "#111111"
+          palette.buttonText: "#222222"
+          palette.brightText: "#333333"
+          palette.highlight: "#444444"
+          Button { objectName: "b"; text: "b" }
+        }
+        """
+
+    Scenario Outline: A <kind> button that is <state> has text in <colour>
+      When the property "flat" of "b" is set to <flat>
+      And the property "<state>" of "b" is set to true
+      Then the property "contentItem.color" of "b" is "<colour>"
+
+      Examples:
+        | kind  | flat  | state       | colour  |
+        | plain | false | enabled     | #222222 |
+        | plain | false | down        | #222222 |
+        | plain | false | checked     | #333333 |
+        | plain | false | highlighted | #333333 |
+        | flat  | true  | enabled     | #111111 |
+        | flat  | true  | down        | #222222 |
+        | flat  | true  | checked     | #333333 |
+        | flat  | true  | highlighted | #333333 |
+
+    Scenario: A flat button that is not enabled keeps the window's colour
+      When the property "flat" of "b" is set to true
+      And the property "enabled" of "b" is set to false
+      Then the property "contentItem.color" of "b" is "#111111"
+
+    @api-QtQuick.Controls.Control.visualFocus
+    Scenario: Tab colours a flat button's text as the keyboard's place
+      When the property "flat" of "b" is set to true
+      And the user presses "Tab"
+      Then the property "visualFocus" of "b" is true
+      And the property "contentItem.color" of "b" is "#444444"
+      When the property "flat" of "b" is set to false
+      Then the property "contentItem.color" of "b" is "#222222"
+
   Rule: The application can replace the parts
 
     Background:

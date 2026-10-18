@@ -28,8 +28,11 @@ T.Button {
             display: control.display
             text: control.text
             font: control.font
+            // A flat button is drawn on the window, not on its background.
             color: control.checked || control.highlighted ? control.palette.brightText
-                                                          : control.palette.buttonText
+                 : !control.flat || control.down ? control.palette.buttonText
+                 : control.visualFocus ? control.palette.highlight
+                 : control.palette.windowText
         }
     }
 
