@@ -1841,6 +1841,11 @@ impl<M: Send + 'static> Desktop<M> {
         }
         if self.heap_trim.is_some_and(|t| t <= Instant::now()) {
             self.heap_trim = None;
+            // Start-up is over and the window idle: what a first scroll
+            // would otherwise compile is compiled now.
+            for painter in self.slots.iter_mut().filter_map(|s| s.painter.as_mut()) {
+                painter.warm();
+            }
             crate::give_back_freed_heap();
         }
     }

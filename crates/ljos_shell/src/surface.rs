@@ -199,6 +199,15 @@ impl Painter {
         let _ = (shapes, pixels_per_point);
     }
 
+    /// Readies, while the window is idle, what drawing it may soon need.
+    pub(crate) fn warm(&mut self) {
+        match self {
+            Painter::Wgpu(_) => {}
+            #[cfg(gl_painter)]
+            Painter::Gl(painter) => painter.warm(),
+        }
+    }
+
     /// Whether [`Painter::frame`] uses where a picture changes, or only
     /// whether it does (`LastPicture::differs`): egui-wgpu draws every
     /// frame whole.

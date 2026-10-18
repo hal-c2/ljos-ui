@@ -210,6 +210,8 @@ pub(crate) struct GlPainter {
     programs: crate::gl_shader::Programs,
     /// Whether GL can copy pixels between framebuffers (GL 3, GLES 3).
     blits: bool,
+    /// Whether the copies a scroll makes have been made once.
+    warmed: bool,
 }
 
 struct GlWindow {
@@ -250,6 +252,7 @@ impl GlPainter {
             window: None,
             programs: crate::gl_shader::Programs::default(),
             blits,
+            warmed: false,
         })
     }
 
@@ -355,6 +358,30 @@ impl GlPainter {
             }
             window.whole_for = 0;
         }
+    }
+
+    /// Makes, once, the two copies a scroll makes, one pixel large and
+    /// back to where it was. A software rasteriser compiles the code of
+    /// each copy the first time it is made, about a frame's time each;
+    /// made while the window is idle, the first frame of a scroll does not
+    /// pay for it.
+    pub(crate) fn warm(&mut self) {
+        if !self.gl.software || !self.blits || std::mem::replace(&mut self.warmed, true) {
+            return;
+        }
+        let Some(gw) = self.window.as_ref() else {
+            return;
+        };
+        if !self.gl.make_current(Some((gw.id, &gw.surface))) {
+            return;
+        }
+        let gl = &self.gl.glow;
+        let Some(mut kept) = Kept::new(gl, Px([0, 0, 1, 1])) else {
+            return;
+        };
+        kept.copy_from(gl, gw.px);
+        kept.move_into(gl, gw.px, [0, 0]);
+        kept.destroy(gl);
     }
 
     /// Whether [`GlPainter::frame`] would use the areas a picture changes
