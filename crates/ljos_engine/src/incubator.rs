@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use ljos_ir::{
-    Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, Literal, Members, ObjRef, ObjectValue,
-    PropertyBinding, SourceSpan, TranslationKind, TypeRef,
+    Arg, Attached, Binding, CompIdx, ComponentKind, ExprId, FunctionDecl, Literal, Members, ObjRef,
+    ObjectValue, PropertyBinding, SourceSpan, TranslationKind, TypeRef,
 };
 use ljos_js::{JsValue, Scope};
 use ljos_runtime::{Job, JobCx, JobPoll, Lane, ProcId};
@@ -1313,18 +1313,7 @@ impl Engine {
             }
         }
         for f in &od.functions {
-            let Ok(m) = self.method_index(id, &f.name) else {
-                continue;
-            };
-            let noted = tier1::Noted::of(inst, f.expr);
-            let inst = inst.clone();
-            let expr = f.expr;
-            let _ = self.set_script_method(
-                id,
-                m,
-                Rc::new(move |e, _obj, args| Ok(e.call_function(&inst, expr, args))),
-            );
-            self.tier1_note_method(id, m, noted);
+            self.install_function(inst, id, f);
         }
         for at in &od.attached {
             self.apply_attached(inst, id, at);
@@ -1395,6 +1384,24 @@ impl Engine {
             rows.push(row);
         }
         rows
+    }
+
+    /// Gives `id` the function `f` of `inst`'s file. A reload in place
+    /// calls it again for a function it edits: a program that ran the old
+    /// body in place finds the closure it was noted with gone, and calls.
+    pub(super) fn install_function(&self, inst: &Rc<Instance>, id: ObjectId, f: &FunctionDecl) {
+        let Ok(m) = self.method_index(id, &f.name) else {
+            return;
+        };
+        let noted = tier1::Noted::of(inst, f.expr);
+        let inst = inst.clone();
+        let expr = f.expr;
+        let _ = self.set_script_method(
+            id,
+            m,
+            Rc::new(move |e, _obj, args| Ok(e.call_function(&inst, expr, args))),
+        );
+        self.tier1_note_method(id, m, noted);
     }
 
     fn apply_attached(&self, inst: &Rc<Instance>, id: ObjectId, at: &Attached) {
@@ -2062,6 +2069,7 @@ impl Engine {
             .iter()
             .find(|r| matches!(r.resolved, ljos_ir::Resolved::Local))
             .map(|r| Atom::new(&r.name));
+        let slot = self.reload_note_handler(inst, expr);
         let handler: crate::Handler = Rc::new(move |e: &Engine, args: &[Value]| {
             // Dev reload: the tree being replaced, or the one being
             // made, is not to act on what the other does.
@@ -2071,7 +2079,16 @@ impl Engine {
             if let Some(name) = &injected {
                 e.warn_injected(&i, expr, at, name);
             }
-            e.call_expr(&i, expr, args);
+            match &slot {
+                Some(s) => {
+                    // Not borrowed while it runs: it may reload.
+                    let (i, expr) = s.borrow().clone();
+                    e.call_expr(&i, expr, args);
+                }
+                None => {
+                    e.call_expr(&i, expr, args);
+                }
+            }
         });
         match self.signal_index(obj, signal) {
             Ok(s) => {

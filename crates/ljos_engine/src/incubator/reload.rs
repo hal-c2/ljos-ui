@@ -41,13 +41,13 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fmt::Write as _;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use ljos_ir::{CompiledFile, KeySeg, ObjIdx, ObjRef, ObjectKey, ReloadOp, ReloadPatch};
 use ljos_js::Bytecode;
 
-mod in_place;
+pub(super) mod in_place;
 
 use super::{Creation, Initial, Instance, Template};
 use crate::atom::Atom;
@@ -378,7 +378,10 @@ pub(crate) struct ReloadState {
     instances: RefCell<Vec<Rc<Instance>>>,
     /// `Component` objects given a template while tracking.
     templates: RefCell<Vec<ObjectId>>,
-    /// The length of `instances` and `templates` at which the dead ones
+    /// The code of every handler connected while tracking, which a reload
+    /// in place points at the file as it is now.
+    handlers: RefCell<Vec<Weak<in_place::HandlerSlot>>>,
+    /// The length of `instances`, `templates` and `handlers` at which the dead ones
     /// are swept out next.
     sweep_at: Cell<usize>,
     /// The properties whoever made a root gave it, which outrank what its

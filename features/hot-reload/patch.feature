@@ -429,3 +429,140 @@ Feature: What a reload changes
       And the property "text" of "row1" is "line 1"
       When the property "rows" of "root" is set to 3
       Then the property "text" of "row2" is "line 2"
+
+  Rule: A change to the body of a handler or a function leaves every object where it is
+
+    The objects go on as they are. The next time the signal comes, the
+    handler runs as the file now writes it; the next call of the function
+    does too, and so do the bindings that call it. A value made a binding,
+    or a binding made a value, is set again the same way.
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int hits: 0
+          signal poke
+          onPoke: hits += 1
+          Rectangle {
+            objectName: "box"; width: 10; height: root.hits + 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "step " + root.step() }
+          function step() { return 1 }
+          function add() { hits += step() }
+          function tap() { poke() }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A handler runs its new body on the next signal
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int hits: 0
+          signal poke
+          onPoke: hits += 10
+          Rectangle {
+            objectName: "box"; width: 10; height: root.hits + 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "step " + root.step() }
+          function step() { return 1 }
+          function add() { hits += step() }
+          function tap() { poke() }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      When the method "tap" of "root" is called
+      Then the property "hits" of "root" is 10
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+    Scenario: A function runs its new body, also in the bindings that call it
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int hits: 0
+          signal poke
+          onPoke: hits += 1
+          Rectangle {
+            objectName: "box"; width: 10; height: root.hits + 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "step " + root.step() }
+          function step() { return 5 }
+          function add() { hits += step() }
+          function tap() { poke() }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "text" of "label" is "step 5"
+      When the method "add" of "root" is called
+      Then the property "hits" of "root" is 5
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+    Scenario: A value made a binding follows what it reads
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int hits: 0
+          signal poke
+          onPoke: hits += 1
+          Rectangle {
+            objectName: "box"; width: root.hits + 20; height: root.hits + 10
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "step " + root.step() }
+          function step() { return 1 }
+          function add() { hits += step() }
+          function tap() { poke() }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "box" is 20
+      When the method "tap" of "root" is called
+      Then the property "width" of "box" is 21
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
+
+    Scenario: A binding made a value no longer follows what it read
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int hits: 0
+          signal poke
+          onPoke: hits += 1
+          Rectangle {
+            objectName: "box"; width: 10; height: 4
+            NumberAnimation on x { id: slide; objectName: "slide"; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          Text { objectName: "label"; text: "step " + root.step() }
+          function step() { return 1 }
+          function add() { hits += step() }
+          function tap() { poke() }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "height" of "box" is 4
+      When the method "tap" of "root" is called
+      Then the property "height" of "box" is 4
+      And the property "running" of "slide" is true
+      And the property "x" of "box" is at least 40
