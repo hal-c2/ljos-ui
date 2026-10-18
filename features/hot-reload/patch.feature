@@ -733,6 +733,46 @@ Feature: What a reload changes
       When the method "go" of "root" is called
       And 500 milliseconds pass
 
+    Scenario: An object added last in a control is before the parts the control is given
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Button {
+          id: root; objectName: "root"
+          property string order: ""
+          background: Rectangle { objectName: "bg" }
+          contentItem: Text { objectName: "ci"; text: "x" }
+          Item { objectName: "mine" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < children.length; i++) r.push(children[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Button {
+          id: root; objectName: "root"
+          property string order: ""
+          background: Rectangle { objectName: "bg" }
+          contentItem: Text { objectName: "ci"; text: "x" }
+          Item { objectName: "mine" }
+          Item { objectName: "added" }
+          function probe() {
+            var r = []
+            for (var i = 0; i < children.length; i++) r.push(children[i].objectName)
+            order = r.join(",")
+          }
+        }
+        """
+      And a reload happens
+      And the method "probe" of "root" is called
+      Then the property "order" of "root" is "mine,added,bg,ci"
+
     Scenario: An added object is there, last among its siblings, and runs onCompleted once
       When the file "Scenario.qml" is changed to:
         """qml

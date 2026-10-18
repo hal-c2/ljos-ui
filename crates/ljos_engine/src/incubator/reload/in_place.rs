@@ -42,9 +42,10 @@ use crate::incubator::{
     AllocFrame, Allocation, Creation, Instance, RootSpec, Template, is_component_attached,
 };
 use crate::loader::LoadedFile;
-use crate::meta::MetaRef;
+use crate::meta::{MetaRef, PropertyAccess};
 use crate::object::QmlType;
 use crate::qtqml::Component;
+use crate::types::TypeTag;
 use crate::value::Value;
 use crate::{EngineError, PropIndex, WriteKind};
 
@@ -844,16 +845,46 @@ impl Engine {
         }
         let r = self
             .list_of(&inst.file, &comp.objects[p.index()], j, parent)
-            .and_then(|prop| match before {
-                Some(a) => self.list_insert(parent, prop, child, a).map(drop),
-                None => self.list_append(parent, prop, child),
-            });
+            .and_then(
+                |prop| match before.or_else(|| self.first_part(parent, prop)) {
+                    Some(a) => self.list_insert(parent, prop, child, a).map(drop),
+                    None => self.list_append(parent, prop, child),
+                },
+            );
         if let Err(e) = r {
             self.warn(format!(
                 "{}Cannot assign to non-existent default property ({e})",
                 self.location_of(child).unwrap_or_default()
             ));
         }
+    }
+
+    /// The first object in `parent`'s list `prop` that one of its native
+    /// properties holds (a control's `background`, `contentItem`): a
+    /// control takes those in when it completes, after what the file
+    /// writes in it, so an object the file adds last goes before them.
+    fn first_part(&self, parent: ObjectId, prop: PropIndex) -> Option<ObjectId> {
+        let meta = self.meta_of(parent)?;
+        self.untrack(|| {
+            let Value::List(items) = self.read(parent, prop) else {
+                return None;
+            };
+            let parts: Vec<ObjectId> = meta
+                .properties
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| {
+                    matches!(p.access, PropertyAccess::Field { .. })
+                        && matches!(p.ty, TypeTag::Object(_))
+                        && !p.is_alias()
+                })
+                .filter_map(|(i, _)| self.read(parent, PropIndex(i as u32)).as_object())
+                .collect();
+            items
+                .iter()
+                .filter_map(Value::as_object)
+                .find(|o| parts.contains(o))
+        })
     }
 
     /// The list property of `parent` (written as `def`) the object `j` is
