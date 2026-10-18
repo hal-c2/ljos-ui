@@ -1385,6 +1385,8 @@ ApplicationWindow {
                             x: 8; y: 8
                             width: parent.width - 16
                             placeholderText: "Filter by type, id or name"
+                            // A field is not named by its placeholder.
+                            Accessible.name: "Filter objects"
                             onTextChanged: objects.filter = text
                         }
                         Label {
@@ -1689,6 +1691,10 @@ ApplicationWindow {
                                                 leftPadding: 6
                                                 clip: true
                                                 color: theme.text
+                                                // Named as the value it takes
+                                                // the place of, so that what
+                                                // pressed that value finds it.
+                                                Accessible.name: prop.modelData.name || ""
                                                 background: Rectangle {
                                                     radius: 5
                                                     color: theme.bg
@@ -1980,6 +1986,7 @@ ApplicationWindow {
                         TextField {
                             Layout.preferredWidth: 260
                             placeholderText: "Filter text or category"
+                            Accessible.name: "Filter logs"
                             onTextChanged: logs.filter = text
                         }
                         ComboBox {
