@@ -311,6 +311,9 @@ struct State {
     /// The URLs whose last decode was a drawing, which is made again at
     /// each display scale. Outlives the cache, which may drop the pixels.
     vectors: HashSet<String>,
+    /// What was said of files that could not be opened, by the kind of
+    /// item and the URL: each is said once, however many items show it.
+    missing: HashSet<String>,
     /// The scale each scene of the engine paints at, by scene.
     scales: HashMap<u64, f32>,
     /// The longest side of each scene's view, in device pixels.
@@ -391,6 +394,7 @@ impl Default for ImageStore {
                 later_waits: WaitAllowance::default(),
                 deferred: Vec::new(),
                 vectors: HashSet::new(),
+                missing: HashSet::new(),
                 scales: HashMap::new(),
                 sides: HashMap::new(),
                 scale_node: None,
@@ -938,6 +942,11 @@ impl ImageStore {
             }
         };
         engine.graph().get(node).to_number() as f32
+    }
+
+    /// Whether `said`, that a file cannot be opened, is new.
+    pub(crate) fn first_missing(&self, said: String) -> bool {
+        self.state.borrow_mut().missing.insert(said)
     }
 
     /// Whether the last decode of `url` was a drawing.

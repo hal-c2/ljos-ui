@@ -432,6 +432,7 @@ fn turn_to(e: &Engine, me: ObjectId, frame: f64) {
 }
 
 /// Qt's warning for an item: where it was declared, its type, the reason.
+/// A file that cannot be opened is said once, not once an item.
 fn warn(e: &Engine, me: ObjectId, reason: &LoadError) {
     let at = e.declared_at(me).unwrap_or_default();
     let name = if is_a::<BorderImage>(e, me) {
@@ -441,6 +442,11 @@ fn warn(e: &Engine, me: ObjectId, reason: &LoadError) {
     } else {
         "Image"
     };
+    if matches!(reason, LoadError::CannotOpen(_))
+        && !ImageStore::of(e).first_missing(format!("{name}: {reason}"))
+    {
+        return;
+    }
     e.log(
         LogLevel::Warning,
         "qml",
