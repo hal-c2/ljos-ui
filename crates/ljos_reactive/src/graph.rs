@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 
@@ -28,7 +28,10 @@ struct Edge {
     back: u32,
 }
 
-type Edges = SmallVec<[Edge; 4]>;
+/// Most nodes have no source or one, and no observer or one (36 863 nodes of
+/// a thermostat: 58 % and 30 %, 52 % and 35 %; 6–8 % have more than two).
+/// Two inline edges keep a node small without moving many edges to the heap.
+type Edges = SmallVec<[Edge; 2]>;
 type DiagnosticHandler = Box<dyn FnMut(&Diagnostic)>;
 
 /// One layer of a property: the base, or an override above it.
@@ -50,11 +53,51 @@ enum Content<V> {
 struct Prop<V> {
     base: Layer<V>,
     /// Usually empty, so it costs no allocation.
-    overrides: Vec<Layer<V>>,
+    overrides: Overrides<V>,
     animated: bool,
     /// The step over the binding was the host's ([`WriteKind::Host`]),
     /// not an animation's. Only read while `animated`.
     host: bool,
+}
+
+/// The layers over a property's base, as a `Vec` behind a box that only a
+/// property with an override has: a node holds a pointer where it held a
+/// `Vec`, and nearly none has an override.
+#[allow(
+    clippy::box_collection,
+    reason = "a thin pointer: a boxed slice is twice as wide"
+)]
+struct Overrides<V>(Option<Box<Vec<Layer<V>>>>);
+
+impl<V> Overrides<V> {
+    const NONE: Self = Overrides(None);
+
+    fn push(&mut self, layer: Layer<V>) {
+        self.0.get_or_insert_default().push(layer);
+    }
+
+    fn remove(&mut self, idx: usize) -> Layer<V> {
+        let layers = self.0.as_mut().expect("an override to remove");
+        let removed = layers.remove(idx);
+        if layers.is_empty() {
+            self.0 = None;
+        }
+        removed
+    }
+}
+
+impl<V> std::ops::Deref for Overrides<V> {
+    type Target = [Layer<V>];
+
+    fn deref(&self) -> &[Layer<V>] {
+        self.0.as_deref().map_or(&[], Vec::as_slice)
+    }
+}
+
+impl<V> std::ops::DerefMut for Overrides<V> {
+    fn deref_mut(&mut self) -> &mut [Layer<V>] {
+        self.0.as_deref_mut().map_or(&mut [], Vec::as_mut_slice)
+    }
 }
 
 impl<V> Prop<V> {
@@ -131,8 +174,6 @@ struct Node<V> {
     /// Scratch for source diffing: where this node's observer entry sat
     /// before the diff started.
     scratch: u32,
-    /// Opaque caller tag; the engine maps nodes back to (object, property).
-    data: Option<u64>,
     /// Stamp of the last frame that recorded a read of this node.
     read_stamp: u64,
     /// Stamp of the last run whose reads became its sources.
@@ -202,6 +243,9 @@ struct Frame {
 
 struct Inner<V> {
     nodes: SlotMap<NodeId, Node<V>>,
+    /// [`Graph::set_node_data`]'s tags, beside the nodes: few nodes have
+    /// one, and every node would pay for the room.
+    tags: HashMap<NodeId, u64>,
     scopes: SlotMap<ScopeId, Scope>,
     root: ScopeId,
     /// Queued roots, one heap per flush level. A flush nested in an effect
@@ -411,6 +455,7 @@ impl<V: Clone + 'static> Graph<V> {
         Graph {
             inner: RefCell::new(Inner {
                 nodes: SlotMap::with_key(),
+                tags: HashMap::new(),
                 scopes,
                 root,
                 queues: vec![Queue::new()],
@@ -698,7 +743,7 @@ impl<V: Clone + 'static> Graph<V> {
                     content: Content::Value(None),
                     provenance,
                 },
-                overrides: Vec::new(),
+                overrides: Overrides::NONE,
                 animated: false,
                 host: false,
             }),
@@ -726,7 +771,7 @@ impl<V: Clone + 'static> Graph<V> {
                         content: Content::Binding(Some(Box::new(f))),
                         provenance: Provenance::Bound,
                     },
-                    overrides: Vec::new(),
+                    overrides: Overrides::NONE,
                     animated: false,
                     host: false,
                 }),
@@ -854,6 +899,9 @@ impl<V: Clone + 'static> Graph<V> {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             let node = i.nodes.remove(n).ok_or(ReactiveError::DeadNode(n))?;
+            if !i.tags.is_empty() {
+                i.tags.remove(&n);
+            }
             for e in &node.sources {
                 drop_observer_slot(&mut i.nodes, e.node, e.back);
             }
@@ -1663,18 +1711,23 @@ impl<V: Clone + 'static> Graph<V> {
     }
 
     /// Attaches an opaque tag to a node. The graph never interprets it; the
-    /// engine uses it to map a node back to its (object, property) when it
+    /// caller can use it to map a node back to what it stands for when it
     /// prints a [`Diagnostic`].
     pub fn set_node_data(&self, n: NodeId, data: u64) -> Result<(), ReactiveError> {
         let mut i = self.inner.borrow_mut();
-        i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?.data = Some(data);
+        if !i.nodes.contains_key(n) {
+            return Err(ReactiveError::DeadNode(n));
+        }
+        i.tags.insert(n, data);
         Ok(())
     }
 
     /// The tag set by [`Graph::set_node_data`]; `None` if unset or the node
     /// is dead.
     pub fn node_data(&self, n: NodeId) -> Option<u64> {
-        self.inner.borrow().nodes.get(n)?.data
+        let i = self.inner.borrow();
+        i.nodes.get(n)?;
+        i.tags.get(&n).copied()
     }
 
     /// Verifies the internal indices: every source entry has a mirror entry
@@ -2336,7 +2389,6 @@ impl<V: Clone + 'static> Inner<V> {
             observers: Edges::new(),
             mark: 0,
             scratch: 0,
-            data: None,
             read_stamp: 0,
             done_stamp: 0,
             runs: 0,
@@ -2863,5 +2915,14 @@ mod tests {
         want.sort_unstable();
         assert_eq!(out, want);
         assert!(q.is_empty());
+    }
+
+    /// Every property and effect of an application is a node, and the node
+    /// table only grows: a thermostat holds 36 863 nodes in room for 65 536.
+    /// What a node holds inline is paid in every slot.
+    #[test]
+    fn a_node_holds_little_inline() {
+        assert_eq!(std::mem::size_of::<Edges>(), 32);
+        assert!(std::mem::size_of::<Node<[u64; 2]>>() <= 224);
     }
 }

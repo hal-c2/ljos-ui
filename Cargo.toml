@@ -35,7 +35,7 @@ rustc-hash = "2.1.3"
 # with an SPIR-V or WGSL front end.
 naga = { version = "30.0.1", default-features = false, features = ["glsl-in", "glsl-out", "wgsl-in"] }
 slotmap = "1.1.1"
-smallvec = "1.16"
+smallvec = { version = "1.16", features = ["union"] }
 bitflags = "2.13"
 rquickjs = { version = "0.14.0", default-features = false }
 salsa = "0.28.5"
