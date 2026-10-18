@@ -2132,6 +2132,64 @@ Feature: What a reload changes
       Then the property "x" of "follower" is 80
       And the property "seen" of "inner" is 60
 
+    Scenario: A file edited after one used in it was edited names the objects it did
+      Given the file "Bar.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: container
+          property Item area
+          Rectangle { width: 1 }
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: window; objectName: "root"; width: 200; height: 100
+          ListModel { id: feeds; ListElement { feed: "a" } }
+          Bar { area: list }
+          ListView {
+            id: list; objectName: "list"
+            width: 100; height: 50
+            model: feeds
+            delegate: Item { height: 10 }
+          }
+          Item { id: close; objectName: "close"; x: 30; width: 20 }
+          Item { objectName: "follower"; x: close.x + 1 }
+        }
+        """
+      When 100 milliseconds pass
+      And the file "Bar.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: container
+          property Item area
+        }
+        """
+      And a reload happens
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: window; objectName: "root"; width: 200; height: 100
+          Item { id: close; objectName: "close"; x: 60; width: 20 }
+          ListModel { id: feeds; ListElement { feed: "a" } }
+          Bar { area: list }
+          ListView {
+            id: list; objectName: "list"
+            width: 100; height: 50
+            model: feeds
+            delegate: Item { height: 10 }
+          }
+          Item { objectName: "follower"; x: close.x + 1 }
+        }
+        """
+      And a reload happens
+      Then the property "count" of "list" is 1
+      And the property "x" of "follower" is 61
+
   Rule: Other changes to objects make them again, as the file now writes them
 
     An object moved, or given another type or another id, is there as the

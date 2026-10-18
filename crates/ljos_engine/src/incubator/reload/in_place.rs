@@ -447,15 +447,22 @@ impl Engine {
             .iter()
             .map(|c| (Rc::as_ptr(&c.old), c.remap.as_slice()))
             .collect();
+        // An instance of a file that did not change is renewed too when
+        // what is in it was: its slots must name the instance the next
+        // reload finds, or that reload makes another from the old one.
         for slot in st.slots.borrow().iter().filter_map(std::rc::Weak::upgrade) {
             let (inst, expr) = slot.borrow().clone();
-            let Some(Some(to)) = remaps
-                .get(&Rc::as_ptr(&inst.file))
-                .and_then(|r| r.get(expr.index()))
-            else {
-                continue;
+            let to = match remaps.get(&Rc::as_ptr(&inst.file)) {
+                Some(r) => match r.get(expr.index()) {
+                    Some(Some(to)) => *to,
+                    _ => continue,
+                },
+                None => expr,
             };
-            *slot.borrow_mut() = (renew(&inst, &files, &mut memo), *to);
+            let now = renew(&inst, &files, &mut memo);
+            if to != expr || !Rc::ptr_eq(&now, &inst) {
+                *slot.borrow_mut() = (now, to);
+            }
         }
         // A binding that names an id that came or went, once
         // the slots name the objects of the new instances: those of the
