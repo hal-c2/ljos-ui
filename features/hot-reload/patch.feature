@@ -3386,3 +3386,47 @@ Feature: What a reload changes
       And the method "go" of "root" is called
       Then the property "shade" of "root" is "green"
       And the property "heard" of "root" is 3
+
+  Rule: An object given to a member of its own that is removed goes in place
+
+    The member goes back to what a fresh object of its type has, as when
+    a value no longer given does; the object goes with the others removed.
+
+    Scenario: A transition a positioner is given removed leaves it with none
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Column {
+            objectName: "col"
+            move: Transition { NumberAnimation { properties: "y"; duration: 100 } }
+            Rectangle { width: 10; height: 10 }
+          }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+      Then the property "move" of "col" is not null
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          Column {
+            objectName: "col"
+            Rectangle { width: 10; height: 10 }
+          }
+          Rectangle { objectName: "box"; width: 10; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "move" of "col" is null
+      And the property "x" of "box" is at least 40

@@ -2099,6 +2099,7 @@ fn same_but_edits(
     let mut moved = HashMap::default();
     let (mut was, mut now) = (Vec::new(), Vec::new());
     let (mut here, mut there) = (Vec::new(), Vec::new());
+    let mut unset = Vec::new();
     for (c, o, n) in pairs() {
         let m = &objects[c];
         for (i, oo) in o.objects.iter().enumerate() {
@@ -2138,6 +2139,10 @@ fn same_but_edits(
                 b.children.retain(|v| !added(v));
                 for oa in b.members.objects.iter_mut().filter(|oa| oa.is_list) {
                     oa.values.retain(|v| !added(v));
+                }
+                let names = unassigned(&mut a, &b);
+                if !names.is_empty() {
+                    unset.push((CompIdx(c as u32), j, i, names));
                 }
             }
             if a != b {
@@ -2183,7 +2188,10 @@ fn same_but_edits(
             let written = |od: &ObjectDef| {
                 held_in(od, name).is_some_and(|(m, leaf)| m.objects.iter().any(|a| a.name == leaf))
             };
-            if written(n) || written(o) {
+            let removed = unset
+                .iter()
+                .any(|u| u.0 == e.comp && u.1 == e.obj && u.3.contains(name));
+            if (written(n) || written(o)) && !removed {
                 return not_here("a member given an object changed");
             }
             if aliased(new, to_new(e.comp), e.obj, name) {
@@ -2230,7 +2238,59 @@ fn same_but_edits(
             }
         }
     }
+    // A member whose object is removed is no longer given, as one whose
+    // value is not.
+    for (comp, obj, was, names) in unset {
+        match edits.iter_mut().find(|e| e.comp == comp && e.obj == obj) {
+            Some(e) => {
+                for name in names {
+                    if !e.names.contains(&name) {
+                        e.names.push(name);
+                    }
+                }
+            }
+            None => edits.push(Edit {
+                comp,
+                obj,
+                was,
+                names,
+                functions: Vec::new(),
+                renamed: Vec::new(),
+                fresh: Vec::new(),
+            }),
+        }
+    }
     Some((whole, remap, moved, objects, models))
+}
+
+/// Takes out of `a`, an old object renumbered, the members given an
+/// object of their own that is removed and that `b` no longer gives; the
+/// dotted names of those.
+fn unassigned(a: &mut ObjectDef, b: &ObjectDef) -> Vec<String> {
+    let gone = ObjectValue::Object(ObjIdx(u32::MAX));
+    let mut out = Vec::new();
+    let mut take = |m: &mut Members, prefix: &str| {
+        m.objects.retain(|oa| {
+            let removed = !oa.is_list
+                && !oa.values.is_empty()
+                && oa.values.iter().all(|v| *v == gone)
+                && !given_names(b).any(|g| is_or_under(&g, &dotted(prefix, &oa.name)));
+            if removed {
+                out.push(dotted(prefix, &oa.name));
+            }
+            !removed
+        });
+    };
+    take(&mut a.members, "");
+    for g in &mut a.grouped {
+        take(&mut g.members, &g.path.join("."));
+    }
+    for at in &mut a.attached {
+        take(&mut at.members, &at.written);
+    }
+    a.grouped.retain(|g| !g.members.is_empty());
+    a.attached.retain(|at| !at.members.is_empty());
+    out
 }
 
 /// Per component of `old`, the one of `new` with its id. Only a
