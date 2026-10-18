@@ -2296,3 +2296,67 @@ shows.
 - **Startup of todolist and thermostat** is still 70–100 ms. Neither is bound by compiling any more:
   opening todolist's project (scanning its tree) takes 10–29 ms on the compile thread, and
   thermostat's first frame waits on something that is not its compile.
+
+### Binding slots, notify, unchanged frame work and clocks' timers (2026-10-18)
+
+Same method as the section above: callgrind main-thread instructions per frame with the prof
+build in the GPU sandbox, and all-thread M/s from `thr.py` in one process. "Before" is d9b176c9,
+where bindings already write numbers through slots.
+
+| Main thread, a frame | Before | Whole run | Notify | No empty shapes | Snap |
+|---|---:|---:|---:|---:|---:|
+| animations | 1.171 M | 1.029 M | 1.011 M | 970 k | 962 k |
+| clocks | 394 k | 393 k | | 390 k | 403 k |
+
+Clocks moves by about ±10 k between runs, because the number of timer calls a frame varies.
+
+| All threads, M/s | Ljós before | Ljós after | Qt |
+|---|---:|---:|---:|
+| animations, GPU | 63.2 | 50.9 | 43.6 |
+| clocks, GPU | 20.3 | 20.6 | 14.8 |
+| samegame, GPU | 14.7 | 14.7 | 15.8 |
+| animations, llvmpipe | 454 | 462 | 1 040 |
+| clocks, llvmpipe | 153 | 156 | 925 |
+| samegame, llvmpipe | 241 | 242 | 1 592 |
+
+- **Whole run.** On a device, a frame whose damage is half the window or more is drawn whole. Its
+  damage was still worked out first: comparing shapes, `Damage::of` and the grid came to 151 k a
+  frame for 200 bars, then went unused. For 30 frames after such a frame, the GL painter now asks
+  only whether the picture changed, and that check stops at the first shape that differs. A frame
+  with no change ends the run. egui-wgpu draws every frame whole, so it never asks for areas.
+- **Notify.** An animated `x` has one observer: the place effect, which is told rather than run.
+  Nothing is marked twice and nothing is allocated. What could go:
+  - the scene's hash-set insert for each item told it moved (76 of the 100 instructions);
+  - taking the mark stack out and putting it back twice per write.
+
+  The told list is now a `Vec`, read once per frame through a stamp on the entry. The flush fell
+  from 28 k to 14 k a frame.
+- **No empty shapes.** `fill_rects` joins the 200 bars into one mesh and left 199 `Shape::Noop`s
+  behind. egui's tessellator spends about 300 instructions on each of them, so tessellating fell
+  from 75 k to 30 k once they are removed.
+- **Snap.** A hard-edged rectangle snapped to pixel centres is no longer checked for lying on whole
+  pixels.
+- **Draw clocks whole on a device.** Tried and dropped. All-thread M/s moved by 4 %, within run
+  noise (19.9 against 20.8), so the ½ rule stays.
+- **Clocks' `timeChanged`.** One call is about 47 k. About 14 k is native:
+  - four property sets, 8.9 k, about 1.9 k each in `write_impl` including the flush they set off;
+  - six reads, 2.8 k;
+  - `new Date`, 2.2 k;
+  - the nested call from the Timer's handler through `Engine::invoke` back into JS, 2.3 k.
+
+  The other ~33 k is QuickJS: interpreting the body, the accessor trampolines for each property
+  read and write (`JS_GetPropertyInternal` → `JS_CallFree`, `call_setter` → `JS_CallInternal`),
+  the proxy lookup of `clock`, and rquickjs's wrapping of the eleven native calls. That is a matter
+  for ilang, not the native side.
+
+**What is left.** At 60 fps the GPU animations frame is 0.85 M on all threads, against Qt's 0.73 M.
+The largest remaining pieces of the main thread are:
+
+- the animation tick, 214 k: about 600 per write, 371 of it the graph;
+- `compose`, 100 k;
+- encode, 105 k;
+- the swap, about 80 k in hardware.
+
+In clocks, the transform-list effect of each hand that springs reruns every frame. Each rerun is
+2.9 k, mostly tracked reads of `Rotation`'s field-backed `origin`, `axis` and `distanceToPlane`,
+about 20 k a frame.
