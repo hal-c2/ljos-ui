@@ -29,6 +29,10 @@ Feature: Tumbler
         Tumbler { id: l; objectName: "l"; x: 200; model: names }
         Tumbler { id: a; objectName: "a"; x: 300; model: ["x", "y"] }
         Tumbler { id: e; objectName: "e"; y: 220 }
+        Tumbler {
+          objectName: "f"; x: 340; model: 5
+          delegate: Text { required property int index; required property var modelData; objectName: "f" + index; text: modelData; property real disp: Tumbler.displacement }
+        }
         Item { id: plain; objectName: "plain" }
         function outside() { seen = [plain.Tumbler.tumbler, plain.Tumbler.displacement].join("|") }
         function modes() { seen = [Tumbler.Beginning, Tumbler.Center, Tumbler.End, Tumbler.Visible, Tumbler.Contain, Tumbler.SnapPosition].join(" ") }
@@ -205,6 +209,18 @@ Feature: Tumbler
         | d2  | -2           |
         | d9  | 1            |
         | d8  | 2            |
+
+    Scenario Outline: A tumbler of fewer rows than its path holds still counts whole rows
+      When 1 second passes
+      Then the property "disp" of "<row>" is within 0.01 of <displacement>
+
+      Examples:
+        | row | displacement |
+        | f0  | 0            |
+        | f1  | -1           |
+        | f2  | -2           |
+        | f4  | 1            |
+        | f3  | 2            |
 
     Scenario: The displacement follows the current index
       When the property "currentIndex" of "t" is set to 4

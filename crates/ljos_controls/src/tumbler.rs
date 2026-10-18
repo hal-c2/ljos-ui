@@ -610,7 +610,23 @@ fn displacement(e: &Engine, item: ObjectId, tumbler: ObjectId) -> f64 {
     if height <= 0.0 {
         return 0.0;
     }
-    (num(e, content, Item::HEIGHT.index) / 2.0 - y) / height
+    (num(e, content, Item::HEIGHT.index) / 2.0 - y) / row_step(e, tumbler, height)
+}
+
+/// How far apart the rows are. A path holds as many rows as it has places
+/// for; with fewer rows than places they share its whole length, so qml6
+/// still counts a whole row from one to the next.
+fn row_step(e: &Engine, tumbler: ObjectId, height: f64) -> f64 {
+    let Some(view) = view_of(e, tumbler).filter(|v| is_a::<PathView>(e, *v)) else {
+        return height;
+    };
+    let places = num(e, view, PathView::PATH_ITEM_COUNT.index);
+    let rows = num(e, view, PathView::COUNT.index);
+    if rows > 0.0 && places > rows {
+        height * places / rows
+    } else {
+        height
+    }
 }
 
 // ------------------------------------------------------- keys and wheel
