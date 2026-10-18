@@ -284,7 +284,7 @@ impl Pointer {
 
 /// `CLOCK_MONOTONIC` in nanoseconds: the clock wlroots stamps a
 /// screencopy frame with.
-fn monotonic_ns() -> u64 {
+pub(crate) fn monotonic_ns() -> u64 {
     let mut ts = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -298,12 +298,23 @@ fn monotonic_ns() -> u64 {
 #[derive(Debug)]
 pub struct FrameCounter {
     stop: Arc<AtomicBool>,
-    handle: JoinHandle<Result<Vec<u64>, Error>>,
+    handle: JoinHandle<Result<Counted, Error>>,
+}
+
+/// The frames a [`FrameCounter`] saw.
+#[derive(Debug, Default)]
+pub struct Counted {
+    /// The times of those that changed a pixel of the region, in
+    /// nanoseconds of the compositor's clock.
+    pub changed: Vec<u64>,
+    /// Every frame the client sent that damaged the region, changed or not.
+    pub committed: usize,
 }
 
 impl FrameCounter {
     /// Starts counting the frames that change the region `(x, y, w, h)` of
-    /// the first output.
+    /// the first output: those that damage it, and of those, the ones that
+    /// change a pixel of it.
     ///
     /// # Errors
     /// The compositor cannot be reached or has no screencopy.
@@ -329,12 +340,11 @@ impl FrameCounter {
         Ok(Self { stop, handle })
     }
 
-    /// Stops and gives the frames' times, in nanoseconds of the
-    /// compositor's clock.
+    /// Stops and gives the frames it saw.
     ///
     /// # Errors
     /// The compositor failed a copy or went away.
-    pub fn finish(self) -> Result<Vec<u64>, Error> {
+    pub fn finish(self) -> Result<Counted, Error> {
         self.stop.store(true, Ordering::Relaxed);
         self.handle
             .join()
@@ -460,11 +470,13 @@ fn count(
     manager: &ZwlrScreencopyManagerV1,
     (x, y, w, h): (i32, i32, i32, i32),
     stop: &AtomicBool,
-) -> Result<Vec<u64>, Error> {
+) -> Result<Counted, Error> {
+    use std::os::unix::fs::FileExt;
     let qh = queue.handle();
     let mut state = State::default();
-    let mut buffer: Option<wl_buffer::WlBuffer> = None;
-    let mut times = Vec::new();
+    let mut buffer: Option<(wl_buffer::WlBuffer, std::fs::File, Vec<u8>)> = None;
+    let mut last: Option<Vec<u8>> = None;
+    let mut counted = Counted::default();
     while !stop.load(Ordering::Relaxed) {
         let frame = manager.capture_output_region(0, output, x, y, w, h, &qh, ());
         state.ready = None;
@@ -481,26 +493,44 @@ fn count(
             let (format, bw, bh, stride) = state.shape.ok_or(Error::Protocol(
                 "screencopy offered no shm buffer".to_owned(),
             ))?;
-            buffer = Some(shm_buffer(shm, &qh, format, bw, bh, stride)?.0);
+            let (b, file) = shm_buffer(shm, &qh, format, bw, bh, stride)?;
+            let size = usize::try_from(u64::from(stride) * u64::from(bh)).map_err(protocol)?;
+            buffer = Some((b, file, vec![0; size]));
         }
-        let Some(target) = &buffer else { break };
+        let Some((target, file, pixels)) = &mut buffer else {
+            break;
+        };
         frame.copy_with_damage(target);
         while state.ready.is_none() && !stop.load(Ordering::Relaxed) {
             pump(&mut queue, &mut state, Duration::from_millis(50))?;
         }
         frame.destroy();
         match state.ready.take() {
-            Some(Ok(t)) => times.push(t),
+            Some(Ok(t)) => {
+                file.read_exact_at(pixels, 0).map_err(protocol)?;
+                // The first copy is of whatever was there when counting
+                // began, not a frame the application made.
+                match &mut last {
+                    None => last = Some(pixels.clone()),
+                    Some(was) => {
+                        counted.committed += 1;
+                        // A frame the client sent again unchanged is work,
+                        // not a frame anyone saw: one runtime that redraws
+                        // every frame of a running particle system and one
+                        // that sends only changes are compared by what
+                        // they showed.
+                        if was != pixels {
+                            was.copy_from_slice(pixels);
+                            counted.changed.push(t);
+                        }
+                    }
+                }
+            }
             Some(Err(())) => return Err(Error::Protocol("screencopy failed a frame".to_owned())),
             None => break,
         }
     }
-    // The first copy is of whatever was there when counting began, not a
-    // frame the application made.
-    if !times.is_empty() {
-        times.remove(0);
-    }
-    Ok(times)
+    Ok(counted)
 }
 
 fn shm_buffer(

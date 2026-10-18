@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    measure::{MinMemory, Outcome, Run},
+    measure::{MinMemory, Outcome, Run, Span},
     profile::Profile,
 };
 
@@ -200,6 +200,14 @@ const METRICS: &[Metric] = &[
         value: |r| r.idle.as_ref()?.frames.as_ref().map(|f| f.fps),
     },
     Metric {
+        title: "Frames sent while idle, changed or not (per second)",
+        value: |r| sent_per_s(r.idle.as_ref()?),
+    },
+    Metric {
+        title: "95th percentile frame interval while idle (ms; animations)",
+        value: |r| r.idle.as_ref()?.frames.as_ref()?.p95_ms,
+    },
+    Metric {
         title: "Slowest frame interval while idle (ms; animations)",
         value: |r| r.idle.as_ref()?.frames.as_ref()?.max_ms,
     },
@@ -210,6 +218,10 @@ const METRICS: &[Metric] = &[
     Metric {
         title: "Frames shown while driven (per second)",
         value: |r| r.load.as_ref()?.frames.as_ref().map(|f| f.fps),
+    },
+    Metric {
+        title: "Frames sent while driven, changed or not (per second)",
+        value: |r| sent_per_s(r.load.as_ref()?),
     },
     Metric {
         title: "Median frame interval while driven (ms)",
@@ -228,6 +240,10 @@ const METRICS: &[Metric] = &[
         value: |r| r.load.as_ref()?.frames.as_ref()?.latency_p95_ms,
     },
     Metric {
+        title: "Slowest frame interval while driven (ms)",
+        value: |r| r.load.as_ref()?.frames.as_ref()?.max_ms,
+    },
+    Metric {
         title: "Mapped install (MiB on disk: runtime, libraries, plugins, fonts)",
         value: |r| {
             r.install
@@ -236,6 +252,13 @@ const METRICS: &[Metric] = &[
         },
     },
 ];
+
+/// Frames the client sent over `span`, whether they changed a pixel or not.
+#[allow(clippy::cast_precision_loss)]
+fn sent_per_s(span: &Span) -> Option<f64> {
+    let sent = span.frames.as_ref()?.committed?;
+    (span.seconds > 0.0).then(|| sent as f64 / span.seconds)
+}
 
 fn cell(v: Option<f64>) -> String {
     match v {

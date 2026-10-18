@@ -6,7 +6,7 @@ from outside the application:
 
 - **Memory and CPU:** the cgroup's own accounting and `/proc`.
 - **First frame:** when the compositor maps the window.
-- **Frames:** counted with the compositor's screencopy.
+- **Frames:** counted with the compositor's screencopy, by whether their pixels changed.
 
 There are no floors. The bench reports; it does not pass or fail an application.
 
@@ -107,9 +107,10 @@ outside a limit.
 | Settled PSS | PSS of all pages |
 | Idle CPU, idle wakeups | CPU use and context switches over `--idle` seconds (10) with no input |
 | Idle CPU of threads that ended | the part of idle CPU no thread alive at the end of the window used: the cgroup's usage less the live threads' `schedstat`. Wakeups are read from live threads, so a short worker shows here and not as wakeups |
-| Frames while idle | screencopy frames over the idle window: non-zero only for apps that animate |
+| Frames while idle | screencopy frames over the idle window whose pixels differ from the one before: non-zero only for apps that animate. A runtime that sends the compositor a frame that shows what the last one did (Qt does, in an animation that moves nothing on screen) is not counted for it; those are reported apart, as frames sent. Counts before 2026-10-18 include them |
+| Frame interval while idle | the 95th percentile time between those frames, and the slowest. A pause in an animation is a long interval in either runtime |
 | CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks a grid over the window, `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up |
-| Frame interval while driven | the median and 95th percentile time between the frames the compositor showed then |
+| Frame interval while driven | the median, 95th percentile and slowest time between the frames that changed then |
 | Mapped install | the files the app maps: runtime, libraries, plugins, fonts |
 | Least memory | the smallest `MemoryMax`, found by bisection, at which the first frame is shown and the app is still running a second later |
 

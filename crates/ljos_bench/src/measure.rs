@@ -147,7 +147,23 @@ pub struct Frames {
     pub latency_p95_ms: Option<f64>,
     #[serde(default)]
     pub latency_max_ms: Option<f64>,
+    /// Frames the client sent that damaged the window, `count` of them
+    /// changing a pixel of it.
+    #[serde(default)]
+    pub committed: Option<usize>,
+    /// The longest intervals, up to [`LONG_KEPT`], each `[ms, ms]`: when
+    /// it ended, from the start of the window of time, and how long it
+    /// was. Kept in time order, to say what was going on then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub long: Vec<[f64; 2]>,
+    /// Each input's wait for a frame, in the order sent (a grid of clicks
+    /// goes by rows); `None` for one no frame followed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waits_ms: Vec<Option<f64>>,
 }
+
+/// How many of the longest frame intervals a report keeps.
+pub const LONG_KEPT: usize = 8;
 
 /// CPU over a window of time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -402,22 +418,33 @@ fn quantile(values: &[f64], q: f64) -> Option<f64> {
     values.get(i).copied()
 }
 
-fn frames(times: &[u64], seconds: f64, inputs: &[u64]) -> Frames {
+fn frames(times: &[u64], start: u64, seconds: f64, inputs: &[u64]) -> Frames {
     #[allow(clippy::cast_precision_loss)]
-    let mut gaps: Vec<f64> = times
+    let ms = |ns: u64| ns as f64 / 1e6;
+    let mut long: Vec<[f64; 2]> = times
         .windows(2)
-        .map(|w| w[1].saturating_sub(w[0]) as f64 / 1e6)
+        .map(|w| {
+            [
+                ms(w[1].saturating_sub(start)),
+                ms(w[1].saturating_sub(w[0])),
+            ]
+        })
         .collect();
+    let mut gaps: Vec<f64> = long.iter().map(|l| l[1]).collect();
     gaps.sort_by(f64::total_cmp);
+    long.sort_by(|a, b| b[1].total_cmp(&a[1]));
+    long.truncate(LONG_KEPT);
+    long.sort_by(|a, b| a[0].total_cmp(&b[0]));
     // An input after the last frame was never answered while counting.
     #[allow(clippy::cast_precision_loss)]
-    let mut waits: Vec<f64> = inputs
+    let waits_ms: Vec<Option<f64>> = inputs
         .iter()
-        .filter_map(|&sent| {
+        .map(|&sent| {
             let i = times.partition_point(|&t| t <= sent);
             times.get(i).map(|&t| (t - sent) as f64 / 1e6)
         })
         .collect();
+    let mut waits: Vec<f64> = waits_ms.iter().flatten().copied().collect();
     waits.sort_by(f64::total_cmp);
     #[allow(clippy::cast_precision_loss)]
     let fps = if seconds > 0.0 {
@@ -434,6 +461,9 @@ fn frames(times: &[u64], seconds: f64, inputs: &[u64]) -> Frames {
         latency_p50_ms: quantile(&waits, 0.5),
         latency_p95_ms: quantile(&waits, 0.95),
         latency_max_ms: waits.last().copied(),
+        committed: None,
+        long,
+        waits_ms,
     }
 }
 
@@ -453,6 +483,7 @@ fn span(
         _ => None,
     };
     let cpu0 = w.cg.cpu_usec()?;
+    let mono0 = wayland::monotonic_ns();
     let thr0 = w.cg.throttled_usec();
     let sw0 = procfs::thread_switches(pid);
     let ns0 = procfs::thread_cpu_ns(pid);
@@ -497,7 +528,10 @@ fn span(
         } else {
             0.0
         },
-        frames: times.map(|t| frames(&t, seconds, &inputs)),
+        frames: times.map(|t| Frames {
+            committed: Some(t.committed),
+            ..frames(&t.changed, mono0, seconds, &inputs)
+        }),
         clicks,
         woken,
         // Rounding between the two clocks is not an ended thread.
@@ -1048,12 +1082,13 @@ mod tests {
 
     #[test]
     fn frame_intervals() {
-        let f = frames(&[0, 16_000_000, 33_000_000, 100_000_000], 1.0, &[]);
+        let f = frames(&[0, 16_000_000, 33_000_000, 100_000_000], 0, 1.0, &[]);
+        assert_eq!(f.long[2], [100.0, 67.0]);
         assert_eq!(f.count, 4);
         assert_eq!(f.max_ms, Some(67.0));
         assert_eq!(f.p50_ms, Some(17.0));
         assert_eq!(f.latency_p50_ms, None);
-        let none = frames(&[], 1.0, &[]);
+        let none = frames(&[], 0, 1.0, &[]);
         assert_eq!((none.count, none.p50_ms), (0, None));
     }
 
@@ -1064,6 +1099,7 @@ mod tests {
         let ms = 1_000_000;
         let f = frames(
             &[16 * ms, 33 * ms, 100 * ms],
+            0,
             1.0,
             &[5 * ms, 20 * ms, 40 * ms, 120 * ms],
         );
