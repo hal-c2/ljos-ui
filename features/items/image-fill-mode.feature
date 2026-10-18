@@ -65,6 +65,52 @@ Feature: Image fill mode
     And the property "paintedWidth" of "picture" is 40
     And the property "paintedHeight" of "picture" is 20
 
+  Scenario Outline: A picture kept in shape is no longer than a narrower side leaves it
+    When the property "fillMode" of "picture" is set to <mode>
+    And the property "<side>" of "picture" is set to <given>
+    Then the property "implicitWidth" of "picture" is <implicit w>
+    And the property "implicitHeight" of "picture" is <implicit h>
+    And the property "width" of "picture" is <w>
+    And the property "height" of "picture" is <h>
+
+    Examples:
+      | mode | side   | given | implicit w | implicit h | w   | h  |
+      | 1    | width  | 30    | 40         | 15         | 30  | 15 |
+      | 1    | width  | 10    | 40         | 5          | 10  | 5  |
+      | 1    | width  | 100   | 40         | 20         | 100 | 20 |
+      | 1    | height | 10    | 20         | 20         | 20  | 10 |
+      | 1    | height | 50    | 40         | 20         | 40  | 50 |
+      | 2    | width  | 10    | 40         | 20         | 10  | 20 |
+      | 6    | width  | 10    | 40         | 20         | 10  | 20 |
+
+  Scenario: A picture kept in shape and given both sides keeps its own size as its implicit size
+    When the property "fillMode" of "picture" is set to 1
+    And the property "width" of "picture" is set to 10
+    And the property "height" of "picture" is set to 30
+    Then the property "implicitWidth" of "picture" is 40
+    And the property "implicitHeight" of "picture" is 20
+
+  Scenario: A picture kept in shape follows the width its anchors give it
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        width: 200; height: 200
+        Item {
+          width: 10; height: 100
+          Image {
+            objectName: "anchored"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            fillMode: Image.PreserveAspectFit
+            source: "red.png"
+          }
+        }
+      }
+      """
+    Then the property "height" of "anchored" is 5
+    And the property "implicitHeight" of "anchored" is 5
+
   Scenario Outline: An Image without a picture draws nothing it could measure
     When the property "fillMode" of "empty" is set to <mode>
     And the property "width" of "empty" is set to 100

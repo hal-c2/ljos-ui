@@ -42,7 +42,7 @@ use ljos_render::{
 };
 
 use crate::enums::{EnumTable, align};
-use crate::item::{Item, is_a, write_computed};
+use crate::item::{Item, is_a, size_follows_implicit, write_computed};
 pub(crate) use store::Waiter;
 
 /// Log category of what the store has to say that Qt has no words for.
@@ -637,8 +637,9 @@ fn announce(e: &Engine, me: ObjectId, natural: (u32, u32), asked: bool) {
         bump(e, me);
         animated::loaded(e, me);
         set(e, me, ImageBase::PROGRESS.index, Value::Real(1.0));
-        set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(w));
-        set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(h));
+        let (iw, ih) = e.untrack(|| implicit_size(e, me, (w, h)));
+        set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(iw));
+        set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(ih));
         set(
             e,
             me,
@@ -940,6 +941,13 @@ fn sharp_pixels(e: &Engine, me: ObjectId, on_screen: bool) -> Option<ImageHandle
     } else {
         let longest = |(w, h): (u32, u32)| w.max(h);
         let kept = longest(decode::kept_size(natural, key.request.limit));
+        let sized = e.read(me, Item::WIDTH.index).to_number() > 0.0
+            && e.read(me, Item::HEIGHT.index).to_number() > 0.0;
+        if on_screen && !sized {
+            // Drawn at no size is not drawn small: what it will be drawn
+            // at is still to come.
+            return None;
+        }
         let limit = if on_screen {
             wanted_limit(e, me, natural, store.device_scale(e))
         } else {
@@ -1221,12 +1229,21 @@ fn update_painted(e: &Engine, me: ObjectId) {
         return;
     }
     follow(e, me);
+    let natural = with_run(e, me, |r| r.natural).unwrap_or_default();
+    if natural.0 > 0 && natural.1 > 0 {
+        // First: a side that follows the implicit size is then as long as
+        // it will be painted, and nothing painted in between sees it 0.
+        let (w, h) = implicit_size(e, me, (f64::from(natural.0), f64::from(natural.1)));
+        e.batch(|| {
+            set(e, me, Item::IMPLICIT_WIDTH.index, Value::Real(w));
+            set(e, me, Item::IMPLICIT_HEIGHT.index, Value::Real(h));
+        });
+    }
     let area = kurbo::Size::new(
         e.read(me, Item::WIDTH.index).to_number(),
         e.read(me, Item::HEIGHT.index).to_number(),
     );
     let fit = fit_of(int(e, me, Image::FILL_MODE.index));
-    let natural = with_run(e, me, |r| r.natural).unwrap_or_default();
     let painted = if natural.0 == 0 || natural.1 == 0 {
         // Qt, with no picture: the stretching and tiling modes still
         // report the item's size.
@@ -1253,6 +1270,38 @@ fn update_painted(e: &Engine, me: ObjectId) {
         );
     });
     e.untrack(|| fit_unpainted(e, me));
+}
+
+/// An Image's implicit size for a picture of `natural` size. Qt: a
+/// picture kept in shape (`PreserveAspectFit`) that is given one side and
+/// not the other is, along the other, as long as the given side leaves it,
+/// and never longer than it is (observed on qml6). A row of a title beside
+/// a picture given only a width is as tall as the picture is drawn, not
+/// as the picture is.
+fn implicit_size(e: &Engine, me: ObjectId, natural: (f64, f64)) -> (f64, f64) {
+    let (w, h) = natural;
+    if w <= 0.0
+        || h <= 0.0
+        || !is_a::<Image>(e, me)
+        || int(e, me, Image::FILL_MODE.index) != fill_mode::PRESERVE_ASPECT_FIT
+    {
+        return natural;
+    }
+    let given = [
+        !size_follows_implicit(e, me, true),
+        !size_follows_implicit(e, me, false),
+    ];
+    match given {
+        [true, false] => {
+            let width = e.read(me, Item::WIDTH.index).to_number();
+            (w, h * (width / w).clamp(0.0, 1.0))
+        }
+        [false, true] => {
+            let height = e.read(me, Item::HEIGHT.index).to_number();
+            (w * (height / h).clamp(0.0, 1.0), h)
+        }
+        _ => natural,
+    }
 }
 
 /// What an `Image` or `BorderImage` paints. Built by the scene's paint
