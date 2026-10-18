@@ -2549,3 +2549,195 @@ Feature: What a reload changes
       Then the property "plainSize" of "root" is "large"
       And the property "wideSize" of "root" is "own"
       And the property "x" of "box" is at least 40
+
+  Rule: A member no longer given goes back to what a new object of its type has, where it stands
+
+    What the component the object is made from gives it, or else what a
+    new native object has. Two siblings of one type that trade places are
+    the same objects, each given what is now written at its place.
+
+    Background:
+      Given the file "Pill.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 10; height: 10; color: "green" }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill"; color: "red"; width: 40 }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30; font.bold: true
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "first"; color: "red"; border.color: "blue" }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle {
+            objectName: "box"; width: 5 + 5; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      When the method "go" of "root" is called
+      And 500 milliseconds pass
+
+    Scenario: A member no longer given to a component's object takes the component's value
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill" }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30; font.bold: true
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "first"; color: "red"; border.color: "blue" }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle {
+            objectName: "box"; width: 5 + 5; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "color" of "pill" is "#008000"
+      And the property "width" of "pill" is 10
+      And the property "x" of "box" is at least 40
+
+    Scenario: A binding no longer given to a native object leaves its default
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill"; color: "red"; width: 40 }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30; font.bold: true
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "first"; color: "red"; border.color: "blue" }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle {
+            objectName: "box"; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "width" of "box" is 0
+      And the property "x" of "box" is at least 40
+
+    Scenario: A member of a value no longer given goes back and the rest of the value stays
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill"; color: "red"; width: 40 }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "first"; color: "red"; border.color: "blue" }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle {
+            objectName: "box"; width: 5 + 5; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "font.bold" of "label" is false
+      And the property "font.pixelSize" of "label" is 30
+      And the property "x" of "box" is at least 40
+
+    Scenario: A member of an attached object no longer given goes back
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill"; color: "red"; width: 40 }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30; font.bold: true
+            property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "first"; color: "red"; border.color: "blue" }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle {
+            objectName: "box"; width: 5 + 5; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "pw" of "label" is -1
+      And the property "x" of "box" is at least 40
+
+    Scenario: A member of a group no longer given goes back
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill"; color: "red"; width: 40 }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30; font.bold: true
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "first"; color: "red" }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle {
+            objectName: "box"; width: 5 + 5; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "border.color" of "first" is "#000000"
+      And the property "color" of "first" is "#ff0000"
+      And the property "x" of "box" is at least 40
+
+    Scenario: Two siblings of one type in each other's places each have what is now written
+      When the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+          id: root; objectName: "root"
+          Pill { objectName: "pill"; color: "red"; width: 40 }
+          Text {
+            objectName: "label"; text: "a"; font.pixelSize: 30; font.bold: true
+            Layout.preferredWidth: 30; property real pw: Layout.preferredWidth
+          }
+          Rectangle { objectName: "second"; radius: 4 }
+          Rectangle { objectName: "first"; color: "red"; border.color: "blue" }
+          Rectangle {
+            objectName: "box"; width: 5 + 5; height: 10
+            NumberAnimation on x { id: slide; running: false; from: 0; to: 100; duration: 1000 }
+          }
+          function go() { slide.start() }
+        }
+        """
+      And a reload happens
+      Then the property "radius" of "second" is 4
+      And the property "color" of "second" is "#ffffff"
+      And the property "border.color" of "second" is "#000000"
+      And the property "radius" of "first" is 0
+      And the property "color" of "first" is "#ff0000"
+      And the property "x" of "box" is at least 40

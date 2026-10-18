@@ -11,8 +11,9 @@
 //! the same arguments; and the changed files are the old ones but for
 //! those members: the same imports, pragmas, scripts, components,
 //! objects and declarations, wherever they now are. Then what is in effect
-//! is the edit alone. Anything else (an object added, a group's member, a property no
-//! longer given, a signal) is made again by [`Engine::reload`].
+//! is the edit alone. A member no longer given goes back to what a new
+//! object of its type has. Anything else (a declaration, a signal) is made
+//! again by [`Engine::reload`].
 //!
 //! The objects keep the bindings they have. The edited members and
 //! functions are installed from the new file, and so are the `Component`s,
@@ -203,6 +204,8 @@ struct Target<'a> {
     obj: usize,
     was: usize,
     def: &'a ObjectDef,
+    /// As the old file writes it.
+    old: &'a ObjectDef,
     names: Vec<String>,
     functions: Vec<String>,
 }
@@ -327,6 +330,7 @@ impl Engine {
                         obj: e.obj,
                         was: e.was,
                         def: &c.new.component(e.comp).objects[e.obj],
+                        old: &c.old.ir.component(e.comp).objects[e.was],
                         names: e.names.clone(),
                         functions: e.functions.clone(),
                     };
@@ -441,7 +445,11 @@ impl Engine {
                     continue;
                 }
                 for name in &t.names {
-                    self.in_place_set(&inst, id, t.def, name);
+                    if gives(t.def, name) {
+                        self.in_place_set(&inst, id, t.def, name);
+                    } else {
+                        let _ = self.in_place_unset(&inst, t.obj, t.old, t.def, name, true);
+                    }
                 }
                 for f in t
                     .def
@@ -1025,6 +1033,16 @@ impl Engine {
         let given = given.get(&id);
         let old = &c.old.ir.component(t.inst.comp).objects[t.was];
         for name in &t.names {
+            if !gives(t.def, name) {
+                self.untrack(|| self.in_place_unset(&t.inst, t.was, t.old, t.def, name, false))?;
+                if given.is_some_and(|g| {
+                    g.iter()
+                        .any(|n| is_or_under(n, name) || is_or_under(name, n))
+                }) {
+                    return Err("an edited member is given where the object is made");
+                }
+                continue;
+            }
             let Some(target) = self.untrack(|| self.in_place_placed(&t.inst, id, t.def, name))
             else {
                 return Err("an edited member is not found");
@@ -1189,10 +1207,139 @@ impl Engine {
                 at
             }
         };
-        // The edit outranks what a script assigned there.
+        self.forget_assigned(&t);
+    }
+
+    /// The edit outranks what a script assigned to `t`.
+    fn forget_assigned(&self, t: &IncTarget) {
         let (o, p) = self.redirect(t.obj, t.prop);
         if let Some(props) = self.inner.reload.assigned.borrow_mut().get_mut(&o) {
             props.retain(|q| *q != p);
+        }
+    }
+
+    /// Takes the member `name` of object `j` of `inst`, which `old` gave
+    /// and `new` no longer gives, back to what a fresh object of its type
+    /// has: what the component it is made from gives it, or else what a
+    /// new native object has (its reset, or its default). With `apply`
+    /// false only tells whether it can.
+    fn in_place_unset(
+        &self,
+        inst: &Rc<Instance>,
+        j: usize,
+        old: &ObjectDef,
+        new: &ObjectDef,
+        name: &str,
+        apply: bool,
+    ) -> Result<(), &'static str> {
+        let obj = inst.objects[j];
+        if !self.is_alive(obj) {
+            return Ok(());
+        }
+        // Whether `od` declares the member, and as an alias.
+        let declared = |od: &ObjectDef| {
+            od.properties
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.alias.is_some())
+        };
+        if declared(new) == Some(true) {
+            return Err("a member no longer given is an alias");
+        }
+        // A value (`font`) goes back whole, and what the file still gives
+        // of it is put on it again.
+        if let Some((path, _)) = name.rsplit_once('.') {
+            let p: Vec<String> = path.split('.').map(str::to_owned).collect();
+            if let Some((at, _)) = self.value_target(obj, &p) {
+                if self.made_of_sets(inst, j, path) {
+                    return Err("the component an object is made from gives the value");
+                }
+                if apply {
+                    self.reset_fresh(&at);
+                    if let Some(g) = new.grouped.iter().find(|g| g.path == p) {
+                        self.apply_value_members(inst, obj, &g.members, &g.path);
+                    }
+                    self.forget_assigned(&at);
+                }
+                return Ok(());
+            }
+        }
+        // The component it is made from, the outermost first.
+        if declared(new).is_none() {
+            let mut cur = inst.inner.get(j).cloned().flatten();
+            while let Some(inner) = cur {
+                let root = &inner.file.ir.component(inner.comp).objects[0];
+                if gives(root, name) {
+                    if apply {
+                        self.in_place_set(&inner, obj, root, name);
+                    }
+                    return Ok(());
+                }
+                if sets(root, name) {
+                    return Err("the component an object is made from gives a part of it");
+                }
+                match declared(root) {
+                    Some(true) => return Err("a member no longer given is an alias"),
+                    Some(false) => break,
+                    None => {}
+                }
+                cur = inner.inner.first().cloned().flatten();
+            }
+        }
+        let at = match old.attached.iter().find_map(|a| {
+            let rest = name.strip_prefix(a.written.as_str())?.strip_prefix('.')?;
+            Some((a, rest))
+        }) {
+            Some((a, rest)) => {
+                if is_component_attached(&a.ty) || rest.contains('.') {
+                    return Err("a member no longer given is attached");
+                }
+                let meta = self
+                    .type_meta(&inst.file, &a.ty)
+                    .map_err(|_| "a member no longer given is attached")?;
+                let att = self
+                    .existing_attached_object(obj, &meta)
+                    .ok_or("a member no longer given is attached")?;
+                self.member_target(att, &[], rest)
+            }
+            None => match name.rsplit_once('.') {
+                Some((path, leaf)) => {
+                    let p: Vec<String> = path.split('.').map(str::to_owned).collect();
+                    self.member_target(obj, &p, leaf)
+                }
+                None => self.member_target(obj, &[], name),
+            },
+        }
+        .map_err(|_| "a member no longer given is not found")?;
+        if apply {
+            self.reset_fresh(&at);
+            self.forget_assigned(&at);
+        }
+        Ok(())
+    }
+
+    /// Whether the components object `j` of `inst` is made from give any
+    /// of the value `path`.
+    fn made_of_sets(&self, inst: &Rc<Instance>, j: usize, path: &str) -> bool {
+        let mut cur = inst.inner.get(j).cloned().flatten();
+        while let Some(inner) = cur {
+            if sets(&inner.file.ir.component(inner.comp).objects[0], path) {
+                return true;
+            }
+            cur = inner.inner.first().cloned().flatten();
+        }
+        false
+    }
+
+    /// Puts `t` as a new object of its type has it, with no binding.
+    fn reset_fresh(&self, t: &IncTarget) {
+        let r = match self.reset_of(t.obj, t.prop) {
+            Some(_) => self.reset_impl(t.obj, t.prop, true),
+            None => self.reset_to_default(t.obj, t.prop),
+        };
+        if let Err(e) = r {
+            let at = self.location_of(t.obj).unwrap_or_default();
+            self.warn(format!("{at}{e}"));
         }
     }
 
@@ -1415,6 +1562,13 @@ fn is_or_under(given: &str, name: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('.'))
 }
 
+/// Whether `od` gives `name` a value or a binding.
+fn gives(od: &ObjectDef, name: &str) -> bool {
+    held_in(od, name).is_some_and(|(m, leaf)| {
+        m.assignments.iter().any(|a| a.name == leaf) || m.bindings.iter().any(|b| b.name == leaf)
+    })
+}
+
 /// Whether `od` gives its object all of `name`: `name` itself or what
 /// it is a member of.
 fn covers(od: &ObjectDef, name: &str) -> bool {
@@ -1618,20 +1772,9 @@ fn same_but_edits(
             return not_here("a model's elements changed");
         }
         for name in &e.names {
-            let given = |od: &ObjectDef| {
-                held_in(od, name).is_some_and(|(m, leaf)| {
-                    m.assignments.iter().any(|a| a.name == leaf)
-                        || m.bindings.iter().any(|b| b.name == leaf)
-                })
-            };
             let written = |od: &ObjectDef| {
                 held_in(od, name).is_some_and(|(m, leaf)| m.objects.iter().any(|a| a.name == leaf))
             };
-            // A member no longer given goes back to its default, which
-            // nothing here knows.
-            if !given(n) {
-                return not_here("a member is no longer given");
-            }
             if written(n) || written(o) {
                 return not_here("a member given an object changed");
             }
@@ -2054,6 +2197,10 @@ fn shape(od: &ObjectDef, names: &[String]) -> ObjectDef {
     for a in &mut o.attached {
         unedited(&mut a.members, &a.written);
     }
+    // A group the edit gave its first member or took its last is in one
+    // file alone.
+    o.grouped.retain(|g| !g.members.is_empty());
+    o.attached.retain(|a| !a.members.is_empty());
     for f in &mut o.functions {
         f.expr = ExprId(0);
     }
