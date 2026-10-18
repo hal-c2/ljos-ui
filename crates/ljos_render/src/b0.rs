@@ -875,17 +875,18 @@ fn solid(list: &DisplayList, to_screen: Affine, opacity: f32) -> Option<(ERect, 
 /// covers the pixels whose centres it holds; an antialiased one only
 /// covers whole pixels when its edges lie between them.
 fn pixels_of(rect: ERect, aa: bool, ppp: f32) -> Option<ERect> {
-    let snapped = if aa {
-        rect
-    } else {
-        // A pixel is in when its centre is: x0 <= i + 0.5 < x1.
-        let edge = |v: f32| ceil(v * ppp - 0.5) / ppp;
-        ERect::from_min_max(
-            Pos2::new(edge(rect.min.x), edge(rect.min.y)),
-            Pos2::new(edge(rect.max.x), edge(rect.max.y)),
-        )
-    };
-    on_pixels(snapped, ppp).then_some(snapped)
+    if aa {
+        return on_pixels(rect, ppp).then_some(rect);
+    }
+    // A pixel is in when its centre is: x0 <= i + 0.5 < x1. The edges are
+    // then whole pixels by making, within what `near_whole` allows, so
+    // they are not checked again for each rectangle of every frame.
+    let edge = |v: f32| ceil(v * ppp - 0.5) / ppp;
+    let snapped = ERect::from_min_max(
+        Pos2::new(edge(rect.min.x), edge(rect.min.y)),
+        Pos2::new(edge(rect.max.x), edge(rect.max.y)),
+    );
+    (snapped.is_positive() && snapped.is_finite()).then_some(snapped)
 }
 
 /// Whether every edge of `rect` (in points) lies on a device pixel's
